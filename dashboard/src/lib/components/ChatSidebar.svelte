@@ -1,10 +1,10 @@
 <script lang="ts">
-import { 
-		conversations, 
-		activeConversationId, 
-		createConversation, 
-		loadConversation, 
-		deleteConversation, 
+	import {
+		conversations,
+		activeConversationId,
+		createConversation,
+		loadConversation,
+		deleteConversation,
 		deleteAllConversations,
 		renameConversation,
 		clearChat,
@@ -23,9 +23,9 @@ import {
 
 	const conversationList = $derived(conversations());
 	const activeId = $derived(activeConversationId());
-const instanceData = $derived(instances());
-const debugEnabled = $derived(debugMode());
-const topologyOnlyEnabled = $derived(topologyOnlyMode());
+	const instanceData = $derived(instances());
+	const debugEnabled = $derived(debugMode());
+	const topologyOnlyEnabled = $derived(topologyOnlyMode());
 
 	let searchQuery = $state('');
 	let editingId = $state<string | null>(null);
@@ -33,11 +33,7 @@ const topologyOnlyEnabled = $derived(topologyOnlyMode());
 	let deleteConfirmId = $state<string | null>(null);
 	let showDeleteAllConfirm = $state(false);
 
-	const filteredConversations = $derived(
-		searchQuery.trim()
-			? conversationList.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()))
-			: conversationList
-	);
+	const filteredConversations = $derived(searchQuery.trim() ? conversationList.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase())) : conversationList);
 
 	function handleNewChat() {
 		createConversation();
@@ -107,7 +103,7 @@ const topologyOnlyEnabled = $derived(topologyOnlyMode());
 		const date = new Date(timestamp);
 		const now = new Date();
 		const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
-		
+
 		if (diffDays === 0) {
 			return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 		} else if (diffDays === 1) {
@@ -119,7 +115,7 @@ const topologyOnlyEnabled = $derived(topologyOnlyMode());
 		}
 	}
 
-	function getLastAssistantStats(conversation: typeof conversationList[0]): { ttftMs?: number; tps?: number } | null {
+	function getLastAssistantStats(conversation: (typeof conversationList)[0]): { ttftMs?: number; tps?: number } | null {
 		// Find the last assistant message with stats
 		for (let i = conversation.messages.length - 1; i >= 0; i--) {
 			const msg = conversation.messages[i];
@@ -183,7 +179,7 @@ const topologyOnlyEnabled = $derived(topologyOnlyMode());
 		return { sharding, instanceType };
 	}
 
-	function resolveConversationInfo(conversation: typeof conversationList[0]): { modelLabel: string; strategyLabel: string } {
+	function resolveConversationInfo(conversation: (typeof conversationList)[0]): { modelLabel: string; strategyLabel: string } {
 		// Attempt to match conversation model to an instance
 		let matchedInstance: unknown = null;
 		let modelId = conversation.modelId ?? null;
@@ -257,7 +253,7 @@ const topologyOnlyEnabled = $derived(topologyOnlyMode());
 						{searchQuery ? 'SEARCH RESULTS' : 'CONVERSATIONS'}
 					</span>
 				</div>
-				
+
 				{#each filteredConversations as conversation (conversation.id)}
 					{@const info = resolveConversationInfo(conversation)}
 					<div class="px-2">
@@ -312,11 +308,9 @@ const topologyOnlyEnabled = $derived(topologyOnlyMode());
 								role="button"
 								tabindex="0"
 								onclick={() => handleSelectConversation(conversation.id)}
-								onkeydown={(e) => e.key === 'Enter' && handleSelectConversation(conversation.id)}
+								onkeydown={e => e.key === 'Enter' && handleSelectConversation(conversation.id)}
 								class="group w-full flex items-center justify-between p-2 rounded mb-1 transition-all text-left cursor-pointer
-									{activeId === conversation.id 
-								? 'bg-transparent border border-exo-yellow/30' 
-									: 'hover:border-exo-yellow/20 border border-transparent'}"
+									{activeId === conversation.id ? 'bg-transparent border border-exo-yellow/30' : 'hover:border-exo-yellow/20 border border-transparent'}"
 							>
 								<div class="flex-1 min-w-0 pr-2">
 									<div class="text-sm truncate {activeId === conversation.id ? 'text-exo-yellow' : 'text-white/90'}">
@@ -333,30 +327,36 @@ const topologyOnlyEnabled = $derived(topologyOnlyMode());
 									</div>
 									{#if stats}
 										<div class="text-xs text-white/60 font-mono mt-1">
-											{#if stats.ttftMs}<span class="text-white/40">TTFT</span> {stats.ttftMs.toFixed(0)}ms{/if}{#if stats.ttftMs && stats.tps}<span class="text-white/30 mx-1.5">•</span>{/if}{#if stats.tps}{stats.tps.toFixed(1)} <span class="text-white/40">tok/s</span>{/if}
+											{#if stats.ttftMs}<span class="text-white/40">TTFT</span> {stats.ttftMs.toFixed(0)}ms{/if}{#if stats.ttftMs && stats.tps}<span class="text-white/30 mx-1.5">•</span
+												>{/if}{#if stats.tps}{stats.tps.toFixed(1)} <span class="text-white/40">tok/s</span>{/if}
 										</div>
 									{/if}
 								</div>
-								
+
 								<div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-								<button
-									type="button"
-									onclick={(e) => handleStartEdit(conversation.id, conversation.name, e)}
-									class="p-1 text-exo-light-gray hover:text-exo-yellow transition-colors cursor-pointer"
-									title="Rename"
-								>
+									<button
+										type="button"
+										onclick={e => handleStartEdit(conversation.id, conversation.name, e)}
+										class="p-1 text-exo-light-gray hover:text-exo-yellow transition-colors cursor-pointer"
+										title="Rename"
+									>
 										<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width="2"
+												d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+											/>
 										</svg>
 									</button>
-								<button
-									type="button"
-									onclick={(e) => handleDeleteClick(conversation.id, e)}
-									class="p-1 text-exo-light-gray hover:text-red-400 transition-colors cursor-pointer"
-									title="Delete"
-								>
+									<button type="button" onclick={e => handleDeleteClick(conversation.id, e)} class="p-1 text-exo-light-gray hover:text-red-400 transition-colors cursor-pointer" title="Delete">
 										<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width="2"
+												d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+											/>
 										</svg>
 									</button>
 								</div>
@@ -369,7 +369,12 @@ const topologyOnlyEnabled = $derived(topologyOnlyMode());
 			<div class="flex flex-col items-center justify-center h-full p-4 text-center">
 				<div class="w-12 h-12 border border-exo-yellow/20 rounded-full flex items-center justify-center mb-3">
 					<svg class="w-6 h-6 text-exo-yellow/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="1.5"
+							d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+						/>
 					</svg>
 				</div>
 				<p class="text-xs text-white/70 font-mono tracking-wider uppercase mb-1">
@@ -388,59 +393,60 @@ const topologyOnlyEnabled = $derived(topologyOnlyMode());
 			<div class="bg-red-500/10 border border-red-500/30 rounded p-2 mb-2">
 				<p class="text-xs text-red-400 text-center mb-2">Delete all {conversationList.length} conversations?</p>
 				<div class="flex gap-2">
-				<button
-					onclick={handleConfirmDeleteAll}
-					class="flex-1 py-1.5 text-xs font-mono tracking-wider uppercase bg-red-500/20 text-red-400 border border-red-500/30 rounded hover:bg-red-500/30 transition-colors cursor-pointer"
-				>
-					DELETE ALL
-				</button>
-				<button
-					onclick={handleCancelDeleteAll}
-					class="flex-1 py-1.5 text-xs font-mono tracking-wider uppercase bg-exo-medium-gray/20 text-exo-light-gray border border-exo-medium-gray/30 rounded hover:bg-exo-medium-gray/30 transition-colors cursor-pointer"
-				>
+					<button
+						onclick={handleConfirmDeleteAll}
+						class="flex-1 py-1.5 text-xs font-mono tracking-wider uppercase bg-red-500/20 text-red-400 border border-red-500/30 rounded hover:bg-red-500/30 transition-colors cursor-pointer"
+					>
+						DELETE ALL
+					</button>
+					<button
+						onclick={handleCancelDeleteAll}
+						class="flex-1 py-1.5 text-xs font-mono tracking-wider uppercase bg-exo-medium-gray/20 text-exo-light-gray border border-exo-medium-gray/30 rounded hover:bg-exo-medium-gray/30 transition-colors cursor-pointer"
+					>
 						CANCEL
 					</button>
 				</div>
 			</div>
 		{:else if conversationList.length > 0}
-		<button
-			onclick={handleDeleteAllClick}
-			class="w-full flex items-center justify-center gap-2 py-1.5 text-sm font-mono tracking-wider uppercase text-white/70 hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 rounded transition-all cursor-pointer"
-		>
+			<button
+				onclick={handleDeleteAllClick}
+				class="w-full flex items-center justify-center gap-2 py-1.5 text-sm font-mono tracking-wider uppercase text-white/70 hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 rounded transition-all cursor-pointer"
+			>
 				<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+					/>
 				</svg>
 				DELETE ALL CHATS
 			</button>
 		{/if}
-	<div class="flex items-center justify-center gap-3 {conversationList.length > 0 && !showDeleteAllConfirm ? 'mt-2' : ''}">
-		<button
-			type="button"
-			onclick={toggleDebugMode}
-			class="p-1.5 rounded border border-exo-medium-gray/40 hover:border-exo-yellow/50 transition-colors cursor-pointer"
-			title="Toggle debug mode"
-		>
-			<svg class="w-4 h-4 {debugEnabled ? 'text-exo-yellow' : 'text-exo-medium-gray'}" fill="currentColor" viewBox="0 0 24 24">
-				<path d="M19 8h-1.81A6.002 6.002 0 0 0 12 2a6.002 6.002 0 0 0-5.19 3H5a1 1 0 0 0 0 2h1v2H5a1 1 0 0 0 0 2h1v2H5a1 1 0 0 0 0 2h1.81A6.002 6.002 0 0 0 12 22a6.002 6.002 0 0 0 5.19-3H19a1 1 0 0 0 0-2h-1v-2h1a1 1 0 0 0 0-2h-1v-2h1a1 1 0 1 0 0-2Zm-5 10.32V19a1 1 0 1 1-2 0v-.68a3.999 3.999 0 0 1-3-3.83V9.32a3.999 3.999 0 0 1 3-3.83V5a1 1 0 0 1 2 0v.49a3.999 3.999 0 0 1 3 3.83v5.17a3.999 3.999 0 0 1-3 3.83Z"/>
-			</svg>
-		</button>
-		<div class="text-xs text-white/60 font-mono tracking-wider text-center">
-			{conversationList.length} CONVERSATION{conversationList.length !== 1 ? 'S' : ''}
+		<div class="flex items-center justify-center gap-3 {conversationList.length > 0 && !showDeleteAllConfirm ? 'mt-2' : ''}">
+			<button type="button" onclick={toggleDebugMode} class="p-1.5 rounded border border-exo-medium-gray/40 hover:border-exo-yellow/50 transition-colors cursor-pointer" title="Toggle debug mode">
+				<svg class="w-4 h-4 {debugEnabled ? 'text-exo-yellow' : 'text-exo-medium-gray'}" fill="currentColor" viewBox="0 0 24 24">
+					<path
+						d="M19 8h-1.81A6.002 6.002 0 0 0 12 2a6.002 6.002 0 0 0-5.19 3H5a1 1 0 0 0 0 2h1v2H5a1 1 0 0 0 0 2h1v2H5a1 1 0 0 0 0 2h1.81A6.002 6.002 0 0 0 12 22a6.002 6.002 0 0 0 5.19-3H19a1 1 0 0 0 0-2h-1v-2h1a1 1 0 0 0 0-2h-1v-2h1a1 1 0 1 0 0-2Zm-5 10.32V19a1 1 0 1 1-2 0v-.68a3.999 3.999 0 0 1-3-3.83V9.32a3.999 3.999 0 0 1 3-3.83V5a1 1 0 0 1 2 0v.49a3.999 3.999 0 0 1 3 3.83v5.17a3.999 3.999 0 0 1-3 3.83Z"
+					/>
+				</svg>
+			</button>
+			<div class="text-xs text-white/60 font-mono tracking-wider text-center">
+				{conversationList.length} CONVERSATION{conversationList.length !== 1 ? 'S' : ''}
+			</div>
+			<button
+				type="button"
+				onclick={toggleTopologyOnlyMode}
+				class="p-1.5 rounded border border-exo-medium-gray/40 hover:border-exo-yellow/50 transition-colors cursor-pointer"
+				title="Toggle topology only mode"
+			>
+				<svg class="w-4 h-4 {topologyOnlyEnabled ? 'text-exo-yellow' : 'text-exo-medium-gray'}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+					<circle cx="12" cy="5" r="2" fill="currentColor" />
+					<circle cx="5" cy="19" r="2" fill="currentColor" />
+					<circle cx="19" cy="19" r="2" fill="currentColor" />
+					<path stroke-linecap="round" d="M12 7v5m0 0l-5 5m5-5l5 5" />
+				</svg>
+			</button>
 		</div>
-		<button
-			type="button"
-			onclick={toggleTopologyOnlyMode}
-			class="p-1.5 rounded border border-exo-medium-gray/40 hover:border-exo-yellow/50 transition-colors cursor-pointer"
-			title="Toggle topology only mode"
-		>
-			<svg class="w-4 h-4 {topologyOnlyEnabled ? 'text-exo-yellow' : 'text-exo-medium-gray'}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-				<circle cx="12" cy="5" r="2" fill="currentColor" />
-				<circle cx="5" cy="19" r="2" fill="currentColor" />
-				<circle cx="19" cy="19" r="2" fill="currentColor" />
-				<path stroke-linecap="round" d="M12 7v5m0 0l-5 5m5-5l5 5" />
-			</svg>
-		</button>
-	</div>
 	</div>
 </aside>
-

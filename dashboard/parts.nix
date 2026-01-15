@@ -4,7 +4,7 @@
     { pkgs, lib, ... }:
     let
       # Filter source to only include dashboard directory
-      src = lib.cleanSourceWith {
+      dashboardSrc = lib.cleanSourceWith {
         src = inputs.self;
         filter =
           path: type:
@@ -30,7 +30,7 @@
           }
           # Inject the filtered source
           {
-            deps.dashboardSrc = lib.mkForce "${src}/dashboard";
+            deps.dashboardSrc = lib.mkForce "${dashboardSrc}/dashboard";
           }
         ];
       };
@@ -39,6 +39,15 @@
       # Extract just the static site from the full build
       packages.dashboard = pkgs.runCommand "exo-dashboard" { } ''
         cp -r ${dashboardFull}/build $out
+      '';
+
+      # Prettier with svelte plugin for treefmt
+      packages.prettier-svelte = pkgs.writeShellScriptBin "prettier-svelte" ''
+        export NODE_PATH="${dashboardFull}/lib/node_modules/exo-dashboard/node_modules"
+        exec ${pkgs.nodejs}/bin/node \
+          ${dashboardFull}/lib/node_modules/exo-dashboard/node_modules/prettier/bin/prettier.cjs \
+          --plugin "${dashboardFull}/lib/node_modules/exo-dashboard/node_modules/prettier-plugin-svelte/plugin.js" \
+          "$@"
       '';
     };
 }

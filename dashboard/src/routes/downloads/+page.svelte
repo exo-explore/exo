@@ -1,12 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import {
-		topologyData,
-		downloads,
-		type DownloadProgress,
-		refreshState,
-		lastUpdate as lastUpdateStore
-	} from '$lib/stores/app.svelte';
+	import { topologyData, downloads, type DownloadProgress, refreshState, lastUpdate as lastUpdateStore } from '$lib/stores/app.svelte';
 	import HeaderNav from '$lib/components/HeaderNav.svelte';
 
 	type FileProgress = {
@@ -166,11 +160,7 @@
 
 			for (const [nodeId, nodeDownloads] of entries) {
 				const modelMap = new Map<string, ModelEntry>();
-				const nodeEntries = Array.isArray(nodeDownloads)
-					? nodeDownloads
-					: nodeDownloads && typeof nodeDownloads === 'object'
-						? Object.values(nodeDownloads as Record<string, unknown>)
-						: [];
+				const nodeEntries = Array.isArray(nodeDownloads) ? nodeDownloads : nodeDownloads && typeof nodeDownloads === 'object' ? Object.values(nodeDownloads as Record<string, unknown>) : [];
 
 				for (const downloadWrapped of nodeEntries) {
 					if (!downloadWrapped || typeof downloadWrapped !== 'object') continue;
@@ -196,19 +186,17 @@
 						return (meta.prettyName as string) ?? null;
 					})();
 
-					const rawProgress = (downloadPayload as Record<string, unknown>).download_progress
-						?? (downloadPayload as Record<string, unknown>).downloadProgress
-						?? {};
+					const rawProgress = (downloadPayload as Record<string, unknown>).download_progress ?? (downloadPayload as Record<string, unknown>).downloadProgress ?? {};
 					// For DownloadCompleted, total_bytes is at top level; for DownloadOngoing, it's inside download_progress
 					const totalBytes = getBytes(
-						(downloadPayload as Record<string, unknown>).total_bytes
-						?? (downloadPayload as Record<string, unknown>).totalBytes
-						?? (rawProgress as Record<string, unknown>).total_bytes
-						?? (rawProgress as Record<string, unknown>).totalBytes
+						(downloadPayload as Record<string, unknown>).total_bytes ??
+							(downloadPayload as Record<string, unknown>).totalBytes ??
+							(rawProgress as Record<string, unknown>).total_bytes ??
+							(rawProgress as Record<string, unknown>).totalBytes
 					);
 					const downloadedBytes = getBytes((rawProgress as Record<string, unknown>).downloaded_bytes ?? (rawProgress as Record<string, unknown>).downloadedBytes);
-					const speed = (rawProgress as Record<string, unknown>).speed as number ?? 0;
-					const etaMs = (rawProgress as Record<string, unknown>).eta_ms as number ?? (rawProgress as Record<string, unknown>).etaMs as number ?? 0;
+					const speed = ((rawProgress as Record<string, unknown>).speed as number) ?? 0;
+					const etaMs = ((rawProgress as Record<string, unknown>).eta_ms as number) ?? ((rawProgress as Record<string, unknown>).etaMs as number) ?? 0;
 					const percentage = totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0;
 
 					const files: FileProgress[] = [];
@@ -245,26 +233,25 @@
 					const existing = modelMap.get(modelId);
 					if (!existing) {
 						modelMap.set(modelId, entry);
-					} else if (
-						(entry.status === 'completed' && existing.status !== 'completed') ||
-						(entry.status === existing.status && entry.downloadedBytes > existing.downloadedBytes)
-					) {
+					} else if ((entry.status === 'completed' && existing.status !== 'completed') || (entry.status === existing.status && entry.downloadedBytes > existing.downloadedBytes)) {
 						modelMap.set(modelId, entry);
 					}
 				}
 
 				let models = Array.from(modelMap.values()).sort((a, b) => b.percentage - a.percentage);
 				if (models.length === 0 && nodeEntries.length > 0) {
-					models = [{
-						modelId: 'Unknown download',
-						percentage: 0,
-						downloadedBytes: 0,
-						totalBytes: 0,
-						speed: 0,
-						etaMs: 0,
-						status: 'downloading',
-						files: []
-					}];
+					models = [
+						{
+							modelId: 'Unknown download',
+							percentage: 0,
+							downloadedBytes: 0,
+							totalBytes: 0,
+							speed: 0,
+							etaMs: 0,
+							status: 'downloading',
+							files: []
+						}
+					];
 				}
 
 				built.push({
@@ -356,14 +343,8 @@
 							<div class="rounded border border-exo-medium-gray/30 bg-exo-dark-gray/60 p-3 space-y-2">
 								<div class="flex items-center justify-between gap-3">
 									<div class="min-w-0 space-y-0.5">
-										<div 
-											class="text-xs font-mono text-white truncate"
-											title={model.prettyName ?? model.modelId}
-										>{model.prettyName ?? model.modelId}</div>
-										<div 
-											class="text-[10px] text-exo-light-gray font-mono truncate"
-											title={model.modelId}
-										>{model.modelId}</div>
+										<div class="text-xs font-mono text-white truncate" title={model.prettyName ?? model.modelId}>{model.prettyName ?? model.modelId}</div>
+										<div class="text-[10px] text-exo-light-gray font-mono truncate" title={model.modelId}>{model.modelId}</div>
 										{#if model.status !== 'completed'}
 											<div class="text-[11px] text-exo-light-gray font-mono">
 												{formatBytes(model.downloadedBytes)} / {formatBytes(model.totalBytes)}
@@ -374,13 +355,7 @@
 										<span class="text-xs font-mono {pct >= 100 ? 'text-green-400' : pct <= 0 ? 'text-red-400' : 'text-exo-yellow'}">
 											{pct.toFixed(1)}%
 										</span>
-										<button
-											type="button"
-											class="text-exo-light-gray hover:text-exo-yellow transition-colors"
-											onclick={() => toggleExpand(key)}
-											aria-expanded={isExpanded}
-											title="Toggle file details"
-										>
+										<button type="button" class="text-exo-light-gray hover:text-exo-yellow transition-colors" onclick={() => toggleExpand(key)} aria-expanded={isExpanded} title="Toggle file details">
 											<svg class="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
 												<path d="M6 8l4 4 4-4" class={isExpanded ? 'transform rotate-180 origin-center transition-transform duration-150' : 'transition-transform duration-150'}></path>
 											</svg>
@@ -389,10 +364,7 @@
 								</div>
 
 								<div class="relative h-2 bg-exo-black/60 rounded-sm overflow-hidden">
-									<div
-										class={`absolute inset-y-0 left-0 bg-gradient-to-r ${gradient} transition-all duration-300`}
-										style={`width: ${pct.toFixed(1)}%`}
-									></div>
+									<div class={`absolute inset-y-0 left-0 bg-gradient-to-r ${gradient} transition-all duration-300`} style={`width: ${pct.toFixed(1)}%`}></div>
 								</div>
 
 								<div class="flex items-center justify-between text-xs font-mono text-exo-light-gray">
@@ -413,13 +385,10 @@
 												<div class="rounded border border-exo-medium-gray/20 bg-exo-black/40 p-2 space-y-1">
 													<div class="flex items-center justify-between text-[11px] font-mono text-exo-light-gray/90">
 														<span class="truncate pr-2">{f.name}</span>
-														<span class="{fpct >= 100 ? 'text-green-400' : fpct <= 0 ? 'text-red-400' : 'text-exo-yellow'}">{fpct.toFixed(1)}%</span>
+														<span class={fpct >= 100 ? 'text-green-400' : fpct <= 0 ? 'text-red-400' : 'text-exo-yellow'}>{fpct.toFixed(1)}%</span>
 													</div>
 													<div class="relative h-1.5 bg-exo-black/60 rounded-sm overflow-hidden">
-														<div
-															class={`absolute inset-y-0 left-0 bg-gradient-to-r ${fgradient} transition-all duration-300`}
-															style={`width: ${fpct.toFixed(1)}%`}
-														></div>
+														<div class={`absolute inset-y-0 left-0 bg-gradient-to-r ${fgradient} transition-all duration-300`} style={`width: ${fpct.toFixed(1)}%`}></div>
 													</div>
 													<div class="flex items-center justify-between text-[10px] text-exo-light-gray/70">
 														<span>{formatBytes(f.downloadedBytes)} / {formatBytes(f.totalBytes)}</span>
@@ -436,7 +405,6 @@
 				{/each}
 			</div>
 		{/if}
-
 	</div>
 </div>
 

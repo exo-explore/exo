@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { TopologyGraph, ChatForm, ChatMessages, ChatSidebar, ModelCard } from '$lib/components';
-	import { 
-		hasStartedChat, 
-		isTopologyMinimized, 
-		topologyData, 
+	import {
+		hasStartedChat,
+		isTopologyMinimized,
+		topologyData,
 		lastUpdate,
 		clearChat,
 		instances,
@@ -16,12 +16,12 @@
 		createConversation,
 		setSelectedChatModel,
 		selectedChatModel,
-	debugMode,
-	toggleDebugMode,
-	topologyOnlyMode,
-	toggleTopologyOnlyMode,
-	chatSidebarVisible,
-	toggleChatSidebarVisible,
+		debugMode,
+		toggleDebugMode,
+		topologyOnlyMode,
+		toggleTopologyOnlyMode,
+		chatSidebarVisible,
+		toggleChatSidebarVisible,
 		type DownloadProgress,
 		type PlacementPreview
 	} from '$lib/stores/app.svelte';
@@ -40,17 +40,17 @@
 	const previewsData = $derived(placementPreviews());
 	const selectedModelId = $derived(selectedPreviewModelId());
 	const loadingPreviews = $derived(isLoadingPreviews());
-const debugEnabled = $derived(debugMode());
-const topologyOnlyEnabled = $derived(topologyOnlyMode());
-const sidebarVisible = $derived(chatSidebarVisible());
+	const debugEnabled = $derived(debugMode());
+	const topologyOnlyEnabled = $derived(topologyOnlyMode());
+	const sidebarVisible = $derived(chatSidebarVisible());
 
 	let mounted = $state(false);
 
 	// Instance launch state
-	let models = $state<Array<{id: string, name?: string, storage_size_megabytes?: number}>>([]);
+	let models = $state<Array<{ id: string; name?: string; storage_size_megabytes?: number }>>([]);
 	let selectedSharding = $state<'Pipeline' | 'Tensor'>('Pipeline');
 	type InstanceMeta = 'MlxRing' | 'MlxIbv' | 'MlxJaccl';
-	
+
 	// Launch defaults persistence
 	const LAUNCH_DEFAULTS_KEY = 'exo-launch-defaults';
 	interface LaunchDefaults {
@@ -59,13 +59,13 @@ const sidebarVisible = $derived(chatSidebarVisible());
 		instanceType: InstanceMeta;
 		minNodes: number;
 	}
-	
+
 	function saveLaunchDefaults(): void {
 		const defaults: LaunchDefaults = {
 			modelId: selectedPreviewModelId(),
 			sharding: selectedSharding,
 			instanceType: selectedInstanceType,
-			minNodes: selectedMinNodes,
+			minNodes: selectedMinNodes
 		};
 		try {
 			localStorage.setItem(LAUNCH_DEFAULTS_KEY, JSON.stringify(defaults));
@@ -73,7 +73,7 @@ const sidebarVisible = $derived(chatSidebarVisible());
 			console.warn('Failed to save launch defaults:', e);
 		}
 	}
-	
+
 	function loadLaunchDefaults(): LaunchDefaults | null {
 		try {
 			const stored = localStorage.getItem(LAUNCH_DEFAULTS_KEY);
@@ -84,51 +84,51 @@ const sidebarVisible = $derived(chatSidebarVisible());
 			return null;
 		}
 	}
-	
-	function applyLaunchDefaults(availableModels: Array<{id: string}>, maxNodes: number): void {
+
+	function applyLaunchDefaults(availableModels: Array<{ id: string }>, maxNodes: number): void {
 		const defaults = loadLaunchDefaults();
 		if (!defaults) return;
-		
+
 		// Apply sharding and instance type unconditionally
 		selectedSharding = defaults.sharding;
 		selectedInstanceType = defaults.instanceType;
-		
+
 		// Apply minNodes if valid (between 1 and maxNodes)
 		if (defaults.minNodes && defaults.minNodes >= 1 && defaults.minNodes <= maxNodes) {
 			selectedMinNodes = defaults.minNodes;
 		}
-		
+
 		// Only apply model if it exists in the available models
 		if (defaults.modelId && availableModels.some(m => m.id === defaults.modelId)) {
 			selectPreviewModel(defaults.modelId);
 		}
 	}
-	
+
 	let selectedInstanceType = $state<InstanceMeta>('MlxRing');
 	let selectedMinNodes = $state<number>(1);
 	let minNodesInitialized = $state(false);
 	let launchingModelId = $state<string | null>(null);
-let instanceDownloadExpandedNodes = $state<Set<string>>(new Set());
-	
+	let instanceDownloadExpandedNodes = $state<Set<string>>(new Set());
+
 	// Custom dropdown state
 	let isModelDropdownOpen = $state(false);
 	let modelDropdownSearch = $state('');
-	
+
 	// Slider dragging state
 	let isDraggingSlider = $state(false);
 	let sliderTrackElement: HTMLDivElement | null = $state(null);
-	
+
 	// Instances container ref for scrolling
 	let instancesContainerRef: HTMLDivElement | null = $state(null);
-// Chat scroll container ref for precise scroll behavior
-let chatScrollRef: HTMLDivElement | null = $state(null);
-	
+	// Chat scroll container ref for precise scroll behavior
+	let chatScrollRef: HTMLDivElement | null = $state(null);
+
 	// Instance hover state for highlighting nodes in topology
 	let hoveredInstanceId = $state<string | null>(null);
-	
+
 	// Preview card hover state for highlighting nodes in topology
 	let hoveredPreviewNodes = $state<Set<string>>(new Set());
-	
+
 	// Helper to unwrap tagged instance for hover highlighting
 	function unwrapInstanceNodes(instanceWrapped: unknown): Set<string> {
 		if (!instanceWrapped || typeof instanceWrapped !== 'object') return new Set();
@@ -141,16 +141,16 @@ let chatScrollRef: HTMLDivElement | null = $state(null);
 		return new Set(Object.keys(inst.shardAssignments.nodeToRunner));
 	}
 
-function toggleInstanceDownloadDetails(nodeId: string): void {
-	const next = new Set(instanceDownloadExpandedNodes);
-	if (next.has(nodeId)) {
-		next.delete(nodeId);
-	} else {
-		next.add(nodeId);
+	function toggleInstanceDownloadDetails(nodeId: string): void {
+		const next = new Set(instanceDownloadExpandedNodes);
+		if (next.has(nodeId)) {
+			next.delete(nodeId);
+		} else {
+			next.add(nodeId);
+		}
+		instanceDownloadExpandedNodes = next;
 	}
-	instanceDownloadExpandedNodes = next;
-}
-	
+
 	// Compute highlighted nodes from hovered instance or hovered preview
 	const highlightedNodes = $derived(() => {
 		// First check instance hover
@@ -164,26 +164,26 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		}
 		return new Set<string>();
 	});
-	
+
 	// Helper to estimate memory from model ID (mirrors ModelCard logic)
 	// Uses regex with word boundaries to avoid false matches like '4bit' matching '4b'
 	function estimateMemoryGB(modelId: string, modelName?: string): number {
 		// Check both ID and name for quantization info
 		const combined = `${modelId} ${modelName || ''}`.toLowerCase();
-		
+
 		// Detect quantization level - affects memory by roughly 2x between levels
 		const is4bit = combined.includes('4bit') || combined.includes('4-bit') || combined.includes(':4bit');
 		const is8bit = combined.includes('8bit') || combined.includes('8-bit') || combined.includes(':8bit');
 		// 4-bit = 0.5 bytes/param, 8-bit = 1 byte/param, fp16 = 2 bytes/param
 		const quantMultiplier = is4bit ? 0.5 : is8bit ? 1 : 2;
 		const id = modelId.toLowerCase();
-		
+
 		// Known large models that don't follow the standard naming pattern
 		// DeepSeek V3 has 685B parameters
 		if (id.includes('deepseek-v3')) {
 			return Math.round(685 * quantMultiplier);
 		}
-		// DeepSeek V2 has 236B parameters  
+		// DeepSeek V2 has 236B parameters
 		if (id.includes('deepseek-v2')) {
 			return Math.round(236 * quantMultiplier);
 		}
@@ -191,14 +191,14 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		if (id.includes('llama-4')) {
 			return Math.round(400 * quantMultiplier);
 		}
-		
+
 		// Match parameter counts with word boundaries (e.g., "70b" but not "4bit")
 		const paramMatch = id.match(/(\d+(?:\.\d+)?)\s*b(?![a-z])/i);
 		if (paramMatch) {
 			const params = parseFloat(paramMatch[1]);
 			return Math.max(4, Math.round(params * quantMultiplier));
 		}
-		
+
 		// Fallback patterns for explicit size markers (assume fp16 baseline, adjust for quant)
 		if (id.includes('405b') || id.includes('400b')) return Math.round(405 * quantMultiplier);
 		if (id.includes('180b')) return Math.round(180 * quantMultiplier);
@@ -214,7 +214,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		if (id.includes('2b') || id.includes('1b') || id.includes('1.5b') || id.includes('0.5b')) return Math.round(2 * quantMultiplier);
 		return 16; // Default fallback
 	}
-	
+
 	// Helper to estimate performance from model ID
 	function estimatePerformance(modelId: string): { ttft: number; tps: number } {
 		const id = modelId.toLowerCase();
@@ -232,53 +232,47 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		if (id.includes('2b') || id.includes('1b') || id.includes('1.5b') || id.includes('0.5b')) return { ttft: 50, tps: 150 };
 		return { ttft: 300, tps: 50 };
 	}
-	
-	const matchesSelectedRuntime = (runtime: InstanceMeta): boolean =>
-		selectedInstanceType === 'MlxRing'
-			? runtime === 'MlxRing'
-			: runtime === 'MlxIbv' || runtime === 'MlxJaccl';
+
+	const matchesSelectedRuntime = (runtime: InstanceMeta): boolean => (selectedInstanceType === 'MlxRing' ? runtime === 'MlxRing' : runtime === 'MlxIbv' || runtime === 'MlxJaccl');
 
 	// Helper to check if a model can be launched (has valid placement with >= minNodes)
 	function canModelFit(modelId: string): boolean {
-
 		// Find previews matching the model, sharding, and instance type
 		const matchingPreviews = previewsData.filter(
-			(p: PlacementPreview) => 
-				p.model_id === modelId && 
-				p.sharding === selectedSharding && 
-				matchesSelectedRuntime(p.instance_meta) &&
-				p.error === null &&
-				p.memory_delta_by_node !== null
+			(p: PlacementPreview) => p.model_id === modelId && p.sharding === selectedSharding && matchesSelectedRuntime(p.instance_meta) && p.error === null && p.memory_delta_by_node !== null
 		);
-		
+
 		// Check if any preview has node count >= selectedMinNodes
 		return matchingPreviews.some((p: PlacementPreview) => getPreviewNodeCount(p) >= selectedMinNodes);
 	}
-	
+
 	// Helper to get model size in GB (from megabytes)
-	function getModelSizeGB(model: {id: string, name?: string, storage_size_megabytes?: number}): number {
+	function getModelSizeGB(model: { id: string; name?: string; storage_size_megabytes?: number }): number {
 		if (model.storage_size_megabytes) {
 			return model.storage_size_megabytes / 1024;
 		}
 		return estimateMemoryGB(model.id, model.name);
 	}
-	
+
 	// Calculate available memory in the cluster (in GB)
 	const availableMemoryGB = $derived(() => {
 		if (!data) return 0;
-		return Object.values(data.nodes).reduce((acc, n) => {
-			const total = n.macmon_info?.memory?.ram_total ?? n.system_info?.memory ?? 0;
-			const used = n.macmon_info?.memory?.ram_usage ?? 0;
-			return acc + (total - used);
-		}, 0) / (1024 * 1024 * 1024);
+		return (
+			Object.values(data.nodes).reduce((acc, n) => {
+				const total = n.macmon_info?.memory?.ram_total ?? n.system_info?.memory ?? 0;
+				const used = n.macmon_info?.memory?.ram_usage ?? 0;
+				return acc + (total - used);
+			}, 0) /
+			(1024 * 1024 * 1024)
+		);
 	});
-	
+
 	// Check if a model has enough memory to run
-	function hasEnoughMemory(model: {id: string, name?: string, storage_size_megabytes?: number}): boolean {
+	function hasEnoughMemory(model: { id: string; name?: string; storage_size_megabytes?: number }): boolean {
 		const modelSizeGB = getModelSizeGB(model);
 		return modelSizeGB <= availableMemoryGB();
 	}
-	
+
 	// Sorted models for dropdown - biggest first, unrunnable at the end
 	const sortedModels = $derived(() => {
 		return [...models].sort((a, b) => {
@@ -287,47 +281,47 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			const bCanFit = hasEnoughMemory(b);
 			if (aCanFit && !bCanFit) return -1;
 			if (!aCanFit && bCanFit) return 1;
-			
+
 			// Then: sort by size (biggest first)
 			const aSize = getModelSizeGB(a);
 			const bSize = getModelSizeGB(b);
 			return bSize - aSize;
 		});
 	});
-	
+
 	// Compute model tags (FASTEST, BIGGEST)
 	const modelTags = $derived(() => {
 		const tags: Record<string, string[]> = {};
 		if (models.length === 0) return tags;
-		
+
 		// Find the fastest model (highest TPS)
 		let fastestId = '';
 		let highestTps = 0;
-		
+
 		// Find the biggest model (most memory)
 		let biggestId = '';
 		let highestMemory = 0;
-		
+
 		for (const model of models) {
 			const perf = estimatePerformance(model.id);
 			const mem = getModelSizeGB(model);
-			
+
 			if (perf.tps > highestTps) {
 				highestTps = perf.tps;
 				fastestId = model.id;
 			}
-			
+
 			if (mem > highestMemory) {
 				highestMemory = mem;
 				biggestId = model.id;
 			}
 		}
-		
+
 		if (fastestId) {
 			tags[fastestId] = tags[fastestId] || [];
 			tags[fastestId].push('FASTEST');
 		}
-		
+
 		if (biggestId && biggestId !== fastestId) {
 			tags[biggestId] = tags[biggestId] || [];
 			tags[biggestId].push('BIGGEST');
@@ -335,7 +329,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			// Same model is both - unlikely but handle it
 			tags[biggestId].push('BIGGEST');
 		}
-		
+
 		return tags;
 	});
 
@@ -362,15 +356,15 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 
 	async function launchInstance(modelId: string, specificPreview?: PlacementPreview | null) {
 		if (!modelId || launchingModelId) return;
-		
+
 		launchingModelId = modelId;
-		
+
 		try {
 			// Use the specific preview if provided, otherwise fall back to filtered preview
 			const preview = specificPreview ?? filteredPreview();
-			
+
 			let instanceData: unknown;
-			
+
 			if (preview?.instance) {
 				// Use the instance from the preview
 				instanceData = preview.instance;
@@ -379,23 +373,23 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				const placementResponse = await fetch(
 					`/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${selectedSharding}&instance_meta=${selectedInstanceType}&min_nodes=${selectedMinNodes}`
 				);
-				
+
 				if (!placementResponse.ok) {
 					const errorText = await placementResponse.text();
 					console.error('Failed to get placement:', errorText);
 					return;
 				}
-				
+
 				instanceData = await placementResponse.json();
 			}
-			
+
 			// POST the instance to create it
 			const response = await fetch('/instance', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ instance: instanceData })
 			});
-			
+
 			if (!response.ok) {
 				const errorText = await response.text();
 				console.error('Failed to launch instance:', errorText);
@@ -404,7 +398,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				if (!selectedChatModel()) {
 					setSelectedChatModel(modelId);
 				}
-				
+
 				// Scroll to the bottom of instances container to show the new instance
 				// Use multiple attempts to ensure DOM has updated with the new instance
 				const scrollToBottom = () => {
@@ -427,19 +421,19 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	function extractModelIdFromDownload(downloadPayload: Record<string, unknown>): string | null {
 		const shardMetadata = downloadPayload.shard_metadata ?? downloadPayload.shardMetadata;
 		if (!shardMetadata || typeof shardMetadata !== 'object') return null;
-		
+
 		// Shard metadata is a tagged union: { PipelineShardMetadata: {...} } or { TensorShardMetadata: {...} }
 		const shardObj = shardMetadata as Record<string, unknown>;
 		const shardKeys = Object.keys(shardObj);
 		if (shardKeys.length !== 1) return null;
-		
+
 		const shardData = shardObj[shardKeys[0]] as Record<string, unknown>;
 		if (!shardData) return null;
-		
+
 		// Model meta is nested: shard.model_meta.model_id
 		const modelMeta = shardData.model_meta ?? shardData.modelMeta;
 		if (!modelMeta || typeof modelMeta !== 'object') return null;
-		
+
 		const meta = modelMeta as Record<string, unknown>;
 		return (meta.model_id as string) ?? (meta.modelId as string) ?? null;
 	}
@@ -448,7 +442,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	function parseDownloadProgress(payload: Record<string, unknown>): DownloadProgress | null {
 		const progress = payload.download_progress ?? payload.downloadProgress;
 		if (!progress || typeof progress !== 'object') return null;
-		
+
 		const prog = progress as Record<string, unknown>;
 		const totalBytes = getBytes(prog.total_bytes ?? prog.totalBytes);
 		const downloadedBytes = getBytes(prog.downloaded_bytes ?? prog.downloadedBytes);
@@ -456,7 +450,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		const completedFiles = (prog.completed_files as number) ?? (prog.completedFiles as number) ?? 0;
 		const totalFiles = (prog.total_files as number) ?? (prog.totalFiles as number) ?? 0;
 		const etaMs = (prog.eta_ms as number) ?? (prog.etaMs as number) ?? 0;
-		
+
 		const files: DownloadProgress['files'] = [];
 		const filesObj = (prog.files ?? {}) as Record<string, unknown>;
 		for (const [fileName, fileData] of Object.entries(filesObj)) {
@@ -473,7 +467,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				percentage: fTotal > 0 ? (fDownloaded / fTotal) * 100 : 0
 			});
 		}
-		
+
 		return {
 			totalBytes,
 			downloadedBytes,
@@ -487,8 +481,8 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	}
 
 	// Helper to get download status for a model (checks all downloads for matching model ID)
-	function getModelDownloadStatus(modelId: string): { 
-		isDownloading: boolean; 
+	function getModelDownloadStatus(modelId: string): {
+		isDownloading: boolean;
 		progress: DownloadProgress | null;
 		perNode: Array<{ nodeId: string; nodeName: string; progress: DownloadProgress }>;
 	} {
@@ -511,27 +505,27 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 
 			for (const downloadWrapped of nodeDownloads) {
 				if (!downloadWrapped || typeof downloadWrapped !== 'object') continue;
-				
+
 				const keys = Object.keys(downloadWrapped as Record<string, unknown>);
 				if (keys.length !== 1) continue;
-				
+
 				const downloadKind = keys[0];
 				const downloadPayload = (downloadWrapped as Record<string, unknown>)[downloadKind] as Record<string, unknown>;
-				
+
 				if (downloadKind !== 'DownloadOngoing') continue;
 				if (!downloadPayload) continue;
-				
+
 				const downloadModelId = extractModelIdFromDownload(downloadPayload);
-				
+
 				// Match if the model ID contains or equals the requested model
 				// (handles cases like "mlx-community/Meta-Llama..." matching)
 				if (!downloadModelId || !downloadModelId.includes(modelId.split('/').pop() || modelId)) {
 					// Try exact match or partial match
 					if (downloadModelId !== modelId) continue;
 				}
-				
+
 				isDownloading = true;
-				
+
 				const progress = parseDownloadProgress(downloadPayload);
 				if (progress) {
 					// Sum all values across nodes - each node downloads independently
@@ -580,9 +574,12 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	});
 
 	// Helper to get download status for an instance
-	function getInstanceDownloadStatus(instanceId: string, instanceWrapped: unknown): { 
-		isDownloading: boolean; 
-		progress: DownloadProgress | null; 
+	function getInstanceDownloadStatus(
+		instanceId: string,
+		instanceWrapped: unknown
+	): {
+		isDownloading: boolean;
+		progress: DownloadProgress | null;
 		statusText: string;
 		perNode: Array<{ nodeId: string; nodeName: string; progress: DownloadProgress }>;
 	} {
@@ -626,13 +623,13 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 
 			for (const downloadWrapped of nodeDownloads) {
 				if (!downloadWrapped || typeof downloadWrapped !== 'object') continue;
-				
+
 				const keys = Object.keys(downloadWrapped as Record<string, unknown>);
 				if (keys.length !== 1) continue;
-				
+
 				const downloadKind = keys[0];
 				const downloadPayload = (downloadWrapped as Record<string, unknown>)[downloadKind] as Record<string, unknown>;
-				
+
 				if (downloadKind !== 'DownloadOngoing') continue;
 				if (!downloadPayload) continue;
 
@@ -640,7 +637,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				const downloadModelId = extractModelIdFromDownload(downloadPayload);
 				if (instanceModelId && downloadModelId && downloadModelId === instanceModelId) {
 					isDownloading = true;
-					
+
 					const progress = parseDownloadProgress(downloadPayload);
 					if (progress) {
 						// Sum all values across nodes - each node downloads independently
@@ -689,17 +686,24 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	// Get color class for a status
 	function getStatusColor(statusText: string): string {
 		switch (statusText) {
-			case 'FAILED': return 'text-red-400';
-			case 'SHUTDOWN': return 'text-gray-400';
-			case 'DOWNLOADING': return 'text-blue-400';
-			case 'LOADING': 
-			case 'WARMING UP': 
+			case 'FAILED':
+				return 'text-red-400';
+			case 'SHUTDOWN':
+				return 'text-gray-400';
+			case 'DOWNLOADING':
+				return 'text-blue-400';
+			case 'LOADING':
+			case 'WARMING UP':
 			case 'WAITING':
-			case 'INITIALIZING': return 'text-yellow-400';
-			case 'RUNNING': return 'text-teal-400';
-			case 'READY': 
-			case 'LOADED': return 'text-green-400';
-			default: return 'text-exo-light-gray';
+			case 'INITIALIZING':
+				return 'text-yellow-400';
+			case 'RUNNING':
+				return 'text-teal-400';
+			case 'READY':
+			case 'LOADED':
+				return 'text-green-400';
+			default:
+				return 'text-exo-light-gray';
 		}
 	}
 
@@ -708,7 +712,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		if (!instance || typeof instance !== 'object') {
 			return { statusText: 'PREPARING', statusClass: 'inactive' };
 		}
-		
+
 		const inst = instance as { shardAssignments?: { runnerToShard?: Record<string, unknown> } };
 		const runnerIds = Object.keys(inst.shardAssignments?.runnerToShard || {});
 
@@ -727,7 +731,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 					RunnerReady: 'Ready',
 					RunnerRunning: 'Running',
 					RunnerShutdown: 'Shutdown',
-					RunnerFailed: 'Failed',
+					RunnerFailed: 'Failed'
 				};
 				return kind ? statusMap[kind] || null : null;
 			})
@@ -762,13 +766,13 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 
 	async function deleteInstance(instanceId: string) {
 		if (!confirm(`Delete instance ${instanceId.slice(0, 8)}...?`)) return;
-		
+
 		try {
 			const response = await fetch(`/instance/${instanceId}`, {
 				method: 'DELETE',
 				headers: { 'Content-Type': 'application/json' }
 			});
-			
+
 			if (!response.ok) {
 				console.error('Failed to delete instance:', response.status);
 			}
@@ -796,9 +800,9 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	}
 
 	// Get instance details: type (MLX Ring/IBV), sharding (Pipeline/Tensor), and node names
-	function getInstanceInfo(instanceWrapped: unknown): { 
-		instanceType: string; 
-		sharding: string; 
+	function getInstanceInfo(instanceWrapped: unknown): {
+		instanceType: string;
+		sharding: string;
 		nodeNames: string[];
 		nodeIds: string[];
 		nodeCount: number;
@@ -807,19 +811,19 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		if (!instance || typeof instance !== 'object') {
 			return { instanceType: 'Unknown', sharding: 'Unknown', nodeNames: [], nodeIds: [], nodeCount: 0 };
 		}
-		
+
 		// Instance type from tag
 		let instanceType = 'Unknown';
 		if (instanceTag === 'MlxRingInstance') instanceType = 'MLX Ring';
 		else if (instanceTag === 'MlxIbvInstance' || instanceTag === 'MlxJacclInstance') instanceType = 'MLX RDMA';
-		
-		const inst = instance as { 
-			shardAssignments?: { 
-				nodeToRunner?: Record<string, string>; 
+
+		const inst = instance as {
+			shardAssignments?: {
+				nodeToRunner?: Record<string, string>;
 				runnerToShard?: Record<string, unknown>;
-			} 
+			};
 		};
-		
+
 		// Sharding strategy from first shard
 		let sharding = 'Unknown';
 		const runnerToShard = inst.shardAssignments?.runnerToShard || {};
@@ -830,7 +834,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			else if (shardTag === 'TensorShardMetadata') sharding = 'Tensor';
 			else if (shardTag === 'PrefillDecodeShardMetadata') sharding = 'Prefill/Decode';
 		}
-		
+
 		// Node names from topology
 		const nodeToRunner = inst.shardAssignments?.nodeToRunner || {};
 		const nodeIds = Object.keys(nodeToRunner);
@@ -838,7 +842,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			const node = data?.nodes?.[nodeId];
 			return node?.friendly_name || nodeId.slice(0, 8);
 		});
-		
+
 		return { instanceType, sharding, nodeNames, nodeIds, nodeCount: nodeIds.length };
 	}
 
@@ -873,9 +877,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		if (!node) return { label: '?', missing: true };
 
 		// Prefer explicit network_interfaces from NodePerformanceProfile
-		const matchFromInterfaces = node.network_interfaces?.find((iface) =>
-			(iface.addresses || []).some((addr) => addr === ip)
-		);
+		const matchFromInterfaces = node.network_interfaces?.find(iface => (iface.addresses || []).some(addr => addr === ip));
 		if (matchFromInterfaces?.name) {
 			return { label: `${matchFromInterfaces.name} on ${getNodeLabel(nodeId)}`, missing: false };
 		}
@@ -894,7 +896,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		const nodeToRunner = (instance.shardAssignments as { nodeToRunner?: Record<string, string> } | undefined)?.nodeToRunner || {};
 		const runnerEntries = Object.entries(runnerToShard).map(([runnerId, shardWrapped]) => {
 			const [tag, shard] = getTagged(shardWrapped);
-			const meta = (shard as { modelMeta?: { worldSize?: number; nLayers?: number; deviceRank?: number } } | undefined);
+			const meta = shard as { modelMeta?: { worldSize?: number; nLayers?: number; deviceRank?: number } } | undefined;
 			const deviceRank = (meta?.deviceRank as number | undefined) ?? 0;
 			return { runnerId, tag, deviceRank };
 		});
@@ -917,9 +919,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			.filter(h => h.ip && h.ip !== '0.0.0.0' && h.port && h.port > 0)
 			.map(h => {
 				const ip = h.ip;
-				const score = ip.startsWith('10.') || ip.startsWith('172.') || ip.startsWith('192.168') ? 3
-					: ip.startsWith('169.254') ? 2
-					: 1;
+				const score = ip.startsWith('10.') || ip.startsWith('172.') || ip.startsWith('192.168') ? 3 : ip.startsWith('169.254') ? 2 : 1;
 				return { host: h, score };
 			});
 		if (scored.length === 0) return null;
@@ -1004,12 +1004,12 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	// Slider drag handlers
 	function handleSliderDrag(clientX: number) {
 		if (!sliderTrackElement || availableMinNodes <= 1) return;
-		
+
 		const rect = sliderTrackElement.getBoundingClientRect();
 		const percentage = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
 		const rawValue = Math.round(percentage * (availableMinNodes - 1)) + 1;
 		const clampedValue = Math.max(1, Math.min(availableMinNodes, rawValue));
-		
+
 		// Find nearest valid value
 		const validCounts = validMinNodeCounts();
 		if (validCounts.has(clampedValue)) {
@@ -1069,17 +1069,17 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 
 	const nodeCount = $derived(data ? Object.keys(data.nodes).length : 0);
 	const instanceCount = $derived(Object.keys(instanceData).length);
-	
+
 	// Helper to get the number of nodes in a placement preview
 	function getPreviewNodeCount(preview: PlacementPreview): number {
 		if (!preview.memory_delta_by_node) return 0;
 		// Count nodes that have non-zero memory delta (i.e. nodes actually used)
 		return Object.entries(preview.memory_delta_by_node).filter(([_, delta]) => delta > 0).length;
 	}
-	
+
 	// Available min nodes options based on topology (like old dashboard)
 	const availableMinNodes = $derived(Math.max(1, nodeCount));
-	
+
 	// Compute which min node values have valid previews for the current model/sharding/instance type
 	// A minNodes value N is valid if there exists a placement with nodeCount >= N
 	// Note: previewsData already contains previews for the selected model (fetched via API)
@@ -1088,7 +1088,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			// If no model selected or no previews, allow all node counts (UI shows all as clickable)
 			return new Set(Array.from({ length: availableMinNodes }, (_, i) => i + 1));
 		}
-		
+
 		// Find the max node count among valid placements for this model/sharding/instance
 		// (model_id filter not needed since previewsData is already for selected model)
 		let maxValidNodes = 0;
@@ -1097,41 +1097,38 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			if (!matchesSelectedRuntime(preview.instance_meta)) continue;
 			if (preview.error !== null) continue;
 			if (!preview.memory_delta_by_node) continue;
-			
+
 			const previewNodes = getPreviewNodeCount(preview);
 			if (previewNodes > maxValidNodes) {
 				maxValidNodes = previewNodes;
 			}
 		}
-		
+
 		// All values from 1 to maxValidNodes are valid (since there's a placement with >= that many nodes)
 		if (maxValidNodes === 0) return new Set<number>();
 		return new Set(Array.from({ length: maxValidNodes }, (_, i) => i + 1));
 	});
-	
+
 	// Get ALL filtered previews based on current settings (matching minimum nodes)
 	// Note: previewsData already contains previews for the selected model (fetched via API)
 	// We filter by sharding/instance type and min nodes, returning ALL eligible previews
 	const filteredPreviews = $derived(() => {
 		if (!selectedModelId || previewsData.length === 0) return [];
-		
+
 		// Find previews matching sharding/instance type (model_id filter not needed since previewsData is already for selected model)
-		const matchingPreviews = previewsData.filter((p: PlacementPreview) => 
-			p.sharding === selectedSharding && 
-			matchesSelectedRuntime(p.instance_meta) && 
-			p.error === null &&
-			p.memory_delta_by_node !== null
+		const matchingPreviews = previewsData.filter(
+			(p: PlacementPreview) => p.sharding === selectedSharding && matchesSelectedRuntime(p.instance_meta) && p.error === null && p.memory_delta_by_node !== null
 		);
-		
+
 		// Filter to previews with node count >= selectedMinNodes, sorted by node count (ascending)
 		return matchingPreviews
 			.filter((p: PlacementPreview) => getPreviewNodeCount(p) >= selectedMinNodes)
 			.sort((a: PlacementPreview, b: PlacementPreview) => getPreviewNodeCount(a) - getPreviewNodeCount(b));
 	});
-	
+
 	// Get the first filtered preview (for launch function compatibility)
 	const filteredPreview = $derived(() => filteredPreviews()[0] ?? null);
-	
+
 	// Auto-update selectedMinNodes when node count changes (default to 1 = show all placements)
 	$effect(() => {
 		const maxNodes = availableMinNodes;
@@ -1144,7 +1141,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			selectedMinNodes = maxNodes;
 		}
 	});
-	
+
 	// Auto-adjust selectedMinNodes to a valid value when it becomes invalid
 	$effect(() => {
 		const valid = validMinNodeCounts();
@@ -1157,31 +1154,28 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			}
 		}
 	});
-	
+
 	// Calculate total memory usage across all nodes
 	const clusterMemory = $derived(() => {
 		if (!data) return { used: 0, total: 0 };
-		return Object.values(data.nodes).reduce((acc, n) => {
-			const total = n.macmon_info?.memory?.ram_total ?? n.system_info?.memory ?? 0;
-			const used = n.macmon_info?.memory?.ram_usage ?? 0;
-			return { used: acc.used + used, total: acc.total + total };
-		}, { used: 0, total: 0 });
+		return Object.values(data.nodes).reduce(
+			(acc, n) => {
+				const total = n.macmon_info?.memory?.ram_total ?? n.system_info?.memory ?? 0;
+				const used = n.macmon_info?.memory?.ram_usage ?? 0;
+				return { used: acc.used + used, total: acc.total + total };
+			},
+			{ used: 0, total: 0 }
+		);
 	});
-	
 </script>
 
 <!-- Global event listeners for slider dragging -->
-<svelte:window 
-	onmousemove={handleSliderMouseMove}
-	onmouseup={handleSliderMouseUp}
-	ontouchmove={handleSliderTouchMove}
-	ontouchend={handleSliderTouchEnd}
-/>
+<svelte:window onmousemove={handleSliderMouseMove} onmouseup={handleSliderMouseUp} ontouchmove={handleSliderTouchMove} ontouchend={handleSliderTouchEnd} />
 
 <div class="relative h-screen w-full flex flex-col bg-exo-dark-gray overflow-hidden">
 	<!-- Scanline overlay -->
 	<div class="fixed inset-0 pointer-events-none z-50 scanlines opacity-20"></div>
-	
+
 	<!-- Shooting Stars Background - one every ~15s -->
 	<div class="shooting-stars">
 		<div class="shooting-star" style="top: 10%; left: 20%; --duration: 45s; --delay: 0s;"></div>
@@ -1190,22 +1184,16 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	</div>
 
 	{#if !topologyOnlyEnabled}
-	<HeaderNav 
-		showHome={chatStarted} 
-		onHome={handleGoHome} 
-		showSidebarToggle={true}
-		sidebarVisible={sidebarVisible}
-		onToggleSidebar={toggleChatSidebarVisible}
-	/>
+		<HeaderNav showHome={chatStarted} onHome={handleGoHome} showSidebarToggle={true} {sidebarVisible} onToggleSidebar={toggleChatSidebarVisible} />
 	{/if}
 
 	<!-- Main Content -->
 	<main class="flex-1 flex overflow-hidden relative">
 		<!-- Left: Conversation History Sidebar (hidden in topology-only mode or when toggled off) -->
 		{#if !topologyOnlyEnabled && sidebarVisible}
-		<div class="w-80 flex-shrink-0 border-r border-exo-yellow/10">
-			<ChatSidebar class="h-full" />
-		</div>
+			<div class="w-80 flex-shrink-0 border-r border-exo-yellow/10">
+				<ChatSidebar class="h-full" />
+			</div>
 		{/if}
 
 		{#if topologyOnlyEnabled}
@@ -1232,45 +1220,35 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		{:else if !chatStarted}
 			<!-- WELCOME STATE: Topology + Instance Controls (no left sidebar for cleaner look) -->
 			<div class="flex-1 flex overflow-visible relative" in:fade={{ duration: 300 }} out:fade={{ duration: 200 }}>
-				
 				<!-- Center: MAIN TOPOLOGY DISPLAY -->
 				<div class="flex-1 flex flex-col min-h-0 min-w-0 py-4">
-					
 					<!-- Topology Container - Takes most of the space -->
 					<div class="flex-1 relative bg-exo-dark-gray/40 mx-4 mb-4 rounded-lg overflow-hidden">
-						
 						<!-- The main topology graph - full container -->
 						<TopologyGraph class="w-full h-full" highlightedNodes={highlightedNodes()} />
 					</div>
-					
+
 					<!-- Chat Input - Below topology -->
 					<div class="px-4 pt-6 pb-8">
 						<div class="max-w-3xl mx-auto">
-							<ChatForm 
-								placeholder="Ask anything" 
-								showHelperText={false}
-								showModelSelector={true}
-							/>
+							<ChatForm placeholder="Ask anything" showHelperText={false} showModelSelector={true} />
 						</div>
 					</div>
 				</div>
-				
+
 				<!-- Right Sidebar: Instance Controls (wider on welcome page for better visibility) -->
 				<aside class="w-80 border-l border-exo-yellow/10 bg-exo-dark-gray flex flex-col flex-shrink-0">
 					<!-- Running Instances Panel (only shown when instances exist) - Scrollable -->
 					{#if instanceCount > 0}
-					<div class="p-4 flex-shrink-0">
-						<!-- Panel Header -->
-						<div class="flex items-center gap-2 mb-4">
-							<div class="w-2 h-2 bg-exo-yellow rounded-full shadow-[0_0_8px_rgba(255,215,0,0.6)] animate-pulse"></div>
-							<h3 class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase">Instances</h3>
-							<div class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"></div>
-						</div>
-						
-						<div
-							bind:this={instancesContainerRef}
-							class="max-h-72 xl:max-h-96 space-y-3 overflow-y-auto overflow-x-hidden py-px"
-						>
+						<div class="p-4 flex-shrink-0">
+							<!-- Panel Header -->
+							<div class="flex items-center gap-2 mb-4">
+								<div class="w-2 h-2 bg-exo-yellow rounded-full shadow-[0_0_8px_rgba(255,215,0,0.6)] animate-pulse"></div>
+								<h3 class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase">Instances</h3>
+								<div class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"></div>
+							</div>
+
+							<div bind:this={instancesContainerRef} class="max-h-72 xl:max-h-96 space-y-3 overflow-y-auto overflow-x-hidden py-px">
 								{#each Object.entries(instanceData) as [id, instance]}
 									{@const downloadInfo = getInstanceDownloadStatus(id, instance)}
 									{@const statusText = downloadInfo.statusText}
@@ -1279,48 +1257,107 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 									{@const isLoading = statusText === 'LOADING' || statusText === 'WARMING UP' || statusText === 'WAITING'}
 									{@const isReady = statusText === 'READY' || statusText === 'LOADED'}
 									{@const isRunning = statusText === 'RUNNING'}
-								<!-- Instance Card -->
-								{@const instanceModelId = getInstanceModelId(instance)}
-								{@const instanceInfo = getInstanceInfo(instance)}
-								{@const instanceConnections = getInstanceConnections(instance)}
-								<div 
-									class="relative group cursor-pointer"
-									role="button"
-									tabindex="0"
-									onmouseenter={() => hoveredInstanceId = id}
-									onmouseleave={() => hoveredInstanceId = null}
-									onclick={() => {
-										if (instanceModelId && instanceModelId !== 'Unknown' && instanceModelId !== 'Unknown Model') {
-											setSelectedChatModel(instanceModelId);
-										}
-									}}
-									onkeydown={(e) => {
-										if (e.key === 'Enter' || e.key === ' ') {
+									<!-- Instance Card -->
+									{@const instanceModelId = getInstanceModelId(instance)}
+									{@const instanceInfo = getInstanceInfo(instance)}
+									{@const instanceConnections = getInstanceConnections(instance)}
+									<div
+										class="relative group cursor-pointer"
+										role="button"
+										tabindex="0"
+										onmouseenter={() => (hoveredInstanceId = id)}
+										onmouseleave={() => (hoveredInstanceId = null)}
+										onclick={() => {
 											if (instanceModelId && instanceModelId !== 'Unknown' && instanceModelId !== 'Unknown Model') {
 												setSelectedChatModel(instanceModelId);
 											}
-										}
-									}}
-								>
-									<!-- Corner accents -->
-									<div class="absolute -top-px -left-px w-2 h-2 border-l border-t {isDownloading ? 'border-blue-500/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-yellow-500/50' : isReady ? 'border-green-500/50' : 'border-teal-500/50'}"></div>
-									<div class="absolute -top-px -right-px w-2 h-2 border-r border-t {isDownloading ? 'border-blue-500/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-yellow-500/50' : isReady ? 'border-green-500/50' : 'border-teal-500/50'}"></div>
-									<div class="absolute -bottom-px -left-px w-2 h-2 border-l border-b {isDownloading ? 'border-blue-500/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-yellow-500/50' : isReady ? 'border-green-500/50' : 'border-teal-500/50'}"></div>
-									<div class="absolute -bottom-px -right-px w-2 h-2 border-r border-b {isDownloading ? 'border-blue-500/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-yellow-500/50' : isReady ? 'border-green-500/50' : 'border-teal-500/50'}"></div>
-									
-									<div class="bg-exo-dark-gray/60 border border-l-2 {isDownloading ? 'border-blue-500/30 border-l-blue-400' : isFailed ? 'border-red-500/30 border-l-red-400' : isLoading ? 'border-exo-yellow/30 border-l-yellow-400' : isReady ? 'border-green-500/30 border-l-green-400' : 'border-teal-500/30 border-l-teal-400'} p-3">
-										
-										<div class="flex justify-between items-start mb-2 pl-2">
-											<div class="flex items-center gap-2">
-												<div class="w-1.5 h-1.5 {isDownloading ? 'bg-blue-400 animate-pulse' : isFailed ? 'bg-red-400' : isLoading ? 'bg-yellow-400 animate-pulse' : isReady ? 'bg-green-400' : 'bg-teal-400'} rounded-full shadow-[0_0_6px_currentColor]"></div>
-												<span class="text-exo-light-gray font-mono text-sm tracking-wider">{id.slice(0, 8).toUpperCase()}</span>
-											</div>
-											<button 
-												onclick={() => deleteInstance(id)}
-												class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
-											>
-												DELETE
-											</button>
+										}}
+										onkeydown={e => {
+											if (e.key === 'Enter' || e.key === ' ') {
+												if (instanceModelId && instanceModelId !== 'Unknown' && instanceModelId !== 'Unknown Model') {
+													setSelectedChatModel(instanceModelId);
+												}
+											}
+										}}
+									>
+										<!-- Corner accents -->
+										<div
+											class="absolute -top-px -left-px w-2 h-2 border-l border-t {isDownloading
+												? 'border-blue-500/50'
+												: isFailed
+													? 'border-red-500/50'
+													: isLoading
+														? 'border-yellow-500/50'
+														: isReady
+															? 'border-green-500/50'
+															: 'border-teal-500/50'}"
+										></div>
+										<div
+											class="absolute -top-px -right-px w-2 h-2 border-r border-t {isDownloading
+												? 'border-blue-500/50'
+												: isFailed
+													? 'border-red-500/50'
+													: isLoading
+														? 'border-yellow-500/50'
+														: isReady
+															? 'border-green-500/50'
+															: 'border-teal-500/50'}"
+										></div>
+										<div
+											class="absolute -bottom-px -left-px w-2 h-2 border-l border-b {isDownloading
+												? 'border-blue-500/50'
+												: isFailed
+													? 'border-red-500/50'
+													: isLoading
+														? 'border-yellow-500/50'
+														: isReady
+															? 'border-green-500/50'
+															: 'border-teal-500/50'}"
+										></div>
+										<div
+											class="absolute -bottom-px -right-px w-2 h-2 border-r border-b {isDownloading
+												? 'border-blue-500/50'
+												: isFailed
+													? 'border-red-500/50'
+													: isLoading
+														? 'border-yellow-500/50'
+														: isReady
+															? 'border-green-500/50'
+															: 'border-teal-500/50'}"
+										></div>
+
+										<div
+											class="bg-exo-dark-gray/60 border border-l-2 {isDownloading
+												? 'border-blue-500/30 border-l-blue-400'
+												: isFailed
+													? 'border-red-500/30 border-l-red-400'
+													: isLoading
+														? 'border-exo-yellow/30 border-l-yellow-400'
+														: isReady
+															? 'border-green-500/30 border-l-green-400'
+															: 'border-teal-500/30 border-l-teal-400'} p-3"
+										>
+											<div class="flex justify-between items-start mb-2 pl-2">
+												<div class="flex items-center gap-2">
+													<div
+														class="w-1.5 h-1.5 {isDownloading
+															? 'bg-blue-400 animate-pulse'
+															: isFailed
+																? 'bg-red-400'
+																: isLoading
+																	? 'bg-yellow-400 animate-pulse'
+																	: isReady
+																		? 'bg-green-400'
+																		: 'bg-teal-400'} rounded-full shadow-[0_0_6px_currentColor]"
+													></div>
+													<span class="text-exo-light-gray font-mono text-sm tracking-wider">{id.slice(0, 8).toUpperCase()}</span>
+												</div>
+												<button
+													onclick={() => deleteInstance(id)}
+													class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
+												>
+													DELETE
+												</button>
 											</div>
 											<div class="pl-2">
 												<div class="text-exo-yellow text-xs font-mono tracking-wide truncate">{getInstanceModelId(instance)}</div>
@@ -1335,9 +1372,9 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 													>
 														<span>Hugging Face</span>
 														<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-															<path d="M14 3h7v7"/>
-															<path d="M10 14l11-11"/>
-															<path d="M21 14v6a1 1 0 0 1-1 1h-16a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1h6"/>
+															<path d="M14 3h7v7" />
+															<path d="M10 14l11-11" />
+															<path d="M21 14v6a1 1 0 0 1-1 1h-16a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1h6" />
 														</svg>
 													</a>
 												{/if}
@@ -1349,12 +1386,12 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 														{#each instanceConnections as conn}
 															<div class="text-[11px] leading-snug font-mono text-white/70">
 																<span>{conn.from} -> {conn.to}: {conn.ip}</span>
-																<span class="{conn.missingIface ? 'text-red-400' : 'text-white/60'}"> ({conn.ifaceLabel})</span>
+																<span class={conn.missingIface ? 'text-red-400' : 'text-white/60'}> ({conn.ifaceLabel})</span>
 															</div>
 														{/each}
 													</div>
 												{/if}
-												
+
 												<!-- Download Progress -->
 												{#if downloadInfo.isDownloading && downloadInfo.progress}
 													<div class="mt-2 space-y-1">
@@ -1363,10 +1400,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 															<span class="text-exo-light-gray">{formatBytes(downloadInfo.progress.downloadedBytes)}/{formatBytes(downloadInfo.progress.totalBytes)}</span>
 														</div>
 														<div class="relative h-1.5 bg-exo-black/60 rounded-sm overflow-hidden">
-															<div 
-																class="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300"
-																style="width: {downloadInfo.progress.percentage}%"
-															></div>
+															<div class="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300" style="width: {downloadInfo.progress.percentage}%"></div>
 														</div>
 														<div class="flex justify-between text-xs font-mono text-exo-light-gray">
 															<span>{formatSpeed(downloadInfo.progress.speed)}</span>
@@ -1380,25 +1414,19 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 																{@const nodePercent = Math.min(100, Math.max(0, nodeProg.progress.percentage))}
 																{@const isExpanded = instanceDownloadExpandedNodes.has(nodeProg.nodeId)}
 																<div class="rounded border border-exo-medium-gray/40 bg-exo-black/30 p-2">
-																	<button
-																		type="button"
-																		class="w-full text-left space-y-1.5"
-																		onclick={() => toggleInstanceDownloadDetails(nodeProg.nodeId)}
-																	>
+																	<button type="button" class="w-full text-left space-y-1.5" onclick={() => toggleInstanceDownloadDetails(nodeProg.nodeId)}>
 																		<div class="flex items-center justify-between text-[11px] font-mono text-exo-light-gray">
 																			<span class="text-white/80 truncate pr-2">{nodeProg.nodeName}</span>
 																			<span class="flex items-center gap-1 text-blue-300">
 																				{nodePercent.toFixed(1)}%
 																				<svg class="w-3 h-3 text-exo-light-gray" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-																					<path d="M6 8l4 4 4-4" class={isExpanded ? 'transform rotate-180 origin-center transition-transform duration-150' : 'transition-transform duration-150'}></path>
+																					<path d="M6 8l4 4 4-4" class={isExpanded ? 'transform rotate-180 origin-center transition-transform duration-150' : 'transition-transform duration-150'}
+																					></path>
 																				</svg>
 																			</span>
 																		</div>
 																		<div class="relative h-1.5 bg-exo-black/60 rounded-sm overflow-hidden">
-																			<div 
-																				class="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300"
-																				style="width: {nodePercent.toFixed(1)}%"
-																			></div>
+																			<div class="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300" style="width: {nodePercent.toFixed(1)}%"></div>
 																		</div>
 																		<div class="flex items-center justify-between text-[11px] font-mono text-exo-light-gray">
 																			<span>{formatBytes(nodeProg.progress.downloadedBytes)} / {formatBytes(nodeProg.progress.totalBytes)}</span>
@@ -1420,8 +1448,10 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 																							<span class={isFileComplete ? 'text-green-400' : 'text-white/80'}>{filePercent.toFixed(1)}%</span>
 																						</div>
 																						<div class="relative h-1 bg-exo-black/60 rounded-sm overflow-hidden mt-1">
-																							<div 
-																								class="absolute inset-y-0 left-0 bg-gradient-to-r {isFileComplete ? 'from-green-500 to-green-400' : 'from-exo-yellow to-exo-yellow/70'} transition-all duration-300"
+																							<div
+																								class="absolute inset-y-0 left-0 bg-gradient-to-r {isFileComplete
+																									? 'from-green-500 to-green-400'
+																									: 'from-exo-yellow to-exo-yellow/70'} transition-all duration-300"
 																								style="width: {filePercent.toFixed(1)}%"
 																							></div>
 																						</div>
@@ -1446,10 +1476,10 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 										</div>
 									</div>
 								{/each}
+							</div>
 						</div>
-					</div>
 					{/if}
-					
+
 					<!-- Models Panel - Scrollable -->
 					<div class="p-4 flex-1 overflow-y-auto">
 						<!-- Panel Header -->
@@ -1459,13 +1489,15 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 							<div class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"></div>
 							<span class="text-sm text-white/70 font-mono">{models.length} models</span>
 						</div>
-						
+
 						<!-- Model Dropdown (Custom) -->
 						<div class="flex-shrink-0 mb-3 relative">
 							<button
 								type="button"
-								onclick={() => isModelDropdownOpen = !isModelDropdownOpen}
-								class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-2.5 text-sm font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 {isModelDropdownOpen ? 'border-exo-yellow/70' : ''}"
+								onclick={() => (isModelDropdownOpen = !isModelDropdownOpen)}
+								class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-2.5 text-sm font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 {isModelDropdownOpen
+									? 'border-exo-yellow/70'
+									: ''}"
 							>
 								{#if selectedModelId}
 									{@const foundModel = models.find(m => m.id === selectedModelId)}
@@ -1487,20 +1519,15 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
 								</svg>
 							</div>
-							
+
 							{#if isModelDropdownOpen}
 								<!-- Backdrop to close dropdown -->
-								<button 
-									type="button"
-									class="fixed inset-0 z-40 cursor-default" 
-									onclick={() => isModelDropdownOpen = false}
-									aria-label="Close dropdown"
-								></button>
-								
+								<button type="button" class="fixed inset-0 z-40 cursor-default" onclick={() => (isModelDropdownOpen = false)} aria-label="Close dropdown"></button>
+
 								<!-- Dropdown Panel -->
-							<div class="absolute top-full left-0 right-0 mt-1 bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-50 max-h-64 overflow-y-auto">
-								<!-- Search within dropdown -->
-								<div class="sticky top-0 bg-exo-dark-gray border-b border-exo-medium-gray/30 p-2">
+								<div class="absolute top-full left-0 right-0 mt-1 bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-50 max-h-64 overflow-y-auto">
+									<!-- Search within dropdown -->
+									<div class="sticky top-0 bg-exo-dark-gray border-b border-exo-medium-gray/30 p-2">
 										<input
 											type="text"
 											placeholder="Search models..."
@@ -1508,13 +1535,10 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 											class="w-full bg-exo-dark-gray/60 border border-exo-medium-gray/30 rounded px-2 py-1.5 text-xs font-mono text-white/80 placeholder:text-white/40 focus:outline-none focus:border-exo-yellow/50"
 										/>
 									</div>
-									
+
 									<!-- Options -->
 									<div class="py-1">
-										{#each sortedModels().filter(m => 
-											!modelDropdownSearch || 
-											(m.name || m.id).toLowerCase().includes(modelDropdownSearch.toLowerCase())
-										) as model}
+										{#each sortedModels().filter(m => !modelDropdownSearch || (m.name || m.id).toLowerCase().includes(modelDropdownSearch.toLowerCase())) as model}
 											{@const sizeGB = getModelSizeGB(model)}
 											{@const modelCanFit = hasEnoughMemory(model)}
 											<button
@@ -1528,13 +1552,11 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 													}
 												}}
 												disabled={!modelCanFit}
-												class="w-full px-3 py-2 text-left text-sm font-mono tracking-wide transition-colors duration-100 flex items-center justify-between gap-2 {
-													selectedModelId === model.id 
-														? 'bg-transparent text-exo-yellow cursor-pointer' 
-														: modelCanFit 
-															? 'text-white/80 hover:text-exo-yellow cursor-pointer' 
-															: 'text-white/30 cursor-default'
-												}"
+												class="w-full px-3 py-2 text-left text-sm font-mono tracking-wide transition-colors duration-100 flex items-center justify-between gap-2 {selectedModelId === model.id
+													? 'bg-transparent text-exo-yellow cursor-pointer'
+													: modelCanFit
+														? 'text-white/80 hover:text-exo-yellow cursor-pointer'
+														: 'text-white/30 cursor-default'}"
 											>
 												<span class="truncate">{model.name || model.id}</span>
 												<span class="flex-shrink-0 text-xs {modelCanFit ? 'text-white/50' : 'text-red-400/60'}">
@@ -1548,16 +1570,21 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 								</div>
 							{/if}
 						</div>
-						
+
 						<!-- Configuration Options -->
 						<div class="flex-shrink-0 mb-4 space-y-3">
 							<!-- Sharding -->
 							<div>
 								<div class="text-xs text-white/70 font-mono mb-2">Sharding:</div>
 								<div class="flex gap-2">
-									<button 
-										onclick={() => { selectedSharding = 'Pipeline'; saveLaunchDefaults(); }}
-										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding === 'Pipeline' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+									<button
+										onclick={() => {
+											selectedSharding = 'Pipeline';
+											saveLaunchDefaults();
+										}}
+										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding === 'Pipeline'
+											? 'bg-transparent text-exo-yellow border-exo-yellow'
+											: 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
 									>
 										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedSharding === 'Pipeline' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
 											{#if selectedSharding === 'Pipeline'}
@@ -1566,9 +1593,14 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 										</span>
 										Pipeline
 									</button>
-									<button 
-										onclick={() => { selectedSharding = 'Tensor'; saveLaunchDefaults(); }}
-										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding === 'Tensor' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+									<button
+										onclick={() => {
+											selectedSharding = 'Tensor';
+											saveLaunchDefaults();
+										}}
+										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding === 'Tensor'
+											? 'bg-transparent text-exo-yellow border-exo-yellow'
+											: 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
 									>
 										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedSharding === 'Tensor' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
 											{#if selectedSharding === 'Tensor'}
@@ -1579,14 +1611,19 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 									</button>
 								</div>
 							</div>
-							
+
 							<!-- Instance Type -->
 							<div>
 								<div class="text-xs text-white/70 font-mono mb-2">Instance Type:</div>
 								<div class="flex gap-2">
-									<button 
-										onclick={() => { selectedInstanceType = 'MlxRing'; saveLaunchDefaults(); }}
-										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'MlxRing' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+									<button
+										onclick={() => {
+											selectedInstanceType = 'MlxRing';
+											saveLaunchDefaults();
+										}}
+										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'MlxRing'
+											? 'bg-transparent text-exo-yellow border-exo-yellow'
+											: 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
 									>
 										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'MlxRing' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
 											{#if selectedInstanceType === 'MlxRing'}
@@ -1595,9 +1632,14 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 										</span>
 										MLX Ring
 									</button>
-									<button 
-										onclick={() => { selectedInstanceType = 'MlxIbv'; saveLaunchDefaults(); }}
-										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'MlxIbv' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+									<button
+										onclick={() => {
+											selectedInstanceType = 'MlxIbv';
+											saveLaunchDefaults();
+										}}
+										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'MlxIbv'
+											? 'bg-transparent text-exo-yellow border-exo-yellow'
+											: 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
 									>
 										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'MlxIbv' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
 											{#if selectedInstanceType === 'MlxIbv'}
@@ -1608,58 +1650,41 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 									</button>
 								</div>
 							</div>
-							
+
 							<!-- Minimum Nodes (discrete slider with drag support) -->
 							<div>
 								<div class="text-xs text-white/70 font-mono mb-2">Minimum Nodes:</div>
 								<!-- Discrete slider track with drag support -->
 								<!-- svelte-ignore a11y_no_static_element_interactions -->
-								<div 
-									bind:this={sliderTrackElement}
-									class="relative h-16 cursor-pointer select-none px-2 pr-6"
-									onmousedown={handleSliderMouseDown}
-									ontouchstart={handleSliderTouchStart}
-								>
+								<div bind:this={sliderTrackElement} class="relative h-16 cursor-pointer select-none px-2 pr-6" onmousedown={handleSliderMouseDown} ontouchstart={handleSliderTouchStart}>
 									<!-- Track background - extends full width to align with edge dots -->
 									<div class="absolute top-6 left-0 right-0 h-2 bg-exo-medium-gray/50 rounded-full"></div>
 									<!-- Active track (fills up to selected) -->
 									{#if availableMinNodes > 1}
-										<div 
-											class="absolute top-6 left-0 h-2 bg-white/30 rounded-full transition-all pointer-events-none"
-											style="width: {((selectedMinNodes - 1) / (availableMinNodes - 1)) * 100}%"
-										></div>
+										<div class="absolute top-6 left-0 h-2 bg-white/30 rounded-full transition-all pointer-events-none" style="width: {((selectedMinNodes - 1) / (availableMinNodes - 1)) * 100}%"></div>
 									{/if}
 									<!-- Dots and labels for each node count -->
 									{#each Array.from({ length: availableMinNodes }, (_, i) => i + 1) as n}
 										{@const isValid = validMinNodeCounts().has(n)}
 										{@const isSelected = selectedMinNodes === n}
 										{@const position = availableMinNodes > 1 ? ((n - 1) / (availableMinNodes - 1)) * 100 : 50}
-										<div
-											class="absolute flex flex-col items-center pointer-events-none"
-											style="left: {position}%; top: 0; transform: translateX(-50%);"
-										>
+										<div class="absolute flex flex-col items-center pointer-events-none" style="left: {position}%; top: 0; transform: translateX(-50%);">
 											<!-- Dot -->
-											<span 
-												class="rounded-full transition-all {isSelected 
-													? 'w-6 h-6 bg-exo-yellow shadow-[0_0_10px_rgba(255,215,0,0.6)]' 
-													: isValid 
-														? 'w-4 h-4 bg-exo-light-gray/70 mt-1' 
+											<span
+												class="rounded-full transition-all {isSelected
+													? 'w-6 h-6 bg-exo-yellow shadow-[0_0_10px_rgba(255,215,0,0.6)]'
+													: isValid
+														? 'w-4 h-4 bg-exo-light-gray/70 mt-1'
 														: 'w-3 h-3 bg-exo-medium-gray/50 mt-1.5'}"
 											></span>
 											<!-- Number label below dot -->
-											<span 
-												class="text-sm font-mono mt-1.5 tabular-nums transition-colors {isSelected 
-													? 'text-exo-yellow font-bold' 
-													: isValid 
-														? 'text-white/70' 
-														: 'text-white/30'}"
-											>{n}</span>
+											<span class="text-sm font-mono mt-1.5 tabular-nums transition-colors {isSelected ? 'text-exo-yellow font-bold' : isValid ? 'text-white/70' : 'text-white/30'}">{n}</span>
 										</div>
 									{/each}
 								</div>
 							</div>
 						</div>
-						
+
 						<!-- Selected Model Preview -->
 						<div class="space-y-3">
 							{#if models.length === 0}
@@ -1678,32 +1703,32 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 									{@const tags = modelTags()[selectedModel.id] || []}
 									<div class="space-y-3">
 										{#each allPreviews as apiPreview, i}
-										<div
-											role="group"
-											onmouseenter={() => {
-												if (apiPreview.memory_delta_by_node) {
-													hoveredPreviewNodes = new Set(
-														Object.entries(apiPreview.memory_delta_by_node)
-															.filter(([, delta]) => (delta ?? 0) > 0)
-															.map(([nodeId]) => nodeId)
-													);
-												}
-											}}
-											onmouseleave={() => hoveredPreviewNodes = new Set()}
-										>
-											<ModelCard 
-												model={selectedModel}
-												isLaunching={launchingModelId === selectedModel.id}
-												{downloadStatus}
-												nodes={data?.nodes ?? {}}
-												sharding={apiPreview.sharding}
-												runtime={apiPreview.instance_meta}
-												onLaunch={() => launchInstance(selectedModel.id, apiPreview)}
-												{tags}
-												{apiPreview}
-												modelIdOverride={apiPreview.model_id}
-											/>
-										</div>
+											<div
+												role="group"
+												onmouseenter={() => {
+													if (apiPreview.memory_delta_by_node) {
+														hoveredPreviewNodes = new Set(
+															Object.entries(apiPreview.memory_delta_by_node)
+																.filter(([, delta]) => (delta ?? 0) > 0)
+																.map(([nodeId]) => nodeId)
+														);
+													}
+												}}
+												onmouseleave={() => (hoveredPreviewNodes = new Set())}
+											>
+												<ModelCard
+													model={selectedModel}
+													isLaunching={launchingModelId === selectedModel.id}
+													{downloadStatus}
+													nodes={data?.nodes ?? {}}
+													sharding={apiPreview.sharding}
+													runtime={apiPreview.instance_meta}
+													onLaunch={() => launchInstance(selectedModel.id, apiPreview)}
+													{tags}
+													{apiPreview}
+													modelIdOverride={apiPreview.model_id}
+												/>
+											</div>
 										{/each}
 									</div>
 								{:else if selectedModel}
@@ -1715,37 +1740,30 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 						</div>
 					</div>
 				</aside>
-				
 			</div>
 		{:else}
 			<!-- CHAT STATE: Chat + Mini-Map -->
 			<div class="flex-1 flex overflow-hidden">
 				<!-- Chat Area -->
-				<div 
-					class="flex-1 flex flex-col min-w-0 overflow-hidden"
-					in:fade={{ duration: 300, delay: 100 }}
-				>
+				<div class="flex-1 flex flex-col min-w-0 overflow-hidden" in:fade={{ duration: 300, delay: 100 }}>
 					<div class="flex-1 overflow-y-auto px-8 py-6" bind:this={chatScrollRef}>
 						<div class="max-w-7xl mx-auto">
 							<ChatMessages scrollParent={chatScrollRef} />
 						</div>
 					</div>
-					
+
 					<div class="flex-shrink-0 px-8 pb-6 pt-4 bg-gradient-to-t from-exo-black via-exo-black to-transparent">
 						<div class="max-w-7xl mx-auto">
 							<ChatForm placeholder="Ask anything" showModelSelector={true} />
 						</div>
 					</div>
 				</div>
-				
+
 				<!-- Right: Mini-Map Sidebar -->
 				{#if minimized}
-					<aside 
-						class="w-80 border-l border-exo-yellow/20 bg-exo-dark-gray flex flex-col flex-shrink-0 overflow-y-auto"
-						in:fly={{ x: 100, duration: 400, easing: cubicInOut }}
-					>
+					<aside class="w-80 border-l border-exo-yellow/20 bg-exo-dark-gray flex flex-col flex-shrink-0 overflow-y-auto" in:fly={{ x: 100, duration: 400, easing: cubicInOut }}>
 						<!-- Topology Section - clickable to go back to main view -->
-						<button 
+						<button
 							class="p-4 border-b border-exo-medium-gray/30 w-full text-left cursor-pointer hover:bg-exo-medium-gray/10 transition-colors"
 							onclick={handleGoHome}
 							title="Click to return to main topology view"
@@ -1753,26 +1771,25 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 							<div class="flex items-center justify-between mb-3">
 								<div class="text-xs text-exo-yellow tracking-[0.2em] uppercase flex items-center gap-2">
 									<span class="w-1.5 h-1.5 bg-exo-yellow rounded-full status-pulse"></span>
-								TOPOLOGY
+									TOPOLOGY
+								</div>
+								<span class="text-xs text-white/70 tabular-nums">{nodeCount} {nodeCount === 1 ? 'NODE' : 'NODES'}</span>
 							</div>
-							<span class="text-xs text-white/70 tabular-nums">{nodeCount} {nodeCount === 1 ? 'NODE' : 'NODES'}</span>
-							</div>
-							
+
 							<div class="relative aspect-square bg-exo-dark-gray rounded-lg overflow-hidden">
-								
 								<TopologyGraph highlightedNodes={highlightedNodes()} />
 							</div>
 						</button>
-						
+
 						<!-- Instances Section (only shown when instances exist) -->
 						{#if instanceCount > 0}
-						<div class="p-4 flex-1">
-							<!-- Panel Header -->
-							<div class="flex items-center gap-2 mb-4">
-								<div class="w-2 h-2 bg-exo-yellow rounded-full shadow-[0_0_8px_rgba(255,215,0,0.6)] animate-pulse"></div>
-								<h3 class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase">Instances</h3>
-								<div class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"></div>
-							</div>
+							<div class="p-4 flex-1">
+								<!-- Panel Header -->
+								<div class="flex items-center gap-2 mb-4">
+									<div class="w-2 h-2 bg-exo-yellow rounded-full shadow-[0_0_8px_rgba(255,215,0,0.6)] animate-pulse"></div>
+									<h3 class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase">Instances</h3>
+									<div class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"></div>
+								</div>
 								<div class="space-y-3 max-h-72 xl:max-h-96 overflow-y-auto overflow-x-hidden py-px pr-1">
 									{#each Object.entries(instanceData) as [id, instance]}
 										{@const downloadInfo = getInstanceDownloadStatus(id, instance)}
@@ -1782,180 +1799,231 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 										{@const isLoading = statusText === 'LOADING' || statusText === 'WARMING UP' || statusText === 'WAITING'}
 										{@const isReady = statusText === 'READY' || statusText === 'LOADED'}
 										{@const isRunning = statusText === 'RUNNING'}
-									<!-- Instance Card -->
-									{@const instanceModelId = getInstanceModelId(instance)}
-									{@const instanceInfo = getInstanceInfo(instance)}
-									{@const instanceConnections = getInstanceConnections(instance)}
-									<div 
-										class="relative group cursor-pointer"
-										role="button"
-										tabindex="0"
-										onmouseenter={() => hoveredInstanceId = id}
-										onmouseleave={() => hoveredInstanceId = null}
-										onclick={() => {
-											if (instanceModelId && instanceModelId !== 'Unknown' && instanceModelId !== 'Unknown Model') {
-												setSelectedChatModel(instanceModelId);
-											}
-										}}
-										onkeydown={(e) => {
-											if (e.key === 'Enter' || e.key === ' ') {
+										<!-- Instance Card -->
+										{@const instanceModelId = getInstanceModelId(instance)}
+										{@const instanceInfo = getInstanceInfo(instance)}
+										{@const instanceConnections = getInstanceConnections(instance)}
+										<div
+											class="relative group cursor-pointer"
+											role="button"
+											tabindex="0"
+											onmouseenter={() => (hoveredInstanceId = id)}
+											onmouseleave={() => (hoveredInstanceId = null)}
+											onclick={() => {
 												if (instanceModelId && instanceModelId !== 'Unknown' && instanceModelId !== 'Unknown Model') {
 													setSelectedChatModel(instanceModelId);
 												}
-											}
-										}}
-									>
-										<!-- Corner accents -->
-										<div class="absolute -top-px -left-px w-2 h-2 border-l border-t {isDownloading ? 'border-blue-500/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-yellow-500/50' : isReady ? 'border-green-500/50' : 'border-teal-500/50'}"></div>
-										<div class="absolute -top-px -right-px w-2 h-2 border-r border-t {isDownloading ? 'border-blue-500/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-yellow-500/50' : isReady ? 'border-green-500/50' : 'border-teal-500/50'}"></div>
-										<div class="absolute -bottom-px -left-px w-2 h-2 border-l border-b {isDownloading ? 'border-blue-500/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-yellow-500/50' : isReady ? 'border-green-500/50' : 'border-teal-500/50'}"></div>
-										<div class="absolute -bottom-px -right-px w-2 h-2 border-r border-b {isDownloading ? 'border-blue-500/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-yellow-500/50' : isReady ? 'border-green-500/50' : 'border-teal-500/50'}"></div>
-										
-										<div class="bg-exo-dark-gray/60 border border-l-2 {isDownloading ? 'border-blue-500/30 border-l-blue-400' : isFailed ? 'border-red-500/30 border-l-red-400' : isLoading ? 'border-exo-yellow/30 border-l-yellow-400' : isReady ? 'border-green-500/30 border-l-green-400' : 'border-teal-500/30 border-l-teal-400'} p-3">
-											
-											<div class="flex justify-between items-start mb-2 pl-2">
-												<div class="flex items-center gap-2">
-													<div class="w-1.5 h-1.5 {isDownloading ? 'bg-blue-400 animate-pulse' : isFailed ? 'bg-red-400' : isLoading ? 'bg-yellow-400 animate-pulse' : isReady ? 'bg-green-400' : 'bg-teal-400'} rounded-full shadow-[0_0_6px_currentColor]"></div>
-													<span class="text-exo-light-gray font-mono text-sm tracking-wider">{id.slice(0, 8).toUpperCase()}</span>
-												</div>
-												<button 
-													onclick={() => deleteInstance(id)}
-													class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
-												>
-													DELETE
-												</button>
+											}}
+											onkeydown={e => {
+												if (e.key === 'Enter' || e.key === ' ') {
+													if (instanceModelId && instanceModelId !== 'Unknown' && instanceModelId !== 'Unknown Model') {
+														setSelectedChatModel(instanceModelId);
+													}
+												}
+											}}
+										>
+											<!-- Corner accents -->
+											<div
+												class="absolute -top-px -left-px w-2 h-2 border-l border-t {isDownloading
+													? 'border-blue-500/50'
+													: isFailed
+														? 'border-red-500/50'
+														: isLoading
+															? 'border-yellow-500/50'
+															: isReady
+																? 'border-green-500/50'
+																: 'border-teal-500/50'}"
+											></div>
+											<div
+												class="absolute -top-px -right-px w-2 h-2 border-r border-t {isDownloading
+													? 'border-blue-500/50'
+													: isFailed
+														? 'border-red-500/50'
+														: isLoading
+															? 'border-yellow-500/50'
+															: isReady
+																? 'border-green-500/50'
+																: 'border-teal-500/50'}"
+											></div>
+											<div
+												class="absolute -bottom-px -left-px w-2 h-2 border-l border-b {isDownloading
+													? 'border-blue-500/50'
+													: isFailed
+														? 'border-red-500/50'
+														: isLoading
+															? 'border-yellow-500/50'
+															: isReady
+																? 'border-green-500/50'
+																: 'border-teal-500/50'}"
+											></div>
+											<div
+												class="absolute -bottom-px -right-px w-2 h-2 border-r border-b {isDownloading
+													? 'border-blue-500/50'
+													: isFailed
+														? 'border-red-500/50'
+														: isLoading
+															? 'border-yellow-500/50'
+															: isReady
+																? 'border-green-500/50'
+																: 'border-teal-500/50'}"
+											></div>
+
+											<div
+												class="bg-exo-dark-gray/60 border border-l-2 {isDownloading
+													? 'border-blue-500/30 border-l-blue-400'
+													: isFailed
+														? 'border-red-500/30 border-l-red-400'
+														: isLoading
+															? 'border-exo-yellow/30 border-l-yellow-400'
+															: isReady
+																? 'border-green-500/30 border-l-green-400'
+																: 'border-teal-500/30 border-l-teal-400'} p-3"
+											>
+												<div class="flex justify-between items-start mb-2 pl-2">
+													<div class="flex items-center gap-2">
+														<div
+															class="w-1.5 h-1.5 {isDownloading
+																? 'bg-blue-400 animate-pulse'
+																: isFailed
+																	? 'bg-red-400'
+																	: isLoading
+																		? 'bg-yellow-400 animate-pulse'
+																		: isReady
+																			? 'bg-green-400'
+																			: 'bg-teal-400'} rounded-full shadow-[0_0_6px_currentColor]"
+														></div>
+														<span class="text-exo-light-gray font-mono text-sm tracking-wider">{id.slice(0, 8).toUpperCase()}</span>
+													</div>
+													<button
+														onclick={() => deleteInstance(id)}
+														class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
+													>
+														DELETE
+													</button>
 												</div>
 												<div class="pl-2">
 													<div class="text-exo-yellow text-xs font-mono tracking-wide truncate">{getInstanceModelId(instance)}</div>
 													<div class="text-white/60 text-xs font-mono">Strategy: <span class="text-white/80">{instanceInfo.sharding} ({instanceInfo.instanceType})</span></div>
-														{#if instanceModelId && instanceModelId !== 'Unknown' && instanceModelId !== 'Unknown Model'}
-															<a
-																class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
-																href={`https://huggingface.co/${instanceModelId}`}
-																target="_blank"
-																rel="noreferrer noopener"
-																aria-label="View model on Hugging Face"
-															>
-																<span>Hugging Face</span>
-																<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-																	<path d="M14 3h7v7"/>
-																	<path d="M10 14l11-11"/>
-																	<path d="M21 14v6a1 1 0 0 1-1 1h-16a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1h6"/>
-																</svg>
-															</a>
-														{/if}
+													{#if instanceModelId && instanceModelId !== 'Unknown' && instanceModelId !== 'Unknown Model'}
+														<a
+															class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
+															href={`https://huggingface.co/${instanceModelId}`}
+															target="_blank"
+															rel="noreferrer noopener"
+															aria-label="View model on Hugging Face"
+														>
+															<span>Hugging Face</span>
+															<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+																<path d="M14 3h7v7" />
+																<path d="M10 14l11-11" />
+																<path d="M21 14v6a1 1 0 0 1-1 1h-16a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1h6" />
+															</svg>
+														</a>
+													{/if}
 													{#if instanceInfo.nodeNames.length > 0}
 														<div class="text-white/60 text-xs font-mono">{instanceInfo.nodeNames.join(', ')}</div>
 													{/if}
 													{#if debugEnabled && instanceConnections.length > 0}
-													<div class="mt-2 space-y-1">
-														{#each instanceConnections as conn}
-															<div class="text-[11px] leading-snug font-mono text-white/70">
-																<span>{conn.from} -> {conn.to}: {conn.ip}</span>
-																<span class="{conn.missingIface ? 'text-red-400' : 'text-white/60'}"> ({conn.ifaceLabel})</span>
-															</div>
-														{/each}
-													</div>
-												{/if}
-												
-												<!-- Download Progress -->
-												{#if downloadInfo.isDownloading && downloadInfo.progress}
-													<div class="mt-2 space-y-1">
-														<div class="flex justify-between text-xs font-mono">
-															<span class="text-blue-400">{downloadInfo.progress.percentage.toFixed(1)}%</span>
-															<span class="text-exo-light-gray">{formatBytes(downloadInfo.progress.downloadedBytes)}/{formatBytes(downloadInfo.progress.totalBytes)}</span>
-														</div>
-														<div class="relative h-1.5 bg-exo-black/60 rounded-sm overflow-hidden">
-															<div 
-																class="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300"
-																style="width: {downloadInfo.progress.percentage}%"
-															></div>
-														</div>
-														<div class="flex justify-between text-xs font-mono text-exo-light-gray">
-															<span>{formatSpeed(downloadInfo.progress.speed)}</span>
-															<span>ETA: {formatEta(downloadInfo.progress.etaMs)}</span>
-															<span>{downloadInfo.progress.completedFiles}/{downloadInfo.progress.totalFiles} files</span>
-														</div>
-													</div>
-													{#if downloadInfo.perNode.length > 0}
-														<div class="mt-2 space-y-2 max-h-48 overflow-y-auto pr-1">
-															{#each downloadInfo.perNode as nodeProg}
-																{@const nodePercent = Math.min(100, Math.max(0, nodeProg.progress.percentage))}
-																{@const isExpanded = instanceDownloadExpandedNodes.has(nodeProg.nodeId)}
-																<div class="rounded border border-exo-medium-gray/40 bg-exo-black/30 p-2">
-																	<button
-																		type="button"
-																		class="w-full text-left space-y-1.5"
-																		onclick={() => toggleInstanceDownloadDetails(nodeProg.nodeId)}
-																	>
-																		<div class="flex items-center justify-between text-[11px] font-mono text-exo-light-gray">
-																			<span class="text-white/80 truncate pr-2">{nodeProg.nodeName}</span>
-																			<span class="flex items-center gap-1 text-blue-300">
-																				{nodePercent.toFixed(1)}%
-																				<svg class="w-3 h-3 text-exo-light-gray" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-																					<path d="M6 8l4 4 4-4" class={isExpanded ? 'transform rotate-180 origin-center transition-transform duration-150' : 'transition-transform duration-150'}></path>
-																				</svg>
-																			</span>
-																		</div>
-																		<div class="relative h-1.5 bg-exo-black/60 rounded-sm overflow-hidden">
-																			<div 
-																				class="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300"
-																				style="width: {nodePercent.toFixed(1)}%"
-																			></div>
-																		</div>
-																		<div class="flex items-center justify-between text-[11px] font-mono text-exo-light-gray">
-																			<span>{formatBytes(nodeProg.progress.downloadedBytes)} / {formatBytes(nodeProg.progress.totalBytes)}</span>
-																			<span>{formatSpeed(nodeProg.progress.speed)} • ETA {formatEta(nodeProg.progress.etaMs)}</span>
-																		</div>
-																	</button>
-
-																	{#if isExpanded}
-																		<div class="mt-2 space-y-1.5">
-																			{#if nodeProg.progress.files.length === 0}
-																				<div class="text-[11px] font-mono text-exo-light-gray/70">No file details reported.</div>
-																			{:else}
-																				{#each nodeProg.progress.files as f}
-																					{@const filePercent = Math.min(100, Math.max(0, f.percentage ?? 0))}
-																					{@const isFileComplete = filePercent >= 100}
-																					<div class="rounded border border-exo-medium-gray/30 bg-exo-black/40 p-2">
-																						<div class="flex items-center justify-between text-[10px] font-mono text-exo-light-gray/90">
-																							<span class="truncate pr-2">{f.name}</span>
-																							<span class={isFileComplete ? 'text-green-400' : 'text-white/80'}>{filePercent.toFixed(1)}%</span>
-																						</div>
-																						<div class="relative h-1 bg-exo-black/60 rounded-sm overflow-hidden mt-1">
-																							<div 
-																								class="absolute inset-y-0 left-0 bg-gradient-to-r {isFileComplete ? 'from-green-500 to-green-400' : 'from-exo-yellow to-exo-yellow/70'} transition-all duration-300"
-																								style="width: {filePercent.toFixed(1)}%"
-																							></div>
-																						</div>
-																						<div class="flex items-center justify-between text-[10px] text-exo-light-gray/70 mt-0.5">
-																							<span>{formatBytes(f.downloadedBytes)} / {formatBytes(f.totalBytes)}</span>
-																							<span>{formatSpeed(f.speed)} • ETA {formatEta(f.etaMs)}</span>
-																						</div>
-																					</div>
-																				{/each}
-																			{/if}
-																		</div>
-																	{/if}
+														<div class="mt-2 space-y-1">
+															{#each instanceConnections as conn}
+																<div class="text-[11px] leading-snug font-mono text-white/70">
+																	<span>{conn.from} -> {conn.to}: {conn.ip}</span>
+																	<span class={conn.missingIface ? 'text-red-400' : 'text-white/60'}> ({conn.ifaceLabel})</span>
 																</div>
 															{/each}
 														</div>
 													{/if}
-													<div class="text-xs text-blue-400 font-mono tracking-wider mt-1">DOWNLOADING</div>
-												{:else}
-													<div class="text-xs {getStatusColor(downloadInfo.statusText)} font-mono tracking-wider mt-1">{downloadInfo.statusText}</div>
-												{/if}
+
+													<!-- Download Progress -->
+													{#if downloadInfo.isDownloading && downloadInfo.progress}
+														<div class="mt-2 space-y-1">
+															<div class="flex justify-between text-xs font-mono">
+																<span class="text-blue-400">{downloadInfo.progress.percentage.toFixed(1)}%</span>
+																<span class="text-exo-light-gray">{formatBytes(downloadInfo.progress.downloadedBytes)}/{formatBytes(downloadInfo.progress.totalBytes)}</span>
+															</div>
+															<div class="relative h-1.5 bg-exo-black/60 rounded-sm overflow-hidden">
+																<div class="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300" style="width: {downloadInfo.progress.percentage}%"></div>
+															</div>
+															<div class="flex justify-between text-xs font-mono text-exo-light-gray">
+																<span>{formatSpeed(downloadInfo.progress.speed)}</span>
+																<span>ETA: {formatEta(downloadInfo.progress.etaMs)}</span>
+																<span>{downloadInfo.progress.completedFiles}/{downloadInfo.progress.totalFiles} files</span>
+															</div>
+														</div>
+														{#if downloadInfo.perNode.length > 0}
+															<div class="mt-2 space-y-2 max-h-48 overflow-y-auto pr-1">
+																{#each downloadInfo.perNode as nodeProg}
+																	{@const nodePercent = Math.min(100, Math.max(0, nodeProg.progress.percentage))}
+																	{@const isExpanded = instanceDownloadExpandedNodes.has(nodeProg.nodeId)}
+																	<div class="rounded border border-exo-medium-gray/40 bg-exo-black/30 p-2">
+																		<button type="button" class="w-full text-left space-y-1.5" onclick={() => toggleInstanceDownloadDetails(nodeProg.nodeId)}>
+																			<div class="flex items-center justify-between text-[11px] font-mono text-exo-light-gray">
+																				<span class="text-white/80 truncate pr-2">{nodeProg.nodeName}</span>
+																				<span class="flex items-center gap-1 text-blue-300">
+																					{nodePercent.toFixed(1)}%
+																					<svg class="w-3 h-3 text-exo-light-gray" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+																						<path d="M6 8l4 4 4-4" class={isExpanded ? 'transform rotate-180 origin-center transition-transform duration-150' : 'transition-transform duration-150'}
+																						></path>
+																					</svg>
+																				</span>
+																			</div>
+																			<div class="relative h-1.5 bg-exo-black/60 rounded-sm overflow-hidden">
+																				<div class="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300" style="width: {nodePercent.toFixed(1)}%"></div>
+																			</div>
+																			<div class="flex items-center justify-between text-[11px] font-mono text-exo-light-gray">
+																				<span>{formatBytes(nodeProg.progress.downloadedBytes)} / {formatBytes(nodeProg.progress.totalBytes)}</span>
+																				<span>{formatSpeed(nodeProg.progress.speed)} • ETA {formatEta(nodeProg.progress.etaMs)}</span>
+																			</div>
+																		</button>
+
+																		{#if isExpanded}
+																			<div class="mt-2 space-y-1.5">
+																				{#if nodeProg.progress.files.length === 0}
+																					<div class="text-[11px] font-mono text-exo-light-gray/70">No file details reported.</div>
+																				{:else}
+																					{#each nodeProg.progress.files as f}
+																						{@const filePercent = Math.min(100, Math.max(0, f.percentage ?? 0))}
+																						{@const isFileComplete = filePercent >= 100}
+																						<div class="rounded border border-exo-medium-gray/30 bg-exo-black/40 p-2">
+																							<div class="flex items-center justify-between text-[10px] font-mono text-exo-light-gray/90">
+																								<span class="truncate pr-2">{f.name}</span>
+																								<span class={isFileComplete ? 'text-green-400' : 'text-white/80'}>{filePercent.toFixed(1)}%</span>
+																							</div>
+																							<div class="relative h-1 bg-exo-black/60 rounded-sm overflow-hidden mt-1">
+																								<div
+																									class="absolute inset-y-0 left-0 bg-gradient-to-r {isFileComplete
+																										? 'from-green-500 to-green-400'
+																										: 'from-exo-yellow to-exo-yellow/70'} transition-all duration-300"
+																									style="width: {filePercent.toFixed(1)}%"
+																								></div>
+																							</div>
+																							<div class="flex items-center justify-between text-[10px] text-exo-light-gray/70 mt-0.5">
+																								<span>{formatBytes(f.downloadedBytes)} / {formatBytes(f.totalBytes)}</span>
+																								<span>{formatSpeed(f.speed)} • ETA {formatEta(f.etaMs)}</span>
+																							</div>
+																						</div>
+																					{/each}
+																				{/if}
+																			</div>
+																		{/if}
+																	</div>
+																{/each}
+															</div>
+														{/if}
+														<div class="text-xs text-blue-400 font-mono tracking-wider mt-1">DOWNLOADING</div>
+													{:else}
+														<div class="text-xs {getStatusColor(downloadInfo.statusText)} font-mono tracking-wider mt-1">{downloadInfo.statusText}</div>
+													{/if}
 												</div>
 											</div>
 										</div>
 									{/each}
 								</div>
-						</div>
+							</div>
 						{/if}
 					</aside>
 				{/if}
 			</div>
 		{/if}
 	</main>
-
 </div>

@@ -9,7 +9,7 @@ export default defineConfig({
 			"/v1": "http://localhost:52415",
 			"/state": "http://localhost:52415",
 			"/models": "http://localhost:52415",
-			"/instance": "http://localhost:52415",
-		},
-	},
+			"/instance": "http://localhost:52415"
+		}
+	}
 });

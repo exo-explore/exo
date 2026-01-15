@@ -1,12 +1,5 @@
 <script lang="ts">
-	import { 
-		messages, 
-		currentResponse, 
-		isLoading,
-		deleteMessage,
-		editAndRegenerate,
-		regenerateLastResponse
-	} from '$lib/stores/app.svelte';
+	import { messages, currentResponse, isLoading, deleteMessage, editAndRegenerate, regenerateLastResponse } from '$lib/stores/app.svelte';
 	import type { MessageAttachment } from '$lib/stores/app.svelte';
 	import MarkdownContent from './MarkdownContent.svelte';
 
@@ -53,7 +46,7 @@
 	$effect(() => {
 		const el = scrollParent ?? containerRef?.parentElement;
 		if (!el) return;
-		
+
 		el.addEventListener('scroll', updateScrollButtonVisibility, { passive: true });
 		// Initial check
 		updateScrollButtonVisibility();
@@ -78,7 +71,7 @@
 	$effect(() => {
 		// Track response to trigger re-check during streaming
 		const _ = response;
-		
+
 		// Small delay to let DOM update
 		requestAnimationFrame(() => updateScrollButtonVisibility());
 	});
@@ -91,14 +84,14 @@
 	// Delete confirmation state
 	let deleteConfirmId = $state<string | null>(null);
 
-// Copied state for feedback
-let copiedMessageId = $state<string | null>(null);
-let expandedThinkingMessageIds = $state<Set<string>>(new Set());
+	// Copied state for feedback
+	let copiedMessageId = $state<string | null>(null);
+	let expandedThinkingMessageIds = $state<Set<string>>(new Set());
 
 	function formatTimestamp(timestamp: number): string {
-		return new Date(timestamp).toLocaleTimeString('en-US', { 
+		return new Date(timestamp).toLocaleTimeString('en-US', {
 			hour12: false,
-			hour: '2-digit', 
+			hour: '2-digit',
 			minute: '2-digit',
 			second: '2-digit'
 		});
@@ -106,9 +99,12 @@ let expandedThinkingMessageIds = $state<Set<string>>(new Set());
 
 	function getAttachmentIcon(attachment: MessageAttachment): string {
 		switch (attachment.type) {
-			case 'image': return '🖼';
-			case 'text': return '📄';
-			default: return '📎';
+			case 'image':
+				return '🖼';
+			case 'text':
+				return '📄';
+			default:
+				return '📎';
 		}
 	}
 
@@ -132,19 +128,19 @@ let expandedThinkingMessageIds = $state<Set<string>>(new Set());
 		}
 	}
 
-function toggleThinkingVisibility(messageId: string) {
-	const next = new Set(expandedThinkingMessageIds);
-	if (next.has(messageId)) {
-		next.delete(messageId);
-	} else {
-		next.add(messageId);
+	function toggleThinkingVisibility(messageId: string) {
+		const next = new Set(expandedThinkingMessageIds);
+		if (next.has(messageId)) {
+			next.delete(messageId);
+		} else {
+			next.add(messageId);
+		}
+		expandedThinkingMessageIds = next;
 	}
-	expandedThinkingMessageIds = next;
-}
 
-function isThinkingExpanded(messageId: string): boolean {
-	return expandedThinkingMessageIds.has(messageId);
-}
+	function isThinkingExpanded(messageId: string): boolean {
+		return expandedThinkingMessageIds.has(messageId);
+	}
 
 	function handleStartEdit(messageId: string, content: string) {
 		editingMessageId = messageId;
@@ -222,7 +218,7 @@ function isThinkingExpanded(messageId: string): boolean {
 <div class="flex flex-col gap-4 sm:gap-6 {className}">
 	{#each messageList as message (message.id)}
 		<div class="group flex {message.role === 'user' ? 'justify-end' : 'justify-start'}">
-			<div class="{message.role === 'user' ? 'max-w-[85%] sm:max-w-[70%] flex flex-col items-end' : 'w-full max-w-[98%] sm:max-w-[95%]'}">
+			<div class={message.role === 'user' ? 'max-w-[85%] sm:max-w-[70%] flex flex-col items-end' : 'w-full max-w-[98%] sm:max-w-[95%]'}>
 				{#if message.role === 'assistant'}
 					<!-- Assistant message header -->
 					<div class="flex items-center gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
@@ -231,7 +227,9 @@ function isThinkingExpanded(messageId: string): boolean {
 						<span class="text-xs sm:text-sm text-exo-light-gray tracking-wider tabular-nums">{formatTimestamp(message.timestamp)}</span>
 						{#if message.ttftMs || message.tps}
 							<span class="text-xs text-exo-light-gray/80 font-mono ml-2">
-								{#if message.ttftMs}<span class="text-exo-light-gray/50">TTFT</span> {message.ttftMs.toFixed(0)}ms{/if}{#if message.ttftMs && message.tps}<span class="text-exo-light-gray/30 mx-1">•</span>{/if}{#if message.tps}{message.tps.toFixed(1)} <span class="text-exo-light-gray/50">tok/s</span>{/if}
+								{#if message.ttftMs}<span class="text-exo-light-gray/50">TTFT</span> {message.ttftMs.toFixed(0)}ms{/if}{#if message.ttftMs && message.tps}<span class="text-exo-light-gray/30 mx-1"
+										>•</span
+									>{/if}{#if message.tps}{message.tps.toFixed(1)} <span class="text-exo-light-gray/50">tok/s</span>{/if}
 							</span>
 						{/if}
 					</div>
@@ -243,22 +241,22 @@ function isThinkingExpanded(messageId: string): boolean {
 						<div class="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-exo-light-gray/50 rounded-full"></div>
 					</div>
 				{/if}
-				
+
 				{#if deleteConfirmId === message.id}
 					<!-- Delete confirmation -->
 					<div class="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
 						<p class="text-xs text-red-400 mb-3">Delete this message{message.role === 'user' ? ' and all responses after it' : ''}?</p>
 						<div class="flex gap-2 justify-end">
-						<button
-							onclick={handleCancelDelete}
-							class="px-3 py-1.5 text-sm font-mono tracking-wider uppercase bg-exo-medium-gray/20 text-exo-light-gray border border-exo-medium-gray/30 rounded hover:bg-exo-medium-gray/30 transition-colors cursor-pointer"
-						>
-							CANCEL
-						</button>
-						<button
-							onclick={handleConfirmDelete}
-							class="px-3 py-1.5 text-sm font-mono tracking-wider uppercase bg-red-500/20 text-red-400 border border-red-500/30 rounded hover:bg-red-500/30 transition-colors cursor-pointer"
-						>
+							<button
+								onclick={handleCancelDelete}
+								class="px-3 py-1.5 text-sm font-mono tracking-wider uppercase bg-exo-medium-gray/20 text-exo-light-gray border border-exo-medium-gray/30 rounded hover:bg-exo-medium-gray/30 transition-colors cursor-pointer"
+							>
+								CANCEL
+							</button>
+							<button
+								onclick={handleConfirmDelete}
+								class="px-3 py-1.5 text-sm font-mono tracking-wider uppercase bg-red-500/20 text-red-400 border border-red-500/30 rounded hover:bg-red-500/30 transition-colors cursor-pointer"
+							>
 								DELETE
 							</button>
 						</div>
@@ -275,17 +273,17 @@ function isThinkingExpanded(messageId: string): boolean {
 							style="min-height: 60px; max-height: 200px;"
 						></textarea>
 						<div class="flex gap-2 justify-end mt-2">
-						<button
-							onclick={handleCancelEdit}
-							class="px-3 py-1.5 text-sm font-mono tracking-wider uppercase bg-exo-medium-gray/20 text-exo-light-gray border border-exo-medium-gray/30 rounded hover:bg-exo-medium-gray/30 transition-colors cursor-pointer"
-						>
-							CANCEL
-						</button>
-						<button
-							onclick={handleSaveEdit}
-							disabled={!editContent.trim()}
-							class="px-3 py-1.5 text-sm font-mono tracking-wider uppercase bg-transparent text-exo-yellow border border-exo-yellow/30 rounded hover:border-exo-yellow/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer"
-						>
+							<button
+								onclick={handleCancelEdit}
+								class="px-3 py-1.5 text-sm font-mono tracking-wider uppercase bg-exo-medium-gray/20 text-exo-light-gray border border-exo-medium-gray/30 rounded hover:bg-exo-medium-gray/30 transition-colors cursor-pointer"
+							>
+								CANCEL
+							</button>
+							<button
+								onclick={handleSaveEdit}
+								disabled={!editContent.trim()}
+								class="px-3 py-1.5 text-sm font-mono tracking-wider uppercase bg-transparent text-exo-yellow border border-exo-yellow/30 rounded hover:border-exo-yellow/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer"
+							>
 								<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
 								</svg>
@@ -294,10 +292,7 @@ function isThinkingExpanded(messageId: string): boolean {
 						</div>
 					</div>
 				{:else}
-					<div class="{message.role === 'user' 
-						? 'command-panel rounded-lg rounded-tr-sm inline-block' 
-						: 'command-panel rounded-lg rounded-tl-sm border-l-2 border-l-exo-yellow/50 block w-full'}">
-						
+					<div class={message.role === 'user' ? 'command-panel rounded-lg rounded-tr-sm inline-block' : 'command-panel rounded-lg rounded-tl-sm border-l-2 border-l-exo-yellow/50 block w-full'}>
 						{#if message.role === 'user'}
 							<!-- User message styling -->
 							<div class="px-4 py-3">
@@ -307,11 +302,7 @@ function isThinkingExpanded(messageId: string): boolean {
 										{#each message.attachments as attachment}
 											<div class="flex items-center gap-2 bg-exo-dark-gray/60 border border-exo-yellow/20 rounded px-2 py-1 text-xs font-mono">
 												{#if attachment.type === 'image' && attachment.preview}
-													<img 
-														src={attachment.preview} 
-														alt={attachment.name}
-														class="w-12 h-12 object-cover rounded border border-exo-yellow/20"
-													/>
+													<img src={attachment.preview} alt={attachment.name} class="w-12 h-12 object-cover rounded border border-exo-yellow/20" />
 												{:else}
 													<span>{getAttachmentIcon(attachment)}</span>
 												{/if}
@@ -320,7 +311,7 @@ function isThinkingExpanded(messageId: string): boolean {
 										{/each}
 									</div>
 								{/if}
-								
+
 								{#if message.content}
 									<div class="text-xs text-foreground font-mono tracking-wide whitespace-pre-wrap break-words leading-relaxed">
 										{message.content}
@@ -356,10 +347,7 @@ function isThinkingExpanded(messageId: string): boolean {
 											</span>
 										</button>
 										{#if isThinkingExpanded(message.id)}
-											<div
-												id={`thinking-panel-${message.id}`}
-												class="px-3 pb-3 text-xs text-exo-light-gray/90 font-mono whitespace-pre-wrap break-words leading-relaxed"
-											>
+											<div id={`thinking-panel-${message.id}`} class="px-3 pb-3 text-xs text-exo-light-gray/90 font-mono whitespace-pre-wrap break-words leading-relaxed">
 												{message.thinking.trim()}
 											</div>
 										{/if}
@@ -374,26 +362,27 @@ function isThinkingExpanded(messageId: string): boolean {
 							</div>
 						{/if}
 					</div>
-					
+
 					<!-- Action buttons -->
 					<div class="flex items-center gap-1 mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity {message.role === 'user' ? 'justify-end' : 'justify-start'}">
 						<!-- Copy button -->
-						<button
-							onclick={() => handleCopy(message.content, message.id)}
-							class="p-1.5 text-exo-light-gray hover:text-exo-yellow transition-colors rounded cursor-pointer"
-							title="Copy message"
-						>
+						<button onclick={() => handleCopy(message.content, message.id)} class="p-1.5 text-exo-light-gray hover:text-exo-yellow transition-colors rounded cursor-pointer" title="Copy message">
 							{#if copiedMessageId === message.id}
 								<svg class="w-3.5 h-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
 								</svg>
 							{:else}
 								<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+									/>
 								</svg>
 							{/if}
 						</button>
-						
+
 						<!-- Edit button (user messages only) -->
 						{#if message.role === 'user'}
 							<button
@@ -402,24 +391,30 @@ function isThinkingExpanded(messageId: string): boolean {
 								title="Edit message"
 							>
 								<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+									/>
 								</svg>
 							</button>
 						{/if}
-						
+
 						<!-- Regenerate button (last assistant message only) -->
 						{#if message.role === 'assistant' && isLastAssistantMessage(message.id) && !loading}
-							<button
-								onclick={handleRegenerate}
-								class="p-1.5 text-exo-light-gray hover:text-exo-yellow transition-colors rounded cursor-pointer"
-								title="Regenerate response"
-							>
+							<button onclick={handleRegenerate} class="p-1.5 text-exo-light-gray hover:text-exo-yellow transition-colors rounded cursor-pointer" title="Regenerate response">
 								<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+									/>
 								</svg>
 							</button>
 						{/if}
-						
+
 						<!-- Delete button -->
 						<button
 							onclick={() => handleDeleteClick(message.id)}
@@ -427,7 +422,12 @@ function isThinkingExpanded(messageId: string): boolean {
 							title="Delete message"
 						>
 							<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+								/>
 							</svg>
 						</button>
 					</div>
@@ -435,7 +435,7 @@ function isThinkingExpanded(messageId: string): boolean {
 			</div>
 		</div>
 	{/each}
-	
+
 	{#if messageList.length === 0}
 		<div class="flex-1 flex flex-col items-center justify-center text-center pt-[20vh]">
 			<div class="w-12 h-12 sm:w-16 sm:h-16 border border-exo-yellow/20 rounded-full flex items-center justify-center mb-3 sm:mb-4">
@@ -447,7 +447,7 @@ function isThinkingExpanded(messageId: string): boolean {
 			<p class="text-sm sm:text-xs text-exo-light-gray tracking-wider mt-1">ENTER A QUERY TO BEGIN</p>
 		</div>
 	{/if}
-	
+
 	<!-- Invisible element for container reference -->
 	<div bind:this={containerRef}></div>
 

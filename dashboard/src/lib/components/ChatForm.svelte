@@ -12,13 +12,7 @@
 		showModelSelector?: boolean;
 	}
 
-	let { 
-		class: className = '', 
-		placeholder = 'Ask anything',
-		showHelperText = false,
-		autofocus = true,
-		showModelSelector = false
-	}: Props = $props();
+	let { class: className = '', placeholder = 'Ask anything', showHelperText = false, autofocus = true, showModelSelector = false }: Props = $props();
 
 	let message = $state('');
 	let textareaRef: HTMLTextAreaElement | undefined = $state();
@@ -31,7 +25,7 @@
 	const currentTtft = $derived(ttftMs());
 	const currentTps = $derived(tps());
 	const currentTokens = $derived(totalTokens());
-	
+
 	// Custom dropdown state
 	let isModelDropdownOpen = $state(false);
 	let dropdownButtonRef: HTMLButtonElement | undefined = $state();
@@ -50,7 +44,7 @@
 
 	// Extract available models from running instances
 	const availableModels = $derived(() => {
-		const models: Array<{id: string, label: string}> = [];
+		const models: Array<{ id: string; label: string }> = [];
 		for (const [, instance] of Object.entries(instanceData)) {
 			const modelId = getInstanceModelId(instance);
 			if (modelId && modelId !== 'Unknown' && !models.some(m => m.id === modelId)) {
@@ -98,18 +92,18 @@
 
 	function handlePaste(event: ClipboardEvent) {
 		if (!event.clipboardData) return;
-		
+
 		const files = Array.from(event.clipboardData.items)
 			.filter(item => item.kind === 'file')
 			.map(item => item.getAsFile())
 			.filter((file): file is File => file !== null);
-		
+
 		if (files.length > 0) {
 			event.preventDefault();
 			handleFiles(files);
 			return;
 		}
-		
+
 		// Handle long text paste as file
 		const text = event.clipboardData.getData('text/plain');
 		if (text.length > 2500) {
@@ -132,7 +126,7 @@
 	function handleDrop(event: DragEvent) {
 		event.preventDefault();
 		isDragOver = false;
-		
+
 		if (event.dataTransfer?.files) {
 			handleFiles(Array.from(event.dataTransfer.files));
 		}
@@ -143,7 +137,7 @@
 		if (event.isComposing || event.keyCode === 229) {
 			return;
 		}
-		
+
 		if (event.key === 'Enter' && !event.shiftKey) {
 			event.preventDefault();
 			handleSubmit();
@@ -152,16 +146,16 @@
 
 	function handleSubmit() {
 		if ((!message.trim() && uploadedFiles.length === 0) || loading) return;
-		
+
 		const content = message.trim();
 		const files = [...uploadedFiles];
-		
+
 		message = '';
 		uploadedFiles = [];
 		resetTextareaHeight();
-		
+
 		sendMessage(content, files);
-		
+
 		// Refocus the textarea after sending
 		setTimeout(() => textareaRef?.focus(), 10);
 	}
@@ -184,13 +178,13 @@
 
 	// Track previous loading state to detect when loading completes
 	let wasLoading = $state(false);
-	
+
 	$effect(() => {
 		if (autofocus && textareaRef) {
 			setTimeout(() => textareaRef?.focus(), 10);
 		}
 	});
-	
+
 	// Refocus after loading completes (AI response finished)
 	$effect(() => {
 		if (wasLoading && !loading && textareaRef) {
@@ -203,37 +197,29 @@
 </script>
 
 <!-- Hidden file input -->
-<input
-	bind:this={fileInputRef}
-	type="file"
-	accept={acceptString}
-	multiple
-	class="hidden"
-	onchange={handleFileInputChange}
-/>
+<input bind:this={fileInputRef} type="file" accept={acceptString} multiple class="hidden" onchange={handleFileInputChange} />
 
-<form 
-	onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} 
+<form
+	onsubmit={e => {
+		e.preventDefault();
+		handleSubmit();
+	}}
 	class="w-full {className}"
 	ondragover={handleDragOver}
 	ondragleave={handleDragLeave}
 	ondrop={handleDrop}
 >
-	<div 
-		class="relative command-panel rounded overflow-hidden transition-all duration-200 {isDragOver ? 'ring-2 ring-exo-yellow ring-opacity-50' : ''}"
-	>
+	<div class="relative command-panel rounded overflow-hidden transition-all duration-200 {isDragOver ? 'ring-2 ring-exo-yellow ring-opacity-50' : ''}">
 		<!-- Top accent line -->
 		<div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-exo-yellow/50 to-transparent"></div>
-		
+
 		<!-- Drag overlay -->
 		{#if isDragOver}
 			<div class="absolute inset-0 bg-exo-dark-gray/80 z-10 flex items-center justify-center">
-				<div class="text-exo-yellow text-sm font-mono tracking-wider uppercase">
-					DROP FILES HERE
-				</div>
+				<div class="text-exo-yellow text-sm font-mono tracking-wider uppercase">DROP FILES HERE</div>
 			</div>
 		{/if}
-		
+
 		<!-- Model selector (when enabled) -->
 		{#if showModelSelector && availableModels().length > 0}
 			<div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-exo-medium-gray/30">
@@ -244,8 +230,10 @@
 						<button
 							bind:this={dropdownButtonRef}
 							type="button"
-							onclick={() => isModelDropdownOpen = !isModelDropdownOpen}
-							class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-1.5 text-xs font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 {isModelDropdownOpen ? 'border-exo-yellow/70' : ''}"
+							onclick={() => (isModelDropdownOpen = !isModelDropdownOpen)}
+							class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-1.5 text-xs font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 {isModelDropdownOpen
+								? 'border-exo-yellow/70'
+								: ''}"
 						>
 							{#if availableModels().find(m => m.id === currentModel)}
 								<span class="text-exo-yellow truncate">{availableModels().find(m => m.id === currentModel)?.label}</span>
@@ -261,18 +249,13 @@
 							</svg>
 						</div>
 					</div>
-					
+
 					{#if isModelDropdownOpen}
 						<!-- Backdrop to close dropdown -->
-						<button 
-							type="button"
-							class="fixed inset-0 z-[9998] cursor-default" 
-							onclick={() => isModelDropdownOpen = false}
-							aria-label="Close dropdown"
-						></button>
-						
+						<button type="button" class="fixed inset-0 z-[9998] cursor-default" onclick={() => (isModelDropdownOpen = false)} aria-label="Close dropdown"></button>
+
 						<!-- Dropdown Panel - fixed positioning to escape overflow:hidden -->
-						<div 
+						<div
 							class="fixed bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto"
 							style="bottom: calc(100vh - {dropdownPosition().top}px + 4px); left: {dropdownPosition().left}px; width: {dropdownPosition().width}px;"
 						>
@@ -284,11 +267,9 @@
 											setSelectedChatModel(model.id);
 											isModelDropdownOpen = false;
 										}}
-										class="w-full px-3 py-2 text-left text-xs font-mono tracking-wide transition-colors duration-100 flex items-center gap-2 {
-											currentModel === model.id 
-											? 'bg-transparent text-exo-yellow' 
-											: 'text-exo-light-gray hover:text-exo-yellow'
-										}"
+										class="w-full px-3 py-2 text-left text-xs font-mono tracking-wide transition-colors duration-100 flex items-center gap-2 {currentModel === model.id
+											? 'bg-transparent text-exo-yellow'
+											: 'text-exo-light-gray hover:text-exo-yellow'}"
 									>
 										{#if currentModel === model.id}
 											<svg class="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
@@ -322,17 +303,14 @@
 				{/if}
 			</div>
 		{/if}
-		
+
 		<!-- Attached files preview -->
 		{#if uploadedFiles.length > 0}
 			<div class="px-3 pt-3">
-				<ChatAttachments 
-					files={uploadedFiles} 
-					onRemove={handleFileRemove}
-				/>
+				<ChatAttachments files={uploadedFiles} onRemove={handleFileRemove} />
 			</div>
 		{/if}
-		
+
 		<!-- Input area -->
 		<div class="flex items-start gap-2 sm:gap-3 py-3 px-3 sm:px-4">
 			<!-- Attach file button -->
@@ -344,13 +322,18 @@
 				title="Attach file"
 			>
 				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
+					/>
 				</svg>
 			</button>
-			
+
 			<!-- Terminal prompt -->
 			<span class="text-exo-yellow text-sm font-bold flex-shrink-0 leading-7">▶</span>
-			
+
 			<textarea
 				bind:this={textareaRef}
 				bind:value={message}
@@ -363,14 +346,12 @@
 				class="flex-1 resize-none bg-transparent text-foreground placeholder:text-exo-light-gray/60 placeholder:text-sm placeholder:tracking-[0.15em] placeholder:leading-7 focus:outline-none focus:ring-0 focus:border-none disabled:opacity-50 text-sm leading-7 font-mono"
 				style="min-height: 28px; max-height: 150px;"
 			></textarea>
-			
+
 			<button
 				type="submit"
 				disabled={!canSend || loading}
 				class="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-xs tracking-[0.1em] sm:tracking-[0.15em] uppercase font-medium transition-all duration-200 whitespace-nowrap
-					{!canSend || loading 
-						? 'bg-exo-medium-gray/50 text-exo-light-gray cursor-not-allowed' 
-						: 'bg-exo-yellow text-exo-black hover:bg-exo-yellow-darker hover:shadow-[0_0_20px_rgba(255,215,0,0.3)]'}"
+					{!canSend || loading ? 'bg-exo-medium-gray/50 text-exo-light-gray cursor-not-allowed' : 'bg-exo-yellow text-exo-black hover:bg-exo-yellow-darker hover:shadow-[0_0_20px_rgba(255,215,0,0.3)]'}"
 				aria-label="Send message"
 			>
 				{#if loading}
@@ -384,11 +365,11 @@
 				{/if}
 			</button>
 		</div>
-		
+
 		<!-- Bottom accent line -->
 		<div class="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-exo-yellow/30 to-transparent"></div>
 	</div>
-	
+
 	{#if showHelperText}
 		<p class="mt-2 sm:mt-3 text-center text-xs sm:text-xs text-exo-light-gray tracking-[0.1em] sm:tracking-[0.15em] uppercase">
 			<kbd class="px-1 sm:px-1.5 py-0.5 rounded bg-exo-medium-gray/30 text-exo-light-gray border border-exo-medium-gray/50">ENTER</kbd>

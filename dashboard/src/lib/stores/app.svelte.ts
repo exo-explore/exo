@@ -11,14 +11,11 @@ import { browser } from "$app/environment";
 
 // UUID generation fallback for browsers without crypto.randomUUID
 function generateUUID(): string {
-	if (
-		typeof crypto !== "undefined" &&
-		typeof crypto.randomUUID === "function"
-	) {
+	if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
 		return crypto.randomUUID();
 	}
 	// Fallback implementation
-	return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+	return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
 		const r = (Math.random() * 16) | 0;
 		const v = c === "x" ? r : (r & 0x3) | 0x8;
 		return v.toString(16);
@@ -105,9 +102,7 @@ interface RawTopologyNode {
 interface RawTopologyConnection {
 	localNodeId: string;
 	sendBackNodeId: string;
-	sendBackMultiaddr?:
-		| { multiaddr?: string; address?: string; ip_address?: string }
-		| string;
+	sendBackMultiaddr?: { multiaddr?: string; address?: string; ip_address?: string } | string;
 }
 
 interface RawTopology {
@@ -206,10 +201,7 @@ export interface Conversation {
 
 const STORAGE_KEY = "exo-conversations";
 
-function transformTopology(
-	raw: RawTopology,
-	profiles?: RawNodeProfiles,
-): TopologyData {
+function transformTopology(raw: RawTopology, profiles?: RawNodeProfiles): TopologyData {
 	const nodes: Record<string, NodeInfo> = {};
 	const edges: TopologyEdge[] = [];
 
@@ -220,42 +212,31 @@ function transformTopology(
 		const ramAvailable = profile?.memory?.ramAvailable?.inBytes ?? 0;
 		const ramUsage = Math.max(ramTotal - ramAvailable, 0);
 
-		const networkInterfaces = (profile?.networkInterfaces || []).map(
-			(iface) => {
-				const addresses: string[] = [];
-				if (iface.ipAddress && typeof iface.ipAddress === "string") {
-					addresses.push(iface.ipAddress);
+		const networkInterfaces = (profile?.networkInterfaces || []).map(iface => {
+			const addresses: string[] = [];
+			if (iface.ipAddress && typeof iface.ipAddress === "string") {
+				addresses.push(iface.ipAddress);
+			}
+			if (Array.isArray(iface.addresses)) {
+				for (const addr of iface.addresses) {
+					if (typeof addr === "string") addresses.push(addr);
+					else if (addr && typeof addr === "object" && addr.address) addresses.push(addr.address);
 				}
-				if (Array.isArray(iface.addresses)) {
-					for (const addr of iface.addresses) {
-						if (typeof addr === "string") addresses.push(addr);
-						else if (addr && typeof addr === "object" && addr.address)
-							addresses.push(addr.address);
-					}
-				}
-				if (Array.isArray(iface.ipAddresses)) {
-					addresses.push(
-						...iface.ipAddresses.filter(
-							(a): a is string => typeof a === "string",
-						),
-					);
-				}
-				if (Array.isArray(iface.ips)) {
-					addresses.push(
-						...iface.ips.filter((a): a is string => typeof a === "string"),
-					);
-				}
-				if (iface.ipv4 && typeof iface.ipv4 === "string")
-					addresses.push(iface.ipv4);
-				if (iface.ipv6 && typeof iface.ipv6 === "string")
-					addresses.push(iface.ipv6);
+			}
+			if (Array.isArray(iface.ipAddresses)) {
+				addresses.push(...iface.ipAddresses.filter((a): a is string => typeof a === "string"));
+			}
+			if (Array.isArray(iface.ips)) {
+				addresses.push(...iface.ips.filter((a): a is string => typeof a === "string"));
+			}
+			if (iface.ipv4 && typeof iface.ipv4 === "string") addresses.push(iface.ipv4);
+			if (iface.ipv6 && typeof iface.ipv6 === "string") addresses.push(iface.ipv6);
 
-				return {
-					name: iface.name,
-					addresses: Array.from(new Set(addresses)),
-				};
-			},
-		);
+			return {
+				name: iface.name,
+				addresses: Array.from(new Set(addresses))
+			};
+		});
 
 		const ipToInterface: Record<string, string> = {};
 		for (const iface of networkInterfaces) {
@@ -268,27 +249,21 @@ function transformTopology(
 			system_info: {
 				model_id: profile?.modelId ?? "Unknown",
 				chip: profile?.chipId,
-				memory: ramTotal,
+				memory: ramTotal
 			},
 			network_interfaces: networkInterfaces,
 			ip_to_interface: ipToInterface,
 			macmon_info: {
 				memory: {
 					ram_usage: ramUsage,
-					ram_total: ramTotal,
+					ram_total: ramTotal
 				},
-				temp:
-					profile?.system?.temp !== undefined
-						? { gpu_temp_avg: profile.system.temp }
-						: undefined,
-				gpu_usage:
-					profile?.system?.gpuUsage !== undefined
-						? [0, profile.system.gpuUsage]
-						: undefined,
-				sys_power: profile?.system?.sysPower,
+				temp: profile?.system?.temp !== undefined ? { gpu_temp_avg: profile.system.temp } : undefined,
+				gpu_usage: profile?.system?.gpuUsage !== undefined ? [0, profile.system.gpuUsage] : undefined,
+				sys_power: profile?.system?.sysPower
 			},
 			last_macmon_update: Date.now() / 1000,
-			friendly_name: profile?.friendlyName,
+			friendly_name: profile?.friendlyName
 		};
 	}
 
@@ -303,17 +278,14 @@ function transformTopology(
 			if (typeof multi === "string") {
 				sendBackIp = extractIpFromMultiaddr(multi);
 			} else {
-				sendBackIp =
-					multi.ip_address ||
-					extractIpFromMultiaddr(multi.multiaddr) ||
-					extractIpFromMultiaddr(multi.address);
+				sendBackIp = multi.ip_address || extractIpFromMultiaddr(multi.multiaddr) || extractIpFromMultiaddr(multi.address);
 			}
 		}
 
 		edges.push({
 			source: conn.localNodeId,
 			target: conn.sendBackNodeId,
-			sendBackIp,
+			sendBackIp
 		});
 	}
 
@@ -387,7 +359,7 @@ class AppStore {
 			const stored = localStorage.getItem(STORAGE_KEY);
 			if (stored) {
 				const parsed = JSON.parse(stored) as Array<Partial<Conversation>>;
-				this.conversations = parsed.map((conversation) => ({
+				this.conversations = parsed.map(conversation => ({
 					id: conversation.id ?? generateUUID(),
 					name: conversation.name ?? "Chat",
 					messages: conversation.messages ?? [],
@@ -395,7 +367,7 @@ class AppStore {
 					updatedAt: conversation.updatedAt ?? Date.now(),
 					modelId: conversation.modelId ?? null,
 					sharding: conversation.sharding ?? null,
-					instanceType: conversation.instanceType ?? null,
+					instanceType: conversation.instanceType ?? null
 				}));
 			}
 		} catch (error) {
@@ -446,10 +418,7 @@ class AppStore {
 
 	private saveTopologyOnlyModeToStorage() {
 		try {
-			localStorage.setItem(
-				"exo-topology-only-mode",
-				this.topologyOnlyMode ? "true" : "false",
-			);
+			localStorage.setItem("exo-topology-only-mode", this.topologyOnlyMode ? "true" : "false");
 		} catch (error) {
 			console.error("Failed to save topology only mode:", error);
 		}
@@ -468,10 +437,7 @@ class AppStore {
 
 	private saveChatSidebarVisibleToStorage() {
 		try {
-			localStorage.setItem(
-				"exo-chat-sidebar-visible",
-				this.chatSidebarVisible ? "true" : "false",
-			);
+			localStorage.setItem("exo-chat-sidebar-visible", this.chatSidebarVisible ? "true" : "false");
 		} catch (error) {
 			console.error("Failed to save chat sidebar visibility:", error);
 		}
@@ -514,15 +480,13 @@ class AppStore {
 
 		const conversation: Conversation = {
 			id,
-			name:
-				name ||
-				`Chat ${new Date(now).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`,
+			name: name || `Chat ${new Date(now).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`,
 			messages: [],
 			createdAt: now,
 			updatedAt: now,
 			modelId: derivedModelId,
 			sharding: derivedSharding,
-			instanceType: derivedInstanceType,
+			instanceType: derivedInstanceType
 		};
 
 		this.conversations.unshift(conversation);
@@ -540,7 +504,7 @@ class AppStore {
 	 * Load a conversation by ID
 	 */
 	loadConversation(id: string): boolean {
-		const conversation = this.conversations.find((c) => c.id === id);
+		const conversation = this.conversations.find(c => c.id === id);
 		if (!conversation) return false;
 
 		this.activeConversationId = id;
@@ -557,7 +521,7 @@ class AppStore {
 	 * Delete a conversation by ID
 	 */
 	deleteConversation(id: string) {
-		this.conversations = this.conversations.filter((c) => c.id !== id);
+		this.conversations = this.conversations.filter(c => c.id !== id);
 
 		if (this.activeConversationId === id) {
 			this.activeConversationId = null;
@@ -585,7 +549,7 @@ class AppStore {
 	 * Rename a conversation
 	 */
 	renameConversation(id: string, newName: string) {
-		const conversation = this.conversations.find((c) => c.id === id);
+		const conversation = this.conversations.find(c => c.id === id);
 		if (conversation) {
 			conversation.name = newName;
 			conversation.updatedAt = Date.now();
@@ -620,11 +584,7 @@ class AppStore {
 
 		let instanceType: string | null = null;
 		if (instanceTag === "MlxRingInstance") instanceType = "MLX Ring";
-		else if (
-			instanceTag === "MlxIbvInstance" ||
-			instanceTag === "MlxJacclInstance"
-		)
-			instanceType = "MLX RDMA";
+		else if (instanceTag === "MlxIbvInstance" || instanceTag === "MlxJacclInstance") instanceType = "MLX RDMA";
 
 		let sharding: string | null = null;
 		const inst = instance as {
@@ -636,8 +596,7 @@ class AppStore {
 			const [shardTag] = this.getTaggedValue(firstShardWrapped);
 			if (shardTag === "PipelineShardMetadata") sharding = "Pipeline";
 			else if (shardTag === "TensorShardMetadata") sharding = "Tensor";
-			else if (shardTag === "PrefillDecodeShardMetadata")
-				sharding = "Prefill/Decode";
+			else if (shardTag === "PrefillDecodeShardMetadata") sharding = "Prefill/Decode";
 		}
 
 		return { sharding, instanceType };
@@ -664,15 +623,9 @@ class AppStore {
 		return { modelId, sharding, instanceType };
 	}
 
-	private applyConversationModelInfo(info: {
-		modelId: string;
-		sharding: string | null;
-		instanceType: string | null;
-	}) {
+	private applyConversationModelInfo(info: { modelId: string; sharding: string | null; instanceType: string | null }) {
 		if (!this.activeConversationId) return;
-		const conversation = this.conversations.find(
-			(c) => c.id === this.activeConversationId,
-		);
+		const conversation = this.conversations.find(c => c.id === this.activeConversationId);
 		if (!conversation) return;
 
 		// Keep the first known modelId stable; only backfill if missing
@@ -689,25 +642,17 @@ class AppStore {
 		return (parts[parts.length - 1] || modelId).toLowerCase();
 	}
 
-	private isBetterModelId(
-		currentId: string | null,
-		candidateId: string | null,
-	): boolean {
+	private isBetterModelId(currentId: string | null, candidateId: string | null): boolean {
 		if (!candidateId) return false;
 		if (!currentId) return true;
 		const currentTail = this.getModelTail(currentId);
 		const candidateTail = this.getModelTail(candidateId);
-		return (
-			candidateTail.length > currentTail.length &&
-			candidateTail.startsWith(currentTail)
-		);
+		return candidateTail.length > currentTail.length && candidateTail.startsWith(currentTail);
 	}
 
 	private refreshConversationModelFromInstances() {
 		if (!this.activeConversationId) return;
-		const conversation = this.conversations.find(
-			(c) => c.id === this.activeConversationId,
-		);
+		const conversation = this.conversations.find(c => c.id === this.activeConversationId);
 		if (!conversation) return;
 
 		// Prefer stored model; do not replace it once set. Only backfill when missing.
@@ -746,9 +691,7 @@ class AppStore {
 		}
 
 		const info = this.buildConversationModelInfo(preferredModelId);
-		const hasNewInfo = Boolean(
-			info.sharding || info.instanceType || !conversation.modelId,
-		);
+		const hasNewInfo = Boolean(info.sharding || info.instanceType || !conversation.modelId);
 		if (hasNewInfo) {
 			this.applyConversationModelInfo(info);
 		}
@@ -764,18 +707,14 @@ class AppStore {
 	private updateActiveConversation() {
 		if (!this.activeConversationId) return;
 
-		const conversation = this.conversations.find(
-			(c) => c.id === this.activeConversationId,
-		);
+		const conversation = this.conversations.find(c => c.id === this.activeConversationId);
 		if (conversation) {
 			conversation.messages = [...this.messages];
 			conversation.updatedAt = Date.now();
 
 			// Auto-generate name from first user message if still has default name
 			if (conversation.name.startsWith("Chat ")) {
-				const firstUserMsg = conversation.messages.find(
-					(m) => m.role === "user" && m.content.trim(),
-				);
+				const firstUserMsg = conversation.messages.find(m => m.role === "user" && m.content.trim());
 				if (firstUserMsg) {
 					// Clean up the content - remove file context markers and whitespace
 					let content = firstUserMsg.content
@@ -784,8 +723,7 @@ class AppStore {
 
 					if (content) {
 						const preview = content.slice(0, 50);
-						conversation.name =
-							preview.length < content.length ? preview + "..." : preview;
+						conversation.name = preview.length < content.length ? preview + "..." : preview;
 					}
 				}
 			}
@@ -895,13 +833,9 @@ class AppStore {
 		this.selectedPreviewModelId = modelId;
 
 		try {
-			const response = await fetch(
-				`/instance/previews?model_id=${encodeURIComponent(modelId)}`,
-			);
+			const response = await fetch(`/instance/previews?model_id=${encodeURIComponent(modelId)}`);
 			if (!response.ok) {
-				throw new Error(
-					`Failed to fetch placement previews: ${response.status}`,
-				);
+				throw new Error(`Failed to fetch placement previews: ${response.status}`);
 			}
 			const data: PlacementPreviewResponse = await response.json();
 			this.placementPreviews = data.previews;
@@ -972,7 +906,7 @@ class AppStore {
 			id: generateUUID(),
 			role,
 			content,
-			timestamp: Date.now(),
+			timestamp: Date.now()
 		};
 		this.messages.push(message);
 		return message;
@@ -982,7 +916,7 @@ class AppStore {
 	 * Delete a message and all subsequent messages
 	 */
 	deleteMessage(messageId: string) {
-		const messageIndex = this.messages.findIndex((m) => m.id === messageId);
+		const messageIndex = this.messages.findIndex(m => m.id === messageId);
 		if (messageIndex === -1) return;
 
 		// Remove this message and all subsequent messages
@@ -994,7 +928,7 @@ class AppStore {
 	 * Edit a user message content (does not regenerate response)
 	 */
 	editMessage(messageId: string, newContent: string) {
-		const message = this.messages.find((m) => m.id === messageId);
+		const message = this.messages.find(m => m.id === messageId);
 		if (!message) return;
 
 		message.content = newContent;
@@ -1005,11 +939,8 @@ class AppStore {
 	/**
 	 * Edit a user message and regenerate the response
 	 */
-	async editAndRegenerate(
-		messageId: string,
-		newContent: string,
-	): Promise<void> {
-		const messageIndex = this.messages.findIndex((m) => m.id === messageId);
+	async editAndRegenerate(messageId: string, newContent: string): Promise<void> {
+		const messageIndex = this.messages.findIndex(m => m.id === messageId);
 		if (messageIndex === -1) return;
 
 		const message = this.messages[messageIndex];
@@ -1056,15 +987,14 @@ class AppStore {
 		try {
 			const systemPrompt = {
 				role: "system" as const,
-				content:
-					"You are a helpful AI assistant. Respond directly and concisely. Do not show your reasoning or thought process.",
+				content: "You are a helpful AI assistant. Respond directly and concisely. Do not show your reasoning or thought process."
 			};
 
 			const apiMessages = [
 				systemPrompt,
-				...this.messages.slice(0, -1).map((m) => {
+				...this.messages.slice(0, -1).map(m => {
 					return { role: m.role, content: m.content };
-				}),
+				})
 			];
 
 			// Determine which model to use
@@ -1072,15 +1002,11 @@ class AppStore {
 			if (!modelToUse) {
 				const firstInstanceKey = Object.keys(this.instances)[0];
 				if (firstInstanceKey) {
-					const instance = this.instances[firstInstanceKey] as
-						| Record<string, unknown>
-						| undefined;
+					const instance = this.instances[firstInstanceKey] as Record<string, unknown> | undefined;
 					if (instance) {
 						const keys = Object.keys(instance);
 						if (keys.length === 1) {
-							const inst = instance[keys[0]] as
-								| { shardAssignments?: { modelId?: string } }
-								| undefined;
+							const inst = instance[keys[0]] as { shardAssignments?: { modelId?: string } } | undefined;
 							modelToUse = inst?.shardAssignments?.modelId || "";
 						}
 					}
@@ -1088,12 +1014,9 @@ class AppStore {
 			}
 
 			if (!modelToUse) {
-				const idx = this.messages.findIndex(
-					(m) => m.id === assistantMessage.id,
-				);
+				const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
 				if (idx !== -1) {
-					this.messages[idx].content =
-						"Error: No model available. Please launch an instance first.";
+					this.messages[idx].content = "Error: No model available. Please launch an instance first.";
 				}
 				this.isLoading = false;
 				this.updateActiveConversation();
@@ -1106,18 +1029,15 @@ class AppStore {
 				body: JSON.stringify({
 					model: modelToUse,
 					messages: apiMessages,
-					stream: true,
-				}),
+					stream: true
+				})
 			});
 
 			if (!response.ok) {
 				const errorText = await response.text();
-				const idx = this.messages.findIndex(
-					(m) => m.id === assistantMessage.id,
-				);
+				const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
 				if (idx !== -1) {
-					this.messages[idx].content =
-						`Error: ${response.status} - ${errorText}`;
+					this.messages[idx].content = `Error: ${response.status} - ${errorText}`;
 				}
 				this.isLoading = false;
 				this.updateActiveConversation();
@@ -1126,9 +1046,7 @@ class AppStore {
 
 			const reader = response.body?.getReader();
 			if (!reader) {
-				const idx = this.messages.findIndex(
-					(m) => m.id === assistantMessage.id,
-				);
+				const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
 				if (idx !== -1) {
 					this.messages[idx].content = "Error: No response stream available";
 				}
@@ -1159,14 +1077,11 @@ class AppStore {
 							const delta = json.choices?.[0]?.delta?.content;
 							if (delta) {
 								fullContent += delta;
-								const { displayContent, thinkingContent } =
-									this.stripThinkingTags(fullContent);
+								const { displayContent, thinkingContent } = this.stripThinkingTags(fullContent);
 								this.currentResponse = displayContent;
 
 								// Update the assistant message in place (triggers Svelte reactivity)
-								const idx = this.messages.findIndex(
-									(m) => m.id === assistantMessage.id,
-								);
+								const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
 								if (idx !== -1) {
 									this.messages[idx].content = displayContent;
 									this.messages[idx].thinking = thinkingContent || undefined;
@@ -1181,19 +1096,17 @@ class AppStore {
 			}
 
 			// Final cleanup of the message
-			const { displayContent, thinkingContent } =
-				this.stripThinkingTags(fullContent);
-			const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
+			const { displayContent, thinkingContent } = this.stripThinkingTags(fullContent);
+			const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
 			if (idx !== -1) {
 				this.messages[idx].content = displayContent;
 				this.messages[idx].thinking = thinkingContent || undefined;
 			}
 			this.persistActiveConversation();
 		} catch (error) {
-			const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
+			const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
 			if (idx !== -1) {
-				this.messages[idx].content =
-					`Error: ${error instanceof Error ? error.message : "Unknown error"}`;
+				this.messages[idx].content = `Error: ${error instanceof Error ? error.message : "Unknown error"}`;
 			}
 			this.persistActiveConversation();
 		} finally {
@@ -1250,7 +1163,7 @@ class AppStore {
 
 		return {
 			displayContent: displayContent.trim(),
-			thinkingContent: extracted.join("\n\n"),
+			thinkingContent: extracted.join("\n\n")
 		};
 	}
 
@@ -1265,10 +1178,9 @@ class AppStore {
 			type: string;
 			textContent?: string;
 			preview?: string;
-		}[],
+		}[]
 	): Promise<void> {
-		if ((!content.trim() && (!files || files.length === 0)) || this.isLoading)
-			return;
+		if ((!content.trim() && (!files || files.length === 0)) || this.isLoading) return;
 
 		if (!this.hasStartedChat) {
 			this.startChat();
@@ -1293,14 +1205,14 @@ class AppStore {
 						type: "image",
 						name: file.name,
 						preview: file.preview,
-						mimeType: file.type,
+						mimeType: file.type
 					});
 				} else if (file.textContent) {
 					attachments.push({
 						type: "text",
 						name: file.name,
 						content: file.textContent,
-						mimeType: file.type,
+						mimeType: file.type
 					});
 					// Add text file content to the message context
 					fileContext += `\n\n[File: ${file.name}]\n\`\`\`\n${file.textContent}\n\`\`\``;
@@ -1308,7 +1220,7 @@ class AppStore {
 					attachments.push({
 						type: "file",
 						name: file.name,
-						mimeType: file.type,
+						mimeType: file.type
 					});
 				}
 			}
@@ -1323,7 +1235,7 @@ class AppStore {
 			role: "user",
 			content: content, // Store original content for display
 			timestamp: Date.now(),
-			attachments: attachments.length > 0 ? attachments : undefined,
+			attachments: attachments.length > 0 ? attachments : undefined
 		};
 		this.messages.push(userMessage);
 
@@ -1335,14 +1247,13 @@ class AppStore {
 			// Build the messages array for the API with system prompt
 			const systemPrompt = {
 				role: "system" as const,
-				content:
-					"You are a helpful AI assistant. Respond directly and concisely. Do not show your reasoning or thought process. When files are shared with you, analyze them and respond helpfully.",
+				content: "You are a helpful AI assistant. Respond directly and concisely. Do not show your reasoning or thought process. When files are shared with you, analyze them and respond helpfully."
 			};
 
 			// Build API messages - include file content for text files
 			const apiMessages = [
 				systemPrompt,
-				...this.messages.slice(0, -1).map((m) => {
+				...this.messages.slice(0, -1).map(m => {
 					// Build content including any text file attachments
 					let msgContent = m.content;
 
@@ -1357,9 +1268,9 @@ class AppStore {
 
 					return {
 						role: m.role,
-						content: msgContent,
+						content: msgContent
 					};
-				}),
+				})
 			];
 
 			// Determine the model to use - prefer selectedChatModel, otherwise try to get from instances
@@ -1368,13 +1279,9 @@ class AppStore {
 				// Try to get model from first running instance
 				for (const [, instanceWrapper] of Object.entries(this.instances)) {
 					if (instanceWrapper && typeof instanceWrapper === "object") {
-						const keys = Object.keys(
-							instanceWrapper as Record<string, unknown>,
-						);
+						const keys = Object.keys(instanceWrapper as Record<string, unknown>);
 						if (keys.length === 1) {
-							const instance = (instanceWrapper as Record<string, unknown>)[
-								keys[0]
-							] as { shardAssignments?: { modelId?: string } };
+							const instance = (instanceWrapper as Record<string, unknown>)[keys[0]] as { shardAssignments?: { modelId?: string } };
 							if (instance?.shardAssignments?.modelId) {
 								modelToUse = instance.shardAssignments.modelId;
 								break;
@@ -1385,9 +1292,7 @@ class AppStore {
 			}
 
 			if (!modelToUse) {
-				throw new Error(
-					"No model selected and no running instances available. Please launch an instance first.",
-				);
+				throw new Error("No model selected and no running instances available. Please launch an instance first.");
 			}
 
 			const conversationModelInfo = this.buildConversationModelInfo(modelToUse);
@@ -1401,14 +1306,14 @@ class AppStore {
 			const response = await fetch("/v1/chat/completions", {
 				method: "POST",
 				headers: {
-					"Content-Type": "application/json",
+					"Content-Type": "application/json"
 				},
 				body: JSON.stringify({
 					model: modelToUse,
 					messages: apiMessages,
 					temperature: 0.7,
-					stream: true,
-				}),
+					stream: true
+				})
 			});
 
 			if (!response.ok) {
@@ -1466,14 +1371,11 @@ class AppStore {
 								fullContent += tokenContent;
 
 								// Strip thinking tags for display and extract thinking content
-								const { displayContent, thinkingContent } =
-									this.stripThinkingTags(fullContent);
+								const { displayContent, thinkingContent } = this.stripThinkingTags(fullContent);
 								this.currentResponse = displayContent;
 
 								// Update the assistant message in place
-								const idx = this.messages.findIndex(
-									(m) => m.id === assistantMessage.id,
-								);
+								const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
 								if (idx !== -1) {
 									this.messages[idx].content = displayContent;
 									this.messages[idx].thinking = thinkingContent || undefined;
@@ -1511,9 +1413,8 @@ class AppStore {
 			}
 
 			// Final cleanup of the message
-			const { displayContent, thinkingContent } =
-				this.stripThinkingTags(fullContent);
-			const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
+			const { displayContent, thinkingContent } = this.stripThinkingTags(fullContent);
+			const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
 			if (idx !== -1) {
 				this.messages[idx].content = displayContent;
 				this.messages[idx].thinking = thinkingContent || undefined;
@@ -1529,10 +1430,9 @@ class AppStore {
 		} catch (error) {
 			console.error("Error sending message:", error);
 			// Update the assistant message with error
-			const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
+			const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
 			if (idx !== -1) {
-				this.messages[idx].content =
-					`Error: ${error instanceof Error ? error.message : "Failed to get response"}`;
+				this.messages[idx].content = `Error: ${error instanceof Error ? error.message : "Failed to get response"}`;
 			}
 			this.persistActiveConversation();
 		} finally {
@@ -1561,9 +1461,7 @@ class AppStore {
 	 */
 	getActiveConversation(): Conversation | null {
 		if (!this.activeConversationId) return null;
-		return (
-			this.conversations.find((c) => c.id === this.activeConversationId) || null
-		);
+		return this.conversations.find(c => c.id === this.activeConversationId) || null;
 	}
 }
 
@@ -1601,45 +1499,33 @@ export const sendMessage = (
 		type: string;
 		textContent?: string;
 		preview?: string;
-	}[],
+	}[]
 ) => appStore.sendMessage(content, files);
 export const clearChat = () => appStore.clearChat();
-export const setSelectedChatModel = (modelId: string) =>
-	appStore.setSelectedModel(modelId);
-export const selectPreviewModel = (modelId: string | null) =>
-	appStore.selectPreviewModel(modelId);
-export const deleteMessage = (messageId: string) =>
-	appStore.deleteMessage(messageId);
-export const editMessage = (messageId: string, newContent: string) =>
-	appStore.editMessage(messageId, newContent);
-export const editAndRegenerate = (messageId: string, newContent: string) =>
-	appStore.editAndRegenerate(messageId, newContent);
+export const setSelectedChatModel = (modelId: string) => appStore.setSelectedModel(modelId);
+export const selectPreviewModel = (modelId: string | null) => appStore.selectPreviewModel(modelId);
+export const deleteMessage = (messageId: string) => appStore.deleteMessage(messageId);
+export const editMessage = (messageId: string, newContent: string) => appStore.editMessage(messageId, newContent);
+export const editAndRegenerate = (messageId: string, newContent: string) => appStore.editAndRegenerate(messageId, newContent);
 export const regenerateLastResponse = () => appStore.regenerateLastResponse();
 
 // Conversation actions
 export const conversations = () => appStore.conversations;
 export const activeConversationId = () => appStore.activeConversationId;
-export const createConversation = (name?: string) =>
-	appStore.createConversation(name);
+export const createConversation = (name?: string) => appStore.createConversation(name);
 export const loadConversation = (id: string) => appStore.loadConversation(id);
-export const deleteConversation = (id: string) =>
-	appStore.deleteConversation(id);
+export const deleteConversation = (id: string) => appStore.deleteConversation(id);
 export const deleteAllConversations = () => appStore.deleteAllConversations();
-export const renameConversation = (id: string, name: string) =>
-	appStore.renameConversation(id, name);
+export const renameConversation = (id: string, name: string) => appStore.renameConversation(id, name);
 export const getActiveConversation = () => appStore.getActiveConversation();
 
 // Sidebar actions
 export const isSidebarOpen = () => appStore.isSidebarOpen;
 export const toggleSidebar = () => appStore.toggleSidebar();
 export const toggleDebugMode = () => appStore.toggleDebugMode();
-export const setDebugMode = (enabled: boolean) =>
-	appStore.setDebugMode(enabled);
+export const setDebugMode = (enabled: boolean) => appStore.setDebugMode(enabled);
 export const toggleTopologyOnlyMode = () => appStore.toggleTopologyOnlyMode();
-export const setTopologyOnlyMode = (enabled: boolean) =>
-	appStore.setTopologyOnlyMode(enabled);
-export const toggleChatSidebarVisible = () =>
-	appStore.toggleChatSidebarVisible();
-export const setChatSidebarVisible = (visible: boolean) =>
-	appStore.setChatSidebarVisible(visible);
+export const setTopologyOnlyMode = (enabled: boolean) => appStore.setTopologyOnlyMode(enabled);
+export const toggleChatSidebarVisible = () => appStore.toggleChatSidebarVisible();
+export const setChatSidebarVisible = (visible: boolean) => appStore.setChatSidebarVisible(visible);
 export const refreshState = () => appStore.fetchState();

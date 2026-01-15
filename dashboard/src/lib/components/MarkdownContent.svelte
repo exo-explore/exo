@@ -59,14 +59,14 @@
 	function preprocessLaTeX(text: string): string {
 		// Protect code blocks
 		const codeBlocks: string[] = [];
-		let processed = text.replace(/```[\s\S]*?```|`[^`]+`/g, (match) => {
+		let processed = text.replace(/```[\s\S]*?```|`[^`]+`/g, match => {
 			codeBlocks.push(match);
 			return `<<CODE_${codeBlocks.length - 1}>>`;
 		});
 
 		// Convert \(...\) to $...$
 		processed = processed.replace(/\\\((.+?)\\\)/g, '$$$1$');
-		
+
 		// Convert \[...\] to $$...$$
 		processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, '$$$$$1$$$$');
 

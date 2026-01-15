@@ -72,7 +72,21 @@
               };
               prettier = {
                 enable = true;
-                includes = [ "*.ts" ];
+                package = self'.packages.prettier-svelte;
+                includes = [ "*.ts" "*.svelte" ];
+                settings = {
+                  useTabs = true;
+                  singleQuote = false;
+                  printWidth = 200;
+                  arrowParens = "avoid";
+                  trailingComma = "none";
+                  overrides = [
+                    {
+                      files = "*.svelte";
+                      options.singleQuote = true;
+                    }
+                  ];
+                };
               };
               swift-format = {
                 enable = true;

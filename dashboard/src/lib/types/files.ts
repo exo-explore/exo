@@ -22,21 +22,8 @@ export interface ChatAttachment {
 
 export type FileCategory = "image" | "text" | "pdf" | "audio" | "unknown";
 
-export const IMAGE_EXTENSIONS = [
-	".jpg",
-	".jpeg",
-	".png",
-	".gif",
-	".webp",
-	".svg",
-];
-export const IMAGE_MIME_TYPES = [
-	"image/jpeg",
-	"image/png",
-	"image/gif",
-	"image/webp",
-	"image/svg+xml",
-];
+export const IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"];
+export const IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"];
 
 export const TEXT_EXTENSIONS = [
 	".txt",
@@ -72,7 +59,7 @@ export const TEXT_EXTENSIONS = [
 	".r",
 	".dart",
 	".vue",
-	".svelte",
+	".svelte"
 ];
 export const TEXT_MIME_TYPES = [
 	"text/plain",
@@ -85,49 +72,31 @@ export const TEXT_MIME_TYPES = [
 	"text/xml",
 	"application/javascript",
 	"text/javascript",
-	"application/typescript",
+	"application/typescript"
 ];
 
 export const PDF_EXTENSIONS = [".pdf"];
 export const PDF_MIME_TYPES = ["application/pdf"];
 
 export const AUDIO_EXTENSIONS = [".mp3", ".wav", ".ogg", ".m4a"];
-export const AUDIO_MIME_TYPES = [
-	"audio/mpeg",
-	"audio/wav",
-	"audio/ogg",
-	"audio/mp4",
-];
+export const AUDIO_MIME_TYPES = ["audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4"];
 
 /**
  * Get file category based on MIME type and extension
  */
-export function getFileCategory(
-	mimeType: string,
-	fileName: string,
-): FileCategory {
+export function getFileCategory(mimeType: string, fileName: string): FileCategory {
 	const extension = fileName.toLowerCase().slice(fileName.lastIndexOf("."));
 
-	if (
-		IMAGE_MIME_TYPES.includes(mimeType) ||
-		IMAGE_EXTENSIONS.includes(extension)
-	) {
+	if (IMAGE_MIME_TYPES.includes(mimeType) || IMAGE_EXTENSIONS.includes(extension)) {
 		return "image";
 	}
 	if (PDF_MIME_TYPES.includes(mimeType) || PDF_EXTENSIONS.includes(extension)) {
 		return "pdf";
 	}
-	if (
-		AUDIO_MIME_TYPES.includes(mimeType) ||
-		AUDIO_EXTENSIONS.includes(extension)
-	) {
+	if (AUDIO_MIME_TYPES.includes(mimeType) || AUDIO_EXTENSIONS.includes(extension)) {
 		return "audio";
 	}
-	if (
-		TEXT_MIME_TYPES.includes(mimeType) ||
-		TEXT_EXTENSIONS.includes(extension) ||
-		mimeType.startsWith("text/")
-	) {
+	if (TEXT_MIME_TYPES.includes(mimeType) || TEXT_EXTENSIONS.includes(extension) || mimeType.startsWith("text/")) {
 		return "text";
 	}
 	return "unknown";
@@ -197,14 +166,11 @@ export function readFileAsText(file: File): Promise<string> {
 /**
  * Process uploaded files into ChatUploadedFile format
  */
-export async function processUploadedFiles(
-	files: File[],
-): Promise<ChatUploadedFile[]> {
+export async function processUploadedFiles(files: File[]): Promise<ChatUploadedFile[]> {
 	const results: ChatUploadedFile[] = [];
 
 	for (const file of files) {
-		const id =
-			Date.now().toString() + Math.random().toString(36).substring(2, 9);
+		const id = Date.now().toString() + Math.random().toString(36).substring(2, 9);
 		const category = getFileCategory(file.type, file.name);
 
 		const base: ChatUploadedFile = {
@@ -212,7 +178,7 @@ export async function processUploadedFiles(
 			name: file.name,
 			size: file.size,
 			type: file.type,
-			file,
+			file
 		};
 
 		try {
