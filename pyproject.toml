@@ -104,6 +104,8 @@ environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
 ]
+# Use wheels for MLX packages (complex Metal SDK build requirements)
+no-build-package = ["mlx", "mlx-metal"]
 
 ###
 # ruff configuration
