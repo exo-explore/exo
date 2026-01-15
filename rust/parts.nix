@@ -81,20 +81,6 @@
 
       config = {
         packages = {
-          # The system_custodian binary
-          system_custodian = craneLib.buildPackage (
-            commonArgs
-            // {
-              inherit cargoArtifacts;
-              cargoExtraArgs = "-p system_custodian";
-
-              meta = {
-                description = "System custodian daemon for exo";
-                mainProgram = "system_custodian";
-              };
-            }
-          );
-
           # Python bindings wheel via maturin
           exo_pyo3_bindings = craneLib.buildPackage (
             commonArgs
