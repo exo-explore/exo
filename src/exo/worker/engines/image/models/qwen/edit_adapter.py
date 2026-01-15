@@ -3,15 +3,15 @@ from pathlib import Path
 from typing import Any, cast
 
 import mlx.core as mx
-from mflux.config.runtime_config import RuntimeConfig
+from mflux.models.common.config.config import Config
 from mflux.models.qwen.latent_creator.qwen_latent_creator import QwenLatentCreator
 from mflux.models.qwen.model.qwen_transformer.qwen_attention import QwenAttention
 from mflux.models.qwen.model.qwen_transformer.qwen_transformer import QwenTransformer
 from mflux.models.qwen.model.qwen_transformer.qwen_transformer_block import (
     QwenTransformerBlock,
 )
+from mflux.models.qwen.variants.edit.qwen_edit_util import QwenEditUtil
 from mflux.models.qwen.variants.edit.qwen_image_edit import QwenImageEdit
-from mflux.models.qwen.variants.edit.utils.qwen_edit_util import QwenEditUtil
 
 from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.models.base import BaseModelAdapter
@@ -123,7 +123,7 @@ class QwenEditModelAdapter(BaseModelAdapter):
         self._config = config
         self._model = QwenImageEdit(
             quantize=quantize,
-            local_path=str(local_path),
+            model_path=str(local_path),
         )
         self._transformer = self._model.transformer
 
@@ -205,7 +205,7 @@ class QwenEditModelAdapter(BaseModelAdapter):
             int(output_height),
         )
 
-    def create_latents(self, seed: int, runtime_config: RuntimeConfig) -> mx.array:
+    def create_latents(self, seed: int, runtime_config: Config) -> mx.array:
         """Create initial noise latents (pure noise for edit mode)."""
         return QwenLatentCreator.create_noise(
             seed=seed,
@@ -225,7 +225,13 @@ class QwenEditModelAdapter(BaseModelAdapter):
             QwenEditPromptData with VL embeddings and conditioning latents
         """
         # Ensure image_paths and dimensions were set via set_image_dimensions()
-        if self._image_paths is None:
+        if (
+            self._image_paths is None
+            or self._vl_height is None
+            or self._vl_width is None
+            or self._vae_height is None
+            or self._vae_width is None
+        ):
             raise RuntimeError(
                 "set_image_dimensions() must be called before encode_prompt() "
                 "for QwenEditModelAdapter"
@@ -234,49 +240,20 @@ class QwenEditModelAdapter(BaseModelAdapter):
         negative_prompt = ""
         image_paths = self._image_paths
 
-        # Use stored dimensions (computed from input image)
-        vl_width = self._vl_width
-        vl_height = self._vl_height
-        vae_width = self._vae_width
-        vae_height = self._vae_height
-
-        # Encode prompts with images via vision-language components
-        tokenizer = self._model.qwen_vl_tokenizer
-        pos_input_ids, pos_attention_mask, pos_pixel_values, pos_image_grid_thw = (
-            tokenizer.tokenize_with_image(
-                prompt, image_paths, vl_width=vl_width, vl_height=vl_height
-            )
+        # TODO(ciaran): config is untyped and unused, unsure if Config or RuntimeConfig is intended
+        (
+            prompt_embeds,
+            prompt_mask,
+            negative_prompt_embeds,
+            negative_prompt_mask,
+        ) = self._model._encode_prompts_with_images(
+            prompt,
+            negative_prompt,
+            image_paths,
+            self._config,
+            self._vl_width,
+            self._vl_height,
         )
-
-        pos_hidden_states = self._model.qwen_vl_encoder(
-            input_ids=pos_input_ids,
-            attention_mask=pos_attention_mask,
-            pixel_values=pos_pixel_values,
-            image_grid_thw=pos_image_grid_thw,
-        )
-        mx.eval(pos_hidden_states[0])
-        mx.eval(pos_hidden_states[1])
-
-        # Encode negative prompt with images
-        neg_input_ids, neg_attention_mask, neg_pixel_values, neg_image_grid_thw = (
-            tokenizer.tokenize_with_image(
-                negative_prompt, image_paths, vl_width=vl_width, vl_height=vl_height
-            )
-        )
-
-        neg_hidden_states = self._model.qwen_vl_encoder(
-            input_ids=neg_input_ids,
-            attention_mask=neg_attention_mask,
-            pixel_values=neg_pixel_values,
-            image_grid_thw=neg_image_grid_thw,
-        )
-        mx.eval(neg_hidden_states[0])
-        mx.eval(neg_hidden_states[1])
-
-        # Create conditioning latents from input images
-        # Ensure dimensions are set (should have been set via set_image_dimensions)
-        assert vl_width is not None and vl_height is not None
-        assert vae_width is not None and vae_height is not None
 
         (
             conditioning_latents,
@@ -286,11 +263,11 @@ class QwenEditModelAdapter(BaseModelAdapter):
             num_images,
         ) = QwenEditUtil.create_image_conditioning_latents(
             vae=self._model.vae,
-            height=vae_height,
-            width=vae_width,
+            height=self._vae_height,
+            width=self._vae_width,
             image_paths=image_paths,
-            vl_width=vl_width,
-            vl_height=vl_height,
+            vl_width=self._vl_width,
+            vl_height=self._vl_height,
         )
 
         # Build cond_image_grid
@@ -302,10 +279,10 @@ class QwenEditModelAdapter(BaseModelAdapter):
             cond_image_grid = (1, cond_h_patches, cond_w_patches)
 
         return QwenEditPromptData(
-            prompt_embeds=pos_hidden_states[0].astype(mx.float16),
-            prompt_mask=pos_hidden_states[1].astype(mx.float16),
-            negative_prompt_embeds=neg_hidden_states[0].astype(mx.float16),
-            negative_prompt_mask=neg_hidden_states[1].astype(mx.float16),
+            prompt_embeds=prompt_embeds,
+            prompt_mask=prompt_mask,
+            negative_prompt_embeds=negative_prompt_embeds,
+            negative_prompt_mask=negative_prompt_mask,
             conditioning_latents=conditioning_latents,
             qwen_image_ids=qwen_image_ids,
             cond_image_grid=cond_image_grid,
@@ -362,7 +339,7 @@ class QwenEditModelAdapter(BaseModelAdapter):
     def compute_text_embeddings(
         self,
         t: int,
-        runtime_config: RuntimeConfig,
+        runtime_config: Config,
         pooled_prompt_embeds: mx.array | None = None,
         hidden_states: mx.array | None = None,
     ) -> mx.array:
@@ -384,7 +361,7 @@ class QwenEditModelAdapter(BaseModelAdapter):
     def compute_rotary_embeddings(
         self,
         prompt_embeds: mx.array,
-        runtime_config: RuntimeConfig,
+        runtime_config: Config,
         **kwargs: Any,
     ) -> Any:
         """Compute 3D rotary embeddings for Qwen edit."""

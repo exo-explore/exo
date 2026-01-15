@@ -2,8 +2,8 @@ from pathlib import Path
 from typing import Any, cast
 
 import mlx.core as mx
-from mflux.config.model_config import ModelConfig
-from mflux.config.runtime_config import RuntimeConfig
+from mflux.models.common.config.config import Config
+from mflux.models.common.config.model_config import ModelConfig
 from mflux.models.flux.latent_creator.flux_latent_creator import FluxLatentCreator
 from mflux.models.flux.model.flux_text_encoder.prompt_encoder import PromptEncoder
 from mflux.models.flux.model.flux_transformer.common.attention_utils import (
@@ -71,7 +71,7 @@ class FluxModelAdapter(BaseModelAdapter):
         self._config = config
         self._model = Flux1(
             model_config=ModelConfig.from_name(model_name=model_id, base_model=None),
-            local_path=str(local_path),
+            model_path=str(local_path),
             quantize=quantize,
         )
         self._transformer = self._model.transformer
@@ -134,7 +134,7 @@ class FluxModelAdapter(BaseModelAdapter):
     def compute_text_embeddings(
         self,
         t: int,
-        runtime_config: RuntimeConfig,
+        runtime_config: Config,
         pooled_prompt_embeds: mx.array | None = None,
         hidden_states: mx.array | None = None,  # Ignored by Flux
     ) -> mx.array:
@@ -151,7 +151,7 @@ class FluxModelAdapter(BaseModelAdapter):
     def compute_rotary_embeddings(
         self,
         prompt_embeds: mx.array,
-        runtime_config: RuntimeConfig,
+        runtime_config: Config,
         **kwargs: Any,
     ) -> mx.array:
         kontext_image_ids = kwargs.get("kontext_image_ids")

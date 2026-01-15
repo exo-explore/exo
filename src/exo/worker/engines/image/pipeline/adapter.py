@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import mlx.core as mx
-from mflux.config.runtime_config import RuntimeConfig
+from mflux.models.common.config.config import Config
 
 from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
@@ -147,7 +147,7 @@ class ModelAdapter(Protocol):
     def compute_text_embeddings(
         self,
         t: int,
-        runtime_config: RuntimeConfig,
+        runtime_config: Config,
         pooled_prompt_embeds: mx.array | None = None,
         hidden_states: mx.array | None = None,
     ) -> mx.array:
@@ -167,7 +167,7 @@ class ModelAdapter(Protocol):
     def compute_rotary_embeddings(
         self,
         prompt_embeds: mx.array,
-        runtime_config: RuntimeConfig,
+        runtime_config: Config,
         **kwargs: Any,
     ) -> Any:
         """Compute rotary position embeddings.
@@ -312,7 +312,7 @@ class ModelAdapter(Protocol):
         """
         ...
 
-    def create_latents(self, seed: int, runtime_config: RuntimeConfig) -> mx.array:
+    def create_latents(self, seed: int, runtime_config: Config) -> mx.array:
         """Create initial noise latents for generation.
 
         Args:
@@ -368,7 +368,7 @@ class ModelAdapter(Protocol):
     def decode_latents(
         self,
         latents: mx.array,
-        runtime_config: RuntimeConfig,
+        runtime_config: Config,
         seed: int,
         prompt: str,
     ) -> Any:

@@ -2,8 +2,8 @@ from pathlib import Path
 from typing import Any, cast
 
 import mlx.core as mx
-from mflux.config.model_config import ModelConfig
-from mflux.config.runtime_config import RuntimeConfig
+from mflux.models.common.config import ModelConfig
+from mflux.models.common.config.config import Config
 from mflux.models.qwen.latent_creator.qwen_latent_creator import QwenLatentCreator
 from mflux.models.qwen.model.qwen_text_encoder.qwen_prompt_encoder import (
     QwenPromptEncoder,
@@ -97,7 +97,7 @@ class QwenModelAdapter(BaseModelAdapter):
         self._config = config
         self._model = QwenImage(
             model_config=ModelConfig.from_name(model_name=model_id, base_model=None),
-            local_path=str(local_path),
+            model_path=str(local_path),
             quantize=quantize,
         )
         self._transformer = self._model.transformer
@@ -135,7 +135,7 @@ class QwenModelAdapter(BaseModelAdapter):
                 prompt=prompt,
                 negative_prompt=negative_prompt,
                 prompt_cache=self._model.prompt_cache,
-                qwen_tokenizer=self._model.qwen_tokenizer,
+                qwen_tokenizer=self._model.tokenizers["qwen"],
                 qwen_text_encoder=self._model.text_encoder,
             )
         )
@@ -180,7 +180,7 @@ class QwenModelAdapter(BaseModelAdapter):
     def compute_text_embeddings(
         self,
         t: int,
-        runtime_config: RuntimeConfig,
+        runtime_config: Config,
         pooled_prompt_embeds: mx.array | None = None,
         hidden_states: mx.array | None = None,
     ) -> mx.array:
@@ -212,7 +212,7 @@ class QwenModelAdapter(BaseModelAdapter):
     def compute_rotary_embeddings(
         self,
         prompt_embeds: mx.array,
-        runtime_config: RuntimeConfig,
+        runtime_config: Config,
         **kwargs: Any,
     ) -> Any:
         """Compute 3D rotary embeddings for Qwen.
