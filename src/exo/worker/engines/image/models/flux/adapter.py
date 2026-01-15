@@ -97,13 +97,17 @@ class FluxModelAdapter(BaseModelAdapter):
 
     def encode_prompt(self, prompt: str) -> FluxPromptData:
         """Encode prompt into FluxPromptData."""
+
+        assert isinstance(self.model.prompt_cache, dict)
+        assert isinstance(self.model.tokenizers, dict)
+
         prompt_embeds, pooled_prompt_embeds = PromptEncoder.encode_prompt(
             prompt=prompt,
-            prompt_cache=self._model.prompt_cache,
-            t5_tokenizer=self._model.t5_tokenizer,
-            clip_tokenizer=self._model.clip_tokenizer,
-            t5_text_encoder=self._model.t5_text_encoder,
-            clip_text_encoder=self._model.clip_text_encoder,
+            prompt_cache=self.model.prompt_cache,
+            t5_tokenizer=self.model.tokenizers["t5"],
+            clip_tokenizer=self.model.tokenizers["clip"],
+            t5_text_encoder=self.model.t5_text_encoder,
+            clip_text_encoder=self.model.clip_text_encoder,
         )
         return FluxPromptData(
             prompt_embeds=prompt_embeds,

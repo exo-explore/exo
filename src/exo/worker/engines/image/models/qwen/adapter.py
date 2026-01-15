@@ -127,6 +127,10 @@ class QwenModelAdapter(BaseModelAdapter):
         Qwen uses classifier-free guidance with explicit negative prompts.
         Returns a QwenPromptData container with all 4 tensors.
         """
+
+        assert isinstance(self.model.prompt_cache, dict)
+        assert isinstance(self.model.tokenizers, dict)
+
         # TODO(ciaran): empty string as default negative prompt
         negative_prompt = ""
 
@@ -134,9 +138,9 @@ class QwenModelAdapter(BaseModelAdapter):
             QwenPromptEncoder.encode_prompt(
                 prompt=prompt,
                 negative_prompt=negative_prompt,
-                prompt_cache=self._model.prompt_cache,
-                qwen_tokenizer=self._model.tokenizers["qwen"],
-                qwen_text_encoder=self._model.text_encoder,
+                prompt_cache=self.model.prompt_cache,
+                qwen_tokenizer=self.model.tokenizers["qwen"],
+                qwen_text_encoder=self.model.text_encoder,
             )
         )
 
