@@ -396,6 +396,10 @@ def make_kv_cache(
 ) -> list[KVCache | RotatingKVCache | QuantizedKVCache]:
     assert hasattr(model, "layers")
 
+    if hasattr(model, "make_cache"):
+        logger.info("Using MLX LM's make cache")
+        return model.make_cache()
+
     if max_kv_size is None:
         if KV_CACHE_BITS is None:
             logger.info("Using default KV cache")
