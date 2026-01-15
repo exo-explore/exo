@@ -102,27 +102,33 @@ interface RawTopologyNode {
 	nodeProfile?: RawNodeProfile;
 }
 
-interface RawTopologyConnection {
-	localNodeId: string;
-	sendBackNodeId: string;
-	sendBackMultiaddr?:
-		| { multiaddr?: string; address?: string; ip_address?: string }
-		| string;
+// New connection edge types from Python SocketConnection/RDMAConnection
+interface RawSocketConnection {
+	sinkMultiaddr?: {
+		address?: string;
+		// Multiaddr uses snake_case (no camelCase alias)
+		ip_address?: string;
+		ipAddress?: string; // fallback in case it changes
+		address_type?: string;
+		port?: number;
+	};
 }
 
-// Connection can be an object or a tuple [source, target, metadata]
-type RawConnectionItem =
-	| RawTopologyConnection
-	| [
-			string,
-			string,
-			{ sinkMultiaddr?: { ip_address?: string; address?: string } }?,
-	  ];
+interface RawRDMAConnection {
+	sourceRdmaIface?: string;
+	sinkRdmaIface?: string;
+}
+
+type RawConnectionEdge = RawSocketConnection | RawRDMAConnection;
+
+// New nested mapping format: { source: { sink: [edge1, edge2, ...] } }
+type RawConnectionsMap = Record<string, Record<string, RawConnectionEdge[]>>;
 
 interface RawTopology {
 	// nodes can be array of strings (node IDs) or array of objects with nodeId/nodeProfile
 	nodes: (string | RawTopologyNode)[];
-	connections?: RawConnectionItem[];
+	// New nested mapping format
+	connections?: RawConnectionsMap;
 }
 
 type RawNodeProfiles = Record<string, RawNodeProfile>;
@@ -311,54 +317,34 @@ function transformTopology(
 		};
 	}
 
-	// Handle connections - can be objects with localNodeId/sendBackNodeId or tuples [source, target, metadata]
-	for (const conn of raw.connections || []) {
-		let localNodeId: string | undefined;
-		let sendBackNodeId: string | undefined;
-		let sendBackMultiaddr:
-			| { multiaddr?: string; address?: string; ip_address?: string }
-			| string
-			| undefined;
+	// Handle connections - nested mapping format { source: { sink: [edges] } }
+	const connections = raw.connections;
+	if (connections && typeof connections === "object") {
+		for (const [source, sinks] of Object.entries(connections)) {
+			if (!sinks || typeof sinks !== "object") continue;
+			for (const [sink, edgeList] of Object.entries(sinks)) {
+				if (!Array.isArray(edgeList)) continue;
+				for (const edge of edgeList) {
+					// Extract IP from SocketConnection (uses snake_case: ip_address)
+					let sendBackIp: string | undefined;
+					if (edge && typeof edge === "object" && "sinkMultiaddr" in edge) {
+						const multiaddr = edge.sinkMultiaddr;
+						if (multiaddr) {
+							// Try both snake_case (actual) and camelCase (in case it changes)
+							sendBackIp =
+								multiaddr.ip_address ||
+								multiaddr.ipAddress ||
+								extractIpFromMultiaddr(multiaddr.address);
+						}
+					}
+					// RDMAConnection (sourceRdmaIface/sinkRdmaIface) has no IP - edge just shows connection exists
 
-		// Check if it's a tuple format [source, target, metadata]
-		if (Array.isArray(conn)) {
-			localNodeId = conn[0] as string;
-			sendBackNodeId = conn[1] as string;
-			const metadata = conn[2] as
-				| { sinkMultiaddr?: { ip_address?: string; address?: string } }
-				| undefined;
-			if (metadata?.sinkMultiaddr) {
-				sendBackMultiaddr = metadata.sinkMultiaddr;
-			}
-		} else {
-			// Object format with localNodeId/sendBackNodeId
-			localNodeId = conn.localNodeId;
-			sendBackNodeId = conn.sendBackNodeId;
-			sendBackMultiaddr = conn.sendBackMultiaddr;
-		}
-
-		if (!localNodeId || !sendBackNodeId) continue;
-		if (localNodeId === sendBackNodeId) continue;
-		if (!nodes[localNodeId] || !nodes[sendBackNodeId]) continue;
-
-		let sendBackIp: string | undefined;
-		if (sendBackMultiaddr) {
-			const multi = sendBackMultiaddr;
-			if (typeof multi === "string") {
-				sendBackIp = extractIpFromMultiaddr(multi);
-			} else {
-				sendBackIp =
-					multi.ip_address ||
-					extractIpFromMultiaddr(multi.multiaddr) ||
-					extractIpFromMultiaddr(multi.address);
+					if (nodes[source] && nodes[sink] && source !== sink) {
+						edges.push({ source, target: sink, sendBackIp });
+					}
+				}
 			}
 		}
-
-		edges.push({
-			source: localNodeId,
-			target: sendBackNodeId,
-			sendBackIp,
-		});
 	}
 
 	return { nodes, edges };
