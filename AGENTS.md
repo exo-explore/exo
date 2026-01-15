@@ -91,6 +91,51 @@ From .cursorrules:
 - Catch exceptions only where you can handle them meaningfully
 - Use `@final` and immutability wherever applicable
 
+## API Reference
+
+The API is served at `http://localhost:52415` by default. Key files:
+- `docs/api.md`: Full API documentation
+- `src/exo/master/api.py`: FastAPI implementation
+- `src/exo/shared/types/api.py`: Request/response Pydantic models
+
+### Key Endpoints
+
+```
+GET  /node_id              # Current master node ID
+GET  /state                # Full cluster state (topology, instances, downloads, etc.)
+GET  /events               # Event log for debugging
+
+POST /instance             # Create model instance
+GET  /instance/{id}        # Get instance details
+DELETE /instance/{id}      # Delete instance
+GET  /instance/previews    # Preview placements for a model
+GET  /instance/placement   # Compute placement without creating
+
+GET  /models               # List available models
+GET  /v1/models            # OpenAI-compatible model list
+
+POST /v1/chat/completions  # OpenAI-compatible chat completions (streaming/non-streaming)
+POST /bench/chat/completions # Chat completions with performance stats
+```
+
+### Useful curl Commands
+
+```bash
+# Check cluster state
+curl -s http://localhost:52415/state | python3 -m json.tool
+
+# List models
+curl -s http://localhost:52415/models | python3 -m json.tool
+
+# Preview placements for a model
+curl -s "http://localhost:52415/instance/previews?model_id=llama-3.2-1b" | python3 -m json.tool
+
+# Chat completion
+curl -X POST http://localhost:52415/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "llama-3.2-1b", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
 ## Testing
 
 Tests use pytest-asyncio with `asyncio_mode = "auto"`. Tests are in `tests/` subdirectories alongside the code they test. The `EXO_TESTS=1` env var is set during tests.
