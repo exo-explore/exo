@@ -17,11 +17,9 @@ def entrypoint(
     task_receiver: MpReceiver[Task],
     _logger: "loguru.Logger",
 ) -> None:
-    if (
-        isinstance(bound_instance.instance, MlxJacclInstance)
-        and len(bound_instance.instance.ibv_devices) >= 2
-    ):
-        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
+    # NOTE: MLX_METAL_FAST_SYNCH is set AFTER model loading in runner.py
+    # Setting it before loading causes hangs with lazy weight evaluation
+    # on certain models (e.g., gpt-oss-20b) with jaccl backend.
 
     global logger
     logger = _logger

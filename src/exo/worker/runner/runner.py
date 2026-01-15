@@ -1,3 +1,4 @@
+import os
 import time
 
 import mlx.core as mx
@@ -20,7 +21,7 @@ from exo.shared.types.tasks import (
     Task,
     TaskStatus,
 )
-from exo.shared.types.worker.instances import BoundInstance
+from exo.shared.types.worker.instances import BoundInstance, MlxJacclInstance
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
@@ -110,6 +111,15 @@ def main(
                     )
 
                     model, tokenizer = load_mlx_items(bound_instance, group)
+
+                    # Enable fast sync AFTER model loading to avoid hang with lazy weights
+                    # See: https://github.com/exo-explore/exo/issues/XXX
+                    if (
+                        isinstance(bound_instance.instance, MlxJacclInstance)
+                        and len(bound_instance.instance.ibv_devices) >= 2
+                    ):
+                        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
+                        logger.info("Enabled MLX_METAL_FAST_SYNCH after model loading")
 
                     current_status = RunnerLoaded()
                     logger.info("runner loaded")

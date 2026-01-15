@@ -249,45 +249,22 @@ def shard_and_load(
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 
-    # Barrier to ensure all nodes are ready before sharding
-    logger.info("BEFORE pre-shard barrier")
-    mx_barrier(group)
-    logger.info("AFTER pre-shard barrier")
-
     match shard_metadata:
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
-            logger.info("BEFORE tensor_auto_parallel")
             model = tensor_auto_parallel(model, group)
-            logger.info("AFTER tensor_auto_parallel")
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
             model = pipeline_auto_parallel(model, group, shard_metadata)
 
-    # Evaluate sharded parameters one by one to identify which one hangs
-    logger.info("BEFORE tree_flatten(model.parameters())")
-    flat_params = mx.utils.tree_flatten(model.parameters())
-    logger.info(f"AFTER tree_flatten, got {len(flat_params)} params")
-    total_params = len(flat_params)
-    logger.info("BEFORE iterating params")
-    for i, (name, param) in enumerate(flat_params):
-        logger.info(f"BEFORE eval param {i}/{total_params}: {name} shape={param.shape}")
-        mx.eval(param)
-        logger.info(f"AFTER eval param {i}/{total_params}: {name}")
-    logger.info(f"AFTER evaluating all {total_params} sharded weights")
-
-    # TODO: Do we need this?
-    logger.info("BEFORE mx.eval(model)")
+    mx.eval(model.parameters())
     mx.eval(model)
-    logger.info("AFTER mx.eval(model)")
 
     logger.debug("SHARDED")
     logger.debug(model)
 
     # Synchronize processes before generation to avoid timeout
-    logger.info("BEFORE mx_barrier(group)")
     mx_barrier(group)
-    logger.info("AFTER mx_barrier(group)")
 
     return model, tokenizer
 
