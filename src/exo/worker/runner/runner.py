@@ -1,6 +1,15 @@
 import time
+from collections.abc import Generator
+from functools import cache
 
 import mlx.core as mx
+from mlx_lm.models.gpt_oss import Model as GptOssModel
+from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
+    HarmonyEncodingName,
+    Role,
+    StreamableParser,
+    load_harmony_encoding,
+)
 
 from exo.shared.types.api import ChatCompletionMessageText
 from exo.shared.types.chunks import TokenChunk
@@ -68,7 +77,6 @@ def main(
 
     model = None
     tokenizer = None
-    sampler = None
     group = None
 
     current_status: RunnerStatus = RunnerIdle()
@@ -110,14 +118,13 @@ def main(
                         )
                     )
 
-                    model, tokenizer, sampler = load_mlx_items(bound_instance, group)
+                    model, tokenizer = load_mlx_items(bound_instance, group)
 
                     current_status = RunnerLoaded()
                     logger.info("runner loaded")
                 case StartWarmup() if isinstance(current_status, RunnerLoaded):
                     assert model
                     assert tokenizer
-                    assert sampler
                     current_status = RunnerWarmingUp()
                     logger.info("runner warming up")
                     event_sender.send(
@@ -130,7 +137,6 @@ def main(
                     toks = warmup_inference(
                         model=model,
                         tokenizer=tokenizer,
-                        sampler=sampler,
                         # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
                     )
                     logger.info(f"warmed up by generating {toks} tokens")
@@ -144,7 +150,6 @@ def main(
                 ):
                     assert model
                     assert tokenizer
-                    assert sampler
                     logger.info(f"received chat request: {str(task)[:500]}")
                     current_status = RunnerRunning()
                     logger.info("runner running")
@@ -157,12 +162,19 @@ def main(
                     _check_for_debug_prompts(task_params.messages[0].content)
 
                     # Generate responses using the actual MLX generation
-                    for response in mlx_generate(
+                    mlx_generator = mlx_generate(
                         model=model,
                         tokenizer=tokenizer,
-                        sampler=sampler,
                         task=task_params,
-                    ):
+                    )
+
+                    # GPT-OSS specific parsing to match other model formats.
+                    if isinstance(model, GptOssModel):
+                        mlx_generator = parse_gpt_oss(mlx_generator)
+
+                    # TODO: Add tool call parser here
+
+                    for response in mlx_generator:
                         match response:
                             case GenerationResponse():
                                 if shard_metadata.device_rank == 0:
@@ -204,12 +216,49 @@ def main(
                 RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
             )
             if isinstance(current_status, RunnerShutdown):
-                del model, tokenizer, group, sampler
+                del model, tokenizer, group
                 mx.clear_cache()
                 import gc
 
                 gc.collect()
                 break
+
+
+@cache
+def get_gpt_oss_encoding():
+    encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
+    return encoding
+
+
+def parse_gpt_oss(
+    responses: Generator[GenerationResponse],
+) -> Generator[GenerationResponse]:
+    encoding = get_gpt_oss_encoding()
+    stream = StreamableParser(encoding, role=Role.ASSISTANT)
+    thinking = False
+
+    for response in responses:
+        stream.process(response.token)
+
+        delta = stream.last_content_delta
+        ch = stream.current_channel
+
+        if ch == "analysis" and not thinking:
+            thinking = True
+            yield response.model_copy(update={"text": "<think>"})
+
+        if ch != "analysis" and thinking:
+            thinking = False
+            yield response.model_copy(update={"text": "</think>"})
+
+        if delta:
+            yield response.model_copy(update={"text": delta})
+
+        if response.finish_reason is not None:
+            if thinking:
+                yield response.model_copy(update={"text": "</think>"})
+            yield response
+            break
 
 
 EXO_RUNNER_MUST_FAIL = "EXO RUNNER MUST FAIL"

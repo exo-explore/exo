@@ -28,7 +28,7 @@ class DownloadPending(BaseDownloadProgress):
 
 
 class DownloadCompleted(BaseDownloadProgress):
-    pass
+    total_bytes: Memory
 
 
 class DownloadFailed(BaseDownloadProgress):

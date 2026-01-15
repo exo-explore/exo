@@ -400,10 +400,8 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				const errorText = await response.text();
 				console.error('Failed to launch instance:', errorText);
 			} else {
-				// Auto-select the launched model only if no model is currently selected
-				if (!selectedChatModel()) {
-					setSelectedChatModel(modelId);
-				}
+				// Always auto-select the newly launched model so the user chats to what they just launched
+				setSelectedChatModel(modelId);
 				
 				// Scroll to the bottom of instances container to show the new instance
 				// Use multiple attempts to ensure DOM has updated with the new instance
@@ -593,7 +591,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		// Unwrap the instance
 		const [instanceTag, instance] = getTagged(instanceWrapped);
 		if (!instance || typeof instance !== 'object') {
-			return { isDownloading: false, progress: null, statusText: 'UNKNOWN', perNode: [] };
+			return { isDownloading: false, progress: null, statusText: 'PREPARING', perNode: [] };
 		}
 
 		const inst = instance as { shardAssignments?: { nodeToRunner?: Record<string, string>; runnerToShard?: Record<string, unknown>; modelId?: string } };
@@ -706,7 +704,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	function deriveInstanceStatus(instanceWrapped: unknown): { statusText: string; statusClass: string } {
 		const [, instance] = getTagged(instanceWrapped);
 		if (!instance || typeof instance !== 'object') {
-			return { statusText: 'UNKNOWN', statusClass: 'inactive' };
+			return { statusText: 'PREPARING', statusClass: 'inactive' };
 		}
 		
 		const inst = instance as { shardAssignments?: { runnerToShard?: Record<string, unknown> } };
@@ -735,7 +733,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 
 		const has = (s: string) => statuses.includes(s);
 
-		if (statuses.length === 0) return { statusText: 'UNKNOWN', statusClass: 'inactive' };
+		if (statuses.length === 0) return { statusText: 'PREPARING', statusClass: 'inactive' };
 		if (has('Failed')) return { statusText: 'FAILED', statusClass: 'failed' };
 		if (has('Shutdown')) return { statusText: 'SHUTDOWN', statusClass: 'inactive' };
 		if (has('Loading')) return { statusText: 'LOADING', statusClass: 'starting' };
@@ -763,6 +761,10 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	async function deleteInstance(instanceId: string) {
 		if (!confirm(`Delete instance ${instanceId.slice(0, 8)}...?`)) return;
 		
+		// Get the model ID of the instance being deleted before we delete it
+		const deletedInstanceModelId = getInstanceModelId(instanceData[instanceId]);
+		const wasSelected = selectedChatModel() === deletedInstanceModelId;
+		
 		try {
 			const response = await fetch(`/instance/${instanceId}`, {
 				method: 'DELETE',
@@ -771,6 +773,24 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			
 			if (!response.ok) {
 				console.error('Failed to delete instance:', response.status);
+			} else if (wasSelected) {
+				// If we deleted the currently selected model, switch to another available model
+				// Find another instance that isn't the one we just deleted
+				const remainingInstances = Object.entries(instanceData).filter(([id]) => id !== instanceId);
+				if (remainingInstances.length > 0) {
+					// Select the last instance (most recently added, since objects preserve insertion order)
+					const [, lastInstance] = remainingInstances[remainingInstances.length - 1];
+					const newModelId = getInstanceModelId(lastInstance);
+					if (newModelId && newModelId !== 'Unknown' && newModelId !== 'Unknown Model') {
+						setSelectedChatModel(newModelId);
+					} else {
+						// Clear selection if no valid model found
+						setSelectedChatModel('');
+					}
+				} else {
+					// No more instances, clear the selection
+					setSelectedChatModel('');
+				}
 			}
 		} catch (error) {
 			console.error('Error deleting instance:', error);
@@ -1267,9 +1287,9 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 							<div class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"></div>
 						</div>
 						
-						<div 
+						<div
 							bind:this={instancesContainerRef}
-							class="max-h-72 space-y-3 overflow-y-auto"
+							class="max-h-72 xl:max-h-96 space-y-3 overflow-y-auto overflow-x-hidden py-px"
 						>
 								{#each Object.entries(instanceData) as [id, instance]}
 									{@const downloadInfo = getInstanceDownloadStatus(id, instance)}
@@ -1773,7 +1793,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 								<h3 class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase">Instances</h3>
 								<div class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"></div>
 							</div>
-								<div class="space-y-3 max-h-72 overflow-y-auto pr-1">
+								<div class="space-y-3 max-h-72 xl:max-h-96 overflow-y-auto overflow-x-hidden py-px pr-1">
 									{#each Object.entries(instanceData) as [id, instance]}
 										{@const downloadInfo = getInstanceDownloadStatus(id, instance)}
 										{@const statusText = downloadInfo.statusText}

@@ -1,13 +1,26 @@
 import json
 import os
 import resource
+import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, cast
+
+# Monkey-patch for transformers 5.x compatibility
+# Kimi's tokenization_kimi.py imports bytes_to_unicode from the old location
+# which was moved in transformers 5.0.0rc2
+try:
+    import transformers.models.gpt2.tokenization_gpt2 as gpt2_tokenization
+    from transformers.convert_slow_tokenizer import bytes_to_unicode
+
+    if not hasattr(gpt2_tokenization, "bytes_to_unicode"):
+        gpt2_tokenization.bytes_to_unicode = bytes_to_unicode  # type: ignore[attr-defined]
+except ImportError:
+    pass  # transformers < 5.0 or bytes_to_unicode not available
 
 from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3Model
-from mlx_lm.sample_utils import make_sampler
+from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.worker.engines.mlx.constants import (
@@ -19,7 +32,7 @@ from exo.worker.engines.mlx.constants import (
 try:
     from mlx_lm.tokenizer_utils import load_tokenizer
 except ImportError:
-    from mlx_lm.tokenizer_utils import load as load_tokenizer  # type: ignore
+    from mlx_lm.tokenizer_utils import load as load_tokenizer
 import contextlib
 
 import mlx.core as mx
@@ -176,11 +189,7 @@ def initialize_mlx(
 
 def load_mlx_items(
     bound_instance: BoundInstance, group: Group | None
-) -> tuple[Model, TokenizerWrapper, Callable[[mx.array], mx.array]]:
-    # TODO: pass temperature
-    sampler: Callable[[mx.array], mx.array] = make_sampler(temp=0.7)
-    logger.info("Created a sampler")
-
+) -> tuple[Model, TokenizerWrapper]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_meta.model_id)
@@ -201,7 +210,7 @@ def load_mlx_items(
 
     set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
 
-    return cast(Model, model), tokenizer, sampler
+    return cast(Model, model), tokenizer
 
 
 def shard_and_load(
@@ -257,26 +266,70 @@ def shard_and_load(
     return model, tokenizer
 
 
-def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata):
-    # TODO: Let's move away from this custom logic to mlx_lm.load()
-    if "kimi-k2" in shard_metadata.model_meta.model_id.lower():
-        eos_token_ids = [163586]
+def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerWrapper:
+    """Load tokenizer for a model shard. Delegates to load_tokenizer_for_model_id."""
+    return load_tokenizer_for_model_id(shard_metadata.model_meta.model_id, model_path)
 
-    elif "glm" in shard_metadata.model_meta.model_id.lower():
-        eos_token_ids = [151336, 151329, 151338]
 
-    else:
-        eos_token_ids = None
+def get_eos_token_ids_for_model(model_id: str) -> list[int] | None:
+    """
+    Get the EOS token IDs for a model based on its ID.
 
-    tokenizer = cast(
-        TokenizerWrapper,
-        load_tokenizer(
-            model_path,
-            tokenizer_config_extra={"trust_remote_code": TRUST_REMOTE_CODE},
-            eos_token_ids=eos_token_ids,
-        ),
+    Some models require explicit EOS token configuration that isn't in their
+    tokenizer config. This function returns the known EOS token IDs for such models.
+
+    Args:
+        model_id: The HuggingFace model ID
+
+    Returns:
+        List of EOS token IDs, or None if the model uses standard tokenizer config
+    """
+    model_id_lower = model_id.lower()
+    if "kimi-k2" in model_id_lower:
+        return [163586]
+    elif "glm" in model_id_lower:
+        return [151336, 151329, 151338]
+    return None
+
+
+def load_tokenizer_for_model_id(model_id: str, model_path: Path) -> TokenizerWrapper:
+    """
+    Load tokenizer for a model given its ID and local path.
+
+    This is the core tokenizer loading logic, handling special cases for different
+    model families (Kimi, GLM, etc.) and transformers 5.x compatibility.
+
+    Args:
+        model_id: The HuggingFace model ID (e.g., "moonshotai/Kimi-K2-Instruct")
+        model_path: Local path where the model/tokenizer files are stored
+
+    Returns:
+        TokenizerWrapper instance configured for the model
+    """
+    model_id_lower = model_id.lower()
+    eos_token_ids = get_eos_token_ids_for_model(model_id)
+
+    # Kimi uses a custom TikTokenTokenizer that transformers 5.x can't load via AutoTokenizer
+    if "kimi-k2" in model_id_lower:
+        sys.path.insert(0, str(model_path))
+        from tokenization_kimi import TikTokenTokenizer  # type: ignore[import-not-found]  # noqa: I001
+
+        hf_tokenizer: Any = TikTokenTokenizer.from_pretrained(model_path)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+
+        # Patch encode to use internal tiktoken model directly
+        # transformers 5.x has a bug in the encode->pad path for slow tokenizers
+        def _patched_encode(text: str, **_kwargs: object) -> list[int]:
+            # Pass allowed_special="all" to handle special tokens like <|im_user|>
+            return list(hf_tokenizer.model.encode(text, allowed_special="all"))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+
+        hf_tokenizer.encode = _patched_encode
+        return TokenizerWrapper(hf_tokenizer, eos_token_ids=eos_token_ids)
+
+    tokenizer = load_tokenizer(
+        model_path,
+        tokenizer_config_extra={"trust_remote_code": TRUST_REMOTE_CODE},
+        eos_token_ids=eos_token_ids,
     )
-    assert isinstance(tokenizer, TokenizerWrapper)
 
     return tokenizer
 
@@ -289,15 +342,15 @@ def apply_chat_template(
     messages = chat_task_data.messages
 
     formatted_messages: list[dict[str, Any]] = []
-    for _, message in enumerate(messages):
+    for message in messages:
         if isinstance(message.content, ChatCompletionMessageText):
             message.content = message.content.text
         if isinstance(message.content, list):
-            if len(message.content) != 1:
-                logger.warning("Received malformed prompt")
+            if len(message.content) == 0:
+                logger.warning("Received prompt with no content, skipping")
                 continue
 
-            message.content = message.content[0].text
+            message.content = "\n".join(c.text for c in message.content).strip()
         if message.content is None and message.thinking is None:
             continue
 
@@ -306,13 +359,16 @@ def apply_chat_template(
             {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
         )
 
-    prompt: str = tokenizer.apply_chat_template(  # type: ignore
+    prompt: str = tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
+        tools=chat_task_data.tools,
     )
 
-    return prompt  # type: ignore
+    logger.info(prompt)
+
+    return prompt
 
 
 class NullKVCache(KVCache):
@@ -342,6 +398,11 @@ def make_kv_cache(
     model: Model, max_kv_size: int | None = None, keep: int = 0
 ) -> list[KVCache | RotatingKVCache | QuantizedKVCache]:
     assert hasattr(model, "layers")
+
+    # TODO: Do this for all models
+    if hasattr(model, "make_cache") and isinstance(model, GptOssModel):
+        logger.info("Using MLX LM's make cache")
+        return model.make_cache()  # type: ignore
 
     if max_kv_size is None:
         if KV_CACHE_BITS is None:

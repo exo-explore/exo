@@ -14,32 +14,6 @@ class ModelCard(CamelCaseModel):
 
 MODEL_CARDS: dict[str, ModelCard] = {
     # deepseek v3
-    # "deepseek-v3-0324:4bit": ModelCard(
-    #     short_id="deepseek-v3-0324:4bit",
-    #     model_id="mlx-community/DeepSeek-V3-0324-4bit",
-    #     name="DeepSeek V3 0324 (4-bit)",
-    #     description="""DeepSeek V3 is a large language model trained on the DeepSeek V3 dataset.""",
-    #     tags=[],
-    #     metadata=ModelMetadata(
-    #         model_id=ModelId("mlx-community/DeepSeek-V3-0324-4bit"),
-    #         pretty_name="DeepSeek V3 0324 (4-bit)",
-    #         storage_size=Memory.from_kb(409706307),
-    #         n_layers=61,
-    #     ),
-    # ),
-    # "deepseek-v3-0324": ModelCard(
-    #     short_id="deepseek-v3-0324",
-    #     model_id="mlx-community/DeepSeek-v3-0324-8bit",
-    #     name="DeepSeek V3 0324 (8-bit)",
-    #     description="""DeepSeek V3 is a large language model trained on the DeepSeek V3 dataset.""",
-    #     tags=[],
-    #     metadata=ModelMetadata(
-    #         model_id=ModelId("mlx-community/DeepSeek-v3-0324-8bit"),
-    #         pretty_name="DeepSeek V3 0324 (8-bit)",
-    #         storage_size=Memory.from_kb(754706307),
-    #         n_layers=61,
-    #     ),
-    # ),
     "deepseek-v3.1-4bit": ModelCard(
         short_id="deepseek-v3.1-4bit",
         model_id=ModelId("mlx-community/DeepSeek-V3.1-4bit"),
@@ -70,63 +44,6 @@ MODEL_CARDS: dict[str, ModelCard] = {
             supports_tensor=True,
         ),
     ),
-    # "deepseek-v3.2": ModelCard(
-    #     short_id="deepseek-v3.2",
-    #     model_id=ModelId("mlx-community/DeepSeek-V3.2-8bit"),
-    #     name="DeepSeek V3.2 (8-bit)",
-    #     description="""DeepSeek V3.2 is a large language model trained on the DeepSeek V3.2 dataset.""",
-    #     tags=[],
-    #     metadata=ModelMetadata(
-    #         model_id=ModelId("mlx-community/DeepSeek-V3.2-8bit"),
-    #         pretty_name="DeepSeek V3.2 (8-bit)",
-    #         storage_size=Memory.from_kb(754706307),
-    #         n_layers=61,
-    #         hidden_size=7168,
-    #     ),
-    # ),
-    # "deepseek-v3.2-4bit": ModelCard(
-    #     short_id="deepseek-v3.2-4bit",
-    #     model_id=ModelId("mlx-community/DeepSeek-V3.2-4bit"),
-    #     name="DeepSeek V3.2 (4-bit)",
-    #     description="""DeepSeek V3.2 is a large language model trained on the DeepSeek V3.2 dataset.""",
-    #     tags=[],
-    #     metadata=ModelMetadata(
-    #         model_id=ModelId("mlx-community/DeepSeek-V3.2-4bit"),
-    #         pretty_name="DeepSeek V3.2 (4-bit)",
-    #         storage_size=Memory.from_kb(754706307 // 2),  # TODO !!!!!
-    #         n_layers=61,
-    #         hidden_size=7168,
-    #     ),
-    # ),
-    # deepseek r1
-    # "deepseek-r1-0528-4bit": ModelCard(
-    #     short_id="deepseek-r1-0528-4bit",
-    #     model_id="mlx-community/DeepSeek-R1-0528-4bit",
-    #     name="DeepSeek-R1-0528 (4-bit)",
-    #     description="""DeepSeek R1 is a large language model trained on the DeepSeek R1 dataset.""",
-    #     tags=[],
-    #     metadata=ModelMetadata(
-    #         model_id=ModelId("mlx-community/DeepSeek-R1-0528-4bit"),
-    #         pretty_name="DeepSeek R1 671B (4-bit)",
-    #         storage_size=Memory.from_kb(409706307),
-    #         n_layers=61,
-    #         hidden_size=7168,
-    #     ),
-    # ),
-    # "deepseek-r1-0528": ModelCard(
-    #     short_id="deepseek-r1-0528",
-    #     model_id="mlx-community/DeepSeek-R1-0528-8bit",
-    #     name="DeepSeek-R1-0528 (8-bit)",
-    #     description="""DeepSeek R1 is a large language model trained on the DeepSeek R1 dataset.""",
-    #     tags=[],
-    #     metadata=ModelMetadata(
-    #         model_id=ModelId("mlx-community/DeepSeek-R1-0528-8bit"),
-    #         pretty_name="DeepSeek R1 671B (8-bit)",
-    #         storage_size=Memory.from_bytes(754998771712),
-    #         n_layers=61,
-    # .       hidden_size=7168,
-    #     ),
-    # ),
     # kimi k2
     "kimi-k2-instruct-4bit": ModelCard(
         short_id="kimi-k2-instruct-4bit",
@@ -508,23 +425,24 @@ MODEL_CARDS: dict[str, ModelCard] = {
             supports_tensor=True,
         ),
     ),
-    "gpt-oss-20b-4bit": ModelCard(
-        short_id="gpt-oss-20b-4bit",
-        model_id=ModelId("mlx-community/gpt-oss-20b-MXFP4-Q4"),
-        name="GPT-OSS 20B (MXFP4-Q4, MLX)",
-        description="""OpenAI's GPT-OSS 20B is a medium-sized MoE model for lower-latency and local or specialized use cases; this MLX variant uses MXFP4 4-bit quantization.""",
+    "gpt-oss-20b-MXFP4-Q8": ModelCard(
+        short_id="gpt-oss-20b-MXFP4-Q8",
+        model_id=ModelId("mlx-community/gpt-oss-20b-MXFP4-Q8"),
+        name="GPT-OSS 20B (MXFP4-Q8, MLX)",
+        description="""OpenAI's GPT-OSS 20B is a medium-sized MoE model for lower-latency and local or specialized use cases; this variant is a 4-bit MLX conversion for Apple Silicon.""",
         tags=[],
         metadata=ModelMetadata(
-            model_id=ModelId("mlx-community/gpt-oss-20b-MXFP4-Q4"),
-            pretty_name="GPT-OSS 20B (MXFP4-Q4, MLX)",
+            model_id=ModelId("mlx-community/gpt-oss-20b-MXFP4-Q8"),
+            pretty_name="GPT-OSS 20B (MXFP4-Q8, MLX)",
             storage_size=Memory.from_kb(11_744_051),
             n_layers=24,
             hidden_size=2880,
             supports_tensor=True,
         ),
     ),
-    # Needs to be quantized g32 or g16.
+    # glm 4.5
     "glm-4.5-air-8bit": ModelCard(
+        # Needs to be quantized g32 or g16 to work with tensor parallel
         short_id="glm-4.5-air-8bit",
         model_id=ModelId("mlx-community/GLM-4.5-Air-8bit"),
         name="GLM 4.5 Air 8bit",
@@ -554,19 +472,81 @@ MODEL_CARDS: dict[str, ModelCard] = {
             supports_tensor=True,
         ),
     ),
-    # "devstral-2-123b-instruct-2512-8bit": ModelCard(
-    #     short_id="devstral-2-123b-instruct-2512-8bit",
-    #     model_id=ModelId("mlx-community/Devstral-2-123B-Instruct-2512-8bit"),
-    #     name="Devstral 2 123B Instruct 2512 (8-bit, MLX)",
-    #     description="""Mistral AI's Devstral 2 123B Instruct (2512) is an agentic coding model.""",
-    #     tags=[],
-    #     metadata=ModelMetadata(
-    #         model_id=ModelId("mlx-community/Devstral-2-123B-Instruct-2512-8bit"),
-    #         pretty_name="Devstral 2 123B Instruct 2512 (8-bit, MLX)",
-    #         storage_size=Memory.from_kb(133_000_000),
-    #         n_layers=88,
-    #         hidden_size=12288,
-    #         supports_tensor=True,
-    #     ),
-    # ),
+    # glm 4.7
+    "glm-4.7-4bit": ModelCard(
+        short_id="glm-4.7-4bit",
+        model_id=ModelId("mlx-community/GLM-4.7-4bit"),
+        name="GLM 4.7 4bit",
+        description="GLM 4.7 4bit",
+        tags=[],
+        metadata=ModelMetadata(
+            model_id=ModelId("mlx-community/GLM-4.7-4bit"),
+            pretty_name="GLM 4.7 4bit",
+            storage_size=Memory.from_bytes(198556925568),
+            n_layers=91,
+            hidden_size=5120,
+            supports_tensor=True,
+        ),
+    ),
+    "glm-4.7-6bit": ModelCard(
+        short_id="glm-4.7-6bit",
+        model_id=ModelId("mlx-community/GLM-4.7-6bit"),
+        name="GLM 4.7 6bit",
+        description="GLM 4.7 6bit",
+        tags=[],
+        metadata=ModelMetadata(
+            model_id=ModelId("mlx-community/GLM-4.7-6bit"),
+            pretty_name="GLM 4.7 6bit",
+            storage_size=Memory.from_bytes(286737579648),
+            n_layers=91,
+            hidden_size=5120,
+            supports_tensor=True,
+        ),
+    ),
+    "glm-4.7-8bit-gs32": ModelCard(
+        short_id="glm-4.7-8bit-gs32",
+        model_id=ModelId("mlx-community/GLM-4.7-8bit-gs32"),
+        name="GLM 4.7 8bit (gs32)",
+        description="GLM 4.7 8bit (gs32)",
+        tags=[],
+        metadata=ModelMetadata(
+            model_id=ModelId("mlx-community/GLM-4.7-8bit-gs32"),
+            pretty_name="GLM 4.7 8bit (gs32)",
+            storage_size=Memory.from_bytes(396963397248),
+            n_layers=91,
+            hidden_size=5120,
+            supports_tensor=True,
+        ),
+    ),
+    # minimax-m2
+    "minimax-m2.1-8bit": ModelCard(
+        short_id="minimax-m2.1-8bit",
+        model_id=ModelId("mlx-community/MiniMax-M2.1-8bit"),
+        name="MiniMax M2.1 8bit",
+        description="MiniMax M2.1 8bit",
+        tags=[],
+        metadata=ModelMetadata(
+            model_id=ModelId("mlx-community/MiniMax-M2.1-8bit"),
+            pretty_name="MiniMax M2.1 8bit",
+            storage_size=Memory.from_bytes(242986745856),
+            n_layers=61,
+            hidden_size=3072,
+            supports_tensor=True,
+        ),
+    ),
+    "minimax-m2.1-3bit": ModelCard(
+        short_id="minimax-m2.1-3bit",
+        model_id=ModelId("mlx-community/MiniMax-M2.1-3bit"),
+        name="MiniMax M2.1 3bit",
+        description="MiniMax M2.1 3bit",
+        tags=[],
+        metadata=ModelMetadata(
+            model_id=ModelId("mlx-community/MiniMax-M2.1-3bit"),
+            pretty_name="MiniMax M2.1 3bit",
+            storage_size=Memory.from_bytes(100086644736),
+            n_layers=61,
+            hidden_size=3072,
+            supports_tensor=True,
+        ),
+    ),
 }

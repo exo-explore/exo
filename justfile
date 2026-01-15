@@ -1,3 +1,5 @@
+export NIX_CONFIG := "extra-experimental-features = nix-command flakes"
+
 fmt:
     nix fmt
 
