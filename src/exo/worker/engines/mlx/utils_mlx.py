@@ -249,6 +249,19 @@ def shard_and_load(
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 
+    # CRITICAL: Materialize lazy weights BEFORE applying distributed sharding.
+    # If we apply tensor_auto_parallel to lazy weights, mx.eval() will try to
+    # download weights AND perform distributed communication simultaneously,
+    # which can deadlock with the jaccl backend.
+    logger.info("BEFORE mx.eval(model.parameters()) - materializing lazy weights")
+    mx.eval(model.parameters())
+    logger.info("AFTER mx.eval(model.parameters()) - weights materialized")
+
+    # Barrier to ensure all nodes have materialized weights before sharding
+    logger.info("BEFORE pre-shard barrier")
+    mx_barrier(group)
+    logger.info("AFTER pre-shard barrier")
+
     match shard_metadata:
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
@@ -259,9 +272,10 @@ def shard_and_load(
             logger.info(f"loading model from {model_path} with pipeline parallelism")
             model = pipeline_auto_parallel(model, group, shard_metadata)
 
-    logger.info("BEFORE mx.eval(model.parameters())")
+    # Evaluate sharded parameters to ensure distributed tensors are ready
+    logger.info("BEFORE mx.eval(model.parameters()) - evaluating sharded weights")
     mx.eval(model.parameters())
-    logger.info("AFTER mx.eval(model.parameters())")
+    logger.info("AFTER mx.eval(model.parameters()) - sharded weights ready")
 
     # TODO: Do we need this?
     logger.info("BEFORE mx.eval(model)")
