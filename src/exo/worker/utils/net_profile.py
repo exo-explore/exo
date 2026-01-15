@@ -1,10 +1,13 @@
 import http.client
+import time
 
 from anyio import create_task_group, to_thread
 from loguru import logger
 
 from exo.shared.topology import Topology
 from exo.shared.types.common import NodeId
+
+BAD_STATUSLINE_ATTEMPTS = 3
 
 
 async def check_reachability(
@@ -15,8 +18,9 @@ async def check_reachability(
 ) -> None:
     """Check if a node is reachable at the given IP and verify its identity."""
 
-    def _fetch_remote_node_id() -> NodeId | None:
-        connection = http.client.HTTPConnection(target_ip, 52415, timeout=1)
+    # TODO: use an async http client
+    def _fetch_remote_node_id(*, attempt: int = 0) -> NodeId | None:
+        connection = http.client.HTTPConnection(target_ip, 52415, timeout=3)
         try:
             connection.request("GET", "/node_id")
             response = connection.getresponse()
@@ -32,6 +36,14 @@ async def check_reachability(
             return NodeId(body) or None
         except OSError:
             return None
+        except http.client.BadStatusLine:
+            if attempt >= BAD_STATUSLINE_ATTEMPTS:
+                logger.warning(
+                    f"BadStatusLine from {target_ip}, after {attempt} attempts, assuming connection to {expected_node_id} has dropped"
+                )
+                return None
+            time.sleep(1)
+            return _fetch_remote_node_id(attempt=attempt + 1)
         except http.client.HTTPException:
             return None
         finally:
