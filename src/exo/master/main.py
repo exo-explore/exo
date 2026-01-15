@@ -8,6 +8,7 @@ from exo.master.placement import (
     add_instance_to_placements,
     delete_instance,
     get_transition_events,
+    place_flash_instance,
     place_instance,
 )
 from exo.shared.apply import apply
@@ -16,8 +17,10 @@ from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
+    LaunchFLASH,
     PlaceInstance,
     RequestEventLog,
+    StopFLASH,
     TaskFinished,
     TestCommand,
 )
@@ -167,6 +170,26 @@ class Master:
                             placement = add_instance_to_placements(
                                 command,
                                 self.state.topology,
+                                self.state.instances,
+                            )
+                            transition_events = get_transition_events(
+                                self.state.instances, placement
+                            )
+                            generated_events.extend(transition_events)
+                        case LaunchFLASH():
+                            placement = place_flash_instance(
+                                command,
+                                self.state.topology,
+                                self.state.instances,
+                            )
+                            transition_events = get_transition_events(
+                                self.state.instances, placement
+                            )
+                            generated_events.extend(transition_events)
+                        case StopFLASH():
+                            # Reuse delete_instance logic to stop FLASH simulation
+                            placement = delete_instance(
+                                DeleteInstance(instance_id=command.instance_id),
                                 self.state.instances,
                             )
                             transition_events = get_transition_events(
