@@ -350,6 +350,8 @@ def _set_layers(model: nn.Module, layers: list[_LayerCallable]) -> None:
 class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
     def shard_model(self, model: nn.Module) -> nn.Module:
         model = cast(DeepseekV3Model, model)
+        dense_count = 0
+        moe_count = 0
         for layer in model.layers:
             # Shard the self attention
             if layer.self_attn.q_lora_rank is None:
@@ -368,6 +370,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
 
             # Shard the MLP
             if isinstance(layer.mlp, (DeepseekV3MLP, DeepseekV32MLP)):
+                dense_count += 1
                 layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
                 layer.mlp.down_proj = self.sharded_to_all_linear(layer.mlp.down_proj)
                 layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
@@ -375,6 +378,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
             # Shard the MoE. Shard in place since the MoE should be responsible
             # for aggregating the results.
             else:
+                moe_count += 1
                 self.all_to_sharded_linear_in_place(layer.mlp.shared_experts.gate_proj)
                 self.sharded_to_all_linear_in_place(layer.mlp.shared_experts.down_proj)
                 self.all_to_sharded_linear_in_place(layer.mlp.shared_experts.up_proj)
@@ -384,6 +388,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
                 layer.mlp = ShardedDeepseekV3MoE(layer.mlp)  # type: ignore
                 layer.mlp.sharding_group = self.group
 
+        logger.info(f"DeepSeekShardingStrategy: {dense_count} dense layers (shard_linear), {moe_count} MoE layers (shard_inplace)")
         return model
 
 
