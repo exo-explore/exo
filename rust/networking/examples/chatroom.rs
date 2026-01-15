@@ -2,8 +2,8 @@ use futures::stream::StreamExt as _;
 use libp2p::{gossipsub, identity, swarm::SwarmEvent};
 use networking::{discovery, swarm};
 use tokio::{io, io::AsyncBufReadExt as _, select};
-use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {

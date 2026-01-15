@@ -5,28 +5,28 @@
     clippy::needless_pass_by_value
 )]
 
-use crate::r#const::MPSC_CHANNEL_SIZE;
 use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _};
 use crate::ext::{ResultExt as _, TokioMpscReceiverExt as _, TokioMpscSenderExt as _};
 use crate::pyclass;
 use crate::pylibp2p::ident::{PyKeypair, PyPeerId};
+use crate::r#const::MPSC_CHANNEL_SIZE;
 use libp2p::futures::StreamExt as _;
 use libp2p::gossipsub::{IdentTopic, Message, MessageId, PublishError};
 use libp2p::swarm::SwarmEvent;
 use libp2p::{gossipsub, mdns};
-use networking::discovery;
-use networking::swarm::create_swarm;
+use networking::swarm::{create_swarm, create_swarm_with_config, Config as SwarmConfig};
+use networking::{discovery, headscale};
 use pyo3::prelude::{PyModule, PyModuleMethods as _};
 use pyo3::types::PyBytes;
-use pyo3::{Bound, Py, PyErr, PyResult, PyTraverseError, PyVisit, Python, pymethods};
+use pyo3::{pymethods, Bound, Py, PyErr, PyResult, PyTraverseError, PyVisit, Python};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 use std::net::IpAddr;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use util::ext::VecExt as _;
 
 mod exception {
     use pyo3::types::PyTuple;
-    use pyo3::{PyErrArguments, exceptions::PyException, prelude::*};
+    use pyo3::{exceptions::PyException, prelude::*, PyErrArguments};
     use pyo3_stub_gen::derive::*;
 
     #[gen_stub_pyclass]
@@ -101,6 +101,58 @@ mod exception {
     }
 }
 
+/// Configuration for Headscale-based peer discovery
+#[gen_stub_pyclass]
+#[pyclass(name = "HeadscaleConfig")]
+#[derive(Debug, Clone)]
+pub struct PyHeadscaleConfig {
+    /// Base URL for the Headscale API (e.g., "https://headscale.example.com")
+    #[pyo3(get, set)]
+    pub api_base_url: String,
+
+    /// API key for authenticating with the Headscale API
+    #[pyo3(get, set)]
+    pub api_key: String,
+
+    /// How often to poll the Headscale API for peer updates (in seconds)
+    #[pyo3(get, set)]
+    pub poll_interval_secs: u64,
+
+    /// The port that exo is listening on
+    #[pyo3(get, set)]
+    pub exo_port: u16,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PyHeadscaleConfig {
+    #[new]
+    #[pyo3(signature = (api_base_url, api_key, poll_interval_secs=5, exo_port=52415))]
+    fn new(api_base_url: String, api_key: String, poll_interval_secs: u64, exo_port: u16) -> Self {
+        Self {
+            api_base_url,
+            api_key,
+            poll_interval_secs,
+            exo_port,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "HeadscaleConfig(api_base_url=\"{}\", api_key=\"***\", poll_interval_secs={}, exo_port={})",
+            self.api_base_url, self.poll_interval_secs, self.exo_port
+        )
+    }
+}
+
+impl From<PyHeadscaleConfig> for headscale::Config {
+    fn from(config: PyHeadscaleConfig) -> Self {
+        headscale::Config::new(config.api_base_url, config.api_key)
+            .with_poll_interval(std::time::Duration::from_secs(config.poll_interval_secs))
+            .with_exo_port(config.exo_port)
+    }
+}
+
 /// Connection or disconnection event discriminant type.
 #[gen_stub_pyclass_enum]
 #[pyclass(eq, eq_int, name = "ConnectionUpdateType")]
@@ -154,10 +206,9 @@ async fn networking_task(
     connection_update_tx: mpsc::Sender<PyConnectionUpdate>,
     gossipsub_message_tx: mpsc::Sender<(String, Vec<u8>)>,
 ) {
+    use networking::swarm::BehaviourEvent::*;
     use SwarmEvent::*;
     use ToTask::*;
-    use mdns::Event::*;
-    use networking::swarm::BehaviourEvent::*;
 
     log::info!("RUST: networking task started");
 
@@ -282,8 +333,57 @@ async fn networking_task(
                             continue;
                         }
                     },
+                    // Handle Headscale discovery events
+                    Behaviour(Headscale(headscale::Event::ConnectionEstablished { peer_id, remote_ip, remote_tcp_port, .. })) => {
+                        let remote_ipv4 = match remote_ip {
+                            IpAddr::V4(ip) => ip.to_string(),
+                            IpAddr::V6(ip) => {
+                                log::warn!("RUST: ignoring Headscale connection to IPv6 address: {ip}");
+                                continue;
+                            }
+                        };
+
+                        log::info!("RUST: Headscale peer connected: {peer_id} at {remote_ipv4}:{remote_tcp_port}");
+
+                        if let Err(e) = connection_update_tx.send(PyConnectionUpdate {
+                            update_type: PyConnectionUpdateType::Connected,
+                            peer_id: PyPeerId(peer_id),
+                            remote_ipv4,
+                            remote_tcp_port,
+                        }).await {
+                            log::error!("RUST: could not send Headscale connection update since channel already closed: {e}");
+                            continue;
+                        }
+                    },
+                    Behaviour(Headscale(headscale::Event::ConnectionClosed { peer_id, remote_ip, remote_tcp_port, .. })) => {
+                        let remote_ipv4 = match remote_ip {
+                            IpAddr::V4(ip) => ip.to_string(),
+                            IpAddr::V6(ip) => {
+                                log::warn!("RUST: ignoring Headscale disconnection from IPv6 address: {ip}");
+                                continue;
+                            }
+                        };
+
+                        log::info!("RUST: Headscale peer disconnected: {peer_id} at {remote_ipv4}:{remote_tcp_port}");
+
+                        if let Err(e) = connection_update_tx.send(PyConnectionUpdate {
+                            update_type: PyConnectionUpdateType::Disconnected,
+                            peer_id: PyPeerId(peer_id),
+                            remote_ipv4,
+                            remote_tcp_port,
+                        }).await {
+                            log::error!("RUST: could not send Headscale disconnection update since channel already closed: {e}");
+                            continue;
+                        }
+                    },
+                    Behaviour(Headscale(headscale::Event::Discovered { peer_id, addresses })) => {
+                        log::info!("RUST: Headscale discovered peer: {peer_id} at {addresses:?}");
+                    },
+                    Behaviour(Headscale(headscale::Event::Expired { peer_id })) => {
+                        log::info!("RUST: Headscale peer expired: {peer_id}");
+                    },
                     e => {
-                        log::info!("RUST: other event {e:?}");
+                        log::debug!("RUST: other event {e:?}");
                     }
                 }
             }
@@ -342,8 +442,19 @@ impl PyNetworkingHandle {
 
     // ---- Lifecycle management methods ----
 
+    /// Create a new NetworkingHandle.
+    ///
+    /// Args:
+    ///     identity: The keypair identity for this node
+    ///     headscale_config: Optional Headscale configuration for WAN peer discovery.
+    ///                       If provided, peers will be discovered via the Headscale API
+    ///                       in addition to local mDNS discovery.
     #[new]
-    fn py_new(identity: Bound<'_, PyKeypair>) -> PyResult<Self> {
+    #[pyo3(signature = (identity, headscale_config=None))]
+    fn py_new(
+        identity: Bound<'_, PyKeypair>,
+        headscale_config: Option<PyHeadscaleConfig>,
+    ) -> PyResult<Self> {
         use pyo3_async_runtimes::tokio::get_runtime;
 
         // create communication channels
@@ -354,9 +465,20 @@ impl PyNetworkingHandle {
         // get identity
         let identity = identity.borrow().0.clone();
 
+        // build swarm config
+        let swarm_config = if let Some(hs_config) = headscale_config {
+            log::info!(
+                "RUST: Headscale discovery enabled with API URL: {}",
+                hs_config.api_base_url
+            );
+            SwarmConfig::new().with_headscale(hs_config.into())
+        } else {
+            SwarmConfig::new()
+        };
+
         // create networking swarm (within tokio context!! or it crashes)
         let swarm = get_runtime()
-            .block_on(async { create_swarm(identity) })
+            .block_on(async { create_swarm_with_config(identity, swarm_config) })
             .pyerr()?;
 
         // spawn tokio task running the networking logic
@@ -562,9 +684,9 @@ pub fn networking_submodule(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<exception::PyNoPeersSubscribedToTopicError>()?;
     m.add_class::<exception::PyAllQueuesFullError>()?;
 
+    m.add_class::<PyHeadscaleConfig>()?;
     m.add_class::<PyConnectionUpdateType>()?;
     m.add_class::<PyConnectionUpdate>()?;
-    m.add_class::<PyConnectionUpdateType>()?;
     m.add_class::<PyNetworkingHandle>()?;
 
     Ok(())

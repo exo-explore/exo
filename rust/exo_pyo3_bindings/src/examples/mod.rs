@@ -11,12 +11,12 @@
 //!  - For sync code: take `&mut self` and `.get_mut()`
 
 use crate::ext::{PyResultExt as _, ResultExt as _, TokioRuntimeExt as _};
-use futures::FutureExt as _;
 use futures::future::BoxFuture;
+use futures::FutureExt as _;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::{PyModule, PyModuleMethods as _};
 use pyo3::{
-    Bound, Py, PyAny, PyErr, PyResult, PyTraverseError, PyVisit, Python, pyclass, pymethods,
+    pyclass, pymethods, Bound, Py, PyAny, PyErr, PyResult, PyTraverseError, PyVisit, Python,
 };
 use std::time::Duration;
 use tokio::sync::mpsc;

@@ -15,6 +15,7 @@
 // #![feature(negative_impls)]
 
 pub mod discovery;
+pub mod headscale;
 pub mod keep_alive;
 pub mod swarm;
 
@@ -29,8 +30,8 @@ pub(crate) mod alias {
 /// Namespace for crate-wide extension traits/methods
 pub(crate) mod ext {
     use extend::ext;
-    use libp2p::Multiaddr;
     use libp2p::multiaddr::Protocol;
+    use libp2p::Multiaddr;
     use std::net::IpAddr;
 
     #[ext(pub, name = MultiaddrExt)]
