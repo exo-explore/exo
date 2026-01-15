@@ -265,13 +265,17 @@ def shard_and_load(
             model = pipeline_auto_parallel(model, group, shard_metadata)
 
     # Evaluate sharded parameters one by one to identify which one hangs
-    logger.info("BEFORE evaluating sharded weights - iterating parameters")
-    params = dict(model.parameters())
+    logger.info("BEFORE model.parameters()")
+    params_gen = model.parameters()
+    logger.info("AFTER model.parameters(), BEFORE dict()")
+    params = dict(params_gen)
+    logger.info(f"AFTER dict(), got {len(params)} params")
     total_params = len(params)
+    logger.info("BEFORE iterating params")
     for i, (name, param) in enumerate(params.items()):
-        if i % 50 == 0 or i < 10:
-            logger.info(f"Evaluating param {i}/{total_params}: {name} shape={param.shape}")
+        logger.info(f"BEFORE eval param {i}/{total_params}: {name} shape={param.shape}")
         mx.eval(param)
+        logger.info(f"AFTER eval param {i}/{total_params}: {name}")
     logger.info(f"AFTER evaluating all {total_params} sharded weights")
 
     # TODO: Do we need this?
