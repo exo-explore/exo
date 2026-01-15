@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from copy import copy
 from datetime import timedelta
 from pathlib import Path
-from typing import AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable, Coroutine
 
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
@@ -31,7 +31,10 @@ class ShardDownloader(ABC):
 
     @abstractmethod
     def on_progress(
-        self, callback: Callable[[ShardMetadata, RepoDownloadProgress], None]
+        self,
+        callback: Callable[
+            [ShardMetadata, RepoDownloadProgress], Coroutine[Any, Any, None]
+        ],
     ) -> None:
         pass
 
@@ -59,7 +62,10 @@ class NoopShardDownloader(ShardDownloader):
         return Path("/tmp/noop_shard")
 
     def on_progress(
-        self, callback: Callable[[ShardMetadata, RepoDownloadProgress], None]
+        self,
+        callback: Callable[
+            [ShardMetadata, RepoDownloadProgress], Coroutine[Any, Any, None]
+        ],
     ) -> None:
         pass
 

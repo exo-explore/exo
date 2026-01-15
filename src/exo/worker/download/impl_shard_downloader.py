@@ -1,6 +1,6 @@
 import asyncio
 from pathlib import Path
-from typing import AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable, Coroutine
 
 from exo.shared.models.model_cards import MODEL_CARDS
 from exo.shared.models.model_meta import get_model_meta
@@ -48,7 +48,10 @@ class SingletonShardDownloader(ShardDownloader):
         self.active_downloads: dict[ShardMetadata, asyncio.Task[Path]] = {}
 
     def on_progress(
-        self, callback: Callable[[ShardMetadata, RepoDownloadProgress], None]
+        self,
+        callback: Callable[
+            [ShardMetadata, RepoDownloadProgress], Coroutine[Any, Any, None]
+        ],
     ) -> None:
         self.shard_downloader.on_progress(callback)
 
@@ -83,7 +86,10 @@ class CachedShardDownloader(ShardDownloader):
         self.cache: dict[tuple[str, ShardMetadata], Path] = {}
 
     def on_progress(
-        self, callback: Callable[[ShardMetadata, RepoDownloadProgress], None]
+        self,
+        callback: Callable[
+            [ShardMetadata, RepoDownloadProgress], Coroutine[Any, Any, None]
+        ],
     ) -> None:
         self.shard_downloader.on_progress(callback)
 
@@ -113,17 +119,22 @@ class ResumableShardDownloader(ShardDownloader):
     def __init__(self, max_parallel_downloads: int = 8):
         self.max_parallel_downloads = max_parallel_downloads
         self.on_progress_callbacks: list[
-            Callable[[ShardMetadata, RepoDownloadProgress], None]
+            Callable[
+                [ShardMetadata, RepoDownloadProgress], Coroutine[Any, Any, None]
+            ]
         ] = []
 
-    def on_progress_wrapper(
+    async def on_progress_wrapper(
         self, shard: ShardMetadata, progress: RepoDownloadProgress
     ) -> None:
         for callback in self.on_progress_callbacks:
-            callback(shard, progress)
+            await callback(shard, progress)
 
     def on_progress(
-        self, callback: Callable[[ShardMetadata, RepoDownloadProgress], None]
+        self,
+        callback: Callable[
+            [ShardMetadata, RepoDownloadProgress], Coroutine[Any, Any, None]
+        ],
     ) -> None:
         self.on_progress_callbacks.append(callback)
 
