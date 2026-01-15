@@ -1,14 +1,13 @@
 import pytest
-from loguru import logger
 
 from exo.master.placement import (
     get_transition_events,
     place_instance,
 )
 from exo.master.tests.conftest import (
-    create_connection,
     create_node_profile,
     create_rdma_connection,
+    create_socket_connection,
 )
 from exo.shared.topology import Topology
 from exo.shared.types.commands import PlaceInstance
@@ -18,7 +17,7 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import NetworkInterfaceInfo
-from exo.shared.types.topology import SocketConnection
+from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.instances import (
     Instance,
     InstanceId,
@@ -89,6 +88,27 @@ def test_get_instance_placements_create_instance(
     node_id_a = NodeId()
     node_id_b = NodeId()
     node_id_c = NodeId()
+
+    # fully connected (directed) between the 3 nodes
+    conn_a_b = Connection(
+        source=node_id_a, sink=node_id_b, edge=create_socket_connection(1)
+    )
+    conn_b_c = Connection(
+        source=node_id_b, sink=node_id_c, edge=create_socket_connection(2)
+    )
+    conn_c_a = Connection(
+        source=node_id_c, sink=node_id_a, edge=create_socket_connection(3)
+    )
+    conn_c_b = Connection(
+        source=node_id_c, sink=node_id_b, edge=create_socket_connection(4)
+    )
+    conn_a_c = Connection(
+        source=node_id_a, sink=node_id_c, edge=create_socket_connection(5)
+    )
+    conn_b_a = Connection(
+        source=node_id_b, sink=node_id_a, edge=create_socket_connection(6)
+    )
+
     profiles = {
         node_id_a: create_node_profile(available_memory[0]),
         node_id_b: create_node_profile(available_memory[1]),
@@ -97,12 +117,12 @@ def test_get_instance_placements_create_instance(
     topology.add_node(node_id_a)
     topology.add_node(node_id_b)
     topology.add_node(node_id_c)
-    topology.add_connection(node_id_a, node_id_b, create_connection(1))
-    topology.add_connection(node_id_b, node_id_c, create_connection(2))
-    topology.add_connection(node_id_c, node_id_a, create_connection(3))
-    topology.add_connection(node_id_c, node_id_b, create_connection(4))
-    topology.add_connection(node_id_a, node_id_c, create_connection(5))
-    topology.add_connection(node_id_b, node_id_a, create_connection(6))
+    topology.add_connection(conn_a_b)
+    topology.add_connection(conn_b_c)
+    topology.add_connection(conn_c_a)
+    topology.add_connection(conn_c_b)
+    topology.add_connection(conn_a_c)
+    topology.add_connection(conn_b_a)
 
     # act
     placements = place_instance(cic, topology, {}, profiles)
@@ -270,19 +290,27 @@ def test_placement_selects_leaf_nodes(
     topology.add_node(node_id_c)
     topology.add_node(node_id_d)
 
-    # Daisy chain topology
-    topology.add_connection(node_id_a, node_id_b, create_connection(1))
-    topology.add_connection(node_id_b, node_id_a, create_connection(1))
-    topology.add_connection(node_id_b, node_id_c, create_connection(1))
-    topology.add_connection(node_id_c, node_id_b, create_connection(1))
-    topology.add_connection(node_id_c, node_id_d, create_connection(1))
-    topology.add_connection(node_id_d, node_id_c, create_connection(1))
-
-    logger.info(list(topology.list_connections()))
-
-    cic = place_instance_command(
-        model_meta=model_meta,
+    # Daisy chain topology (directed)
+    topology.add_connection(
+        Connection(source=node_id_a, sink=node_id_b, edge=create_socket_connection(1))
     )
+    topology.add_connection(
+        Connection(source=node_id_b, sink=node_id_a, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_id_b, sink=node_id_c, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_id_c, sink=node_id_b, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_id_c, sink=node_id_d, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_id_d, sink=node_id_c, edge=create_socket_connection(1))
+    )
+
+    cic = place_instance_command(model_meta=model_meta)
 
     # act
     placements = place_instance(cic, topology, {}, profiles)
@@ -293,13 +321,17 @@ def test_placement_selects_leaf_nodes(
 
     assigned_nodes = set(instance.shard_assignments.node_to_runner.keys())
     assert assigned_nodes == set((node_id_a, node_id_b)) or assigned_nodes == set(
-        (node_id_c, node_id_d)
+        (
+            node_id_c,
+            node_id_d,
+        )
     )
 
 
 def test_tensor_rdma_backend_connectivity_matrix(
     model_meta: ModelMetadata,
 ):
+    # arrange
     topology = Topology()
     model_meta.n_layers = 12
     model_meta.storage_size.in_bytes = 1500
@@ -316,10 +348,10 @@ def test_tensor_rdma_backend_connectivity_matrix(
 
     ethernet_interface = NetworkInterfaceInfo(
         name="en0",
-        ip_address="192.168.1.100",
+        ip_address="10.0.0.1",
     )
     ethernet_conn = SocketConnection(
-        sink_multiaddr=Multiaddr(address=f"/ip4/192.168.1.{100}/tcp/{8000}")
+        sink_multiaddr=Multiaddr(address="/ip4/10.0.0.1/tcp/8000")
     )
 
     profiles[node_a].network_interfaces = [ethernet_interface]
@@ -329,19 +361,34 @@ def test_tensor_rdma_backend_connectivity_matrix(
     topology.add_node(node_a)
     topology.add_node(node_b)
     topology.add_node(node_c)
-    topology.add_connection(node_a, node_b, create_rdma_connection(3))
-    topology.add_connection(node_b, node_c, create_rdma_connection(4))
-    topology.add_connection(node_c, node_a, create_rdma_connection(5))
-    topology.add_connection(node_b, node_a, create_rdma_connection(3))
-    topology.add_connection(node_c, node_b, create_rdma_connection(4))
-    topology.add_connection(node_a, node_c, create_rdma_connection(5))
 
-    topology.add_connection(node_a, node_b, ethernet_conn)
-    topology.add_connection(node_b, node_c, ethernet_conn)
-    topology.add_connection(node_c, node_a, ethernet_conn)
-    topology.add_connection(node_a, node_c, ethernet_conn)
-    topology.add_connection(node_b, node_a, ethernet_conn)
-    topology.add_connection(node_c, node_b, ethernet_conn)
+    # RDMA connections (directed)
+    topology.add_connection(
+        Connection(source=node_a, sink=node_b, edge=create_rdma_connection(3))
+    )
+    topology.add_connection(
+        Connection(source=node_b, sink=node_a, edge=create_rdma_connection(3))
+    )
+    topology.add_connection(
+        Connection(source=node_b, sink=node_c, edge=create_rdma_connection(4))
+    )
+    topology.add_connection(
+        Connection(source=node_c, sink=node_b, edge=create_rdma_connection(4))
+    )
+    topology.add_connection(
+        Connection(source=node_a, sink=node_c, edge=create_rdma_connection(5))
+    )
+    topology.add_connection(
+        Connection(source=node_c, sink=node_a, edge=create_rdma_connection(5))
+    )
+
+    # Ethernet connections (directed)
+    topology.add_connection(Connection(source=node_a, sink=node_b, edge=ethernet_conn))
+    topology.add_connection(Connection(source=node_b, sink=node_c, edge=ethernet_conn))
+    topology.add_connection(Connection(source=node_c, sink=node_a, edge=ethernet_conn))
+    topology.add_connection(Connection(source=node_a, sink=node_c, edge=ethernet_conn))
+    topology.add_connection(Connection(source=node_b, sink=node_a, edge=ethernet_conn))
+    topology.add_connection(Connection(source=node_c, sink=node_b, edge=ethernet_conn))
 
     cic = PlaceInstance(
         sharding=Sharding.Tensor,
@@ -351,8 +398,10 @@ def test_tensor_rdma_backend_connectivity_matrix(
         min_nodes=1,
     )
 
+    # act
     placements = place_instance(cic, topology, {}, profiles)
 
+    # assert
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
     instance = placements[instance_id]
@@ -364,7 +413,6 @@ def test_tensor_rdma_backend_connectivity_matrix(
 
     matrix = instance.jaccl_devices
     assert len(matrix) == 3
-
     for i in range(3):
         assert matrix[i][i] is None
 
@@ -374,8 +422,6 @@ def test_tensor_rdma_backend_connectivity_matrix(
     idx_a = node_to_idx[node_a]
     idx_b = node_to_idx[node_b]
     idx_c = node_to_idx[node_c]
-
-    logger.info(matrix)
 
     assert matrix[idx_a][idx_b] == "rdma_en3"
     assert matrix[idx_b][idx_c] == "rdma_en4"
@@ -391,7 +437,5 @@ def test_tensor_rdma_backend_connectivity_matrix(
         if node_id == assigned_nodes[0]:
             assert coordinator.startswith("0.0.0.0:")
         else:
-            # Non-rank-0 nodes should have valid IP addresses (can be link-local)
             ip_part = coordinator.split(":")[0]
-            # Just verify it's a valid IP format
             assert len(ip_part.split(".")) == 4
