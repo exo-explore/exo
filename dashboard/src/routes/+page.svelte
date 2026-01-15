@@ -400,10 +400,8 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				const errorText = await response.text();
 				console.error('Failed to launch instance:', errorText);
 			} else {
-				// Auto-select the launched model only if no model is currently selected
-				if (!selectedChatModel()) {
-					setSelectedChatModel(modelId);
-				}
+				// Always auto-select the newly launched model so the user chats to what they just launched
+				setSelectedChatModel(modelId);
 				
 				// Scroll to the bottom of instances container to show the new instance
 				// Use multiple attempts to ensure DOM has updated with the new instance
@@ -763,6 +761,10 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	async function deleteInstance(instanceId: string) {
 		if (!confirm(`Delete instance ${instanceId.slice(0, 8)}...?`)) return;
 		
+		// Get the model ID of the instance being deleted before we delete it
+		const deletedInstanceModelId = getInstanceModelId(instanceData[instanceId]);
+		const wasSelected = selectedChatModel() === deletedInstanceModelId;
+		
 		try {
 			const response = await fetch(`/instance/${instanceId}`, {
 				method: 'DELETE',
@@ -771,6 +773,24 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			
 			if (!response.ok) {
 				console.error('Failed to delete instance:', response.status);
+			} else if (wasSelected) {
+				// If we deleted the currently selected model, switch to another available model
+				// Find another instance that isn't the one we just deleted
+				const remainingInstances = Object.entries(instanceData).filter(([id]) => id !== instanceId);
+				if (remainingInstances.length > 0) {
+					// Select the last instance (most recently added, since objects preserve insertion order)
+					const [, lastInstance] = remainingInstances[remainingInstances.length - 1];
+					const newModelId = getInstanceModelId(lastInstance);
+					if (newModelId && newModelId !== 'Unknown' && newModelId !== 'Unknown Model') {
+						setSelectedChatModel(newModelId);
+					} else {
+						// Clear selection if no valid model found
+						setSelectedChatModel('');
+					}
+				} else {
+					// No more instances, clear the selection
+					setSelectedChatModel('');
+				}
 			}
 		} catch (error) {
 			console.error('Error deleting instance:', error);
