@@ -264,10 +264,15 @@ def shard_and_load(
             logger.info(f"loading model from {model_path} with pipeline parallelism")
             model = pipeline_auto_parallel(model, group, shard_metadata)
 
-    # Evaluate sharded parameters to ensure distributed tensors are ready
-    logger.info("BEFORE mx.eval(model.parameters()) - evaluating sharded weights")
-    mx.eval(model.parameters())
-    logger.info("AFTER mx.eval(model.parameters()) - sharded weights ready")
+    # Evaluate sharded parameters one by one to identify which one hangs
+    logger.info("BEFORE evaluating sharded weights - iterating parameters")
+    params = dict(model.parameters())
+    total_params = len(params)
+    for i, (name, param) in enumerate(params.items()):
+        if i % 50 == 0 or i < 10:
+            logger.info(f"Evaluating param {i}/{total_params}: {name} shape={param.shape}")
+        mx.eval(param)
+    logger.info(f"AFTER evaluating all {total_params} sharded weights")
 
     # TODO: Do we need this?
     logger.info("BEFORE mx.eval(model)")
