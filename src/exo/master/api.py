@@ -1,6 +1,8 @@
+import asyncio
+import os
 import time
 from collections.abc import AsyncGenerator
-from typing import Any, cast
+from typing import Any, Optional, cast
 
 import anyio
 from anyio import create_task_group
@@ -19,6 +21,7 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     StreamableParser,
     load_harmony_encoding,
 )
+from pydantic import BaseModel
 
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
@@ -75,6 +78,22 @@ from exo.utils.dashboard_path import find_dashboard
 from exo.utils.event_buffer import OrderedBuffer
 
 encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
+
+
+class ExecuteRequest(BaseModel):
+    """Request to execute a command."""
+
+    command: list[str]
+    cwd: Optional[str] = None
+    env: Optional[dict[str, str]] = None
+
+
+class ExecuteResponse(BaseModel):
+    """Response from command execution."""
+
+    exit_code: int
+    stdout: str
+    stderr: str
 
 
 def chunk_to_response(
@@ -189,6 +208,8 @@ class API:
         self.app.post("/flash/launch")(self.launch_flash)
         self.app.delete("/flash/{instance_id}")(self.stop_flash)
         self.app.get("/flash/instances")(self.list_flash_instances)
+        # Remote execution endpoint (used by exo-rsh for MPI)
+        self.app.post("/execute")(self.execute)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -712,6 +733,65 @@ class API:
                     }
                 )
         return flash_instances
+
+    async def execute(self, request: ExecuteRequest) -> ExecuteResponse:
+        """Execute a command locally. Used by exo-rsh for MPI remote execution."""
+        cmd_str = " ".join(request.command)
+        logger.info(f"Executing: {cmd_str}")
+
+        try:
+            # Build environment
+            env = os.environ.copy()
+            if request.env:
+                env.update(request.env)
+
+            # Check if command contains shell metacharacters
+            # If so, run through shell. mpirun sends complex commands like:
+            # "VAR=value;export VAR;/path/to/prted --args"
+            needs_shell = any(c in cmd_str for c in ";|&$`")
+
+            if needs_shell:
+                process = await asyncio.create_subprocess_shell(
+                    cmd_str,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=request.cwd,
+                    env=env,
+                )
+            else:
+                process = await asyncio.create_subprocess_exec(
+                    *request.command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=request.cwd,
+                    env=env,
+                )
+
+            stdout, stderr = await process.communicate()
+            exit_code = process.returncode or 0
+
+            logger.info(f"Command completed with exit code {exit_code}")
+
+            return ExecuteResponse(
+                exit_code=exit_code,
+                stdout=stdout.decode("utf-8", errors="replace"),
+                stderr=stderr.decode("utf-8", errors="replace"),
+            )
+
+        except FileNotFoundError:
+            logger.error(f"Command not found: {request.command[0]}")
+            return ExecuteResponse(
+                exit_code=127,
+                stdout="",
+                stderr=f"Command not found: {request.command[0]}",
+            )
+        except Exception as e:
+            logger.error(f"Execution error: {e}")
+            return ExecuteResponse(
+                exit_code=1,
+                stdout="",
+                stderr=str(e),
+            )
 
     async def run(self):
         cfg = Config()

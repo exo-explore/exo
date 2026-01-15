@@ -4,7 +4,7 @@ Exo-native distributed MPI:
 - Exo handles node discovery and coordination
 - Coordinator generates hostfile from Exo topology
 - mpirun uses exo-rsh (no SSH required) to spawn on remote nodes
-- Each Exo node runs an RSH server on port 52416 for remote execution
+- exo-rsh connects to each node's Exo API (/execute endpoint) for remote execution
 - Workers just report ready and wait
 """
 
@@ -120,7 +120,7 @@ def main(
 ):
     """Main FLASH runner loop.
 
-    Coordinator: generates hostfile and runs mpirun (which SSHs to workers)
+    Coordinator: generates hostfile and runs mpirun (uses exo-rsh instead of SSH)
     Workers: just report ready and wait for mpirun to spawn processes on them
     """
     assert isinstance(bound_instance.instance, FLASHInstance)

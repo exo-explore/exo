@@ -4,7 +4,7 @@
 This script is called by mpirun as a replacement for ssh.
 Usage: exo-rsh [ssh-options...] hostname command [args...]
 
-It connects to the target node's RSH server (port 52416) and executes the command.
+It connects to the target node's Exo API (port 52415) and executes the command.
 """
 
 import json
@@ -14,7 +14,8 @@ from typing import Any, cast
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-RSH_PORT = 52416
+# Use the same port as Exo's API server
+EXO_API_PORT = 52415
 
 
 def resolve_hostname(hostname: str) -> str:
@@ -61,8 +62,8 @@ def main():
     # Resolve hostname to IP
     ip = resolve_hostname(hostname)
 
-    # Make request to RSH server
-    url = f"http://{ip}:{RSH_PORT}/execute"
+    # Make request to Exo API
+    url = f"http://{ip}:{EXO_API_PORT}/execute"
     data = json.dumps({"command": command}).encode("utf-8")
 
     try:
@@ -87,7 +88,8 @@ def main():
 
     except URLError as e:
         print(
-            f"exo-rsh: Failed to connect to {hostname}:{RSH_PORT}: {e}", file=sys.stderr
+            f"exo-rsh: Failed to connect to {hostname}:{EXO_API_PORT}: {e}",
+            file=sys.stderr,
         )
         sys.exit(255)
     except Exception as e:
