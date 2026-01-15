@@ -6,7 +6,6 @@ from mlx_lm.models.cache import KVCache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-# from exo.engines.mlx.cache import KVPrefixCache
 from exo.shared.types.api import (
     BenchChatCompletionTaskParams,
     ChatCompletionMessage,
@@ -19,6 +18,7 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
 from exo.worker.engines.mlx import Model
+from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
@@ -119,6 +119,7 @@ def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
     task: ChatCompletionTaskParams,
+    prefix_cache: KVPrefixCache | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -135,8 +136,6 @@ def mlx_generate(
         chat_task_data=task,
     )
 
-    caches = make_kv_cache(model=model)
-
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = []
     if is_bench:
         # Only sample length eos tokens
@@ -147,6 +146,20 @@ def mlx_generate(
         temp=task.temperature if task.temperature is not None else 0.7,
         top_p=task.top_p if task.top_p is not None else 1.0,
     )
+
+    # Get KV cache - either from prefix cache or fresh
+    tokens_reused = 0
+    if prefix_cache is not None:
+        caches, tokens_reused = prefix_cache.get_kv_cache(
+            model=model,
+            tokenizer=tokenizer,
+            sampler=sampler,
+            prompt=prompt,
+        )
+        if tokens_reused > 0:
+            logger.info(f"Prefix cache hit: reused {tokens_reused} tokens")
+    else:
+        caches = make_kv_cache(model=model)
 
     max_tokens = task.max_tokens or MAX_TOKENS
     for out in stream_generate(
@@ -189,6 +202,9 @@ def mlx_generate(
         )
 
         if out.finish_reason is not None:
+            # Store in prefix cache for future reuse
+            if prefix_cache is not None:
+                prefix_cache.put(tokenizer=tokenizer, prompt=prompt, cache=caches)
             break
 
         # TODO: Do we want an mx_barrier?

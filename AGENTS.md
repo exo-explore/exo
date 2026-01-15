@@ -30,14 +30,17 @@ uv run pytest src/exo/shared/tests/test_election.py
 # Run a specific test function
 uv run pytest src/exo/shared/tests/test_election.py::test_function_name
 
-# Type checking (strict mode)
-uv run basedpyright
+# Type checking (strict mode) - MUST pass before committing
+uv run basedpyright --project pyproject.toml
 
 # Linting
 uv run ruff check
 
 # Format code (using nix)
 nix fmt
+
+# Run all checks (do this before committing)
+uv run basedpyright --project pyproject.toml && uv run ruff check && nix fmt
 ```
 
 ## Architecture
@@ -90,6 +93,10 @@ From .cursorrules:
 - Descriptive names - no abbreviations or 3-letter acronyms
 - Catch exceptions only where you can handle them meaningfully
 - Use `@final` and immutability wherever applicable
+
+## File Locations
+
+- **Downloaded models**: `~/.exo/models/` (NOT in huggingface cache)
 
 ## Testing
 

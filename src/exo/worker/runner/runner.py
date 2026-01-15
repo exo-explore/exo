@@ -39,6 +39,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import MpReceiver, MpSender
+from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
@@ -69,6 +70,7 @@ def main(
     model = None
     tokenizer = None
     group = None
+    prefix_cache: KVPrefixCache | None = None
 
     current_status: RunnerStatus = RunnerIdle()
     logger.info("runner created")
@@ -110,6 +112,8 @@ def main(
                     )
 
                     model, tokenizer = load_mlx_items(bound_instance, group)
+                    prefix_cache = KVPrefixCache(max_size=10)
+                    logger.info("prefix cache initialized")
 
                     current_status = RunnerLoaded()
                     logger.info("runner loaded")
@@ -157,6 +161,7 @@ def main(
                         model=model,
                         tokenizer=tokenizer,
                         task=task_params,
+                        prefix_cache=prefix_cache,
                     ):
                         match response:
                             case GenerationResponse():
