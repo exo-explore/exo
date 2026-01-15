@@ -487,7 +487,11 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
         model = cast(GptOssMoeModel, model)
         logger.info(f"GptOssShardingStrategy.shard_model: {len(model.layers)} layers")
         for i, layer in enumerate(model.layers):
+            if i == 0:
+                logger.info(f"Layer 0: BEFORE shard_linear(q_proj)")
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
+            if i == 0:
+                logger.info(f"Layer 0: AFTER shard_linear(q_proj)")
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
             layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
@@ -505,7 +509,11 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
                 * (self.group.rank() + 1)
             ]
 
+            if i == 0:
+                logger.info(f"Layer 0: BEFORE shard_inplace(gate_proj)")
             self.all_to_sharded_linear_in_place(layer.mlp.experts.gate_proj)
+            if i == 0:
+                logger.info(f"Layer 0: AFTER shard_inplace(gate_proj)")
             self.sharded_to_all_linear_in_place(layer.mlp.experts.down_proj)
             self.all_to_sharded_linear_in_place(layer.mlp.experts.up_proj)
 
