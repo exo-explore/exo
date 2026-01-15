@@ -8,7 +8,7 @@
 exo: Run your own AI cluster at home with everyday devices. Maintained by [exo labs](https://x.com/exolabs).
 
 <p align="center">
-  <a href="https://discord.gg/72NsF6ux" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Discord-Join%20Server-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://discord.gg/TJ4P57arEm" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Discord-Join%20Server-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://x.com/exolabs" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/twitter/follow/exolabs?style=social" alt="X"></a>
   <a href="https://www.apache.org/licenses/LICENSE-2.0.html" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/License-Apache2.0-blue.svg" alt="License: Apache-2.0"></a>
 </p>
@@ -166,6 +166,24 @@ Download the latest build here: [EXO-latest.dmg](https://assets.exolabs.net/EXO-
 
 The app will ask for permission to modify system settings and install a new Network profile. Improvements to this are being worked on.
 
+#### Uninstalling the macOS App
+
+The recommended way to uninstall is through the app itself: click the menu bar icon → Advanced → Uninstall. This cleanly removes all system components.
+
+If you've already deleted the app, you can run the standalone uninstaller script:
+
+```bash
+sudo ./app/EXO/uninstall-exo.sh
+```
+
+This removes:
+- Network setup LaunchDaemon
+- Network configuration script
+- Log files
+- The "exo" network location
+
+**Note:** You'll need to manually remove EXO from Login Items in System Settings → General → Login Items.
+
 ---
 
 ### Enabling RDMA on macOS
@@ -287,7 +305,10 @@ curl -X DELETE http://localhost:52415/instance/YOUR_INSTANCE_ID
 - List all models: `curl http://localhost:52415/models`
 - Inspect instance IDs and deployment state: `curl http://localhost:52415/state`
 
-For further details, see API types and endpoints in [src/exo/master/api.py](src/exo/master/api.py).
+For further details, see:
+
+- API basic documentation in [docs/api.md](docs/api.md).
+- API types and endpoints in [src/exo/master/api.py](src/exo/master/api.py).
 
 ---
 

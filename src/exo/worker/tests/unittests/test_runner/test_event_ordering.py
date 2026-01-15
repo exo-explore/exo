@@ -34,6 +34,7 @@ from exo.shared.types.worker.runners import (
     RunnerReady,
     RunnerRunning,
     RunnerShutdown,
+    RunnerShuttingDown,
     RunnerWarmingUp,
 )
 from exo.utils.channels import mp_channel
@@ -110,7 +111,7 @@ def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Even
 def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     # initialize_mlx returns a "group" equal to 1
     monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(1))
-    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, 1, 1)))
+    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, 1)))
     monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", nothin)
 
@@ -199,6 +200,9 @@ def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
             RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerReady()),
             TaskStatusUpdated(task_id=SHUTDOWN_TASK_ID, task_status=TaskStatus.Running),
             TaskAcknowledged(task_id=SHUTDOWN_TASK_ID),
+            RunnerStatusUpdated(
+                runner_id=RUNNER_1_ID, runner_status=RunnerShuttingDown()
+            ),
             TaskStatusUpdated(
                 task_id=SHUTDOWN_TASK_ID, task_status=TaskStatus.Complete
             ),

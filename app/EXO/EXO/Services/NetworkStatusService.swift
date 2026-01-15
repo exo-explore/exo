@@ -35,12 +35,32 @@ struct NetworkStatus: Equatable {
     let thunderboltBridgeState: ThunderboltState?
     let bridgeInactive: Bool?
     let interfaceStatuses: [InterfaceIpStatus]
+    let rdmaStatus: RDMAStatus
 
     static let empty = NetworkStatus(
         thunderboltBridgeState: nil,
         bridgeInactive: nil,
-        interfaceStatuses: []
+        interfaceStatuses: [],
+        rdmaStatus: .empty
     )
+}
+
+struct RDMAStatus: Equatable {
+    let rdmaCtlEnabled: Bool?
+    let devices: [String]
+    let activePorts: [RDMAPort]
+
+    var isAvailable: Bool {
+        rdmaCtlEnabled == true || !devices.isEmpty
+    }
+
+    static let empty = RDMAStatus(rdmaCtlEnabled: nil, devices: [], activePorts: [])
+}
+
+struct RDMAPort: Equatable {
+    let device: String
+    let port: String
+    let state: String
 }
 
 struct InterfaceIpStatus: Equatable {
@@ -59,8 +79,77 @@ private struct NetworkStatusFetcher {
         NetworkStatus(
             thunderboltBridgeState: readThunderboltBridgeState(),
             bridgeInactive: readBridgeInactive(),
-            interfaceStatuses: readInterfaceStatuses()
+            interfaceStatuses: readInterfaceStatuses(),
+            rdmaStatus: readRDMAStatus()
         )
+    }
+
+    private func readRDMAStatus() -> RDMAStatus {
+        let rdmaCtlEnabled = readRDMACtlEnabled()
+        let devices = readRDMADevices()
+        let activePorts = readRDMAActivePorts()
+        return RDMAStatus(
+            rdmaCtlEnabled: rdmaCtlEnabled, devices: devices, activePorts: activePorts)
+    }
+
+    private func readRDMACtlEnabled() -> Bool? {
+        let result = runCommand(["rdma_ctl", "status"])
+        guard result.exitCode == 0 else { return nil }
+        let output = result.output.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if output.contains("enabled") {
+            return true
+        }
+        if output.contains("disabled") {
+            return false
+        }
+        return nil
+    }
+
+    private func readRDMADevices() -> [String] {
+        let result = runCommand(["ibv_devices"])
+        guard result.exitCode == 0 else { return [] }
+        var devices: [String] = []
+        for line in result.output.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("---") || trimmed.lowercased().hasPrefix("device")
+                || trimmed.isEmpty
+            {
+                continue
+            }
+            let parts = trimmed.split(separator: " ", maxSplits: 1)
+            if let deviceName = parts.first {
+                devices.append(String(deviceName))
+            }
+        }
+        return devices
+    }
+
+    private func readRDMAActivePorts() -> [RDMAPort] {
+        let result = runCommand(["ibv_devinfo"])
+        guard result.exitCode == 0 else { return [] }
+        var ports: [RDMAPort] = []
+        var currentDevice: String?
+        var currentPort: String?
+
+        for line in result.output.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("hca_id:") {
+                currentDevice = trimmed.replacingOccurrences(of: "hca_id:", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+            } else if trimmed.hasPrefix("port:") {
+                currentPort = trimmed.replacingOccurrences(of: "port:", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+            } else if trimmed.hasPrefix("state:") {
+                let state = trimmed.replacingOccurrences(of: "state:", with: "").trimmingCharacters(
+                    in: .whitespaces)
+                if let device = currentDevice, let port = currentPort {
+                    if state.lowercased().contains("active") {
+                        ports.append(RDMAPort(device: device, port: port, state: state))
+                    }
+                }
+            }
+        }
+        return ports
     }
 
     private func readThunderboltBridgeState() -> ThunderboltState? {
@@ -85,10 +174,11 @@ private struct NetworkStatusFetcher {
     private func readBridgeInactive() -> Bool? {
         let result = runCommand(["ifconfig", "bridge0"])
         guard result.exitCode == 0 else { return nil }
-        guard let statusLine = result.output
-            .components(separatedBy: .newlines)
-            .first(where: { $0.contains("status:") })?
-            .lowercased()
+        guard
+            let statusLine = result.output
+                .components(separatedBy: .newlines)
+                .first(where: { $0.contains("status:") })?
+                .lowercased()
         else {
             return nil
         }
@@ -171,4 +261,3 @@ private struct NetworkStatusFetcher {
         )
     }
 }
-

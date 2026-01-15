@@ -12,18 +12,25 @@ struct ContentView: View {
     @EnvironmentObject private var controller: ExoProcessController
     @EnvironmentObject private var stateService: ClusterStateService
     @EnvironmentObject private var networkStatusService: NetworkStatusService
+    @EnvironmentObject private var localNetworkChecker: LocalNetworkChecker
     @EnvironmentObject private var updater: SparkleUpdater
     @State private var focusedNode: NodeViewModel?
     @State private var deletingInstanceIDs: Set<String> = []
     @State private var showAllNodes = false
     @State private var showAllInstances = false
+    @State private var showAdvanced = false
     @State private var showDebugInfo = false
     @State private var bugReportInFlight = false
     @State private var bugReportMessage: String?
+    @State private var uninstallInProgress = false
+    @State private var pendingNamespace: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             statusSection
+            if shouldShowLocalNetworkWarning {
+                localNetworkWarningBanner
+            }
             if shouldShowClusterDetails {
                 Divider()
                 overviewSection
@@ -38,6 +45,7 @@ struct ContentView: View {
         }
         .animation(.easeInOut(duration: 0.3), value: shouldShowClusterDetails)
         .animation(.easeInOut(duration: 0.3), value: shouldShowInstances)
+        .animation(.easeInOut(duration: 0.3), value: shouldShowLocalNetworkWarning)
         .padding()
         .frame(width: 340)
         .onAppear {
@@ -47,9 +55,62 @@ struct ContentView: View {
         }
     }
 
+    private var shouldShowLocalNetworkWarning: Bool {
+        if case .notWorking = localNetworkChecker.status {
+            return controller.status != .stopped
+        }
+        return false
+    }
+
+    private var localNetworkWarningBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                Text("Local Network Access Issue")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+            }
+            Text(
+                "Device discovery won't work. To fix:\n1. Quit EXO\n2. Open System Settings → Privacy & Security → Local Network\n3. Toggle EXO off, then back on\n4. Relaunch EXO"
+            )
+            .font(.caption2)
+            .foregroundColor(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            Button {
+                openLocalNetworkSettings()
+            } label: {
+                Text("Open Settings")
+                    .font(.caption2)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.orange.opacity(0.1))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+        )
+    }
+
+    private func openLocalNetworkSettings() {
+        // Open Privacy & Security settings - Local Network section
+        if let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")
+        {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     private var topologySection: some View {
         Group {
-            if let topology = stateService.latestSnapshot?.topologyViewModel(localNodeId: stateService.localNodeId), !topology.nodes.isEmpty {
+            if let topology = stateService.latestSnapshot?.topologyViewModel(
+                localNodeId: stateService.localNodeId), !topology.nodes.isEmpty
+            {
                 TopologyMiniView(topology: topology)
             }
         }
@@ -83,8 +144,10 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         VStack(alignment: .leading) {
-                            Text("\(overview.usedRam, specifier: "%.0f") / \(overview.totalRam, specifier: "%.0f") GB")
-                                .font(.headline)
+                            Text(
+                                "\(overview.usedRam, specifier: "%.0f") / \(overview.totalRam, specifier: "%.0f") GB"
+                            )
+                            .font(.headline)
                             Text("Memory")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -193,11 +256,7 @@ struct ContentView: View {
                 Divider()
                     .padding(.vertical, 4)
             }
-            controlButton(title: "Check for Updates") {
-                updater.checkForUpdates()
-            }
-            .padding(.bottom, 8)
-            debugSection
+            advancedSection
                 .padding(.bottom, 8)
             controlButton(title: "Quit", tint: .secondary) {
                 controller.stop()
@@ -206,7 +265,57 @@ struct ContentView: View {
         }
     }
 
-    private func controlButton(title: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {
+    private var advancedSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Advanced")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                collapseButton(isExpanded: $showAdvanced)
+            }
+            .animation(nil, value: showAdvanced)
+            if showAdvanced {
+                VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Cluster Namespace")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        HStack {
+                            TextField("optional", text: $pendingNamespace)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.caption2)
+                                .onAppear {
+                                    pendingNamespace = controller.customNamespace
+                                }
+                            Button("Save & Restart") {
+                                controller.customNamespace = pendingNamespace
+                                if controller.status == .running || controller.status == .starting {
+                                    controller.restart()
+                                }
+                            }
+                            .font(.caption2)
+                            .disabled(pendingNamespace == controller.customNamespace)
+                        }
+                    }
+                    HoverButton(title: "Check for Updates", small: true) {
+                        updater.checkForUpdates()
+                    }
+                    debugSection
+                    HoverButton(title: "Uninstall", tint: .red, small: true) {
+                        showUninstallConfirmationAlert()
+                    }
+                    .disabled(uninstallInProgress)
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: showAdvanced)
+    }
+
+    private func controlButton(title: String, tint: Color = .primary, action: @escaping () -> Void)
+        -> some View
+    {
         HoverButton(title: title, tint: tint, trailingSystemImage: nil, action: action)
     }
 
@@ -237,9 +346,12 @@ struct ContentView: View {
         Button {
             isExpanded.wrappedValue.toggle()
         } label: {
-            Label(isExpanded.wrappedValue ? "Hide" : "Show All", systemImage: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
-                .labelStyle(.titleAndIcon)
-                .contentTransition(.symbolEffect(.replace))
+            Label(
+                isExpanded.wrappedValue ? "Hide" : "Show All",
+                systemImage: isExpanded.wrappedValue ? "chevron.up" : "chevron.down"
+            )
+            .labelStyle(.titleAndIcon)
+            .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.plain)
         .font(.caption2)
@@ -328,15 +440,15 @@ struct ContentView: View {
     }
 
     private var debugSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Debug Info")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Spacer()
-                collapseButton(isExpanded: $showDebugInfo)
+        VStack(alignment: .leading, spacing: 4) {
+            HoverButton(
+                title: "Debug Info",
+                tint: .primary,
+                trailingSystemImage: showDebugInfo ? "chevron.up" : "chevron.down",
+                small: true
+            ) {
+                showDebugInfo.toggle()
             }
-            .animation(nil, value: showDebugInfo)
             if showDebugInfo {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Version: \(buildTag)")
@@ -349,13 +461,61 @@ struct ContentView: View {
                         .font(.caption2)
                         .foregroundColor(thunderboltStatusColor)
                     interfaceIpList
+                    rdmaStatusView
                     sendBugReportButton
                         .padding(.top, 6)
                 }
+                .padding(.leading, 8)
                 .transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: 0.25), value: showDebugInfo)
+    }
+
+    private var rdmaStatusView: some View {
+        let rdma = networkStatusService.status.rdmaStatus
+        return VStack(alignment: .leading, spacing: 1) {
+            Text("RDMA: \(rdmaStatusText(rdma))")
+                .font(.caption2)
+                .foregroundColor(rdmaStatusColor(rdma))
+            if !rdma.devices.isEmpty {
+                Text("  Devices: \(rdma.devices.joined(separator: ", "))")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            if !rdma.activePorts.isEmpty {
+                Text("  Active Ports:")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                ForEach(rdma.activePorts, id: \.device) { port in
+                    Text("    \(port.device) port \(port.port): \(port.state)")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                }
+            }
+        }
+    }
+
+    private func rdmaStatusText(_ rdma: RDMAStatus) -> String {
+        switch rdma.rdmaCtlEnabled {
+        case .some(true):
+            return "Enabled"
+        case .some(false):
+            return "Disabled"
+        case nil:
+            return rdma.devices.isEmpty ? "Not Available" : "Available"
+        }
+    }
+
+    private func rdmaStatusColor(_ rdma: RDMAStatus) -> Color {
+        switch rdma.rdmaCtlEnabled {
+        case .some(true):
+            return .green
+        case .some(false):
+            return .orange
+        case nil:
+            return rdma.devices.isEmpty ? .secondary : .green
+        }
     }
 
     private var sendBugReportButton: some View {
@@ -447,6 +607,88 @@ struct ContentView: View {
         bugReportInFlight = false
     }
 
+    private func showUninstallConfirmationAlert() {
+        let alert = NSAlert()
+        alert.messageText = "Uninstall EXO"
+        alert.informativeText = """
+            This will remove EXO and all its system components:
+
+            • Network configuration daemon
+            • Launch at login registration
+            • EXO network location
+
+            The app will be moved to Trash.
+            """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Uninstall")
+        alert.addButton(withTitle: "Cancel")
+
+        // Style the Uninstall button as destructive
+        if let uninstallButton = alert.buttons.first {
+            uninstallButton.hasDestructiveAction = true
+        }
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            performUninstall()
+        }
+    }
+
+    private func performUninstall() {
+        uninstallInProgress = true
+
+        // Stop EXO process first
+        controller.cancelPendingLaunch()
+        controller.stop()
+        stateService.stopPolling()
+
+        // Run the privileged uninstall on a background thread
+        // Using .utility QoS to avoid priority inversion with NSAppleScript's subprocess
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                // Remove network setup daemon and components (requires admin privileges)
+                try NetworkSetupHelper.uninstall()
+
+                DispatchQueue.main.async {
+                    // Unregister from launch at login
+                    LaunchAtLoginHelper.disable()
+
+                    // Move app to trash
+                    self.moveAppToTrash()
+
+                    // Quit the app
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        NSApplication.shared.terminate(nil)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.showErrorAlert(message: error.localizedDescription)
+                    self.uninstallInProgress = false
+                }
+            }
+        }
+    }
+
+    private func showErrorAlert(message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Uninstall Failed"
+        alert.informativeText = message
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    private func moveAppToTrash() {
+        guard let appURL = Bundle.main.bundleURL as URL? else { return }
+        do {
+            try FileManager.default.trashItem(at: appURL, resultingItemURL: nil)
+        } catch {
+            // If we can't trash the app, that's OK - user can do it manually
+            // The important system components have already been cleaned up
+        }
+    }
+
     private var buildTag: String {
         Bundle.main.infoDictionary?["EXOBuildTag"] as? String ?? "unknown"
     }
@@ -460,7 +702,19 @@ private struct HoverButton: View {
     let title: String
     let tint: Color
     let trailingSystemImage: String?
+    let small: Bool
     let action: () -> Void
+
+    init(
+        title: String, tint: Color = .primary, trailingSystemImage: String? = nil,
+        small: Bool = false, action: @escaping () -> Void
+    ) {
+        self.title = title
+        self.tint = tint
+        self.trailingSystemImage = trailingSystemImage
+        self.small = small
+        self.action = action
+    }
 
     @State private var isHovering = false
 
@@ -468,6 +722,7 @@ private struct HoverButton: View {
         Button(action: action) {
             HStack {
                 Text(title)
+                    .font(small ? .caption : nil)
                 Spacer()
                 if let systemName = trailingSystemImage {
                     Image(systemName: systemName)
@@ -475,8 +730,8 @@ private struct HoverButton: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 6)
-            .padding(.horizontal, 8)
+            .padding(.vertical, small ? 4 : 6)
+            .padding(.horizontal, small ? 6 : 8)
             .background(
                 RoundedRectangle(cornerRadius: 6)
                     .fill(
@@ -491,4 +746,3 @@ private struct HoverButton: View {
         .onHover { isHovering = $0 }
     }
 }
-

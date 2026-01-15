@@ -28,4 +28,3 @@ struct NodeRowView: View {
         .padding(.vertical, 4)
     }
 }
-
