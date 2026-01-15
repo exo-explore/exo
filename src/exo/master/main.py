@@ -27,6 +27,7 @@ from exo.shared.types.events import (
     ForwarderEvent,
     IndexedEvent,
     InstanceDeleted,
+    NodeGatheredInfo,
     NodeTimedOut,
     TaskCreated,
     TaskDeleted,
@@ -236,6 +237,8 @@ class Master:
                     self.state = apply(self.state, indexed)
 
                     event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
+                    if isinstance(event, NodeGatheredInfo):
+                        event.when = str(datetime.now(tz=timezone.utc))
 
                     self._event_log.append(event)
                     await self._send_event(indexed)
