@@ -1,0 +1,15 @@
+short_id = "llama-3.3-70b-fp16"
+model_id = "mlx-community/llama-3.3-70b-instruct-fp16"
+name = "Llama 3.3 70B (FP16)"
+description = "The Meta Llama 3.3 multilingual large language model (LLM) is an instruction tuned generative model in 70B (text in/text out)"
+tags = []
+
+[metadata]
+model_id = "mlx-community/llama-3.3-70b-instruct-fp16"
+pretty_name = "Llama 3.3 70B (FP16)"
+n_layers = 80
+hidden_size = 8192
+supports_tensor = true
+
+[metadata.storage_size]
+in_bytes = 144383672320

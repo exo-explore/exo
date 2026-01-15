@@ -1,0 +1,15 @@
+short_id = "glm-4.7-4bit"
+model_id = "mlx-community/GLM-4.7-4bit"
+name = "GLM 4.7 4bit"
+description = "GLM 4.7 4bit"
+tags = []
+
+[metadata]
+model_id = "mlx-community/GLM-4.7-4bit"
+pretty_name = "GLM 4.7 4bit"
+n_layers = 91
+hidden_size = 5120
+supports_tensor = true
+
+[metadata.storage_size]
+in_bytes = 198556925568

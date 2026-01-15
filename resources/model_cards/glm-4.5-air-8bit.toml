@@ -1,0 +1,15 @@
+short_id = "glm-4.5-air-8bit"
+model_id = "mlx-community/GLM-4.5-Air-8bit"
+name = "GLM 4.5 Air 8bit"
+description = "GLM 4.5 Air 8bit"
+tags = []
+
+[metadata]
+model_id = "mlx-community/GLM-4.5-Air-8bit"
+pretty_name = "GLM 4.5 Air 8bit"
+n_layers = 46
+hidden_size = 4096
+supports_tensor = false
+
+[metadata.storage_size]
+in_bytes = 122406567936

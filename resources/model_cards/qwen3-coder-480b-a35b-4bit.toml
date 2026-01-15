@@ -1,0 +1,15 @@
+short_id = "qwen3-coder-480b-a35b-4bit"
+model_id = "mlx-community/Qwen3-Coder-480B-A35B-Instruct-4bit"
+name = "Qwen3 Coder 480B A35B (4-bit)"
+description = "Qwen3 Coder 480B (Active 35B) is a large language model trained on the Qwen3 Coder 480B dataset."
+tags = []
+
+[metadata]
+model_id = "mlx-community/Qwen3-Coder-480B-A35B-Instruct-4bit"
+pretty_name = "Qwen3 Coder 480B A35B (4-bit)"
+n_layers = 62
+hidden_size = 6144
+supports_tensor = true
+
+[metadata.storage_size]
+in_bytes = 289910292480

@@ -1,0 +1,15 @@
+short_id = "qwen3-30b-8bit"
+model_id = "mlx-community/Qwen3-30B-A3B-8bit"
+name = "Qwen3 30B A3B (8-bit)"
+description = "Qwen3 30B is a large language model trained on the Qwen3 30B dataset."
+tags = []
+
+[metadata]
+model_id = "mlx-community/Qwen3-30B-A3B-8bit"
+pretty_name = "Qwen3 30B A3B (8-bit)"
+n_layers = 48
+hidden_size = 2048
+supports_tensor = true
+
+[metadata.storage_size]
+in_bytes = 33279705088

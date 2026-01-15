@@ -1,0 +1,15 @@
+short_id = "glm-4.7-8bit-gs32"
+model_id = "mlx-community/GLM-4.7-8bit-gs32"
+name = "GLM 4.7 8bit (gs32)"
+description = "GLM 4.7 8bit (gs32)"
+tags = []
+
+[metadata]
+model_id = "mlx-community/GLM-4.7-8bit-gs32"
+pretty_name = "GLM 4.7 8bit (gs32)"
+n_layers = 91
+hidden_size = 5120
+supports_tensor = true
+
+[metadata.storage_size]
+in_bytes = 396963397248

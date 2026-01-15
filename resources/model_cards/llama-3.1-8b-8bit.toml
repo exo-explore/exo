@@ -1,0 +1,15 @@
+short_id = "llama-3.1-8b-8bit"
+model_id = "mlx-community/Meta-Llama-3.1-8B-Instruct-8bit"
+name = "Llama 3.1 8B (8-bit)"
+description = "Llama 3.1 is a large language model trained on the Llama 3.1 dataset."
+tags = []
+
+[metadata]
+model_id = "mlx-community/Meta-Llama-3.1-8B-Instruct-8bit"
+pretty_name = "Llama 3.1 8B (8-bit)"
+n_layers = 32
+hidden_size = 4096
+supports_tensor = true
+
+[metadata.storage_size]
+in_bytes = 8954839040

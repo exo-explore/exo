@@ -1,0 +1,15 @@
+short_id = "qwen3-80b-a3B-4bit"
+model_id = "mlx-community/Qwen3-Next-80B-A3B-Instruct-4bit"
+name = "Qwen3 80B A3B (4-bit)"
+description = "Qwen3 80B"
+tags = []
+
+[metadata]
+model_id = "mlx-community/Qwen3-Next-80B-A3B-Instruct-4bit"
+pretty_name = "Qwen3 80B A3B (4-bit)"
+n_layers = 48
+hidden_size = 2048
+supports_tensor = true
+
+[metadata.storage_size]
+in_bytes = 46976204800

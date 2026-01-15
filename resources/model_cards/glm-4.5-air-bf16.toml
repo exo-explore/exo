@@ -1,0 +1,15 @@
+short_id = "glm-4.5-air-bf16"
+model_id = "mlx-community/GLM-4.5-Air-bf16"
+name = "GLM 4.5 Air bf16"
+description = "GLM 4.5 Air bf16"
+tags = []
+
+[metadata]
+model_id = "mlx-community/GLM-4.5-Air-bf16"
+pretty_name = "GLM 4.5 Air bf16"
+n_layers = 46
+hidden_size = 4096
+supports_tensor = true
+
+[metadata.storage_size]
+in_bytes = 229780750336
