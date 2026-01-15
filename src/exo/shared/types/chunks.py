@@ -1,9 +1,12 @@
+from collections.abc import Generator
 from enum import Enum
+from typing import Any
 
 from exo.shared.types.api import GenerationStats
 from exo.utils.pydantic_ext import TaggedModel
 
 from .api import FinishReason
+from .common import CommandId
 from .models import ModelId
 
 
@@ -25,7 +28,34 @@ class TokenChunk(BaseChunk):
 
 
 class ImageChunk(BaseChunk):
-    data: bytes
+    data: str
+    chunk_index: int
+    total_chunks: int
+    image_index: int
+    is_partial: bool = False
+    partial_index: int | None = None
+    total_partials: int | None = None
+
+    def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
+        for name, value in super().__repr_args__():
+            if name == "data" and hasattr(value, "__len__"):
+                yield name, f"<{len(self.data)} chars>"
+            elif name is not None:
+                yield name, value
+
+
+class InputImageChunk(BaseChunk):
+    command_id: CommandId
+    data: str
+    chunk_index: int
+    total_chunks: int
+
+    def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
+        for name, value in super().__repr_args__():
+            if name == "data" and hasattr(value, "__len__"):
+                yield name, f"<{len(self.data)} chars>"
+            elif name is not None:
+                yield name, value
 
 
 GenerationChunk = TokenChunk | ImageChunk

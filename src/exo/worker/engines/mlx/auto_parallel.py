@@ -106,6 +106,7 @@ class PipelineLastLayer(CustomMlxLayer):
             if cache is not None:
                 cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
 
+        # TODO(ciaran): This is overkill
         output = mx.distributed.all_gather(output, group=self.group)[-output.shape[0] :]
         return output
 
