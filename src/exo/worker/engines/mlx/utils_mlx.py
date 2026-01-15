@@ -366,6 +366,8 @@ def apply_chat_template(
         tools=chat_task_data.tools,
     )
 
+    logger.info(prompt)
+
     return prompt
 
 
