@@ -617,6 +617,23 @@ class API:
         response = await self._collect_chat_completion_with_stats(command.command_id)
         return response
 
+    async def _validate_image_model(self, model: str) -> ModelId:
+        """Validate model exists and return resolved model ID.
+
+        Raises HTTPException 404 if no instance is found for the model.
+        """
+        model_meta = await resolve_model_meta(model)
+        resolved_model = model_meta.model_id
+        if not any(
+            instance.shard_assignments.model_id == resolved_model
+            for instance in self.state.instances.values()
+        ):
+            await self._trigger_notify_user_to_download_model(resolved_model)
+            raise HTTPException(
+                status_code=404, detail=f"No instance found for model {resolved_model}"
+            )
+        return resolved_model
+
     async def image_generations(
         self, payload: ImageGenerationTaskParams
     ) -> ImageGenerationResponse | StreamingResponse:
@@ -625,17 +642,7 @@ class API:
         When stream=True and partial_images > 0, returns a StreamingResponse
         with SSE-formatted events for partial and final images.
         """
-        model_meta = await resolve_model_meta(payload.model)
-        payload.model = model_meta.model_id
-
-        if not any(
-            instance.shard_assignments.model_id == payload.model
-            for instance in self.state.instances.values()
-        ):
-            await self._trigger_notify_user_to_download_model(payload.model)
-            raise HTTPException(
-                status_code=404, detail=f"No instance found for model {payload.model}"
-            )
+        payload.model = await self._validate_image_model(payload.model)
 
         command = ImageGeneration(
             request_params=payload,
@@ -813,17 +820,7 @@ class API:
         partial_images: int = Form(0),
     ) -> ImageGenerationResponse | StreamingResponse:
         """Handle image editing requests (img2img)."""
-        model_meta = await resolve_model_meta(model)
-        resolved_model = model_meta.model_id
-
-        if not any(
-            instance.shard_assignments.model_id == resolved_model
-            for instance in self.state.instances.values()
-        ):
-            await self._trigger_notify_user_to_download_model(resolved_model)
-            raise HTTPException(
-                status_code=404, detail=f"No instance found for model {resolved_model}"
-            )
+        resolved_model = await self._validate_image_model(model)
 
         # Read and base64 encode the uploaded image
         image_content = await image.read()
@@ -889,52 +886,12 @@ class API:
                 media_type="text/event-stream",
             )
 
-        # Track chunks per image: {image_index: {chunk_index: data}}
-        image_chunks: dict[int, dict[int, str]] = {}
-        image_total_chunks: dict[int, int] = {}
-        images_complete = 0
-
-        try:
-            self._image_generation_queues[command.command_id], recv = channel[
-                ImageChunk
-            ]()
-
-            while images_complete < num_images:
-                with recv as chunks:
-                    async for chunk in chunks:
-                        if chunk.image_index not in image_chunks:
-                            image_chunks[chunk.image_index] = {}
-                            image_total_chunks[chunk.image_index] = chunk.total_chunks
-
-                        image_chunks[chunk.image_index][chunk.chunk_index] = chunk.data
-
-                        if (
-                            len(image_chunks[chunk.image_index])
-                            == image_total_chunks[chunk.image_index]
-                        ):
-                            images_complete += 1
-
-                        if images_complete >= num_images:
-                            break
-
-            images: list[ImageData] = []
-            for image_idx in range(num_images):
-                chunks_dict = image_chunks[image_idx]
-                full_data = "".join(chunks_dict[i] for i in range(len(chunks_dict)))
-                images.append(
-                    ImageData(
-                        b64_json=full_data if response_format == "b64_json" else None,
-                        url=None,  # URL format not implemented yet
-                    )
-                )
-
-            return ImageGenerationResponse(data=images)
-        except anyio.get_cancelled_exc_class():
-            raise
-        finally:
-            # Send TaskFinished command
-            await self._send(TaskFinished(finished_command_id=command.command_id))
-            del self._image_generation_queues[command.command_id]
+        # Non-streaming: collect all image chunks
+        return await self._collect_image_generation(
+            command_id=command.command_id,
+            num_images=num_images,
+            response_format=response_format,
+        )
 
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
