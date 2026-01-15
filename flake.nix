@@ -9,6 +9,8 @@
       inputs.nixpkgs-lib.follows = "nixpkgs";
     };
 
+    crane.url = "github:ipetkov/crane";
+
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -16,6 +18,11 @@
 
     treefmt-nix = {
       url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    dream2nix = {
+      url = "github:nix-community/dream2nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -39,10 +46,12 @@
 
       imports = [
         inputs.treefmt-nix.flakeModule
+        ./dashboard/parts.nix
+        ./rust/parts.nix
       ];
 
       perSystem =
-        { config, inputs', pkgs, lib, system, ... }:
+        { config, self', inputs', pkgs, lib, system, ... }:
         let
           fenixToolchain = inputs'.fenix.packages.complete;
           # Use pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
@@ -59,7 +68,7 @@
               };
               rustfmt = {
                 enable = true;
-                package = fenixToolchain.rustfmt;
+                package = config.rust.toolchain;
               };
               prettier = {
                 enable = true;
@@ -79,6 +88,8 @@
           '';
 
           devShells.default = with pkgs; pkgs.mkShell {
+            inputsFrom = [ self'.checks.cargo-build ];
+
             packages =
               [
                 # FORMATTING
@@ -91,14 +102,8 @@
                 basedpyright
 
                 # RUST
-                (fenixToolchain.withComponents [
-                  "cargo"
-                  "rustc"
-                  "clippy"
-                  "rustfmt"
-                  "rust-src"
-                ])
-                rustup # Just here to make RustRover happy
+                config.rust.toolchain
+                maturin
 
                 # NIX
                 nixpkgs-fmt
@@ -110,30 +115,20 @@
                 just
                 jq
               ]
-              ++ (pkgs.lib.optionals pkgs.stdenv.isLinux [
-                # IFCONFIG
+              ++ lib.optionals stdenv.isLinux [
                 unixtools.ifconfig
-
-                # Build dependencies for Linux
-                pkg-config
-                openssl
-              ])
-              ++ (pkgs.lib.optionals pkgs.stdenv.isDarwin [
-                # MACMON
+              ]
+              ++ lib.optionals stdenv.isDarwin [
                 macmon
-              ]);
+              ];
+
+            OPENSSL_NO_VENDOR = "1";
 
             shellHook = ''
-              # PYTHON
-              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.python313}/lib"
-              ${lib.optionalString pkgs.stdenv.isLinux ''
-                # Build environment for Linux
-                export PKG_CONFIG_PATH="${pkgs.openssl.dev}/lib/pkgconfig:$PKG_CONFIG_PATH"
-                export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:$LD_LIBRARY_PATH"
+              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${python313}/lib"
+              ${lib.optionalString stdenv.isLinux ''
+                export LD_LIBRARY_PATH="${openssl.out}/lib:$LD_LIBRARY_PATH"
               ''}
-              echo
-              echo "🍎🍎 Run 'just <recipe>' to get started"
-              just --list
             '';
           };
         };

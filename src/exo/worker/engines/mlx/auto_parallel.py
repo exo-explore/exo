@@ -19,6 +19,7 @@ from mlx_lm.models.glm4_moe import MoE
 from mlx_lm.models.gpt_oss import GptOssMoeModel
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.models.llama import Model as LlamaModel
+from mlx_lm.models.minimax import Model as MiniMaxModel
 from mlx_lm.models.ministral3 import Model as Ministral3Model
 from mlx_lm.models.qwen3_moe import Model as Qwen3MoeModel
 from mlx_lm.models.qwen3_moe import Qwen3MoeSparseMoeBlock
@@ -252,6 +253,14 @@ def tensor_auto_parallel(
             all_to_sharded_linear_in_place,
             sharded_to_all_linear_in_place,
         )
+    elif isinstance(model, MiniMaxModel):
+        tensor_parallel_sharding_strategy = MiniMaxShardingStrategy(
+            group,
+            all_to_sharded_linear,
+            sharded_to_all_linear,
+            all_to_sharded_linear_in_place,
+            sharded_to_all_linear_in_place,
+        )
     elif isinstance(model, (Qwen3MoeModel, Glm4MoeModel, Qwen3NextModel)):
         tensor_parallel_sharding_strategy = QwenShardingStrategy(
             group,
@@ -394,6 +403,35 @@ class ShardedDeepseekV3MoE(CustomMlxLayer):
         return y
 
 
+class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
+    def shard_model(self, model: nn.Module) -> nn.Module:
+        model = cast(MiniMaxModel, model)
+        for layer in model.layers:
+            # Shard the self attention
+            layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
+            layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
+            layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
+            layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
+            layer.self_attn.num_attention_heads //= self.N
+            layer.self_attn.num_key_value_heads //= self.N
+
+            # Shard the MoE. Shard in place since the MoE should be responsible
+            # for aggregating the results.
+            self.all_to_sharded_linear_in_place(
+                layer.block_sparse_moe.switch_mlp.gate_proj
+            )
+            self.sharded_to_all_linear_in_place(
+                layer.block_sparse_moe.switch_mlp.down_proj
+            )
+            self.all_to_sharded_linear_in_place(
+                layer.block_sparse_moe.switch_mlp.up_proj
+            )
+            layer.block_sparse_moe = ShardedQwenMoE(layer.block_sparse_moe)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
+            layer.block_sparse_moe.sharding_group = self.group
+
+        return model
+
+
 class QwenShardingStrategy(TensorParallelShardingStrategy):
     def shard_model(self, model: nn.Module) -> nn.Module:
         model = cast(Qwen3MoeModel, model)
@@ -414,7 +452,7 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
                 self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
-                layer.mlp = ShardedQwenMoE(layer.mlp)  # type: ignore
+                layer.mlp = ShardedQwenMoE(layer.mlp)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
                 layer.mlp.sharding_group = self.group
 
             # Shard the MLP
