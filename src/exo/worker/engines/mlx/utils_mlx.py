@@ -265,14 +265,12 @@ def shard_and_load(
             model = pipeline_auto_parallel(model, group, shard_metadata)
 
     # Evaluate sharded parameters one by one to identify which one hangs
-    logger.info("BEFORE model.parameters()")
-    params_gen = model.parameters()
-    logger.info("AFTER model.parameters(), BEFORE dict()")
-    params = dict(params_gen)
-    logger.info(f"AFTER dict(), got {len(params)} params")
-    total_params = len(params)
+    logger.info("BEFORE tree_flatten(model.parameters())")
+    flat_params = mx.utils.tree_flatten(model.parameters())
+    logger.info(f"AFTER tree_flatten, got {len(flat_params)} params")
+    total_params = len(flat_params)
     logger.info("BEFORE iterating params")
-    for i, (name, param) in enumerate(params.items()):
+    for i, (name, param) in enumerate(flat_params):
         logger.info(f"BEFORE eval param {i}/{total_params}: {name} shape={param.shape}")
         mx.eval(param)
         logger.info(f"AFTER eval param {i}/{total_params}: {name}")
