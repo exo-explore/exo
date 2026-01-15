@@ -425,15 +425,15 @@ MODEL_CARDS: dict[str, ModelCard] = {
             supports_tensor=True,
         ),
     ),
-    "gpt-oss-20b-4bit": ModelCard(
-        short_id="gpt-oss-20b-4bit",
-        model_id=ModelId("mlx-community/gpt-oss-20b-MXFP4-Q4"),
-        name="GPT-OSS 20B (MXFP4-Q4, MLX)",
-        description="""OpenAI's GPT-OSS 20B is a medium-sized MoE model for lower-latency and local or specialized use cases; this MLX variant uses MXFP4 4-bit quantization.""",
+    "gpt-oss-20b-MXFP4-Q8": ModelCard(
+        short_id="gpt-oss-20b-MXFP4-Q8",
+        model_id=ModelId("mlx-community/gpt-oss-20b-MXFP4-Q8"),
+        name="GPT-OSS 20B (MXFP4-Q8, MLX)",
+        description="""OpenAI's GPT-OSS 20B is a medium-sized MoE model for lower-latency and local or specialized use cases; this variant is a 4-bit MLX conversion for Apple Silicon.""",
         tags=[],
         metadata=ModelMetadata(
-            model_id=ModelId("mlx-community/gpt-oss-20b-MXFP4-Q4"),
-            pretty_name="GPT-OSS 20B (MXFP4-Q4, MLX)",
+            model_id=ModelId("mlx-community/gpt-oss-20b-MXFP4-Q8"),
+            pretty_name="GPT-OSS 20B (MXFP4-Q8, MLX)",
             storage_size=Memory.from_kb(11_744_051),
             n_layers=24,
             hidden_size=2880,
