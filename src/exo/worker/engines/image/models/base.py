@@ -3,9 +3,8 @@ from pathlib import Path
 from typing import Any
 
 import mlx.core as mx
-from mflux.config.runtime_config import RuntimeConfig
+from mflux.models.common.config.config import Config
 from mflux.models.common.latent_creator.latent_creator import Img2Img, LatentCreator
-from mflux.utils.array_util import ArrayUtil
 from mflux.utils.image_util import ImageUtil
 
 
@@ -16,7 +15,7 @@ class BaseModelAdapter(ABC):
     Subclasses implement model-specific prompt encoding and noise computation.
     """
 
-    def create_latents(self, seed: int, runtime_config: RuntimeConfig) -> mx.array:
+    def create_latents(self, seed: int, runtime_config: Config) -> mx.array:
         """Create initial latents. Uses model-specific latent creator."""
         return LatentCreator.create_for_txt2img_or_img2img(
             seed=seed,
@@ -34,17 +33,20 @@ class BaseModelAdapter(ABC):
     def decode_latents(
         self,
         latents: mx.array,
-        runtime_config: RuntimeConfig,
+        runtime_config: Config,
         seed: int,
         prompt: str,
     ) -> Any:
         """Decode latents to image. Shared implementation."""
-        latents = ArrayUtil.unpack_latents(
+        latents = self._get_latent_creator().unpack_latents(
             latents=latents,
             height=runtime_config.height,
             width=runtime_config.width,
         )
         decoded = self.model.vae.decode(latents)
+        # TODO(ciaran):
+        # from mflux.models.common.vae.vae_util import VAEUtil
+        # VAEUtil.decode(vae=self.model.vae, latents=latents, tiling_config=self.tiling_config)
         return ImageUtil.to_image(
             decoded_latents=decoded,
             config=runtime_config,

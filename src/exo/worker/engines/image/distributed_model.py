@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import mlx.core as mx
-from mflux.config.config import Config
+from mflux.models.common.config.config import Config
 from PIL import Image
 
 from exo.shared.types.worker.instances import BoundInstance
@@ -204,11 +204,12 @@ class DistributedImageModel:
             height=height,
             width=width,
             image_path=image_path,
+            model_config=self._adapter.model.model_config,
         )
 
         # Generate images via the runner
         for result in self._runner.generate_image(
-            settings=config,
+            runtime_config=config,
             prompt=prompt,
             seed=seed,
             partial_images=partial_images,

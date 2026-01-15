@@ -2,9 +2,7 @@ from math import ceil
 from typing import Any, Optional
 
 import mlx.core as mx
-from mflux.callbacks.callbacks import Callbacks
-from mflux.config.config import Config
-from mflux.config.runtime_config import RuntimeConfig
+from mflux.models.common.config.config import Config
 from mflux.utils.exceptions import StopImageGenerationException
 from tqdm import tqdm
 
@@ -213,7 +211,7 @@ class DiffusionRunner:
 
     def generate_image(
         self,
-        settings: Config,
+        runtime_config: Config,
         prompt: str,
         seed: int,
         partial_images: int = 0,
@@ -240,7 +238,6 @@ class DiffusionRunner:
             Partial images as (GeneratedImage, partial_index, total_partials) tuples
             Final GeneratedImage
         """
-        runtime_config = RuntimeConfig(settings, self.adapter.model.model_config)
         latents = self.adapter.create_latents(seed, runtime_config)
         prompt_data = self.adapter.encode_prompt(prompt)
 
@@ -294,7 +291,7 @@ class DiffusionRunner:
         self,
         latents: mx.array,
         prompt_data: PromptData,
-        runtime_config: RuntimeConfig,
+        runtime_config: Config,
         seed: int,
         prompt: str,
         capture_steps: set[int] | None = None,
@@ -324,12 +321,12 @@ class DiffusionRunner:
 
         time_steps = tqdm(range(runtime_config.num_inference_steps))
 
-        # Call subscribers for beginning of loop
-        Callbacks.before_loop(
-            seed=seed,
-            prompt=prompt,
+        ctx = self.adapter.model.callbacks.start(
+            seed=seed, prompt=prompt, config=runtime_config
+        )
+
+        ctx.before_loop(
             latents=latents,
-            config=runtime_config,
         )
 
         for t in time_steps:
@@ -342,13 +339,9 @@ class DiffusionRunner:
                 )
 
                 # Call subscribers in-loop
-                Callbacks.in_loop(
+                ctx.in_loop(
                     t=t,
-                    seed=seed,
-                    prompt=prompt,
                     latents=latents,
-                    config=runtime_config,
-                    time_steps=time_steps,
                 )
 
                 mx.eval(latents)
@@ -358,25 +351,13 @@ class DiffusionRunner:
                     yield (latents, t)
 
             except KeyboardInterrupt:  # noqa: PERF203
-                Callbacks.interruption(
-                    t=t,
-                    seed=seed,
-                    prompt=prompt,
-                    latents=latents,
-                    config=runtime_config,
-                    time_steps=time_steps,
-                )
+                ctx.interruption(t=t, latents=latents)
                 raise StopImageGenerationException(
                     f"Stopping image generation at step {t + 1}/{len(time_steps)}"
                 ) from None
 
         # Call subscribers after loop
-        Callbacks.after_loop(
-            seed=seed,
-            prompt=prompt,
-            latents=latents,
-            config=runtime_config,
-        )
+        ctx.after_loop(latents=latents)
 
         return latents
 
@@ -473,7 +454,7 @@ class DiffusionRunner:
     def _diffusion_step(
         self,
         t: int,
-        config: RuntimeConfig,
+        config: Config,
         latents: mx.array,
         prompt_data: PromptData,
     ) -> mx.array:
@@ -502,7 +483,7 @@ class DiffusionRunner:
     def _single_node_step(
         self,
         t: int,
-        config: RuntimeConfig,
+        config: Config,
         latents: mx.array,
         prompt_data: PromptData,
     ) -> mx.array:
@@ -551,7 +532,7 @@ class DiffusionRunner:
                 kwargs,
             )
 
-        return config.scheduler.step(model_output=noise, timestep=t, sample=latents)
+        return config.scheduler.step(noise=noise, timestep=t, latents=latents)
 
     def _initialize_kv_caches(
         self,
@@ -588,7 +569,7 @@ class DiffusionRunner:
     def _create_patches(
         self,
         latents: mx.array,
-        config: RuntimeConfig,
+        config: Config,
     ) -> tuple[list[mx.array], list[tuple[int, int]]]:
         """Split latents into patches for async pipeline."""
         # Use 16 to match FluxLatentCreator.create_noise formula
@@ -606,7 +587,7 @@ class DiffusionRunner:
     def _sync_pipeline(
         self,
         t: int,
-        config: RuntimeConfig,
+        config: Config,
         hidden_states: mx.array,
         prompt_data: PromptData,
         kontext_image_ids: mx.array | None = None,
@@ -764,9 +745,9 @@ class DiffusionRunner:
             )
 
             hidden_states = config.scheduler.step(
-                model_output=hidden_states,
+                noise=hidden_states,
                 timestep=t,
-                sample=prev_latents,
+                latents=prev_latents,
             )
 
             if not self.is_first_stage:
@@ -788,7 +769,7 @@ class DiffusionRunner:
     def _async_pipeline_step(
         self,
         t: int,
-        config: RuntimeConfig,
+        config: Config,
         latents: mx.array,
         prompt_data: PromptData,
         kontext_image_ids: mx.array | None = None,
@@ -809,7 +790,7 @@ class DiffusionRunner:
     def _async_pipeline(
         self,
         t: int,
-        config: RuntimeConfig,
+        config: Config,
         patch_latents: list[mx.array],
         token_indices: list[tuple[int, int]],
         prompt_data: PromptData,
@@ -960,9 +941,9 @@ class DiffusionRunner:
                 )
 
                 patch = config.scheduler.step(
-                    model_output=patch_img_only,
+                    noise=patch_img_only,
                     timestep=t,
-                    sample=patch_prev,
+                    latents=patch_prev,
                 )
 
                 if not self.is_first_stage and t != config.num_inference_steps - 1:
