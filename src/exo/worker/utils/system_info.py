@@ -97,26 +97,29 @@ def profile_memory_bandwidth() -> int | None:
         if not mx.metal.is_available():
             return None
 
-        # Use 512MB buffer - large enough to bypass cache
-        size_bytes = 512 * 1024 * 1024
-        num_elements = size_bytes // 4  # float32 = 4 bytes
+        # Use 2GB buffer to better saturate memory bandwidth
+        # Use 2D shape to avoid potential issues with very large 1D arrays
+        size_bytes = 2 * 1024 * 1024 * 1024
+        side = int((size_bytes // 4) ** 0.5)  # Square 2D array of float32
+        shape = (side, side)
+        actual_bytes = side * side * 4
+        bytes_transferred = actual_bytes * 2  # read + write
 
         # Warm-up: run the full benchmark operation multiple times to stabilize GPU
         for _ in range(3):
-            src = mx.random.uniform(shape=(num_elements,), dtype=mx.float32)
+            src = mx.random.uniform(shape=shape, dtype=mx.float32)
             mx.eval(src)
             dst = src + 0.0
             mx.eval(dst)
             mx.synchronize()
             del src, dst
 
-        # Benchmark: measure time to copy array (skip first run as it may be slow)
+        # Benchmark: measure time to copy array
         best_bandwidth = 0.0
-        num_runs = 4  # First run may still be slow, take best of 4
+        num_runs = 4
 
         for _ in range(num_runs):
-            # Create source array
-            src = mx.random.uniform(shape=(num_elements,), dtype=mx.float32)
+            src = mx.random.uniform(shape=shape, dtype=mx.float32)
             mx.eval(src)
             mx.synchronize()
 
@@ -127,9 +130,6 @@ def profile_memory_bandwidth() -> int | None:
             mx.synchronize()
             end = time.perf_counter()
 
-            # Bandwidth = bytes transferred / time
-            # Operation reads size_bytes and writes size_bytes
-            bytes_transferred = size_bytes * 2
             bandwidth = bytes_transferred / (end - start)
             best_bandwidth = max(best_bandwidth, bandwidth)
 
