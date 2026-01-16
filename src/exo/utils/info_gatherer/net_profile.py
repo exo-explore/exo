@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 import anyio
 import httpx
 from anyio import create_task_group
@@ -74,7 +76,9 @@ async def check_reachability(
 
 
 async def check_reachable(
-    topology: Topology, self_node_id: NodeId
+    topology: Topology,
+    self_node_id: NodeId,
+    node_profiles: Mapping[NodeId, NodePerformanceProfile],
 ) -> dict[NodeId, set[str]]:
     """Check which nodes are reachable and return their IPs."""
 
@@ -92,16 +96,16 @@ async def check_reachable(
         httpx.AsyncClient(timeout=timeout, limits=limits) as client,
         create_task_group() as tg,
     ):
-        for node in topology.list_nodes():
-            if not node.node_profile:
+        for node_id in topology.list_nodes():
+            if node_id not in node_profiles:
                 continue
-            if node.node_id == self_node_id:
+            if node_id == self_node_id:
                 continue
-            for iface in node.node_profile.network_interfaces:
+            for iface in node_profiles[node_id].network_interfaces:
                 tg.start_soon(
                     check_reachability,
                     iface.ip_address,
-                    node.node_id,
+                    node_id,
                     reachable,
                     client,
                 )
