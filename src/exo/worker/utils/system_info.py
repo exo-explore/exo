@@ -1,5 +1,6 @@
 import socket
 import sys
+import time
 from subprocess import CalledProcessError
 
 import psutil
@@ -83,78 +84,55 @@ async def get_model_and_chip() -> tuple[str, str]:
     return (model, chip)
 
 
-def _profile_memory_bandwidth_numpy() -> int | None:
-    """Profile memory bandwidth using 1GB array benchmark."""
-    try:
-        import numpy as np
-        import time
-
-        size = 1024 * 1024 * 1024 // 8
-        num_runs = 3
-        best_bandwidth = 0.0
-
-        for _ in range(num_runs):
-            src = np.random.random(size)
-            start = time.perf_counter()
-            dst = src.copy()
-            end = time.perf_counter()
-            _ = dst[0]
-            bandwidth = (size * 8 * 2) / (end - start)
-            best_bandwidth = max(best_bandwidth, bandwidth)
-            del src, dst
-
-        return int(best_bandwidth)
-    except Exception:
-        return None
-
-
-def _profile_memory_bandwidth_simple() -> int | None:
-    """Fallback memory bandwidth benchmark using 200MB array."""
-    try:
-        import numpy as np
-        import time
-
-        size = 200 * 1024 * 1024 // 8
-        best_bandwidth = 0.0
-        num_runs = 5
-
-        for _ in range(num_runs):
-            src = np.random.random(size)
-            start = time.perf_counter()
-            dst = src.copy()
-            end = time.perf_counter()
-            _ = dst[0]
-            bandwidth = (size * 8 * 2) / (end - start)
-            best_bandwidth = max(best_bandwidth, bandwidth)
-            del src, dst
-
-        return int(best_bandwidth)
-    except Exception:
-        return None
-
-
-def profile_memory_bandwidth() -> int | None:
+def profile_memory_bandwidth() -> int:
     """
-    Profile device memory bandwidth using numpy benchmarks.
+    Profile device memory bandwidth using MLX GPU operations.
 
-    Returns measured bandwidth which may be lower than theoretical peak.
-    Relative ratios between devices remain accurate for placement decisions.
+    Uses a large array copy on the GPU to measure unified memory bandwidth.
+    Returns measured bandwidth in bytes/second.
+    Raises exception if MLX is unavailable or profiling fails.
     """
-    bandwidth = _profile_memory_bandwidth_numpy()
-    if bandwidth and bandwidth > 0:
-        return bandwidth
+    import mlx.core as mx
 
-    bandwidth = _profile_memory_bandwidth_simple()
-    if bandwidth and bandwidth > 0:
-        return bandwidth
+    if not mx.metal.is_available():
+        raise RuntimeError("Metal is not available")
 
-    return None
+    # Use 2GB buffer to better saturate memory bandwidth
+    # Use 2D shape to avoid potential issues with very large 1D arrays
+    size_bytes = 2 * 1024 * 1024 * 1024
+    side = int((size_bytes // 4) ** 0.5)  # Square 2D array of float32
+    shape = (side, side)
+    actual_bytes = side * side * 4
+    bytes_transferred = actual_bytes * 2  # read + write
 
+    # Warm-up: run the full benchmark operation multiple times to stabilize GPU
+    for _ in range(3):
+        src = mx.random.uniform(shape=shape, dtype=mx.float32)
+        mx.eval(src)
+        dst = src + 0.0
+        mx.eval(dst)
+        mx.synchronize()
+        del src, dst
 
-def get_memory_bandwidth(_chip_id: str) -> int | None:
-    """
-    Returns measured memory bandwidth in bytes/second.
+    # Benchmark: measure time to copy array
+    best_bandwidth = 0.0
+    num_runs = 4
 
-    Uses runtime profiling via numpy benchmarks. Works on any platform.
-    """
-    return profile_memory_bandwidth()
+    for _ in range(num_runs):
+        src = mx.random.uniform(shape=shape, dtype=mx.float32)
+        mx.eval(src)
+        mx.synchronize()
+
+        # Time the copy operation (src + 0.0 forces read of src, write of dst)
+        start = time.perf_counter()
+        dst = src + 0.0
+        mx.eval(dst)
+        mx.synchronize()
+        end = time.perf_counter()
+
+        bandwidth = bytes_transferred / (end - start)
+        best_bandwidth = max(best_bandwidth, bandwidth)
+
+        del src, dst
+
+    return int(best_bandwidth)
