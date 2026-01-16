@@ -22,7 +22,6 @@ async def check_reachability(
     url = f"http://{target_ip}:52415/node_id"
 
     remote_node_id = None
-
     last_error = None
 
     for _ in range(REACHABILITY_ATTEMPTS):
@@ -40,24 +39,24 @@ async def check_reachability(
             remote_node_id = NodeId(body)
             break
 
+        # expected failure cases
         except (
-            httpx.ConnectError,
-            httpx.ConnectTimeout,
-            httpx.ReadTimeout,
-            httpx.RemoteProtocolError,
-        ) as e:
+            httpx.TimeoutException,
+            httpx.NetworkError,
+        ):
+            await anyio.sleep(1)
+
+        # other failures should be logged on last attempt
+        except httpx.HTTPError as e:
             last_error = e
             await anyio.sleep(1)
 
-    else:
-        if last_error is not None:
-            logger.warning(
-                f"connect error {type(last_error).__name__} from {target_ip} after {REACHABILITY_ATTEMPTS} attempts; treating as down"
-            )
-        else:
-            logger.warning(
-                f"malformed response from {target_ip} after {REACHABILITY_ATTEMPTS} attempts; treating as down"
-            )
+    if last_error is not None:
+        logger.warning(
+            f"connect error {type(last_error).__name__} from {target_ip} after {REACHABILITY_ATTEMPTS} attempts; treating as down"
+        )
+
+    if remote_node_id is None:
         return
 
     if remote_node_id != expected_node_id:
