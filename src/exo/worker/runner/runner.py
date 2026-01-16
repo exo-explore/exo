@@ -1,9 +1,13 @@
+import json
 import time
 from collections.abc import Generator
 from functools import cache
+from typing import Any
+from uuid import uuid4
 
 import mlx.core as mx
 from mlx_lm.models.gpt_oss import Model as GptOssModel
+from mlx_lm.tokenizer_utils import TokenizerWrapper
 from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     HarmonyEncodingName,
     Role,
@@ -12,7 +16,7 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
 )
 
 from exo.shared.types.api import ChatCompletionMessageText
-from exo.shared.types.chunks import TokenChunk
+from exo.shared.types.chunks import TokenChunk, ToolCall, ToolCallFunction
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -172,7 +176,10 @@ def main(
                     if isinstance(model, GptOssModel):
                         mlx_generator = parse_gpt_oss(mlx_generator)
 
-                    # TODO: Add tool call parser here
+                    # Parse tool calls to place them in the tool calls section
+                    mlx_generator = parse_tool_calls(
+                        mlx_generator, tokenizer, task_params.tools
+                    )
 
                     for response in mlx_generator:
                         match response:
@@ -188,6 +195,7 @@ def main(
                                                 token_id=response.token,
                                                 finish_reason=response.finish_reason,
                                                 stats=response.stats,
+                                                tool_calls=response.tool_calls,
                                             ),
                                         )
                                     )
@@ -259,6 +267,98 @@ def parse_gpt_oss(
                 yield response.model_copy(update={"text": "</think>"})
             yield response
             break
+
+
+def _generate_tool_call_id() -> str:
+    return f"call_{uuid4().hex[:24]}"
+
+
+def _parse_tool_call_content(
+    content: str,
+    tokenizer: TokenizerWrapper,
+    tools: list[dict[str, Any]] | None,
+) -> ToolCall | None:
+    content = content.strip()
+    if not content:
+        return None
+
+    tool_parser: Any = getattr(tokenizer, "tool_parser", None)
+    if tool_parser is None:
+        logger.warning("No tool_parser available for tokenizer")
+        return None
+
+    try:
+        parsed: dict[str, Any] = tool_parser(content, tools)  # pyright: ignore[reportAny]
+        if parsed and "name" in parsed:
+            arguments: Any = parsed.get("arguments", {})  # pyright: ignore[reportAny]
+            arguments_str: str = (
+                json.dumps(arguments)
+                if not isinstance(arguments, str)
+                else arguments
+            )
+            return ToolCall(
+                id=_generate_tool_call_id(),
+                type="function",
+                function=ToolCallFunction(
+                    name=str(parsed["name"]),  # pyright: ignore[reportAny]
+                    arguments=arguments_str,
+                ),
+            )
+    except Exception as e:
+        logger.warning(f"tool_parser failed: {e}")
+
+    return None
+
+
+def parse_tool_calls(
+    responses: Generator[GenerationResponse],
+    tokenizer: TokenizerWrapper,
+    tools: list[dict[str, Any]] | None,
+) -> Generator[GenerationResponse]:
+    has_tool_calling = getattr(tokenizer, "has_tool_calling", False)
+    if not has_tool_calling or tools is None:
+        yield from responses
+        return
+
+    tool_call_start: str | None = getattr(tokenizer, "tool_call_start", None)
+    tool_call_end: str | None = getattr(tokenizer, "tool_call_end", None)
+
+    if tool_call_start is None or tool_call_end is None:
+        yield from responses
+        return
+
+    in_tool_call = False
+    tool_call_buffer: list[str] = []
+    pending_tool_calls: list[ToolCall] = []
+
+    for response in responses:
+        if response.text == tool_call_start:
+            in_tool_call = True
+            tool_call_buffer = []
+            continue
+
+        if response.text == tool_call_end:
+            in_tool_call = False
+            parsed = _parse_tool_call_content(
+                "".join(tool_call_buffer), tokenizer, tools
+            )
+            if parsed is not None:
+                pending_tool_calls.append(parsed)
+            continue
+
+        if in_tool_call:
+            tool_call_buffer.append(response.text)
+            continue
+
+        if response.finish_reason is None or not pending_tool_calls:
+            yield response
+        else:
+            yield response.model_copy(
+                update={
+                    "finish_reason": "tool_calls",
+                    "tool_calls": pending_tool_calls if pending_tool_calls else None,
+                }
+            )
 
 
 EXO_RUNNER_MUST_FAIL = "EXO RUNNER MUST FAIL"

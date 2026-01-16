@@ -1,6 +1,6 @@
 import time
 from collections.abc import AsyncGenerator
-from typing import cast
+from typing import Any, cast
 
 import anyio
 from anyio import create_task_group
@@ -72,7 +72,11 @@ def chunk_to_response(
         choices=[
             StreamingChoiceResponse(
                 index=0,
-                delta=ChatCompletionMessage(role="assistant", content=chunk.text),
+                delta=ChatCompletionMessage(
+                    role="assistant",
+                    content=chunk.text if chunk.text else None,
+                    tool_calls=chunk.tool_calls,
+                ),
                 finish_reason=chunk.finish_reason,
             )
         ],
@@ -424,12 +428,27 @@ class API:
         text_parts: list[str] = []
         model: str | None = None
         finish_reason: FinishReason | None = None
+        all_tool_calls: list[dict[str, Any]] = []
 
         async for chunk in self._chat_chunk_stream(command_id):
             if model is None:
                 model = chunk.model
 
             text_parts.append(chunk.text)
+
+            # Collect tool calls
+            if chunk.tool_calls:
+                for tc in chunk.tool_calls:
+                    all_tool_calls.append(
+                        {
+                            "id": tc.id,
+                            "type": tc.type,
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                    )
 
             if chunk.finish_reason is not None:
                 finish_reason = chunk.finish_reason
@@ -446,7 +465,8 @@ class API:
                     index=0,
                     message=ChatCompletionMessage(
                         role="assistant",
-                        content=combined_text,
+                        content=combined_text if combined_text else None,
+                        tool_calls=all_tool_calls if all_tool_calls else None,
                     ),
                     finish_reason=finish_reason,
                 )
@@ -459,6 +479,7 @@ class API:
         text_parts: list[str] = []
         model: str | None = None
         finish_reason: FinishReason | None = None
+        all_tool_calls: list[dict[str, Any]] = []
 
         stats: GenerationStats | None = None
 
@@ -468,6 +489,20 @@ class API:
 
             text_parts.append(chunk.text)
             stats = chunk.stats or stats
+
+            # Collect tool calls
+            if chunk.tool_calls:
+                for tc in chunk.tool_calls:
+                    all_tool_calls.append(
+                        {
+                            "id": tc.id,
+                            "type": tc.type,
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                    )
 
             if chunk.finish_reason is not None:
                 finish_reason = chunk.finish_reason
@@ -483,7 +518,9 @@ class API:
                 ChatCompletionChoice(
                     index=0,
                     message=ChatCompletionMessage(
-                        role="assistant", content=combined_text
+                        role="assistant",
+                        content=combined_text if combined_text else None,
+                        tool_calls=all_tool_calls if all_tool_calls else None,
                     ),
                     finish_reason=finish_reason,
                 )

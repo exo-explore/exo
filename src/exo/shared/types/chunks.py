@@ -1,4 +1,7 @@
 from enum import Enum
+from typing import Literal
+
+from pydantic import BaseModel
 
 from exo.shared.types.api import GenerationStats
 from exo.utils.pydantic_ext import TaggedModel
@@ -12,6 +15,17 @@ class ChunkType(str, Enum):
     Image = "Image"
 
 
+class ToolCallFunction(BaseModel, frozen=True):
+    name: str
+    arguments: str
+
+
+class ToolCall(BaseModel, frozen=True):
+    id: str
+    type: Literal["function"] = "function"
+    function: ToolCallFunction
+
+
 class BaseChunk(TaggedModel):
     idx: int
     model: ModelId
@@ -22,6 +36,7 @@ class TokenChunk(BaseChunk):
     token_id: int
     finish_reason: FinishReason | None = None
     stats: GenerationStats | None = None
+    tool_calls: list[ToolCall] | None = None
 
 
 class ImageChunk(BaseChunk):
