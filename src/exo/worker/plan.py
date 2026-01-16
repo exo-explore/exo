@@ -189,7 +189,7 @@ def _load_model(
 
         all_local_downloads_complete = all(
             nid in global_download_status
-            and global_download_status[nid]  # non-empty
+            and global_download_status[nid] != []  # non-empty
             and all(
                 isinstance(dp, DownloadCompleted)
                 and dp.shard_metadata.model_meta.model_id == shard_assignments.model_id
