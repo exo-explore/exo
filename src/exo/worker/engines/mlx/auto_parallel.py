@@ -202,9 +202,9 @@ def tensor_auto_parallel(
     segments: int = 1
 
     def _all_to_sharded(path: str, weight: mx.array):
-        if path.endswith("bias"):
-            logger.info(f"Sharding bias for {path} - all to sharded")
-            return weight.ndim - 1, segments
+        # if path.endswith("bias"):
+        #     logger.info(f"Sharding bias for {path} - all to sharded")
+        #     return weight.ndim - 1, segments
         return max(weight.ndim - 2, 0), segments
 
     all_to_sharded_linear_in_place = partial(
@@ -216,10 +216,10 @@ def tensor_auto_parallel(
     n = group.size()
 
     def _sharded_to_all(path: str, weight: mx.array):
-        if path.endswith("bias"):
-            logger.info(f"Sharding bias for {path} - sharded to all")
-            weight /= n
-            return None
+        # if path.endswith("bias"):
+        #     logger.info(f"Sharding bias for {path} - sharded to all")
+        #     weight /= n
+        #     return None
         return -1, segments
 
     sharded_to_all_linear_in_place = partial(
@@ -505,8 +505,8 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
             self.sharded_to_all_linear_in_place(layer.mlp.experts.down_proj)
             self.all_to_sharded_linear_in_place(layer.mlp.experts.up_proj)
 
-            # layer.mlp = ShardedGptOssMoE(layer.mlp)  # type: ignore
-            # layer.mlp.sharding_group = self.group
+            layer.mlp = ShardedGptOssMoE(layer.mlp)  # type: ignore
+            layer.mlp.sharding_group = self.group
 
         return model
 
