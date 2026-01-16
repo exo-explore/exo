@@ -367,7 +367,6 @@ version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "anyio", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "exo-pyo3-bindings", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "fastapi", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -389,7 +388,6 @@ dependencies = [
     { name = "rustworkx", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "tiktoken", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "tomlkit", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "types-aiofiles", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "zstandard", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
 
@@ -406,7 +404,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiofiles", specifier = ">=24.1.0" },
-    { name = "aiohttp", specifier = ">=3.12.14" },
     { name = "anyio", specifier = "==4.11.0" },
     { name = "exo-pyo3-bindings", editable = "rust/exo_pyo3_bindings" },
     { name = "fastapi", specifier = ">=0.116.1" },
@@ -428,7 +425,6 @@ requires-dist = [
     { name = "rustworkx", specifier = ">=0.17.1" },
     { name = "tiktoken", specifier = ">=0.12.0" },
     { name = "tomlkit", specifier = ">=0.14.0" },
-    { name = "types-aiofiles", specifier = ">=24.1.0.20250708" },
     { name = "zstandard", specifier = ">=0.23.0" },
 ]
 

@@ -189,6 +189,7 @@ class ResumableShardDownloader(ShardDownloader):
             try:
                 yield await task
             except Exception as e:
+                task.cancel()
                 logger.warning(f"Error downloading shard: {type(e).__name__}")
 
     async def get_shard_download_status_for_shard(
