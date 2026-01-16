@@ -1,5 +1,5 @@
 from math import ceil
-from typing import Any, Optional
+from typing import Optional
 
 import mlx.core as mx
 from mflux.models.common.config.config import Config
@@ -8,11 +8,8 @@ from tqdm import tqdm
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.engines.image.config import ImageModelConfig
-from exo.worker.engines.image.pipeline.adapter import (
-    BlockWrapperMode,
-    ModelAdapter,
-    PromptData,
-)
+from exo.worker.engines.image.models.base import ModelAdapter, PromptData
+from exo.worker.engines.image.pipeline.adapter import BlockWrapperMode
 from exo.worker.engines.image.pipeline.block_wrapper import (
     JointBlockWrapper,
     SingleBlockWrapper,
@@ -366,7 +363,13 @@ class DiffusionRunner:
         latents: mx.array,
         prompt_embeds: mx.array,
         pooled_prompt_embeds: mx.array,
-        kwargs: dict[str, Any],
+        t: int,
+        config: Config,
+        encoder_hidden_states_mask: mx.array | None = None,
+        cond_image_grid: tuple[int, int, int]
+        | list[tuple[int, int, int]]
+        | None = None,
+        conditioning_latents: mx.array | None = None,
     ) -> mx.array:
         """Run a single forward pass through the transformer.
 
@@ -380,19 +383,18 @@ class DiffusionRunner:
             latents: Input latents (already scaled by caller)
             prompt_embeds: Text embeddings
             pooled_prompt_embeds: Pooled text embeddings (Flux) or placeholder (Qwen)
-            kwargs: Model-specific arguments (e.g., encoder_hidden_states_mask, t)
+            t: Current timestep
+            config: Runtime configuration
+            encoder_hidden_states_mask: Attention mask for text (Qwen)
+            cond_image_grid: Conditioning image grid dimensions (Qwen edit)
+            conditioning_latents: Conditioning latents for edit mode
 
         Returns:
             Noise prediction tensor
         """
-        t = kwargs.get("t", 0)
-        config = kwargs.get("config")
-        if config is None:
-            raise ValueError("config must be provided in kwargs")
         scaled_latents = config.scheduler.scale_model_input(latents, t)
 
         # For edit mode: concatenate with conditioning latents
-        conditioning_latents = kwargs.get("conditioning_latents")
         original_latent_tokens = scaled_latents.shape[1]
         if conditioning_latents is not None:
             scaled_latents = mx.concatenate(
@@ -406,7 +408,10 @@ class DiffusionRunner:
             t, config, pooled_prompt_embeds, hidden_states=hidden_states
         )
         rotary_embeddings = self.adapter.compute_rotary_embeddings(
-            prompt_embeds, config, **kwargs
+            prompt_embeds,
+            config,
+            encoder_hidden_states_mask=encoder_hidden_states_mask,
+            cond_image_grid=cond_image_grid,
         )
 
         text_seq_len = prompt_embeds.shape[1]
@@ -422,7 +427,7 @@ class DiffusionRunner:
                 kv_cache=None,
                 mode=BlockWrapperMode.CACHING,
                 block_idx=block_idx,
-                **kwargs,
+                encoder_hidden_states_mask=encoder_hidden_states_mask,
             )
 
         # Merge streams
@@ -488,34 +493,44 @@ class DiffusionRunner:
         prompt_data: PromptData,
     ) -> mx.array:
         """Execute a single diffusion step on a single node (no distribution)."""
-        base_kwargs = {"t": t, "config": config}
-
-        # For edit mode: include conditioning latents
-        if prompt_data.conditioning_latents is not None:
-            base_kwargs["conditioning_latents"] = prompt_data.conditioning_latents
+        conditioning_latents = prompt_data.conditioning_latents
+        cond_image_grid = prompt_data.cond_image_grid
 
         if self.adapter.needs_cfg:
             # Two forward passes + guidance for CFG models (e.g., Qwen)
-            pos_kwargs = {
-                **base_kwargs,
-                **prompt_data.get_extra_forward_kwargs(positive=True),
-            }
             noise_pos = self._forward_pass(
                 latents,
                 prompt_data.prompt_embeds,
                 prompt_data.pooled_prompt_embeds,
-                pos_kwargs,
+                t=t,
+                config=config,
+                encoder_hidden_states_mask=prompt_data.get_encoder_hidden_states_mask(
+                    positive=True
+                ),
+                cond_image_grid=cond_image_grid,
+                conditioning_latents=conditioning_latents,
             )
 
-            neg_kwargs = {
-                **base_kwargs,
-                **prompt_data.get_extra_forward_kwargs(positive=False),
-            }
+            negative_prompt_embeds = prompt_data.negative_prompt_embeds
+            negative_pooled_prompt_embeds = prompt_data.negative_pooled_prompt_embeds
+            assert negative_prompt_embeds is not None, (
+                "CFG requires negative_prompt_embeds"
+            )
+            assert negative_pooled_prompt_embeds is not None, (
+                "CFG requires negative_pooled_prompt_embeds"
+            )
+
             noise_neg = self._forward_pass(
                 latents,
-                prompt_data.negative_prompt_embeds,
-                prompt_data.negative_pooled_prompt_embeds,
-                neg_kwargs,
+                negative_prompt_embeds,
+                negative_pooled_prompt_embeds,
+                t=t,
+                config=config,
+                encoder_hidden_states_mask=prompt_data.get_encoder_hidden_states_mask(
+                    positive=False
+                ),
+                cond_image_grid=cond_image_grid,
+                conditioning_latents=conditioning_latents,
             )
 
             assert self.config.guidance_scale is not None
@@ -524,12 +539,15 @@ class DiffusionRunner:
             )
         else:
             # Single forward pass for non-CFG models (e.g., Flux)
-            kwargs = {**base_kwargs, **prompt_data.get_extra_forward_kwargs()}
             noise = self._forward_pass(
                 latents,
                 prompt_data.prompt_embeds,
                 prompt_data.pooled_prompt_embeds,
-                kwargs,
+                t=t,
+                config=config,
+                encoder_hidden_states_mask=prompt_data.get_encoder_hidden_states_mask(),
+                cond_image_grid=cond_image_grid,
+                conditioning_latents=conditioning_latents,
             )
 
         return config.scheduler.step(noise=noise, timestep=t, latents=latents)
@@ -594,10 +612,11 @@ class DiffusionRunner:
     ) -> mx.array:
         prev_latents = hidden_states
 
-        # Extract embeddings and extra kwargs (e.g., encoder_hidden_states_mask for Qwen)
+        # Extract embeddings and model-specific data
         prompt_embeds = prompt_data.prompt_embeds
         pooled_prompt_embeds = prompt_data.pooled_prompt_embeds
-        extra_kwargs = prompt_data.get_extra_forward_kwargs()
+        encoder_hidden_states_mask = prompt_data.get_encoder_hidden_states_mask()
+        cond_image_grid = prompt_data.cond_image_grid
 
         hidden_states = config.scheduler.scale_model_input(hidden_states, t)
 
@@ -629,8 +648,9 @@ class DiffusionRunner:
         image_rotary_embeddings = self.adapter.compute_rotary_embeddings(
             prompt_embeds,
             config,
+            encoder_hidden_states_mask=encoder_hidden_states_mask,
+            cond_image_grid=cond_image_grid,
             kontext_image_ids=kontext_image_ids,
-            **extra_kwargs,
         )
 
         # === Initialize KV caches to populate during sync for async warmstart ===
@@ -673,7 +693,7 @@ class DiffusionRunner:
                     text_seq_len=text_seq_len,
                     kv_cache=self.joint_kv_caches[block_idx],
                     mode=BlockWrapperMode.CACHING,
-                    **extra_kwargs,
+                    encoder_hidden_states_mask=encoder_hidden_states_mask,
                 )
 
         # === PHASE 3: Joint→Single Transition ===
@@ -800,10 +820,11 @@ class DiffusionRunner:
         assert self.joint_kv_caches is not None
         assert self.single_kv_caches is not None
 
-        # Extract embeddings and extra kwargs (e.g., encoder_hidden_states_mask for Qwen)
+        # Extract embeddings and model-specific data
         prompt_embeds = prompt_data.prompt_embeds
         pooled_prompt_embeds = prompt_data.pooled_prompt_embeds
-        extra_kwargs = prompt_data.get_extra_forward_kwargs()
+        encoder_hidden_states_mask = prompt_data.get_encoder_hidden_states_mask()
+        cond_image_grid = prompt_data.cond_image_grid
 
         text_embeddings = self.adapter.compute_text_embeddings(
             t, config, pooled_prompt_embeds
@@ -811,8 +832,9 @@ class DiffusionRunner:
         image_rotary_embeddings = self.adapter.compute_rotary_embeddings(
             prompt_embeds,
             config,
+            encoder_hidden_states_mask=encoder_hidden_states_mask,
+            cond_image_grid=cond_image_grid,
             kontext_image_ids=kontext_image_ids,
-            **extra_kwargs,
         )
 
         batch_size = patch_latents[0].shape[0]
@@ -872,7 +894,7 @@ class DiffusionRunner:
                         mode=BlockWrapperMode.PATCHED,
                         patch_start=start_token,
                         patch_end=end_token,
-                        **extra_kwargs,
+                        encoder_hidden_states_mask=encoder_hidden_states_mask,
                     )
 
             if self.owns_concat_stage:

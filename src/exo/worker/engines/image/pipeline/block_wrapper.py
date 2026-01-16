@@ -1,11 +1,9 @@
-from typing import Any
-
 import mlx.core as mx
 
+from exo.worker.engines.image.models.base import ModelAdapter
 from exo.worker.engines.image.pipeline.adapter import (
     BlockWrapperMode,
     JointBlockInterface,
-    ModelAdapter,
     SingleBlockInterface,
 )
 from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
@@ -47,7 +45,8 @@ class JointBlockWrapper:
         mode: BlockWrapperMode,
         patch_start: int | None = None,
         patch_end: int | None = None,
-        **kwargs: Any,
+        encoder_hidden_states_mask: mx.array | None = None,
+        block_idx: int | None = None,
     ) -> tuple[mx.array, mx.array]:
         """Apply the joint block.
 
@@ -61,8 +60,8 @@ class JointBlockWrapper:
             mode: CACHING (populate cache) or PATCHED (use cached K/V)
             patch_start: Start index for patched mode (required if mode=PATCHED)
             patch_end: End index for patched mode (required if mode=PATCHED)
-            **kwargs: Additional model-specific arguments (e.g., encoder_hidden_states_mask,
-                block_idx for Qwen)
+            encoder_hidden_states_mask: Attention mask for text (Qwen)
+            block_idx: Block index for debugging (Qwen)
 
         Returns:
             Tuple of (encoder_hidden_states, hidden_states)
@@ -78,7 +77,8 @@ class JointBlockWrapper:
             text_seq_len=text_seq_len,
             patch_start=patch_start,
             patch_end=patch_end,
-            **kwargs,
+            encoder_hidden_states_mask=encoder_hidden_states_mask,
+            block_idx=block_idx,
         )
 
 

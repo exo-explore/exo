@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Callable
 
 from exo.worker.engines.image.config import ImageModelConfig
+from exo.worker.engines.image.models.base import ModelAdapter
 from exo.worker.engines.image.models.flux import (
     FLUX_DEV_CONFIG,
     FLUX_SCHNELL_CONFIG,
@@ -13,7 +14,6 @@ from exo.worker.engines.image.models.qwen import (
     QwenEditModelAdapter,
     QwenModelAdapter,
 )
-from exo.worker.engines.image.pipeline.adapter import ModelAdapter
 
 __all__: list[str] = []
 

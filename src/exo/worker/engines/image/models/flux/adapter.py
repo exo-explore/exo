@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import mlx.core as mx
 from mflux.models.common.config.config import Config
@@ -16,7 +16,7 @@ from mflux.models.flux.model.flux_transformer.transformer import Transformer
 from mflux.models.flux.variants.txt2img.flux import Flux1
 
 from exo.worker.engines.image.config import ImageModelConfig
-from exo.worker.engines.image.models.base import BaseModelAdapter
+from exo.worker.engines.image.models.base import ModelAdapter, PromptData
 from exo.worker.engines.image.pipeline.adapter import (
     BlockWrapperMode,
     JointBlockInterface,
@@ -25,7 +25,7 @@ from exo.worker.engines.image.pipeline.adapter import (
 from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
 
 
-class FluxPromptData:
+class FluxPromptData(PromptData):
     """Container for Flux prompt encoding results."""
 
     def __init__(self, prompt_embeds: mx.array, pooled_prompt_embeds: mx.array):
@@ -50,9 +50,16 @@ class FluxPromptData:
         """Flux does not use CFG."""
         return None
 
-    def get_extra_forward_kwargs(self, positive: bool = True) -> dict[str, Any]:
-        """Flux has no extra forward kwargs."""
-        return {}
+    def get_encoder_hidden_states_mask(self, positive: bool = True) -> mx.array | None:
+        """Flux does not use encoder hidden states mask."""
+        return None
+
+    @property
+    def cond_image_grid(
+        self,
+    ) -> tuple[int, int, int] | list[tuple[int, int, int]] | None:
+        """Flux does not use conditioning image grid."""
+        return None
 
     @property
     def conditioning_latents(self) -> mx.array | None:
@@ -60,7 +67,7 @@ class FluxPromptData:
         return None
 
 
-class FluxModelAdapter(BaseModelAdapter):
+class FluxModelAdapter(ModelAdapter):
     def __init__(
         self,
         config: ImageModelConfig,
@@ -77,23 +84,55 @@ class FluxModelAdapter(BaseModelAdapter):
         self._transformer = self._model.transformer
 
     @property
-    def config(self) -> ImageModelConfig:
-        return self._config
-
-    @property
-    def model(self) -> Flux1:
-        return self._model
-
-    @property
-    def transformer(self) -> Transformer:
-        return self._transformer
-
-    @property
     def hidden_dim(self) -> int:
         return self._transformer.x_embedder.weight.shape[0]
 
+    @property
+    def needs_cfg(self) -> bool:
+        return False
+
     def _get_latent_creator(self) -> type:
         return FluxLatentCreator
+
+    def get_joint_blocks(self) -> list[JointBlockInterface]:
+        return cast(
+            list[JointBlockInterface], list(self._transformer.transformer_blocks)
+        )
+
+    def get_single_blocks(self) -> list[SingleBlockInterface]:
+        return cast(
+            list[SingleBlockInterface],
+            list(self._transformer.single_transformer_blocks),
+        )
+
+    def slice_transformer_blocks(
+        self,
+        start_layer: int,
+        end_layer: int,
+    ):
+        all_joint = list(self._transformer.transformer_blocks)
+        all_single = list(self._transformer.single_transformer_blocks)
+        total_joint_blocks = len(all_joint)
+        if end_layer <= total_joint_blocks:
+            # All assigned are joint blocks
+            joint_start, joint_end = start_layer, end_layer
+            single_start, single_end = 0, 0
+        elif start_layer >= total_joint_blocks:
+            # All assigned are single blocks
+            joint_start, joint_end = 0, 0
+            single_start = start_layer - total_joint_blocks
+            single_end = end_layer - total_joint_blocks
+        else:
+            # Spans both joint and single
+            joint_start, joint_end = start_layer, total_joint_blocks
+            single_start = 0
+            single_end = end_layer - total_joint_blocks
+
+        self._transformer.transformer_blocks = all_joint[joint_start:joint_end]
+
+        self._transformer.single_transformer_blocks = all_single[
+            single_start:single_end
+        ]
 
     def encode_prompt(self, prompt: str) -> FluxPromptData:
         """Encode prompt into FluxPromptData."""
@@ -113,18 +152,6 @@ class FluxModelAdapter(BaseModelAdapter):
             prompt_embeds=prompt_embeds,
             pooled_prompt_embeds=pooled_prompt_embeds,
         )
-
-    @property
-    def needs_cfg(self) -> bool:
-        return False
-
-    def apply_guidance(
-        self,
-        noise_positive: mx.array,
-        noise_negative: mx.array,
-        guidance_scale: float,
-    ) -> mx.array:
-        raise NotImplementedError("Flux does not use classifier-free guidance")
 
     def compute_embeddings(
         self,
@@ -156,9 +183,12 @@ class FluxModelAdapter(BaseModelAdapter):
         self,
         prompt_embeds: mx.array,
         runtime_config: Config,
-        **kwargs: Any,
+        encoder_hidden_states_mask: mx.array | None = None,
+        cond_image_grid: tuple[int, int, int]
+        | list[tuple[int, int, int]]
+        | None = None,
+        kontext_image_ids: mx.array | None = None,
     ) -> mx.array:
-        kontext_image_ids = kwargs.get("kontext_image_ids")
         return Transformer.compute_rotary_embeddings(
             prompt_embeds,
             self._transformer.pos_embed,
@@ -172,13 +202,14 @@ class FluxModelAdapter(BaseModelAdapter):
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: Any,  # mx.array for Flux
+        rotary_embeddings: mx.array,
         kv_cache: ImagePatchKVCache | None,
         mode: BlockWrapperMode,
         text_seq_len: int,
         patch_start: int | None = None,
         patch_end: int | None = None,
-        **kwargs: Any,
+        encoder_hidden_states_mask: mx.array | None = None,
+        block_idx: int | None = None,
     ) -> tuple[mx.array, mx.array]:
         if mode == BlockWrapperMode.CACHING:
             return self._apply_joint_block_caching(
@@ -240,61 +271,13 @@ class FluxModelAdapter(BaseModelAdapter):
                 patch_end=patch_end,
             )
 
-    def final_projection(
+    def apply_guidance(
         self,
-        hidden_states: mx.array,
-        text_embeddings: mx.array,
+        noise_positive: mx.array,
+        noise_negative: mx.array,
+        guidance_scale: float,
     ) -> mx.array:
-        hidden_states = self._transformer.norm_out(hidden_states, text_embeddings)
-        return self._transformer.proj_out(hidden_states)
-
-    def get_joint_blocks(self) -> list[JointBlockInterface]:
-        return cast(
-            list[JointBlockInterface], list(self._transformer.transformer_blocks)
-        )
-
-    def get_single_blocks(self) -> list[SingleBlockInterface]:
-        return cast(
-            list[SingleBlockInterface],
-            list(self._transformer.single_transformer_blocks),
-        )
-
-    def slice_transformer_blocks(
-        self,
-        start_layer: int,
-        end_layer: int,
-        total_joint_blocks: int,
-        total_single_blocks: int,
-    ) -> None:
-        if end_layer <= total_joint_blocks:
-            # All assigned are joint blocks
-            joint_start, joint_end = start_layer, end_layer
-            single_start, single_end = 0, 0
-        elif start_layer >= total_joint_blocks:
-            # All assigned are single blocks
-            joint_start, joint_end = 0, 0
-            single_start = start_layer - total_joint_blocks
-            single_end = end_layer - total_joint_blocks
-        else:
-            # Spans both joint and single
-            joint_start, joint_end = start_layer, total_joint_blocks
-            single_start = 0
-            single_end = end_layer - total_joint_blocks
-
-        all_joint = list(self._transformer.transformer_blocks)
-        self._transformer.transformer_blocks = all_joint[joint_start:joint_end]
-
-        all_single = list(self._transformer.single_transformer_blocks)
-        self._transformer.single_transformer_blocks = all_single[
-            single_start:single_end
-        ]
-
-    def merge_streams(
-        self,
-        hidden_states: mx.array,
-        encoder_hidden_states: mx.array,
-    ) -> mx.array:
-        return mx.concatenate([encoder_hidden_states, hidden_states], axis=1)
+        raise NotImplementedError("Flux does not use classifier-free guidance")
 
     def _apply_joint_block_caching(
         self,

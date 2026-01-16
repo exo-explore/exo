@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import mlx.core as mx
 from mflux.models.common.config import ModelConfig
@@ -16,7 +16,7 @@ from mflux.models.qwen.model.qwen_transformer.qwen_transformer_block import (
 from mflux.models.qwen.variants.txt2img.qwen_image import QwenImage
 
 from exo.worker.engines.image.config import ImageModelConfig
-from exo.worker.engines.image.models.base import BaseModelAdapter
+from exo.worker.engines.image.models.base import ModelAdapter, PromptData
 from exo.worker.engines.image.pipeline.adapter import (
     BlockWrapperMode,
     JointBlockInterface,
@@ -25,7 +25,7 @@ from exo.worker.engines.image.pipeline.adapter import (
 from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
 
 
-class QwenPromptData:
+class QwenPromptData(PromptData):
     """Container for Qwen prompt encoding results.
 
     Implements PromptData protocol with additional Qwen-specific attributes.
@@ -39,9 +39,9 @@ class QwenPromptData:
         negative_prompt_mask: mx.array,
     ):
         self._prompt_embeds = prompt_embeds
-        self.prompt_mask = prompt_mask
+        self._prompt_mask = prompt_mask
         self._negative_prompt_embeds = negative_prompt_embeds
-        self.negative_prompt_mask = negative_prompt_mask
+        self._negative_prompt_mask = negative_prompt_mask
 
     @property
     def prompt_embeds(self) -> mx.array:
@@ -63,12 +63,19 @@ class QwenPromptData:
         """Placeholder - Qwen doesn't use pooled embeds."""
         return self._negative_prompt_embeds
 
-    def get_extra_forward_kwargs(self, positive: bool = True) -> dict[str, Any]:
+    def get_encoder_hidden_states_mask(self, positive: bool = True) -> mx.array:
         """Return encoder_hidden_states_mask for the appropriate prompt."""
         if positive:
-            return {"encoder_hidden_states_mask": self.prompt_mask}
+            return self._prompt_mask
         else:
-            return {"encoder_hidden_states_mask": self.negative_prompt_mask}
+            return self._negative_prompt_mask
+
+    @property
+    def cond_image_grid(
+        self,
+    ) -> tuple[int, int, int] | list[tuple[int, int, int]] | None:
+        """Standard Qwen does not use conditioning image grid."""
+        return None
 
     @property
     def conditioning_latents(self) -> mx.array | None:
@@ -76,7 +83,7 @@ class QwenPromptData:
         return None
 
 
-class QwenModelAdapter(BaseModelAdapter):
+class QwenModelAdapter(ModelAdapter):
     """Adapter for Qwen-Image model.
 
     Key differences from Flux:
@@ -103,23 +110,35 @@ class QwenModelAdapter(BaseModelAdapter):
         self._transformer = self._model.transformer
 
     @property
-    def config(self) -> ImageModelConfig:
-        return self._config
-
-    @property
-    def model(self) -> QwenImage:
-        return self._model
-
-    @property
-    def transformer(self) -> QwenTransformer:
-        return self._transformer
-
-    @property
     def hidden_dim(self) -> int:
         return self._transformer.inner_dim
 
+    @property
+    def needs_cfg(self) -> bool:
+        gs = self._config.guidance_scale
+        return gs is not None and gs > 1.0
+
     def _get_latent_creator(self) -> type:
         return QwenLatentCreator
+
+    def get_joint_blocks(self) -> list[JointBlockInterface]:
+        """Return all 60 transformer blocks."""
+        return cast(
+            list[JointBlockInterface], list(self._transformer.transformer_blocks)
+        )
+
+    def get_single_blocks(self) -> list[SingleBlockInterface]:
+        """Qwen has no single blocks."""
+        return []
+
+    def slice_transformer_blocks(
+        self,
+        start_layer: int,
+        end_layer: int,
+    ):
+        self._transformer.transformer_blocks = self._transformer.transformer_blocks[
+            start_layer:end_layer
+        ]
 
     def encode_prompt(self, prompt: str) -> QwenPromptData:
         """Encode prompt into QwenPromptData.
@@ -149,23 +168,6 @@ class QwenModelAdapter(BaseModelAdapter):
             prompt_mask=prompt_mask,
             negative_prompt_embeds=neg_embeds,
             negative_prompt_mask=neg_mask,
-        )
-
-    @property
-    def needs_cfg(self) -> bool:
-        gs = self._config.guidance_scale
-        return gs is not None and gs > 1.0
-
-    def apply_guidance(
-        self,
-        noise_positive: mx.array,
-        noise_negative: mx.array,
-        guidance_scale: float,
-    ) -> mx.array:
-        return self._model.compute_guided_noise(
-            noise=noise_positive,
-            noise_negative=noise_negative,
-            guidance=guidance_scale,
         )
 
     def compute_embeddings(
@@ -217,8 +219,12 @@ class QwenModelAdapter(BaseModelAdapter):
         self,
         prompt_embeds: mx.array,
         runtime_config: Config,
-        **kwargs: Any,
-    ) -> Any:
+        encoder_hidden_states_mask: mx.array | None = None,
+        cond_image_grid: tuple[int, int, int]
+        | list[tuple[int, int, int]]
+        | None = None,
+        kontext_image_ids: mx.array | None = None,
+    ) -> tuple[mx.array, mx.array]:
         """Compute 3D rotary embeddings for Qwen.
 
         Qwen uses video-aware 3D RoPE with separate embeddings for image and text.
@@ -227,9 +233,6 @@ class QwenModelAdapter(BaseModelAdapter):
             tuple[tuple[mx.array, mx.array], tuple[mx.array, mx.array]]:
                 ((img_cos, img_sin), (txt_cos, txt_sin))
         """
-        encoder_hidden_states_mask = kwargs.get("encoder_hidden_states_mask")
-        cond_image_grid = kwargs.get("cond_image_grid")
-
         if encoder_hidden_states_mask is None:
             raise ValueError(
                 "encoder_hidden_states_mask is required for Qwen RoPE computation"
@@ -248,25 +251,23 @@ class QwenModelAdapter(BaseModelAdapter):
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: Any,  # tuple[tuple[mx.array, mx.array], tuple[mx.array, mx.array]] for Qwen
+        rotary_embeddings: tuple[mx.array, mx.array],
         kv_cache: ImagePatchKVCache | None,
         mode: BlockWrapperMode,
         text_seq_len: int,
         patch_start: int | None = None,
         patch_end: int | None = None,
-        **kwargs: Any,
+        encoder_hidden_states_mask: mx.array | None = None,
+        block_idx: int | None = None,
     ) -> tuple[mx.array, mx.array]:
         """Apply Qwen joint block.
 
         For caching mode, we run the full block and optionally populate the KV cache.
         For patched mode, we use the cached KV values (not yet implemented).
         """
-        encoder_hidden_states_mask = kwargs.get("encoder_hidden_states_mask")
-        block_idx = kwargs.get("block_idx")
-
         if mode == BlockWrapperMode.CACHING:
             return self._apply_joint_block_caching(
-                block=block,
+                block=cast(QwenTransformerBlock, block),
                 hidden_states=hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 text_embeddings=text_embeddings,
@@ -281,7 +282,7 @@ class QwenModelAdapter(BaseModelAdapter):
             assert patch_start is not None and patch_end is not None
             assert kv_cache is not None
             return self._apply_joint_block_patched(
-                block=block,
+                block=cast(QwenTransformerBlock, block),
                 patch_hidden=hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 text_embeddings=text_embeddings,
@@ -309,55 +310,25 @@ class QwenModelAdapter(BaseModelAdapter):
         """Qwen has no single blocks."""
         raise NotImplementedError("Qwen does not have single blocks")
 
-    def final_projection(
+    def apply_guidance(
         self,
-        hidden_states: mx.array,
-        text_embeddings: mx.array,
+        noise_positive: mx.array,
+        noise_negative: mx.array,
+        guidance_scale: float,
     ) -> mx.array:
-        """Apply final normalization and projection."""
-        hidden_states = self._transformer.norm_out(hidden_states, text_embeddings)
-        return self._transformer.proj_out(hidden_states)
-
-    def get_joint_blocks(self) -> list[JointBlockInterface]:
-        """Return all 60 transformer blocks."""
-        return cast(
-            list[JointBlockInterface], list(self._transformer.transformer_blocks)
+        return self._model.compute_guided_noise(
+            noise=noise_positive,
+            noise_negative=noise_negative,
+            guidance=guidance_scale,
         )
-
-    def get_single_blocks(self) -> list[SingleBlockInterface]:
-        """Qwen has no single blocks."""
-        return []
-
-    def slice_transformer_blocks(
-        self,
-        start_layer: int,
-        end_layer: int,
-        total_joint_blocks: int,
-        total_single_blocks: int,
-    ) -> None:
-        all_blocks = list(self._transformer.transformer_blocks)
-        assigned_blocks = all_blocks[start_layer:end_layer]
-        self._transformer.transformer_blocks = assigned_blocks
-
-    def merge_streams(
-        self,
-        hidden_states: mx.array,
-        encoder_hidden_states: mx.array,
-    ) -> mx.array:
-        """Merge image and text streams.
-
-        For Qwen, this is called before final projection.
-        The streams remain separate through all blocks.
-        """
-        return mx.concatenate([encoder_hidden_states, hidden_states], axis=1)
 
     def _apply_joint_block_caching(
         self,
-        block: Any,  # QwenTransformerBlock
+        block: QwenTransformerBlock,
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: tuple[tuple[mx.array, mx.array], tuple[mx.array, mx.array]],
+        rotary_embeddings: tuple[mx.array, mx.array],
         kv_cache: ImagePatchKVCache | None,
         text_seq_len: int,
         encoder_hidden_states_mask: mx.array | None = None,
@@ -379,11 +350,11 @@ class QwenModelAdapter(BaseModelAdapter):
 
     def _apply_joint_block_patched(
         self,
-        block: Any,  # QwenTransformerBlock
+        block: QwenTransformerBlock,
         patch_hidden: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: tuple[tuple[mx.array, mx.array], tuple[mx.array, mx.array]],
+        rotary_embeddings: tuple[mx.array, mx.array],
         kv_cache: ImagePatchKVCache,
         text_seq_len: int,
         patch_start: int,
