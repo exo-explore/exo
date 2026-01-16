@@ -654,17 +654,14 @@ class API:
                 for idx, event in self.event_buffer.drain_indexed():
                     self._event_log.append(event)
                     self.state = apply(self.state, IndexedEvent(event=event, idx=idx))
-                    if (
-                        isinstance(event, ChunkGenerated)
-                        and event.command_id in self._chat_completion_queues
-                    ):
+                    if isinstance(event, ChunkGenerated):
                         assert isinstance(event.chunk, TokenChunk)
-                        try:
-                            await self._chat_completion_queues[event.command_id].send(
-                                event.chunk
-                            )
-                        except BrokenResourceError:
-                            self._chat_completion_queues.pop(event.command_id, None)
+                        queue = self._chat_completion_queues.get(event.command_id)
+                        if queue is not None:
+                            try:
+                                await queue.send(event.chunk)
+                            except BrokenResourceError:
+                                self._chat_completion_queues.pop(event.command_id, None)
 
     async def _pause_on_new_election(self):
         with self.election_receiver as ems:
