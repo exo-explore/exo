@@ -103,8 +103,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Find draft release - either by matching tag name or by finding untagged draft with matching name
-          RELEASE_JSON=$(gh api repos/${{ github.repository }}/releases --jq ".[] | select(.draft == true) | select(.tag_name == \"$GITHUB_REF_NAME\" or .tag_name == \"\" or .name == \"$GITHUB_REF_NAME\")" 2>/dev/null | head -1 || echo "")
+          # Find draft release - match by name (title) since draft releases don't have tag_name set yet
+          RELEASE_JSON=$(gh api repos/${{ github.repository }}/releases --jq "[.[] | select(.draft == true) | select(.name == \"$GITHUB_REF_NAME\")] | first // empty" 2>/dev/null || echo "")
 
           if [[ -z "$RELEASE_JSON" ]]; then
             if [[ "$IS_ALPHA" == "true" ]]; then
