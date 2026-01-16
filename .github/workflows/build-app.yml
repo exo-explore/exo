@@ -1,5 +1,16 @@
 name: Build EXO macOS DMG
 
+# Release workflow:
+# 1. Create a draft GitHub Release with the tag name (e.g. v1.0.0) and write release notes in markdown
+# 2. Push the tag: git tag v1.0.0 && git push origin v1.0.0
+# 3. This workflow builds, signs, and notarizes the DMG
+# 4. Release notes are embedded in appcast.xml for Sparkle (rendered as markdown)
+# 5. DMG and appcast.xml are uploaded to S3
+# 6. The draft GitHub Release is published with the DMG attached
+#
+# For alpha releases (e.g. v1.0.0-alpha.1): draft release and notes are optional.
+# If no draft exists, a release is auto-created with generated notes.
+
 on:
   workflow_dispatch:
   push:
@@ -12,7 +23,7 @@ jobs:
   build-macos-app:
     runs-on: "macos-26"
     env:
-      SPARKLE_VERSION: 2.8.1
+      SPARKLE_VERSION: 2.9.0-beta.1
       SPARKLE_DOWNLOAD_PREFIX: ${{ secrets.SPARKLE_DOWNLOAD_PREFIX }}
       SPARKLE_FEED_URL: ${{ secrets.SPARKLE_FEED_URL }}
       SPARKLE_ED25519_PUBLIC: ${{ secrets.SPARKLE_ED25519_PUBLIC }}
@@ -86,6 +97,47 @@ jobs:
             echo "Production tag must point to a commit on main"
             exit 1
           fi
+
+      - name: Fetch and validate release notes
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find draft release - either by matching tag name or by finding untagged draft with matching name
+          RELEASE_JSON=$(gh api repos/${{ github.repository }}/releases --jq ".[] | select(.draft == true) | select(.tag_name == \"$GITHUB_REF_NAME\" or .tag_name == \"\" or .name == \"$GITHUB_REF_NAME\")" 2>/dev/null | head -1 || echo "")
+
+          if [[ -z "$RELEASE_JSON" ]]; then
+            if [[ "$IS_ALPHA" == "true" ]]; then
+              echo "No draft release found for alpha tag $GITHUB_REF_NAME (optional for alphas)"
+              echo "HAS_RELEASE_NOTES=false" >> $GITHUB_ENV
+              exit 0
+            fi
+            echo "ERROR: No draft release found for tag $GITHUB_REF_NAME"
+            echo "Please create a draft release with release notes before pushing the tag."
+            exit 1
+          fi
+
+          # Extract release notes
+          NOTES=$(echo "$RELEASE_JSON" | jq -r '.body // ""')
+          if [[ -z "$NOTES" || "$NOTES" == "null" ]]; then
+            if [[ "$IS_ALPHA" == "true" ]]; then
+              echo "Draft release has no notes (optional for alphas)"
+              echo "HAS_RELEASE_NOTES=false" >> $GITHUB_ENV
+              exit 0
+            fi
+            echo "ERROR: Draft release exists but has no release notes"
+            echo "Please add release notes to the draft release before pushing the tag."
+            exit 1
+          fi
+
+          # Save release ID for later publishing
+          RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r '.id')
+          echo "DRAFT_RELEASE_ID=$RELEASE_ID" >> $GITHUB_ENV
+          echo "HAS_RELEASE_NOTES=true" >> $GITHUB_ENV
+
+          echo "Found draft release (ID: $RELEASE_ID), saving release notes..."
+          echo "$NOTES" > /tmp/release_notes.md
+          echo "RELEASE_NOTES_FILE=/tmp/release_notes.md" >> $GITHUB_ENV
 
       # ============================================================
       # Install dependencies
@@ -304,6 +356,28 @@ jobs:
             $CHANNEL_FLAG \
             .
 
+      - name: Inject release notes into appcast
+        if: github.ref_type == 'tag' && env.HAS_RELEASE_NOTES == 'true'
+        env:
+          RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
+        run: |
+          # Inject markdown release notes with sparkle:format="markdown" (Sparkle 2.9+)
+          export NOTES=$(cat "$RELEASE_NOTES_FILE")
+
+          # Insert description after the enclosure tag for this version
+          awk '
+            /<enclosure[^>]*>/ && index($0, ENVIRON["RELEASE_VERSION"]) {
+              print
+              print "            <description sparkle:format=\"markdown\"><![CDATA["
+              print ENVIRON["NOTES"]
+              print "            ]]></description>"
+              next
+            }
+            { print }
+          ' output/appcast.xml > output/appcast.xml.tmp && mv output/appcast.xml.tmp output/appcast.xml
+
+          echo "Injected markdown release notes for version $RELEASE_VERSION"
+
       # ============================================================
       # Upload artifacts
       # ============================================================
@@ -335,4 +409,27 @@ jobs:
           if [[ "$IS_ALPHA" != "true" ]]; then
             aws s3 cp "$DMG_NAME" "s3://${SPARKLE_S3_BUCKET}/${PREFIX}EXO-latest.dmg"
             aws s3 cp appcast.xml "s3://${SPARKLE_S3_BUCKET}/${PREFIX}appcast.xml" --content-type application/xml --cache-control no-cache
+          fi
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DMG_PATH="output/EXO-${RELEASE_VERSION}.dmg"
+
+          if [[ "$HAS_RELEASE_NOTES" == "true" ]]; then
+            # Update the draft release with the tag and upload DMG
+            gh api --method PATCH "repos/${{ github.repository }}/releases/$DRAFT_RELEASE_ID" \
+              -f tag_name="$GITHUB_REF_NAME" \
+              -F draft=false
+            gh release upload "$GITHUB_REF_NAME" "$DMG_PATH" --clobber
+            echo "Published release $GITHUB_REF_NAME with DMG attached"
+          else
+            # Alpha without draft release - create one with auto-generated notes
+            gh release create "$GITHUB_REF_NAME" "$DMG_PATH" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes \
+              --prerelease
+            echo "Created alpha release $GITHUB_REF_NAME with auto-generated notes"
           fi
