@@ -173,6 +173,7 @@ class ChatCompletionTaskParams(BaseModel):
     stream: bool = False
     temperature: float | None = None
     top_p: float | None = None
+    top_k: int | None = None
     tools: list[dict[str, Any]] | None = None
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool | None = None
