@@ -505,7 +505,7 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
             self.sharded_to_all_linear_in_place(layer.mlp.experts.down_proj)
             self.all_to_sharded_linear_in_place(layer.mlp.experts.up_proj)
 
-            layer.mlp = ShardedGptOssMoE(layer.mlp)  # type: ignore
+            # layer.mlp = ShardedGptOssMoE(layer.mlp)  # type: ignore
             # layer.mlp.sharding_group = self.group
 
         return model
