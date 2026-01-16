@@ -405,7 +405,9 @@ class Worker:
 
     async def _poll_connection_updates(self):
         while True:
-            edges = set(conn.edge for conn in self.state.topology.list_connections())
+            edges = set(
+                conn.edge for conn in self.state.topology.out_edges(self.node_id)
+            )
             conns = await check_reachable(
                 self.state.topology, self.state.node_profiles, self.node_id
             )
@@ -437,7 +439,7 @@ class Worker:
                 if not isinstance(conn.edge, SocketConnection):
                     continue
                 if (
-                    conn.source not in conns
+                    conn.sink not in conns
                     or conn.edge.sink_multiaddr.ip_address
                     not in conns.get(conn.source, set())
                 ):
