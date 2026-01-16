@@ -150,7 +150,20 @@ def main(
                         )
                     )
 
-                    model, tokenizer = load_mlx_items(bound_instance, group)
+                    def on_model_load_timeout() -> None:
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id,
+                                runner_status=RunnerFailed(
+                                    error_message="Model loading timed out"
+                                ),
+                            )
+                        )
+                        time.sleep(0.5)
+
+                    model, tokenizer = load_mlx_items(
+                        bound_instance, group, on_timeout=on_model_load_timeout
+                    )
 
                     current_status = RunnerLoaded()
                     logger.info("runner loaded")

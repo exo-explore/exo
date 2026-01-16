@@ -2,7 +2,9 @@ import json
 import os
 import resource
 import sys
+import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -80,6 +82,45 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
             else model_shard_meta.world_size
         )
     )
+
+
+class ModelLoadingTimeoutError(Exception):
+    pass
+
+
+TimeoutCallback = Callable[[], None]
+
+
+def eval_with_timeout(
+    mlx_item: Any,  # pyright: ignore[reportAny]
+    timeout_seconds: float = 60.0,
+    on_timeout: TimeoutCallback | None = None,
+) -> None:
+    """Evaluate MLX item with a hard timeout.
+
+    If on_timeout callback is provided, it will be called before terminating
+    the process. This allows the runner to send a failure event before exit.
+    """
+    completed = threading.Event()
+
+    def watchdog() -> None:
+        if not completed.wait(timeout=timeout_seconds):
+            logger.error(
+                f"mlx_item evaluation timed out after {timeout_seconds:.0f}s. "
+                "This may indicate an issue with FAST_SYNCH and tensor parallel sharding. "
+                "Terminating process."
+            )
+            if on_timeout is not None:
+                on_timeout()
+            os._exit(1)
+
+    watchdog_thread = threading.Thread(target=watchdog, daemon=True)
+    watchdog_thread.start()
+
+    try:
+        mx.eval(mlx_item)  # pyright: ignore[reportAny]
+    finally:
+        completed.set()
 
 
 def mx_barrier(group: Group | None = None):
@@ -188,7 +229,9 @@ def initialize_mlx(
 
 
 def load_mlx_items(
-    bound_instance: BoundInstance, group: Group | None
+    bound_instance: BoundInstance,
+    group: Group | None,
+    on_timeout: TimeoutCallback | None = None,
 ) -> tuple[Model, TokenizerWrapper]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
@@ -202,7 +245,9 @@ def load_mlx_items(
     else:
         logger.info("Starting distributed init")
         start_time = time.perf_counter()
-        model, tokenizer = shard_and_load(bound_instance.bound_shard, group=group)
+        model, tokenizer = shard_and_load(
+            bound_instance.bound_shard, group=group, on_timeout=on_timeout
+        )
         end_time = time.perf_counter()
         logger.info(
             f"Time taken to shard and load model: {(end_time - start_time):.2f}s"
@@ -216,6 +261,7 @@ def load_mlx_items(
 def shard_and_load(
     shard_metadata: ShardMetadata,
     group: Group,
+    on_timeout: TimeoutCallback | None = None,
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(shard_metadata.model_meta.model_id)
 
@@ -252,7 +298,14 @@ def shard_and_load(
             logger.info(f"loading model from {model_path} with pipeline parallelism")
             model = pipeline_auto_parallel(model, group, shard_metadata)
 
-    mx.eval(model.parameters())
+    # Estimate timeout based on model size
+    model_size_gb = get_weights_size(shard_metadata).in_bytes / (1024**3)
+    timeout_seconds = 60 + model_size_gb / 5
+    logger.info(
+        f"Evaluating model parameters with timeout of {timeout_seconds:.0f}s "
+        f"(model size: {model_size_gb:.1f}GB)"
+    )
+    eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
 
     # TODO: Do we need this?
     mx.eval(model)

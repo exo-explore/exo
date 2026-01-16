@@ -664,7 +664,7 @@ class API:
                                 event.chunk
                             )
                         except BrokenResourceError:
-                            del self._chat_completion_queues[event.command_id]
+                            self._chat_completion_queues.pop(event.command_id, None)
 
     async def _pause_on_new_election(self):
         with self.election_receiver as ems:

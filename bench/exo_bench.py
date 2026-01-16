@@ -27,7 +27,7 @@ class ExoHttpError(RuntimeError):
 
 
 class ExoClient:
-    def __init__(self, host: str, port: int, timeout_s: float = 2400.0):
+    def __init__(self, host: str, port: int, timeout_s: float = 600.0):
         self.host = host
         self.port = port
         self.timeout_s = timeout_s
@@ -325,6 +325,12 @@ def main() -> int:
         help="Only consider placements using <= this many nodes.",
     )
     ap.add_argument(
+        "--min-nodes",
+        type=int,
+        default=1,
+        help="Only consider placements using >= this many nodes.",
+    )
+    ap.add_argument(
         "--instance-meta", choices=["ring", "jaccl", "both"], default="both"
     )
     ap.add_argument(
@@ -345,7 +351,7 @@ def main() -> int:
         help="Warmup runs per placement (uses first pp/tg).",
     )
     ap.add_argument(
-        "--timeout", type=float, default=2400.0, help="HTTP timeout (seconds)."
+        "--timeout", type=float, default=600.0, help="HTTP timeout (seconds)."
     )
     ap.add_argument(
         "--json-out",
@@ -424,7 +430,7 @@ def main() -> int:
         ):
             continue
 
-        if 0 < n <= args.max_nodes:
+        if args.min_nodes <= n <= args.max_nodes:
             selected.append(p)
 
     if not selected:
