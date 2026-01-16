@@ -18,10 +18,13 @@ def entrypoint(
     _logger: "loguru.Logger",
 ) -> None:
     fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
-    if fast_synch_override == "on" or (fast_synch_override != "off" and (
-        isinstance(bound_instance.instance, MlxJacclInstance)
-        and len(bound_instance.instance.ibv_devices) >= 2
-    )):
+    if fast_synch_override == "on" or (
+        fast_synch_override != "off"
+        and (
+            isinstance(bound_instance.instance, MlxJacclInstance)
+            and len(bound_instance.instance.ibv_devices) >= 2
+        )
+    ):
         os.environ["MLX_METAL_FAST_SYNCH"] = "1"
     else:
         os.environ["MLX_METAL_FAST_SYNCH"] = "0"
@@ -29,7 +32,7 @@ def entrypoint(
     global logger
     logger = _logger
 
-    logger.info(f'Fast synch flag: {os.environ["MLX_METAL_FAST_SYNCH"]}')
+    logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:
