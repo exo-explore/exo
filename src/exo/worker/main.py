@@ -409,7 +409,9 @@ class Worker:
                 conn.edge for conn in self.state.topology.out_edges(self.node_id)
             )
             conns = await check_reachable(
-                self.state.topology, self.state.node_profiles, self.node_id
+                self.state.topology,
+                self.node_id,
+                self.state.node_profiles,
             )
             for nid in conns:
                 for ip in conns[nid]:
