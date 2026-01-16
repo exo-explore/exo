@@ -915,7 +915,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		const runnerEntries = Object.entries(runnerToShard).map(([runnerId, shardWrapped]) => {
 			const [tag, shard] = getTagged(shardWrapped);
 			const meta = (shard as { modelMeta?: { worldSize?: number; nLayers?: number; deviceRank?: number } } | undefined);
-			const deviceRank = (meta?.deviceRank as number | undefined) ?? 0;
+			const deviceRank = meta?.modelMeta?.deviceRank ?? 0;
 			return { runnerId, tag, deviceRank };
 		});
 

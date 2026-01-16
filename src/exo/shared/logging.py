@@ -11,9 +11,6 @@ class InterceptLogger(HypercornLogger):
     def __init__(self, config: Config):
         super().__init__(config)
         assert self.error_logger
-        # TODO: Decide if we want to provide access logs
-        # assert self.access_logger
-        # self.access_logger.handlers = [_InterceptHandler()]
         self.error_logger.handlers = [_InterceptHandler()]
 
 

@@ -1,7 +1,7 @@
 from exo.shared.types.common import NodeId
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
-from exo.shared.types.topology import Connection
+from exo.shared.types.topology import Connection, SocketConnection
 
 
 def test_state_serialization_roundtrip() -> None:
@@ -12,9 +12,11 @@ def test_state_serialization_roundtrip() -> None:
     node_b = NodeId("node-b")
 
     connection = Connection(
-        local_node_id=node_a,
-        send_back_node_id=node_b,
-        send_back_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/10001"),
+        source=node_a,
+        sink=node_b,
+        edge=SocketConnection(
+            sink_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/10001"),
+        ),
     )
 
     state = State()
@@ -23,5 +25,11 @@ def test_state_serialization_roundtrip() -> None:
     json_repr = state.model_dump_json()
     restored_state = State.model_validate_json(json_repr)
 
-    assert state.topology.to_snapshot() == restored_state.topology.to_snapshot()
+    assert (
+        state.topology.to_snapshot().nodes
+        == restored_state.topology.to_snapshot().nodes
+    )
+    assert set(state.topology.to_snapshot().connections) == set(
+        restored_state.topology.to_snapshot().connections
+    )
     assert restored_state.model_dump_json() == json_repr

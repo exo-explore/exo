@@ -38,6 +38,7 @@ EXO_TEST_LOG = EXO_CACHE_HOME / "exo_test.log"
 
 # Identity (config)
 EXO_NODE_ID_KEYPAIR = EXO_CONFIG_HOME / "node_id.keypair"
+EXO_CONFIG_FILE = EXO_CONFIG_HOME / "config.toml"
 
 # libp2p topics for event forwarding
 LIBP2P_LOCAL_EVENTS_TOPIC = "worker_events"

@@ -27,6 +27,7 @@ from exo.shared.types.events import (
     ForwarderEvent,
     IndexedEvent,
     InstanceDeleted,
+    NodeGatheredInfo,
     NodeTimedOut,
     TaskCreated,
     TaskDeleted,
@@ -158,6 +159,7 @@ class Master:
                                 command,
                                 self.state.topology,
                                 self.state.instances,
+                                self.state.node_profiles,
                             )
                             transition_events = get_transition_events(
                                 self.state.instances, placement
@@ -200,9 +202,7 @@ class Master:
     async def _plan(self) -> None:
         while True:
             # kill broken instances
-            connected_node_ids = set(
-                [x.node_id for x in self.state.topology.list_nodes()]
-            )
+            connected_node_ids = set(self.state.topology.list_nodes())
             for instance_id, instance in self.state.instances.items():
                 for node_id in instance.shard_assignments.node_to_runner:
                     if node_id not in connected_node_ids:
@@ -237,6 +237,8 @@ class Master:
                     self.state = apply(self.state, indexed)
 
                     event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
+                    if isinstance(event, NodeGatheredInfo):
+                        event.when = str(datetime.now(tz=timezone.utc))
 
                     self._event_log.append(event)
                     await self._send_event(indexed)

@@ -19,15 +19,13 @@ from exo.shared.types.events import (
     ForwarderEvent,
     IndexedEvent,
     InstanceCreated,
-    NodePerformanceMeasured,
+    NodeGatheredInfo,
     TaskCreated,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.profiling import (
-    MemoryPerformanceProfile,
-    NodePerformanceProfile,
-    SystemPerformanceProfile,
+    MemoryUsage,
 )
 from exo.shared.types.tasks import ChatCompletion as ChatCompletionTask
 from exo.shared.types.tasks import TaskStatus
@@ -83,21 +81,14 @@ async def test_master():
                 origin=sender_node_id,
                 session=session_id,
                 event=(
-                    NodePerformanceMeasured(
+                    NodeGatheredInfo(
                         when=str(datetime.now(tz=timezone.utc)),
                         node_id=node_id,
-                        node_profile=NodePerformanceProfile(
-                            model_id="maccy",
-                            chip_id="arm",
-                            friendly_name="test",
-                            memory=MemoryPerformanceProfile(
-                                ram_total=Memory.from_bytes(678948 * 1024),
-                                ram_available=Memory.from_bytes(678948 * 1024),
-                                swap_total=Memory.from_bytes(0),
-                                swap_available=Memory.from_bytes(0),
-                            ),
-                            network_interfaces=[],
-                            system=SystemPerformanceProfile(),
+                        info=MemoryUsage(
+                            ram_total=Memory.from_bytes(678948 * 1024),
+                            ram_available=Memory.from_bytes(678948 * 1024),
+                            swap_total=Memory.from_bytes(0),
+                            swap_available=Memory.from_bytes(0),
                         ),
                     )
                 ),
@@ -163,7 +154,7 @@ async def test_master():
         assert events[0].idx == 0
         assert events[1].idx == 1
         assert events[2].idx == 2
-        assert isinstance(events[0].event, NodePerformanceMeasured)
+        assert isinstance(events[0].event, NodeGatheredInfo)
         assert isinstance(events[1].event, InstanceCreated)
         created_instance = events[1].event.instance
         assert isinstance(created_instance, MlxRingInstance)
