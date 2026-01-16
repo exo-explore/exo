@@ -121,6 +121,7 @@ class DownloadCoordinator:
     def _start_download_task(
         self, shard: ShardMetadata, initial_progress: RepoDownloadProgress
     ) -> None:
+        logger.warning("starting download for {shard}")
         model_id = shard.model_card.model_id
 
         # Emit ongoing status
