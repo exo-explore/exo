@@ -1,8 +1,6 @@
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from loguru import logger
-
 from exo.shared.types.common import NodeId
 from exo.shared.types.multiaddr import Multiaddr
 from exo.utils.pydantic_ext import FrozenModel
@@ -24,7 +22,6 @@ class RDMAConnection(FrozenModel):
     sink_rdma_iface: str
 
     def is_thunderbolt(self) -> bool:
-        logger.warning("duh")
         return True
 
 
