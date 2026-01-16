@@ -75,7 +75,9 @@ def chunk_to_response(
                 delta=ChatCompletionMessage(
                     role="assistant",
                     content=chunk.text if chunk.text else None,
-                    tool_calls=chunk.tool_calls,
+                    tool_calls=[tc.model_dump() for tc in chunk.tool_calls]
+                    if chunk.tool_calls
+                    else None,
                 ),
                 finish_reason=chunk.finish_reason,
             )

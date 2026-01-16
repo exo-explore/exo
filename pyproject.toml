@@ -23,6 +23,9 @@ dependencies = [
     "tiktoken>=0.12.0", # required for kimi k2 tokenizer
     "hypercorn>=0.18.0",
     "openai-harmony>=0.0.8",
+    "openhands-sdk>=0.1.0", # for exo-eval SWE-bench evaluation
+    "openhands-tools>=0.1.0", # tools for openhands agents
+    "datasets>=3.0.0", # for loading SWE-bench from HuggingFace
 ]
 
 [project.scripts]
