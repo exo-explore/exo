@@ -22,6 +22,8 @@ on:
 jobs:
   build-macos-app:
     runs-on: "macos-26"
+    permissions:
+      contents: write
     env:
       SPARKLE_VERSION: 2.9.0-beta.1
       SPARKLE_DOWNLOAD_PREFIX: ${{ secrets.SPARKLE_DOWNLOAD_PREFIX }}
@@ -103,10 +105,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Find draft release - match by name (title) since draft releases don't have tag_name set yet
-          RELEASE_JSON=$(gh api repos/${{ github.repository }}/releases --jq "[.[] | select(.draft == true) | select(.name == \"$GITHUB_REF_NAME\")] | first // empty" 2>/dev/null || echo "")
+          # Find draft release by name using gh release list (more reliable with default token)
+          echo "Looking for draft release named '$GITHUB_REF_NAME'..."
+          DRAFT_EXISTS=$(gh release list --json name,isDraft --jq ".[] | select(.isDraft == true) | select(.name == \"$GITHUB_REF_NAME\") | .name" 2>/dev/null || echo "")
 
-          if [[ -z "$RELEASE_JSON" ]]; then
+          if [[ -z "$DRAFT_EXISTS" ]]; then
             if [[ "$IS_ALPHA" == "true" ]]; then
               echo "No draft release found for alpha tag $GITHUB_REF_NAME (optional for alphas)"
               echo "HAS_RELEASE_NOTES=false" >> $GITHUB_ENV
@@ -116,6 +119,10 @@ jobs:
             echo "Please create a draft release with release notes before pushing the tag."
             exit 1
           fi
+
+          # Fetch full release details via API to get body and ID
+          echo "Found draft release, fetching details..."
+          RELEASE_JSON=$(gh api repos/${{ github.repository }}/releases --jq ".[] | select(.draft == true) | select(.name == \"$GITHUB_REF_NAME\")" 2>/dev/null || echo "")
 
           # Extract release notes
           NOTES=$(echo "$RELEASE_JSON" | jq -r '.body // ""')
