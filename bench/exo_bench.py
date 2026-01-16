@@ -241,6 +241,9 @@ class PromptSizer:
             ids = tokenizer.apply_chat_template(
                 messages, tokenize=True, add_generation_prompt=True
             )
+            # Fix for transformers 5.x
+            if hasattr(ids, "input_ids"):
+                ids = ids.input_ids
             return int(len(ids))
 
         return count_fn

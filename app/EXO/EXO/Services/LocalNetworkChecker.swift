@@ -5,8 +5,8 @@ import os.log
 /// Checks if the app's local network permission is actually functional.
 ///
 /// macOS local network permission can appear enabled in System Preferences but not
-/// actually work after a restart. This service detects this by creating a UDP
-/// connection to the mDNS multicast address (224.0.0.251:5353).
+/// actually work after a restart. This service uses NWConnection to mDNS multicast
+/// to verify actual connectivity.
 @MainActor
 final class LocalNetworkChecker: ObservableObject {
     enum Status: Equatable {
@@ -35,30 +35,43 @@ final class LocalNetworkChecker: ObservableObject {
     }
 
     private static let logger = Logger(subsystem: "io.exo.EXO", category: "LocalNetworkChecker")
+    private static let hasCompletedInitialCheckKey = "LocalNetworkChecker.hasCompletedInitialCheck"
 
     @Published private(set) var status: Status = .unknown
-    @Published private(set) var lastConnectionState: String = "none"
 
     private var connection: NWConnection?
     private var checkTask: Task<Void, Never>?
+
+    /// Whether we've completed at least one check (stored in UserDefaults)
+    private var hasCompletedInitialCheck: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.hasCompletedInitialCheckKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.hasCompletedInitialCheckKey) }
+    }
 
     /// Checks if local network access is working.
     func check() {
         checkTask?.cancel()
         status = .checking
-        lastConnectionState = "connecting"
+
+        // Use longer timeout on first launch to allow time for permission prompt
+        let isFirstCheck = !hasCompletedInitialCheck
+        let timeout: UInt64 = isFirstCheck ? 30_000_000_000 : 3_000_000_000
 
         checkTask = Task { [weak self] in
             guard let self else { return }
-            let result = await self.performCheck()
+
+            Self.logger.info("Checking local network connectivity (first check: \(isFirstCheck))")
+            let result = await self.checkConnectivity(timeout: timeout)
             self.status = result
+            self.hasCompletedInitialCheck = true
+
             Self.logger.info("Local network check complete: \(result.displayText)")
         }
     }
 
-    private func performCheck() async -> Status {
-        Self.logger.info("Checking local network access via UDP multicast")
-
+    /// Checks connectivity using NWConnection to mDNS multicast.
+    /// The connection attempt triggers the permission prompt if not yet shown.
+    private func checkConnectivity(timeout: UInt64) async -> Status {
         connection?.cancel()
         connection = nil
 
@@ -84,22 +97,7 @@ final class LocalNetworkChecker: ObservableObject {
                 continuation.resume(returning: status)
             }
 
-            conn.stateUpdateHandler = { [weak self] state in
-                let stateStr: String
-                switch state {
-                case .setup: stateStr = "setup"
-                case .preparing: stateStr = "preparing"
-                case .ready: stateStr = "ready"
-                case .waiting(let e): stateStr = "waiting(\(e))"
-                case .failed(let e): stateStr = "failed(\(e))"
-                case .cancelled: stateStr = "cancelled"
-                @unknown default: stateStr = "unknown"
-                }
-
-                Task { @MainActor in
-                    self?.lastConnectionState = stateStr
-                }
-
+            conn.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
                     resumeOnce(.working)
@@ -108,6 +106,7 @@ final class LocalNetworkChecker: ObservableObject {
                     if errorStr.contains("54") || errorStr.contains("ECONNRESET") {
                         resumeOnce(.notWorking(reason: "Connection blocked"))
                     }
+                // Otherwise keep waiting - might be showing permission prompt
                 case .failed(let error):
                     let errorStr = "\(error)"
                     if errorStr.contains("65") || errorStr.contains("EHOSTUNREACH")
@@ -127,7 +126,7 @@ final class LocalNetworkChecker: ObservableObject {
             conn.start(queue: .main)
 
             Task {
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                try? await Task.sleep(nanoseconds: timeout)
                 let state = conn.state
                 switch state {
                 case .ready:
