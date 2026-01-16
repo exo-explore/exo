@@ -1,6 +1,6 @@
 import math
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import mlx.core as mx
 from mflux.models.common.config.config import Config
@@ -14,7 +14,7 @@ from mflux.models.qwen.variants.edit.qwen_edit_util import QwenEditUtil
 from mflux.models.qwen.variants.edit.qwen_image_edit import QwenImageEdit
 
 from exo.worker.engines.image.config import ImageModelConfig
-from exo.worker.engines.image.models.base import BaseModelAdapter
+from exo.worker.engines.image.models.base import ModelAdapter, PromptData
 from exo.worker.engines.image.pipeline.adapter import (
     BlockWrapperMode,
     JointBlockInterface,
@@ -23,7 +23,7 @@ from exo.worker.engines.image.pipeline.adapter import (
 from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
 
 
-class QwenEditPromptData:
+class QwenEditPromptData(PromptData):
     """Container for Qwen edit prompt encoding results.
 
     Includes vision-language encoded embeddings and edit-specific conditioning.
@@ -40,9 +40,9 @@ class QwenEditPromptData:
         cond_image_grid: tuple[int, int, int] | list[tuple[int, int, int]],
     ):
         self._prompt_embeds = prompt_embeds
-        self.prompt_mask = prompt_mask
+        self._prompt_mask = prompt_mask
         self._negative_prompt_embeds = negative_prompt_embeds
-        self.negative_prompt_mask = negative_prompt_mask
+        self._negative_prompt_mask = negative_prompt_mask
         self._conditioning_latents = conditioning_latents
         self._qwen_image_ids = qwen_image_ids
         self._cond_image_grid = cond_image_grid
@@ -67,6 +67,18 @@ class QwenEditPromptData:
         """Placeholder - Qwen doesn't use pooled embeds."""
         return self._negative_prompt_embeds
 
+    def get_encoder_hidden_states_mask(self, positive: bool = True) -> mx.array:
+        """Return encoder_hidden_states_mask for the appropriate prompt."""
+        if positive:
+            return self._prompt_mask
+        else:
+            return self._negative_prompt_mask
+
+    @property
+    def cond_image_grid(self) -> tuple[int, int, int] | list[tuple[int, int, int]]:
+        """Conditioning image grid dimensions."""
+        return self._cond_image_grid
+
     @property
     def conditioning_latents(self) -> mx.array:
         """Static image conditioning latents to concatenate with generated latents."""
@@ -78,32 +90,12 @@ class QwenEditPromptData:
         return self._qwen_image_ids
 
     @property
-    def cond_image_grid(self) -> tuple[int, int, int] | list[tuple[int, int, int]]:
-        """Conditioning image grid dimensions."""
-        return self._cond_image_grid
-
-    def get_extra_forward_kwargs(self, positive: bool = True) -> dict[str, Any]:
-        """Return encoder_hidden_states_mask and edit-specific params."""
-        if positive:
-            return {
-                "encoder_hidden_states_mask": self.prompt_mask,
-                "qwen_image_ids": self._qwen_image_ids,
-                "cond_image_grid": self._cond_image_grid,
-            }
-        else:
-            return {
-                "encoder_hidden_states_mask": self.negative_prompt_mask,
-                "qwen_image_ids": self._qwen_image_ids,
-                "cond_image_grid": self._cond_image_grid,
-            }
-
-    @property
     def is_edit_mode(self) -> bool:
         """Indicates this is edit mode with conditioning latents."""
         return True
 
 
-class QwenEditModelAdapter(BaseModelAdapter):
+class QwenEditModelAdapter(ModelAdapter):
     """Adapter for Qwen-Image-Edit model.
 
     Key differences from standard QwenModelAdapter:
@@ -150,60 +142,50 @@ class QwenEditModelAdapter(BaseModelAdapter):
     def hidden_dim(self) -> int:
         return self._transformer.inner_dim
 
+    @property
+    def needs_cfg(self) -> bool:
+        gs = self._config.guidance_scale
+        return gs is not None and gs > 1.0
+
     def _get_latent_creator(self) -> type:
         return QwenLatentCreator
 
-    def _compute_dimensions_from_image(
-        self, image_path: Path
-    ) -> tuple[int, int, int, int, int, int]:
-        """Compute VL and VAE dimensions from input image.
+    def get_joint_blocks(self) -> list[JointBlockInterface]:
+        """Return all 60 transformer blocks."""
+        return cast(
+            list[JointBlockInterface], list(self._transformer.transformer_blocks)
+        )
+
+    def get_single_blocks(self) -> list[SingleBlockInterface]:
+        """Qwen has no single blocks."""
+        return []
+
+    def slice_transformer_blocks(
+        self,
+        start_layer: int,
+        end_layer: int,
+    ):
+        self._transformer.transformer_blocks = self._transformer.transformer_blocks[
+            start_layer:end_layer
+        ]
+
+    def set_image_dimensions(self, image_path: Path) -> tuple[int, int]:
+        """Compute and store dimensions from input image.
+
+        Also stores image_paths for use in encode_prompt().
 
         Returns:
-            (vl_width, vl_height, vae_width, vae_height, output_width, output_height)
+            (output_width, output_height) for runtime config
         """
-        from mflux.utils.image_util import ImageUtil
-
-        pil_image = ImageUtil.load_image(str(image_path)).convert("RGB")
-        image_size = pil_image.size
-
-        # Vision-language dimensions (384x384 target area)
-        condition_image_size = 384 * 384
-        condition_ratio = image_size[0] / image_size[1]
-        vl_width = math.sqrt(condition_image_size * condition_ratio)
-        vl_height = vl_width / condition_ratio
-        vl_width = round(vl_width / 32) * 32
-        vl_height = round(vl_height / 32) * 32
-
-        # VAE dimensions (1024x1024 target area)
-        vae_image_size = 1024 * 1024
-        vae_ratio = image_size[0] / image_size[1]
-        vae_width = math.sqrt(vae_image_size * vae_ratio)
-        vae_height = vae_width / vae_ratio
-        vae_width = round(vae_width / 32) * 32
-        vae_height = round(vae_height / 32) * 32
-
-        # Output dimensions from input image aspect ratio
-        target_area = 1024 * 1024
-        ratio = image_size[0] / image_size[1]
-        output_width = math.sqrt(target_area * ratio)
-        output_height = output_width / ratio
-        output_width = round(output_width / 32) * 32
-        output_height = round(output_height / 32) * 32
-
-        # Ensure multiple of 16 for VAE
-        vae_scale_factor = 8
-        multiple_of = vae_scale_factor * 2
-        output_width = output_width // multiple_of * multiple_of
-        output_height = output_height // multiple_of * multiple_of
-
-        return (
-            int(vl_width),
-            int(vl_height),
-            int(vae_width),
-            int(vae_height),
-            int(output_width),
-            int(output_height),
+        vl_w, vl_h, vae_w, vae_h, out_w, out_h = self._compute_dimensions_from_image(
+            image_path
         )
+        self._vl_width = vl_w
+        self._vl_height = vl_h
+        self._vae_width = vae_w
+        self._vae_height = vae_h
+        self._image_paths = [str(image_path)]
+        return out_w, out_h
 
     def create_latents(self, seed: int, runtime_config: Config) -> mx.array:
         """Create initial noise latents (pure noise for edit mode)."""
@@ -288,43 +270,6 @@ class QwenEditModelAdapter(BaseModelAdapter):
             cond_image_grid=cond_image_grid,
         )
 
-    def set_image_dimensions(self, image_path: Path) -> tuple[int, int]:
-        """Compute and store dimensions from input image.
-
-        Also stores image_paths for use in encode_prompt().
-
-        Returns:
-            (output_width, output_height) for runtime config
-        """
-        vl_w, vl_h, vae_w, vae_h, out_w, out_h = self._compute_dimensions_from_image(
-            image_path
-        )
-        self._vl_width = vl_w
-        self._vl_height = vl_h
-        self._vae_width = vae_w
-        self._vae_height = vae_h
-        self._image_paths = [str(image_path)]
-        return out_w, out_h
-
-    @property
-    def needs_cfg(self) -> bool:
-        gs = self._config.guidance_scale
-        return gs is not None and gs > 1.0
-
-    def apply_guidance(
-        self,
-        noise_positive: mx.array,
-        noise_negative: mx.array,
-        guidance_scale: float,
-    ) -> mx.array:
-        from mflux.models.qwen.variants.txt2img.qwen_image import QwenImage
-
-        return QwenImage.compute_guided_noise(
-            noise=noise_positive,
-            noise_negative=noise_negative,
-            guidance=guidance_scale,
-        )
-
     def compute_embeddings(
         self,
         hidden_states: mx.array,
@@ -362,12 +307,13 @@ class QwenEditModelAdapter(BaseModelAdapter):
         self,
         prompt_embeds: mx.array,
         runtime_config: Config,
-        **kwargs: Any,
-    ) -> Any:
+        encoder_hidden_states_mask: mx.array | None = None,
+        cond_image_grid: tuple[int, int, int]
+        | list[tuple[int, int, int]]
+        | None = None,
+        kontext_image_ids: mx.array | None = None,
+    ) -> tuple[mx.array, mx.array]:
         """Compute 3D rotary embeddings for Qwen edit."""
-        encoder_hidden_states_mask = kwargs.get("encoder_hidden_states_mask")
-        cond_image_grid = kwargs.get("cond_image_grid")
-
         if encoder_hidden_states_mask is None:
             raise ValueError(
                 "encoder_hidden_states_mask is required for Qwen RoPE computation"
@@ -386,21 +332,19 @@ class QwenEditModelAdapter(BaseModelAdapter):
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: Any,
+        rotary_embeddings: tuple[mx.array, mx.array],
         kv_cache: ImagePatchKVCache | None,
         mode: BlockWrapperMode,
         text_seq_len: int,
         patch_start: int | None = None,
         patch_end: int | None = None,
-        **kwargs: Any,
+        encoder_hidden_states_mask: mx.array | None = None,
+        block_idx: int | None = None,
     ) -> tuple[mx.array, mx.array]:
         """Apply Qwen joint block."""
-        encoder_hidden_states_mask = kwargs.get("encoder_hidden_states_mask")
-        block_idx = kwargs.get("block_idx")
-
         if mode == BlockWrapperMode.CACHING:
             return self._apply_joint_block_caching(
-                block=block,
+                block=cast(QwenTransformerBlock, block),
                 hidden_states=hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 text_embeddings=text_embeddings,
@@ -414,7 +358,7 @@ class QwenEditModelAdapter(BaseModelAdapter):
             assert patch_start is not None and patch_end is not None
             assert kv_cache is not None
             return self._apply_joint_block_patched(
-                block=block,
+                block=cast(QwenTransformerBlock, block),
                 patch_hidden=hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 text_embeddings=text_embeddings,
@@ -426,6 +370,14 @@ class QwenEditModelAdapter(BaseModelAdapter):
                 encoder_hidden_states_mask=encoder_hidden_states_mask,
                 block_idx=block_idx,
             )
+
+    def merge_streams(
+        self,
+        hidden_states: mx.array,
+        encoder_hidden_states: mx.array,
+    ) -> mx.array:
+        """Merge image and text streams."""
+        return mx.concatenate([encoder_hidden_states, hidden_states], axis=1)
 
     def apply_single_block(
         self,
@@ -442,51 +394,79 @@ class QwenEditModelAdapter(BaseModelAdapter):
         """Qwen has no single blocks."""
         raise NotImplementedError("Qwen does not have single blocks")
 
-    def final_projection(
+    def apply_guidance(
         self,
-        hidden_states: mx.array,
-        text_embeddings: mx.array,
+        noise_positive: mx.array,
+        noise_negative: mx.array,
+        guidance_scale: float,
     ) -> mx.array:
-        """Apply final normalization and projection."""
-        hidden_states = self._transformer.norm_out(hidden_states, text_embeddings)
-        return self._transformer.proj_out(hidden_states)
+        from mflux.models.qwen.variants.txt2img.qwen_image import QwenImage
 
-    def get_joint_blocks(self) -> list[JointBlockInterface]:
-        """Return all 60 transformer blocks."""
-        return cast(
-            list[JointBlockInterface], list(self._transformer.transformer_blocks)
+        return QwenImage.compute_guided_noise(
+            noise=noise_positive,
+            noise_negative=noise_negative,
+            guidance=guidance_scale,
         )
 
-    def get_single_blocks(self) -> list[SingleBlockInterface]:
-        """Qwen has no single blocks."""
-        return []
+    def _compute_dimensions_from_image(
+        self, image_path: Path
+    ) -> tuple[int, int, int, int, int, int]:
+        """Compute VL and VAE dimensions from input image.
 
-    def slice_transformer_blocks(
-        self,
-        start_layer: int,
-        end_layer: int,
-        total_joint_blocks: int,
-        total_single_blocks: int,
-    ) -> None:
-        all_blocks = list(self._transformer.transformer_blocks)
-        assigned_blocks = all_blocks[start_layer:end_layer]
-        self._transformer.transformer_blocks = assigned_blocks
+        Returns:
+            (vl_width, vl_height, vae_width, vae_height, output_width, output_height)
+        """
+        from mflux.utils.image_util import ImageUtil
 
-    def merge_streams(
-        self,
-        hidden_states: mx.array,
-        encoder_hidden_states: mx.array,
-    ) -> mx.array:
-        """Merge image and text streams."""
-        return mx.concatenate([encoder_hidden_states, hidden_states], axis=1)
+        pil_image = ImageUtil.load_image(str(image_path)).convert("RGB")
+        image_size = pil_image.size
+
+        # Vision-language dimensions (384x384 target area)
+        condition_image_size = 384 * 384
+        condition_ratio = image_size[0] / image_size[1]
+        vl_width = math.sqrt(condition_image_size * condition_ratio)
+        vl_height = vl_width / condition_ratio
+        vl_width = round(vl_width / 32) * 32
+        vl_height = round(vl_height / 32) * 32
+
+        # VAE dimensions (1024x1024 target area)
+        vae_image_size = 1024 * 1024
+        vae_ratio = image_size[0] / image_size[1]
+        vae_width = math.sqrt(vae_image_size * vae_ratio)
+        vae_height = vae_width / vae_ratio
+        vae_width = round(vae_width / 32) * 32
+        vae_height = round(vae_height / 32) * 32
+
+        # Output dimensions from input image aspect ratio
+        target_area = 1024 * 1024
+        ratio = image_size[0] / image_size[1]
+        output_width = math.sqrt(target_area * ratio)
+        output_height = output_width / ratio
+        output_width = round(output_width / 32) * 32
+        output_height = round(output_height / 32) * 32
+
+        # Ensure multiple of 16 for VAE
+        vae_scale_factor = 8
+        multiple_of = vae_scale_factor * 2
+        output_width = output_width // multiple_of * multiple_of
+        output_height = output_height // multiple_of * multiple_of
+
+        return (
+            int(vl_width),
+            int(vl_height),
+            int(vae_width),
+            int(vae_height),
+            int(output_width),
+            int(output_height),
+        )
 
     def _apply_joint_block_caching(
         self,
-        block: Any,
+        block: QwenTransformerBlock,
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: tuple[tuple[mx.array, mx.array], tuple[mx.array, mx.array]],
+        rotary_embeddings: tuple[mx.array, mx.array],
         kv_cache: ImagePatchKVCache | None,
         text_seq_len: int,
         encoder_hidden_states_mask: mx.array | None = None,
@@ -504,11 +484,11 @@ class QwenEditModelAdapter(BaseModelAdapter):
 
     def _apply_joint_block_patched(
         self,
-        block: Any,
+        block: QwenTransformerBlock,
         patch_hidden: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: tuple[tuple[mx.array, mx.array], tuple[mx.array, mx.array]],
+        rotary_embeddings: tuple[mx.array, mx.array],
         kv_cache: ImagePatchKVCache,
         text_seq_len: int,
         patch_start: int,

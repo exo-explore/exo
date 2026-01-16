@@ -14,7 +14,7 @@ from exo.worker.engines.image.models import (
     create_adapter_for_model,
     get_config_for_model,
 )
-from exo.worker.engines.image.models.base import BaseModelAdapter
+from exo.worker.engines.image.models.base import ModelAdapter
 from exo.worker.engines.image.pipeline import DiffusionRunner
 from exo.worker.engines.mlx.utils_mlx import mlx_distributed_init, mx_barrier
 from exo.worker.runner.bootstrap import logger
@@ -30,7 +30,7 @@ class DistributedImageModel:
     )
 
     _config: ImageModelConfig
-    _adapter: BaseModelAdapter
+    _adapter: ModelAdapter
     _group: Optional[mx.distributed.Group]
     _shard_metadata: PipelineShardMetadata
     _runner: DiffusionRunner
@@ -51,8 +51,6 @@ class DistributedImageModel:
             adapter.slice_transformer_blocks(
                 start_layer=shard_metadata.start_layer,
                 end_layer=shard_metadata.end_layer,
-                total_joint_blocks=config.joint_block_count,
-                total_single_blocks=config.single_block_count,
             )
 
         # Create diffusion runner (handles both single-node and distributed modes)
@@ -123,7 +121,7 @@ class DistributedImageModel:
         return self._config
 
     @property
-    def adapter(self) -> BaseModelAdapter:
+    def adapter(self) -> ModelAdapter:
         return self._adapter
 
     @property

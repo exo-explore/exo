@@ -1,7 +1,6 @@
 from exo.worker.engines.image.pipeline.adapter import (
     BlockWrapperMode,
     JointBlockInterface,
-    ModelAdapter,
     SingleBlockInterface,
 )
 from exo.worker.engines.image.pipeline.block_wrapper import (
@@ -17,7 +16,6 @@ __all__ = [
     "ImagePatchKVCache",
     "JointBlockInterface",
     "JointBlockWrapper",
-    "ModelAdapter",
     "SingleBlockInterface",
     "SingleBlockWrapper",
 ]
