@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import http.client
 import json
 import os
@@ -104,21 +105,45 @@ def runner_ready(runner: dict[str, Any]) -> bool:
     return "RunnerReady" in runner
 
 
+def runner_failed(runner: dict[str, Any]) -> bool:
+    return "RunnerFailed" in runner
+
+
+def get_runner_failed_message(runner: dict[str, Any]) -> str | None:
+    if "RunnerFailed" in runner:
+        return runner["RunnerFailed"].get("errorMessage")
+    return None
+
+
 def wait_for_instance_ready(
     client: ExoClient, instance_id: str, timeout: float = 24000.0
 ) -> None:
     start_time = time.time()
+    instance_existed = False
     while time.time() - start_time < timeout:
         state = client.request_json("GET", "/state")
         instances = state.get("instances", {})
 
         if instance_id not in instances:
+            if instance_existed:
+                # Instance was deleted after being created - likely due to runner failure
+                raise RuntimeError(
+                    f"Instance {instance_id} was deleted (runner may have failed)"
+                )
             time.sleep(0.1)
             continue
 
+        instance_existed = True
         instance = instances[instance_id]
         runner_ids = runner_ids_from_instance(instance)
         runners = state.get("runners", {})
+
+        # Check for failed runners first
+        for rid in runner_ids:
+            runner = runners.get(rid, {})
+            if runner_failed(runner):
+                error_msg = get_runner_failed_message(runner) or "Unknown error"
+                raise RuntimeError(f"Runner {rid} failed: {error_msg}")
 
         if all(runner_ready(runners.get(rid, {})) for rid in runner_ids):
             return
@@ -441,7 +466,13 @@ def main() -> int:
         )
 
         client.request_json("POST", "/instance", body={"instance": instance})
-        wait_for_instance_ready(client, instance_id)
+        try:
+            wait_for_instance_ready(client, instance_id)
+        except (RuntimeError, TimeoutError) as e:
+            logger.error(f"Failed to initialize placement: {e}")
+            with contextlib.suppress(ExoHttpError):
+                client.request_json("DELETE", f"/instance/{instance_id}")
+            continue
 
         time.sleep(1)
 
