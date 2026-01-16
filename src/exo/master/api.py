@@ -14,6 +14,16 @@ from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from loguru import logger
 
+from exo.master.adapters.claude import (
+    chat_response_to_claude_response,
+    claude_request_to_chat_params,
+    generate_claude_stream,
+)
+from exo.master.adapters.responses import (
+    chat_response_to_responses_response,
+    generate_responses_stream,
+    responses_request_to_chat_params,
+)
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.election import ElectionMessage
@@ -39,6 +49,10 @@ from exo.shared.types.api import (
     StreamingChoiceResponse,
 )
 from exo.shared.types.chunks import TokenChunk
+from exo.shared.types.claude_api import (
+    ClaudeMessagesRequest,
+    ClaudeMessagesResponse,
+)
 from exo.shared.types.commands import (
     ChatCompletion,
     Command,
@@ -52,6 +66,10 @@ from exo.shared.types.common import CommandId, NodeId, SessionId
 from exo.shared.types.events import ChunkGenerated, Event, ForwarderEvent, IndexedEvent
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
+from exo.shared.types.openai_responses import (
+    ResponsesRequest,
+    ResponsesResponse,
+)
 from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
@@ -168,6 +186,8 @@ class API:
             self.chat_completions
         )
         self.app.post("/bench/chat/completions")(self.bench_chat_completions)
+        self.app.post("/v1/messages", response_model=None)(self.claude_messages)
+        self.app.post("/v1/responses", response_model=None)(self.openai_responses)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
 
@@ -547,6 +567,75 @@ class API:
 
         response = await self._collect_chat_completion_with_stats(command.command_id)
         return response
+
+    async def claude_messages(
+        self, payload: ClaudeMessagesRequest
+    ) -> ClaudeMessagesResponse | StreamingResponse:
+        """Handle Claude Messages API requests."""
+        chat_params = claude_request_to_chat_params(payload)
+        model_meta = await resolve_model_meta(chat_params.model)
+        chat_params.model = model_meta.model_id
+
+        if not any(
+            instance.shard_assignments.model_id == chat_params.model
+            for instance in self.state.instances.values()
+        ):
+            await self._trigger_notify_user_to_download_model(chat_params.model)
+            raise HTTPException(
+                status_code=404,
+                detail=f"No instance found for model {chat_params.model}",
+            )
+
+        command = ChatCompletion(request_params=chat_params)
+        await self._send(command)
+
+        if payload.stream:
+            return StreamingResponse(
+                generate_claude_stream(
+                    command.command_id,
+                    payload.model,
+                    self._chat_chunk_stream(command.command_id),
+                ),
+                media_type="text/event-stream",
+            )
+
+        response = await self._collect_chat_completion(command.command_id)
+        return chat_response_to_claude_response(response)
+
+    async def openai_responses(
+        self, payload: ResponsesRequest
+    ) -> ResponsesResponse | StreamingResponse:
+        """Handle OpenAI Responses API requests."""
+        chat_params = responses_request_to_chat_params(payload)
+
+        model_meta = await resolve_model_meta(chat_params.model)
+        chat_params.model = model_meta.model_id
+
+        if not any(
+            instance.shard_assignments.model_id == chat_params.model
+            for instance in self.state.instances.values()
+        ):
+            await self._trigger_notify_user_to_download_model(chat_params.model)
+            raise HTTPException(
+                status_code=404,
+                detail=f"No instance found for model {chat_params.model}",
+            )
+
+        command = ChatCompletion(request_params=chat_params)
+        await self._send(command)
+
+        if payload.stream:
+            return StreamingResponse(
+                generate_responses_stream(
+                    command.command_id,
+                    payload.model,
+                    self._chat_chunk_stream(command.command_id),
+                ),
+                media_type="text/event-stream",
+            )
+
+        response = await self._collect_chat_completion(command.command_id)
+        return chat_response_to_responses_response(response)
 
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
