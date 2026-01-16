@@ -4,6 +4,7 @@ import platform
 from typing import Any, Callable, Coroutine
 
 import anyio
+from anyio import to_thread
 from loguru import logger
 
 from exo.shared.types.memory import Memory
@@ -22,10 +23,62 @@ from .macmon import (
 )
 from .system_info import (
     get_friendly_name,
-    get_memory_bandwidth,
     get_model_and_chip,
     get_network_interfaces,
+    profile_memory_bandwidth,
 )
+
+# Module-level cache for memory bandwidth (doesn't change at runtime)
+_cached_bandwidth: int | None = None
+_bandwidth_profiled: bool = False
+_bandwidth_profiling_task: asyncio.Task[int | None] | None = None
+
+
+async def profile_bandwidth_once() -> int | None:
+    """Profile bandwidth once in a background thread and cache the result.
+
+    This function is non-blocking - it runs the profiling in a thread pool.
+    Subsequent calls return the cached result immediately.
+    """
+    global _cached_bandwidth, _bandwidth_profiled, _bandwidth_profiling_task
+
+    # Already profiled, return cached value
+    if _bandwidth_profiled:
+        return _cached_bandwidth
+
+    # Profiling already in progress, wait for it
+    if _bandwidth_profiling_task is not None:
+        return await _bandwidth_profiling_task
+
+    # Start profiling in background thread
+    async def _do_profile() -> int | None:
+        global _cached_bandwidth, _bandwidth_profiled
+        try:
+            logger.info("Starting memory bandwidth profiling in background thread...")
+            bandwidth = await to_thread.run_sync(profile_memory_bandwidth, cancellable=True)
+            _cached_bandwidth = bandwidth
+            _bandwidth_profiled = True
+            if bandwidth:
+                logger.info(f"Memory bandwidth profiled: {bandwidth / 1e9:.1f} GB/s")
+            else:
+                logger.warning("Memory bandwidth profiling returned None")
+            return bandwidth
+        except Exception as e:
+            logger.opt(exception=e).error("Memory bandwidth profiling failed")
+            _bandwidth_profiled = True  # Mark as done to avoid retrying
+            return None
+
+    _bandwidth_profiling_task = asyncio.create_task(_do_profile())
+    return await _bandwidth_profiling_task
+
+
+def get_memory_bandwidth_cached() -> int | None:
+    """Return cached bandwidth or None if not yet profiled.
+
+    This is a non-blocking synchronous function that returns immediately.
+    Call profile_bandwidth_once() first to trigger profiling.
+    """
+    return _cached_bandwidth if _bandwidth_profiled else None
 
 
 async def get_metrics_async() -> Metrics | None:
@@ -72,6 +125,8 @@ async def start_polling_node_metrics(
     callback: Callable[[NodePerformanceProfile], Coroutine[Any, Any, None]],
 ):
     poll_interval_s = 1.0
+    bandwidth_profile_started = False
+
     while True:
         try:
             metrics = await get_metrics_async()
@@ -86,6 +141,15 @@ async def start_polling_node_metrics(
             # do the memory profile last to get a fresh reading to not conflict with the other memory profiling loop
             memory_profile = get_memory_profile()
 
+            # Start bandwidth profiling in background on first poll (non-blocking)
+            if not bandwidth_profile_started:
+                bandwidth_profile_started = True
+                # Fire and forget - don't await, let it run in background
+                asyncio.create_task(profile_bandwidth_once())
+
+            # Use cached bandwidth (None until profiling completes)
+            memory_bandwidth = get_memory_bandwidth_cached()
+
             await callback(
                 NodePerformanceProfile(
                     model_id=model_id,
@@ -93,7 +157,7 @@ async def start_polling_node_metrics(
                     friendly_name=friendly_name,
                     network_interfaces=network_interfaces,
                     memory=memory_profile,
-                    memory_bandwidth=get_memory_bandwidth(chip_id),
+                    memory_bandwidth=memory_bandwidth,
                     system=SystemPerformanceProfile(
                         gpu_usage=metrics.gpu_usage[1],
                         temp=metrics.temp.gpu_temp_avg,
