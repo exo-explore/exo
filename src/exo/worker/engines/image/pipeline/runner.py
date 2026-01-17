@@ -78,7 +78,6 @@ class DiffusionRunner:
         self.adapter = adapter
         self.group = group
 
-        # Handle single-node vs distributed mode
         if group is None:
             self.rank = 0
             self.world_size = 1
@@ -97,7 +96,6 @@ class DiffusionRunner:
         self.num_sync_steps = num_sync_steps
         self.num_patches = num_patches if num_patches else max(1, self.world_size)
 
-        # Get block counts from config (model-agnostic)
         self.total_joint = config.joint_block_count
         self.total_single = config.single_block_count
         self.total_layers = config.total_blocks
@@ -110,19 +108,16 @@ class DiffusionRunner:
         end = self.end_layer
 
         if end <= self.total_joint:
-            # All assigned blocks are joint blocks
             self.joint_start = start
             self.joint_end = end
             self.single_start = 0
             self.single_end = 0
         elif start >= self.total_joint:
-            # All assigned blocks are single blocks
             self.joint_start = 0
             self.joint_end = 0
             self.single_start = start - self.total_joint
             self.single_end = end - self.total_joint
         else:
-            # Stage spans joint→single transition
             self.joint_start = start
             self.joint_end = self.total_joint
             self.single_start = 0
@@ -185,6 +180,15 @@ class DiffusionRunner:
             for wrapper in self.single_block_wrappers:
                 wrapper.reset_cache()
 
+    def _set_use_negative_cache(self, use_negative: bool) -> None:
+        """Switch all wrappers to negative cache for CFG."""
+        if self.joint_block_wrappers:
+            for wrapper in self.joint_block_wrappers:
+                wrapper.set_use_negative_cache(use_negative)
+        if self.single_block_wrappers:
+            for wrapper in self.single_block_wrappers:
+                wrapper.set_use_negative_cache(use_negative)
+
     def _calculate_capture_steps(
         self,
         partial_images: int,
@@ -212,15 +216,12 @@ class DiffusionRunner:
             return set()
 
         if partial_images >= total_steps - 1:
-            # Capture every step except final
             return set(range(init_time_step, num_inference_steps - 1))
 
-        # Evenly space partial captures
         step_interval = total_steps / (partial_images + 1)
         capture_steps: set[int] = set()
         for i in range(1, partial_images + 1):
             step_idx = int(init_time_step + i * step_interval)
-            # Ensure we don't capture the final step
             if step_idx < num_inference_steps - 1:
                 capture_steps.add(step_idx)
 
@@ -258,14 +259,12 @@ class DiffusionRunner:
         latents = self.adapter.create_latents(seed, runtime_config)
         prompt_data = self.adapter.encode_prompt(prompt)
 
-        # Calculate which steps to capture
         capture_steps = self._calculate_capture_steps(
             partial_images=partial_images,
             init_time_step=runtime_config.init_time_step,
             num_inference_steps=runtime_config.num_inference_steps,
         )
 
-        # Run diffusion loop - may yield partial latents
         diffusion_gen = self._run_diffusion_loop(
             latents=latents,
             prompt_data=prompt_data,
@@ -275,12 +274,10 @@ class DiffusionRunner:
             capture_steps=capture_steps,
         )
 
-        # Process partial yields and get final latents
         partial_index = 0
         total_partials = len(capture_steps)
 
         if capture_steps:
-            # Generator mode - iterate to get partials and final latents
             try:
                 while True:
                     partial_latents, _step = next(diffusion_gen)
@@ -293,14 +290,12 @@ class DiffusionRunner:
             except StopIteration as e:
                 latents = e.value
         else:
-            # No partials - just consume generator to get final latents
             try:
                 while True:
                     next(diffusion_gen)
             except StopIteration as e:
                 latents = e.value
 
-        # Yield final image (only on last stage)
         if self.is_last_stage:
             yield self.adapter.decode_latents(latents, runtime_config, seed, prompt)
 
@@ -336,7 +331,6 @@ class DiffusionRunner:
         if capture_steps is None:
             capture_steps = set()
 
-        # Reset KV caches for new generation (dimensions may differ from previous)
         self._reset_all_caches()
 
         time_steps = tqdm(range(runtime_config.num_inference_steps))
@@ -358,7 +352,6 @@ class DiffusionRunner:
                     prompt_data=prompt_data,
                 )
 
-                # Call subscribers in-loop
                 ctx.in_loop(
                     t=t,
                     latents=latents,
@@ -376,7 +369,6 @@ class DiffusionRunner:
                     f"Stopping image generation at step {t + 1}/{len(time_steps)}"
                 ) from None
 
-        # Call subscribers after loop
         ctx.after_loop(latents=latents)
 
         return latents
@@ -417,12 +409,8 @@ class DiffusionRunner:
         """
         text_seq_len = prompt_embeds.shape[1]
 
-        # Ensure wrappers are initialized (lazy - needs text_seq_len)
         self._ensure_wrappers(text_seq_len, encoder_hidden_states_mask)
 
-        # Update masks on all joint block wrappers for this pass.
-        # This is necessary for CFG where we run positive and negative passes
-        # with different masks. Qwen uses masks; Flux doesn't.
         if self.joint_block_wrappers and encoder_hidden_states_mask is not None:
             for wrapper in self.joint_block_wrappers:
                 wrapper.set_encoder_mask(encoder_hidden_states_mask)
@@ -449,7 +437,6 @@ class DiffusionRunner:
             cond_image_grid=cond_image_grid,
         )
 
-        # Run through all joint blocks (wrappers own their KV cache, mode defaults to CACHING)
         assert self.joint_block_wrappers is not None
         for wrapper in self.joint_block_wrappers:
             encoder_hidden_states, hidden_states = wrapper(
@@ -459,13 +446,11 @@ class DiffusionRunner:
                 rotary_embeddings=rotary_embeddings,
             )
 
-        # Merge streams
         if self.joint_block_wrappers:
             hidden_states = self.adapter.merge_streams(
                 hidden_states, encoder_hidden_states
             )
 
-        # Run through single blocks
         assert self.single_block_wrappers is not None
         for wrapper in self.single_block_wrappers:
             hidden_states = wrapper(
@@ -474,7 +459,7 @@ class DiffusionRunner:
                 rotary_embeddings=rotary_embeddings,
             )
 
-        # Extract image portion and project
+        # Extract image portion
         hidden_states = hidden_states[:, text_seq_len:, ...]
 
         # For edit mode: extract only the generated portion (exclude conditioning latents)
@@ -490,15 +475,10 @@ class DiffusionRunner:
         latents: mx.array,
         prompt_data: PromptData,
     ) -> mx.array:
-        """Execute a single diffusion step.
-
-        Routes to single-node, sync pipeline, or async pipeline based on
-        configuration and current timestep.
-        """
         if self.group is None:
             return self._single_node_step(t, config, latents, prompt_data)
         elif t < config.init_time_step + self.num_sync_steps:
-            return self._sync_pipeline(
+            return self._sync_pipeline_step(
                 t,
                 config,
                 latents,
@@ -519,25 +499,24 @@ class DiffusionRunner:
         latents: mx.array,
         prompt_data: PromptData,
     ) -> mx.array:
-        """Execute a single diffusion step on a single node (no distribution)."""
         conditioning_latents = prompt_data.conditioning_latents
         cond_image_grid = prompt_data.cond_image_grid
 
-        if self.adapter.needs_cfg:
-            # Two forward passes + guidance for CFG models (e.g., Qwen)
-            noise_pos = self._forward_pass(
-                latents,
-                prompt_data.prompt_embeds,
-                prompt_data.pooled_prompt_embeds,
-                t=t,
-                config=config,
-                encoder_hidden_states_mask=prompt_data.get_encoder_hidden_states_mask(
-                    positive=True
-                ),
-                cond_image_grid=cond_image_grid,
-                conditioning_latents=conditioning_latents,
-            )
+        self._set_use_negative_cache(False)
+        noise = self._forward_pass(
+            latents,
+            prompt_data.prompt_embeds,
+            prompt_data.pooled_prompt_embeds,
+            t=t,
+            config=config,
+            encoder_hidden_states_mask=prompt_data.get_encoder_hidden_states_mask(
+                positive=True
+            ),
+            cond_image_grid=cond_image_grid,
+            conditioning_latents=conditioning_latents,
+        )
 
+        if self.adapter.needs_cfg:
             negative_prompt_embeds = prompt_data.negative_prompt_embeds
             negative_pooled_prompt_embeds = prompt_data.negative_pooled_prompt_embeds
             assert negative_prompt_embeds is not None, (
@@ -547,6 +526,7 @@ class DiffusionRunner:
                 "CFG requires negative_pooled_prompt_embeds"
             )
 
+            self._set_use_negative_cache(True)
             noise_neg = self._forward_pass(
                 latents,
                 negative_prompt_embeds,
@@ -562,19 +542,7 @@ class DiffusionRunner:
 
             assert self.config.guidance_scale is not None
             noise = self.adapter.apply_guidance(
-                noise_pos, noise_neg, guidance_scale=self.config.guidance_scale
-            )
-        else:
-            # Single forward pass for non-CFG models (e.g., Flux)
-            noise = self._forward_pass(
-                latents,
-                prompt_data.prompt_embeds,
-                prompt_data.pooled_prompt_embeds,
-                t=t,
-                config=config,
-                encoder_hidden_states_mask=prompt_data.get_encoder_hidden_states_mask(),
-                cond_image_grid=cond_image_grid,
-                conditioning_latents=conditioning_latents,
+                noise, noise_neg, guidance_scale=self.config.guidance_scale
             )
 
         return config.scheduler.step(noise=noise, timestep=t, latents=latents)
@@ -584,59 +552,45 @@ class DiffusionRunner:
         latents: mx.array,
         config: Config,
     ) -> tuple[list[mx.array], list[tuple[int, int]]]:
-        """Split latents into patches for async pipeline."""
-        # Use 16 to match FluxLatentCreator.create_noise formula
         latent_height = config.height // 16
         latent_width = config.width // 16
 
         patch_heights, _ = calculate_patch_heights(latent_height, self.num_patches)
         token_indices = calculate_token_indices(patch_heights, latent_width)
 
-        # Split latents into patches
         patch_latents = [latents[:, start:end, :] for start, end in token_indices]
 
         return patch_latents, token_indices
 
-    def _sync_pipeline(
+    def _run_sync_pass(
         self,
         t: int,
         config: Config,
-        hidden_states: mx.array,
-        prompt_data: PromptData,
-        kontext_image_ids: mx.array | None = None,
-    ) -> mx.array:
-        prev_latents = hidden_states
+        scaled_hidden_states: mx.array,
+        prompt_embeds: mx.array,
+        pooled_prompt_embeds: mx.array,
+        encoder_hidden_states_mask: mx.array | None,
+        cond_image_grid: tuple[int, int, int] | list[tuple[int, int, int]] | None,
+        kontext_image_ids: mx.array | None,
+        num_img_tokens: int,
+        original_latent_tokens: int,
+        conditioning_latents: mx.array | None,
+    ) -> mx.array | None:
+        hidden_states = scaled_hidden_states
+        batch_size = hidden_states.shape[0]
+        text_seq_len = prompt_embeds.shape[1]
+        hidden_dim = self.adapter.hidden_dim
+        dtype = scaled_hidden_states.dtype
 
-        # Extract embeddings and model-specific data
-        prompt_embeds = prompt_data.prompt_embeds
-        pooled_prompt_embeds = prompt_data.pooled_prompt_embeds
-        encoder_hidden_states_mask = prompt_data.get_encoder_hidden_states_mask()
-        cond_image_grid = prompt_data.cond_image_grid
+        if self.joint_block_wrappers:
+            for wrapper in self.joint_block_wrappers:
+                wrapper.set_encoder_mask(encoder_hidden_states_mask)
 
-        hidden_states = config.scheduler.scale_model_input(hidden_states, t)
-
-        # For edit mode: handle conditioning latents
-        # All stages need to know the total token count for correct recv templates
-        conditioning_latents = prompt_data.conditioning_latents
-        original_latent_tokens = hidden_states.shape[1]
-        if conditioning_latents is not None:
-            num_img_tokens = original_latent_tokens + conditioning_latents.shape[1]
-        else:
-            num_img_tokens = original_latent_tokens
-
-        # First stage: concatenate conditioning latents before embedding
-        if self.is_first_stage and conditioning_latents is not None:
-            hidden_states = mx.concatenate(
-                [hidden_states, conditioning_latents], axis=1
-            )
-
-        # === PHASE 1: Embeddings ===
         if self.is_first_stage:
             hidden_states, encoder_hidden_states = self.adapter.compute_embeddings(
                 hidden_states, prompt_embeds
             )
 
-        # All stages need these for their blocks
         text_embeddings = self.adapter.compute_text_embeddings(
             t, config, pooled_prompt_embeds
         )
@@ -648,32 +602,23 @@ class DiffusionRunner:
             kontext_image_ids=kontext_image_ids,
         )
 
-        # Ensure wrappers are initialized (lazy - needs text_seq_len)
-        batch_size = prev_latents.shape[0]
-        text_seq_len = prompt_embeds.shape[1]
-        hidden_dim = self.adapter.hidden_dim
-
-        self._ensure_wrappers(text_seq_len, encoder_hidden_states_mask)
-
-        # === PHASE 2: Joint Blocks with Communication and Caching ===
         if self.has_joint_blocks:
             # Receive from previous stage (if not first stage)
             if not self.is_first_stage:
                 recv_template = mx.zeros(
-                    (batch_size, num_img_tokens, hidden_dim), dtype=prev_latents.dtype
+                    (batch_size, num_img_tokens, hidden_dim), dtype=dtype
                 )
                 hidden_states = mx.distributed.recv_like(
                     recv_template, self.prev_rank, group=self.group
                 )
                 enc_template = mx.zeros(
-                    (batch_size, text_seq_len, hidden_dim), dtype=prev_latents.dtype
+                    (batch_size, text_seq_len, hidden_dim), dtype=dtype
                 )
                 encoder_hidden_states = mx.distributed.recv_like(
                     enc_template, self.prev_rank, group=self.group
                 )
                 mx.eval(hidden_states, encoder_hidden_states)
 
-            # Run assigned joint blocks with caching mode (wrappers own their KV caches)
             assert self.joint_block_wrappers is not None
             for wrapper in self.joint_block_wrappers:
                 wrapper.set_patch(BlockWrapperMode.CACHING)
@@ -684,24 +629,19 @@ class DiffusionRunner:
                     rotary_embeddings=image_rotary_embeddings,
                 )
 
-        # === PHASE 3: Joint→Single Transition ===
         if self.owns_concat_stage:
-            # Merge encoder and hidden states using adapter hook
             concatenated = self.adapter.merge_streams(
                 hidden_states, encoder_hidden_states
             )
 
             if self.has_single_blocks or self.is_last_stage:
-                # Keep locally: either for single blocks or final projection
                 hidden_states = concatenated
             else:
-                # Send concatenated state to next stage (which has single blocks)
                 mx.eval(
                     mx.distributed.send(concatenated, self.next_rank, group=self.group)
                 )
 
         elif self.has_joint_blocks and not self.is_last_stage:
-            # Send joint block outputs to next stage (which has more joint blocks)
             mx.eval(
                 mx.distributed.send(hidden_states, self.next_rank, group=self.group),
                 mx.distributed.send(
@@ -709,20 +649,17 @@ class DiffusionRunner:
                 ),
             )
 
-        # === PHASE 4: Single Blocks with Communication and Caching ===
         if self.has_single_blocks:
-            # Receive from previous stage if we didn't do concatenation
             if not self.owns_concat_stage and not self.is_first_stage:
                 recv_template = mx.zeros(
                     (batch_size, text_seq_len + num_img_tokens, hidden_dim),
-                    dtype=prev_latents.dtype,
+                    dtype=dtype,
                 )
                 hidden_states = mx.distributed.recv_like(
                     recv_template, self.prev_rank, group=self.group
                 )
                 mx.eval(hidden_states)
 
-            # Run assigned single blocks with caching mode (wrappers own their KV caches)
             assert self.single_block_wrappers is not None
             for wrapper in self.single_block_wrappers:
                 wrapper.set_patch(BlockWrapperMode.CACHING)
@@ -732,29 +669,105 @@ class DiffusionRunner:
                     rotary_embeddings=image_rotary_embeddings,
                 )
 
-            # Send to next stage if not last
             if not self.is_last_stage:
                 mx.eval(
                     mx.distributed.send(hidden_states, self.next_rank, group=self.group)
                 )
 
-        # === PHASE 5: Last Stage - Final Projection + Scheduler ===
-        # Extract image portion (remove text embeddings prefix)
         hidden_states = hidden_states[:, text_seq_len:, ...]
 
-        # For edit mode: extract only the generated portion (exclude conditioning latents)
         if conditioning_latents is not None:
             hidden_states = hidden_states[:, :original_latent_tokens, ...]
 
         if self.is_last_stage:
-            hidden_states = self.adapter.final_projection(
-                hidden_states, text_embeddings
+            return self.adapter.final_projection(hidden_states, text_embeddings)
+
+        return None
+
+    def _sync_pipeline_step(
+        self,
+        t: int,
+        config: Config,
+        hidden_states: mx.array,
+        prompt_data: PromptData,
+        kontext_image_ids: mx.array | None = None,
+    ) -> mx.array:
+        prev_latents = hidden_states
+
+        scaled_hidden_states = config.scheduler.scale_model_input(hidden_states, t)
+
+        # For edit mode: handle conditioning latents
+        conditioning_latents = prompt_data.conditioning_latents
+        original_latent_tokens = scaled_hidden_states.shape[1]
+        if conditioning_latents is not None:
+            num_img_tokens = original_latent_tokens + conditioning_latents.shape[1]
+        else:
+            num_img_tokens = original_latent_tokens
+
+        if self.is_first_stage and conditioning_latents is not None:
+            scaled_hidden_states = mx.concatenate(
+                [scaled_hidden_states, conditioning_latents], axis=1
             )
 
+        text_seq_len = prompt_data.prompt_embeds.shape[1]
+        self._ensure_wrappers(
+            text_seq_len, prompt_data.get_encoder_hidden_states_mask()
+        )
+
+        needs_cfg = self.adapter.needs_cfg
+
+        self._set_use_negative_cache(False)
+        noise = self._run_sync_pass(
+            t,
+            config,
+            scaled_hidden_states,
+            prompt_data.prompt_embeds,
+            prompt_data.pooled_prompt_embeds,
+            prompt_data.get_encoder_hidden_states_mask(positive=True),
+            prompt_data.cond_image_grid,
+            kontext_image_ids,
+            num_img_tokens,
+            original_latent_tokens,
+            conditioning_latents,
+        )
+
+        if needs_cfg:
+            self._set_use_negative_cache(True)
+            negative_prompt_embeds = prompt_data.negative_prompt_embeds
+            negative_pooled_prompt_embeds = prompt_data.negative_pooled_prompt_embeds
+            assert negative_prompt_embeds is not None, (
+                "CFG requires negative_prompt_embeds"
+            )
+            assert negative_pooled_prompt_embeds is not None, (
+                "CFG requires negative_pooled_prompt_embeds"
+            )
+
+            noise_neg = self._run_sync_pass(
+                t,
+                config,
+                scaled_hidden_states,
+                negative_prompt_embeds,
+                negative_pooled_prompt_embeds,
+                prompt_data.get_encoder_hidden_states_mask(positive=False),
+                prompt_data.cond_image_grid,
+                kontext_image_ids,
+                num_img_tokens,
+                original_latent_tokens,
+                conditioning_latents,
+            )
+
+            if self.is_last_stage:
+                assert noise is not None
+                assert noise_neg is not None
+                assert self.config.guidance_scale is not None
+                noise = self.adapter.apply_guidance(
+                    noise, noise_neg, self.config.guidance_scale
+                )
+
+        if self.is_last_stage:
+            assert noise is not None
             hidden_states = config.scheduler.step(
-                noise=hidden_states,
-                timestep=t,
-                latents=prev_latents,
+                noise=noise, timestep=t, latents=prev_latents
             )
 
             if not self.is_first_stage:
@@ -764,11 +777,9 @@ class DiffusionRunner:
             hidden_states = mx.distributed.recv_like(
                 prev_latents, src=self.world_size - 1, group=self.group
             )
-
             mx.eval(hidden_states)
 
         else:
-            # For shape correctness
             hidden_states = prev_latents
 
         return hidden_states
@@ -781,177 +792,259 @@ class DiffusionRunner:
         prompt_data: PromptData,
         kontext_image_ids: mx.array | None = None,
     ) -> mx.array:
+        """Execute async pipeline step with interleaved positive/negative passes."""
         patch_latents, token_indices = self._create_patches(latents, config)
 
-        patch_latents = self._async_pipeline(
-            t,
-            config,
-            patch_latents,
-            token_indices,
-            prompt_data,
-            kontext_image_ids,
+        text_seq_len = prompt_data.prompt_embeds.shape[1]
+        self._ensure_wrappers(
+            text_seq_len, prompt_data.get_encoder_hidden_states_mask()
         )
 
-        return mx.concatenate(patch_latents, axis=1)
-
-    def _async_pipeline(
-        self,
-        t: int,
-        config: Config,
-        patch_latents: list[mx.array],
-        token_indices: list[tuple[int, int]],
-        prompt_data: PromptData,
-        kontext_image_ids: mx.array | None = None,
-    ) -> list[mx.array]:
-        # Extract embeddings and model-specific data
-        prompt_embeds = prompt_data.prompt_embeds
-        pooled_prompt_embeds = prompt_data.pooled_prompt_embeds
-        encoder_hidden_states_mask = prompt_data.get_encoder_hidden_states_mask()
-        cond_image_grid = prompt_data.cond_image_grid
-
+        encoder_mask = prompt_data.get_encoder_hidden_states_mask(positive=True)
         text_embeddings = self.adapter.compute_text_embeddings(
-            t, config, pooled_prompt_embeds
+            t, config, prompt_data.pooled_prompt_embeds
         )
         image_rotary_embeddings = self.adapter.compute_rotary_embeddings(
-            prompt_embeds,
+            prompt_data.prompt_embeds,
             config,
-            encoder_hidden_states_mask=encoder_hidden_states_mask,
-            cond_image_grid=cond_image_grid,
+            encoder_hidden_states_mask=encoder_mask,
+            cond_image_grid=prompt_data.cond_image_grid,
             kontext_image_ids=kontext_image_ids,
         )
 
-        batch_size = patch_latents[0].shape[0]
-        text_seq_len = prompt_embeds.shape[1]
-        hidden_dim = self.adapter.hidden_dim
+        needs_cfg = self.adapter.needs_cfg
+        negative_prompt_embeds: mx.array | None = None
+        encoder_mask_neg: mx.array | None = None
+        text_embeddings_neg: mx.array | None = None
+        image_rotary_embeddings_neg: mx.array | None = None
 
-        # Ensure wrappers are initialized (should already be from sync phase)
-        self._ensure_wrappers(text_seq_len, encoder_hidden_states_mask)
+        if needs_cfg:
+            negative_prompt_embeds = prompt_data.negative_prompt_embeds
+            negative_pooled_prompt_embeds = prompt_data.negative_pooled_prompt_embeds
+            assert negative_prompt_embeds is not None, (
+                "CFG requires negative_prompt_embeds"
+            )
+            assert negative_pooled_prompt_embeds is not None, (
+                "CFG requires negative_pooled_prompt_embeds"
+            )
 
-        for patch_idx, patch in enumerate(patch_latents):
-            patch_prev = patch
+            encoder_mask_neg = prompt_data.get_encoder_hidden_states_mask(
+                positive=False
+            )
+            text_embeddings_neg = self.adapter.compute_text_embeddings(
+                t, config, negative_pooled_prompt_embeds
+            )
+            image_rotary_embeddings_neg = self.adapter.compute_rotary_embeddings(
+                negative_prompt_embeds,
+                config,
+                encoder_hidden_states_mask=encoder_mask_neg,
+                cond_image_grid=prompt_data.cond_image_grid,
+                kontext_image_ids=kontext_image_ids,
+            )
 
-            start_token, end_token = token_indices[patch_idx]
+        prev_patch_latents = [p for p in patch_latents]
 
-            if self.has_joint_blocks:
-                if (
-                    not self.is_first_stage
-                    or t != config.init_time_step + self.num_sync_steps
-                ):
-                    if self.is_first_stage:
-                        # First stage receives latent-space from last stage (scheduler output)
-                        recv_template = patch
-                    else:
-                        # Other stages receive hidden-space from previous stage
-                        patch_len = patch.shape[1]
-                        recv_template = mx.zeros(
-                            (batch_size, patch_len, hidden_dim),
-                            dtype=patch.dtype,
-                        )
-                    patch = mx.distributed.recv_like(
-                        recv_template, src=self.prev_rank, group=self.group
-                    )
-                    mx.eval(patch)
-                    patch_latents[patch_idx] = patch
+        encoder_hidden_states: mx.array | None = None
+        encoder_hidden_states_neg: mx.array | None = None
 
-                    if not self.is_first_stage and patch_idx == 0:
-                        enc_template = mx.zeros(
-                            (batch_size, text_seq_len, hidden_dim),
-                            dtype=patch_latents[0].dtype,
-                        )
-                        encoder_hidden_states = mx.distributed.recv_like(
-                            enc_template, src=self.prev_rank, group=self.group
-                        )
-                        mx.eval(encoder_hidden_states)
+        is_first_async_step = t == config.init_time_step + self.num_sync_steps
 
-                if self.is_first_stage:
-                    patch, encoder_hidden_states = self.adapter.compute_embeddings(
-                        patch, prompt_embeds
-                    )
+        for patch_idx in range(len(patch_latents)):
+            patch = patch_latents[patch_idx]
 
-                # Run assigned joint blocks with patched mode (wrappers own their KV caches)
-                assert self.joint_block_wrappers is not None
+            self._set_use_negative_cache(False)
+            if self.joint_block_wrappers:
                 for wrapper in self.joint_block_wrappers:
-                    wrapper.set_patch(BlockWrapperMode.PATCHED, start_token, end_token)
-                    encoder_hidden_states, patch = wrapper(
-                        hidden_states=patch,
-                        encoder_hidden_states=encoder_hidden_states,
-                        text_embeddings=text_embeddings,
-                        rotary_embeddings=image_rotary_embeddings,
-                    )
+                    wrapper.set_encoder_mask(encoder_mask)
 
-            if self.owns_concat_stage:
-                patch_concat = self.adapter.merge_streams(patch, encoder_hidden_states)
+            noise, encoder_hidden_states = self._run_single_patch_pass(
+                t=t,
+                config=config,
+                patch=patch,
+                patch_idx=patch_idx,
+                token_indices=token_indices[patch_idx],
+                prompt_embeds=prompt_data.prompt_embeds,
+                text_embeddings=text_embeddings,
+                image_rotary_embeddings=image_rotary_embeddings,
+                encoder_hidden_states=encoder_hidden_states,
+                is_first_async_step=is_first_async_step,
+            )
 
-                if self.has_single_blocks or self.is_last_stage:
-                    # Keep locally: either for single blocks or final projection
-                    patch = patch_concat
-                else:
-                    mx.eval(
-                        mx.distributed.send(
-                            patch_concat, self.next_rank, group=self.group
-                        )
-                    )
+            if needs_cfg:
+                assert negative_prompt_embeds is not None
+                assert text_embeddings_neg is not None
+                assert image_rotary_embeddings_neg is not None
 
-            elif self.has_joint_blocks and not self.is_last_stage:
-                mx.eval(mx.distributed.send(patch, self.next_rank, group=self.group))
+                self._set_use_negative_cache(True)
+                if self.joint_block_wrappers:
+                    for wrapper in self.joint_block_wrappers:
+                        wrapper.set_encoder_mask(encoder_mask_neg)
 
-                if patch_idx == 0:
-                    mx.eval(
-                        mx.distributed.send(
-                            encoder_hidden_states, self.next_rank, group=self.group
-                        )
-                    )
+                noise_neg, encoder_hidden_states_neg = self._run_single_patch_pass(
+                    t=t,
+                    config=config,
+                    patch=patch,
+                    patch_idx=patch_idx,
+                    token_indices=token_indices[patch_idx],
+                    prompt_embeds=negative_prompt_embeds,
+                    text_embeddings=text_embeddings_neg,
+                    image_rotary_embeddings=image_rotary_embeddings_neg,
+                    encoder_hidden_states=encoder_hidden_states_neg,
+                    is_first_async_step=is_first_async_step,
+                )
 
-            if self.has_single_blocks:
-                if not self.owns_concat_stage and not self.is_first_stage:
-                    recv_template = mx.zeros(
-                        [
-                            batch_size,
-                            text_seq_len + patch_latents[patch_idx].shape[1],
-                            hidden_dim,
-                        ],
-                        dtype=patch_latents[0].dtype,
-                    )
-
-                    patch = mx.distributed.recv_like(
-                        recv_template, src=self.prev_rank, group=self.group
-                    )
-                    mx.eval(patch)
-                    patch_latents[patch_idx] = patch
-
-                # Run assigned single blocks with patched mode (wrappers own their KV caches)
-                assert self.single_block_wrappers is not None
-                for wrapper in self.single_block_wrappers:
-                    wrapper.set_patch(BlockWrapperMode.PATCHED, start_token, end_token)
-                    patch = wrapper(
-                        hidden_states=patch,
-                        text_embeddings=text_embeddings,
-                        rotary_embeddings=image_rotary_embeddings,
-                    )
-
-                if not self.is_last_stage:
-                    mx.eval(
-                        mx.distributed.send(patch, self.next_rank, group=self.group)
+                if self.is_last_stage:
+                    assert noise is not None
+                    assert noise_neg is not None
+                    assert self.config.guidance_scale is not None
+                    noise = self.adapter.apply_guidance(
+                        noise, noise_neg, self.config.guidance_scale
                     )
 
             if self.is_last_stage:
-                patch_img_only = patch[:, text_seq_len:, :]
-
-                patch_img_only = self.adapter.final_projection(
-                    patch_img_only, text_embeddings
-                )
-
-                patch = config.scheduler.step(
-                    noise=patch_img_only,
+                assert noise is not None
+                patch_latents[patch_idx] = config.scheduler.step(
+                    noise=noise,
                     timestep=t,
-                    latents=patch_prev,
+                    latents=prev_patch_latents[patch_idx],
                 )
 
                 if not self.is_first_stage and t != config.num_inference_steps - 1:
                     mx.eval(
-                        mx.distributed.send(patch, self.next_rank, group=self.group)
+                        mx.distributed.send(
+                            patch_latents[patch_idx],
+                            self.next_rank,
+                            group=self.group,
+                        )
                     )
 
-                patch_latents[patch_idx] = patch
+        return mx.concatenate(patch_latents, axis=1)
 
-        return patch_latents
+    def _run_single_patch_pass(
+        self,
+        t: int,
+        config: Config,
+        patch: mx.array,
+        patch_idx: int,
+        token_indices: tuple[int, int],
+        prompt_embeds: mx.array,
+        text_embeddings: mx.array,
+        image_rotary_embeddings: mx.array,
+        encoder_hidden_states: mx.array | None,
+        is_first_async_step: bool,
+    ) -> tuple[mx.array | None, mx.array | None]:
+        """Process a single patch through the pipeline.
+
+        Args:
+            t: Current timestep
+            config: Runtime configuration
+            patch: The patch latents to process
+            patch_idx: Index of this patch (0-indexed)
+            token_indices: (start_token, end_token) for this patch
+            prompt_embeds: Text embeddings (for compute_embeddings on first stage)
+            text_embeddings: Precomputed text embeddings
+            image_rotary_embeddings: Precomputed rotary embeddings
+            encoder_hidden_states: Encoder hidden states (passed between patches)
+            is_first_async_step: Whether this is the first async timestep
+
+        Returns:
+            (noise_prediction, encoder_hidden_states) - noise is None for non-last stages
+        """
+        start_token, end_token = token_indices
+        batch_size = patch.shape[0]
+        text_seq_len = prompt_embeds.shape[1]
+        hidden_dim = self.adapter.hidden_dim
+
+        if self.has_joint_blocks:
+            if not self.is_first_stage or not is_first_async_step:
+                if self.is_first_stage:
+                    recv_template = patch
+                else:
+                    patch_len = patch.shape[1]
+                    recv_template = mx.zeros(
+                        (batch_size, patch_len, hidden_dim),
+                        dtype=patch.dtype,
+                    )
+                patch = mx.distributed.recv_like(
+                    recv_template, src=self.prev_rank, group=self.group
+                )
+                mx.eval(patch)
+
+                if not self.is_first_stage and patch_idx == 0:
+                    enc_template = mx.zeros(
+                        (batch_size, text_seq_len, hidden_dim),
+                        dtype=patch.dtype,
+                    )
+                    encoder_hidden_states = mx.distributed.recv_like(
+                        enc_template, src=self.prev_rank, group=self.group
+                    )
+                    mx.eval(encoder_hidden_states)
+
+            if self.is_first_stage:
+                patch, encoder_hidden_states = self.adapter.compute_embeddings(
+                    patch, prompt_embeds
+                )
+
+            assert self.joint_block_wrappers is not None
+            assert encoder_hidden_states is not None
+            for wrapper in self.joint_block_wrappers:
+                wrapper.set_patch(BlockWrapperMode.PATCHED, start_token, end_token)
+                encoder_hidden_states, patch = wrapper(
+                    hidden_states=patch,
+                    encoder_hidden_states=encoder_hidden_states,
+                    text_embeddings=text_embeddings,
+                    rotary_embeddings=image_rotary_embeddings,
+                )
+
+        if self.owns_concat_stage:
+            assert encoder_hidden_states is not None
+            patch_concat = self.adapter.merge_streams(patch, encoder_hidden_states)
+
+            if self.has_single_blocks or self.is_last_stage:
+                patch = patch_concat
+            else:
+                mx.eval(
+                    mx.distributed.send(patch_concat, self.next_rank, group=self.group)
+                )
+
+        elif self.has_joint_blocks and not self.is_last_stage:
+            mx.eval(mx.distributed.send(patch, self.next_rank, group=self.group))
+
+            if patch_idx == 0:
+                assert encoder_hidden_states is not None
+                mx.eval(
+                    mx.distributed.send(
+                        encoder_hidden_states, self.next_rank, group=self.group
+                    )
+                )
+
+        if self.has_single_blocks:
+            if not self.owns_concat_stage and not self.is_first_stage:
+                patch_len = patch.shape[1]
+                recv_template = mx.zeros(
+                    (batch_size, text_seq_len + patch_len, hidden_dim),
+                    dtype=patch.dtype,
+                )
+                patch = mx.distributed.recv_like(
+                    recv_template, src=self.prev_rank, group=self.group
+                )
+                mx.eval(patch)
+
+            assert self.single_block_wrappers is not None
+            for wrapper in self.single_block_wrappers:
+                wrapper.set_patch(BlockWrapperMode.PATCHED, start_token, end_token)
+                patch = wrapper(
+                    hidden_states=patch,
+                    text_embeddings=text_embeddings,
+                    rotary_embeddings=image_rotary_embeddings,
+                )
+
+            if not self.is_last_stage:
+                mx.eval(mx.distributed.send(patch, self.next_rank, group=self.group))
+
+        noise: mx.array | None = None
+        if self.is_last_stage:
+            patch_img_only = patch[:, text_seq_len:, :]
+            noise = self.adapter.final_projection(patch_img_only, text_embeddings)
+
+        return noise, encoder_hidden_states
