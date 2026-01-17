@@ -134,7 +134,7 @@ class DiffusionRunner:
         self.joint_block_wrappers: list[JointBlockWrapper] | None = None
         self.single_block_wrappers: list[SingleBlockWrapper] | None = None
         self._wrappers_initialized = False
-        self._current_text_seq_len: int | None = None  # Track for re-initialization
+        self._current_text_seq_len: int | None = None
 
     @property
     def is_first_stage(self) -> bool:
@@ -614,7 +614,6 @@ class DiffusionRunner:
         )
 
         if self.has_joint_blocks:
-            # Receive from previous stage (if not first stage)
             if not self.is_first_stage:
                 recv_template = mx.zeros(
                     (batch_size, num_img_tokens, hidden_dim), dtype=dtype
@@ -857,8 +856,9 @@ class DiffusionRunner:
 
         is_first_async_step = t == config.init_time_step + self.num_sync_steps
 
-        positive_noise_results: list[mx.array | None] = []
         encoder_hidden_states: mx.array | None = None
+        encoder_hidden_states_neg: mx.array | None = None
+        noise_neg: mx.array | None = None
 
         for patch_idx in range(len(patch_latents)):
             patch = patch_latents[patch_idx]
@@ -880,17 +880,11 @@ class DiffusionRunner:
                 is_first_async_step=is_first_async_step,
                 is_first_cfg_pass=True,
             )
-            positive_noise_results.append(noise)
 
-        if needs_cfg:
-            assert negative_prompt_embeds is not None
-            assert text_embeddings_neg is not None
-            assert image_rotary_embeddings_neg is not None
-
-            encoder_hidden_states_neg: mx.array | None = None
-
-            for patch_idx in range(len(patch_latents)):
-                patch = patch_latents[patch_idx]
+            if needs_cfg:
+                assert negative_prompt_embeds is not None
+                assert text_embeddings_neg is not None
+                assert image_rotary_embeddings_neg is not None
 
                 self._set_use_negative_cache(True)
                 self._set_text_seq_len(negative_prompt_embeds.shape[1])
@@ -910,33 +904,15 @@ class DiffusionRunner:
                     is_first_cfg_pass=False,
                 )
 
-                if self.is_last_stage:
-                    noise = positive_noise_results[patch_idx]
+            if self.is_last_stage:
+                if needs_cfg:
                     assert noise is not None
                     assert noise_neg is not None
                     assert self.config.guidance_scale is not None
-
                     noise = self.adapter.apply_guidance(
                         noise, noise_neg, self.config.guidance_scale
                     )
-                    patch_latents[patch_idx] = config.scheduler.step(
-                        noise=noise,
-                        timestep=t,
-                        latents=prev_patch_latents[patch_idx],
-                    )
 
-                    if not self.is_first_stage and t != config.num_inference_steps - 1:
-                        mx.eval(
-                            mx.distributed.send(
-                                patch_latents[patch_idx],
-                                self.next_rank,
-                                group=self.group,
-                            )
-                        )
-
-        elif self.is_last_stage:
-            for patch_idx in range(len(patch_latents)):
-                noise = positive_noise_results[patch_idx]
                 assert noise is not None
                 patch_latents[patch_idx] = config.scheduler.step(
                     noise=noise,
