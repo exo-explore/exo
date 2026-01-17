@@ -880,6 +880,7 @@ class DiffusionRunner:
                 image_rotary_embeddings=image_rotary_embeddings,
                 encoder_hidden_states=encoder_hidden_states,
                 is_first_async_step=is_first_async_step,
+                is_first_cfg_pass=True,
             )
 
             if needs_cfg:
@@ -904,6 +905,7 @@ class DiffusionRunner:
                     image_rotary_embeddings=image_rotary_embeddings_neg,
                     encoder_hidden_states=encoder_hidden_states_neg,
                     is_first_async_step=is_first_async_step,
+                    is_first_cfg_pass=False,
                 )
 
                 if self.is_last_stage:
@@ -945,6 +947,7 @@ class DiffusionRunner:
         image_rotary_embeddings: mx.array,
         encoder_hidden_states: mx.array | None,
         is_first_async_step: bool,
+        is_first_cfg_pass: bool = True,
     ) -> tuple[mx.array | None, mx.array | None]:
         """Process a single patch through the pipeline.
 
@@ -959,6 +962,9 @@ class DiffusionRunner:
             image_rotary_embeddings: Precomputed rotary embeddings
             encoder_hidden_states: Encoder hidden states (passed between patches)
             is_first_async_step: Whether this is the first async timestep
+            is_first_cfg_pass: Whether this is the first CFG pass (positive). On the
+                negative pass, the first stage should skip the latent recv since it
+                already received updated latents during the positive pass.
 
         Returns:
             (noise_prediction, encoder_hidden_states) - noise is None for non-last stages
@@ -969,7 +975,12 @@ class DiffusionRunner:
         hidden_dim = self.adapter.hidden_dim
 
         if self.has_joint_blocks:
-            if not self.is_first_stage or not is_first_async_step:
+            # First stage recvs updated latents only on non-first async steps AND only
+            # on the first CFG pass (positive). Non-first stages always recv from prev.
+            should_recv_from_prev = not self.is_first_stage or (
+                not is_first_async_step and is_first_cfg_pass
+            )
+            if should_recv_from_prev:
                 if self.is_first_stage:
                     recv_template = patch
                 else:
