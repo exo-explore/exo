@@ -97,9 +97,7 @@ def get_shard_assignments_for_pipeline_parallel(
     )
 
     if cycle_memory.in_bytes == 0:
-        raise ValueError(
-            "Cannot create shard assignments: total available memory is 0"
-        )
+        raise ValueError("Cannot create shard assignments: total available memory is 0")
 
     total_layers = model_meta.n_layers
     world_size = len(selected_cycle)
@@ -116,7 +114,9 @@ def get_shard_assignments_for_pipeline_parallel(
 
     # Validate each node has sufficient memory for its assigned layers
     memory_per_layer = model_meta.storage_size.in_bytes / total_layers
-    for i, (node, node_layers) in enumerate(zip(selected_cycle, layer_allocations)):
+    for i, (node, node_layers) in enumerate(
+        zip(selected_cycle, layer_allocations, strict=True)
+    ):
         required_memory = node_layers * memory_per_layer
         available_memory = node.node_profile.memory.ram_available.in_bytes
         if required_memory > available_memory:
@@ -127,7 +127,9 @@ def get_shard_assignments_for_pipeline_parallel(
             )
 
     layers_assigned = 0
-    for i, (node, node_layers) in enumerate(zip(selected_cycle, layer_allocations)):
+    for i, (node, node_layers) in enumerate(
+        zip(selected_cycle, layer_allocations, strict=True)
+    ):
         runner_id = RunnerId()
 
         shard = PipelineShardMetadata(

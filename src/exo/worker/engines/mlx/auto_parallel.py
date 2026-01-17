@@ -176,8 +176,16 @@ def pipeline_auto_parallel(
 
         layer_types: list[str] = inner_model_instance.layer_types  # type: ignore
         # Default to 0 if layer type not present - the mask will be created but unused in mlx lm
-        inner_model_instance.swa_idx = 0 if "sliding_attention" not in layer_types else layer_types.index("sliding_attention")
-        inner_model_instance.ga_idx = 0 if "full_attention" not in layer_types else layer_types.index("full_attention")
+        inner_model_instance.swa_idx = (
+            0
+            if "sliding_attention" not in layer_types
+            else layer_types.index("sliding_attention")
+        )
+        inner_model_instance.ga_idx = (
+            0
+            if "full_attention" not in layer_types
+            else layer_types.index("full_attention")
+        )
 
     _set_layers(model, layers)
 

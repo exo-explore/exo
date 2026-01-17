@@ -3,6 +3,11 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 
+from exo.worker.engines.mlx.auto_parallel import (
+    PipelineFirstLayer,
+    PipelineLastLayer,
+)
+
 
 class MockLayer(nn.Module):
     def __init__(self) -> None:
@@ -18,7 +23,7 @@ def run_pipeline_device(
     rank: int,
     world_size: int,
     hostfile_path: str,
-    result_queue: Any,
+    result_queue: Any,  # pyright: ignore[reportAny]
 ) -> None:
     """Worker function for pipeline parallel tests. Runs in a spawned process."""
     import os
@@ -28,8 +33,6 @@ def run_pipeline_device(
 
     import mlx.core as mlx_core
     import mlx.nn as mlx_nn
-
-    from exo.worker.engines.mlx.auto_parallel import PipelineFirstLayer, PipelineLastLayer
 
     class MockLayerInner(mlx_nn.Module):
         def __init__(self) -> None:
@@ -53,6 +56,6 @@ def run_pipeline_device(
         mlx_core.eval(result)
 
         success = result.shape == x.shape
-        result_queue.put((rank, success, result))
+        result_queue.put((rank, success, result))  # pyright: ignore[reportAny]
     except Exception as e:
-        result_queue.put((rank, False, str(e)))
+        result_queue.put((rank, False, str(e)))  # pyright: ignore[reportAny]

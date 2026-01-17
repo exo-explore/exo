@@ -2,6 +2,7 @@ import multiprocessing as mp
 from typing import Any
 
 import mlx.core as mx
+import pytest
 
 from exo.worker.engines.mlx.auto_parallel import (
     CustomMlxLayer,
@@ -35,11 +36,8 @@ def test_missing_attribute_raises() -> None:
     mock = MockLayer()
     wrapped = CustomMlxLayer(mock)
 
-    try:
+    with pytest.raises(AttributeError):
         _ = wrapped.nonexistent_attr  # type: ignore[attr-defined]
-        assert False, "Should have raised AttributeError"
-    except AttributeError:
-        pass
 
 
 def test_composed_call_works() -> None:
@@ -70,27 +68,33 @@ def test_composed_call_works() -> None:
             p.start()
             processes.append(p)
 
-        for p in processes:
-            p.join(timeout=10)
+        for p in processes:  # pyright: ignore[reportAny]
+            p.join(timeout=10)  # pyright: ignore[reportAny]
 
         results: dict[int, Any] = {}
         errors: dict[int, str] = {}
-        while not result_queue.empty():
-            rank, success, value = result_queue.get()
+        while not result_queue.empty():  # pyright: ignore[reportAny]
+            rank, success, value = result_queue.get()  # pyright: ignore[reportAny]
             if success:
                 results[rank] = value
             else:
                 errors[rank] = value
 
-        assert len(results) == world_size, f"Expected {world_size} results, got {len(results)}. Errors: {errors}"
+        assert len(results) == world_size, (
+            f"Expected {world_size} results, got {len(results)}. Errors: {errors}"
+        )
 
         # Device 0: input ones -> MockLayer(x*2) -> sends twos to device 1
         # Device 1: receives twos -> MockLayer(x*2) -> outputs fours
         # all_gather returns last batch, which is device 1's output (4.0)
         for rank in range(world_size):
-            assert rank in results, f"Device {rank} failed: {errors.get(rank, 'unknown')}"
+            assert rank in results, (
+                f"Device {rank} failed: {errors.get(rank, 'unknown')}"
+            )
             result_array = results[rank]
             # Both devices see the final result (4.0) after all_gather
-            assert (result_array == 4.0).all(), f"Device {rank}: expected 4.0, got {result_array}"
+            assert (result_array == 4.0).all(), (
+                f"Device {rank}: expected 4.0, got {result_array}"
+            )
     finally:
         os.unlink(hostfile_path)

@@ -409,14 +409,12 @@ class TestAllocateLayersProportionally:
             allocate_layers_proportionally(total_layers=10, memory_fractions=[])
 
     def test_zero_layers_raises(self):
-        with pytest.raises(ValueError, match="must be positive"):
+        with pytest.raises(ValueError, match="need at least 1 layer per node"):
             allocate_layers_proportionally(total_layers=0, memory_fractions=[0.5, 0.5])
 
     def test_negative_layers_raises(self):
-        with pytest.raises(ValueError, match="must be positive"):
-            allocate_layers_proportionally(
-                total_layers=-1, memory_fractions=[0.5, 0.5]
-            )
+        with pytest.raises(ValueError, match="need at least 1 layer per node"):
+            allocate_layers_proportionally(total_layers=-1, memory_fractions=[0.5, 0.5])
 
     def test_fewer_layers_than_nodes_raises(self):
         with pytest.raises(ValueError, match="need at least 1 layer per node"):
@@ -448,9 +446,7 @@ class TestAllocateLayersProportionally:
         assert result == [18, 1, 1]
 
     def test_single_node_gets_all_layers(self):
-        result = allocate_layers_proportionally(
-            total_layers=10, memory_fractions=[1.0]
-        )
+        result = allocate_layers_proportionally(total_layers=10, memory_fractions=[1.0])
         assert result == [10]
 
     def test_minimum_viable_allocation(self):
