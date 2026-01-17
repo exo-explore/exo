@@ -1,26 +1,20 @@
 import math
 from pathlib import Path
-from typing import cast
 
 import mlx.core as mx
 from mflux.models.common.config.config import Config
 from mflux.models.qwen.latent_creator.qwen_latent_creator import QwenLatentCreator
-from mflux.models.qwen.model.qwen_transformer.qwen_attention import QwenAttention
 from mflux.models.qwen.model.qwen_transformer.qwen_transformer import QwenTransformer
-from mflux.models.qwen.model.qwen_transformer.qwen_transformer_block import (
-    QwenTransformerBlock,
-)
 from mflux.models.qwen.variants.edit.qwen_edit_util import QwenEditUtil
 from mflux.models.qwen.variants.edit.qwen_image_edit import QwenImageEdit
 
 from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.models.base import ModelAdapter, PromptData
-from exo.worker.engines.image.pipeline.adapter import (
-    BlockWrapperMode,
-    JointBlockInterface,
-    SingleBlockInterface,
+from exo.worker.engines.image.models.qwen.wrappers import QwenJointBlockWrapper
+from exo.worker.engines.image.pipeline.block_wrapper import (
+    JointBlockWrapper,
+    SingleBlockWrapper,
 )
-from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
 
 
 class QwenEditPromptData(PromptData):
@@ -150,13 +144,21 @@ class QwenEditModelAdapter(ModelAdapter):
     def _get_latent_creator(self) -> type:
         return QwenLatentCreator
 
-    def get_joint_blocks(self) -> list[JointBlockInterface]:
-        """Return all 60 transformer blocks."""
-        return cast(
-            list[JointBlockInterface], list(self._transformer.transformer_blocks)
-        )
+    def get_joint_block_wrappers(
+        self,
+        text_seq_len: int,
+        encoder_hidden_states_mask: mx.array | None = None,
+    ) -> list[JointBlockWrapper]:
+        """Create wrapped joint blocks for Qwen Edit."""
+        return [
+            QwenJointBlockWrapper(block, text_seq_len, encoder_hidden_states_mask)
+            for block in self._transformer.transformer_blocks
+        ]
 
-    def get_single_blocks(self) -> list[SingleBlockInterface]:
+    def get_single_block_wrappers(
+        self,
+        text_seq_len: int,
+    ) -> list[SingleBlockWrapper]:
         """Qwen has no single blocks."""
         return []
 
@@ -326,51 +328,6 @@ class QwenEditModelAdapter(ModelAdapter):
             cond_image_grid=cond_image_grid,
         )
 
-    def apply_joint_block(
-        self,
-        block: JointBlockInterface,
-        hidden_states: mx.array,
-        encoder_hidden_states: mx.array,
-        text_embeddings: mx.array,
-        rotary_embeddings: tuple[mx.array, mx.array],
-        kv_cache: ImagePatchKVCache | None,
-        mode: BlockWrapperMode,
-        text_seq_len: int,
-        patch_start: int | None = None,
-        patch_end: int | None = None,
-        encoder_hidden_states_mask: mx.array | None = None,
-        block_idx: int | None = None,
-    ) -> tuple[mx.array, mx.array]:
-        """Apply Qwen joint block."""
-        if mode == BlockWrapperMode.CACHING:
-            return self._apply_joint_block_caching(
-                block=cast(QwenTransformerBlock, block),
-                hidden_states=hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
-                text_embeddings=text_embeddings,
-                rotary_embeddings=rotary_embeddings,
-                kv_cache=kv_cache,
-                text_seq_len=text_seq_len,
-                encoder_hidden_states_mask=encoder_hidden_states_mask,
-                block_idx=block_idx,
-            )
-        else:
-            assert patch_start is not None and patch_end is not None
-            assert kv_cache is not None
-            return self._apply_joint_block_patched(
-                block=cast(QwenTransformerBlock, block),
-                patch_hidden=hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
-                text_embeddings=text_embeddings,
-                rotary_embeddings=rotary_embeddings,
-                kv_cache=kv_cache,
-                text_seq_len=text_seq_len,
-                patch_start=patch_start,
-                patch_end=patch_end,
-                encoder_hidden_states_mask=encoder_hidden_states_mask,
-                block_idx=block_idx,
-            )
-
     def merge_streams(
         self,
         hidden_states: mx.array,
@@ -378,21 +335,6 @@ class QwenEditModelAdapter(ModelAdapter):
     ) -> mx.array:
         """Merge image and text streams."""
         return mx.concatenate([encoder_hidden_states, hidden_states], axis=1)
-
-    def apply_single_block(
-        self,
-        block: SingleBlockInterface,
-        hidden_states: mx.array,
-        text_embeddings: mx.array,
-        rotary_embeddings: mx.array,
-        kv_cache: ImagePatchKVCache | None,
-        mode: BlockWrapperMode,
-        text_seq_len: int,
-        patch_start: int | None = None,
-        patch_end: int | None = None,
-    ) -> mx.array:
-        """Qwen has no single blocks."""
-        raise NotImplementedError("Qwen does not have single blocks")
 
     def apply_guidance(
         self,
@@ -460,169 +402,3 @@ class QwenEditModelAdapter(ModelAdapter):
             int(output_height),
         )
 
-    def _apply_joint_block_caching(
-        self,
-        block: QwenTransformerBlock,
-        hidden_states: mx.array,
-        encoder_hidden_states: mx.array,
-        text_embeddings: mx.array,
-        rotary_embeddings: tuple[mx.array, mx.array],
-        kv_cache: ImagePatchKVCache | None,
-        text_seq_len: int,
-        encoder_hidden_states_mask: mx.array | None = None,
-        block_idx: int | None = None,
-    ) -> tuple[mx.array, mx.array]:
-        """Apply joint block in caching mode."""
-        return block(
-            hidden_states=hidden_states,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_hidden_states_mask=encoder_hidden_states_mask,
-            text_embeddings=text_embeddings,
-            image_rotary_emb=rotary_embeddings,
-            block_idx=block_idx,
-        )
-
-    def _apply_joint_block_patched(
-        self,
-        block: QwenTransformerBlock,
-        patch_hidden: mx.array,
-        encoder_hidden_states: mx.array,
-        text_embeddings: mx.array,
-        rotary_embeddings: tuple[mx.array, mx.array],
-        kv_cache: ImagePatchKVCache,
-        text_seq_len: int,
-        patch_start: int,
-        patch_end: int,
-        encoder_hidden_states_mask: mx.array | None = None,
-        block_idx: int | None = None,
-    ) -> tuple[mx.array, mx.array]:
-        batch_size = patch_hidden.shape[0]
-        attn = block.attn
-        num_heads = attn.num_heads
-        head_dim = attn.head_dim
-
-        # Modulation parameters
-        img_mod_params = block.img_mod_linear(block.img_mod_silu(text_embeddings))
-        txt_mod_params = block.txt_mod_linear(block.txt_mod_silu(text_embeddings))
-
-        img_mod1, img_mod2 = mx.split(img_mod_params, 2, axis=-1)
-        txt_mod1, txt_mod2 = mx.split(txt_mod_params, 2, axis=-1)
-
-        # Normalization and modulation
-        img_normed = block.img_norm1(patch_hidden)
-        img_modulated, img_gate1 = QwenTransformerBlock._modulate(img_normed, img_mod1)
-
-        txt_normed = block.txt_norm1(encoder_hidden_states)
-        txt_modulated, txt_gate1 = QwenTransformerBlock._modulate(txt_normed, txt_mod1)
-
-        # Q, K, V for image patch
-        img_query = attn.to_q(img_modulated)
-        img_key = attn.to_k(img_modulated)
-        img_value = attn.to_v(img_modulated)
-
-        # Q, K, V for text
-        txt_query = attn.add_q_proj(txt_modulated)
-        txt_key = attn.add_k_proj(txt_modulated)
-        txt_value = attn.add_v_proj(txt_modulated)
-
-        # Reshape to [B, S, H, D]
-        patch_len = patch_hidden.shape[1]
-        img_query = mx.reshape(img_query, (batch_size, patch_len, num_heads, head_dim))
-        img_key = mx.reshape(img_key, (batch_size, patch_len, num_heads, head_dim))
-        img_value = mx.reshape(img_value, (batch_size, patch_len, num_heads, head_dim))
-
-        txt_query = mx.reshape(
-            txt_query, (batch_size, text_seq_len, num_heads, head_dim)
-        )
-        txt_key = mx.reshape(txt_key, (batch_size, text_seq_len, num_heads, head_dim))
-        txt_value = mx.reshape(
-            txt_value, (batch_size, text_seq_len, num_heads, head_dim)
-        )
-
-        # RMSNorm to Q, K
-        img_query = attn.norm_q(img_query)
-        img_key = attn.norm_k(img_key)
-        txt_query = attn.norm_added_q(txt_query)
-        txt_key = attn.norm_added_k(txt_key)
-
-        # Extract RoPE for patch
-        (img_cos, img_sin), (txt_cos, txt_sin) = rotary_embeddings
-        patch_img_cos = img_cos[patch_start:patch_end]
-        patch_img_sin = img_sin[patch_start:patch_end]
-
-        # Apply RoPE
-        img_query = QwenAttention._apply_rope_qwen(
-            img_query, patch_img_cos, patch_img_sin
-        )
-        img_key = QwenAttention._apply_rope_qwen(img_key, patch_img_cos, patch_img_sin)
-        txt_query = QwenAttention._apply_rope_qwen(txt_query, txt_cos, txt_sin)
-        txt_key = QwenAttention._apply_rope_qwen(txt_key, txt_cos, txt_sin)
-
-        # Transpose to [B, H, S, D]
-        img_key_bhsd = mx.transpose(img_key, (0, 2, 1, 3))
-        img_value_bhsd = mx.transpose(img_value, (0, 2, 1, 3))
-
-        # Update cache
-        kv_cache.update_image_patch(
-            patch_start=patch_start,
-            patch_end=patch_end,
-            key=img_key_bhsd,
-            value=img_value_bhsd,
-        )
-
-        # Get full K, V from cache
-        txt_key_bhsd = mx.transpose(txt_key, (0, 2, 1, 3))
-        txt_value_bhsd = mx.transpose(txt_value, (0, 2, 1, 3))
-        full_key, full_value = kv_cache.get_full_kv(
-            text_key=txt_key_bhsd,
-            text_value=txt_value_bhsd,
-        )
-
-        # Build query
-        joint_query = mx.concatenate([txt_query, img_query], axis=1)
-
-        # Build attention mask
-        mask = QwenAttention._convert_mask_for_qwen(
-            mask=encoder_hidden_states_mask,
-            joint_seq_len=full_key.shape[2],
-            txt_seq_len=text_seq_len,
-        )
-
-        # Compute attention
-        hidden_states = attn._compute_attention_qwen(
-            query=joint_query,
-            key=mx.transpose(full_key, (0, 2, 1, 3)),
-            value=mx.transpose(full_value, (0, 2, 1, 3)),
-            mask=mask,
-            block_idx=block_idx,
-        )
-
-        # Extract outputs
-        txt_attn_output = hidden_states[:, :text_seq_len, :]
-        img_attn_output = hidden_states[:, text_seq_len:, :]
-
-        # Project
-        img_attn_output = attn.attn_to_out[0](img_attn_output)
-        txt_attn_output = attn.to_add_out(txt_attn_output)
-
-        # Residual + gate
-        patch_hidden = patch_hidden + img_gate1 * img_attn_output
-        encoder_hidden_states = encoder_hidden_states + txt_gate1 * txt_attn_output
-
-        # Feed-forward for image
-        img_normed2 = block.img_norm2(patch_hidden)
-        img_modulated2, img_gate2 = QwenTransformerBlock._modulate(
-            img_normed2, img_mod2
-        )
-        img_mlp_output = block.img_ff(img_modulated2)
-        patch_hidden = patch_hidden + img_gate2 * img_mlp_output
-
-        # Feed-forward for text
-        txt_normed2 = block.txt_norm2(encoder_hidden_states)
-        txt_modulated2, txt_gate2 = QwenTransformerBlock._modulate(
-            txt_normed2, txt_mod2
-        )
-        txt_mlp_output = block.txt_ff(txt_modulated2)
-        encoder_hidden_states = encoder_hidden_states + txt_gate2 * txt_mlp_output
-
-        return encoder_hidden_states, patch_hidden

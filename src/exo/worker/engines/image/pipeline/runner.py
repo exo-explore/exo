@@ -9,12 +9,11 @@ from tqdm import tqdm
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.models.base import ModelAdapter, PromptData
-from exo.worker.engines.image.pipeline.adapter import BlockWrapperMode
 from exo.worker.engines.image.pipeline.block_wrapper import (
+    BlockWrapperMode,
     JointBlockWrapper,
     SingleBlockWrapper,
 )
-from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
 
 
 def calculate_patch_heights(latent_height: int, num_patches: int):
@@ -98,10 +97,6 @@ class DiffusionRunner:
         self.num_sync_steps = num_sync_steps
         self.num_patches = num_patches if num_patches else max(1, self.world_size)
 
-        # Persistent KV caches (initialized on first async timestep, reused across timesteps)
-        self.joint_kv_caches: list[ImagePatchKVCache] | None = None
-        self.single_kv_caches: list[ImagePatchKVCache] | None = None
-
         # Get block counts from config (model-agnostic)
         self.total_joint = config.joint_block_count
         self.total_single = config.single_block_count
@@ -140,18 +135,11 @@ class DiffusionRunner:
             self.has_single_blocks or self.end_layer == self.total_joint
         )
 
-        joint_blocks = self.adapter.get_joint_blocks()
-        single_blocks = self.adapter.get_single_blocks()
-
-        # Wrap blocks at initialization (reused across all calls)
-        self.joint_block_wrappers = [
-            JointBlockWrapper(block=block, adapter=self.adapter)
-            for block in joint_blocks
-        ]
-        self.single_block_wrappers = [
-            SingleBlockWrapper(block=block, adapter=self.adapter)
-            for block in single_blocks
-        ]
+        # Wrappers created lazily on first forward (need text_seq_len)
+        self.joint_block_wrappers: list[JointBlockWrapper] | None = None
+        self.single_block_wrappers: list[SingleBlockWrapper] | None = None
+        self._wrappers_initialized = False
+        self._current_text_seq_len: int | None = None  # Track for re-initialization
 
     @property
     def is_first_stage(self) -> bool:
@@ -164,6 +152,38 @@ class DiffusionRunner:
     @property
     def is_distributed(self) -> bool:
         return self.group is not None
+
+    def _ensure_wrappers(
+        self,
+        text_seq_len: int,
+        encoder_hidden_states_mask: mx.array | None = None,
+    ) -> None:
+        """Lazily create block wrappers on first forward pass.
+
+        Wrappers need text_seq_len which is only known after prompt encoding.
+        Re-initializes if text_seq_len changes (e.g., warmup vs real generation).
+        """
+        if self._wrappers_initialized and self._current_text_seq_len == text_seq_len:
+            return
+
+        self.joint_block_wrappers = self.adapter.get_joint_block_wrappers(
+            text_seq_len=text_seq_len,
+            encoder_hidden_states_mask=encoder_hidden_states_mask,
+        )
+        self.single_block_wrappers = self.adapter.get_single_block_wrappers(
+            text_seq_len=text_seq_len,
+        )
+        self._wrappers_initialized = True
+        self._current_text_seq_len = text_seq_len
+
+    def _reset_all_caches(self) -> None:
+        """Reset KV caches on all wrappers for a new generation."""
+        if self.joint_block_wrappers:
+            for wrapper in self.joint_block_wrappers:
+                wrapper.reset_cache()
+        if self.single_block_wrappers:
+            for wrapper in self.single_block_wrappers:
+                wrapper.reset_cache()
 
     def _calculate_capture_steps(
         self,
@@ -316,6 +336,9 @@ class DiffusionRunner:
         if capture_steps is None:
             capture_steps = set()
 
+        # Reset KV caches for new generation (dimensions may differ from previous)
+        self._reset_all_caches()
+
         time_steps = tqdm(range(runtime_config.num_inference_steps))
 
         ctx = self.adapter.model.callbacks.start(
@@ -392,6 +415,11 @@ class DiffusionRunner:
         Returns:
             Noise prediction tensor
         """
+        text_seq_len = prompt_embeds.shape[1]
+
+        # Ensure wrappers are initialized (lazy - needs text_seq_len)
+        self._ensure_wrappers(text_seq_len, encoder_hidden_states_mask)
+
         scaled_latents = config.scheduler.scale_model_input(latents, t)
 
         # For edit mode: concatenate with conditioning latents
@@ -414,20 +442,14 @@ class DiffusionRunner:
             cond_image_grid=cond_image_grid,
         )
 
-        text_seq_len = prompt_embeds.shape[1]
-
-        # Run through all joint blocks
-        for block_idx, wrapper in enumerate(self.joint_block_wrappers):
+        # Run through all joint blocks (wrappers own their KV cache, mode defaults to CACHING)
+        assert self.joint_block_wrappers is not None
+        for wrapper in self.joint_block_wrappers:
             encoder_hidden_states, hidden_states = wrapper(
                 hidden_states=hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 text_embeddings=text_embeddings,
                 rotary_embeddings=rotary_embeddings,
-                text_seq_len=text_seq_len,
-                kv_cache=None,
-                mode=BlockWrapperMode.CACHING,
-                block_idx=block_idx,
-                encoder_hidden_states_mask=encoder_hidden_states_mask,
             )
 
         # Merge streams
@@ -437,14 +459,12 @@ class DiffusionRunner:
             )
 
         # Run through single blocks
+        assert self.single_block_wrappers is not None
         for wrapper in self.single_block_wrappers:
             hidden_states = wrapper(
                 hidden_states=hidden_states,
                 text_embeddings=text_embeddings,
                 rotary_embeddings=rotary_embeddings,
-                text_seq_len=text_seq_len,
-                kv_cache=None,
-                mode=BlockWrapperMode.CACHING,
             )
 
         # Extract image portion and project
@@ -552,38 +572,6 @@ class DiffusionRunner:
 
         return config.scheduler.step(noise=noise, timestep=t, latents=latents)
 
-    def _initialize_kv_caches(
-        self,
-        batch_size: int,
-        num_img_tokens: int,
-        dtype: mx.Dtype,
-    ) -> None:
-        """Initialize KV caches for both sync and async pipelines.
-
-        Note: Caches only store IMAGE K/V, not text K/V. Text K/V is always
-        computed fresh and doesn't need caching (it's the same for all patches).
-        """
-        self.joint_kv_caches = [
-            ImagePatchKVCache(
-                batch_size=batch_size,
-                num_heads=self.config.num_heads,
-                image_seq_len=num_img_tokens,
-                head_dim=self.config.head_dim,
-                dtype=dtype,
-            )
-            for _ in range(len(self.joint_block_wrappers))
-        ]
-        self.single_kv_caches = [
-            ImagePatchKVCache(
-                batch_size=batch_size,
-                num_heads=self.config.num_heads,
-                image_seq_len=num_img_tokens,
-                head_dim=self.config.head_dim,
-                dtype=dtype,
-            )
-            for _ in range(len(self.single_block_wrappers))
-        ]
-
     def _create_patches(
         self,
         latents: mx.array,
@@ -653,17 +641,12 @@ class DiffusionRunner:
             kontext_image_ids=kontext_image_ids,
         )
 
-        # === Initialize KV caches to populate during sync for async warmstart ===
+        # Ensure wrappers are initialized (lazy - needs text_seq_len)
         batch_size = prev_latents.shape[0]
         text_seq_len = prompt_embeds.shape[1]
         hidden_dim = self.adapter.hidden_dim
 
-        if t == config.init_time_step:
-            self._initialize_kv_caches(
-                batch_size=batch_size,
-                num_img_tokens=num_img_tokens,
-                dtype=prev_latents.dtype,
-            )
+        self._ensure_wrappers(text_seq_len, encoder_hidden_states_mask)
 
         # === PHASE 2: Joint Blocks with Communication and Caching ===
         if self.has_joint_blocks:
@@ -683,17 +666,15 @@ class DiffusionRunner:
                 )
                 mx.eval(hidden_states, encoder_hidden_states)
 
-            # Run assigned joint blocks with caching mode
-            for block_idx, wrapper in enumerate(self.joint_block_wrappers):
+            # Run assigned joint blocks with caching mode (wrappers own their KV caches)
+            assert self.joint_block_wrappers is not None
+            for wrapper in self.joint_block_wrappers:
+                wrapper.set_patch(BlockWrapperMode.CACHING)
                 encoder_hidden_states, hidden_states = wrapper(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     text_embeddings=text_embeddings,
                     rotary_embeddings=image_rotary_embeddings,
-                    text_seq_len=text_seq_len,
-                    kv_cache=self.joint_kv_caches[block_idx],
-                    mode=BlockWrapperMode.CACHING,
-                    encoder_hidden_states_mask=encoder_hidden_states_mask,
                 )
 
         # === PHASE 3: Joint→Single Transition ===
@@ -734,15 +715,14 @@ class DiffusionRunner:
                 )
                 mx.eval(hidden_states)
 
-            # Run assigned single blocks with caching mode
-            for block_idx, wrapper in enumerate(self.single_block_wrappers):
+            # Run assigned single blocks with caching mode (wrappers own their KV caches)
+            assert self.single_block_wrappers is not None
+            for wrapper in self.single_block_wrappers:
+                wrapper.set_patch(BlockWrapperMode.CACHING)
                 hidden_states = wrapper(
                     hidden_states=hidden_states,
                     text_embeddings=text_embeddings,
                     rotary_embeddings=image_rotary_embeddings,
-                    text_seq_len=text_seq_len,
-                    kv_cache=self.single_kv_caches[block_idx],
-                    mode=BlockWrapperMode.CACHING,
                 )
 
             # Send to next stage if not last
@@ -816,10 +796,6 @@ class DiffusionRunner:
         prompt_data: PromptData,
         kontext_image_ids: mx.array | None = None,
     ) -> list[mx.array]:
-        """Execute async pipeline for all patches."""
-        assert self.joint_kv_caches is not None
-        assert self.single_kv_caches is not None
-
         # Extract embeddings and model-specific data
         prompt_embeds = prompt_data.prompt_embeds
         pooled_prompt_embeds = prompt_data.pooled_prompt_embeds
@@ -840,6 +816,9 @@ class DiffusionRunner:
         batch_size = patch_latents[0].shape[0]
         text_seq_len = prompt_embeds.shape[1]
         hidden_dim = self.adapter.hidden_dim
+
+        # Ensure wrappers are initialized (should already be from sync phase)
+        self._ensure_wrappers(text_seq_len, encoder_hidden_states_mask)
 
         for patch_idx, patch in enumerate(patch_latents):
             patch_prev = patch
@@ -882,19 +861,15 @@ class DiffusionRunner:
                         patch, prompt_embeds
                     )
 
-                # Run assigned joint blocks with patched mode
-                for block_idx, wrapper in enumerate(self.joint_block_wrappers):
+                # Run assigned joint blocks with patched mode (wrappers own their KV caches)
+                assert self.joint_block_wrappers is not None
+                for wrapper in self.joint_block_wrappers:
+                    wrapper.set_patch(BlockWrapperMode.PATCHED, start_token, end_token)
                     encoder_hidden_states, patch = wrapper(
                         hidden_states=patch,
                         encoder_hidden_states=encoder_hidden_states,
                         text_embeddings=text_embeddings,
                         rotary_embeddings=image_rotary_embeddings,
-                        text_seq_len=text_seq_len,
-                        kv_cache=self.joint_kv_caches[block_idx],
-                        mode=BlockWrapperMode.PATCHED,
-                        patch_start=start_token,
-                        patch_end=end_token,
-                        encoder_hidden_states_mask=encoder_hidden_states_mask,
                     )
 
             if self.owns_concat_stage:
@@ -937,17 +912,14 @@ class DiffusionRunner:
                     mx.eval(patch)
                     patch_latents[patch_idx] = patch
 
-                # Run assigned single blocks with patched mode
-                for block_idx, wrapper in enumerate(self.single_block_wrappers):
+                # Run assigned single blocks with patched mode (wrappers own their KV caches)
+                assert self.single_block_wrappers is not None
+                for wrapper in self.single_block_wrappers:
+                    wrapper.set_patch(BlockWrapperMode.PATCHED, start_token, end_token)
                     patch = wrapper(
                         hidden_states=patch,
                         text_embeddings=text_embeddings,
                         rotary_embeddings=image_rotary_embeddings,
-                        text_seq_len=text_seq_len,
-                        kv_cache=self.single_kv_caches[block_idx],
-                        mode=BlockWrapperMode.PATCHED,
-                        patch_start=start_token,
-                        patch_end=end_token,
                     )
 
                 if not self.is_last_stage:
