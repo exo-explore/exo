@@ -7,14 +7,7 @@ import pydantic
 import pytest
 
 from exo.master.adapters.responses import (
-    chat_response_to_responses_response,
     responses_request_to_chat_params,
-)
-from exo.shared.types.api import (
-    ChatCompletionChoice,
-    ChatCompletionMessage,
-    ChatCompletionResponse,
-    Usage,
 )
 from exo.shared.types.openai_responses import (
     ResponseCompletedEvent,
@@ -123,130 +116,6 @@ class TestResponsesRequestToChatParams:
 
         assert len(params.messages) == 2
         assert params.messages[0].role == "developer"
-
-
-class TestChatResponseToResponsesResponse:
-    """Tests for converting ChatCompletionResponse to OpenAI Responses API response."""
-
-    def test_basic_response_conversion(self):
-        response = ChatCompletionResponse(
-            id="chatcmpl-123",
-            created=1234567890,
-            model="llama-3.2-1b",
-            choices=[
-                ChatCompletionChoice(
-                    index=0,
-                    message=ChatCompletionMessage(
-                        role="assistant",
-                        content="Hello! How can I help you?",
-                    ),
-                    finish_reason="stop",
-                )
-            ],
-        )
-        responses_response = chat_response_to_responses_response(response)
-
-        assert responses_response.id == "resp_chatcmpl-123"
-        assert responses_response.object == "response"
-        assert responses_response.model == "llama-3.2-1b"
-        assert responses_response.status == "completed"
-        assert responses_response.output_text == "Hello! How can I help you?"
-        assert len(responses_response.output) == 1
-        assert responses_response.output[0].type == "message"
-        assert responses_response.output[0].role == "assistant"
-        assert len(responses_response.output[0].content) == 1
-        assert responses_response.output[0].content[0].type == "output_text"
-        assert (
-            responses_response.output[0].content[0].text == "Hello! How can I help you?"
-        )
-
-    def test_response_with_usage(self):
-        response = ChatCompletionResponse(
-            id="chatcmpl-123",
-            created=1234567890,
-            model="llama-3.2-1b",
-            choices=[
-                ChatCompletionChoice(
-                    index=0,
-                    message=ChatCompletionMessage(role="assistant", content="Hello!"),
-                    finish_reason="stop",
-                )
-            ],
-            usage=Usage(
-                prompt_tokens=10,
-                completion_tokens=5,
-                total_tokens=15,
-            ),
-        )
-        responses_response = chat_response_to_responses_response(response)
-
-        assert responses_response.usage is not None
-        assert responses_response.usage.input_tokens == 10
-        assert responses_response.usage.output_tokens == 5
-        assert responses_response.usage.total_tokens == 15
-
-    def test_response_with_empty_content(self):
-        response = ChatCompletionResponse(
-            id="chatcmpl-123",
-            created=1234567890,
-            model="llama-3.2-1b",
-            choices=[
-                ChatCompletionChoice(
-                    index=0,
-                    message=ChatCompletionMessage(role="assistant", content=""),
-                    finish_reason="stop",
-                )
-            ],
-        )
-        responses_response = chat_response_to_responses_response(response)
-
-        assert responses_response.output_text == ""
-        assert responses_response.output[0].content[0].text == ""
-
-    def test_response_with_no_choices(self):
-        response = ChatCompletionResponse(
-            id="chatcmpl-123",
-            created=1234567890,
-            model="llama-3.2-1b",
-            choices=[],
-        )
-        responses_response = chat_response_to_responses_response(response)
-
-        assert responses_response.output_text == ""
-
-    def test_response_without_usage(self):
-        response = ChatCompletionResponse(
-            id="chatcmpl-123",
-            created=1234567890,
-            model="llama-3.2-1b",
-            choices=[
-                ChatCompletionChoice(
-                    index=0,
-                    message=ChatCompletionMessage(role="assistant", content="Hello!"),
-                    finish_reason="stop",
-                )
-            ],
-        )
-        responses_response = chat_response_to_responses_response(response)
-
-        assert responses_response.usage is None
-
-    def test_response_item_id_format(self):
-        response = ChatCompletionResponse(
-            id="chatcmpl-abc123",
-            created=1234567890,
-            model="llama-3.2-1b",
-            choices=[
-                ChatCompletionChoice(
-                    index=0,
-                    message=ChatCompletionMessage(role="assistant", content="Hello!"),
-                    finish_reason="stop",
-                )
-            ],
-        )
-        responses_response = chat_response_to_responses_response(response)
-
-        assert responses_response.output[0].id == "item_chatcmpl-abc123"
 
 
 class TestResponsesRequestValidation:

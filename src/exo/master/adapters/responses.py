@@ -1,11 +1,13 @@
-"""OpenAI Responses API adapter for converting requests/responses."""
+"""OpenAI Responses API adapter for converting requests/responses.
+
+This is the canonical internal format. Responses API is the most featureful,
+making it the natural choice for the internal format.
+"""
 
 from collections.abc import AsyncGenerator
 
 from exo.shared.types.api import (
-    ChatCompletionChoice,
     ChatCompletionMessage,
-    ChatCompletionResponse,
 )
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.common import CommandId
@@ -62,40 +64,50 @@ def responses_request_to_chat_params(
     )
 
 
-def chat_response_to_responses_response(
-    response: ChatCompletionResponse,
+async def collect_responses_response(
+    command_id: CommandId,
+    model: str,
+    chunk_stream: AsyncGenerator[TokenChunk, None],
 ) -> ResponsesResponse:
-    """Convert internal ChatCompletionResponse to OpenAI Responses API response."""
-    output_text = ""
+    """Collect all token chunks and return a single ResponsesResponse."""
+    response_id = f"resp_{command_id}"
+    item_id = f"item_{command_id}"
+    accumulated_text = ""
+    last_stats = None
+    error_message: str | None = None
 
-    if response.choices:
-        choice = response.choices[0]
-        if isinstance(choice, ChatCompletionChoice) and choice.message.content:
-            output_text = (
-                choice.message.content
-                if isinstance(choice.message.content, str)
-                else str(choice.message.content)
-            )
+    async for chunk in chunk_stream:
+        if chunk.finish_reason == "error":
+            error_message = chunk.error_message or "Internal server error"
+            break
 
-    item_id = f"item_{response.id}"
-    output_item = ResponseMessageItem(
-        id=item_id,
-        content=[ResponseOutputText(text=output_text)],
-    )
+        accumulated_text += chunk.text
+        last_stats = chunk.stats or last_stats
 
+    if error_message is not None:
+        raise ValueError(error_message)
+
+    # Create usage from stats if available
     usage = None
-    if response.usage:
+    if last_stats is not None:
         usage = ResponseUsage(
-            input_tokens=response.usage.prompt_tokens,
-            output_tokens=response.usage.completion_tokens,
-            total_tokens=response.usage.total_tokens,
+            input_tokens=last_stats.prompt_tokens,
+            output_tokens=last_stats.generation_tokens,
+            total_tokens=last_stats.prompt_tokens + last_stats.generation_tokens,
         )
 
+    output_item = ResponseMessageItem(
+        id=item_id,
+        content=[ResponseOutputText(text=accumulated_text)],
+        status="completed",
+    )
+
     return ResponsesResponse(
-        id=f"resp_{response.id}",
-        model=response.model,
+        id=response_id,
+        model=model,
+        status="completed",
         output=[output_item],
-        output_text=output_text,
+        output_text=accumulated_text,
         usage=usage,
     )
 
