@@ -855,10 +855,10 @@ class DiffusionRunner:
 
         prev_patch_latents = [p for p in patch_latents]
 
-        encoder_hidden_states: mx.array | None = None
-        encoder_hidden_states_neg: mx.array | None = None
-
         is_first_async_step = t == config.init_time_step + self.num_sync_steps
+
+        positive_noise_results: list[mx.array | None] = []
+        encoder_hidden_states: mx.array | None = None
 
         for patch_idx in range(len(patch_latents)):
             patch = patch_latents[patch_idx]
@@ -870,8 +870,6 @@ class DiffusionRunner:
                     wrapper.set_encoder_mask(encoder_mask)
 
             noise, encoder_hidden_states = self._run_single_patch_pass(
-                t=t,
-                config=config,
                 patch=patch,
                 patch_idx=patch_idx,
                 token_indices=token_indices[patch_idx],
@@ -882,11 +880,17 @@ class DiffusionRunner:
                 is_first_async_step=is_first_async_step,
                 is_first_cfg_pass=True,
             )
+            positive_noise_results.append(noise)
 
-            if needs_cfg:
-                assert negative_prompt_embeds is not None
-                assert text_embeddings_neg is not None
-                assert image_rotary_embeddings_neg is not None
+        if needs_cfg:
+            assert negative_prompt_embeds is not None
+            assert text_embeddings_neg is not None
+            assert image_rotary_embeddings_neg is not None
+
+            encoder_hidden_states_neg: mx.array | None = None
+
+            for patch_idx in range(len(patch_latents)):
+                patch = patch_latents[patch_idx]
 
                 self._set_use_negative_cache(True)
                 self._set_text_seq_len(negative_prompt_embeds.shape[1])
@@ -895,8 +899,6 @@ class DiffusionRunner:
                         wrapper.set_encoder_mask(encoder_mask_neg)
 
                 noise_neg, encoder_hidden_states_neg = self._run_single_patch_pass(
-                    t=t,
-                    config=config,
                     patch=patch,
                     patch_idx=patch_idx,
                     token_indices=token_indices[patch_idx],
@@ -909,14 +911,32 @@ class DiffusionRunner:
                 )
 
                 if self.is_last_stage:
+                    noise = positive_noise_results[patch_idx]
                     assert noise is not None
                     assert noise_neg is not None
                     assert self.config.guidance_scale is not None
+
                     noise = self.adapter.apply_guidance(
                         noise, noise_neg, self.config.guidance_scale
                     )
+                    patch_latents[patch_idx] = config.scheduler.step(
+                        noise=noise,
+                        timestep=t,
+                        latents=prev_patch_latents[patch_idx],
+                    )
 
-            if self.is_last_stage:
+                    if not self.is_first_stage and t != config.num_inference_steps - 1:
+                        mx.eval(
+                            mx.distributed.send(
+                                patch_latents[patch_idx],
+                                self.next_rank,
+                                group=self.group,
+                            )
+                        )
+
+        elif self.is_last_stage:
+            for patch_idx in range(len(patch_latents)):
+                noise = positive_noise_results[patch_idx]
                 assert noise is not None
                 patch_latents[patch_idx] = config.scheduler.step(
                     noise=noise,
@@ -937,8 +957,6 @@ class DiffusionRunner:
 
     def _run_single_patch_pass(
         self,
-        t: int,
-        config: Config,
         patch: mx.array,
         patch_idx: int,
         token_indices: tuple[int, int],
