@@ -420,6 +420,13 @@ class DiffusionRunner:
         # Ensure wrappers are initialized (lazy - needs text_seq_len)
         self._ensure_wrappers(text_seq_len, encoder_hidden_states_mask)
 
+        # Update masks on all joint block wrappers for this pass.
+        # This is necessary for CFG where we run positive and negative passes
+        # with different masks. Qwen uses masks; Flux doesn't.
+        if self.joint_block_wrappers and encoder_hidden_states_mask is not None:
+            for wrapper in self.joint_block_wrappers:
+                wrapper.set_encoder_mask(encoder_hidden_states_mask)
+
         scaled_latents = config.scheduler.scale_model_input(latents, t)
 
         # For edit mode: concatenate with conditioning latents

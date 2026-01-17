@@ -97,6 +97,14 @@ class JointBlockWrapper(ABC):
         """Reset the KV cache. Call at the start of a new generation."""
         self._kv_cache = None
 
+    def set_encoder_mask(self, mask: mx.array | None) -> None:  # noqa: B027
+        """Set the encoder hidden states mask for attention.
+
+        Override in subclasses that use attention masks (e.g., Qwen).
+        Default is a no-op for models that don't use masks (e.g., Flux).
+        """
+        del mask  # Unused in base class
+
     def __call__(
         self,
         hidden_states: mx.array,
