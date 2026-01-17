@@ -1,4 +1,4 @@
-from exo.shared.types.api import FinishReason, GenerationStats
+from exo.shared.types.api import FinishReason, GenerationStats, TopLogprobItem
 from exo.utils.pydantic_ext import TaggedModel
 
 
@@ -13,7 +13,8 @@ class TokenizedResponse(BaseRunnerResponse):
 class GenerationResponse(BaseRunnerResponse):
     text: str
     token: int
-    # logprobs: list[float] | None = None # too big. we can change to be top-k
+    logprob: float | None = None  # Log probability of the selected token
+    top_logprobs: list[TopLogprobItem] | None = None  # Top-k alternative tokens
     finish_reason: FinishReason | None = None
     stats: GenerationStats | None = None
 

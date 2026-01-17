@@ -186,6 +186,8 @@ def main(
                                                 model=shard_metadata.model_meta.model_id,
                                                 text=response.text,
                                                 token_id=response.token,
+                                                logprob=response.logprob,
+                                                top_logprobs=response.top_logprobs,
                                                 finish_reason=response.finish_reason,
                                                 stats=response.stats,
                                             ),

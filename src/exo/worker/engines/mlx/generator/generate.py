@@ -12,6 +12,7 @@ from exo.shared.types.api import (
     ChatCompletionMessage,
     FinishReason,
     GenerationStats,
+    TopLogprobItem,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import ChatCompletionTaskParams
@@ -115,6 +116,60 @@ def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
     return eos
 
 
+def extract_top_logprobs(
+    logprobs: mx.array,
+    tokenizer: TokenizerWrapper,
+    top_k: int,
+    selected_token: int,
+) -> tuple[float, list[TopLogprobItem]]:
+    """Extract the selected token's logprob and top-k alternative tokens.
+
+    Args:
+        logprobs: Full vocabulary logprobs array from MLX
+        tokenizer: Tokenizer for decoding token IDs to strings
+        top_k: Number of top alternatives to return
+        selected_token: The token ID that was actually sampled
+
+    Returns:
+        Tuple of (selected_token_logprob, list of TopLogprobItem for top-k tokens)
+    """
+    # Get the logprob of the selected token
+    selected_logprob = float(logprobs[selected_token].item())
+
+    # Get top-k indices (most probable tokens)
+    # mx.argpartition gives indices that would partition the array
+    # We negate logprobs since argpartition finds smallest, and we want largest
+    top_k = min(top_k, logprobs.shape[0])  # Don't exceed vocab size
+    top_indices = mx.argpartition(-logprobs, top_k)[:top_k]
+
+    # Get the actual logprob values for these indices
+    top_values = logprobs[top_indices]
+
+    # Sort by logprob (descending) for consistent ordering
+    sort_order = mx.argsort(-top_values)
+    top_indices = top_indices[sort_order]
+    top_values = top_values[sort_order]
+
+    # Convert to list of TopLogprobItem
+    top_logprob_items: list[TopLogprobItem] = []
+    for i in range(top_k):
+        token_id = int(top_indices[i].item())
+        token_logprob = float(top_values[i].item())
+        # Decode token ID to string
+        token_str = tokenizer.decode([token_id])
+        # Get byte representation
+        token_bytes = list(token_str.encode("utf-8"))
+        top_logprob_items.append(
+            TopLogprobItem(
+                token=token_str,
+                logprob=token_logprob,
+                bytes=token_bytes,
+            )
+        )
+
+    return selected_logprob, top_logprob_items
+
+
 def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
@@ -160,6 +215,10 @@ def mlx_generate(
     max_tokens = task.max_tokens or MAX_TOKENS
     accumulated_text = ""
 
+    # Determine if we need to extract logprobs
+    should_extract_logprobs = task.logprobs is True
+    num_top_logprobs = task.top_logprobs if task.top_logprobs is not None else 5
+
     for out in stream_generate(
         model=model,
         tokenizer=tokenizer,
@@ -195,6 +254,17 @@ def mlx_generate(
                     stop_matched = True
                     break
 
+        # Extract logprobs if requested
+        token_logprob: float | None = None
+        top_logprobs: list[TopLogprobItem] | None = None
+        if should_extract_logprobs:
+            token_logprob, top_logprobs = extract_top_logprobs(
+                logprobs=out.logprobs,
+                tokenizer=tokenizer,
+                top_k=num_top_logprobs,
+                selected_token=out.token,
+            )
+
         is_done = finish_reason is not None
         stats: GenerationStats | None = None
         if is_done:
@@ -213,6 +283,8 @@ def mlx_generate(
         yield GenerationResponse(
             text=text,
             token=out.token,
+            logprob=token_logprob,
+            top_logprobs=top_logprobs,
             finish_reason=finish_reason,
             stats=stats,
         )

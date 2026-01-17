@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { 
-		messages, 
-		currentResponse, 
+	import {
+		messages,
+		currentResponse,
 		isLoading,
 		deleteMessage,
 		editAndRegenerate,
@@ -9,6 +9,7 @@
 	} from '$lib/stores/app.svelte';
 	import type { MessageAttachment } from '$lib/stores/app.svelte';
 	import MarkdownContent from './MarkdownContent.svelte';
+	import TokenHeatmap from './TokenHeatmap.svelte';
 
 	interface Props {
 		class?: string;
@@ -94,6 +95,23 @@
 // Copied state for feedback
 let copiedMessageId = $state<string | null>(null);
 let expandedThinkingMessageIds = $state<Set<string>>(new Set());
+
+// Uncertainty view state - tracks which messages show token heatmap
+let uncertaintyViewMessageIds = $state<Set<string>>(new Set());
+
+function toggleUncertaintyView(messageId: string) {
+	const newSet = new Set(uncertaintyViewMessageIds);
+	if (newSet.has(messageId)) {
+		newSet.delete(messageId);
+	} else {
+		newSet.add(messageId);
+	}
+	uncertaintyViewMessageIds = newSet;
+}
+
+function isUncertaintyViewEnabled(messageId: string): boolean {
+	return uncertaintyViewMessageIds.has(messageId);
+}
 
 	function formatTimestamp(timestamp: number): string {
 		return new Date(timestamp).toLocaleTimeString('en-US', { 
@@ -366,7 +384,13 @@ function isThinkingExpanded(messageId: string): boolean {
 									</div>
 								{/if}
 								<div class="text-xs text-foreground">
-									<MarkdownContent content={message.content || (loading ? response : '')} />
+									{#if message.role === 'assistant' && isUncertaintyViewEnabled(message.id) && message.tokens && message.tokens.length > 0}
+										<!-- Uncertainty heatmap view -->
+										<TokenHeatmap tokens={message.tokens} />
+									{:else}
+										<!-- Normal markdown view -->
+										<MarkdownContent content={message.content || (loading ? response : '')} />
+									{/if}
 									{#if loading && !message.content}
 										<span class="inline-block w-2 h-4 bg-exo-yellow/70 ml-1 cursor-blink"></span>
 									{/if}
@@ -416,6 +440,19 @@ function isThinkingExpanded(messageId: string): boolean {
 							>
 								<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+								</svg>
+							</button>
+						{/if}
+
+						<!-- Uncertainty view toggle (assistant messages with tokens only) -->
+						{#if message.role === 'assistant' && message.tokens && message.tokens.length > 0}
+							<button
+								onclick={() => toggleUncertaintyView(message.id)}
+								class="p-1.5 transition-colors rounded cursor-pointer {isUncertaintyViewEnabled(message.id) ? 'text-exo-yellow' : 'text-exo-light-gray hover:text-exo-yellow'}"
+								title={isUncertaintyViewEnabled(message.id) ? 'Hide uncertainty' : 'Show uncertainty'}
+							>
+								<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
 								</svg>
 							</button>
 						{/if}

@@ -41,6 +41,8 @@ from exo.shared.types.api import (
     DeleteInstanceResponse,
     FinishReason,
     GenerationStats,
+    Logprobs,
+    LogprobsContentItem,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
@@ -83,6 +85,20 @@ from exo.utils.event_buffer import OrderedBuffer
 def chunk_to_response(
     chunk: TokenChunk, command_id: CommandId
 ) -> ChatCompletionResponse:
+    # Build logprobs if available
+    logprobs: Logprobs | None = None
+    if chunk.logprob is not None:
+        logprobs = Logprobs(
+            content=[
+                LogprobsContentItem(
+                    token=chunk.text,
+                    logprob=chunk.logprob,
+                    bytes=list(chunk.text.encode("utf-8")),
+                    top_logprobs=chunk.top_logprobs or [],
+                )
+            ]
+        )
+
     return ChatCompletionResponse(
         id=command_id,
         created=int(time.time()),
@@ -91,6 +107,7 @@ def chunk_to_response(
             StreamingChoiceResponse(
                 index=0,
                 delta=ChatCompletionMessage(role="assistant", content=chunk.text),
+                logprobs=logprobs,
                 finish_reason=chunk.finish_reason,
             )
         ],

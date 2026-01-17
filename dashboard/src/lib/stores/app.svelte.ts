@@ -182,6 +182,20 @@ export interface MessageAttachment {
 	mimeType?: string;
 }
 
+// Token-level data for uncertainty visualization
+export interface TopLogprob {
+	token: string;
+	logprob: number;
+	bytes?: number[];
+}
+
+export interface TokenData {
+	token: string;
+	logprob: number;
+	probability: number; // exp(logprob)
+	topLogprobs: TopLogprob[];
+}
+
 export interface Message {
 	id: string;
 	role: "user" | "assistant" | "system";
@@ -191,6 +205,7 @@ export interface Message {
 	attachments?: MessageAttachment[];
 	ttftMs?: number; // Time to first token in ms (for assistant messages)
 	tps?: number; // Tokens per second (for assistant messages)
+	tokens?: TokenData[]; // Token-level data for uncertainty visualization
 }
 
 export interface Conversation {
@@ -1107,6 +1122,8 @@ class AppStore {
 					model: modelToUse,
 					messages: apiMessages,
 					stream: true,
+					logprobs: true,
+					top_logprobs: 5,
 				}),
 			});
 
@@ -1408,6 +1425,8 @@ class AppStore {
 					messages: apiMessages,
 					temperature: 0.7,
 					stream: true,
+					logprobs: true,
+					top_logprobs: 5,
 				}),
 			});
 
@@ -1424,6 +1443,7 @@ class AppStore {
 			const decoder = new TextDecoder();
 			let fullContent = "";
 			let buffer = "";
+			const collectedTokens: TokenData[] = [];
 
 			while (true) {
 				const { done, value } = await reader.read();
@@ -1463,6 +1483,25 @@ class AppStore {
 									this.tps = (tokenCount / elapsed) * 1000;
 								}
 
+								// Extract logprobs for uncertainty visualization
+								const logprobsData = parsed.choices?.[0]?.logprobs;
+								if (logprobsData?.content?.[0]) {
+									const logprobItem = logprobsData.content[0];
+									const tokenData: TokenData = {
+										token: logprobItem.token || tokenContent,
+										logprob: logprobItem.logprob ?? 0,
+										probability: Math.exp(logprobItem.logprob ?? 0),
+										topLogprobs: (logprobItem.top_logprobs || []).map(
+											(item: { token: string; logprob: number; bytes?: number[] }) => ({
+												token: item.token,
+												logprob: item.logprob,
+												bytes: item.bytes,
+											}),
+										),
+									};
+									collectedTokens.push(tokenData);
+								}
+
 								fullContent += tokenContent;
 
 								// Strip thinking tags for display and extract thinking content
@@ -1477,6 +1516,8 @@ class AppStore {
 								if (idx !== -1) {
 									this.messages[idx].content = displayContent;
 									this.messages[idx].thinking = thinkingContent || undefined;
+									// Update tokens during streaming for real-time visualization
+									this.messages[idx].tokens = [...collectedTokens];
 								}
 								this.persistActiveConversation();
 							}
@@ -1523,6 +1564,10 @@ class AppStore {
 				}
 				if (this.tps !== null) {
 					this.messages[idx].tps = this.tps;
+				}
+				// Store token data for uncertainty visualization
+				if (collectedTokens.length > 0) {
+					this.messages[idx].tokens = collectedTokens;
 				}
 			}
 			this.persistActiveConversation();
