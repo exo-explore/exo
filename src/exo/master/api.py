@@ -1,5 +1,6 @@
 import time
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import cast
 
 import anyio
@@ -65,7 +66,13 @@ from exo.shared.types.commands import (
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
-from exo.shared.types.events import ChunkGenerated, Event, ForwarderEvent, IndexedEvent
+from exo.shared.types.events import (
+    ChunkGenerated,
+    Event,
+    ForwarderEvent,
+    IndexedEvent,
+    PrefillProgress,
+)
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.openai_responses import (
@@ -80,6 +87,18 @@ from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.dashboard_path import find_dashboard
 from exo.utils.event_buffer import OrderedBuffer
+
+
+@dataclass
+class PrefillProgressData:
+    """Data class for prefill progress events."""
+
+    processed_tokens: int
+    total_tokens: int
+
+
+# Union type for stream events
+StreamEvent = TokenChunk | PrefillProgressData
 
 
 def chunk_to_response(
@@ -162,7 +181,7 @@ class API:
             name="dashboard",
         )
 
-        self._chat_completion_queues: dict[CommandId, Sender[TokenChunk]] = {}
+        self._chat_completion_queues: dict[CommandId, Sender[StreamEvent]] = {}
         self._tg: TaskGroup | None = None
 
     def reset(self, new_session_id: SessionId, result_clock: int):
@@ -410,18 +429,18 @@ class API:
             instance_id=instance_id,
         )
 
-    async def _chat_chunk_stream(
+    async def _stream_events(
         self, command_id: CommandId
-    ) -> AsyncGenerator[TokenChunk, None]:
-        """Yield `TokenChunk`s for a given command until completion."""
+    ) -> AsyncGenerator[StreamEvent, None]:
+        """Yield stream events (TokenChunks or PrefillProgressData) for a command."""
 
         try:
-            self._chat_completion_queues[command_id], recv = channel[TokenChunk]()
+            self._chat_completion_queues[command_id], recv = channel[StreamEvent]()
 
-            with recv as token_chunks:
-                async for chunk in token_chunks:
-                    yield chunk
-                    if chunk.finish_reason is not None:
+            with recv as events:
+                async for event in events:
+                    yield event
+                    if isinstance(event, TokenChunk) and event.finish_reason is not None:
                         break
 
         except anyio.get_cancelled_exc_class():
@@ -437,21 +456,36 @@ class API:
             await self._send(command)
             del self._chat_completion_queues[command_id]
 
+    async def _chat_chunk_stream(
+        self, command_id: CommandId
+    ) -> AsyncGenerator[TokenChunk, None]:
+        """Yield only TokenChunks, filtering out progress events."""
+
+        async for event in self._stream_events(command_id):
+            if isinstance(event, TokenChunk):
+                yield event
+
     async def _generate_chat_stream(
         self, command_id: CommandId
     ) -> AsyncGenerator[str, None]:
         """Generate chat completion stream as JSON strings."""
 
-        async for chunk in self._chat_chunk_stream(command_id):
-            chunk_response: ChatCompletionResponse = chunk_to_response(
-                chunk, command_id
-            )
-            logger.debug(f"chunk_response: {chunk_response}")
+        async for event in self._stream_events(command_id):
+            if isinstance(event, PrefillProgressData):
+                # Send prefill progress as a named SSE event
+                progress_json = f'{{"processed":{event.processed_tokens},"total":{event.total_tokens}}}'
+                yield f"event: prefill_progress\ndata: {progress_json}\n\n"
+            else:
+                # TokenChunk - regular token generation
+                chunk_response: ChatCompletionResponse = chunk_to_response(
+                    event, command_id
+                )
+                logger.debug(f"chunk_response: {chunk_response}")
 
-            yield f"data: {chunk_response.model_dump_json()}\n\n"
+                yield f"data: {chunk_response.model_dump_json()}\n\n"
 
-            if chunk.finish_reason is not None:
-                yield "data: [DONE]\n\n"
+                if event.finish_reason is not None:
+                    yield "data: [DONE]\n\n"
 
     async def _collect_chat_completion(
         self, command_id: CommandId
@@ -720,6 +754,16 @@ class API:
                         assert isinstance(event.chunk, TokenChunk)
                         await self._chat_completion_queues[event.command_id].send(
                             event.chunk
+                        )
+                    elif (
+                        isinstance(event, PrefillProgress)
+                        and event.command_id in self._chat_completion_queues
+                    ):
+                        await self._chat_completion_queues[event.command_id].send(
+                            PrefillProgressData(
+                                processed_tokens=event.processed_tokens,
+                                total_tokens=event.total_tokens,
+                            )
                         )
 
     async def _pause_on_new_election(self):

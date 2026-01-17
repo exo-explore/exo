@@ -16,6 +16,7 @@ from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
+    PrefillProgress,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
@@ -161,11 +162,23 @@ def main(
                     assert task_params.messages[0].content is not None
                     _check_for_debug_prompts(task_params.messages[0].content)
 
+                    # Define callback to send prefill progress events directly
+                    def on_prefill_progress(processed: int, total: int) -> None:
+                        if shard_metadata.device_rank == 0:
+                            event_sender.send(
+                                PrefillProgress(
+                                    command_id=command_id,
+                                    processed_tokens=processed,
+                                    total_tokens=total,
+                                )
+                            )
+
                     # Generate responses using the actual MLX generation
                     mlx_generator = mlx_generate(
                         model=model,
                         tokenizer=tokenizer,
                         task=task_params,
+                        on_prefill_progress=on_prefill_progress,
                     )
 
                     # GPT-OSS specific parsing to match other model formats.

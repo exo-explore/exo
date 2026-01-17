@@ -106,6 +106,12 @@ class ChunkGenerated(BaseEvent):
     chunk: GenerationChunk
 
 
+class PrefillProgress(BaseEvent):
+    command_id: CommandId
+    processed_tokens: int
+    total_tokens: int
+
+
 class TopologyEdgeCreated(BaseEvent):
     edge: Connection
 
@@ -131,6 +137,7 @@ Event = (
     | NodeMemoryMeasured
     | NodeDownloadProgress
     | ChunkGenerated
+    | PrefillProgress
     | TopologyEdgeCreated
     | TopologyEdgeDeleted
 )

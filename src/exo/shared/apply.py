@@ -16,6 +16,7 @@ from exo.shared.types.events import (
     NodeMemoryMeasured,
     NodePerformanceMeasured,
     NodeTimedOut,
+    PrefillProgress,
     RunnerDeleted,
     RunnerStatusUpdated,
     TaskAcknowledged,
@@ -40,7 +41,7 @@ def event_apply(event: Event, state: State) -> State:
     """Apply an event to state."""
     match event:
         case (
-            TestEvent() | ChunkGenerated() | TaskAcknowledged()
+            TestEvent() | ChunkGenerated() | TaskAcknowledged() | PrefillProgress()
         ):  # TaskAcknowledged should never be sent by a worker but i dont mind if it just gets ignored
             return state
         case InstanceCreated():
