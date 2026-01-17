@@ -1659,7 +1659,7 @@ export const setTopologyOnlyMode = (enabled: boolean) =>
 	appStore.setTopologyOnlyMode(enabled);
 export const toggleChatSidebarVisible = () =>
 	appStore.toggleChatSidebarVisible();
-	export const setChatSidebarVisible = (visible: boolean) =>
-		appStore.setChatSidebarVisible(visible);
-	export const refreshState = () => appStore.fetchState();
-	export const deleteModel = (modelId: string) => appStore.deleteModel(modelId);
+export const setChatSidebarVisible = (visible: boolean) =>
+	appStore.setChatSidebarVisible(visible);
+export const refreshState = () => appStore.fetchState();
+export const deleteModel = (modelId: string) => appStore.deleteModel(modelId);
