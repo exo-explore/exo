@@ -1205,7 +1205,11 @@ class AppStore {
 										logprob: logprobItem.logprob ?? 0,
 										probability: Math.exp(logprobItem.logprob ?? 0),
 										topLogprobs: (logprobItem.top_logprobs || []).map(
-											(item: { token: string; logprob: number; bytes?: number[] }) => ({
+											(item: {
+												token: string;
+												logprob: number;
+												bytes?: number[];
+											}) => ({
 												token: item.token,
 												logprob: item.logprob,
 												bytes: item.bytes,
@@ -1360,7 +1364,8 @@ class AppStore {
 			}
 
 			if (!modelToUse) {
-				this.messages[messageIdx].content = prefixText + "\n\nError: No model available.";
+				this.messages[messageIdx].content =
+					prefixText + "\n\nError: No model available.";
 				this.isLoading = false;
 				this.updateActiveConversation();
 				return;
@@ -1752,7 +1757,11 @@ class AppStore {
 										logprob: logprobItem.logprob ?? 0,
 										probability: Math.exp(logprobItem.logprob ?? 0),
 										topLogprobs: (logprobItem.top_logprobs || []).map(
-											(item: { token: string; logprob: number; bytes?: number[] }) => ({
+											(item: {
+												token: string;
+												logprob: number;
+												bytes?: number[];
+											}) => ({
 												token: item.token,
 												logprob: item.logprob,
 												bytes: item.bytes,
