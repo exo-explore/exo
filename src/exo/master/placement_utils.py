@@ -49,6 +49,29 @@ def get_smallest_cycles(cycles: list[list[NodeInfo]]) -> list[list[NodeInfo]]:
     return [cycle for cycle in cycles if len(cycle) == min_nodes]
 
 
+def allocate_layers_proportionally(
+    total_layers: int,
+    memory_fractions: list[float],
+) -> list[int]:
+    """Allocate layers proportionally to memory.
+    """
+    num_nodes = len(memory_fractions)
+    allocations: list[int] = []
+    layers_assigned = 0
+
+    for i in range(num_nodes):
+        if i == num_nodes - 1:
+            node_layers = total_layers - layers_assigned
+        else:
+            node_layers = round(total_layers * memory_fractions[i])
+            node_layers = max(1, node_layers)
+
+        allocations.append(node_layers)
+        layers_assigned += node_layers
+
+    return allocations
+
+
 def get_shard_assignments_for_pipeline_parallel(
     model_meta: ModelMetadata,
     selected_cycle: list[NodeWithProfile],
@@ -62,20 +85,16 @@ def get_shard_assignments_for_pipeline_parallel(
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
 
-    layers_assigned = 0
-    for i, node in enumerate(selected_cycle):
-        if i == len(selected_cycle) - 1:
-            node_layers = total_layers - layers_assigned
-        else:
-            node_layers = round(
-                total_layers
-                * (
-                    node.node_profile.memory.ram_available.in_bytes
-                    / cycle_memory.in_bytes
-                )
-            )
-            node_layers = max(1, node_layers)
+    layer_allocations = allocate_layers_proportionally(
+        total_layers=total_layers,
+        memory_fractions=[
+            node.node_profile.memory.ram_available.in_bytes / cycle_memory.in_bytes
+            for node in selected_cycle
+        ],
+    )
 
+    layers_assigned = 0
+    for i, (node, node_layers) in enumerate(zip(selected_cycle, layer_allocations)):
         runner_id = RunnerId()
 
         shard = PipelineShardMetadata(
