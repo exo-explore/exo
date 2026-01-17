@@ -68,6 +68,10 @@ class JointBlockWrapper(ABC):
         """Switch to negative cache for CFG. False = primary cache."""
         self._use_negative_cache = use_negative
 
+    def set_text_seq_len(self, text_seq_len: int) -> None:
+        """Update text sequence length for CFG passes with different prompt lengths."""
+        self._text_seq_len = text_seq_len
+
     def _get_active_cache(self) -> ImagePatchKVCache | None:
         """Get the active KV cache based on current CFG pass."""
         if self._use_negative_cache:
@@ -328,6 +332,10 @@ class SingleBlockWrapper(ABC):
     def set_use_negative_cache(self, use_negative: bool) -> None:
         """Switch to negative cache for CFG. False = primary cache."""
         self._use_negative_cache = use_negative
+
+    def set_text_seq_len(self, text_seq_len: int) -> None:
+        """Update text sequence length for CFG passes with different prompt lengths."""
+        self._text_seq_len = text_seq_len
 
     def _get_active_cache(self) -> ImagePatchKVCache | None:
         """Get the active KV cache based on current CFG pass."""
