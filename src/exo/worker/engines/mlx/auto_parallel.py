@@ -46,9 +46,11 @@ class CustomMlxLayer(nn.Module):
 
     def __init__(self, original_layer: _LayerCallable):
         super().__init__()
-        # Set twice to avoid __setattr__ recursion
         object.__setattr__(self, "_original_layer", original_layer)
-        self.original_layer: _LayerCallable = original_layer
+
+    @property
+    def original_layer(self) -> _LayerCallable:
+        return cast(_LayerCallable, object.__getattribute__(self, "_original_layer"))
 
     # Calls __getattr__ for any attributes not found on nn.Module (e.g. use_sliding)
     if not TYPE_CHECKING:
@@ -58,7 +60,7 @@ class CustomMlxLayer(nn.Module):
                 return super().__getattr__(name)
             except AttributeError:
                 original_layer = object.__getattribute__(self, "_original_layer")
-                return object.__getattribute__(original_layer, name)
+                return getattr(original_layer, name)
 
 
 class PipelineFirstLayer(CustomMlxLayer):
@@ -155,7 +157,10 @@ def pipeline_auto_parallel(
     start_layer, end_layer = model_shard_meta.start_layer, model_shard_meta.end_layer
     device_rank, world_size = model_shard_meta.device_rank, model_shard_meta.world_size
 
+    # assume that at least one layer is assigned to the shard from placement
     layers = layers[start_layer:end_layer]
+
+    # pipeline last layer can be composed with pipeline first layer
     layers[0] = PipelineFirstLayer(layers[0], device_rank, group=group)
     layers[-1] = PipelineLastLayer(
         layers[-1],
@@ -168,12 +173,11 @@ def pipeline_auto_parallel(
         inner_model_instance.layer_types = inner_model_instance.layer_types[  # type: ignore
             start_layer:end_layer
         ]
-        inner_model_instance.swa_idx = inner_model_instance.layer_types.index(  # type: ignore
-            "sliding_attention"
-        )
-        inner_model_instance.ga_idx = inner_model_instance.layer_types.index(  # type: ignore
-            "full_attention"
-        )
+
+        layer_types: list[str] = inner_model_instance.layer_types  # type: ignore
+        # Default to 0 if layer type not present - the mask will be created but unused in mlx lm
+        inner_model_instance.swa_idx = 0 if "sliding_attention" not in layer_types else layer_types.index("sliding_attention")
+        inner_model_instance.ga_idx = 0 if "full_attention" not in layer_types else layer_types.index("full_attention")
 
     _set_layers(model, layers)
 
