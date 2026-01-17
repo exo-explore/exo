@@ -3,6 +3,7 @@ from typing import Callable
 import pytest
 
 from exo.master.placement_utils import (
+    allocate_layers_proportionally,
     filter_cycles_by_memory,
     get_hosts_from_subgraph,
     get_mlx_jaccl_coordinators,
@@ -165,6 +166,9 @@ def test_get_smallest_cycles(
         ((500, 500, 1000), 12, (3, 3, 6)),
         ((500, 500, 500), 12, (4, 4, 4)),
         ((312, 518, 1024), 12, (2, 3, 7)),
+        # Edge case: one node has ~90% of memory - should not over-allocate.
+        # Each node must have enough memory for at least 1 layer (50 KB = 1000/20).
+        ((900, 50, 50), 20, (18, 1, 1)),
     ],
 )
 def test_get_shard_assignments(
@@ -397,3 +401,96 @@ def test_get_mlx_jaccl_coordinators(
     assert coordinators[node_c_id] == (
         f"{conn_c_a.send_back_multiaddr.ip_address}:5000"
     ), "node_c should use the IP from conn_c_a"
+
+
+class TestAllocateLayersProportionally:
+    def test_empty_node_list_raises(self):
+        with pytest.raises(ValueError, match="empty node list"):
+            allocate_layers_proportionally(total_layers=10, memory_fractions=[])
+
+    def test_zero_layers_raises(self):
+        with pytest.raises(ValueError, match="need at least 1 layer per node"):
+            allocate_layers_proportionally(total_layers=0, memory_fractions=[0.5, 0.5])
+
+    def test_negative_layers_raises(self):
+        with pytest.raises(ValueError, match="need at least 1 layer per node"):
+            allocate_layers_proportionally(total_layers=-1, memory_fractions=[0.5, 0.5])
+
+    def test_fewer_layers_than_nodes_raises(self):
+        with pytest.raises(ValueError, match="need at least 1 layer per node"):
+            allocate_layers_proportionally(
+                total_layers=2, memory_fractions=[0.33, 0.33, 0.34]
+            )
+
+    def test_equal_distribution(self):
+        result = allocate_layers_proportionally(
+            total_layers=12, memory_fractions=[0.25, 0.25, 0.25, 0.25]
+        )
+        assert result == [3, 3, 3, 3]
+        assert sum(result) == 12
+
+    def test_proportional_distribution(self):
+        result = allocate_layers_proportionally(
+            total_layers=12, memory_fractions=[0.25, 0.25, 0.50]
+        )
+        assert result == [3, 3, 6]
+        assert sum(result) == 12
+
+    def test_extreme_imbalance_ensures_minimum(self):
+        result = allocate_layers_proportionally(
+            total_layers=20, memory_fractions=[0.975, 0.0125, 0.0125]
+        )
+        assert all(layers >= 1 for layers in result)
+        assert sum(result) == 20
+        # Small nodes get minimum 1 layer
+        assert result == [18, 1, 1]
+
+    def test_single_node_gets_all_layers(self):
+        result = allocate_layers_proportionally(total_layers=10, memory_fractions=[1.0])
+        assert result == [10]
+
+    def test_minimum_viable_allocation(self):
+        result = allocate_layers_proportionally(
+            total_layers=3, memory_fractions=[0.33, 0.33, 0.34]
+        )
+        assert result == [1, 1, 1]
+        assert sum(result) == 3
+
+
+def test_get_shard_assignments_insufficient_memory_raises(
+    topology: Topology,
+    create_node: Callable[[int, NodeId | None], NodeInfo],
+    create_connection: Callable[[NodeId, NodeId], Connection],
+):
+    """Test that ValueError is raised when a node has insufficient memory for its layers."""
+    node_a_id = NodeId()
+    node_b_id = NodeId()
+    node_c_id = NodeId()
+
+    # Node C has only 10 KB but would need 50 KB for 1 layer (1000 KB / 20 layers)
+    node_a = create_node(900 * 1024, node_a_id)
+    node_b = create_node(50 * 1024, node_b_id)
+    node_c = create_node(10 * 1024, node_c_id)  # Insufficient memory
+
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    topology.add_node(node_c)
+
+    topology.add_connection(create_connection(node_a_id, node_b_id))
+    topology.add_connection(create_connection(node_b_id, node_c_id))
+    topology.add_connection(create_connection(node_c_id, node_a_id))
+    topology.add_connection(create_connection(node_b_id, node_a_id))
+
+    model_meta = ModelMetadata(
+        model_id=ModelId("test-model"),
+        pretty_name="Test Model",
+        n_layers=20,
+        storage_size=Memory.from_kb(1000),
+        hidden_size=1000,
+        supports_tensor=True,
+    )
+    cycles = topology.get_cycles()
+    selected_cycle = cycles[0]
+
+    with pytest.raises(ValueError, match="insufficient memory"):
+        get_shard_assignments(model_meta, selected_cycle, Sharding.Pipeline)
