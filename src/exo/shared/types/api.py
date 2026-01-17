@@ -151,6 +151,7 @@ class ChatCompletionTaskParams(BaseModel):
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool | None = None
     user: str | None = None
+    continue_from_prefix: bool = False  # When True, continue the last assistant message
 
 
 class BenchChatCompletionTaskParams(ChatCompletionTaskParams):

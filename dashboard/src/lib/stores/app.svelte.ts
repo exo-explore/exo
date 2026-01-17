@@ -383,6 +383,21 @@ class AppStore {
 	private fetchInterval: ReturnType<typeof setInterval> | null = null;
 	private previewsInterval: ReturnType<typeof setInterval> | null = null;
 	private lastConversationPersistTs = 0;
+	private currentRequestController: AbortController | null = null;
+
+	/**
+	 * Abort any in-flight generation request
+	 */
+	abortCurrentRequest(): boolean {
+		if (this.currentRequestController) {
+			this.currentRequestController.abort();
+			this.currentRequestController = null;
+			this.isLoading = false;
+			this.currentResponse = "";
+			return true;
+		}
+		return false;
+	}
 
 	constructor() {
 		if (browser) {
@@ -1061,6 +1076,10 @@ class AppStore {
 		// Remove any messages after the user message
 		this.messages = this.messages.slice(0, lastUserIndex + 1);
 
+		// Create abort controller for this request
+		const controller = new AbortController();
+		this.currentRequestController = controller;
+
 		// Resend the message to get a new response
 		this.isLoading = true;
 		this.currentResponse = "";
@@ -1125,6 +1144,7 @@ class AppStore {
 					logprobs: true,
 					top_logprobs: 5,
 				}),
+				signal: controller.signal,
 			});
 
 			if (!response.ok) {
@@ -1231,6 +1251,10 @@ class AppStore {
 			}
 			this.persistActiveConversation();
 		} catch (error) {
+			// Don't show error for aborted requests (user cancelled)
+			if (error instanceof Error && error.name === "AbortError") {
+				return;
+			}
 			const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
 			if (idx !== -1) {
 				this.messages[idx].content =
@@ -1238,6 +1262,10 @@ class AppStore {
 			}
 			this.persistActiveConversation();
 		} finally {
+			// Clean up controller if this is still the active request
+			if (this.currentRequestController === controller) {
+				this.currentRequestController = null;
+			}
 			this.isLoading = false;
 			this.currentResponse = "";
 			this.updateActiveConversation();
@@ -1257,6 +1285,209 @@ class AppStore {
 		// Clear stats when model changes
 		this.ttftMs = null;
 		this.tps = null;
+	}
+
+	/**
+	 * Regenerate from a specific token in an assistant message.
+	 * Keeps content up to and including the specified token, then continues generation.
+	 * If a generation is already in progress, it will be aborted first.
+	 */
+	async regenerateFromToken(
+		messageId: string,
+		tokenIndex: number,
+	): Promise<void> {
+		// Abort any in-flight request first
+		this.abortCurrentRequest();
+
+		const messageIdx = this.messages.findIndex((m) => m.id === messageId);
+		if (messageIdx === -1) return;
+
+		const message = this.messages[messageIdx];
+		if (message.role !== "assistant" || !message.tokens) return;
+
+		// Get tokens up to and including the specified index
+		const keptTokens = message.tokens.slice(0, tokenIndex + 1);
+		const prefixText = keptTokens.map((t) => t.token).join("");
+
+		// Update the message with just the prefix
+		this.messages[messageIdx].content = prefixText;
+		this.messages[messageIdx].tokens = keptTokens;
+		this.messages[messageIdx].thinking = undefined;
+		this.persistActiveConversation();
+
+		// Start loading
+		this.isLoading = true;
+		this.currentResponse = prefixText;
+
+		// Create abort controller for this request
+		const controller = new AbortController();
+		this.currentRequestController = controller;
+
+		try {
+			const systemPrompt = {
+				role: "system" as const,
+				content:
+					"You are a helpful AI assistant. Respond directly and concisely. Do not show your reasoning or thought process.",
+			};
+
+			// Build messages: all messages before this one, plus the prefix as assistant
+			const apiMessages: { role: string; content: string }[] = [systemPrompt];
+			for (let i = 0; i < messageIdx; i++) {
+				const m = this.messages[i];
+				apiMessages.push({ role: m.role, content: m.content || "" });
+			}
+			// Add the prefix as a partial assistant response to continue from
+			apiMessages.push({ role: "assistant", content: prefixText });
+
+			// Determine which model to use
+			let modelToUse = this.selectedChatModel;
+			if (!modelToUse) {
+				const firstInstanceKey = Object.keys(this.instances)[0];
+				if (firstInstanceKey) {
+					const instance = this.instances[firstInstanceKey] as
+						| Record<string, unknown>
+						| undefined;
+					if (instance) {
+						const keys = Object.keys(instance);
+						if (keys.length === 1) {
+							const inst = instance[keys[0]] as
+								| { shardAssignments?: { modelId?: string } }
+								| undefined;
+							modelToUse = inst?.shardAssignments?.modelId || "";
+						}
+					}
+				}
+			}
+
+			if (!modelToUse) {
+				this.messages[messageIdx].content = prefixText + "\n\nError: No model available.";
+				this.isLoading = false;
+				this.updateActiveConversation();
+				return;
+			}
+
+			const response = await fetch("/v1/chat/completions", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					model: modelToUse,
+					messages: apiMessages,
+					stream: true,
+					logprobs: true,
+					top_logprobs: 5,
+					continue_from_prefix: true,
+				}),
+				signal: controller.signal,
+			});
+
+			if (!response.ok) {
+				const errorText = await response.text();
+				this.messages[messageIdx].content =
+					prefixText + `\n\nError: ${response.status} - ${errorText}`;
+				this.isLoading = false;
+				this.updateActiveConversation();
+				return;
+			}
+
+			const reader = response.body?.getReader();
+			if (!reader) {
+				this.messages[messageIdx].content =
+					prefixText + "\n\nError: No response stream available";
+				this.isLoading = false;
+				this.updateActiveConversation();
+				return;
+			}
+
+			const decoder = new TextDecoder();
+			let fullContent = prefixText;
+			let partialLine = "";
+			const collectedTokens: TokenData[] = [...keptTokens];
+
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+
+				const chunk = decoder.decode(value, { stream: true });
+				const lines = (partialLine + chunk).split("\n");
+				partialLine = lines.pop() || "";
+
+				for (const line of lines) {
+					const trimmed = line.trim();
+					if (!trimmed || trimmed === "data: [DONE]") continue;
+
+					if (trimmed.startsWith("data: ")) {
+						try {
+							const json = JSON.parse(trimmed.slice(6));
+							const delta = json.choices?.[0]?.delta?.content;
+							if (delta) {
+								// Extract logprobs for uncertainty visualization
+								const logprobsData = json.choices?.[0]?.logprobs;
+								if (logprobsData?.content?.[0]) {
+									const logprobItem = logprobsData.content[0];
+									const tokenData: TokenData = {
+										token: logprobItem.token || delta,
+										logprob: logprobItem.logprob ?? 0,
+										probability: Math.exp(logprobItem.logprob ?? 0),
+										topLogprobs: (logprobItem.top_logprobs || []).map(
+											(item: {
+												token: string;
+												logprob: number;
+												bytes?: number[];
+											}) => ({
+												token: item.token,
+												logprob: item.logprob,
+												bytes: item.bytes,
+											}),
+										),
+									};
+									collectedTokens.push(tokenData);
+								}
+
+								fullContent += delta;
+								const { displayContent, thinkingContent } =
+									this.stripThinkingTags(fullContent);
+								this.currentResponse = displayContent;
+
+								this.messages[messageIdx].content = displayContent;
+								this.messages[messageIdx].thinking =
+									thinkingContent || undefined;
+								this.messages[messageIdx].tokens = [...collectedTokens];
+								this.persistActiveConversation();
+							}
+						} catch {
+							// Skip malformed JSON
+						}
+					}
+				}
+			}
+
+			// Final cleanup
+			const { displayContent, thinkingContent } =
+				this.stripThinkingTags(fullContent);
+			this.messages[messageIdx].content = displayContent;
+			this.messages[messageIdx].thinking = thinkingContent || undefined;
+			if (collectedTokens.length > 0) {
+				this.messages[messageIdx].tokens = collectedTokens;
+			}
+			this.persistActiveConversation();
+		} catch (error) {
+			// Don't show error for aborted requests (user cancelled)
+			if (error instanceof Error && error.name === "AbortError") {
+				return;
+			}
+			this.messages[messageIdx].content =
+				prefixText +
+				`\n\nError: ${error instanceof Error ? error.message : "Unknown error"}`;
+			this.persistActiveConversation();
+		} finally {
+			// Clean up controller if this is still the active request
+			if (this.currentRequestController === controller) {
+				this.currentRequestController = null;
+			}
+			this.isLoading = false;
+			this.currentResponse = "";
+			this.updateActiveConversation();
+		}
 	}
 
 	/**
@@ -1314,6 +1545,10 @@ class AppStore {
 		if (!this.hasStartedChat) {
 			this.startChat();
 		}
+
+		// Create abort controller for this request
+		const controller = new AbortController();
+		this.currentRequestController = controller;
 
 		this.isLoading = true;
 		this.currentResponse = "";
@@ -1452,6 +1687,7 @@ class AppStore {
 					logprobs: true,
 					top_logprobs: 5,
 				}),
+				signal: controller.signal,
 			});
 
 			if (!response.ok) {
@@ -1596,6 +1832,10 @@ class AppStore {
 			}
 			this.persistActiveConversation();
 		} catch (error) {
+			// Don't show error for aborted requests (user cancelled)
+			if (error instanceof Error && error.name === "AbortError") {
+				return;
+			}
 			console.error("Error sending message:", error);
 			// Update the assistant message with error
 			const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
@@ -1605,6 +1845,10 @@ class AppStore {
 			}
 			this.persistActiveConversation();
 		} finally {
+			// Clean up controller if this is still the active request
+			if (this.currentRequestController === controller) {
+				this.currentRequestController = null;
+			}
 			this.isLoading = false;
 			this.currentResponse = "";
 			this.updateActiveConversation();
@@ -1684,6 +1928,9 @@ export const editMessage = (messageId: string, newContent: string) =>
 export const editAndRegenerate = (messageId: string, newContent: string) =>
 	appStore.editAndRegenerate(messageId, newContent);
 export const regenerateLastResponse = () => appStore.regenerateLastResponse();
+export const regenerateFromToken = (messageId: string, tokenIndex: number) =>
+	appStore.regenerateFromToken(messageId, tokenIndex);
+export const abortCurrentRequest = () => appStore.abortCurrentRequest();
 
 // Conversation actions
 export const conversations = () => appStore.conversations;

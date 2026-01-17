@@ -5,7 +5,8 @@
 		isLoading,
 		deleteMessage,
 		editAndRegenerate,
-		regenerateLastResponse
+		regenerateLastResponse,
+		regenerateFromToken
 	} from '$lib/stores/app.svelte';
 	import type { MessageAttachment } from '$lib/stores/app.svelte';
 	import MarkdownContent from './MarkdownContent.svelte';
@@ -386,7 +387,11 @@ function isThinkingExpanded(messageId: string): boolean {
 								<div class="text-xs text-foreground">
 									{#if message.role === 'assistant' && isUncertaintyViewEnabled(message.id) && message.tokens && message.tokens.length > 0}
 										<!-- Uncertainty heatmap view -->
-										<TokenHeatmap tokens={message.tokens} />
+										<TokenHeatmap
+											tokens={message.tokens}
+											isGenerating={loading}
+											onRegenerateFrom={(tokenIndex) => regenerateFromToken(message.id, tokenIndex)}
+										/>
 									{:else}
 										<!-- Normal markdown view -->
 										<MarkdownContent content={message.content || (loading ? response : '')} />

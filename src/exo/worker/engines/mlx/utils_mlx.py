@@ -359,12 +359,23 @@ def apply_chat_template(
             {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
         )
 
-    prompt: str = tokenizer.apply_chat_template(
-        formatted_messages,
-        tokenize=False,
-        add_generation_prompt=True,
-        tools=chat_task_data.tools,
-    )
+    # Use continue_final_message when continuing from prefix (e.g., regenerate from token)
+    # This keeps the final assistant message open without EOS tokens
+    prompt: str
+    if chat_task_data.continue_from_prefix:
+        prompt = tokenizer.apply_chat_template(
+            formatted_messages,
+            tokenize=False,
+            continue_final_message=True,
+            tools=chat_task_data.tools,
+        )
+    else:
+        prompt = tokenizer.apply_chat_template(
+            formatted_messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            tools=chat_task_data.tools,
+        )
 
     logger.info(prompt)
 

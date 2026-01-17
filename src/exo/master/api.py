@@ -718,9 +718,17 @@ class API:
                         and event.command_id in self._chat_completion_queues
                     ):
                         assert isinstance(event.chunk, TokenChunk)
-                        await self._chat_completion_queues[event.command_id].send(
-                            event.chunk
-                        )
+                        try:
+                            await self._chat_completion_queues[event.command_id].send(
+                                event.chunk
+                            )
+                        except (anyio.BrokenResourceError, KeyError):
+                            # Client disconnected, queue was closed/removed - this is expected
+                            # when clients abort requests (e.g., regenerate from token)
+                            logger.debug(
+                                f"Client disconnected for command {event.command_id}, "
+                                "dropping chunk"
+                            )
 
     async def _pause_on_new_election(self):
         with self.election_receiver as ems:

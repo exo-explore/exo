@@ -4,12 +4,24 @@
 	interface Props {
 		tokens: TokenData[];
 		class?: string;
+		isGenerating?: boolean;
+		onRegenerateFrom?: (tokenIndex: number) => void;
 	}
 
-	let { tokens, class: className = '' }: Props = $props();
+	let { tokens, class: className = '', isGenerating = false, onRegenerateFrom }: Props = $props();
 
-	// Tooltip state
-	let hoveredToken = $state<{ token: TokenData; x: number; y: number } | null>(null);
+	// Tooltip state - track both token data and index
+	let hoveredTokenIndex = $state<number | null>(null);
+	let hoveredPosition = $state<{ x: number; y: number } | null>(null);
+	let isTooltipHovered = $state(false);
+	let hideTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+	// Derive the hovered token from the index (stable across re-renders)
+	const hoveredToken = $derived(
+		hoveredTokenIndex !== null && hoveredPosition && tokens[hoveredTokenIndex]
+			? { token: tokens[hoveredTokenIndex], index: hoveredTokenIndex, ...hoveredPosition }
+			: null
+	);
 
 	/**
 	 * Get confidence styling based on probability.
@@ -33,17 +45,56 @@
 		return 'border-red-500/40';
 	}
 
-	function handleMouseEnter(event: MouseEvent, token: TokenData) {
+	function clearHideTimeout() {
+		if (hideTimeoutId) {
+			clearTimeout(hideTimeoutId);
+			hideTimeoutId = null;
+		}
+	}
+
+	function handleMouseEnter(event: MouseEvent, token: TokenData, index: number) {
+		clearHideTimeout();
 		const rect = (event.target as HTMLElement).getBoundingClientRect();
-		hoveredToken = {
-			token,
+		hoveredTokenIndex = index;
+		hoveredPosition = {
 			x: rect.left + rect.width / 2,
 			y: rect.top - 10
 		};
 	}
 
 	function handleMouseLeave() {
-		hoveredToken = null;
+		clearHideTimeout();
+		// Use longer delay during generation to account for re-renders
+		const delay = isGenerating ? 300 : 100;
+		hideTimeoutId = setTimeout(() => {
+			if (!isTooltipHovered) {
+				hoveredTokenIndex = null;
+				hoveredPosition = null;
+			}
+		}, delay);
+	}
+
+	function handleTooltipEnter() {
+		clearHideTimeout();
+		isTooltipHovered = true;
+	}
+
+	function handleTooltipLeave() {
+		isTooltipHovered = false;
+		hoveredTokenIndex = null;
+		hoveredPosition = null;
+	}
+
+	function handleRegenerate() {
+		if (hoveredToken && onRegenerateFrom) {
+			const indexToRegenerate = hoveredToken.index;
+			// Clear hover state immediately
+			hoveredTokenIndex = null;
+			hoveredPosition = null;
+			isTooltipHovered = false;
+			// Call regenerate
+			onRegenerateFrom(indexToRegenerate);
+		}
 	}
 
 	function formatProbability(prob: number): string {
@@ -68,7 +119,7 @@
 			role="button"
 			tabindex="0"
 			class="token-span inline rounded px-0.5 py-0.5 cursor-pointer transition-all duration-150 border {getConfidenceClass(tokenData.probability)} {getBorderClass(tokenData.probability)} hover:opacity-80"
-			onmouseenter={(e) => handleMouseEnter(e, tokenData)}
+			onmouseenter={(e) => handleMouseEnter(e, tokenData, i)}
 			onmouseleave={handleMouseLeave}
 		>{tokenData.token}</span>
 	{/each}
@@ -77,8 +128,10 @@
 <!-- Tooltip -->
 {#if hoveredToken}
 	<div
-		class="fixed z-50 pointer-events-none"
+		class="fixed z-50"
 		style="left: {hoveredToken.x}px; top: {hoveredToken.y}px; transform: translate(-50%, -100%);"
+		onmouseenter={handleTooltipEnter}
+		onmouseleave={handleTooltipLeave}
 	>
 		<div class="bg-gray-900/95 backdrop-blur-sm border border-gray-700/50 rounded-xl shadow-xl p-3 text-sm min-w-48">
 			<!-- Token info -->
@@ -94,8 +147,8 @@
 
 			<!-- Top alternatives -->
 			{#if hoveredToken.token.topLogprobs.length > 0}
-				<div class="border-t border-gray-700 mt-2 pt-2">
-					<div class="text-gray-400 text-xs mb-1">Alternatives:</div>
+				<div class="border-t border-gray-700/50 mt-2 pt-2">
+					<div class="text-gray-500 text-xs mb-1">Alternatives:</div>
 					{#each hoveredToken.token.topLogprobs.slice(0, 5) as alt, idx (idx)}
 						{@const altProb = Math.exp(alt.logprob)}
 						<div class="flex justify-between items-center text-xs py-0.5">
@@ -104,6 +157,19 @@
 						</div>
 					{/each}
 				</div>
+			{/if}
+
+			<!-- Regenerate button -->
+			{#if onRegenerateFrom}
+				<button
+					onclick={handleRegenerate}
+					class="w-full mt-2 pt-2 border-t border-gray-700/50 flex items-center justify-center gap-1.5 text-xs text-gray-400 hover:text-white transition-colors cursor-pointer"
+				>
+					<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+					</svg>
+					Regenerate from here
+				</button>
 			{/if}
 		</div>
 		<!-- Arrow -->
