@@ -886,6 +886,25 @@ class AppStore {
 		}
 	}
 
+	async deleteModel(modelId: string): Promise<boolean> {
+		try {
+			const response = await fetch(`/models/${encodeURIComponent(modelId)}`, {
+				method: "DELETE",
+			});
+
+			if (!response.ok) {
+				const error = await response.json();
+				throw new Error(error.detail || "Failed to delete model");
+			}
+
+			await this.fetchState();
+			return true;
+		} catch (error) {
+			console.error("Error deleting model:", error);
+			throw error;
+		}
+	}
+
 	async fetchPlacementPreviews(modelId: string, showLoading = true) {
 		if (!modelId) return;
 
@@ -1640,6 +1659,7 @@ export const setTopologyOnlyMode = (enabled: boolean) =>
 	appStore.setTopologyOnlyMode(enabled);
 export const toggleChatSidebarVisible = () =>
 	appStore.toggleChatSidebarVisible();
-export const setChatSidebarVisible = (visible: boolean) =>
-	appStore.setChatSidebarVisible(visible);
-export const refreshState = () => appStore.fetchState();
+	export const setChatSidebarVisible = (visible: boolean) =>
+		appStore.setChatSidebarVisible(visible);
+	export const refreshState = () => appStore.fetchState();
+	export const deleteModel = (modelId: string) => appStore.deleteModel(modelId);

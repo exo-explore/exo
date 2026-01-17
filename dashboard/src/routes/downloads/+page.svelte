@@ -5,7 +5,8 @@
 		downloads,
 		type DownloadProgress,
 		refreshState,
-		lastUpdate as lastUpdateStore
+		lastUpdate as lastUpdateStore,
+		deleteModel
 	} from '$lib/stores/app.svelte';
 	import HeaderNav from '$lib/components/HeaderNav.svelte';
 
@@ -297,6 +298,24 @@
 		// Ensure we fetch at least once when visiting downloads directly
 		refreshState();
 	});
+
+	let deletingModelId = $state<string | null>(null);
+
+	async function handleDeleteModel(nodeId: string, modelId: string, prettyName: string | null) {
+		if (!confirm(`Delete model "${prettyName ?? modelId}" from node "${getNodeLabel(nodeId)}"? This action cannot be undone.`)) {
+			return;
+		}
+
+		deletingModelId = modelId;
+		try {
+			await deleteModel(modelId);
+		} catch (error) {
+			console.error('Error deleting model:', error);
+			alert(`Failed to delete model: ${error instanceof Error ? error.message : 'Unknown error'}`);
+		} finally {
+			deletingModelId = null;
+		}
+	}
 </script>
 
 <div class="min-h-screen bg-exo-dark-gray text-white">
@@ -374,6 +393,17 @@
 										<span class="text-xs font-mono {pct >= 100 ? 'text-green-400' : pct <= 0 ? 'text-red-400' : 'text-exo-yellow'}">
 											{pct.toFixed(1)}%
 										</span>
+										{#if model.status === 'completed'}
+											<button
+												type="button"
+												class="text-xs text-red-400 hover:text-red-300 border border-red-500/30 px-2 py-1 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+												disabled={deletingModelId === model.modelId}
+												onclick={() => handleDeleteModel(node.nodeId, model.modelId, model.prettyName ?? null)}
+												title="Delete this model"
+											>
+												{deletingModelId === model.modelId ? 'Deleting...' : 'Delete'}
+											</button>
+										{/if}
 										<button
 											type="button"
 											class="text-exo-light-gray hover:text-exo-yellow transition-colors"

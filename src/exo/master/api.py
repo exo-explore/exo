@@ -2,6 +2,7 @@ import time
 from collections.abc import AsyncGenerator
 from typing import cast
 
+import aiofiles.os as aios
 import anyio
 from anyio import create_task_group
 from anyio.abc import TaskGroup
@@ -163,6 +164,7 @@ class API:
         self.app.get("/instance/{instance_id}")(self.get_instance)
         self.app.delete("/instance/{instance_id}")(self.delete_instance)
         self.app.get("/models")(self.get_models)
+        self.app.delete("/models/{model_id:path}")(self.delete_model)
         self.app.get("/v1/models")(self.get_models)
         self.app.post("/v1/chat/completions", response_model=None)(
             self.chat_completions
@@ -573,6 +575,51 @@ class API:
                 )
                 for card in MODEL_CARDS.values()
             ]
+        )
+
+    async def delete_model(self, model_id: str) -> dict:
+        """Delete a downloaded model from disk."""
+        from exo.worker.download.download_utils import delete_model
+
+        try:
+            success = await delete_model(model_id)
+            if not success:
+                raise HTTPException(
+                    status_code=404, detail=f"Model {model_id} not found on disk"
+                )
+
+            await self._filter_stale_downloads()
+
+            return {"message": f"Model {model_id} deleted successfully"}
+        except Exception as e:
+            logger.error(f"Error deleting model {model_id}: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    async def _filter_stale_downloads(self):
+        """Remove download entries for models that no longer exist on disk."""
+        from exo.shared.types.state import State
+        from exo.worker.download.download_utils import ensure_models_dir
+
+        models_dir = await ensure_models_dir()
+
+        filtered_downloads = {}
+        for node_id, download_list in self.state.downloads.items():
+            valid_downloads = []
+            for download in download_list:
+                model_id = download.shard_metadata.model_meta.model_id
+                model_path = models_dir / str(model_id).replace("/", "--")
+                if await aios.path.exists(model_path):
+                    valid_downloads.append(download)
+            if valid_downloads:
+                filtered_downloads[node_id] = valid_downloads
+
+        self.state = State(
+            topology=self.state.topology,
+            instances=self.state.instances,
+            runners=self.state.runners,
+            downloads=filtered_downloads,
+            tasks=self.state.tasks,
+            last_event_applied_idx=self.state.last_event_applied_idx,
         )
 
     async def run(self):
