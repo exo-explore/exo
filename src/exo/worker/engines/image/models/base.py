@@ -10,12 +10,10 @@ from mflux.utils.image_util import ImageUtil
 from exo.worker.engines.image.config import ImageModelConfig
 
 if TYPE_CHECKING:
-    from exo.worker.engines.image.pipeline.adapter import (
-        BlockWrapperMode,
-        JointBlockInterface,
-        SingleBlockInterface,
+    from exo.worker.engines.image.pipeline.block_wrapper import (
+        JointBlockWrapper,
+        SingleBlockWrapper,
     )
-    from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
 
 
 class PromptData(ABC):
@@ -128,13 +126,35 @@ class ModelAdapter(ABC):
         ...
 
     @abstractmethod
-    def get_joint_blocks(self) -> list["JointBlockInterface"]:
-        """Get the list of joint transformer blocks from the model."""
+    def get_joint_block_wrappers(
+        self,
+        text_seq_len: int,
+        encoder_hidden_states_mask: mx.array | None = None,
+    ) -> list["JointBlockWrapper"]:
+        """Create wrapped joint transformer blocks with pipefusion support.
+
+        Args:
+            text_seq_len: Number of text tokens (constant for generation)
+            encoder_hidden_states_mask: Attention mask for text (Qwen only)
+
+        Returns:
+            List of wrapped joint blocks ready for pipefusion
+        """
         ...
 
     @abstractmethod
-    def get_single_blocks(self) -> list["SingleBlockInterface"]:
-        """Get the list of single transformer blocks from the model."""
+    def get_single_block_wrappers(
+        self,
+        text_seq_len: int,
+    ) -> list["SingleBlockWrapper"]:
+        """Create wrapped single transformer blocks with pipefusion support.
+
+        Args:
+            text_seq_len: Number of text tokens (constant for generation)
+
+        Returns:
+            List of wrapped single blocks ready for pipefusion
+        """
         ...
 
     @abstractmethod
@@ -285,80 +305,12 @@ class ModelAdapter(ABC):
         """
         ...
 
-    @abstractmethod
-    def apply_joint_block(
-        self,
-        block: "JointBlockInterface",
-        hidden_states: mx.array,
-        encoder_hidden_states: mx.array,
-        text_embeddings: mx.array,
-        rotary_embeddings: Any,
-        kv_cache: "ImagePatchKVCache | None",
-        mode: "BlockWrapperMode",
-        text_seq_len: int,
-        patch_start: int | None = None,
-        patch_end: int | None = None,
-        encoder_hidden_states_mask: mx.array | None = None,
-        block_idx: int | None = None,
-    ) -> tuple[mx.array, mx.array]:
-        """Apply a joint transformer block.
-
-        Args:
-            block: The joint transformer block
-            hidden_states: Image hidden states
-            encoder_hidden_states: Text hidden states
-            text_embeddings: Conditioning embeddings
-            rotary_embeddings: Rotary position embeddings (format varies by model)
-            kv_cache: KV cache (None if not using cache)
-            mode: CACHING or PATCHED mode
-            text_seq_len: Text sequence length
-            patch_start: Start index for patched mode
-            patch_end: End index for patched mode
-            encoder_hidden_states_mask: Attention mask for text (Qwen)
-            block_idx: Block index for debugging (Qwen)
-
-        Returns:
-            Tuple of (encoder_hidden_states, hidden_states)
-        """
-        ...
-
     def merge_streams(
         self,
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
     ) -> mx.array:
         return mx.concatenate([encoder_hidden_states, hidden_states], axis=1)
-
-    @abstractmethod
-    def apply_single_block(
-        self,
-        block: "SingleBlockInterface",
-        hidden_states: mx.array,
-        text_embeddings: mx.array,
-        rotary_embeddings: mx.array,
-        kv_cache: "ImagePatchKVCache | None",
-        mode: "BlockWrapperMode",
-        text_seq_len: int,
-        patch_start: int | None = None,
-        patch_end: int | None = None,
-    ) -> mx.array:
-        """Apply a single transformer block.
-
-        Args:
-            block: The single transformer block
-            hidden_states: Concatenated [text + image] hidden states
-            text_embeddings: Conditioning embeddings
-            rotary_embeddings: Rotary position embeddings
-            kv_cache: KV cache (None if not using cache)
-            mode: CACHING or PATCHED mode
-            text_seq_len: Text sequence length
-            patch_start: Start index for patched mode
-            patch_end: End index for patched mode
-
-        Returns:
-            Output hidden states
-        """
-        ...
 
     @abstractmethod
     def apply_guidance(
