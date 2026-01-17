@@ -189,6 +189,15 @@ class DiffusionRunner:
             for wrapper in self.single_block_wrappers:
                 wrapper.set_use_negative_cache(use_negative)
 
+    def _set_text_seq_len(self, text_seq_len: int) -> None:
+        """Set text sequence length on all wrappers for current pass."""
+        if self.joint_block_wrappers:
+            for wrapper in self.joint_block_wrappers:
+                wrapper.set_text_seq_len(text_seq_len)
+        if self.single_block_wrappers:
+            for wrapper in self.single_block_wrappers:
+                wrapper.set_text_seq_len(text_seq_len)
+
     def _calculate_capture_steps(
         self,
         partial_images: int,
@@ -582,6 +591,8 @@ class DiffusionRunner:
         hidden_dim = self.adapter.hidden_dim
         dtype = scaled_hidden_states.dtype
 
+        self._set_text_seq_len(text_seq_len)
+
         if self.joint_block_wrappers:
             for wrapper in self.joint_block_wrappers:
                 wrapper.set_encoder_mask(encoder_hidden_states_mask)
@@ -853,6 +864,7 @@ class DiffusionRunner:
             patch = patch_latents[patch_idx]
 
             self._set_use_negative_cache(False)
+            self._set_text_seq_len(prompt_data.prompt_embeds.shape[1])
             if self.joint_block_wrappers:
                 for wrapper in self.joint_block_wrappers:
                     wrapper.set_encoder_mask(encoder_mask)
@@ -876,6 +888,7 @@ class DiffusionRunner:
                 assert image_rotary_embeddings_neg is not None
 
                 self._set_use_negative_cache(True)
+                self._set_text_seq_len(negative_prompt_embeds.shape[1])
                 if self.joint_block_wrappers:
                     for wrapper in self.joint_block_wrappers:
                         wrapper.set_encoder_mask(encoder_mask_neg)
