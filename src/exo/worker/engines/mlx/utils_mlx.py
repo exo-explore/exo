@@ -431,6 +431,18 @@ def apply_chat_template(
     return prompt
 
 
+def detect_thinking_prompt_suffix(prompt: str) -> str | None:
+    """
+    Detect if prompt ends with a thinking opening tag that should be
+    prepended to the output stream.
+
+    Returns the tag to prepend (e.g., "<think>") or None if not applicable.
+    """
+    if prompt.rstrip().endswith("<think>"):
+        return "<think>"
+    return None
+
+
 class NullKVCache(KVCache):
     """
     A KVCache that pretends to exist but holds zero tokens.

@@ -50,6 +50,8 @@ from exo.shared.types.worker.runners import (
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
+    apply_chat_template,
+    detect_thinking_prompt_suffix,
     initialize_mlx,
     load_mlx_items,
     mlx_force_oom,
@@ -187,6 +189,15 @@ def main(
                         # GPT-OSS specific parsing to match other model formats.
                         if isinstance(model, GptOssModel):
                             mlx_generator = parse_gpt_oss(mlx_generator)
+                        else:
+                            # For other thinking models (GLM, etc.), check if we need to
+                            # prepend the thinking tag that was consumed by the chat template
+                            prompt = apply_chat_template(tokenizer, task_params)
+                            thinking_prefix = detect_thinking_prompt_suffix(prompt)
+                            if thinking_prefix is not None:
+                                mlx_generator = parse_thinking_models(
+                                    mlx_generator, thinking_prefix
+                                )
 
                         # TODO: Add tool call parser here
 
@@ -291,6 +302,24 @@ def parse_gpt_oss(
                 yield response.model_copy(update={"text": "</think>"})
             yield response
             break
+
+
+def parse_thinking_models(
+    responses: Generator[GenerationResponse],
+    thinking_prefix: str,
+) -> Generator[GenerationResponse]:
+    """
+    For models that inject thinking tags in the prompt (like GLM-4.7),
+    prepend the thinking tag to the output stream so the frontend
+    can properly parse thinking content.
+    """
+    first = True
+    for response in responses:
+        if first:
+            first = False
+            # Yield the thinking prefix using first token's metadata
+            yield response.model_copy(update={"text": thinking_prefix})
+        yield response
 
 
 EXO_RUNNER_MUST_FAIL = "EXO RUNNER MUST FAIL"
