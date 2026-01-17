@@ -3,9 +3,7 @@
 from collections.abc import AsyncGenerator
 
 from exo.shared.types.api import (
-    ChatCompletionChoice,
     ChatCompletionMessage,
-    ChatCompletionResponse,
     FinishReason,
 )
 from exo.shared.types.chunks import TokenChunk
@@ -90,31 +88,41 @@ def claude_request_to_chat_params(
     )
 
 
-def chat_response_to_claude_response(
-    response: ChatCompletionResponse,
+async def collect_claude_response(
+    command_id: CommandId,
+    model: str,
+    chunk_stream: AsyncGenerator[TokenChunk, None],
 ) -> ClaudeMessagesResponse:
-    """Convert internal ChatCompletionResponse to Claude Messages API response."""
-    content_text = ""
+    """Collect all token chunks and return a single ClaudeMessagesResponse."""
+    text_parts: list[str] = []
     stop_reason: ClaudeStopReason | None = None
+    last_stats = None
+    error_message: str | None = None
 
-    if response.choices:
-        choice = response.choices[0]
-        if isinstance(choice, ChatCompletionChoice) and choice.message.content:
-            content_text = (
-                choice.message.content
-                if isinstance(choice.message.content, str)
-                else str(choice.message.content)
-            )
-        stop_reason = finish_reason_to_claude_stop_reason(choice.finish_reason)
+    async for chunk in chunk_stream:
+        if chunk.finish_reason == "error":
+            error_message = chunk.error_message or "Internal server error"
+            break
 
-    # Use actual usage data from response if available
-    input_tokens = response.usage.prompt_tokens if response.usage else 0
-    output_tokens = response.usage.completion_tokens if response.usage else 0
+        text_parts.append(chunk.text)
+        last_stats = chunk.stats or last_stats
+
+        if chunk.finish_reason is not None:
+            stop_reason = finish_reason_to_claude_stop_reason(chunk.finish_reason)
+
+    if error_message is not None:
+        raise ValueError(error_message)
+
+    combined_text = "".join(text_parts)
+
+    # Use actual usage data from stats if available
+    input_tokens = last_stats.prompt_tokens if last_stats else 0
+    output_tokens = last_stats.generation_tokens if last_stats else 0
 
     return ClaudeMessagesResponse(
-        id=f"msg_{response.id}",
-        model=response.model,
-        content=[ClaudeTextBlock(text=content_text)],
+        id=f"msg_{command_id}",
+        model=model,
+        content=[ClaudeTextBlock(text=combined_text)],
         stop_reason=stop_reason,
         usage=ClaudeUsage(
             input_tokens=input_tokens,

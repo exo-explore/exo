@@ -7,15 +7,8 @@ import pydantic
 import pytest
 
 from exo.master.adapters.claude import (
-    chat_response_to_claude_response,
     claude_request_to_chat_params,
     finish_reason_to_claude_stop_reason,
-)
-from exo.shared.types.api import (
-    ChatCompletionChoice,
-    ChatCompletionMessage,
-    ChatCompletionResponse,
-    Usage,
 )
 from exo.shared.types.claude_api import (
     ClaudeContentBlockDeltaEvent,
@@ -165,112 +158,6 @@ class TestClaudeRequestToChatParams:
         assert params.top_k == 40
         assert params.stop == ["STOP", "END"]
         assert params.stream is True
-
-
-class TestChatResponseToClaudeResponse:
-    """Tests for converting ChatCompletionResponse to Claude Messages API response."""
-
-    def test_basic_response_conversion(self):
-        response = ChatCompletionResponse(
-            id="chatcmpl-123",
-            created=1234567890,
-            model="llama-3.2-1b",
-            choices=[
-                ChatCompletionChoice(
-                    index=0,
-                    message=ChatCompletionMessage(
-                        role="assistant",
-                        content="Hello! How can I help you?",
-                    ),
-                    finish_reason="stop",
-                )
-            ],
-            usage=Usage(prompt_tokens=10, completion_tokens=7, total_tokens=17),
-        )
-        claude_response = chat_response_to_claude_response(response)
-
-        assert claude_response.id == "msg_chatcmpl-123"
-        assert claude_response.model == "llama-3.2-1b"
-        assert claude_response.role == "assistant"
-        assert claude_response.type == "message"
-        assert len(claude_response.content) == 1
-        assert claude_response.content[0].type == "text"
-        assert claude_response.content[0].text == "Hello! How can I help you?"
-        assert claude_response.stop_reason == "end_turn"
-        assert claude_response.usage.input_tokens == 10
-        assert claude_response.usage.output_tokens == 7
-
-    def test_response_with_length_finish_reason(self):
-        response = ChatCompletionResponse(
-            id="chatcmpl-123",
-            created=1234567890,
-            model="llama-3.2-1b",
-            choices=[
-                ChatCompletionChoice(
-                    index=0,
-                    message=ChatCompletionMessage(
-                        role="assistant", content="Truncated..."
-                    ),
-                    finish_reason="length",
-                )
-            ],
-        )
-        claude_response = chat_response_to_claude_response(response)
-
-        assert claude_response.stop_reason == "max_tokens"
-
-    def test_response_with_empty_content(self):
-        response = ChatCompletionResponse(
-            id="chatcmpl-123",
-            created=1234567890,
-            model="llama-3.2-1b",
-            choices=[
-                ChatCompletionChoice(
-                    index=0,
-                    message=ChatCompletionMessage(role="assistant", content=""),
-                    finish_reason="stop",
-                )
-            ],
-            usage=Usage(prompt_tokens=10, completion_tokens=0, total_tokens=10),
-        )
-        claude_response = chat_response_to_claude_response(response)
-
-        assert claude_response.content[0].text == ""
-        assert claude_response.usage.output_tokens == 0
-
-    def test_response_with_no_choices(self):
-        response = ChatCompletionResponse(
-            id="chatcmpl-123",
-            created=1234567890,
-            model="llama-3.2-1b",
-            choices=[],
-        )
-        claude_response = chat_response_to_claude_response(response)
-
-        assert claude_response.content[0].text == ""
-        assert claude_response.stop_reason is None
-        assert claude_response.usage.input_tokens == 0
-        assert claude_response.usage.output_tokens == 0
-
-    def test_response_without_usage(self):
-        """Test response conversion when usage data is not available."""
-        response = ChatCompletionResponse(
-            id="chatcmpl-123",
-            created=1234567890,
-            model="llama-3.2-1b",
-            choices=[
-                ChatCompletionChoice(
-                    index=0,
-                    message=ChatCompletionMessage(role="assistant", content="Hello!"),
-                    finish_reason="stop",
-                )
-            ],
-        )
-        claude_response = chat_response_to_claude_response(response)
-
-        assert claude_response.content[0].text == "Hello!"
-        assert claude_response.usage.input_tokens == 0
-        assert claude_response.usage.output_tokens == 0
 
 
 class TestClaudeMessagesRequestValidation:

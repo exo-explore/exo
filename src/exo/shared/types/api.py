@@ -158,7 +158,7 @@ class BenchChatCompletionResponse(ChatCompletionResponse):
 
 
 class ChatCompletionTaskParams(BaseModel):
-    model: str
+    model: ModelId
     frequency_penalty: float | None = None
     messages: list[ChatCompletionMessage]
     logit_bias: dict[str, int] | None = None
