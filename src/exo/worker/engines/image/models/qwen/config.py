@@ -24,7 +24,7 @@ QWEN_IMAGE_CONFIG = ImageModelConfig(
     default_steps={"low": 10, "medium": 25, "high": 50},
     num_sync_steps_factor=0.125,  # ~3 sync steps for medium (30 steps)
     uses_attention_mask=True,  # Qwen uses encoder_hidden_states_mask
-    guidance_scale=None,  # Set to None or < 1.0 to disable CFG
+    guidance_scale=3.5,  # Set to None or < 1.0 to disable CFG
 )
 
 # Qwen-Image-Edit uses the same architecture but different processing pipeline
@@ -45,5 +45,5 @@ QWEN_IMAGE_EDIT_CONFIG = ImageModelConfig(
     default_steps={"low": 10, "medium": 25, "high": 50},
     num_sync_steps_factor=0.125,
     uses_attention_mask=True,
-    guidance_scale=None,
+    guidance_scale=3.5,
 )
