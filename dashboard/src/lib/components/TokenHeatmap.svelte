@@ -12,27 +12,25 @@
 	let hoveredToken = $state<{ token: TokenData; x: number; y: number } | null>(null);
 
 	/**
-	 * Get confidence level based on probability
-	 * High: >0.8 (logprob > -0.22)
-	 * Medium: 0.5-0.8 (logprob -0.69 to -0.22)
-	 * Low: 0.2-0.5 (logprob -1.61 to -0.69)
-	 * Very Low: <0.2 (logprob < -1.61)
+	 * Get confidence styling based on probability.
+	 * Following Apple design principles: high confidence tokens blend in,
+	 * only uncertainty draws attention.
 	 */
 	function getConfidenceClass(probability: number): string {
-		if (probability > 0.8) return 'bg-green-500/30 text-green-100';
-		if (probability > 0.5) return 'bg-yellow-500/30 text-yellow-100';
-		if (probability > 0.2) return 'bg-orange-500/30 text-orange-100';
-		return 'bg-red-500/40 text-red-100';
+		if (probability > 0.8) return 'text-inherit'; // Expected tokens - blend in
+		if (probability > 0.5) return 'bg-gray-500/10 text-inherit'; // Slight hint
+		if (probability > 0.2) return 'bg-amber-500/15 text-amber-200/90'; // Subtle warmth
+		return 'bg-red-500/20 text-red-200/90'; // Draws attention
 	}
 
 	/**
-	 * Get border color for token based on probability
+	 * Get border/underline styling for uncertain tokens
 	 */
 	function getBorderClass(probability: number): string {
-		if (probability > 0.8) return 'border-green-500/50';
-		if (probability > 0.5) return 'border-yellow-500/50';
-		if (probability > 0.2) return 'border-orange-500/50';
-		return 'border-red-500/50';
+		if (probability > 0.8) return 'border-transparent'; // No border for expected
+		if (probability > 0.5) return 'border-gray-500/20';
+		if (probability > 0.2) return 'border-amber-500/30';
+		return 'border-red-500/40';
 	}
 
 	function handleMouseEnter(event: MouseEvent, token: TokenData) {
@@ -55,6 +53,13 @@
 	function formatLogprob(logprob: number): string {
 		return logprob.toFixed(3);
 	}
+
+	function getProbabilityColor(probability: number): string {
+		if (probability > 0.8) return 'text-gray-300';
+		if (probability > 0.5) return 'text-gray-400';
+		if (probability > 0.2) return 'text-amber-400';
+		return 'text-red-400';
+	}
 </script>
 
 <div class="token-heatmap leading-relaxed {className}">
@@ -75,12 +80,12 @@
 		class="fixed z-50 pointer-events-none"
 		style="left: {hoveredToken.x}px; top: {hoveredToken.y}px; transform: translate(-50%, -100%);"
 	>
-		<div class="bg-gray-900 border border-gray-700 rounded-lg shadow-xl p-3 text-sm min-w-48">
+		<div class="bg-gray-900/95 backdrop-blur-sm border border-gray-700/50 rounded-xl shadow-xl p-3 text-sm min-w-48">
 			<!-- Token info -->
 			<div class="mb-2">
-				<span class="text-gray-400 text-xs">Token:</span>
+				<span class="text-gray-500 text-xs">Token:</span>
 				<span class="text-white font-mono ml-1">"{hoveredToken.token.token}"</span>
-				<span class="text-green-400 ml-2">{formatProbability(hoveredToken.token.probability)}</span>
+				<span class="{getProbabilityColor(hoveredToken.token.probability)} ml-2">{formatProbability(hoveredToken.token.probability)}</span>
 			</div>
 
 			<div class="text-gray-400 text-xs mb-1">

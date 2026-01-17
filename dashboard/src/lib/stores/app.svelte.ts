@@ -1157,6 +1157,7 @@ class AppStore {
 			const decoder = new TextDecoder();
 			let fullContent = "";
 			let partialLine = "";
+			const collectedTokens: TokenData[] = [];
 
 			while (true) {
 				const { done, value } = await reader.read();
@@ -1175,6 +1176,25 @@ class AppStore {
 							const json = JSON.parse(trimmed.slice(6));
 							const delta = json.choices?.[0]?.delta?.content;
 							if (delta) {
+								// Extract logprobs for uncertainty visualization
+								const logprobsData = json.choices?.[0]?.logprobs;
+								if (logprobsData?.content?.[0]) {
+									const logprobItem = logprobsData.content[0];
+									const tokenData: TokenData = {
+										token: logprobItem.token || delta,
+										logprob: logprobItem.logprob ?? 0,
+										probability: Math.exp(logprobItem.logprob ?? 0),
+										topLogprobs: (logprobItem.top_logprobs || []).map(
+											(item: { token: string; logprob: number; bytes?: number[] }) => ({
+												token: item.token,
+												logprob: item.logprob,
+												bytes: item.bytes,
+											}),
+										),
+									};
+									collectedTokens.push(tokenData);
+								}
+
 								fullContent += delta;
 								const { displayContent, thinkingContent } =
 									this.stripThinkingTags(fullContent);
@@ -1187,6 +1207,7 @@ class AppStore {
 								if (idx !== -1) {
 									this.messages[idx].content = displayContent;
 									this.messages[idx].thinking = thinkingContent || undefined;
+									this.messages[idx].tokens = [...collectedTokens];
 								}
 								this.persistActiveConversation();
 							}
@@ -1204,6 +1225,9 @@ class AppStore {
 			if (idx !== -1) {
 				this.messages[idx].content = displayContent;
 				this.messages[idx].thinking = thinkingContent || undefined;
+				if (collectedTokens.length > 0) {
+					this.messages[idx].tokens = collectedTokens;
+				}
 			}
 			this.persistActiveConversation();
 		} catch (error) {
