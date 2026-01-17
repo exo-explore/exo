@@ -36,10 +36,12 @@ class JointBlockWrapper(ABC):
         """
         self.block = block
         self._text_seq_len = text_seq_len
-        self._kv_cache: ImagePatchKVCache | None = None
+        self._kv_cache: ImagePatchKVCache | None = None  # Primary (or positive for CFG)
+        self._kv_cache_negative: ImagePatchKVCache | None = None  # Only for CFG
         self._mode = BlockWrapperMode.CACHING
         self._patch_start: int = 0
         self._patch_end: int = 0
+        self._use_negative_cache: bool = False
 
     def set_patch(
         self,
@@ -62,40 +64,61 @@ class JointBlockWrapper(ABC):
         self._patch_end = patch_end
         return self
 
+    def set_use_negative_cache(self, use_negative: bool) -> None:
+        """Switch to negative cache for CFG. False = primary cache."""
+        self._use_negative_cache = use_negative
+
+    def _get_active_cache(self) -> ImagePatchKVCache | None:
+        """Get the active KV cache based on current CFG pass."""
+        if self._use_negative_cache:
+            return self._kv_cache_negative
+        return self._kv_cache
+
     def _ensure_cache(self, img_key: mx.array) -> None:
         """Create cache on first CACHING forward using actual dimensions."""
-        if self._kv_cache is None:
-            batch, num_heads, img_seq_len, head_dim = img_key.shape
-            self._kv_cache = ImagePatchKVCache(
-                batch_size=batch,
-                num_heads=num_heads,
-                image_seq_len=img_seq_len,
-                head_dim=head_dim,
-            )
+        batch, num_heads, img_seq_len, head_dim = img_key.shape
+        if self._use_negative_cache:
+            if self._kv_cache_negative is None:
+                self._kv_cache_negative = ImagePatchKVCache(
+                    batch_size=batch,
+                    num_heads=num_heads,
+                    image_seq_len=img_seq_len,
+                    head_dim=head_dim,
+                )
+        else:
+            if self._kv_cache is None:
+                self._kv_cache = ImagePatchKVCache(
+                    batch_size=batch,
+                    num_heads=num_heads,
+                    image_seq_len=img_seq_len,
+                    head_dim=head_dim,
+                )
 
     def _cache_full_image_kv(self, img_key: mx.array, img_value: mx.array) -> None:
         """Store full image K/V during CACHING mode."""
         self._ensure_cache(img_key)
-        assert self._kv_cache is not None
-        self._kv_cache.update_image_patch(0, img_key.shape[2], img_key, img_value)
+        cache = self._get_active_cache()
+        assert cache is not None
+        cache.update_image_patch(0, img_key.shape[2], img_key, img_value)
 
     def _cache_patch_kv(self, img_key: mx.array, img_value: mx.array) -> None:
         """Store current patch's K/V during PATCHED mode."""
-        assert self._kv_cache is not None
-        self._kv_cache.update_image_patch(
-            self._patch_start, self._patch_end, img_key, img_value
-        )
+        cache = self._get_active_cache()
+        assert cache is not None
+        cache.update_image_patch(self._patch_start, self._patch_end, img_key, img_value)
 
     def _get_full_kv(
         self, text_key: mx.array, text_value: mx.array
     ) -> tuple[mx.array, mx.array]:
         """Get full K/V by combining fresh text with cached image."""
-        assert self._kv_cache is not None
-        return self._kv_cache.get_full_kv(text_key, text_value)
+        cache = self._get_active_cache()
+        assert cache is not None
+        return cache.get_full_kv(text_key, text_value)
 
     def reset_cache(self) -> None:
-        """Reset the KV cache. Call at the start of a new generation."""
+        """Reset all KV caches. Call at the start of a new generation."""
         self._kv_cache = None
+        self._kv_cache_negative = None
 
     def set_encoder_mask(self, mask: mx.array | None) -> None:  # noqa: B027
         """Set the encoder hidden states mask for attention.
@@ -283,10 +306,12 @@ class SingleBlockWrapper(ABC):
         """
         self.block = block
         self._text_seq_len = text_seq_len
-        self._kv_cache: ImagePatchKVCache | None = None
+        self._kv_cache: ImagePatchKVCache | None = None  # Primary (or positive for CFG)
+        self._kv_cache_negative: ImagePatchKVCache | None = None  # Only for CFG
         self._mode = BlockWrapperMode.CACHING
         self._patch_start: int = 0
         self._patch_end: int = 0
+        self._use_negative_cache: bool = False
 
     def set_patch(
         self,
@@ -300,40 +325,61 @@ class SingleBlockWrapper(ABC):
         self._patch_end = patch_end
         return self
 
+    def set_use_negative_cache(self, use_negative: bool) -> None:
+        """Switch to negative cache for CFG. False = primary cache."""
+        self._use_negative_cache = use_negative
+
+    def _get_active_cache(self) -> ImagePatchKVCache | None:
+        """Get the active KV cache based on current CFG pass."""
+        if self._use_negative_cache:
+            return self._kv_cache_negative
+        return self._kv_cache
+
     def _ensure_cache(self, img_key: mx.array) -> None:
         """Create cache on first CACHING forward using actual dimensions."""
-        if self._kv_cache is None:
-            batch, num_heads, img_seq_len, head_dim = img_key.shape
-            self._kv_cache = ImagePatchKVCache(
-                batch_size=batch,
-                num_heads=num_heads,
-                image_seq_len=img_seq_len,
-                head_dim=head_dim,
-            )
+        batch, num_heads, img_seq_len, head_dim = img_key.shape
+        if self._use_negative_cache:
+            if self._kv_cache_negative is None:
+                self._kv_cache_negative = ImagePatchKVCache(
+                    batch_size=batch,
+                    num_heads=num_heads,
+                    image_seq_len=img_seq_len,
+                    head_dim=head_dim,
+                )
+        else:
+            if self._kv_cache is None:
+                self._kv_cache = ImagePatchKVCache(
+                    batch_size=batch,
+                    num_heads=num_heads,
+                    image_seq_len=img_seq_len,
+                    head_dim=head_dim,
+                )
 
     def _cache_full_image_kv(self, img_key: mx.array, img_value: mx.array) -> None:
         """Store full image K/V during CACHING mode."""
         self._ensure_cache(img_key)
-        assert self._kv_cache is not None
-        self._kv_cache.update_image_patch(0, img_key.shape[2], img_key, img_value)
+        cache = self._get_active_cache()
+        assert cache is not None
+        cache.update_image_patch(0, img_key.shape[2], img_key, img_value)
 
     def _cache_patch_kv(self, img_key: mx.array, img_value: mx.array) -> None:
         """Store current patch's K/V during PATCHED mode."""
-        assert self._kv_cache is not None
-        self._kv_cache.update_image_patch(
-            self._patch_start, self._patch_end, img_key, img_value
-        )
+        cache = self._get_active_cache()
+        assert cache is not None
+        cache.update_image_patch(self._patch_start, self._patch_end, img_key, img_value)
 
     def _get_full_kv(
         self, text_key: mx.array, text_value: mx.array
     ) -> tuple[mx.array, mx.array]:
         """Get full K/V by combining fresh text with cached image."""
-        assert self._kv_cache is not None
-        return self._kv_cache.get_full_kv(text_key, text_value)
+        cache = self._get_active_cache()
+        assert cache is not None
+        return cache.get_full_kv(text_key, text_value)
 
     def reset_cache(self) -> None:
-        """Reset the KV cache."""
+        """Reset all KV caches. Call at the start of a new generation."""
         self._kv_cache = None
+        self._kv_cache_negative = None
 
     def __call__(
         self,
