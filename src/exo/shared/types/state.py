@@ -7,7 +7,12 @@ from pydantic.alias_generators import to_camel
 
 from exo.shared.topology import Topology, TopologySnapshot
 from exo.shared.types.common import NodeId
-from exo.shared.types.profiling import NodePerformanceProfile
+from exo.shared.types.profiling import (
+    MemoryPerformanceProfile,
+    NetworkInterfaceInfo,
+    NodeIdentity,
+    SystemPerformanceProfile,
+)
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
@@ -35,7 +40,10 @@ class State(CamelCaseModel):
     runners: Mapping[RunnerId, RunnerStatus] = {}
     downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {}
     tasks: Mapping[TaskId, Task] = {}
-    node_profiles: Mapping[NodeId, NodePerformanceProfile] = {}
+    node_identities: Mapping[NodeId, NodeIdentity] = {}
+    node_memories: Mapping[NodeId, MemoryPerformanceProfile] = {}
+    node_systems: Mapping[NodeId, SystemPerformanceProfile] = {}
+    node_networks: Mapping[NodeId, list[NetworkInterfaceInfo]] = {}
     last_seen: Mapping[NodeId, datetime] = {}
     topology: Topology = Field(default_factory=Topology)
     last_event_applied_idx: int = Field(default=-1, ge=-1)

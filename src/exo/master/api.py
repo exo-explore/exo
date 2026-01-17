@@ -600,9 +600,8 @@ class API:
         """Calculate total available memory across all nodes in bytes."""
         total_available = Memory()
 
-        for node in self.state.topology.list_nodes():
-            if node.node_profile is not None:
-                total_available += node.node_profile.memory.ram_available
+        for memory in self.state.node_memories.values():
+            total_available += memory.ram_available
 
         return total_available
 

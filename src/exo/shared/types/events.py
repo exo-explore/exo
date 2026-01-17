@@ -2,10 +2,14 @@ from datetime import datetime
 
 from pydantic import Field
 
-from exo.shared.topology import Connection, NodePerformanceProfile
+from exo.shared.topology import Connection
 from exo.shared.types.chunks import GenerationChunk
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
-from exo.shared.types.profiling import MemoryPerformanceProfile
+from exo.shared.types.profiling import (
+    MemoryPerformanceProfile,
+    NetworkInterfaceInfo,
+    SystemPerformanceProfile,
+)
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
@@ -85,13 +89,35 @@ class NodeTimedOut(BaseEvent):
     node_id: NodeId
 
 
-class NodePerformanceMeasured(BaseEvent):
+class NodeIdentityMeasured(BaseEvent):
+    """Static identity info - emitted once at startup."""
+
     node_id: NodeId
     when: str  # this is a manually cast datetime overrode by the master when the event is indexed, rather than the local time on the device
-    node_profile: NodePerformanceProfile
+    model_id: str
+    chip_id: str
+    friendly_name: str
+
+
+class NodeSystemMeasured(BaseEvent):
+    """Dynamic system metrics (GPU, temp, power) - emitted at 1s intervals."""
+
+    node_id: NodeId
+    when: str  # this is a manually cast datetime overrode by the master when the event is indexed, rather than the local time on the device
+    system: SystemPerformanceProfile
+
+
+class NodeNetworkMeasured(BaseEvent):
+    """Semi-static network interface info - emitted at 30s intervals."""
+
+    node_id: NodeId
+    when: str  # this is a manually cast datetime overrode by the master when the event is indexed, rather than the local time on the device
+    network_interfaces: list[NetworkInterfaceInfo]
 
 
 class NodeMemoryMeasured(BaseEvent):
+    """Dynamic memory metrics - emitted at 0.5s intervals."""
+
     node_id: NodeId
     when: str  # this is a manually cast datetime overrode by the master when the event is indexed, rather than the local time on the device
     memory: MemoryPerformanceProfile
@@ -127,7 +153,9 @@ Event = (
     | RunnerDeleted
     | NodeCreated
     | NodeTimedOut
-    | NodePerformanceMeasured
+    | NodeIdentityMeasured
+    | NodeSystemMeasured
+    | NodeNetworkMeasured
     | NodeMemoryMeasured
     | NodeDownloadProgress
     | ChunkGenerated

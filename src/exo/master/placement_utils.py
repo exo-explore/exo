@@ -25,7 +25,10 @@ class NodeWithProfile(BaseModel):
 
 
 def narrow_all_nodes(nodes: list[NodeInfo]) -> TypeGuard[list[NodeWithProfile]]:
-    return all(node.node_profile is not None for node in nodes)
+    return all(
+        node.node_profile is not None and node.node_profile.memory is not None
+        for node in nodes
+    )
 
 
 def filter_cycles_by_memory(
@@ -36,8 +39,14 @@ def filter_cycles_by_memory(
         if not narrow_all_nodes(cycle):
             continue
 
+        # narrow_all_nodes guarantees memory is not None
         total_mem = sum(
-            (node.node_profile.memory.ram_available for node in cycle), start=Memory()
+            (
+                node.node_profile.memory.ram_available
+                for node in cycle
+                if node.node_profile.memory is not None
+            ),
+            start=Memory(),
         )
         if total_mem >= required_memory:
             filtered_cycles.append(cast(list[NodeInfo], cycle))
@@ -88,7 +97,11 @@ def get_shard_assignments_for_pipeline_parallel(
         raise ValueError("Cannot create shard assignments for empty node cycle")
 
     cycle_memory = sum(
-        (node.node_profile.memory.ram_available for node in selected_cycle),
+        (
+            node.node_profile.memory.ram_available
+            for node in selected_cycle
+            if node.node_profile.memory is not None
+        ),
         start=Memory(),
     )
 
@@ -105,6 +118,7 @@ def get_shard_assignments_for_pipeline_parallel(
         memory_fractions=[
             node.node_profile.memory.ram_available.in_bytes / cycle_memory.in_bytes
             for node in selected_cycle
+            if node.node_profile.memory is not None
         ],
     )
 
@@ -113,6 +127,7 @@ def get_shard_assignments_for_pipeline_parallel(
     for i, (node, node_layers) in enumerate(
         zip(selected_cycle, layer_allocations, strict=True)
     ):
+        assert node.node_profile.memory is not None
         required_memory = node_layers * memory_per_layer
         available_memory = node.node_profile.memory.ram_available.in_bytes
         if required_memory > available_memory:
