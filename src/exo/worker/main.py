@@ -16,8 +16,10 @@ from exo.shared.types.events import (
     ForwarderEvent,
     IndexedEvent,
     NodeDownloadProgress,
+    NodeIdentityMeasured,
     NodeMemoryMeasured,
-    NodePerformanceMeasured,
+    NodeNetworkMeasured,
+    NodeSystemMeasured,
     TaskCreated,
     TaskStatusUpdated,
     TopologyEdgeCreated,
@@ -25,7 +27,11 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.models import ModelId
 from exo.shared.types.multiaddr import Multiaddr
-from exo.shared.types.profiling import MemoryPerformanceProfile, NodePerformanceProfile
+from exo.shared.types.profiling import (
+    MemoryPerformanceProfile,
+    NetworkInterfaceInfo,
+    SystemPerformanceProfile,
+)
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     CreateRunner,
@@ -51,7 +57,13 @@ from exo.worker.download.download_utils import (
 from exo.worker.download.shard_downloader import RepoDownloadProgress, ShardDownloader
 from exo.worker.plan import plan
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
-from exo.worker.utils import start_polling_memory_metrics, start_polling_node_metrics
+from exo.worker.utils import (
+    IdentityMetrics,
+    start_polling_identity_metrics,
+    start_polling_memory_metrics,
+    start_polling_network_metrics,
+    start_polling_system_metrics,
+)
 from exo.worker.utils.net_profile import check_reachable
 
 
@@ -98,37 +110,51 @@ class Worker:
     async def run(self):
         logger.info("Starting Worker")
 
-        # TODO: CLEANUP HEADER
-        async def resource_monitor_callback(
-            node_performance_profile: NodePerformanceProfile,
-        ) -> None:
+        async def identity_callback(identity: IdentityMetrics) -> None:
             await self.event_sender.send(
-                NodePerformanceMeasured(
+                NodeIdentityMeasured(
                     node_id=self.node_id,
-                    node_profile=node_performance_profile,
+                    model_id=identity.model_id,
+                    chip_id=identity.chip_id,
+                    friendly_name=identity.friendly_name,
                     when=str(datetime.now(tz=timezone.utc)),
                 ),
             )
 
-        async def memory_monitor_callback(
-            memory_profile: MemoryPerformanceProfile,
-        ) -> None:
+        async def system_callback(system: SystemPerformanceProfile) -> None:
+            await self.event_sender.send(
+                NodeSystemMeasured(
+                    node_id=self.node_id,
+                    system=system,
+                    when=str(datetime.now(tz=timezone.utc)),
+                ),
+            )
+
+        async def network_callback(interfaces: list[NetworkInterfaceInfo]) -> None:
+            await self.event_sender.send(
+                NodeNetworkMeasured(
+                    node_id=self.node_id,
+                    network_interfaces=interfaces,
+                    when=str(datetime.now(tz=timezone.utc)),
+                ),
+            )
+
+        async def memory_callback(memory: MemoryPerformanceProfile) -> None:
             await self.event_sender.send(
                 NodeMemoryMeasured(
                     node_id=self.node_id,
-                    memory=memory_profile,
+                    memory=memory,
                     when=str(datetime.now(tz=timezone.utc)),
                 )
             )
 
-        # END CLEANUP
-
         async with create_task_group() as tg:
             self._tg = tg
             tg.start_soon(self.plan_step)
-            tg.start_soon(start_polling_node_metrics, resource_monitor_callback)
-
-            tg.start_soon(start_polling_memory_metrics, memory_monitor_callback)
+            tg.start_soon(start_polling_identity_metrics, identity_callback)
+            tg.start_soon(start_polling_system_metrics, system_callback)
+            tg.start_soon(start_polling_network_metrics, network_callback)
+            tg.start_soon(start_polling_memory_metrics, memory_callback)
             tg.start_soon(self._emit_existing_download_progress)
             tg.start_soon(self._connection_message_event_writer)
             tg.start_soon(self._resend_out_for_delivery)
