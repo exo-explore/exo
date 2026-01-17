@@ -13,8 +13,10 @@ from exo.shared.types.events import (
     InstanceDeleted,
     NodeCreated,
     NodeDownloadProgress,
+    NodeIdentityMeasured,
     NodeMemoryMeasured,
-    NodePerformanceMeasured,
+    NodeNetworkMeasured,
+    NodeSystemMeasured,
     NodeTimedOut,
     RunnerDeleted,
     RunnerStatusUpdated,
@@ -27,7 +29,13 @@ from exo.shared.types.events import (
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
 )
-from exo.shared.types.profiling import NodePerformanceProfile, SystemPerformanceProfile
+from exo.shared.types.profiling import (
+    MemoryPerformanceProfile,
+    NetworkInterfaceInfo,
+    NodeIdentity,
+    NodePerformanceProfile,
+    SystemPerformanceProfile,
+)
 from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.topology import NodeInfo
@@ -51,8 +59,12 @@ def event_apply(event: Event, state: State) -> State:
             return apply_topology_node_created(event, state)
         case NodeTimedOut():
             return apply_node_timed_out(event, state)
-        case NodePerformanceMeasured():
-            return apply_node_performance_measured(event, state)
+        case NodeIdentityMeasured():
+            return apply_node_identity_measured(event, state)
+        case NodeSystemMeasured():
+            return apply_node_system_measured(event, state)
+        case NodeNetworkMeasured():
+            return apply_node_network_measured(event, state)
         case NodeDownloadProgress():
             return apply_node_download_progress(event, state)
         case NodeMemoryMeasured():
@@ -190,8 +202,19 @@ def apply_runner_deleted(event: RunnerDeleted, state: State) -> State:
 def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
     topology = copy.copy(state.topology)
     state.topology.remove_node(event.node_id)
-    node_profiles = {
-        key: value for key, value in state.node_profiles.items() if key != event.node_id
+    node_identities = {
+        key: value
+        for key, value in state.node_identities.items()
+        if key != event.node_id
+    }
+    node_memories = {
+        key: value for key, value in state.node_memories.items() if key != event.node_id
+    }
+    node_systems = {
+        key: value for key, value in state.node_systems.items() if key != event.node_id
+    }
+    node_networks = {
+        key: value for key, value in state.node_networks.items() if key != event.node_id
     }
     last_seen = {
         key: value for key, value in state.last_seen.items() if key != event.node_id
@@ -199,32 +222,120 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
     return state.model_copy(
         update={
             "topology": topology,
-            "node_profiles": node_profiles,
+            "node_identities": node_identities,
+            "node_memories": node_memories,
+            "node_systems": node_systems,
+            "node_networks": node_networks,
             "last_seen": last_seen,
         }
     )
 
 
-def apply_node_performance_measured(
-    event: NodePerformanceMeasured, state: State
-) -> State:
-    new_profiles: Mapping[NodeId, NodePerformanceProfile] = {
-        **state.node_profiles,
-        event.node_id: event.node_profile,
+def _reconstruct_profile(
+    node_id: NodeId,
+    state: State,
+    *,
+    identity: NodeIdentity | None = None,
+    memory: MemoryPerformanceProfile | None = None,
+    system: SystemPerformanceProfile | None = None,
+    network_interfaces: list[NetworkInterfaceInfo] | None = None,
+) -> NodePerformanceProfile:
+    """Reconstruct a NodePerformanceProfile from split state storage.
+
+    Uses provided overrides, falling back to state values.
+    """
+    ident = identity or state.node_identities.get(node_id)
+    mem = memory or state.node_memories.get(node_id)
+    sys = system or state.node_systems.get(node_id)
+    nets = (
+        network_interfaces
+        if network_interfaces is not None
+        else state.node_networks.get(node_id, [])
+    )
+
+    return NodePerformanceProfile(
+        model_id=ident.model_id if ident else None,
+        chip_id=ident.chip_id if ident else None,
+        friendly_name=ident.friendly_name if ident else None,
+        memory=mem,
+        network_interfaces=nets,
+        system=sys,
+    )
+
+
+def apply_node_identity_measured(event: NodeIdentityMeasured, state: State) -> State:
+    topology = copy.copy(state.topology)
+
+    identity = NodeIdentity(
+        model_id=event.model_id,
+        chip_id=event.chip_id,
+        friendly_name=event.friendly_name,
+    )
+    new_identities: Mapping[NodeId, NodeIdentity] = {
+        **state.node_identities,
+        event.node_id: identity,
     }
     last_seen: Mapping[NodeId, datetime] = {
         **state.last_seen,
         event.node_id: datetime.fromisoformat(event.when),
     }
-    state = state.model_copy(update={"node_profiles": new_profiles})
-    topology = copy.copy(state.topology)
-    # TODO: NodeCreated
     if not topology.contains_node(event.node_id):
         topology.add_node(NodeInfo(node_id=event.node_id))
-    topology.update_node_profile(event.node_id, event.node_profile)
+    reconstructed = _reconstruct_profile(event.node_id, state, identity=identity)
+    topology.update_node_profile(event.node_id, reconstructed)
     return state.model_copy(
         update={
-            "node_profiles": new_profiles,
+            "node_identities": new_identities,
+            "topology": topology,
+            "last_seen": last_seen,
+        }
+    )
+
+
+def apply_node_system_measured(event: NodeSystemMeasured, state: State) -> State:
+    topology = copy.copy(state.topology)
+
+    new_systems: Mapping[NodeId, SystemPerformanceProfile] = {
+        **state.node_systems,
+        event.node_id: event.system,
+    }
+    last_seen: Mapping[NodeId, datetime] = {
+        **state.last_seen,
+        event.node_id: datetime.fromisoformat(event.when),
+    }
+    if not topology.contains_node(event.node_id):
+        topology.add_node(NodeInfo(node_id=event.node_id))
+    reconstructed = _reconstruct_profile(event.node_id, state, system=event.system)
+    topology.update_node_profile(event.node_id, reconstructed)
+    return state.model_copy(
+        update={
+            "node_systems": new_systems,
+            "topology": topology,
+            "last_seen": last_seen,
+        }
+    )
+
+
+def apply_node_network_measured(event: NodeNetworkMeasured, state: State) -> State:
+    topology = copy.copy(state.topology)
+
+    new_networks: Mapping[NodeId, list[NetworkInterfaceInfo]] = {
+        **state.node_networks,
+        event.node_id: event.network_interfaces,
+    }
+    last_seen: Mapping[NodeId, datetime] = {
+        **state.last_seen,
+        event.node_id: datetime.fromisoformat(event.when),
+    }
+    if not topology.contains_node(event.node_id):
+        topology.add_node(NodeInfo(node_id=event.node_id))
+    reconstructed = _reconstruct_profile(
+        event.node_id, state, network_interfaces=event.network_interfaces
+    )
+    topology.update_node_profile(event.node_id, reconstructed)
+    return state.model_copy(
+        update={
+            "node_networks": new_networks,
             "topology": topology,
             "last_seen": last_seen,
         }
@@ -232,57 +343,26 @@ def apply_node_performance_measured(
 
 
 def apply_node_memory_measured(event: NodeMemoryMeasured, state: State) -> State:
-    existing = state.node_profiles.get(event.node_id)
     topology = copy.copy(state.topology)
 
-    if existing is None:
-        created = NodePerformanceProfile(
-            model_id="unknown",
-            chip_id="unknown",
-            friendly_name="Unknown",
-            memory=event.memory,
-            network_interfaces=[],
-            system=SystemPerformanceProfile(
-                # TODO: flops_fp16=0.0,
-                gpu_usage=0.0,
-                temp=0.0,
-                sys_power=0.0,
-                pcpu_usage=0.0,
-                ecpu_usage=0.0,
-                ane_power=0.0,
-            ),
-        )
-        created_profiles: Mapping[NodeId, NodePerformanceProfile] = {
-            **state.node_profiles,
-            event.node_id: created,
-        }
-        last_seen: Mapping[NodeId, datetime] = {
-            **state.last_seen,
-            event.node_id: datetime.fromisoformat(event.when),
-        }
-        if not topology.contains_node(event.node_id):
-            topology.add_node(NodeInfo(node_id=event.node_id))
-            # TODO: NodeCreated
-        topology.update_node_profile(event.node_id, created)
-        return state.model_copy(
-            update={
-                "node_profiles": created_profiles,
-                "topology": topology,
-                "last_seen": last_seen,
-            }
-        )
-
-    updated = existing.model_copy(update={"memory": event.memory})
-    updated_profiles: Mapping[NodeId, NodePerformanceProfile] = {
-        **state.node_profiles,
-        event.node_id: updated,
+    new_memories: Mapping[NodeId, MemoryPerformanceProfile] = {
+        **state.node_memories,
+        event.node_id: event.memory,
     }
-    # TODO: NodeCreated
+    last_seen: Mapping[NodeId, datetime] = {
+        **state.last_seen,
+        event.node_id: datetime.fromisoformat(event.when),
+    }
     if not topology.contains_node(event.node_id):
         topology.add_node(NodeInfo(node_id=event.node_id))
-    topology.update_node_profile(event.node_id, updated)
+    reconstructed = _reconstruct_profile(event.node_id, state, memory=event.memory)
+    topology.update_node_profile(event.node_id, reconstructed)
     return state.model_copy(
-        update={"node_profiles": updated_profiles, "topology": topology}
+        update={
+            "node_memories": new_memories,
+            "topology": topology,
+            "last_seen": last_seen,
+        }
     )
 
 

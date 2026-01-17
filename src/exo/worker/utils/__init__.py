@@ -1,6 +1,15 @@
-from .profile import start_polling_memory_metrics, start_polling_node_metrics
+from .profile import (
+    IdentityMetrics,
+    start_polling_identity_metrics,
+    start_polling_memory_metrics,
+    start_polling_network_metrics,
+    start_polling_system_metrics,
+)
 
 __all__ = [
-    "start_polling_node_metrics",
+    "IdentityMetrics",
+    "start_polling_identity_metrics",
     "start_polling_memory_metrics",
+    "start_polling_network_metrics",
+    "start_polling_system_metrics",
 ]

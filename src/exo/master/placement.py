@@ -113,6 +113,7 @@ def place_instance(
                 node.node_profile.memory.ram_available
                 for node in cycle
                 if node.node_profile is not None
+                and node.node_profile.memory is not None
             ),
             start=Memory(),
         ),

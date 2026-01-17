@@ -1,6 +1,7 @@
 import asyncio
 import os
 import platform
+from dataclasses import dataclass
 from typing import Any, Callable, Coroutine
 
 import anyio
@@ -9,7 +10,7 @@ from loguru import logger
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     MemoryPerformanceProfile,
-    NodePerformanceProfile,
+    NetworkInterfaceInfo,
     SystemPerformanceProfile,
 )
 
@@ -25,6 +26,13 @@ from .system_info import (
     get_model_and_chip,
     get_network_interfaces,
 )
+
+
+@dataclass(frozen=True)
+class IdentityMetrics:
+    model_id: str
+    chip_id: str
+    friendly_name: str
 
 
 async def get_metrics_async() -> Metrics | None:
@@ -67,48 +75,73 @@ async def start_polling_memory_metrics(
             await anyio.sleep(poll_interval_s)
 
 
-async def start_polling_node_metrics(
-    callback: Callable[[NodePerformanceProfile], Coroutine[Any, Any, None]],
-):
-    poll_interval_s = 1.0
+async def start_polling_identity_metrics(
+    callback: Callable[[IdentityMetrics], Coroutine[Any, Any, None]],
+    *,
+    poll_interval_s: float = 30.0,
+) -> None:
+    """Continuously poll and emit identity metrics at 30s intervals."""
+    while True:
+        try:
+            model_id, chip_id = await get_model_and_chip()
+            friendly_name = await get_friendly_name()
+            await callback(
+                IdentityMetrics(
+                    model_id=model_id,
+                    chip_id=chip_id,
+                    friendly_name=friendly_name,
+                )
+            )
+        except Exception as e:
+            logger.opt(exception=e).error("Failed to emit identity metrics")
+        finally:
+            await anyio.sleep(poll_interval_s)
+
+
+async def start_polling_system_metrics(
+    callback: Callable[[SystemPerformanceProfile], Coroutine[Any, Any, None]],
+    *,
+    poll_interval_s: float = 1.0,
+) -> None:
+    """Continuously poll and emit system metrics (GPU, temp, power) at 1s intervals."""
     while True:
         try:
             metrics = await get_metrics_async()
             if metrics is None:
                 return
 
-            network_interfaces = get_network_interfaces()
-            # these awaits could be joined but realistically they should be cached
-            model_id, chip_id = await get_model_and_chip()
-            friendly_name = await get_friendly_name()
-
-            # do the memory profile last to get a fresh reading to not conflict with the other memory profiling loop
-            memory_profile = get_memory_profile()
-
             await callback(
-                NodePerformanceProfile(
-                    model_id=model_id,
-                    chip_id=chip_id,
-                    friendly_name=friendly_name,
-                    network_interfaces=network_interfaces,
-                    memory=memory_profile,
-                    system=SystemPerformanceProfile(
-                        gpu_usage=metrics.gpu_usage[1],
-                        temp=metrics.temp.gpu_temp_avg,
-                        sys_power=metrics.sys_power,
-                        pcpu_usage=metrics.pcpu_usage[1],
-                        ecpu_usage=metrics.ecpu_usage[1],
-                        ane_power=metrics.ane_power,
-                    ),
+                SystemPerformanceProfile(
+                    gpu_usage=metrics.gpu_usage[1],
+                    temp=metrics.temp.gpu_temp_avg,
+                    sys_power=metrics.sys_power,
+                    pcpu_usage=metrics.pcpu_usage[1],
+                    ecpu_usage=metrics.ecpu_usage[1],
+                    ane_power=metrics.ane_power,
                 )
             )
-
         except asyncio.TimeoutError:
             logger.warning(
-                "[resource_monitor] Operation timed out after 30s, skipping this cycle."
+                "[system_monitor] Operation timed out after 30s, skipping this cycle."
             )
         except MacMonError as e:
-            logger.opt(exception=e).error("Resource Monitor encountered error")
+            logger.opt(exception=e).error("System Monitor encountered error")
             return
+        finally:
+            await anyio.sleep(poll_interval_s)
+
+
+async def start_polling_network_metrics(
+    callback: Callable[[list[NetworkInterfaceInfo]], Coroutine[Any, Any, None]],
+    *,
+    poll_interval_s: float = 30.0,
+) -> None:
+    """Continuously poll and emit network interface info at 30s intervals."""
+    while True:
+        try:
+            network_interfaces = get_network_interfaces()
+            await callback(network_interfaces)
+        except Exception as e:
+            logger.opt(exception=e).error("Network Monitor encountered error")
         finally:
             await anyio.sleep(poll_interval_s)

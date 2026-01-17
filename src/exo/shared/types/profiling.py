@@ -52,13 +52,21 @@ class NetworkInterfaceInfo(CamelCaseModel):
     ip_address: str
 
 
-class NodePerformanceProfile(CamelCaseModel):
+class NodeIdentity(CamelCaseModel):
+    """Static identity info for a node."""
+
     model_id: str
     chip_id: str
     friendly_name: str
-    memory: MemoryPerformanceProfile
+
+
+class NodePerformanceProfile(CamelCaseModel):
+    model_id: str | None = None
+    chip_id: str | None = None
+    friendly_name: str | None = None
+    memory: MemoryPerformanceProfile | None = None
     network_interfaces: list[NetworkInterfaceInfo] = []
-    system: SystemPerformanceProfile
+    system: SystemPerformanceProfile | None = None
 
 
 class ConnectionProfile(CamelCaseModel):
