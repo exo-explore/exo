@@ -13,3 +13,8 @@ KV_CACHE_BITS: int | None = None
 
 # TODO: We should really make this opt-in, but Kimi requires trust_remote_code=True
 TRUST_REMOTE_CODE: bool = True
+
+# Multi-Token Prediction (MTP) configuration for DeepSeek V3
+# MTP enables speculative decoding using the model's built-in draft layer
+MTP_ENABLED: bool = True  # Feature flag to enable/disable MTP
+MTP_NUM_DRAFT_TOKENS: int = 1  # Number of tokens to draft (vLLM reports k=1 is optimal)

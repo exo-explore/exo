@@ -27,6 +27,7 @@ from exo.shared.models.model_cards import ModelId
 from exo.worker.engines.mlx.constants import (
     CACHE_GROUP_SIZE,
     KV_CACHE_BITS,
+    MTP_ENABLED,
     TRUST_REMOTE_CODE,
 )
 
@@ -68,6 +69,67 @@ from exo.worker.runner.bootstrap import logger
 Group = mx.distributed.Group
 # Needed for 8 bit model
 resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 4096))
+
+
+# MTP (Multi-Token Prediction) support for DeepSeek V3
+MTP_LAYER_INDEX = 61
+_original_deepseek_sanitize: Callable[..., dict[str, Any]] | None = None
+
+
+def _is_deepseek_v3_model(model: nn.Module) -> bool:
+    """Check if the model is DeepSeek V3."""
+    return hasattr(model, "model") and isinstance(model.model, DeepseekV3Model)
+
+
+def _patch_deepseek_sanitize_for_mtp() -> None:
+    """Patch DeepSeek V3 Model.sanitize to preserve MTP layer weights.
+
+    The original sanitize() method filters out layer 61 (MTP layer) weights.
+    This patch keeps them so we can extract and use the MTP module.
+    """
+    global _original_deepseek_sanitize
+    from mlx_lm.models.deepseek_v3 import Model as DeepSeekV3Model
+
+    if _original_deepseek_sanitize is not None:
+        # Already patched
+        return
+
+    _original_deepseek_sanitize = DeepSeekV3Model.sanitize
+
+    def sanitize_with_mtp(
+        self: DeepSeekV3Model, weights: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Modified sanitize that keeps MTP layer weights."""
+        # First, call the original sanitize to handle all the weight transformations
+        # (dequantization, expert stacking, etc.)
+        if _original_deepseek_sanitize is None:
+            raise RuntimeError(
+                "_original_deepseek_sanitize is None - patch not applied correctly"
+            )
+        original_result: dict[str, Any] = _original_deepseek_sanitize(self, weights)
+
+        # Re-add the MTP layer weights that were filtered out
+        mtp_weights = {
+            k: v
+            for k, v in weights.items()
+            if k.startswith(f"model.layers.{MTP_LAYER_INDEX}")
+        }
+
+        return {**original_result, **mtp_weights}
+
+    DeepSeekV3Model.sanitize = sanitize_with_mtp
+
+
+def _restore_deepseek_sanitize() -> None:
+    """Restore the original DeepSeek V3 sanitize method."""
+    global _original_deepseek_sanitize
+    if _original_deepseek_sanitize is None:
+        return
+
+    from mlx_lm.models.deepseek_v3 import Model as DeepSeekV3Model
+
+    DeepSeekV3Model.sanitize = _original_deepseek_sanitize
+    _original_deepseek_sanitize = None
 
 
 # TODO: Test this
@@ -205,29 +267,162 @@ def load_mlx_items(
     group: Group | None,
     on_timeout: TimeoutCallback | None = None,
 ) -> tuple[Model, TokenizerWrapper]:
-    if group is None:
-        logger.info(f"Single device used for {bound_instance.instance}")
-        model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
-        start_time = time.perf_counter()
-        model, _ = load_model(model_path, strict=True)
-        end_time = time.perf_counter()
-        logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
-        tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
+    """Load MLX model and tokenizer.
 
-    else:
-        logger.info("Starting distributed init")
-        start_time = time.perf_counter()
-        model, tokenizer = shard_and_load(
-            bound_instance.bound_shard, group=group, on_timeout=on_timeout
-        )
-        end_time = time.perf_counter()
-        logger.info(
-            f"Time taken to shard and load model: {(end_time - start_time):.2f}s"
-        )
+    Returns:
+        Tuple of (model, tokenizer)
+    """
+    model_id = bound_instance.bound_shard.model_meta.model_id
+    mtp_module = None
+
+    # Patch sanitize for MTP if this might be DeepSeek V3
+    should_try_mtp = MTP_ENABLED and _might_be_deepseek_v3(model_id)
+    if should_try_mtp:
+        logger.info("Patching DeepSeek V3 sanitize for MTP weight preservation")
+        _patch_deepseek_sanitize_for_mtp()
+
+    try:
+        if group is None:
+            logger.info(f"Single device used for {bound_instance.instance}")
+            model_path = build_model_path(model_id)
+            start_time = time.perf_counter()
+            model, _ = load_model(model_path, strict=not should_try_mtp)
+            end_time = time.perf_counter()
+            logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
+            tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
+
+        else:
+            logger.info("Starting distributed init")
+            start_time = time.perf_counter()
+            model, tokenizer = shard_and_load(
+                bound_instance.bound_shard, group=group, on_timeout=on_timeout
+            )
+            end_time = time.perf_counter()
+            logger.info(
+                f"Time taken to shard and load model: {(end_time - start_time):.2f}s"
+            )
+
+        # Extract MTP module if available
+        if should_try_mtp and _is_deepseek_v3_model(model):
+            mtp_module = _extract_mtp_module(model)
+            if mtp_module is not None:
+                logger.info("Successfully extracted MTP module from DeepSeek V3")
+
+    finally:
+        # Restore original sanitize
+        if should_try_mtp:
+            _restore_deepseek_sanitize()
 
     set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
 
+    # Store MTP module on the model for later access
+    if mtp_module is not None:
+        model.mtp_module = mtp_module  # noqa: B010
+
     return cast(Model, model), tokenizer
+
+
+def _might_be_deepseek_v3(model_id: str) -> bool:
+    """Check if model ID suggests this might be DeepSeek V3."""
+    model_id_lower = model_id.lower()
+    return "deepseek" in model_id_lower and (
+        "v3" in model_id_lower or "r1" in model_id_lower
+    )
+
+
+def _flatten_params(
+    params: dict[str, Any],
+    prefix: str = "",
+) -> dict[str, mx.array]:
+    """Flatten nested parameter dict to flat dict with dot-separated keys."""
+    result: dict[str, mx.array] = {}
+    for key, value in params.items():
+        full_key = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, mx.array):
+            result[full_key] = value
+        elif isinstance(value, dict):
+            result.update(_flatten_params(value, full_key))
+    return result
+
+
+def _extract_mtp_module(model: nn.Module) -> Any | None:
+    """Extract MTP module from a loaded DeepSeek V3 model.
+
+    The MTP weights are stored in model.model.layers at index 61 (if preserved).
+    This function extracts them and creates an MTPModule.
+
+    Returns:
+        MTPModule if MTP weights were found and extracted, None otherwise.
+    """
+    from exo.worker.engines.mlx.mtp.module import (
+        MTPModule,
+        extract_mtp_weights,
+        load_mtp_weights_into_module,
+    )
+
+    try:
+        # Check if the model has the MTP layer
+        inner_model = getattr(model, "model", None)
+        if inner_model is None or not hasattr(inner_model, "layers"):
+            logger.debug("Model doesn't have expected structure for MTP extraction")
+            return None
+
+        layers: list[nn.Module] = inner_model.layers  # type: ignore[assignment]
+        if len(layers) <= MTP_LAYER_INDEX:
+            logger.debug(
+                f"Model has {len(layers)} layers, MTP layer {MTP_LAYER_INDEX} not found"
+            )
+            return None
+
+        # Get model config
+        config = getattr(model, "args", None)
+        if config is None:
+            logger.debug("Could not get model config for MTP module")
+            return None
+
+        # Create MTP module with shared weights
+        embed_tokens = getattr(inner_model, "embed_tokens", None)
+        lm_head = getattr(model, "lm_head", None)
+        norm = getattr(inner_model, "norm", None)
+
+        if embed_tokens is None or lm_head is None or norm is None:
+            logger.debug("Could not get required model components for MTP")
+            return None
+
+        mtp_module = MTPModule(
+            config=config,
+            shared_embedding=embed_tokens,
+            shared_lm_head=lm_head,
+            output_norm=norm,
+        )
+
+        # Extract MTP layer weights from the model's parameters
+        # The weights should be at model.model.layers.61.*
+        # model.parameters() returns a nested dict, we need to flatten it
+        raw_params: dict[str, Any] = dict(model.parameters())  # type: ignore[arg-type]
+        model_weights = _flatten_params(raw_params)
+        mtp_weights = extract_mtp_weights(model_weights)
+
+        if not mtp_weights:
+            logger.debug("No MTP weights found in model parameters")
+            return None
+
+        # Load weights into MTP module
+        load_mtp_weights_into_module(mtp_module, mtp_weights)
+
+        # Remove MTP layer from main model to avoid double computation
+        # Create new layers list without the MTP layer
+        new_layers = [layer for i, layer in enumerate(layers) if i != MTP_LAYER_INDEX]
+        inner_model.layers = new_layers  # noqa: B010
+
+        logger.info(
+            f"Extracted MTP module, main model now has {len(new_layers)} layers"
+        )
+        return mtp_module
+
+    except Exception as e:
+        logger.warning(f"Failed to extract MTP module: {e}")
+        return None
 
 
 def shard_and_load(
