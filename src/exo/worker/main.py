@@ -15,6 +15,7 @@ from exo.shared.types.events import (
     EventId,
     ForwarderEvent,
     IndexedEvent,
+    ModelDeleted,
     NodeDownloadProgress,
     NodeMemoryMeasured,
     NodePerformanceMeasured,
@@ -172,6 +173,14 @@ class Worker:
 
                 for idx, event in indexed_events:
                     self.state = apply(self.state, IndexedEvent(idx=idx, event=event))
+
+                    # Handle ModelDeleted events to clean up local download status
+                    if isinstance(event, ModelDeleted):
+                        if event.model_id in self.download_status:
+                            del self.download_status[event.model_id]
+                            logger.info(
+                                f"Cleaned up local download status for deleted model {event.model_id}"
+                            )
 
     async def plan_step(self):
         while True:

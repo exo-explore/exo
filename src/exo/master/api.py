@@ -50,7 +50,7 @@ from exo.shared.types.commands import (
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
-from exo.shared.types.events import ChunkGenerated, Event, ForwarderEvent, IndexedEvent
+from exo.shared.types.events import ChunkGenerated, Event, ForwarderEvent, IndexedEvent, ModelDeleted
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.state import State
@@ -96,19 +96,21 @@ class API:
         self,
         node_id: NodeId,
         session_id: SessionId,
-        *,
         port: int,
         # Ideally this would be a MasterForwarderEvent but type system says no :(
         global_event_receiver: Receiver[ForwarderEvent],
         command_sender: Sender[ForwarderCommand],
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
+        # Optional event sender for broadcasting events directly
+        event_sender: Sender[Event] | None = None,
     ) -> None:
         self.state = State()
         self._event_log: list[Event] = []
         self.command_sender = command_sender
         self.global_event_receiver = global_event_receiver
         self.election_receiver = election_receiver
+        self.event_sender = event_sender
         self.event_buffer: OrderedBuffer[Event] = OrderedBuffer[Event]()
         self.node_id: NodeId = node_id
         self.session_id: SessionId = session_id
@@ -588,6 +590,12 @@ class API:
             raise HTTPException(
                 status_code=404, detail=f"Model {model_id} not found on disk"
             )
+
+        # Send ModelDeleted event if event sender is available
+        if self.event_sender:
+
+            event = ModelDeleted(model_id=ModelId(model_id))
+            await self.event_sender.send(event)
 
         return {"message": f"Model {model_id} deleted successfully"}
 

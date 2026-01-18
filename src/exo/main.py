@@ -50,19 +50,6 @@ class Node:
         await router.register_topic(topics.ELECTION_MESSAGES)
         await router.register_topic(topics.CONNECTION_MESSAGES)
 
-        logger.info(f"Starting node {node_id}")
-        if args.spawn_api:
-            api = API(
-                node_id,
-                session_id,
-                port=args.api_port,
-                global_event_receiver=router.receiver(topics.GLOBAL_EVENTS),
-                command_sender=router.sender(topics.COMMANDS),
-                election_receiver=router.receiver(topics.ELECTION_MESSAGES),
-            )
-        else:
-            api = None
-
         if not args.no_worker:
             worker = Worker(
                 node_id,
@@ -84,6 +71,20 @@ class Node:
             local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
             command_receiver=router.receiver(topics.COMMANDS),
         )
+
+        logger.info(f"Starting node {node_id}")
+        if args.spawn_api:
+            api = API(
+                node_id,
+                session_id,
+                port=args.api_port,
+                global_event_receiver=router.receiver(topics.GLOBAL_EVENTS),
+                command_sender=router.sender(topics.COMMANDS),
+                election_receiver=router.receiver(topics.ELECTION_MESSAGES),
+                event_sender=master.event_sender,
+            )
+        else:
+            api = None
 
         er_send, er_recv = channel[ElectionResult]()
         election = Election(

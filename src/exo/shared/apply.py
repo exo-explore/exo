@@ -11,6 +11,7 @@ from exo.shared.types.events import (
     IndexedEvent,
     InstanceCreated,
     InstanceDeleted,
+    ModelDeleted,
     NodeCreated,
     NodeDownloadProgress,
     NodeMemoryMeasured,
@@ -73,6 +74,8 @@ def event_apply(event: Event, state: State) -> State:
             return apply_topology_edge_created(event, state)
         case TopologyEdgeDeleted():
             return apply_topology_edge_deleted(event, state)
+        case ModelDeleted():
+            return apply_model_deleted(event, state)
 
 
 def apply(state: State, event: IndexedEvent) -> State:
@@ -110,6 +113,26 @@ def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> S
         node_id: current,
     }
     return state.model_copy(update={"downloads": new_downloads})
+
+
+def apply_model_deleted(event: ModelDeleted, state: State) -> State:
+    """
+    Remove download entries for deleted model from all nodes.
+    """
+    model_id = event.model_id
+    filtered_downloads = {}
+
+    for node_id, download_list in state.downloads.items():
+        # Filter out downloads for the deleted model
+        valid_downloads = [
+            download
+            for download in download_list
+            if download.shard_metadata.model_meta.model_id != model_id
+        ]
+        if valid_downloads:
+            filtered_downloads[node_id] = valid_downloads
+
+    return state.model_copy(update={"downloads": filtered_downloads})
 
 
 def apply_task_created(event: TaskCreated, state: State) -> State:

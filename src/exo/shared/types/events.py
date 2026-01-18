@@ -5,6 +5,7 @@ from pydantic import Field
 from exo.shared.topology import Connection, NodePerformanceProfile
 from exo.shared.types.chunks import GenerationChunk
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
+from exo.shared.types.models import ModelId
 from exo.shared.types.profiling import MemoryPerformanceProfile
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
@@ -114,6 +115,10 @@ class TopologyEdgeDeleted(BaseEvent):
     edge: Connection
 
 
+class ModelDeleted(BaseEvent):
+    model_id: ModelId
+
+
 Event = (
     TestEvent
     | TaskCreated
@@ -133,6 +138,7 @@ Event = (
     | ChunkGenerated
     | TopologyEdgeCreated
     | TopologyEdgeDeleted
+    | ModelDeleted
 )
 
 
