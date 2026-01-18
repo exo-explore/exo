@@ -589,33 +589,7 @@ class API:
                 status_code=404, detail=f"Model {model_id} not found on disk"
             )
 
-        await self._filter_stale_downloads()
-
         return {"message": f"Model {model_id} deleted successfully"}
-
-    async def _filter_stale_downloads(self):
-        """Remove download entries for models that no longer exist on disk."""
-        models_dir = await ensure_models_dir()
-
-        filtered_downloads = {}
-        for node_id, download_list in self.state.downloads.items():
-            valid_downloads = []
-            for download in download_list:
-                model_id = download.shard_metadata.model_meta.model_id
-                model_path = models_dir / str(model_id).replace("/", "--")
-                if await aios.path.exists(model_path):
-                    valid_downloads.append(download)
-            if valid_downloads:
-                filtered_downloads[node_id] = valid_downloads
-
-        self.state = State(
-            topology=self.state.topology,
-            instances=self.state.instances,
-            runners=self.state.runners,
-            downloads=filtered_downloads,
-            tasks=self.state.tasks,
-            last_event_applied_idx=self.state.last_event_applied_idx,
-        )
 
     async def run(self):
         cfg = Config()
