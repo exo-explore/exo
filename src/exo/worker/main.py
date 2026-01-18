@@ -443,7 +443,7 @@ class Worker:
                 if (
                     conn.sink not in conns
                     or conn.edge.sink_multiaddr.ip_address
-                    not in conns.get(conn.source, set())
+                    not in conns.get(conn.sink, set())
                 ):
                     logger.debug(f"ping failed to discover {conn=}")
                     await self.event_sender.send(TopologyEdgeDeleted(conn=conn))

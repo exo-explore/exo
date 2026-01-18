@@ -21,8 +21,9 @@ async def check_reachability(
     """Check if a node is reachable at the given IP and verify its identity."""
     if ":" in target_ip:
         # TODO: use real IpAddress types
-        target_ip = f"[{target_ip}]"
-    url = f"http://{target_ip}:52415/node_id"
+        url = f"http://[{target_ip}]:52415/node_id"
+    else:
+        url = f"http://{target_ip}:52415/node_id"
 
     remote_node_id = None
     last_error = None
