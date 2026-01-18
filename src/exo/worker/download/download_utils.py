@@ -245,12 +245,15 @@ def create_http_session(
         sock_read_timeout = 1800
         sock_connect_timeout = 60
 
-    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    ssl_context = ssl.create_default_context(
+        cafile=os.getenv("SSL_CERT_FILE") or certifi.where()
+    )
     connector = aiohttp.TCPConnector(ssl=ssl_context)
 
     return aiohttp.ClientSession(
         auto_decompress=auto_decompress,
         connector=connector,
+        proxy=os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY") or None,
         timeout=aiohttp.ClientTimeout(
             total=total_timeout,
             connect=connect_timeout,
