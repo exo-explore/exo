@@ -62,6 +62,7 @@ from exo.worker.engines.mlx.auto_parallel import (
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
+from exo.worker.engines.mlx.distributed_patch import patch_mlx_lm_for_distributed
 from exo.worker.runner.bootstrap import logger
 
 Group = mx.distributed.Group
@@ -289,6 +290,9 @@ def shard_and_load(
     tokenizer = get_tokenizer(model_path, shard_metadata)
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
+
+    # prompts > prefill_step_size cause GPU timeout otherwise
+    patch_mlx_lm_for_distributed()
 
     match shard_metadata:
         case TensorShardMetadata():
