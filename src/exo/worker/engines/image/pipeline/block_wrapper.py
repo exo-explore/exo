@@ -364,13 +364,9 @@ class SingleBlockWrapper(BlockWrapperMixin, ABC):
         rotary_embeddings: Any,
     ) -> mx.array:
         """PATCHED mode: Compute patch Q/K/V, use cached image K/V for attention."""
-        # hidden_states is already [text, patch] - extract both parts
-        text_hidden = hidden_states[:, : self._text_seq_len, :]
-        patch_hidden = hidden_states[:, self._text_seq_len :, :]
-        patch_states = mx.concatenate([text_hidden, patch_hidden], axis=1)
-
+        # hidden_states is already [text, patch]
         query, key, value = self._compute_qkv(
-            patch_states, text_embeddings, rotary_embeddings, patch_mode=True
+            hidden_states, text_embeddings, rotary_embeddings, patch_mode=True
         )
 
         text_key = key[:, :, : self._text_seq_len, :]
@@ -383,7 +379,7 @@ class SingleBlockWrapper(BlockWrapperMixin, ABC):
 
         attn_out = self._compute_attention(query, full_key, full_value)
 
-        return self._apply_output(attn_out, patch_states, text_embeddings)
+        return self._apply_output(attn_out, hidden_states, text_embeddings)
 
     @abstractmethod
     def _compute_qkv(
