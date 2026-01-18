@@ -2,7 +2,7 @@ import base64
 import time
 from collections.abc import Generator
 from functools import cache
-from typing import Literal
+from typing import Literal, cast
 
 import mlx.core as mx
 from mlx_lm.models.gpt_oss import Model as GptOssModel
@@ -32,6 +32,7 @@ from exo.shared.types.tasks import (
     ImageEdits,
     ImageGeneration,
     LoadModel,
+    SetDraftModel,
     Shutdown,
     StartWarmup,
     Task,
@@ -71,6 +72,7 @@ from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     detect_thinking_prompt_suffix,
     initialize_mlx,
+    load_draft_model,
     load_mlx_items,
     mlx_force_oom,
 )
@@ -99,6 +101,7 @@ def main(
     model: Model | DistributedImageModel | None = None
     tokenizer = None
     group = None
+    draft_model: Model | None = None  # Loaded during warmup if instance has draft_model
 
     current_status: RunnerStatus = RunnerIdle()
     logger.info("runner created")
@@ -164,6 +167,16 @@ def main(
                             f"Unknown model task(s): {shard_metadata.model_card.tasks}"
                         )
 
+                    # Load draft model for speculative decoding (rank 0 only)
+                    if (
+                        instance.draft_model is not None
+                        and shard_metadata.device_rank == 0
+                    ):
+                        logger.info(f"Loading draft model: {instance.draft_model}")
+                        draft_model = cast(
+                            Model, load_draft_model(str(instance.draft_model))
+                        )
+
                     current_status = RunnerLoaded()
                     logger.info("runner loaded")
                 case StartWarmup() if isinstance(current_status, RunnerLoaded):
@@ -185,7 +198,8 @@ def main(
                         toks = warmup_inference(
                             model=model,
                             tokenizer=tokenizer,
-                            # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
+                            draft_model=draft_model,
+                            num_draft_tokens=instance.num_draft_tokens,
                         )
                         logger.info(f"warmed up by generating {toks} tokens")
                         logger.info(
@@ -231,6 +245,8 @@ def main(
                             tokenizer=tokenizer,
                             task=task_params,
                             prompt=prompt,
+                            draft_model=draft_model,
+                            num_draft_tokens=instance.num_draft_tokens,
                         )
 
                         # GPT-OSS specific parsing to match other model formats.
@@ -412,6 +428,52 @@ def main(
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
+                case SetDraftModel(
+                    model_id=draft_model_id, num_draft_tokens=num_tokens
+                ) if isinstance(current_status, RunnerReady):
+                    current_status = RunnerWarmingUp()
+                    logger.info("runner warming up (setting draft model)")
+                    event_sender.send(
+                        RunnerStatusUpdated(
+                            runner_id=runner_id, runner_status=current_status
+                        )
+                    )
+                    assert model is not None
+                    assert tokenizer is not None
+
+                    if draft_model_id is None:
+                        # Clear draft model
+                        logger.info("Clearing draft model")
+                        draft_model = None
+                        instance = instance.model_copy(
+                            update={
+                                "draft_model": None,
+                                "num_draft_tokens": 4,
+                            }
+                        )
+                    else:
+                        # Load new draft model
+                        logger.info(f"Loading draft model: {draft_model_id}")
+                        draft_model = cast(
+                            Model, load_draft_model(ModelId(draft_model_id))
+                        )
+                        instance = instance.model_copy(
+                            update={
+                                "draft_model": ModelId(draft_model_id),
+                                "num_draft_tokens": num_tokens,
+                            }
+                        )
+                        # Warm up with speculative decoding
+                        logger.info("Warming up with new draft model")
+                        warmup_inference(
+                            model=cast(Model, model),
+                            tokenizer=tokenizer,
+                            draft_model=draft_model,
+                            num_draft_tokens=num_tokens,
+                        )
+                        logger.info("Draft model loaded and warmed up")
+
+                    current_status = RunnerReady()
                 case Shutdown():
                     current_status = RunnerShuttingDown()
                     logger.info("runner shutting down")
@@ -432,7 +494,7 @@ def main(
                 RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
             )
             if isinstance(current_status, RunnerShutdown):
-                del model, tokenizer, group
+                del model, tokenizer, group, draft_model
                 mx.clear_cache()
                 import gc
 

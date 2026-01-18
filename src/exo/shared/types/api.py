@@ -177,6 +177,8 @@ class ChatCompletionTaskParams(BaseModel):
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool | None = None
     user: str | None = None
+    # Speculative decoding: tokens to draft per iteration (if instance has draft model)
+    num_draft_tokens: int = 3
 
 
 class BenchChatCompletionTaskParams(ChatCompletionTaskParams):
@@ -188,6 +190,8 @@ class PlaceInstanceParams(BaseModel):
     sharding: Sharding = Sharding.Pipeline
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
     min_nodes: int = 1
+    draft_model: ModelId | None = None  # For speculative decoding
+    num_draft_tokens: int = 4  # Tokens to draft per iteration
 
     @field_validator("sharding", "instance_meta", mode="plain")
     @classmethod
@@ -340,3 +344,14 @@ class ImageListItem(BaseModel, frozen=True):
 
 class ImageListResponse(BaseModel, frozen=True):
     data: list[ImageListItem]
+
+
+class SetDraftModelParams(BaseModel):
+    draft_model: ModelId | None = None  # None to disable speculative decoding
+    num_draft_tokens: int = 4
+
+
+class SetDraftModelResponse(BaseModel):
+    message: str
+    command_id: CommandId
+    instance_id: InstanceId

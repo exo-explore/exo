@@ -7,7 +7,7 @@ from exo.shared.types.api import (
     ImageGenerationTaskParams,
 )
 from exo.shared.types.chunks import InputImageChunk
-from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.common import CommandId, ModelId, NodeId
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
@@ -38,6 +38,8 @@ class PlaceInstance(BaseCommand):
     sharding: Sharding
     instance_meta: InstanceMeta
     min_nodes: int
+    draft_model: ModelId | None = None  # For speculative decoding
+    num_draft_tokens: int = 4  # Tokens to draft per iteration
 
 
 class CreateInstance(BaseCommand):
@@ -46,6 +48,14 @@ class CreateInstance(BaseCommand):
 
 class DeleteInstance(BaseCommand):
     instance_id: InstanceId
+
+
+class SetInstanceDraftModel(BaseCommand):
+    """Set or update the draft model for an existing instance."""
+
+    instance_id: InstanceId
+    draft_model: ModelId | None  # None to disable speculative decoding
+    num_draft_tokens: int = 4
 
 
 class TaskFinished(BaseCommand):
@@ -71,6 +81,7 @@ Command = (
     | PlaceInstance
     | CreateInstance
     | DeleteInstance
+    | SetInstanceDraftModel
     | TaskFinished
     | SendInputChunk
 )

@@ -162,6 +162,12 @@
   let launchingModelId = $state<string | null>(null);
   let instanceDownloadExpandedNodes = $state<Set<string>>(new Set());
 
+  // Draft model editing state
+  let editingDraftInstanceId = $state<string | null>(null);
+  let editDraftModel = $state<string | null>(null);
+  let editNumDraftTokens = $state<number>(4);
+  let draftEditDropdownSearch = $state("");
+
   // Custom dropdown state
   let isModelDropdownOpen = $state(false);
   let modelDropdownSearch = $state("");
@@ -1012,6 +1018,53 @@
     }
   }
 
+  // Open draft model edit modal for an instance
+  function openDraftModelEdit(
+    instanceId: string,
+    currentDraftModel: string | null,
+    currentNumTokens: number | null,
+  ): void {
+    editingDraftInstanceId = instanceId;
+    editDraftModel = currentDraftModel;
+    editNumDraftTokens = currentNumTokens ?? 4;
+    draftEditDropdownSearch = "";
+  }
+
+  // Close draft model edit modal
+  function closeDraftModelEdit(): void {
+    editingDraftInstanceId = null;
+    editDraftModel = null;
+    editNumDraftTokens = 4;
+    draftEditDropdownSearch = "";
+  }
+
+  // Save draft model settings for an instance
+  async function saveDraftModel(): Promise<void> {
+    if (!editingDraftInstanceId) return;
+
+    try {
+      const response = await fetch(
+        `/instance/${editingDraftInstanceId}/draft_model`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            draft_model: editDraftModel,
+            num_draft_tokens: editNumDraftTokens,
+          }),
+        },
+      );
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Failed to set draft model:", errorText);
+      }
+    } catch (error) {
+      console.error("Error setting draft model:", error);
+    } finally {
+      closeDraftModelEdit();
+    }
+  }
+
   // Helper to unwrap tagged unions like { MlxRingInstance: {...} }
   function getTagged(obj: unknown): [string | null, unknown] {
     if (!obj || typeof obj !== "object") return [null, null];
@@ -1037,6 +1090,8 @@
     nodeNames: string[];
     nodeIds: string[];
     nodeCount: number;
+    draftModel: string | null;
+    numDraftTokens: number | null;
   } {
     const [instanceTag, instance] = getTagged(instanceWrapped);
     if (!instance || typeof instance !== "object") {
@@ -1046,6 +1101,8 @@
         nodeNames: [],
         nodeIds: [],
         nodeCount: 0,
+        draftModel: null,
+        numDraftTokens: null,
       };
     }
 
@@ -1063,6 +1120,8 @@
         nodeToRunner?: Record<string, string>;
         runnerToShard?: Record<string, unknown>;
       };
+      draftModel?: string;
+      numDraftTokens?: number;
     };
 
     // Sharding strategy from first shard
@@ -1085,12 +1144,18 @@
       return node?.friendly_name || nodeId.slice(0, 8);
     });
 
+    // Draft model for speculative decoding
+    const draftModel = inst.draftModel ?? null;
+    const numDraftTokens = inst.numDraftTokens ?? null;
+
     return {
       instanceType,
       sharding,
       nodeNames,
       nodeIds,
       nodeCount: nodeIds.length,
+      draftModel,
+      numDraftTokens,
     };
   }
 
@@ -1788,12 +1853,42 @@
                             >{id.slice(0, 8).toUpperCase()}</span
                           >
                         </div>
-                        <button
-                          onclick={() => deleteInstance(id)}
-                          class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
-                        >
-                          DELETE
-                        </button>
+                        <div class="flex items-center gap-2">
+                          <button
+                            onclick={() =>
+                              openDraftModelEdit(
+                                id,
+                                instanceInfo.draftModel,
+                                instanceInfo.numDraftTokens,
+                              )}
+                            class="p-1.5 font-mono border transition-all duration-200 cursor-pointer {instanceInfo.draftModel
+                              ? 'border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/20 hover:border-cyan-500'
+                              : 'border-exo-medium-gray/50 text-white/40 hover:text-cyan-400 hover:border-cyan-500/50'}"
+                            title={instanceInfo.draftModel
+                              ? `Draft: ${instanceInfo.draftModel.split("/").pop()} (${instanceInfo.numDraftTokens}t)`
+                              : "Configure speculative decoding"}
+                          >
+                            <svg
+                              class="w-3.5 h-3.5"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                              stroke-width="2"
+                            >
+                              <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                d="M13 10V3L4 14h7v7l9-11h-7z"
+                              />
+                            </svg>
+                          </button>
+                          <button
+                            onclick={() => deleteInstance(id)}
+                            class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
+                          >
+                            DELETE
+                          </button>
+                        </div>
                       </div>
                       <div class="pl-2">
                         <div
@@ -1806,6 +1901,13 @@
                             >{instanceInfo.sharding} ({instanceInfo.instanceType})</span
                           >
                         </div>
+                        {#if instanceInfo.draftModel}
+                          <div class="text-cyan-400/80 text-xs font-mono">
+                            Draft: <span class="text-cyan-400"
+                              >{instanceInfo.draftModel.split("/").pop()} ({instanceInfo.numDraftTokens}t)</span
+                            >
+                          </div>
+                        {/if}
                         {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
                           <a
                             class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
@@ -2710,12 +2812,42 @@
                               >{id.slice(0, 8).toUpperCase()}</span
                             >
                           </div>
-                          <button
-                            onclick={() => deleteInstance(id)}
-                            class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
-                          >
-                            DELETE
-                          </button>
+                          <div class="flex items-center gap-2">
+                            <button
+                              onclick={() =>
+                                openDraftModelEdit(
+                                  id,
+                                  instanceInfo.draftModel,
+                                  instanceInfo.numDraftTokens,
+                                )}
+                              class="p-1.5 font-mono border transition-all duration-200 cursor-pointer {instanceInfo.draftModel
+                                ? 'border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/20 hover:border-cyan-500'
+                                : 'border-exo-medium-gray/50 text-white/40 hover:text-cyan-400 hover:border-cyan-500/50'}"
+                              title={instanceInfo.draftModel
+                                ? `Draft: ${instanceInfo.draftModel.split("/").pop()} (${instanceInfo.numDraftTokens}t)`
+                                : "Configure speculative decoding"}
+                            >
+                              <svg
+                                class="w-3.5 h-3.5"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                                stroke-width="2"
+                              >
+                                <path
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  d="M13 10V3L4 14h7v7l9-11h-7z"
+                                />
+                              </svg>
+                            </button>
+                            <button
+                              onclick={() => deleteInstance(id)}
+                              class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
+                            >
+                              DELETE
+                            </button>
+                          </div>
                         </div>
                         <div class="pl-2">
                           <div
@@ -2728,6 +2860,13 @@
                               >{instanceInfo.sharding} ({instanceInfo.instanceType})</span
                             >
                           </div>
+                          {#if instanceInfo.draftModel}
+                            <div class="text-cyan-400/80 text-xs font-mono">
+                              Draft: <span class="text-cyan-400"
+                                >{instanceInfo.draftModel.split("/").pop()} ({instanceInfo.numDraftTokens}t)</span
+                              >
+                            </div>
+                          {/if}
                           {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
                             <a
                               class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
@@ -3003,6 +3142,112 @@
             {/if}
           </aside>
         {/if}
+      </div>
+    {/if}
+
+    <!-- Draft Model Edit Modal -->
+    {#if editingDraftInstanceId}
+      <div
+        class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center"
+        role="dialog"
+        aria-modal="true"
+        onclick={closeDraftModelEdit}
+        onkeydown={(e) => e.key === "Escape" && closeDraftModelEdit()}
+      >
+        <div
+          class="bg-exo-dark-gray border border-exo-yellow/30 p-6 max-w-md w-full mx-4"
+          onclick={(e) => e.stopPropagation()}
+          onkeydown={(e) => e.stopPropagation()}
+          role="document"
+        >
+          <h3 class="text-exo-yellow font-mono text-lg tracking-wider mb-4">
+            SPECULATIVE DECODING
+          </h3>
+
+          <div class="space-y-4">
+            <!-- Draft Model Selection -->
+            <div>
+              <label
+                class="block text-white/60 text-xs font-mono tracking-wider mb-2"
+                >DRAFT MODEL</label
+              >
+              <div class="relative">
+                <input
+                  type="text"
+                  bind:value={draftEditDropdownSearch}
+                  placeholder={editDraftModel || "Select a draft model..."}
+                  class="w-full bg-exo-dark-gray/60 border border-exo-yellow/30 text-white text-sm font-mono px-3 py-2 focus:outline-none focus:border-exo-yellow/60"
+                />
+                {#if draftEditDropdownSearch}
+                  <div
+                    class="absolute z-10 w-full mt-1 bg-exo-dark-gray border border-exo-yellow/30 max-h-48 overflow-y-auto"
+                  >
+                    {#each models.filter((m) => m.id
+                        .toLowerCase()
+                        .includes(draftEditDropdownSearch.toLowerCase())) as model}
+                      <button
+                        class="w-full text-left px-3 py-2 text-sm font-mono text-white/80 hover:bg-exo-yellow/10 hover:text-exo-yellow cursor-pointer"
+                        onclick={() => {
+                          editDraftModel = model.hugging_face_id || model.id;
+                          draftEditDropdownSearch = "";
+                        }}
+                      >
+                        {model.name || model.id}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+              {#if editDraftModel}
+                <div
+                  class="mt-2 flex items-center justify-between text-cyan-400 text-xs font-mono"
+                >
+                  <span>{editDraftModel}</span>
+                  <button
+                    class="text-red-400 hover:text-red-300 cursor-pointer"
+                    onclick={() => (editDraftModel = null)}
+                  >
+                    Clear
+                  </button>
+                </div>
+              {/if}
+            </div>
+
+            <!-- Num Draft Tokens -->
+            <div>
+              <label
+                class="block text-white/60 text-xs font-mono tracking-wider mb-2"
+                >DRAFT TOKENS</label
+              >
+              <input
+                type="number"
+                min="1"
+                max="16"
+                bind:value={editNumDraftTokens}
+                class="w-full bg-exo-dark-gray/60 border border-exo-yellow/30 text-white text-sm font-mono px-3 py-2 focus:outline-none focus:border-exo-yellow/60"
+              />
+              <p class="text-white/40 text-xs font-mono mt-1">
+                Number of tokens to draft per step (1-16)
+              </p>
+            </div>
+          </div>
+
+          <!-- Actions -->
+          <div class="flex justify-end gap-3 mt-6">
+            <button
+              onclick={closeDraftModelEdit}
+              class="px-4 py-2 text-xs font-mono tracking-wider uppercase border border-white/30 text-white/60 hover:bg-white/10 hover:text-white transition-all cursor-pointer"
+            >
+              CANCEL
+            </button>
+            <button
+              onclick={saveDraftModel}
+              class="px-4 py-2 text-xs font-mono tracking-wider uppercase border border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/20 transition-all cursor-pointer"
+            >
+              SAVE
+            </button>
+          </div>
+        </div>
       </div>
     {/if}
   </main>

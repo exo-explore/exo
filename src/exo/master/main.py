@@ -21,6 +21,7 @@ from exo.shared.types.commands import (
     PlaceInstance,
     RequestEventLog,
     SendInputChunk,
+    SetInstanceDraftModel,
     TaskFinished,
     TestCommand,
 )
@@ -31,6 +32,7 @@ from exo.shared.types.events import (
     IndexedEvent,
     InputChunkReceived,
     InstanceDeleted,
+    InstanceDraftModelUpdated,
     NodeGatheredInfo,
     NodeTimedOut,
     TaskCreated,
@@ -276,6 +278,14 @@ class Master:
                                 InputChunkReceived(
                                     command_id=chunk.command_id,
                                     chunk=chunk,
+                                )
+                            )
+                        case SetInstanceDraftModel():
+                            generated_events.append(
+                                InstanceDraftModelUpdated(
+                                    instance_id=command.instance_id,
+                                    draft_model=command.draft_model,
+                                    num_draft_tokens=command.num_draft_tokens,
                                 )
                             )
                         case TaskFinished():

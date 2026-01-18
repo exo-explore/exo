@@ -69,6 +69,8 @@ export interface Instance {
     runnerToShard?: Record<string, unknown>;
     nodeToRunner?: Record<string, string>;
   };
+  draftModel?: string;
+  numDraftTokens?: number;
 }
 
 // Granular node state types from the new state structure

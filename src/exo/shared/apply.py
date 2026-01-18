@@ -12,6 +12,7 @@ from exo.shared.types.events import (
     InputChunkReceived,
     InstanceCreated,
     InstanceDeleted,
+    InstanceDraftModelUpdated,
     NodeDownloadProgress,
     NodeGatheredInfo,
     NodeTimedOut,
@@ -60,6 +61,8 @@ def event_apply(event: Event, state: State) -> State:
             return apply_instance_created(event, state)
         case InstanceDeleted():
             return apply_instance_deleted(event, state)
+        case InstanceDraftModelUpdated():
+            return apply_instance_draft_model_updated(event, state)
         case NodeTimedOut():
             return apply_node_timed_out(event, state)
         case NodeDownloadProgress():
@@ -174,6 +177,25 @@ def apply_instance_created(event: InstanceCreated, state: State) -> State:
 def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
     new_instances: Mapping[InstanceId, Instance] = {
         iid: inst for iid, inst in state.instances.items() if iid != event.instance_id
+    }
+    return state.model_copy(update={"instances": new_instances})
+
+
+def apply_instance_draft_model_updated(
+    event: InstanceDraftModelUpdated, state: State
+) -> State:
+    if event.instance_id not in state.instances:
+        return state
+    instance = state.instances[event.instance_id]
+    updated_instance = instance.model_copy(
+        update={
+            "draft_model": event.draft_model,
+            "num_draft_tokens": event.num_draft_tokens,
+        }
+    )
+    new_instances: Mapping[InstanceId, Instance] = {
+        **state.instances,
+        event.instance_id: updated_instance,
     }
     return state.model_copy(update={"instances": new_instances})
 

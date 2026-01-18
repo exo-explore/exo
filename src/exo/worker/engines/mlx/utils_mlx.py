@@ -230,6 +230,27 @@ def load_mlx_items(
     return cast(Model, model), tokenizer
 
 
+def load_draft_model(model_id: ModelId) -> nn.Module:
+    """Load a draft model for speculative decoding (rank 0 only).
+
+    Draft models are small models (typically 0.5B-2B parameters) used to
+    generate candidate tokens quickly, which are then verified by the main
+    model in a single forward pass.
+
+    Assumes the model has already been downloaded by the worker.
+
+    Args:
+        model_id: HuggingFace model ID for the draft model
+
+    Returns:
+        The loaded draft model
+    """
+    model_path = build_model_path(model_id)
+    draft_model, _ = load_model(model_path, strict=True)
+    logger.info(f"Loaded draft model from {model_path}")
+    return draft_model
+
+
 def shard_and_load(
     shard_metadata: ShardMetadata,
     group: Group,

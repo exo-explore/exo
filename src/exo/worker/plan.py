@@ -8,10 +8,12 @@ from exo.shared.types.tasks import (
     ChatCompletion,
     ConnectToGroup,
     CreateRunner,
+    DownloadDraftModel,
     DownloadModel,
     ImageEdits,
     ImageGeneration,
     LoadModel,
+    SetDraftModel,
     Shutdown,
     StartWarmup,
     Task,
@@ -40,6 +42,16 @@ from exo.shared.types.worker.runners import (
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
 
+def _is_download_in_progress_or_complete(
+    model_id: ModelId,
+    download_status: Mapping[ModelId, DownloadProgress],
+) -> bool:
+    """Check if model download is in progress or complete."""
+    return model_id in download_status and isinstance(
+        download_status[model_id], (DownloadOngoing, DownloadCompleted)
+    )
+
+
 def plan(
     node_id: NodeId,
     # Runners is expected to be FRESH and so should not come from state
@@ -59,9 +71,11 @@ def plan(
         _kill_runner(runners, all_runners, instances)
         or _create_runner(node_id, runners, instances)
         or _model_needs_download(runners, download_status)
+        or _draft_model_needs_download(runners, download_status, instances)
         or _init_distributed_backend(runners, all_runners)
-        or _load_model(runners, all_runners, global_download_status)
+        or _load_model(runners, all_runners, global_download_status, download_status)
         or _ready_to_warmup(runners, all_runners)
+        or _set_draft_model(runners, instances, download_status)
         or _pending_tasks(runners, tasks, all_runners, input_chunk_buffer)
     )
 
@@ -119,17 +133,51 @@ def _model_needs_download(
 ) -> DownloadModel | None:
     for runner in runners.values():
         model_id = runner.bound_instance.bound_shard.model_card.model_id
-        if isinstance(runner.status, RunnerIdle) and (
-            model_id not in download_status
-            or not isinstance(
-                download_status[model_id], (DownloadOngoing, DownloadCompleted)
-            )
-        ):
+        if isinstance(
+            runner.status, RunnerIdle
+        ) and not _is_download_in_progress_or_complete(model_id, download_status):
             # We don't invalidate download_status randomly in case a file gets deleted on disk
             return DownloadModel(
                 instance_id=runner.bound_instance.instance.instance_id,
                 shard_metadata=runner.bound_instance.bound_shard,
             )
+
+
+def _draft_model_needs_download(
+    runners: Mapping[RunnerId, RunnerSupervisor],
+    download_status: Mapping[ModelId, DownloadProgress],
+    instances: Mapping[InstanceId, Instance],
+) -> DownloadDraftModel | None:
+    """Check if draft model needs download for rank 0 runner.
+
+    Triggers download when:
+    - RunnerIdle with draft model (initial setup)
+    - RunnerReady with new draft model (updated via API)
+    """
+    rank_0_runner = next(
+        (r for r in runners.values() if r.bound_instance.bound_shard.device_rank == 0),
+        None,
+    )
+    if rank_0_runner is None:
+        return None
+    if not isinstance(rank_0_runner.status, (RunnerIdle, RunnerReady)):
+        return None
+
+    # Use current instance state (may have been updated via API)
+    instance_id = rank_0_runner.bound_instance.instance.instance_id
+    current_instance = instances.get(instance_id)
+    if current_instance is None:
+        return None
+
+    draft_model_id = current_instance.draft_model
+    if draft_model_id is None:
+        return None
+    if _is_download_in_progress_or_complete(draft_model_id, download_status):
+        return None
+    return DownloadDraftModel(
+        instance_id=instance_id,
+        model_id=str(draft_model_id),
+    )
 
 
 def _init_distributed_backend(
@@ -186,10 +234,12 @@ def _load_model(
     runners: Mapping[RunnerId, RunnerSupervisor],
     all_runners: Mapping[RunnerId, RunnerStatus],
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+    download_status: Mapping[ModelId, DownloadProgress],
 ) -> LoadModel | None:
     for runner in runners.values():
         instance = runner.bound_instance.instance
         shard_assignments = instance.shard_assignments
+        shard = runner.bound_instance.bound_shard
 
         all_local_downloads_complete = all(
             nid in global_download_status
@@ -202,6 +252,14 @@ def _load_model(
         )
         if not all_local_downloads_complete:
             continue
+
+        # Rank 0 with draft model must wait for draft download before loading
+        if shard.device_rank == 0:
+            draft_model_id = instance.draft_model
+            if draft_model_id is not None and not isinstance(
+                download_status.get(draft_model_id), DownloadCompleted
+            ):
+                continue
 
         is_single_node_instance = len(instance.shard_assignments.runner_to_shard) == 1
         if is_single_node_instance and isinstance(runner.status, RunnerIdle):
@@ -260,6 +318,53 @@ def _ready_to_warmup(
             return StartWarmup(instance_id=instance.instance_id)
 
     return None
+
+
+def _set_draft_model(
+    runners: Mapping[RunnerId, RunnerSupervisor],
+    instances: Mapping[InstanceId, Instance],
+    download_status: Mapping[ModelId, DownloadProgress],
+) -> SetDraftModel | None:
+    """Check if rank 0 runner needs to load or clear a draft model."""
+    rank_0_runner = next(
+        (r for r in runners.values() if r.bound_instance.bound_shard.device_rank == 0),
+        None,
+    )
+    if rank_0_runner is None:
+        return None
+    if not isinstance(rank_0_runner.status, RunnerReady):
+        return None
+
+    instance_id = rank_0_runner.bound_instance.instance.instance_id
+    current_instance = instances.get(instance_id)
+    if current_instance is None:
+        return None
+
+    # Compare runner's bound draft model vs current instance draft model
+    runner_draft_model = rank_0_runner.bound_instance.instance.draft_model
+    current_draft_model = current_instance.draft_model
+
+    if runner_draft_model == current_draft_model:
+        return None
+
+    # Draft model changed - need to update
+    if current_draft_model is None:
+        # Clear draft model
+        return SetDraftModel(
+            instance_id=instance_id,
+            model_id=None,
+            num_draft_tokens=4,
+        )
+
+    # Wait for draft model to be downloaded
+    if not isinstance(download_status.get(current_draft_model), DownloadCompleted):
+        return None
+
+    return SetDraftModel(
+        instance_id=instance_id,
+        model_id=str(current_draft_model),
+        num_draft_tokens=current_instance.num_draft_tokens,
+    )
 
 
 def _pending_tasks(

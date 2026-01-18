@@ -29,8 +29,10 @@ from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     CreateRunner,
+    DownloadDraftModel,
     DownloadModel,
     ImageEdits,
+    SetDraftModel,
     Shutdown,
     Task,
     TaskStatus,
@@ -51,6 +53,7 @@ from exo.utils.info_gatherer.net_profile import check_reachable
 from exo.worker.download.download_utils import (
     map_repo_download_progress_to_download_progress_data,
 )
+from exo.worker.download.impl_shard_downloader import build_full_shard
 from exo.worker.download.shard_downloader import RepoDownloadProgress, ShardDownloader
 from exo.worker.plan import plan
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
@@ -206,42 +209,10 @@ class Worker:
                         )
                     )
                 case DownloadModel(shard_metadata=shard):
-                    if shard.model_card.model_id not in self.download_status:
-                        progress = DownloadPending(
-                            shard_metadata=shard, node_id=self.node_id
-                        )
-                        self.download_status[shard.model_card.model_id] = progress
-                        await self.event_sender.send(
-                            NodeDownloadProgress(download_progress=progress)
-                        )
-                    initial_progress = (
-                        await self.shard_downloader.get_shard_download_status_for_shard(
-                            shard
-                        )
-                    )
-                    if initial_progress.status == "complete":
-                        progress = DownloadCompleted(
-                            shard_metadata=shard,
-                            node_id=self.node_id,
-                            total_bytes=initial_progress.total_bytes,
-                        )
-                        self.download_status[shard.model_card.model_id] = progress
-                        await self.event_sender.send(
-                            NodeDownloadProgress(download_progress=progress)
-                        )
-                        await self.event_sender.send(
-                            TaskStatusUpdated(
-                                task_id=task.task_id,
-                                task_status=TaskStatus.Complete,
-                            )
-                        )
-                    else:
-                        await self.event_sender.send(
-                            TaskStatusUpdated(
-                                task_id=task.task_id, task_status=TaskStatus.Running
-                            )
-                        )
-                        self._handle_shard_download_process(task, initial_progress)
+                    await self._handle_download(shard, task)
+                case DownloadDraftModel(model_id=model_id):
+                    shard = await build_full_shard(ModelId(model_id))
+                    await self._handle_download(shard, task)
                 case Shutdown(runner_id=runner_id):
                     try:
                         with fail_after(3):
@@ -291,6 +262,25 @@ class Worker:
                         del self.input_chunk_counts[cmd_id]
                     await self.runners[self._task_to_runner_id(task)].start_task(
                         modified_task
+                    )
+                case SetDraftModel(
+                    model_id=draft_model_id, num_draft_tokens=num_tokens
+                ):
+                    runner = self.runners[self._task_to_runner_id(task)]
+                    await runner.start_task(task)
+                    # Update bound_instance to reflect new/cleared draft model
+                    updated_instance = runner.bound_instance.instance.model_copy(
+                        update={
+                            "draft_model": (
+                                ModelId(draft_model_id)
+                                if draft_model_id is not None
+                                else None
+                            ),
+                            "num_draft_tokens": num_tokens,
+                        }
+                    )
+                    runner.bound_instance = runner.bound_instance.model_copy(
+                        update={"instance": updated_instance}
                     )
                 case task:
                     await self.runners[self._task_to_runner_id(task)].start_task(task)
@@ -385,6 +375,46 @@ class Worker:
         self.runners[task.bound_instance.bound_runner_id] = runner
         self._tg.start_soon(runner.run)
         return runner
+
+    async def _handle_download(self, shard: ShardMetadata, task: Task) -> None:
+        """Handle model download - shared logic for main and draft models."""
+        model_id = shard.model_card.model_id
+
+        if model_id not in self.download_status:
+            progress = DownloadPending(shard_metadata=shard, node_id=self.node_id)
+            self.download_status[model_id] = progress
+            await self.event_sender.send(
+                NodeDownloadProgress(download_progress=progress)
+            )
+
+        initial_progress = (
+            await self.shard_downloader.get_shard_download_status_for_shard(shard)
+        )
+
+        if initial_progress.status == "complete":
+            progress = DownloadCompleted(
+                shard_metadata=shard,
+                node_id=self.node_id,
+                total_bytes=initial_progress.total_bytes,
+            )
+            self.download_status[model_id] = progress
+            await self.event_sender.send(
+                NodeDownloadProgress(download_progress=progress)
+            )
+            await self.event_sender.send(
+                TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Complete)
+            )
+        else:
+            await self.event_sender.send(
+                TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Running)
+            )
+            download_task = DownloadModel(
+                instance_id=task.instance_id,
+                shard_metadata=shard,
+                task_id=task.task_id,
+                task_status=task.task_status,
+            )
+            self._handle_shard_download_process(download_task, initial_progress)
 
     def _handle_shard_download_process(
         self,

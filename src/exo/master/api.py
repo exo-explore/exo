@@ -55,6 +55,8 @@ from exo.shared.types.api import (
     PlaceInstanceParams,
     PlacementPreview,
     PlacementPreviewResponse,
+    SetDraftModelParams,
+    SetDraftModelResponse,
     StreamingChoiceResponse,
 )
 from exo.shared.types.chunks import ImageChunk, InputImageChunk, TokenChunk
@@ -68,6 +70,7 @@ from exo.shared.types.commands import (
     ImageGeneration,
     PlaceInstance,
     SendInputChunk,
+    SetInstanceDraftModel,
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
@@ -215,6 +218,7 @@ class API:
         self.app.get("/instance/previews")(self.get_placement_previews)
         self.app.get("/instance/{instance_id}")(self.get_instance)
         self.app.delete("/instance/{instance_id}")(self.delete_instance)
+        self.app.put("/instance/{instance_id}/draft_model")(self.set_draft_model)
         self.app.get("/models")(self.get_models)
         self.app.get("/v1/models")(self.get_models)
         self.app.post("/v1/chat/completions", response_model=None)(
@@ -238,6 +242,8 @@ class API:
             sharding=payload.sharding,
             instance_meta=payload.instance_meta,
             min_nodes=payload.min_nodes,
+            draft_model=payload.draft_model,
+            num_draft_tokens=payload.num_draft_tokens,
         )
         await self._send(command)
 
@@ -432,6 +438,24 @@ class API:
         )
         await self._send(command)
         return DeleteInstanceResponse(
+            message="Command received.",
+            command_id=command.command_id,
+            instance_id=instance_id,
+        )
+
+    async def set_draft_model(
+        self, instance_id: InstanceId, payload: SetDraftModelParams
+    ) -> SetDraftModelResponse:
+        if instance_id not in self.state.instances:
+            raise HTTPException(status_code=404, detail="Instance not found")
+
+        command = SetInstanceDraftModel(
+            instance_id=instance_id,
+            draft_model=payload.draft_model,
+            num_draft_tokens=payload.num_draft_tokens,
+        )
+        await self._send(command)
+        return SetDraftModelResponse(
             message="Command received.",
             command_id=command.command_id,
             instance_id=instance_id,
