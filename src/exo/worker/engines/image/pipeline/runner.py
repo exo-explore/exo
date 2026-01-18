@@ -863,6 +863,16 @@ class DiffusionRunner:
         for patch_idx in range(len(patch_latents)):
             patch = patch_latents[patch_idx]
 
+            if (
+                self.is_first_stage
+                and not self.is_last_stage
+                and not is_first_async_step
+            ):
+                patch = mx.distributed.recv_like(
+                    patch, src=self.prev_rank, group=self.group
+                )
+                mx.eval(patch)
+
             self._set_use_negative_cache(False)
             self._set_text_seq_len(prompt_data.prompt_embeds.shape[1])
             if self.joint_block_wrappers:
@@ -877,8 +887,6 @@ class DiffusionRunner:
                 text_embeddings=text_embeddings,
                 image_rotary_embeddings=image_rotary_embeddings,
                 encoder_hidden_states=encoder_hidden_states,
-                is_first_async_step=is_first_async_step,
-                is_first_cfg_pass=True,
             )
 
             if needs_cfg:
@@ -900,8 +908,6 @@ class DiffusionRunner:
                     text_embeddings=text_embeddings_neg,
                     image_rotary_embeddings=image_rotary_embeddings_neg,
                     encoder_hidden_states=encoder_hidden_states_neg,
-                    is_first_async_step=is_first_async_step,
-                    is_first_cfg_pass=False,
                 )
 
             if self.is_last_stage:
@@ -940,14 +946,13 @@ class DiffusionRunner:
         text_embeddings: mx.array,
         image_rotary_embeddings: mx.array,
         encoder_hidden_states: mx.array | None,
-        is_first_async_step: bool,
-        is_first_cfg_pass: bool = True,
     ) -> tuple[mx.array | None, mx.array | None]:
-        """Process a single patch through the pipeline.
+        """Process a single patch through the forward pipeline.
+
+        Handles stage-to-stage communication (stage i -> stage i+1).
+        Ring communication (last stage -> first stage) is handled by the caller.
 
         Args:
-            t: Current timestep
-            config: Runtime configuration
             patch: The patch latents to process
             patch_idx: Index of this patch (0-indexed)
             token_indices: (start_token, end_token) for this patch
@@ -955,10 +960,6 @@ class DiffusionRunner:
             text_embeddings: Precomputed text embeddings
             image_rotary_embeddings: Precomputed rotary embeddings
             encoder_hidden_states: Encoder hidden states (passed between patches)
-            is_first_async_step: Whether this is the first async timestep
-            is_first_cfg_pass: Whether this is the first CFG pass (positive). On the
-                negative pass, the first stage should skip the latent recv since it
-                already received updated latents during the positive pass.
 
         Returns:
             (noise_prediction, encoder_hidden_states) - noise is None for non-last stages
@@ -969,26 +970,18 @@ class DiffusionRunner:
         hidden_dim = self.adapter.hidden_dim
 
         if self.has_joint_blocks:
-            # First stage recvs updated latents only on non-first async steps AND only
-            # on the first CFG pass (positive). Non-first stages always recv from prev.
-            should_recv_from_prev = not self.is_first_stage or (
-                not is_first_async_step and is_first_cfg_pass
-            )
-            if should_recv_from_prev:
-                if self.is_first_stage:
-                    recv_template = patch
-                else:
-                    patch_len = patch.shape[1]
-                    recv_template = mx.zeros(
-                        (batch_size, patch_len, hidden_dim),
-                        dtype=patch.dtype,
-                    )
+            if not self.is_first_stage:
+                patch_len = patch.shape[1]
+                recv_template = mx.zeros(
+                    (batch_size, patch_len, hidden_dim),
+                    dtype=patch.dtype,
+                )
                 patch = mx.distributed.recv_like(
                     recv_template, src=self.prev_rank, group=self.group
                 )
                 mx.eval(patch)
 
-                if not self.is_first_stage and patch_idx == 0:
+                if patch_idx == 0:
                     enc_template = mx.zeros(
                         (batch_size, text_seq_len, hidden_dim),
                         dtype=patch.dtype,
