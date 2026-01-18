@@ -12,6 +12,8 @@ from exo.shared.types.api import (
     ErrorInfo,
     ErrorResponse,
     FinishReason,
+    Logprobs,
+    LogprobsContentItem,
     StreamingChoiceResponse,
 )
 from exo.shared.types.chunks import TokenChunk
@@ -66,6 +68,7 @@ def chat_request_to_internal(request: ChatCompletionTaskParams) -> ResponsesRequ
         seed=request.seed,
         stream=request.stream,
         tools=request.tools,
+        continue_from_prefix=request.continue_from_prefix,
     )
 
 
@@ -73,6 +76,19 @@ def chunk_to_response(
     chunk: TokenChunk, command_id: CommandId
 ) -> ChatCompletionResponse:
     """Convert a TokenChunk to a streaming ChatCompletionResponse."""
+    # Build logprobs if available
+    logprobs: Logprobs | None = None
+    if chunk.logprob is not None:
+        logprobs = Logprobs(
+            content=[
+                LogprobsContentItem(
+                    token=chunk.text,
+                    logprob=chunk.logprob,
+                    top_logprobs=chunk.top_logprobs or [],
+                )
+            ]
+        )
+
     return ChatCompletionResponse(
         id=command_id,
         created=int(time.time()),
@@ -81,6 +97,7 @@ def chunk_to_response(
             StreamingChoiceResponse(
                 index=0,
                 delta=ChatCompletionMessage(role="assistant", content=chunk.text),
+                logprobs=logprobs,
                 finish_reason=chunk.finish_reason,
             )
         ],

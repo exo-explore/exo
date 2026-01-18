@@ -10,6 +10,7 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 from exo.shared.types.api import (
     FinishReason,
     GenerationStats,
+    TopLogprobItem,
 )
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
@@ -159,6 +160,8 @@ def mlx_generate(
         prefill_step_size=2048,
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
+        return_logprob=True,
+        return_top_logprobs=5,
     ):
         logger.info(out.text)
         accumulated_text += out.text
@@ -197,9 +200,27 @@ def mlx_generate(
                     f"Model generated unexpected finish_reason: {out.finish_reason}"
                 )
 
+        # Extract logprobs if available
+        logprob: float | None = getattr(out, "logprob", None)
+        top_logprobs_raw: list[tuple[int, float]] | None = getattr(
+            out, "top_logprobs", None
+        )
+
+        top_logprobs: list[TopLogprobItem] | None = None
+        if top_logprobs_raw is not None:
+            top_logprobs = [
+                TopLogprobItem(
+                    token=text if i == 0 else tokenizer.decode([tok_id]),
+                    logprob=float(lp),
+                )
+                for i, (tok_id, lp) in enumerate(top_logprobs_raw)
+            ]
+
         yield GenerationResponse(
             text=text,
             token=out.token,
+            logprob=logprob,
+            top_logprobs=top_logprobs,
             finish_reason=finish_reason,
             stats=stats,
         )
