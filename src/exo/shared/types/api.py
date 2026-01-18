@@ -140,6 +140,19 @@ class GenerationStats(BaseModel):
     peak_memory_usage: Memory
 
 
+class ImageGenerationStats(BaseModel):
+    seconds_per_step: float
+    total_generation_time: float
+
+    num_inference_steps: int
+    num_images: int
+
+    image_width: int
+    image_height: int
+
+    peak_memory_usage: Memory
+
+
 class BenchChatCompletionResponse(ChatCompletionResponse):
     generation_stats: GenerationStats | None = None
 
@@ -233,6 +246,12 @@ class ImageGenerationTaskParams(BaseModel):
     stream: bool | None = False
     # style: str | None = "vivid"
     # user: str | None = None
+    # Internal flag for benchmark mode - set by API, preserved through serialization
+    bench: bool = False
+
+
+class BenchImageGenerationTaskParams(ImageGenerationTaskParams):
+    bench: bool = True
 
 
 class ImageEditsTaskParams(BaseModel):
@@ -263,6 +282,7 @@ class ImageEditsInternalParams(BaseModel):
     image_strength: float = 0.7
     stream: bool = False
     partial_images: int | None = 0
+    bench: bool = False
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
         for name, value in super().__repr_args__():
@@ -288,3 +308,7 @@ class ImageData(BaseModel):
 class ImageGenerationResponse(BaseModel):
     created: int = Field(default_factory=lambda: int(time.time()))
     data: list[ImageData]
+
+
+class BenchImageGenerationResponse(ImageGenerationResponse):
+    generation_stats: ImageGenerationStats | None = None

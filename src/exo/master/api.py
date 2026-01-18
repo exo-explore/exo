@@ -30,6 +30,8 @@ from exo.shared.models.model_cards import (
 from exo.shared.types.api import (
     BenchChatCompletionResponse,
     BenchChatCompletionTaskParams,
+    BenchImageGenerationResponse,
+    BenchImageGenerationTaskParams,
     ChatCompletionChoice,
     ChatCompletionMessage,
     ChatCompletionResponse,
@@ -43,6 +45,7 @@ from exo.shared.types.api import (
     ImageData,
     ImageEditsInternalParams,
     ImageGenerationResponse,
+    ImageGenerationStats,
     ImageGenerationTaskParams,
     ModelList,
     ModelListModel,
@@ -209,7 +212,9 @@ class API:
         self.app.post("/v1/images/generations", response_model=None)(
             self.image_generations
         )
+        self.app.post("/bench/images/generations")(self.bench_image_generations)
         self.app.post("/v1/images/edits", response_model=None)(self.image_edits)
+        self.app.post("/bench/images/edits")(self.bench_image_edits)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
 
@@ -748,18 +753,20 @@ class API:
             if command_id in self._image_generation_queues:
                 del self._image_generation_queues[command_id]
 
-    async def _collect_image_generation(
+    async def _collect_image_chunks(
         self,
         command_id: CommandId,
         num_images: int,
         response_format: str,
-    ) -> ImageGenerationResponse:
-        """Collect all image chunks (non-streaming) and return a single response."""
+        capture_stats: bool = False,
+    ) -> tuple[list[ImageData], ImageGenerationStats | None]:
+        """Collect image chunks and optionally capture stats."""
         # Track chunks per image: {image_index: {chunk_index: data}}
         # Only track non-partial (final) images
         image_chunks: dict[int, dict[int, str]] = {}
         image_total_chunks: dict[int, int] = {}
         images_complete = 0
+        stats: ImageGenerationStats | None = None
 
         try:
             self._image_generation_queues[command_id], recv = channel[ImageChunk]()
@@ -767,7 +774,6 @@ class API:
             while images_complete < num_images:
                 with recv as chunks:
                     async for chunk in chunks:
-                        # Skip partial images in non-streaming mode
                         if chunk.is_partial:
                             continue
 
@@ -777,7 +783,9 @@ class API:
 
                         image_chunks[chunk.image_index][chunk.chunk_index] = chunk.data
 
-                        # Check if this image is complete
+                        if capture_stats and chunk.stats is not None:
+                            stats = chunk.stats
+
                         if (
                             len(image_chunks[chunk.image_index])
                             == image_total_chunks[chunk.image_index]
@@ -787,7 +795,6 @@ class API:
                         if images_complete >= num_images:
                             break
 
-            # Reassemble images in order
             images: list[ImageData] = []
             for image_idx in range(num_images):
                 chunks_dict = image_chunks[image_idx]
@@ -795,11 +802,11 @@ class API:
                 images.append(
                     ImageData(
                         b64_json=full_data if response_format == "b64_json" else None,
-                        url=None,  # URL format not implemented yet
+                        url=None,
                     )
                 )
 
-            return ImageGenerationResponse(data=images)
+            return (images, stats if capture_stats else None)
         except anyio.get_cancelled_exc_class():
             raise
         finally:
@@ -807,39 +814,78 @@ class API:
             if command_id in self._image_generation_queues:
                 del self._image_generation_queues[command_id]
 
-    async def image_edits(
+    async def _collect_image_generation(
         self,
-        image: UploadFile = File(...),
-        prompt: str = Form(...),
-        model: str = Form(...),
-        n: int = Form(1),
-        size: str = Form("1024x1024"),
-        response_format: Literal["url", "b64_json"] = Form("b64_json"),
-        input_fidelity: Literal["low", "high"] = Form("low"),
-        stream: bool = Form(False),
-        partial_images: int = Form(0),
-    ) -> ImageGenerationResponse | StreamingResponse:
-        """Handle image editing requests (img2img)."""
+        command_id: CommandId,
+        num_images: int,
+        response_format: str,
+    ) -> ImageGenerationResponse:
+        """Collect all image chunks (non-streaming) and return a single response."""
+        images, _ = await self._collect_image_chunks(
+            command_id, num_images, response_format, capture_stats=False
+        )
+        return ImageGenerationResponse(data=images)
+
+    async def _collect_image_generation_with_stats(
+        self,
+        command_id: CommandId,
+        num_images: int,
+        response_format: str,
+    ) -> BenchImageGenerationResponse:
+        images, stats = await self._collect_image_chunks(
+            command_id, num_images, response_format, capture_stats=True
+        )
+        return BenchImageGenerationResponse(data=images, generation_stats=stats)
+
+    async def bench_image_generations(
+        self, payload: BenchImageGenerationTaskParams
+    ) -> BenchImageGenerationResponse:
+        payload.model = await self._validate_image_model(payload.model)
+
+        payload.stream = False
+        payload.partial_images = 0
+
+        command = ImageGeneration(
+            request_params=payload,
+        )
+        await self._send(command)
+
+        return await self._collect_image_generation_with_stats(
+            command_id=command.command_id,
+            num_images=payload.n or 1,
+            response_format=payload.response_format or "b64_json",
+        )
+
+    async def _send_image_edits_command(
+        self,
+        image: UploadFile,
+        prompt: str,
+        model: str,
+        n: int,
+        size: str,
+        response_format: Literal["url", "b64_json"],
+        input_fidelity: Literal["low", "high"],
+        stream: bool,
+        partial_images: int,
+        bench: bool,
+    ) -> ImageEdits:
+        """Prepare and send an image edits command with chunked image upload."""
         resolved_model = await self._validate_image_model(model)
 
-        # Read and base64 encode the uploaded image
         image_content = await image.read()
         image_data = base64.b64encode(image_content).decode("utf-8")
 
-        # Map input_fidelity to image_strength
         image_strength = 0.7 if input_fidelity == "high" else 0.3
 
-        # Split image into chunks to stay under gossipsub message size limit
         data_chunks = [
             image_data[i : i + EXO_MAX_CHUNK_SIZE]
             for i in range(0, len(image_data), EXO_MAX_CHUNK_SIZE)
         ]
         total_chunks = len(data_chunks)
 
-        # Create command first to get command_id
         command = ImageEdits(
             request_params=ImageEditsInternalParams(
-                image_data="",  # Empty - will be assembled at worker from chunks
+                image_data="",
                 total_input_chunks=total_chunks,
                 prompt=prompt,
                 model=resolved_model,
@@ -849,10 +895,10 @@ class API:
                 image_strength=image_strength,
                 stream=stream,
                 partial_images=partial_images,
+                bench=bench,
             ),
         )
 
-        # Send input chunks BEFORE the command
         logger.info(
             f"Sending input image: {len(image_data)} bytes in {total_chunks} chunks"
         )
@@ -870,26 +916,78 @@ class API:
                 )
             )
 
-        # Now send the main command
         await self._send(command)
+        return command
 
-        num_images = n
+    async def image_edits(
+        self,
+        image: UploadFile = File(...),
+        prompt: str = Form(...),
+        model: str = Form(...),
+        n: int = Form(1),
+        size: str = Form("1024x1024"),
+        response_format: Literal["url", "b64_json"] = Form("b64_json"),
+        input_fidelity: Literal["low", "high"] = Form("low"),
+        stream: bool = Form(False),
+        partial_images: int = Form(0),
+    ) -> ImageGenerationResponse | StreamingResponse:
+        """Handle image editing requests (img2img)."""
+        command = await self._send_image_edits_command(
+            image=image,
+            prompt=prompt,
+            model=model,
+            n=n,
+            size=size,
+            response_format=response_format,
+            input_fidelity=input_fidelity,
+            stream=stream,
+            partial_images=partial_images,
+            bench=False,
+        )
 
-        # Check if streaming is requested
         if stream and partial_images and partial_images > 0:
             return StreamingResponse(
                 self._generate_image_stream(
                     command_id=command.command_id,
-                    num_images=num_images,
+                    num_images=n,
                     response_format=response_format,
                 ),
                 media_type="text/event-stream",
             )
 
-        # Non-streaming: collect all image chunks
         return await self._collect_image_generation(
             command_id=command.command_id,
-            num_images=num_images,
+            num_images=n,
+            response_format=response_format,
+        )
+
+    async def bench_image_edits(
+        self,
+        image: UploadFile = File(...),
+        prompt: str = Form(...),
+        model: str = Form(...),
+        n: int = Form(1),
+        size: str = Form("1024x1024"),
+        response_format: Literal["url", "b64_json"] = Form("b64_json"),
+        input_fidelity: Literal["low", "high"] = Form("low"),
+    ) -> BenchImageGenerationResponse:
+        """Handle benchmark image editing requests with generation stats."""
+        command = await self._send_image_edits_command(
+            image=image,
+            prompt=prompt,
+            model=model,
+            n=n,
+            size=size,
+            response_format=response_format,
+            input_fidelity=input_fidelity,
+            stream=False,
+            partial_images=0,
+            bench=True,
+        )
+
+        return await self._collect_image_generation_with_stats(
+            command_id=command.command_id,
+            num_images=n,
             response_format=response_format,
         )
 

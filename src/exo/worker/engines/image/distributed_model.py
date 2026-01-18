@@ -156,6 +156,10 @@ class DistributedImageModel:
     def runner(self) -> DiffusionRunner:
         return self._runner
 
+    def get_steps_for_quality(self, quality: Literal["low", "medium", "high"]) -> int:
+        """Get the number of inference steps for a quality level."""
+        return self._config.get_steps_for_quality(quality)
+
     # Delegate attribute access to the underlying model via the adapter.
     # Guarded with TYPE_CHECKING to prevent type checker complaints
     # while still providing full delegation at runtime.

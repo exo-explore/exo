@@ -13,6 +13,10 @@ class ImageGenerator(Protocol):
     @property
     def is_first_stage(self) -> bool: ...
 
+    def get_steps_for_quality(self, quality: Literal["low", "medium", "high"]) -> int:
+        """Get the number of inference steps for a quality level."""
+        ...
+
     def generate(
         self,
         prompt: str,

@@ -15,7 +15,7 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
 
 from exo.master.api import get_model_card
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE
-from exo.shared.types.api import ChatCompletionMessageText
+from exo.shared.types.api import ChatCompletionMessageText, ImageGenerationStats
 from exo.shared.types.chunks import ImageChunk, TokenChunk
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -460,6 +460,7 @@ def _send_image_chunk(
     is_partial: bool,
     partial_index: int | None = None,
     total_partials: int | None = None,
+    stats: ImageGenerationStats | None = None,
 ) -> None:
     """Send base64-encoded image data as chunks via events."""
     data_chunks = [
@@ -468,6 +469,10 @@ def _send_image_chunk(
     ]
     total_chunks = len(data_chunks)
     for chunk_index, chunk_data in enumerate(data_chunks):
+        # Only include stats on the last chunk of the final image
+        chunk_stats = (
+            stats if chunk_index == total_chunks - 1 and not is_partial else None
+        )
         event_sender.send(
             ChunkGenerated(
                 command_id=command_id,
@@ -481,6 +486,7 @@ def _send_image_chunk(
                     is_partial=is_partial,
                     partial_index=partial_index,
                     total_partials=total_partials,
+                    stats=chunk_stats,
                 ),
             )
         )
@@ -496,6 +502,8 @@ def _process_image_response(
     """Process a single image response and send chunks."""
     encoded_data = base64.b64encode(response.image_data).decode("utf-8")
     is_partial = isinstance(response, PartialImageResponse)
+    # Extract stats from final ImageGenerationResponse if available
+    stats = response.stats if isinstance(response, ImageGenerationResponse) else None
     _send_image_chunk(
         encoded_data=encoded_data,
         command_id=command_id,
@@ -505,6 +513,7 @@ def _process_image_response(
         is_partial=is_partial,
         partial_index=response.partial_index if is_partial else None,
         total_partials=response.total_partials if is_partial else None,
+        stats=stats,
     )
 
 

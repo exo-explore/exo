@@ -1,7 +1,7 @@
 from collections.abc import Generator
 from typing import Any, Literal
 
-from exo.shared.types.api import FinishReason, GenerationStats
+from exo.shared.types.api import FinishReason, GenerationStats, ImageGenerationStats
 from exo.utils.pydantic_ext import TaggedModel
 
 
@@ -24,6 +24,7 @@ class GenerationResponse(BaseRunnerResponse):
 class ImageGenerationResponse(BaseRunnerResponse):
     image_data: bytes
     format: Literal["png", "jpeg", "webp"] = "png"
+    stats: ImageGenerationStats | None = None
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
         for name, value in super().__repr_args__():

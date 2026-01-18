@@ -1,12 +1,19 @@
 import base64
 import io
 import tempfile
+import time
 from pathlib import Path
 from typing import Generator, Literal
 
+import mlx.core as mx
 from PIL import Image
 
-from exo.shared.types.api import ImageEditsInternalParams, ImageGenerationTaskParams
+from exo.shared.types.api import (
+    ImageEditsInternalParams,
+    ImageGenerationStats,
+    ImageGenerationTaskParams,
+)
+from exo.shared.types.memory import Memory
 from exo.shared.types.worker.runner_response import (
     ImageGenerationResponse,
     PartialImageResponse,
@@ -69,7 +76,14 @@ def generate_image(
     quality: Literal["low", "medium", "high"] = task.quality or "medium"
     seed = 2  # TODO(ciaran): Randomise when not testing anymore
 
-    # Handle streaming params for both generation and edit tasks
+    is_bench = getattr(task, "bench", False)
+
+    generation_start_time: float = 0.0
+
+    if is_bench:
+        mx.reset_peak_memory()
+        generation_start_time = time.perf_counter()
+
     partial_images = task.partial_images or (3 if task.stream else 0)
 
     image_path: Path | None = None
@@ -106,8 +120,33 @@ def generate_image(
                     total_partials=total_partials,
                 )
             else:
-                # Final image
                 image = result
+
+                stats: ImageGenerationStats | None = None
+                if is_bench:
+                    generation_end_time = time.perf_counter()
+                    total_generation_time = generation_end_time - generation_start_time
+
+                    num_inference_steps = model.get_steps_for_quality(quality)
+
+                    seconds_per_step = (
+                        total_generation_time / num_inference_steps
+                        if num_inference_steps > 0
+                        else 0.0
+                    )
+
+                    peak_memory_gb = mx.get_peak_memory() / (1024**3)
+
+                    stats = ImageGenerationStats(
+                        seconds_per_step=seconds_per_step,
+                        total_generation_time=total_generation_time,
+                        num_inference_steps=num_inference_steps,
+                        num_images=task.n or 1,
+                        image_width=width,
+                        image_height=height,
+                        peak_memory_usage=Memory.from_gb(peak_memory_gb),
+                    )
+
                 buffer = io.BytesIO()
                 image_format = task.output_format.upper()
                 if image_format == "JPG":
@@ -117,4 +156,5 @@ def generate_image(
                 yield ImageGenerationResponse(
                     image_data=buffer.getvalue(),
                     format=task.output_format,
+                    stats=stats,
                 )
