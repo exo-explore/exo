@@ -102,7 +102,12 @@ def chunk_to_response(
         choices=[
             StreamingChoiceResponse(
                 index=0,
-                delta=ChatCompletionMessage(role="assistant", content=chunk.text),
+                delta=ChatCompletionMessage(
+                    role="assistant",
+                    content=chunk.text,
+                    thinking=chunk.reasoning_content,
+                    tool_calls=chunk.tool_calls,
+                ),
                 finish_reason=chunk.finish_reason,
             )
         ],
@@ -498,6 +503,8 @@ class API:
         """Collect all token chunks for a chat completion and return a single response."""
 
         text_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
         model: str | None = None
         finish_reason: FinishReason | None = None
 
@@ -512,11 +519,16 @@ class API:
                 model = chunk.model
 
             text_parts.append(chunk.text)
+            if chunk.reasoning_content:
+                reasoning_parts.append(chunk.reasoning_content)
+            if chunk.tool_calls:
+                tool_calls.extend(chunk.tool_calls)
 
             if chunk.finish_reason is not None:
                 finish_reason = chunk.finish_reason
 
         combined_text = "".join(text_parts)
+        combined_reasoning = "".join(reasoning_parts)
         assert model is not None
 
         return ChatCompletionResponse(
@@ -528,7 +540,9 @@ class API:
                     index=0,
                     message=ChatCompletionMessage(
                         role="assistant",
-                        content=combined_text,
+                        content=combined_text if combined_text else None,
+                        thinking=combined_reasoning if combined_reasoning else None,
+                        tool_calls=tool_calls if tool_calls else None,
                     ),
                     finish_reason=finish_reason,
                 )
@@ -539,6 +553,8 @@ class API:
         self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
         text_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
         model: str | None = None
         finish_reason: FinishReason | None = None
 
@@ -555,12 +571,17 @@ class API:
                 model = chunk.model
 
             text_parts.append(chunk.text)
+            if chunk.reasoning_content:
+                reasoning_parts.append(chunk.reasoning_content)
+            if chunk.tool_calls:
+                tool_calls.extend(chunk.tool_calls)
             stats = chunk.stats or stats
 
             if chunk.finish_reason is not None:
                 finish_reason = chunk.finish_reason
 
         combined_text = "".join(text_parts)
+        combined_reasoning = "".join(reasoning_parts)
         assert model is not None
 
         resp = BenchChatCompletionResponse(
@@ -571,7 +592,10 @@ class API:
                 ChatCompletionChoice(
                     index=0,
                     message=ChatCompletionMessage(
-                        role="assistant", content=combined_text
+                        role="assistant",
+                        content=combined_text if combined_text else None,
+                        thinking=combined_reasoning if combined_reasoning else None,
+                        tool_calls=tool_calls if tool_calls else None,
                     ),
                     finish_reason=finish_reason,
                 )

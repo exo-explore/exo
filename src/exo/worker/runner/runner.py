@@ -17,7 +17,7 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE
 from exo.shared.models.model_cards import ModelId, ModelTask
 from exo.shared.types.api import ChatCompletionMessageText, ImageGenerationStats
-from exo.shared.types.chunks import ImageChunk, TokenChunk
+from exo.shared.types.chunks import ImageChunk, TokenChunk, FinishReason
 from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -75,6 +75,133 @@ from exo.worker.engines.mlx.utils_mlx import (
     mlx_force_oom,
 )
 from exo.worker.runner.bootstrap import logger
+from exo.worker.parsing.stream import ChunkParser, ChunkParserConfig
+
+
+ALL_PARSERS: set[str] = {
+    "hermes",
+    "qwen3",
+    "qwen3_moe",
+    "qwen3_vl",
+    "qwen3_coder",
+    "glm4_moe",
+    "minimax_m2",
+    "nemotron3_nano",
+    "functiongemma",
+    "function_parameter",
+    "iquest_coder_v1",
+    "solar_open",
+    "harmony",
+}
+
+
+def _get_parser_config(model_id: str) -> ChunkParserConfig:
+    """
+    Map model_id -> ChunkParserConfig, covering all supported parser types.
+
+    Key behavior:
+    - If we return (None, None), parsing is disabled and tool calls will remain as text.
+    - For families where the tool dialect differs from the reasoning dialect (e.g. Qwen3 Coder),
+      we choose separate parser names for reasoning vs tool parsing.
+    """
+    lower_id = (model_id or "").lower()
+
+    if "harmony" in lower_id or "gpt-oss" in lower_id:
+        return ChunkParserConfig(
+            reasoning_parser_name="harmony",
+            tool_parser_name="harmony",
+            enable_thinking=True,
+        )
+
+    if "solar" in lower_id and "open" in lower_id:
+        return ChunkParserConfig(
+            reasoning_parser_name="solar_open",
+            tool_parser_name="solar_open",
+            enable_thinking=True,
+        )
+
+    if "minimax" in lower_id or "m2" in lower_id:
+        return ChunkParserConfig(
+            reasoning_parser_name="minimax_m2",
+            tool_parser_name="minimax_m2",
+            enable_thinking=True,
+        )
+
+    if "glm" in lower_id or "chatglm" in lower_id:
+        return ChunkParserConfig(
+            reasoning_parser_name="glm4_moe",
+            tool_parser_name="glm4_moe",
+            enable_thinking=True,
+        )
+
+    if "nemotron" in lower_id and ("nano" in lower_id or "3" in lower_id):
+        return ChunkParserConfig(
+            reasoning_parser_name="nemotron3_nano",
+            tool_parser_name="nemotron3_nano",
+            enable_thinking=True,
+        )
+
+    if "qwen3" in lower_id:
+        if "vl" in lower_id:
+            return ChunkParserConfig(
+                reasoning_parser_name="qwen3_vl",
+                tool_parser_name="qwen3_vl",
+                enable_thinking=True,
+            )
+
+        if "moe" in lower_id:
+            return ChunkParserConfig(
+                reasoning_parser_name="qwen3_moe",
+                tool_parser_name="qwen3_moe",
+                enable_thinking=True,
+            )
+
+        if "coder" in lower_id:
+            return ChunkParserConfig(
+                reasoning_parser_name="qwen3",
+                tool_parser_name="qwen3_coder",
+                enable_thinking=True,
+            )
+
+        return ChunkParserConfig(
+            reasoning_parser_name="qwen3",
+            tool_parser_name="qwen3",
+            enable_thinking=True,
+        )
+
+    if "functiongemma" in lower_id or ("gemma" in lower_id and "function" in lower_id):
+        return ChunkParserConfig(
+            reasoning_parser_name=None,
+            tool_parser_name="functiongemma",
+            enable_thinking=True,
+        )
+
+    if "function_parameter" in lower_id or "function-parameter" in lower_id:
+        return ChunkParserConfig(
+            reasoning_parser_name=None,
+            tool_parser_name="function_parameter",
+            enable_thinking=True,
+        )
+
+    if "iquest" in lower_id or "iquest_coder_v1" in lower_id:
+        return ChunkParserConfig(
+            reasoning_parser_name=None,
+            tool_parser_name="iquest_coder_v1",
+            enable_thinking=True,
+        )
+
+    if "hermes" in lower_id or "tool-use" in lower_id:
+        return ChunkParserConfig(
+            reasoning_parser_name="hermes",
+            tool_parser_name="hermes",
+            enable_thinking=True,
+        )
+
+    return ChunkParserConfig(
+        reasoning_parser_name=None,
+        tool_parser_name=None,
+        enable_thinking=True,
+    )
 
 
 def main(
@@ -237,32 +364,63 @@ def main(
                         if isinstance(model, GptOssModel):
                             mlx_generator = parse_gpt_oss(mlx_generator)
 
-                        # For other thinking models (GLM, etc.), check if we need to
-                        # prepend the thinking tag that was consumed by the chat template
-                        if detect_thinking_prompt_suffix(prompt, tokenizer):
-                            mlx_generator = parse_thinking_models(
-                                mlx_generator, tokenizer
-                            )
+                    parser = ChunkParser(_get_parser_config(shard_metadata.model_meta.model_id))
 
-                        # TODO: Add tool call parser here
+                    has_generated_tool_calls = False
+                    for response in mlx_generator:
+                        match response:
+                            case GenerationResponse():
+                                if shard_metadata.device_rank == 0:
+                                    parsed_chunks = parser.feed(response.text)
 
-                        for response in mlx_generator:
-                            match response:
-                                case GenerationResponse():
-                                    if device_rank == 0:
+                                    if response.finish_reason is not None:
+                                        parsed_chunks.extend(parser.flush())
+
+                                    if not parsed_chunks and response.finish_reason is not None:
+                                        parsed_chunks.append("")
+
+                                    for i, p_chunk in enumerate(parsed_chunks):
+                                        is_last_chunk = (response.finish_reason is not None) and (i == len(parsed_chunks) - 1)
+
+                                        text_payload = ""
+                                        reasoning_payload = None
+                                        tool_calls_payload = None
+
+                                        if isinstance(p_chunk, str):
+                                            text_payload = p_chunk
+                                        elif isinstance(p_chunk, dict):
+                                            if "reasoning_content" in p_chunk:
+                                                reasoning_payload = p_chunk["reasoning_content"]
+                                            elif "type" in p_chunk and p_chunk["type"] == "function":
+                                                tool_calls_payload = [p_chunk]
+                                                has_generated_tool_calls = True
+                                            elif "name" in p_chunk:
+                                                tool_calls_payload = [p_chunk]
+                                                has_generated_tool_calls = True
+
+                                        finish_reason = None
+                                        if is_last_chunk:
+                                            finish_reason = response.finish_reason
+                                            if has_generated_tool_calls:
+                                                finish_reason = "tool_calls"
+
                                         event_sender.send(
                                             ChunkGenerated(
                                                 command_id=command_id,
                                                 chunk=TokenChunk(
                                                     idx=response.token,
-                                                    model=shard_metadata.model_card.model_id,
-                                                    text=response.text,
+                                                    model=shard_metadata.model_meta.model_id,
+                                                    text=text_payload,
                                                     token_id=response.token,
-                                                    finish_reason=response.finish_reason,
-                                                    stats=response.stats,
+                                                    finish_reason=finish_reason,
+                                                    stats=response.stats if is_last_chunk else None,
+                                                    reasoning_content=reasoning_payload,
+                                                    tool_calls=tool_calls_payload,
                                                 ),
                                             )
                                         )
+                                # case TokenizedResponse():
+                                # TODO: something here ig
 
                     # can we make this more explicit?
                     except Exception as e:

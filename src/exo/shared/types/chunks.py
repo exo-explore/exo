@@ -1,6 +1,6 @@
 from collections.abc import Generator
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Dict, List, Optional
 
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.api import GenerationStats, ImageGenerationStats
@@ -26,6 +26,8 @@ class TokenChunk(BaseChunk):
     finish_reason: FinishReason | None = None
     stats: GenerationStats | None = None
     error_message: str | None = None
+    reasoning_content: Optional[str] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
 
 
 class ImageChunk(BaseChunk):
