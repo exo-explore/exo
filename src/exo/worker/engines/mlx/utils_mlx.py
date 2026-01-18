@@ -41,10 +41,9 @@ import mlx.nn as nn
 from mlx_lm.utils import load_model
 from pydantic import RootModel
 
-from exo.shared.types.api import ChatCompletionMessageText
 from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
-from exo.shared.types.tasks import ChatCompletionTaskParams
+from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.worker.instances import (
     BoundInstance,
     MlxJacclInstance,
@@ -367,34 +366,36 @@ def load_tokenizer_for_model_id(
 
 def apply_chat_template(
     tokenizer: TokenizerWrapper,
-    chat_task_data: ChatCompletionTaskParams,
+    task_params: ResponsesRequest,
 ) -> str:
-    # Now we can properly access the messages
-    messages = chat_task_data.messages
+    """Convert ResponsesRequest to a chat template prompt.
 
+    Converts the internal format (input + instructions) to a messages list
+    that can be processed by the tokenizer's chat template.
+    """
     formatted_messages: list[dict[str, Any]] = []
-    for message in messages:
-        if isinstance(message.content, ChatCompletionMessageText):
-            message.content = message.content.text
-        if isinstance(message.content, list):
-            if len(message.content) == 0:
-                logger.warning("Received prompt with no content, skipping")
+
+    # Add system message (instructions) if present
+    if task_params.instructions:
+        formatted_messages.append({"role": "system", "content": task_params.instructions})
+
+    # Convert input to messages
+    if isinstance(task_params.input, str):
+        # Simple string input becomes a single user message
+        formatted_messages.append({"role": "user", "content": task_params.input})
+    else:
+        # List of InputMessage
+        for msg in task_params.input:
+            if not msg.content:
+                logger.warning("Received message with empty content, skipping")
                 continue
-
-            message.content = "\n".join(c.text for c in message.content).strip()
-        if message.content is None and message.thinking is None:
-            continue
-
-        # Null values are not valid when applying templates in tokenizer
-        formatted_messages.append(
-            {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
-        )
+            formatted_messages.append({"role": msg.role, "content": msg.content})
 
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
-        tools=chat_task_data.tools,
+        tools=task_params.tools,
     )
 
     logger.info(prompt)

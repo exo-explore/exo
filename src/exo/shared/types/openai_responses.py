@@ -1,7 +1,15 @@
-"""OpenAI Responses API types for request/response conversion."""
+"""OpenAI Responses API types for request/response conversion.
+
+ResponsesRequest serves as both:
+1. The external API request type for /v1/responses
+2. The canonical internal type used throughout the inference pipeline
+
+All external API formats (Chat Completions, Claude) are converted to
+ResponsesRequest at the API boundary.
+"""
 
 import time
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -12,14 +20,27 @@ ResponseRole = Literal["user", "assistant", "system", "developer"]
 
 # Request types
 class ResponseInputMessage(BaseModel, frozen=True):
-    """Input message for Responses API."""
+    """Input message for Responses API.
+
+    This is also used as the internal message format throughout the pipeline.
+    """
 
     role: ResponseRole
     content: str
 
 
 class ResponsesRequest(BaseModel):
-    """Request body for OpenAI Responses API."""
+    """Request body for OpenAI Responses API.
+
+    This is also the canonical internal task params format used throughout
+    the inference pipeline. All external API formats are converted to this
+    format at the API boundary.
+
+    Field mapping from other APIs:
+    - input: Replaces 'messages' from Chat Completions
+    - instructions: System message, extracted from messages or Claude's 'system'
+    - max_output_tokens: Replaces 'max_tokens' from Chat Completions
+    """
 
     model: str
     input: str | list[ResponseInputMessage]
@@ -27,7 +48,12 @@ class ResponsesRequest(BaseModel):
     max_output_tokens: int | None = None
     temperature: float | None = None
     top_p: float | None = None
+    top_k: int | None = None
+    stop: str | list[str] | None = None
+    seed: int | None = None
     stream: bool = False
+    # Tools support
+    tools: list[dict[str, Any]] | None = None
     # previous_response_id not supported in MVP
     metadata: dict[str, str] | None = None
 

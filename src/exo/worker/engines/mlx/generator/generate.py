@@ -8,13 +8,11 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 # from exo.engines.mlx.cache import KVPrefixCache
 from exo.shared.types.api import (
-    BenchChatCompletionTaskParams,
-    ChatCompletionMessage,
     FinishReason,
     GenerationStats,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.tasks import ChatCompletionTaskParams
+from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
@@ -53,14 +51,9 @@ def warmup_inference(
 
     warmup_prompt = apply_chat_template(
         tokenizer=tokenizer,
-        chat_task_data=ChatCompletionTaskParams(
+        task_params=ResponsesRequest(
             model="",
-            messages=[
-                ChatCompletionMessage(
-                    role="user",
-                    content=content,
-                )
-            ],
+            input=content,
         ),
     )
 
@@ -118,18 +111,22 @@ def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
 def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
-    task: ChatCompletionTaskParams,
-    prompt: str,
+    task: ResponsesRequest,
+    is_bench: bool = False,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
-    is_bench: bool = isinstance(task, BenchChatCompletionTaskParams)
 
     # Currently we support chat-completion tasks only.
     logger.debug(f"task_params: {task}")
 
     if task.seed is not None:
         mx.random.seed(task.seed)
+
+    prompt = apply_chat_template(
+        tokenizer=tokenizer,
+        task_params=task,
+    )
 
     caches = make_kv_cache(model=model)
 
@@ -153,7 +150,7 @@ def mlx_generate(
     )
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
-    max_tokens = task.max_tokens or MAX_TOKENS
+    max_tokens = task.max_output_tokens or MAX_TOKENS
     accumulated_text = ""
 
     for out in stream_generate(

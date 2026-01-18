@@ -6,7 +6,9 @@ from collections.abc import AsyncGenerator
 from exo.shared.types.api import (
     ChatCompletionChoice,
     ChatCompletionMessage,
+    ChatCompletionMessageText,
     ChatCompletionResponse,
+    ChatCompletionTaskParams,
     ErrorInfo,
     ErrorResponse,
     FinishReason,
@@ -14,18 +16,55 @@ from exo.shared.types.api import (
 )
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.common import CommandId
-from exo.shared.types.tasks import ChatCompletionTaskParams
+from exo.shared.types.openai_responses import ResponseInputMessage, ResponsesRequest
 
 
-def chat_request_to_internal_params(
-    request: ChatCompletionTaskParams,
-) -> ChatCompletionTaskParams:
-    """Convert Chat Completions API request to internal params.
+def chat_request_to_internal(request: ChatCompletionTaskParams) -> ResponsesRequest:
+    """Convert Chat Completions API request to ResponsesRequest (canonical internal format).
 
-    This is essentially a pass-through since ChatCompletionTaskParams
-    is already the internal format for chat completions.
+    Extracts system message as instructions, converts messages to input.
     """
-    return request
+    instructions: str | None = None
+    input_messages: list[ResponseInputMessage] = []
+
+    for msg in request.messages:
+        # Normalize content to string
+        content: str
+        if msg.content is None:
+            content = ""
+        elif isinstance(msg.content, str):
+            content = msg.content
+        elif isinstance(msg.content, ChatCompletionMessageText):
+            content = msg.content.text
+        else:
+            # List of ChatCompletionMessageText
+            content = "\n".join(item.text for item in msg.content)
+
+        # Extract system message as instructions
+        if msg.role == "system":
+            if instructions is None:
+                instructions = content
+            else:
+                # Append additional system messages
+                instructions = f"{instructions}\n{content}"
+        else:
+            # Convert to ResponseInputMessage (only user, assistant, developer roles)
+            if msg.role in ("user", "assistant", "developer"):
+                input_messages.append(ResponseInputMessage(role=msg.role, content=content))
+
+    return ResponsesRequest(
+        model=request.model,
+        input=input_messages if input_messages else "",
+        instructions=instructions,
+        max_output_tokens=request.max_tokens,
+        temperature=request.temperature,
+        top_p=request.top_p,
+        top_k=request.top_k,
+        stop=request.stop,
+        seed=request.seed,
+        stream=request.stream,
+        tools=request.tools,
+    )
 
 
 def chunk_to_response(

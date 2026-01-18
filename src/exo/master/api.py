@@ -18,19 +18,18 @@ from hypercorn.typing import ASGIFramework
 from loguru import logger
 
 from exo.master.adapters.chat_completions import (
-    chat_request_to_internal_params,
+    chat_request_to_internal,
     collect_chat_response,
     generate_chat_stream,
 )
 from exo.master.adapters.claude import (
-    claude_request_to_chat_params,
+    claude_request_to_internal,
     collect_claude_response,
     generate_claude_stream,
 )
 from exo.master.adapters.responses import (
     collect_responses_response,
     generate_responses_stream,
-    responses_request_to_chat_params,
 )
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
@@ -51,6 +50,7 @@ from exo.shared.types.api import (
     ChatCompletionChoice,
     ChatCompletionMessage,
     ChatCompletionResponse,
+    ChatCompletionTaskParams,
     CreateInstanceParams,
     CreateInstanceResponse,
     DeleteInstanceResponse,
@@ -100,7 +100,6 @@ from exo.shared.types.openai_responses import (
     ResponsesResponse,
 )
 from exo.shared.types.state import State
-from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
@@ -530,15 +529,13 @@ class API:
         self, payload: ChatCompletionTaskParams
     ) -> ChatCompletionResponse | StreamingResponse:
         """OpenAI Chat Completions API - adapter."""
-        internal_params = chat_request_to_internal_params(payload)
-        model_card = await resolve_model_card(internal_params.model)
-        internal_params.model = model_card.model_id
+        internal_params = chat_request_to_internal(payload)
 
         if not any(
             instance.shard_assignments.model_id == internal_params.model
             for instance in self.state.instances.values()
         ):
-            await self._trigger_notify_user_to_download_model(internal_params.model)
+            await self._trigger_notify_user_to_download_model(ModelId(internal_params.model))
             raise HTTPException(
                 status_code=404,
                 detail=f"No instance found for model {internal_params.model}",
@@ -567,21 +564,22 @@ class API:
     async def bench_chat_completions(
         self, payload: BenchChatCompletionTaskParams
     ) -> BenchChatCompletionResponse:
-        model_card = await resolve_model_card(payload.model)
-        payload.model = model_card.model_id
+        # Convert to internal format (BenchChatCompletionTaskParams extends ChatCompletionTaskParams)
+        internal_params = chat_request_to_internal(payload)
 
         if not any(
-            instance.shard_assignments.model_id == payload.model
+            instance.shard_assignments.model_id == internal_params.model
             for instance in self.state.instances.values()
         ):
-            await self._trigger_notify_user_to_download_model(payload.model)
+            await self._trigger_notify_user_to_download_model(ModelId(internal_params.model))
             raise HTTPException(
-                status_code=404, detail=f"No instance found for model {payload.model}"
+                status_code=404,
+                detail=f"No instance found for model {internal_params.model}",
             )
 
-        payload.stream = False
+        internal_params.stream = False
 
-        command = ChatCompletion(request_params=payload)
+        command = ChatCompletion(request_params=internal_params)
         await self._send(command)
 
         response = await self._collect_chat_completion_with_stats(command.command_id)
@@ -1091,7 +1089,7 @@ class API:
             instance.shard_assignments.model_id == internal_params.model
             for instance in self.state.instances.values()
         ):
-            await self._trigger_notify_user_to_download_model(internal_params.model)
+            await self._trigger_notify_user_to_download_model(ModelId(internal_params.model))
             raise HTTPException(
                 status_code=404,
                 detail=f"No instance found for model {internal_params.model}",

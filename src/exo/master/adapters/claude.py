@@ -2,10 +2,7 @@
 
 from collections.abc import AsyncGenerator
 
-from exo.shared.types.api import (
-    ChatCompletionMessage,
-    FinishReason,
-)
+from exo.shared.types.api import FinishReason
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.claude_api import (
     ClaudeContentBlockDeltaEvent,
@@ -25,7 +22,7 @@ from exo.shared.types.claude_api import (
     ClaudeUsage,
 )
 from exo.shared.types.common import CommandId
-from exo.shared.types.tasks import ChatCompletionTaskParams
+from exo.shared.types.openai_responses import ResponseInputMessage, ResponsesRequest
 
 
 def finish_reason_to_claude_stop_reason(
@@ -44,24 +41,23 @@ def finish_reason_to_claude_stop_reason(
     return mapping.get(finish_reason, "end_turn")
 
 
-def claude_request_to_chat_params(
-    request: ClaudeMessagesRequest,
-) -> ChatCompletionTaskParams:
-    """Convert Claude Messages API request to internal ChatCompletionTaskParams."""
-    messages: list[ChatCompletionMessage] = []
+def claude_request_to_internal(request: ClaudeMessagesRequest) -> ResponsesRequest:
+    """Convert Claude Messages API request to ResponsesRequest (canonical internal format).
 
-    # Add system message if present
+    Converts Claude's system parameter to instructions,
+    and messages to input.
+    """
+    # Handle system message
+    instructions: str | None = None
     if request.system:
         if isinstance(request.system, str):
-            messages.append(
-                ChatCompletionMessage(role="system", content=request.system)
-            )
+            instructions = request.system
         else:
             # List of text blocks
-            system_text = "".join(block.text for block in request.system)
-            messages.append(ChatCompletionMessage(role="system", content=system_text))
+            instructions = "".join(block.text for block in request.system)
 
-    # Convert messages
+    # Convert messages to input
+    input_messages: list[ResponseInputMessage] = []
     for msg in request.messages:
         content: str
         if isinstance(msg.content, str):
@@ -74,12 +70,14 @@ def claude_request_to_chat_params(
                     text_parts.append(block.text)
             content = "".join(text_parts)
 
-        messages.append(ChatCompletionMessage(role=msg.role, content=content))
+        # Claude uses "user" and "assistant" roles
+        input_messages.append(ResponseInputMessage(role=msg.role, content=content))
 
-    return ChatCompletionTaskParams(
+    return ResponsesRequest(
         model=request.model,
-        messages=messages,
-        max_tokens=request.max_tokens,
+        input=input_messages if input_messages else "",
+        instructions=instructions,
+        max_output_tokens=request.max_tokens,
         temperature=request.temperature,
         top_p=request.top_p,
         top_k=request.top_k,

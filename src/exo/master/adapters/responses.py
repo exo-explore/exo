@@ -1,14 +1,12 @@
 """OpenAI Responses API adapter for converting requests/responses.
 
-This is the canonical internal format. Responses API is the most featureful,
-making it the natural choice for the internal format.
+ResponsesRequest is the canonical internal format. Responses API is the most featureful,
+making it the natural choice for the internal format. All other API formats (Chat
+Completions, Claude) are converted TO ResponsesRequest.
 """
 
 from collections.abc import AsyncGenerator
 
-from exo.shared.types.api import (
-    ChatCompletionMessage,
-)
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.common import CommandId
 from exo.shared.types.openai_responses import (
@@ -21,47 +19,11 @@ from exo.shared.types.openai_responses import (
     ResponseOutputItemAddedEvent,
     ResponseOutputItemDoneEvent,
     ResponseOutputText,
-    ResponsesRequest,
     ResponsesResponse,
     ResponseTextDeltaEvent,
     ResponseTextDoneEvent,
     ResponseUsage,
 )
-from exo.shared.types.tasks import ChatCompletionTaskParams
-
-
-def responses_request_to_chat_params(
-    request: ResponsesRequest,
-) -> ChatCompletionTaskParams:
-    """Convert OpenAI Responses API request to internal ChatCompletionTaskParams."""
-    messages: list[ChatCompletionMessage] = []
-
-    # Add instructions as system message if present
-    if request.instructions:
-        messages.append(
-            ChatCompletionMessage(role="system", content=request.instructions)
-        )
-
-    # Convert input to messages
-    if isinstance(request.input, str):
-        messages.append(ChatCompletionMessage(role="user", content=request.input))
-    else:
-        for msg in request.input:
-            messages.append(
-                ChatCompletionMessage(
-                    role=msg.role,
-                    content=msg.content,
-                )
-            )
-
-    return ChatCompletionTaskParams(
-        model=request.model,
-        messages=messages,
-        max_tokens=request.max_output_tokens,
-        temperature=request.temperature,
-        top_p=request.top_p,
-        stream=request.stream,
-    )
 
 
 async def collect_responses_response(

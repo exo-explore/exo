@@ -1,4 +1,8 @@
-"""Tests for OpenAI Responses API conversion functions and types."""
+"""Tests for OpenAI Responses API types.
+
+ResponsesRequest is the canonical internal type used throughout the pipeline.
+No conversion is needed for Responses API requests.
+"""
 
 import json
 from typing import Any, cast
@@ -6,9 +10,6 @@ from typing import Any, cast
 import pydantic
 import pytest
 
-from exo.master.adapters.responses import (
-    responses_request_to_chat_params,
-)
 from exo.shared.types.openai_responses import (
     ResponseCompletedEvent,
     ResponseContentPartAddedEvent,
@@ -26,22 +27,20 @@ from exo.shared.types.openai_responses import (
 )
 
 
-class TestResponsesRequestToChatParams:
-    """Tests for converting OpenAI Responses API requests to ChatCompletionTaskParams."""
+class TestResponsesRequestAsCanonicalType:
+    """Tests for ResponsesRequest as the canonical internal type."""
 
-    def test_string_input_conversion(self):
+    def test_string_input(self):
         request = ResponsesRequest(
             model="gpt-4o",
             input="Hello, how are you?",
         )
-        params = responses_request_to_chat_params(request)
 
-        assert params.model == "gpt-4o"
-        assert len(params.messages) == 1
-        assert params.messages[0].role == "user"
-        assert params.messages[0].content == "Hello, how are you?"
+        assert request.model == "gpt-4o"
+        assert request.input == "Hello, how are you?"
+        assert request.instructions is None
 
-    def test_message_array_input_conversion(self):
+    def test_message_array_input(self):
         request = ResponsesRequest(
             model="gpt-4o",
             input=[
@@ -50,15 +49,15 @@ class TestResponsesRequestToChatParams:
                 ResponseInputMessage(role="user", content="How are you?"),
             ],
         )
-        params = responses_request_to_chat_params(request)
 
-        assert len(params.messages) == 3
-        assert params.messages[0].role == "user"
-        assert params.messages[0].content == "Hello"
-        assert params.messages[1].role == "assistant"
-        assert params.messages[1].content == "Hi there!"
-        assert params.messages[2].role == "user"
-        assert params.messages[2].content == "How are you?"
+        assert isinstance(request.input, list)
+        assert len(request.input) == 3
+        assert request.input[0].role == "user"
+        assert request.input[0].content == "Hello"
+        assert request.input[1].role == "assistant"
+        assert request.input[1].content == "Hi there!"
+        assert request.input[2].role == "user"
+        assert request.input[2].content == "How are you?"
 
     def test_request_with_instructions(self):
         request = ResponsesRequest(
@@ -66,13 +65,9 @@ class TestResponsesRequestToChatParams:
             input="Hello",
             instructions="You are a helpful assistant. Be concise.",
         )
-        params = responses_request_to_chat_params(request)
 
-        assert len(params.messages) == 2
-        assert params.messages[0].role == "system"
-        assert params.messages[0].content == "You are a helpful assistant. Be concise."
-        assert params.messages[1].role == "user"
-        assert params.messages[1].content == "Hello"
+        assert request.input == "Hello"
+        assert request.instructions == "You are a helpful assistant. Be concise."
 
     def test_request_with_optional_parameters(self):
         request = ResponsesRequest(
@@ -83,12 +78,27 @@ class TestResponsesRequestToChatParams:
             top_p=0.95,
             stream=True,
         )
-        params = responses_request_to_chat_params(request)
 
-        assert params.max_tokens == 500
-        assert params.temperature == 0.8
-        assert params.top_p == 0.95
-        assert params.stream is True
+        assert request.max_output_tokens == 500
+        assert request.temperature == 0.8
+        assert request.top_p == 0.95
+        assert request.stream is True
+
+    def test_request_with_new_fields(self):
+        """Test the additional fields added for internal use."""
+        request = ResponsesRequest(
+            model="gpt-4o",
+            input="Hello",
+            top_k=40,
+            seed=42,
+            stop=["STOP", "END"],
+            tools=[{"type": "function", "function": {"name": "test"}}],
+        )
+
+        assert request.top_k == 40
+        assert request.seed == 42
+        assert request.stop == ["STOP", "END"]
+        assert request.tools == [{"type": "function", "function": {"name": "test"}}]
 
     def test_request_with_system_role_in_messages(self):
         request = ResponsesRequest(
@@ -98,11 +108,11 @@ class TestResponsesRequestToChatParams:
                 ResponseInputMessage(role="user", content="Hello"),
             ],
         )
-        params = responses_request_to_chat_params(request)
 
-        assert len(params.messages) == 2
-        assert params.messages[0].role == "system"
-        assert params.messages[1].role == "user"
+        assert isinstance(request.input, list)
+        assert len(request.input) == 2
+        assert request.input[0].role == "system"
+        assert request.input[1].role == "user"
 
     def test_request_with_developer_role(self):
         request = ResponsesRequest(
@@ -112,10 +122,10 @@ class TestResponsesRequestToChatParams:
                 ResponseInputMessage(role="user", content="Hello"),
             ],
         )
-        params = responses_request_to_chat_params(request)
 
-        assert len(params.messages) == 2
-        assert params.messages[0].role == "developer"
+        assert isinstance(request.input, list)
+        assert len(request.input) == 2
+        assert request.input[0].role == "developer"
 
 
 class TestResponsesRequestValidation:

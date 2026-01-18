@@ -7,7 +7,7 @@ import pydantic
 import pytest
 
 from exo.master.adapters.claude import (
-    claude_request_to_chat_params,
+    claude_request_to_internal,
     finish_reason_to_claude_stop_reason,
 )
 from exo.shared.types.claude_api import (
@@ -50,8 +50,8 @@ class TestFinishReasonToClaudeStopReason:
         assert finish_reason_to_claude_stop_reason(None) is None
 
 
-class TestClaudeRequestToChatParams:
-    """Tests for converting Claude Messages API requests to ChatCompletionTaskParams."""
+class TestClaudeRequestToInternal:
+    """Tests for converting Claude Messages API requests to ResponsesRequest."""
 
     def test_basic_request_conversion(self):
         request = ClaudeMessagesRequest(
@@ -61,13 +61,15 @@ class TestClaudeRequestToChatParams:
                 ClaudeMessage(role="user", content="Hello"),
             ],
         )
-        params = claude_request_to_chat_params(request)
+        params = claude_request_to_internal(request)
 
         assert params.model == "claude-3-opus"
-        assert params.max_tokens == 100
-        assert len(params.messages) == 1
-        assert params.messages[0].role == "user"
-        assert params.messages[0].content == "Hello"
+        assert params.max_output_tokens == 100
+        assert isinstance(params.input, list)
+        assert len(params.input) == 1
+        assert params.input[0].role == "user"
+        assert params.input[0].content == "Hello"
+        assert params.instructions is None
 
     def test_request_with_system_string(self):
         request = ClaudeMessagesRequest(
@@ -78,13 +80,13 @@ class TestClaudeRequestToChatParams:
                 ClaudeMessage(role="user", content="Hello"),
             ],
         )
-        params = claude_request_to_chat_params(request)
+        params = claude_request_to_internal(request)
 
-        assert len(params.messages) == 2
-        assert params.messages[0].role == "system"
-        assert params.messages[0].content == "You are a helpful assistant."
-        assert params.messages[1].role == "user"
-        assert params.messages[1].content == "Hello"
+        assert params.instructions == "You are a helpful assistant."
+        assert isinstance(params.input, list)
+        assert len(params.input) == 1
+        assert params.input[0].role == "user"
+        assert params.input[0].content == "Hello"
 
     def test_request_with_system_text_blocks(self):
         request = ClaudeMessagesRequest(
@@ -98,11 +100,11 @@ class TestClaudeRequestToChatParams:
                 ClaudeMessage(role="user", content="Hello"),
             ],
         )
-        params = claude_request_to_chat_params(request)
+        params = claude_request_to_internal(request)
 
-        assert len(params.messages) == 2
-        assert params.messages[0].role == "system"
-        assert params.messages[0].content == "You are helpful. Be concise."
+        assert params.instructions == "You are helpful. Be concise."
+        assert isinstance(params.input, list)
+        assert len(params.input) == 1
 
     def test_request_with_content_blocks(self):
         request = ClaudeMessagesRequest(
@@ -118,10 +120,11 @@ class TestClaudeRequestToChatParams:
                 ),
             ],
         )
-        params = claude_request_to_chat_params(request)
+        params = claude_request_to_internal(request)
 
-        assert len(params.messages) == 1
-        assert params.messages[0].content == "First part. Second part."
+        assert isinstance(params.input, list)
+        assert len(params.input) == 1
+        assert params.input[0].content == "First part. Second part."
 
     def test_request_with_multi_turn_conversation(self):
         request = ClaudeMessagesRequest(
@@ -133,12 +136,13 @@ class TestClaudeRequestToChatParams:
                 ClaudeMessage(role="user", content="How are you?"),
             ],
         )
-        params = claude_request_to_chat_params(request)
+        params = claude_request_to_internal(request)
 
-        assert len(params.messages) == 3
-        assert params.messages[0].role == "user"
-        assert params.messages[1].role == "assistant"
-        assert params.messages[2].role == "user"
+        assert isinstance(params.input, list)
+        assert len(params.input) == 3
+        assert params.input[0].role == "user"
+        assert params.input[1].role == "assistant"
+        assert params.input[2].role == "user"
 
     def test_request_with_optional_parameters(self):
         request = ClaudeMessagesRequest(
@@ -151,7 +155,7 @@ class TestClaudeRequestToChatParams:
             stop_sequences=["STOP", "END"],
             stream=True,
         )
-        params = claude_request_to_chat_params(request)
+        params = claude_request_to_internal(request)
 
         assert params.temperature == 0.7
         assert params.top_p == 0.9
