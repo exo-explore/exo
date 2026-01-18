@@ -62,7 +62,9 @@ from exo.worker.engines.mlx.auto_parallel import (
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
-from exo.worker.engines.mlx.distributed_patch import patch_mlx_lm_for_distributed
+from exo.worker.engines.mlx.generator.distributed_patch import (
+    patch_mlx_lm_for_distributed,
+)
 from exo.worker.runner.bootstrap import logger
 
 Group = mx.distributed.Group

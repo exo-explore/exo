@@ -114,7 +114,7 @@ def run_gpt_oss_pipeline_device(
     os.environ["MLX_RANK"] = str(rank)
 
     if use_patch:
-        from exo.worker.engines.mlx.distributed_patch import (
+        from exo.worker.engines.mlx.generator.distributed_patch import (
             patch_mlx_lm_for_distributed,
         )
 
@@ -210,7 +210,7 @@ def run_gpt_oss_tensor_parallel_device(
     os.environ["MLX_RANK"] = str(rank)
 
     if use_patch:
-        from exo.worker.engines.mlx.distributed_patch import (
+        from exo.worker.engines.mlx.generator.distributed_patch import (
             patch_mlx_lm_for_distributed,
         )
 
