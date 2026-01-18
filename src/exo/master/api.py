@@ -61,6 +61,9 @@ from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.dashboard_path import find_dashboard
 from exo.utils.event_buffer import OrderedBuffer
+from exo.worker.download.download_utils import delete_model
+from exo.shared.types.state import State
+from exo.worker.download.download_utils import ensure_models_dir
 
 
 def chunk_to_response(
@@ -579,27 +582,19 @@ class API:
 
     async def delete_model(self, model_id: str) -> dict:
         """Delete a downloaded model from disk."""
-        from exo.worker.download.download_utils import delete_model
 
-        try:
-            success = await delete_model(model_id)
-            if not success:
-                raise HTTPException(
-                    status_code=404, detail=f"Model {model_id} not found on disk"
-                )
+        success = await delete_model(model_id)
+        if not success:
+            raise HTTPException(
+                status_code=404, detail=f"Model {model_id} not found on disk"
+            )
 
-            await self._filter_stale_downloads()
+        await self._filter_stale_downloads()
 
-            return {"message": f"Model {model_id} deleted successfully"}
-        except Exception as e:
-            logger.error(f"Error deleting model {model_id}: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+        return {"message": f"Model {model_id} deleted successfully"}
 
     async def _filter_stale_downloads(self):
         """Remove download entries for models that no longer exist on disk."""
-        from exo.shared.types.state import State
-        from exo.worker.download.download_utils import ensure_models_dir
-
         models_dir = await ensure_models_dir()
 
         filtered_downloads = {}
