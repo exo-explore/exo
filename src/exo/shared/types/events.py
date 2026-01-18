@@ -5,6 +5,7 @@ from pydantic import Field
 from exo.shared.topology import Connection, NodePerformanceProfile
 from exo.shared.types.chunks import GenerationChunk
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
+from exo.shared.types.models import ModelId
 from exo.shared.types.profiling import MemoryPerformanceProfile
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
@@ -67,6 +68,14 @@ class InstanceDeleted(BaseEvent):
     instance_id: InstanceId
 
 
+class InstanceDraftModelUpdated(BaseEvent):
+    """Draft model updated on an existing instance."""
+
+    instance_id: InstanceId
+    draft_model: ModelId | None
+    num_draft_tokens: int
+
+
 class RunnerStatusUpdated(BaseEvent):
     runner_id: RunnerId
     runner_status: RunnerStatus
@@ -123,6 +132,7 @@ Event = (
     | TaskAcknowledged
     | InstanceCreated
     | InstanceDeleted
+    | InstanceDraftModelUpdated
     | RunnerStatusUpdated
     | RunnerDeleted
     | NodeCreated
