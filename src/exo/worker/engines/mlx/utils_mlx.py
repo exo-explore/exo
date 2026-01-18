@@ -3,6 +3,7 @@ import os
 import resource
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
