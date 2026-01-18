@@ -148,6 +148,11 @@ def mlx_generate(
         top_p=task.top_p if task.top_p is not None else 1.0,
     )
 
+    # Get pipeline group for token broadcasting (if using pipeline parallelism)
+    pipeline_group: mx.distributed.Group | None = getattr(
+        model, "_pipeline_group", None
+    )
+
     max_tokens = task.max_tokens or MAX_TOKENS
     for out in stream_generate(
         model=model,
@@ -162,6 +167,17 @@ def mlx_generate(
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
     ):
+        # Broadcast token across all pipeline devices for synchronization
+        if pipeline_group is not None:
+            token_array = mx.array([[out.token]], dtype=mx.int32)
+            token_array = mx.distributed.all_gather(token_array, group=pipeline_group)
+            # Take the token from the last device (which has the full output)
+            # all_gather concatenates along first dim: [world_size, 1]
+            correct_token = int(token_array[-1, 0].item())
+            out.token = correct_token
+            # Re-decode text since our local token may have been wrong
+            out.text = tokenizer.decode([correct_token])
+
         logger.info(out.text)
 
         stats: GenerationStats | None = None

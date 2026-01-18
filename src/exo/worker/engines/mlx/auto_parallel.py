@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from functools import partial
 from inspect import signature
-from typing import TYPE_CHECKING, Callable, Protocol, cast
+from typing import TYPE_CHECKING, Any, Callable, Protocol, cast
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -106,8 +106,50 @@ class PipelineLastLayer(CustomMlxLayer):
             if cache is not None:
                 cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
 
-        output = mx.distributed.all_gather(output, group=self.group)[-output.shape[0] :]
         return output
+
+
+class DistributedModelWrapper:
+    """Wrapper that ensures distributed ops are evaluated during prefill.
+
+    mlx_lm's prefill loop only evaluates cache state, not logits. With pipeline
+    parallel, the send/recv ops are triggered when logits are evaluated. This
+    wrapper adds mx.depends between cache.state and logits, so when cache is
+    evaluated after each prefill chunk, the distributed ops are also evaluated.
+    """
+
+    _inner: Any
+    _cache: Any
+
+    def __init__(
+        self,
+        inner_model: nn.Module,
+        cache: Any = None,  # pyright: ignore[reportAny]
+    ):
+        object.__setattr__(self, "_inner", inner_model)
+        object.__setattr__(self, "_cache", cache)
+
+    def __call__(
+        self,
+        *args: Any,  # pyright: ignore[reportAny]
+        **kwargs: Any,  # pyright: ignore[reportAny]
+    ) -> mx.array:
+        logits: mx.array = self._inner(*args, **kwargs)  # pyright: ignore[reportAny]
+        cache: Any = kwargs.get("cache") or self._cache  # pyright: ignore[reportAny]
+        if cache is not None:
+            for c in cache:  # pyright: ignore[reportAny]
+                if hasattr(c, "state") and c.state is not None:  # pyright: ignore[reportAny]
+                    c.state = mx.depends(c.state, logits)  # pyright: ignore[reportAny,reportUnknownMemberType]
+        return logits
+
+    def __getattr__(self, name: str) -> Any:  # pyright: ignore[reportAny]
+        return getattr(self._inner, name)  # pyright: ignore[reportAny]
+
+    def __setattr__(self, name: str, value: Any) -> None:  # pyright: ignore[reportAny]
+        if name in ("_inner", "_cache"):
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._inner, name, value)  # pyright: ignore[reportAny]
 
 
 def _inner_model(model: nn.Module) -> nn.Module:
@@ -168,12 +210,19 @@ def pipeline_auto_parallel(
         inner_model_instance.layer_types = inner_model_instance.layer_types[  # type: ignore
             start_layer:end_layer
         ]
-        inner_model_instance.swa_idx = inner_model_instance.layer_types.index(  # type: ignore
-            "sliding_attention"
-        )
-        inner_model_instance.ga_idx = inner_model_instance.layer_types.index(  # type: ignore
-            "full_attention"
-        )
+        # Handle case where layer type may not exist in this shard
+        try:
+            inner_model_instance.swa_idx = inner_model_instance.layer_types.index(  # type: ignore
+                "sliding_attention"
+            )
+        except ValueError:
+            inner_model_instance.swa_idx = -1
+        try:
+            inner_model_instance.ga_idx = inner_model_instance.layer_types.index(  # type: ignore
+                "full_attention"
+            )
+        except ValueError:
+            inner_model_instance.ga_idx = -1
 
     _set_layers(model, layers)
 
@@ -181,7 +230,14 @@ def pipeline_auto_parallel(
         "Expected a list of layers after auto-parallel initialisation"
     )
 
-    return model
+    # Store pipeline group on model for token broadcasting in generate
+    model._pipeline_group = group
+
+    # Wrap model to ensure distributed ops are evaluated during prefill
+    wrapped = DistributedModelWrapper(model)
+    wrapped._pipeline_group = group
+
+    return wrapped  # type: ignore[return-value]
 
 
 def tensor_auto_parallel(

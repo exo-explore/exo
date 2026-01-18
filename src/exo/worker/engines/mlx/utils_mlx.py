@@ -147,6 +147,79 @@ def broadcast_from_zero(value: int, group: Group | None = None):
     return int(m.item())
 
 
+def _get_inner_model(model: nn.Module) -> nn.Module:
+    """Get the inner model (handles wrapper patterns)."""
+    if hasattr(model, "model"):
+        inner: Any = model.model  # type: ignore[attr-defined]
+        if isinstance(inner, nn.Module):
+            return inner
+    if hasattr(model, "transformer"):
+        inner = model.transformer  # type: ignore[attr-defined]
+        if isinstance(inner, nn.Module):
+            return inner
+    return model
+
+
+def _get_model_layers(inner: nn.Module) -> list[nn.Module]:
+    """Get the transformer layers from the model."""
+    if hasattr(inner, "layers"):
+        layers: Any = inner.layers  # type: ignore[attr-defined]
+        if isinstance(layers, list):
+            return cast(list[nn.Module], layers)
+    if hasattr(inner, "h"):
+        h_layers: Any = inner.h  # type: ignore[attr-defined]
+        if isinstance(h_layers, list):
+            return cast(list[nn.Module], h_layers)
+    return []
+
+
+def eval_parameters_per_layer(
+    model: nn.Module,
+    group: Group | None,
+    timeout_seconds: float,
+    on_timeout: TimeoutCallback | None = None,
+) -> None:
+    """Evaluate model parameters layer by layer to reduce Metal sync pressure.
+
+    This avoids the FAST_SYNCH deadlock by breaking evaluation into smaller chunks,
+    reducing peak Metal GPU memory/sync contention.
+    """
+    inner = _get_inner_model(model)
+    layers = _get_model_layers(inner)
+
+    n_layers = len(layers)
+    # Reserve some time for embedding and output layers
+    per_layer_timeout = timeout_seconds / max(n_layers + 4, 1)
+
+    # Evaluate embedding/input layers first
+    if hasattr(inner, "embed_tokens"):
+        embed: Any = inner.embed_tokens  # type: ignore[attr-defined]
+        if hasattr(embed, "parameters"):  # pyright: ignore[reportUnknownArgumentType]
+            logger.debug("Evaluating embed_tokens")
+            eval_with_timeout(embed.parameters(), per_layer_timeout, on_timeout)  # pyright: ignore[reportUnknownMemberType]
+
+    # Evaluate each transformer layer separately
+    for i, layer in enumerate(layers):
+        logger.debug(f"Evaluating layer {i}/{n_layers}")
+        eval_with_timeout(layer.parameters(), per_layer_timeout, on_timeout)
+
+        # Barrier between layers for distributed sync
+        if group is not None:
+            mx_barrier(group)
+
+    # Evaluate output layers
+    if hasattr(inner, "norm"):
+        norm: Any = inner.norm  # type: ignore[attr-defined]
+        if hasattr(norm, "parameters"):  # pyright: ignore[reportUnknownArgumentType]
+            logger.debug("Evaluating norm")
+            eval_with_timeout(norm.parameters(), per_layer_timeout, on_timeout)  # pyright: ignore[reportUnknownMemberType]
+    if hasattr(model, "lm_head"):
+        lm_head: Any = model.lm_head  # type: ignore[attr-defined]
+        if hasattr(lm_head, "parameters"):  # pyright: ignore[reportUnknownArgumentType]
+            logger.debug("Evaluating lm_head")
+            eval_with_timeout(lm_head.parameters(), per_layer_timeout, on_timeout)  # pyright: ignore[reportUnknownMemberType]
+
+
 class HostList(RootModel[list[str]]):
     @classmethod
     def from_hosts(cls, hosts: list[Host]) -> "HostList":
@@ -265,7 +338,9 @@ def shard_and_load(
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(shard_metadata.model_meta.model_id)
 
-    model, _ = load_model(model_path, lazy=True, strict=False)
+    # Use lazy=False to materialize weights before applying distributed sharding
+    # This avoids deadlock with FAST_SYNCH + lazy weights + distributed collectives
+    model, _ = load_model(model_path, lazy=False, strict=False)
     logger.debug(model)
     if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
         pass
@@ -303,12 +378,14 @@ def shard_and_load(
     model_size_gb = get_weights_size(shard_metadata).in_bytes / (1024**3)
     timeout_seconds = base_timeout + model_size_gb / 5
     logger.info(
-        f"Evaluating model parameters with timeout of {timeout_seconds:.0f}s "
+        f"Evaluating model parameters per-layer with total timeout of {timeout_seconds:.0f}s "
         f"(model size: {model_size_gb:.1f}GB)"
     )
-    eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
 
-    # TODO: Do we need this?
+    # Per-layer evaluation to avoid FAST_SYNCH deadlock with tensor parallel
+    eval_parameters_per_layer(model, group, timeout_seconds, on_timeout)
+
+    # Final model eval (should be fast now, weights already materialized)
     mx.eval(model)
 
     logger.debug("SHARDED")
