@@ -195,6 +195,14 @@ class Node:
 
 
 def main():
+    # Check for SLURM-compatible subcommands first
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] in ("sbatch", "squeue", "scancel", "salloc"):
+        from exo.cli import run_subcommand
+
+        sys.exit(run_subcommand(sys.argv[1], sys.argv[2:]))
+
     args = Args.parse()
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, 65535), hard))
