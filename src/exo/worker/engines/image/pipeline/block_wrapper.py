@@ -12,36 +12,32 @@ class BlockWrapperMode(Enum):
     PATCHED = "patched"  # Async mode: compute patch attention, use cached KV
 
 
-class JointBlockWrapper(ABC):
-    """Base class for joint transformer block wrappers with pipefusion support.
+class BlockWrapperMixin:
+    """Common cache management logic for block wrappers.
 
-    Subclass this to add pipefusion support to any model's joint blocks.
-    The wrapper:
-    - Owns its KV cache (created lazily on first CACHING forward)
-    - Controls the forward pass flow (CACHING vs PATCHED mode)
-    - Handles patch slicing and cache operations
-
-    Model subclass provides:
-    - _compute_qkv: Compute Q, K, V tensors (norms, projections, RoPE)
-    - _compute_attention: Run scaled dot-product attention
-    - _apply_output: Apply output projection, feed-forward, residuals
+    Including:
+    - KV cache creation and management
+    - Mode and patch range setting
+    - CFG cache switching
     """
 
-    def __init__(self, block: Any, text_seq_len: int):
-        """Initialize the joint block wrapper.
+    _text_seq_len: int
+    _kv_cache: ImagePatchKVCache | None
+    _kv_cache_negative: ImagePatchKVCache | None
+    _mode: BlockWrapperMode
+    _patch_start: int
+    _patch_end: int
+    _use_negative_cache: bool
 
-        Args:
-            block: The joint transformer block to wrap
-            text_seq_len: Number of text tokens (constant for entire generation)
-        """
-        self.block = block
+    def _init_cache_state(self, text_seq_len: int) -> None:
+        """Initialize cache-related state. Call from subclass __init__."""
         self._text_seq_len = text_seq_len
-        self._kv_cache: ImagePatchKVCache | None = None  # Primary (or positive for CFG)
-        self._kv_cache_negative: ImagePatchKVCache | None = None  # Only for CFG
+        self._kv_cache = None  # Primary (or positive for CFG)
+        self._kv_cache_negative = None  # Only for CFG
         self._mode = BlockWrapperMode.CACHING
-        self._patch_start: int = 0
-        self._patch_end: int = 0
-        self._use_negative_cache: bool = False
+        self._patch_start = 0
+        self._patch_end = 0
+        self._use_negative_cache = False
 
     def set_patch(
         self,
@@ -124,6 +120,32 @@ class JointBlockWrapper(ABC):
         self._kv_cache = None
         self._kv_cache_negative = None
 
+
+class JointBlockWrapper(BlockWrapperMixin, ABC):
+    """Base class for joint transformer block wrappers with pipefusion support.
+
+    Subclass this to add pipefusion support to any model's joint blocks.
+    The wrapper:
+    - Owns its KV cache (created lazily on first CACHING forward)
+    - Controls the forward pass flow (CACHING vs PATCHED mode)
+    - Handles patch slicing and cache operations
+
+    Model subclass provides:
+    - _compute_qkv: Compute Q, K, V tensors (norms, projections, RoPE)
+    - _compute_attention: Run scaled dot-product attention
+    - _apply_output: Apply output projection, feed-forward, residuals
+    """
+
+    def __init__(self, block: Any, text_seq_len: int):
+        """Initialize the joint block wrapper.
+
+        Args:
+            block: The joint transformer block to wrap
+            text_seq_len: Number of text tokens (constant for entire generation)
+        """
+        self.block = block
+        self._init_cache_state(text_seq_len)
+
     def set_encoder_mask(self, mask: mx.array | None) -> None:  # noqa: B027
         """Set the encoder hidden states mask for attention.
 
@@ -192,8 +214,12 @@ class JointBlockWrapper(ABC):
         # hidden_states is already the patch (provided by runner)
         patch_hidden = hidden_states
 
-        query, key, value = self._compute_patch_qkv(
-            patch_hidden, encoder_hidden_states, text_embeddings, rotary_embeddings
+        query, key, value = self._compute_qkv(
+            patch_hidden,
+            encoder_hidden_states,
+            text_embeddings,
+            rotary_embeddings,
+            patch_mode=True,
         )
 
         text_key = key[:, :, : self._text_seq_len, :]
@@ -217,42 +243,21 @@ class JointBlockWrapper(ABC):
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
         rotary_embeddings: Any,
+        patch_mode: bool = False,
     ) -> tuple[mx.array, mx.array, mx.array]:
-        """Compute Q, K, V tensors for full sequence.
+        """Compute Q, K, V tensors for sequence.
 
         Includes normalization, projections, concatenation, and RoPE.
 
         Args:
-            hidden_states: Image hidden states [B, num_img_tokens, D]
+            hidden_states: Image hidden states [B, num_img_tokens, D] or patch [B, patch_len, D]
             encoder_hidden_states: Text hidden states [B, text_seq_len, D]
             text_embeddings: Conditioning embeddings [B, D]
             rotary_embeddings: Rotary position embeddings
+            patch_mode: If True, slice RoPE for current patch range
 
         Returns:
-            Tuple of (query, key, value) with shape [B, H, text+img, head_dim]
-        """
-        ...
-
-    @abstractmethod
-    def _compute_patch_qkv(
-        self,
-        patch_hidden: mx.array,
-        encoder_hidden_states: mx.array,
-        text_embeddings: mx.array,
-        rotary_embeddings: Any,
-    ) -> tuple[mx.array, mx.array, mx.array]:
-        """Compute Q, K, V tensors for [text + patch].
-
-        Similar to _compute_qkv but for patch mode - may need to slice RoPE.
-
-        Args:
-            patch_hidden: Patch hidden states [B, patch_len, D]
-            encoder_hidden_states: Text hidden states [B, text_seq_len, D]
-            text_embeddings: Conditioning embeddings [B, D]
-            rotary_embeddings: Rotary position embeddings
-
-        Returns:
-            Tuple of (query, key, value) with shape [B, H, text+patch, head_dim]
+            Tuple of (query, key, value) with shape [B, H, text+img/patch, head_dim]
         """
         ...
 
@@ -294,7 +299,7 @@ class JointBlockWrapper(ABC):
         ...
 
 
-class SingleBlockWrapper(ABC):
+class SingleBlockWrapper(BlockWrapperMixin, ABC):
     """Base class for single-stream transformer block wrappers.
 
     Similar to JointBlockWrapper but for blocks that operate on a single
@@ -309,85 +314,7 @@ class SingleBlockWrapper(ABC):
             text_seq_len: Number of text tokens (constant for entire generation)
         """
         self.block = block
-        self._text_seq_len = text_seq_len
-        self._kv_cache: ImagePatchKVCache | None = None  # Primary (or positive for CFG)
-        self._kv_cache_negative: ImagePatchKVCache | None = None  # Only for CFG
-        self._mode = BlockWrapperMode.CACHING
-        self._patch_start: int = 0
-        self._patch_end: int = 0
-        self._use_negative_cache: bool = False
-
-    def set_patch(
-        self,
-        mode: BlockWrapperMode,
-        patch_start: int = 0,
-        patch_end: int = 0,
-    ) -> Self:
-        """Set mode and patch range. Only call when these change."""
-        self._mode = mode
-        self._patch_start = patch_start
-        self._patch_end = patch_end
-        return self
-
-    def set_use_negative_cache(self, use_negative: bool) -> None:
-        """Switch to negative cache for CFG. False = primary cache."""
-        self._use_negative_cache = use_negative
-
-    def set_text_seq_len(self, text_seq_len: int) -> None:
-        """Update text sequence length for CFG passes with different prompt lengths."""
-        self._text_seq_len = text_seq_len
-
-    def _get_active_cache(self) -> ImagePatchKVCache | None:
-        """Get the active KV cache based on current CFG pass."""
-        if self._use_negative_cache:
-            return self._kv_cache_negative
-        return self._kv_cache
-
-    def _ensure_cache(self, img_key: mx.array) -> None:
-        """Create cache on first CACHING forward using actual dimensions."""
-        batch, num_heads, img_seq_len, head_dim = img_key.shape
-        if self._use_negative_cache:
-            if self._kv_cache_negative is None:
-                self._kv_cache_negative = ImagePatchKVCache(
-                    batch_size=batch,
-                    num_heads=num_heads,
-                    image_seq_len=img_seq_len,
-                    head_dim=head_dim,
-                )
-        else:
-            if self._kv_cache is None:
-                self._kv_cache = ImagePatchKVCache(
-                    batch_size=batch,
-                    num_heads=num_heads,
-                    image_seq_len=img_seq_len,
-                    head_dim=head_dim,
-                )
-
-    def _cache_full_image_kv(self, img_key: mx.array, img_value: mx.array) -> None:
-        """Store full image K/V during CACHING mode."""
-        self._ensure_cache(img_key)
-        cache = self._get_active_cache()
-        assert cache is not None
-        cache.update_image_patch(0, img_key.shape[2], img_key, img_value)
-
-    def _cache_patch_kv(self, img_key: mx.array, img_value: mx.array) -> None:
-        """Store current patch's K/V during PATCHED mode."""
-        cache = self._get_active_cache()
-        assert cache is not None
-        cache.update_image_patch(self._patch_start, self._patch_end, img_key, img_value)
-
-    def _get_full_kv(
-        self, text_key: mx.array, text_value: mx.array
-    ) -> tuple[mx.array, mx.array]:
-        """Get full K/V by combining fresh text with cached image."""
-        cache = self._get_active_cache()
-        assert cache is not None
-        return cache.get_full_kv(text_key, text_value)
-
-    def reset_cache(self) -> None:
-        """Reset all KV caches. Call at the start of a new generation."""
-        self._kv_cache = None
-        self._kv_cache_negative = None
+        self._init_cache_state(text_seq_len)
 
     def __call__(
         self,
@@ -442,8 +369,8 @@ class SingleBlockWrapper(ABC):
         patch_hidden = hidden_states[:, self._text_seq_len :, :]
         patch_states = mx.concatenate([text_hidden, patch_hidden], axis=1)
 
-        query, key, value = self._compute_patch_qkv(
-            patch_states, text_embeddings, rotary_embeddings
+        query, key, value = self._compute_qkv(
+            patch_states, text_embeddings, rotary_embeddings, patch_mode=True
         )
 
         text_key = key[:, :, : self._text_seq_len, :]
@@ -464,18 +391,19 @@ class SingleBlockWrapper(ABC):
         hidden_states: mx.array,
         text_embeddings: mx.array,
         rotary_embeddings: Any,
+        patch_mode: bool = False,
     ) -> tuple[mx.array, mx.array, mx.array]:
-        """Compute Q, K, V tensors for full sequence."""
-        ...
+        """Compute Q, K, V tensors for sequence.
 
-    @abstractmethod
-    def _compute_patch_qkv(
-        self,
-        patch_states: mx.array,
-        text_embeddings: mx.array,
-        rotary_embeddings: Any,
-    ) -> tuple[mx.array, mx.array, mx.array]:
-        """Compute Q, K, V tensors for [text + patch]."""
+        Args:
+            hidden_states: Concatenated [text, image] hidden states
+            text_embeddings: Conditioning embeddings [B, D]
+            rotary_embeddings: Rotary position embeddings
+            patch_mode: If True, slice RoPE for current patch range
+
+        Returns:
+            Tuple of (query, key, value) with shape [B, H, seq_len, head_dim]
+        """
         ...
 
     @abstractmethod
