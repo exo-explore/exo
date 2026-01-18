@@ -50,7 +50,9 @@ def chat_request_to_internal(request: ChatCompletionTaskParams) -> ResponsesRequ
         else:
             # Convert to ResponseInputMessage (only user, assistant, developer roles)
             if msg.role in ("user", "assistant", "developer"):
-                input_messages.append(ResponseInputMessage(role=msg.role, content=content))
+                input_messages.append(
+                    ResponseInputMessage(role=msg.role, content=content)
+                )
 
     return ResponsesRequest(
         model=request.model,

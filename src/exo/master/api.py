@@ -535,7 +535,9 @@ class API:
             instance.shard_assignments.model_id == internal_params.model
             for instance in self.state.instances.values()
         ):
-            await self._trigger_notify_user_to_download_model(ModelId(internal_params.model))
+            await self._trigger_notify_user_to_download_model(
+                ModelId(internal_params.model)
+            )
             raise HTTPException(
                 status_code=404,
                 detail=f"No instance found for model {internal_params.model}",
@@ -571,7 +573,9 @@ class API:
             instance.shard_assignments.model_id == internal_params.model
             for instance in self.state.instances.values()
         ):
-            await self._trigger_notify_user_to_download_model(ModelId(internal_params.model))
+            await self._trigger_notify_user_to_download_model(
+                ModelId(internal_params.model)
+            )
             raise HTTPException(
                 status_code=404,
                 detail=f"No instance found for model {internal_params.model}",
@@ -1089,7 +1093,9 @@ class API:
             instance.shard_assignments.model_id == internal_params.model
             for instance in self.state.instances.values()
         ):
-            await self._trigger_notify_user_to_download_model(ModelId(internal_params.model))
+            await self._trigger_notify_user_to_download_model(
+                ModelId(internal_params.model)
+            )
             raise HTTPException(
                 status_code=404,
                 detail=f"No instance found for model {internal_params.model}",

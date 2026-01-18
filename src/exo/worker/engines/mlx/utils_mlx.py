@@ -377,7 +377,9 @@ def apply_chat_template(
 
     # Add system message (instructions) if present
     if task_params.instructions:
-        formatted_messages.append({"role": "system", "content": task_params.instructions})
+        formatted_messages.append(
+            {"role": "system", "content": task_params.instructions}
+        )
 
     # Convert input to messages
     if isinstance(task_params.input, str):
