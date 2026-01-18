@@ -31,13 +31,33 @@ def narrow_all_nodes(nodes: list[NodeInfo]) -> TypeGuard[list[NodeWithProfile]]:
 def filter_cycles_by_memory(
     cycles: list[list[NodeInfo]], required_memory: Memory
 ) -> list[list[NodeInfo]]:
+    """Filter cycles to only those with sufficient memory.
+
+    Uses effective_available which accounts for memory pressure:
+    - Under CRITICAL pressure: effective_available = 0 (node excluded)
+    - Under WARN pressure: effective_available = available / 2 (conservative)
+    - Under NORMAL pressure: effective_available = available (full capacity)
+    """
     filtered_cycles: list[list[NodeInfo]] = []
     for cycle in cycles:
         if not narrow_all_nodes(cycle):
             continue
 
+        # Log nodes under memory pressure
+        for node in cycle:
+            if node.node_profile is not None:
+                pressure = node.node_profile.memory.pressure_level
+                if pressure.value > 1:  # WARN or CRITICAL
+                    logger.warning(
+                        f"Node {node.node_id} under memory pressure: {pressure.name} "
+                        f"(raw={node.node_profile.memory.ram_available.in_gb:.1f}GB, "
+                        f"effective={node.node_profile.memory.effective_available.in_gb:.1f}GB)"
+                    )
+
+        # Use effective_available which accounts for memory pressure
         total_mem = sum(
-            (node.node_profile.memory.ram_available for node in cycle), start=Memory()
+            (node.node_profile.memory.effective_available for node in cycle),
+            start=Memory(),
         )
         if total_mem >= required_memory:
             filtered_cycles.append(cast(list[NodeInfo], cycle))
@@ -53,8 +73,13 @@ def get_shard_assignments_for_pipeline_parallel(
     model_meta: ModelMetadata,
     selected_cycle: list[NodeWithProfile],
 ):
+    """Assign model layers to nodes proportional to their effective available memory.
+
+    Uses effective_available which accounts for memory pressure, ensuring nodes
+    under pressure receive fewer layers.
+    """
     cycle_memory = sum(
-        (node.node_profile.memory.ram_available for node in selected_cycle),
+        (node.node_profile.memory.effective_available for node in selected_cycle),
         start=Memory(),
     )
     total_layers = model_meta.n_layers
@@ -70,7 +95,7 @@ def get_shard_assignments_for_pipeline_parallel(
             node_layers = round(
                 total_layers
                 * (
-                    node.node_profile.memory.ram_available.in_bytes
+                    node.node_profile.memory.effective_available.in_bytes
                     / cycle_memory.in_bytes
                 )
             )
