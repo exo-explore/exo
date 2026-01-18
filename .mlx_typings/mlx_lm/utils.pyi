@@ -98,9 +98,7 @@ def make_shards(weights: dict, max_file_size_gb: int = ...) -> list:
         list: List of weight shards.
     """
 
-def create_model_card(
-    path: str | Path, hf_path: str | Path | None
-):  # -> None:
+def create_model_card(path: str | Path, hf_path: str | Path | None):  # -> None:
     """
     Uploads the model to Hugging Face hub.
 

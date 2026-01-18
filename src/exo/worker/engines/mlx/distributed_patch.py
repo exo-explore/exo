@@ -37,6 +37,7 @@ def patch_mlx_lm_for_distributed() -> None:
 
         class DistributedModelWrapper:
             """Wrapper that adds mx.depends between logits and cache state."""
+
             def __init__(
                 self,
                 inner_model: Any,  # pyright: ignore[reportAny]
