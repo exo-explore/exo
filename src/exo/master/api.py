@@ -1,24 +1,19 @@
 import time
 from collections.abc import AsyncGenerator
+from http import HTTPStatus
 from typing import cast
 
 import anyio
-from anyio import create_task_group
+from anyio import BrokenResourceError, create_task_group
 from anyio.abc import TaskGroup
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
 from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from loguru import logger
-from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
-    HarmonyEncodingName,
-    Role,
-    StreamableParser,
-    load_harmony_encoding,
-)
 
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
@@ -35,6 +30,8 @@ from exo.shared.types.api import (
     CreateInstanceParams,
     CreateInstanceResponse,
     DeleteInstanceResponse,
+    ErrorInfo,
+    ErrorResponse,
     FinishReason,
     GenerationStats,
     ModelList,
@@ -55,7 +52,12 @@ from exo.shared.types.commands import (
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
-from exo.shared.types.events import ChunkGenerated, Event, ForwarderEvent, IndexedEvent
+from exo.shared.types.events import (
+    ChunkGenerated,
+    Event,
+    ForwarderEvent,
+    IndexedEvent,
+)
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.state import State
@@ -66,8 +68,6 @@ from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.dashboard_path import find_dashboard
 from exo.utils.event_buffer import OrderedBuffer
-
-encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
 
 
 def chunk_to_response(
@@ -123,6 +123,7 @@ class API:
         self.paused_ev: anyio.Event = anyio.Event()
 
         self.app = FastAPI()
+        self._setup_exception_handlers()
         self._setup_cors()
         self._setup_routes()
 
@@ -152,6 +153,21 @@ class API:
         self.paused = False
         self.paused_ev.set()
         self.paused_ev = anyio.Event()
+
+    def _setup_exception_handlers(self) -> None:
+        self.app.exception_handler(HTTPException)(self.http_exception_handler)
+
+    async def http_exception_handler(
+        self, _: Request, exc: HTTPException
+    ) -> JSONResponse:
+        err = ErrorResponse(
+            error=ErrorInfo(
+                message=exc.detail,
+                type=HTTPStatus(exc.status_code).phrase,
+                code=exc.status_code,
+            )
+        )
+        return JSONResponse(err.model_dump(), status_code=exc.status_code)
 
     def _setup_cors(self) -> None:
         self.app.add_middleware(
@@ -381,35 +397,8 @@ class API:
             instance_id=instance_id,
         )
 
-    async def _process_gpt_oss(self, token_chunks: Receiver[TokenChunk]):
-        stream = StreamableParser(encoding, role=Role.ASSISTANT)
-        thinking = False
-
-        async for chunk in token_chunks:
-            stream.process(chunk.token_id)
-
-            delta = stream.last_content_delta
-            ch = stream.current_channel
-
-            if ch == "analysis" and not thinking:
-                thinking = True
-                yield chunk.model_copy(update={"text": "<think>"})
-
-            if ch != "analysis" and thinking:
-                thinking = False
-                yield chunk.model_copy(update={"text": "</think>"})
-
-            if delta:
-                yield chunk.model_copy(update={"text": delta})
-
-            if chunk.finish_reason is not None:
-                if thinking:
-                    yield chunk.model_copy(update={"text": "</think>"})
-                yield chunk
-                break
-
     async def _chat_chunk_stream(
-        self, command_id: CommandId, parse_gpt_oss: bool
+        self, command_id: CommandId
     ) -> AsyncGenerator[TokenChunk, None]:
         """Yield `TokenChunk`s for a given command until completion."""
 
@@ -417,16 +406,10 @@ class API:
             self._chat_completion_queues[command_id], recv = channel[TokenChunk]()
 
             with recv as token_chunks:
-                if parse_gpt_oss:
-                    async for chunk in self._process_gpt_oss(token_chunks):
-                        yield chunk
-                        if chunk.finish_reason is not None:
-                            break
-                else:
-                    async for chunk in token_chunks:
-                        yield chunk
-                        if chunk.finish_reason is not None:
-                            break
+                async for chunk in token_chunks:
+                    yield chunk
+                    if chunk.finish_reason is not None:
+                        break
 
         except anyio.get_cancelled_exc_class():
             # TODO: TaskCancelled
@@ -442,11 +425,23 @@ class API:
             del self._chat_completion_queues[command_id]
 
     async def _generate_chat_stream(
-        self, command_id: CommandId, parse_gpt_oss: bool
+        self, command_id: CommandId
     ) -> AsyncGenerator[str, None]:
         """Generate chat completion stream as JSON strings."""
 
-        async for chunk in self._chat_chunk_stream(command_id, parse_gpt_oss):
+        async for chunk in self._chat_chunk_stream(command_id):
+            if chunk.finish_reason == "error":
+                error_response = ErrorResponse(
+                    error=ErrorInfo(
+                        message=chunk.error_message or "Internal server error",
+                        type="InternalServerError",
+                        code=500,
+                    )
+                )
+                yield f"data: {error_response.model_dump_json()}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
             chunk_response: ChatCompletionResponse = chunk_to_response(
                 chunk, command_id
             )
@@ -458,7 +453,7 @@ class API:
                 yield "data: [DONE]\n\n"
 
     async def _collect_chat_completion(
-        self, command_id: CommandId, parse_gpt_oss: bool
+        self, command_id: CommandId
     ) -> ChatCompletionResponse:
         """Collect all token chunks for a chat completion and return a single response."""
 
@@ -466,7 +461,13 @@ class API:
         model: str | None = None
         finish_reason: FinishReason | None = None
 
-        async for chunk in self._chat_chunk_stream(command_id, parse_gpt_oss):
+        async for chunk in self._chat_chunk_stream(command_id):
+            if chunk.finish_reason == "error":
+                raise HTTPException(
+                    status_code=500,
+                    detail=chunk.error_message or "Internal server error",
+                )
+
             if model is None:
                 model = chunk.model
 
@@ -495,7 +496,7 @@ class API:
         )
 
     async def _collect_chat_completion_with_stats(
-        self, command_id: CommandId, parse_gpt_oss: bool
+        self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
         text_parts: list[str] = []
         model: str | None = None
@@ -503,7 +504,13 @@ class API:
 
         stats: GenerationStats | None = None
 
-        async for chunk in self._chat_chunk_stream(command_id, parse_gpt_oss):
+        async for chunk in self._chat_chunk_stream(command_id):
+            if chunk.finish_reason == "error":
+                raise HTTPException(
+                    status_code=500,
+                    detail=chunk.error_message or "Internal server error",
+                )
+
             if model is None:
                 model = chunk.model
 
@@ -544,8 +551,6 @@ class API:
         """Handle chat completions, supporting both streaming and non-streaming responses."""
         model_meta = await resolve_model_meta(payload.model)
         payload.model = model_meta.model_id
-        parse_gpt_oss = "gpt-oss" in model_meta.model_id.lower()
-        logger.info(f"{parse_gpt_oss=}")
 
         if not any(
             instance.shard_assignments.model_id == payload.model
@@ -562,17 +567,16 @@ class API:
         await self._send(command)
         if payload.stream:
             return StreamingResponse(
-                self._generate_chat_stream(command.command_id, parse_gpt_oss),
+                self._generate_chat_stream(command.command_id),
                 media_type="text/event-stream",
             )
 
-        return await self._collect_chat_completion(command.command_id, parse_gpt_oss)
+        return await self._collect_chat_completion(command.command_id)
 
     async def bench_chat_completions(
         self, payload: BenchChatCompletionTaskParams
     ) -> BenchChatCompletionResponse:
         model_meta = await resolve_model_meta(payload.model)
-        parse_gpt_oss = "gpt-oss" in model_meta.model_id.lower()
         payload.model = model_meta.model_id
 
         if not any(
@@ -589,10 +593,7 @@ class API:
         command = ChatCompletion(request_params=payload)
         await self._send(command)
 
-        response = await self._collect_chat_completion_with_stats(
-            command.command_id,
-            parse_gpt_oss,
-        )
+        response = await self._collect_chat_completion_with_stats(command.command_id)
         return response
 
     def _calculate_total_available_memory(self) -> Memory:
@@ -654,14 +655,14 @@ class API:
                 for idx, event in self.event_buffer.drain_indexed():
                     self._event_log.append(event)
                     self.state = apply(self.state, IndexedEvent(event=event, idx=idx))
-                    if (
-                        isinstance(event, ChunkGenerated)
-                        and event.command_id in self._chat_completion_queues
-                    ):
+                    if isinstance(event, ChunkGenerated):
                         assert isinstance(event.chunk, TokenChunk)
-                        await self._chat_completion_queues[event.command_id].send(
-                            event.chunk
-                        )
+                        queue = self._chat_completion_queues.get(event.command_id)
+                        if queue is not None:
+                            try:
+                                await queue.send(event.chunk)
+                            except BrokenResourceError:
+                                self._chat_completion_queues.pop(event.command_id, None)
 
     async def _pause_on_new_election(self):
         with self.election_receiver as ems:
