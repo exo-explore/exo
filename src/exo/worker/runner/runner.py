@@ -323,7 +323,7 @@ def parse_thinking_models(
             yield response.model_copy(
                 update={
                     "text": tokenizer.think_start,
-                    "token": tokenizer.think_start,
+                    "token": tokenizer.think_start_id,  # type: ignore
                 }
             )
         yield response
