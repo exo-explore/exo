@@ -3,6 +3,8 @@
 import time
 from collections.abc import AsyncGenerator
 
+from loguru import logger
+
 from exo.shared.types.api import (
     ChatCompletionChoice,
     ChatCompletionMessage,
@@ -109,25 +111,33 @@ async def generate_chat_stream(
     chunk_stream: AsyncGenerator[TokenChunk, None],
 ) -> AsyncGenerator[str, None]:
     """Generate Chat Completions API streaming events from TokenChunks."""
-    async for chunk in chunk_stream:
-        if chunk.finish_reason == "error":
-            error_response = ErrorResponse(
-                error=ErrorInfo(
-                    message=chunk.error_message or "Internal server error",
-                    type="InternalServerError",
-                    code=500,
+    try:
+        async for chunk in chunk_stream:
+            if chunk.finish_reason == "error":
+                error_response = ErrorResponse(
+                    error=ErrorInfo(
+                        message=chunk.error_message or "Internal server error",
+                        type="InternalServerError",
+                        code=500,
+                    )
                 )
-            )
-            yield f"data: {error_response.model_dump_json()}\n\n"
-            yield "data: [DONE]\n\n"
-            return
+                yield f"data: {error_response.model_dump_json()}\n\n"
+                yield "data: [DONE]\n\n"
+                logger.info(f"generate_chat_stream ending (error): {command_id}")
+                return
 
-        chunk_response = chunk_to_response(chunk, command_id)
-        yield f"data: {chunk_response.model_dump_json()}\n\n"
+            chunk_response = chunk_to_response(chunk, command_id)
+            yield f"data: {chunk_response.model_dump_json()}\n\n"
 
-        if chunk.finish_reason is not None:
-            yield "data: [DONE]\n\n"
-            return
+            if chunk.finish_reason is not None:
+                logger.info(
+                    f"generate_chat_stream yielding [DONE] for finish_reason={chunk.finish_reason}: {command_id}"
+                )
+                yield "data: [DONE]\n\n"
+                logger.info(f"generate_chat_stream returning: {command_id}")
+                return
+    finally:
+        logger.info(f"generate_chat_stream finally block: {command_id}")
 
 
 async def collect_chat_response(
