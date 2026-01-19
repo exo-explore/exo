@@ -107,28 +107,10 @@ interface RawNodeNetworkInfo {
 	interfaces?: RawNetworkInterfaceInfo[];
 }
 
-// Legacy RawNodeProfile for backwards compatibility with inline profiles
-interface RawNodeProfile {
-	modelId?: string;
-	chipId?: string;
-	friendlyName?: string;
-	networkInterfaces?: RawNetworkInterfaceInfo[];
-	memory?: RawMemoryUsage;
-	system?: RawSystemPerformanceProfile;
-}
-
-interface RawTopologyNode {
-	nodeId: string;
-	nodeProfile?: RawNodeProfile;
-}
-
-// New connection edge types from Python SocketConnection/RDMAConnection
 interface RawSocketConnection {
 	sinkMultiaddr?: {
 		address?: string;
-		// Multiaddr uses snake_case (no camelCase alias)
 		ip_address?: string;
-		ipAddress?: string; // fallback in case it changes
 		address_type?: string;
 		port?: number;
 	};
@@ -145,9 +127,7 @@ type RawConnectionEdge = RawSocketConnection | RawRDMAConnection;
 type RawConnectionsMap = Record<string, Record<string, RawConnectionEdge[]>>;
 
 interface RawTopology {
-	// nodes can be array of strings (node IDs) or array of objects with nodeId/nodeProfile
-	nodes: (string | RawTopologyNode)[];
-	// New nested mapping format
+	nodes: string[];
 	connections?: RawConnectionsMap;
 }
 
@@ -292,10 +272,7 @@ function transformTopology(
 	const nodes: Record<string, NodeInfo> = {};
 	const edges: TopologyEdge[] = [];
 
-	// Handle nodes - can be array of strings (node IDs) or array of objects with nodeId/nodeProfile
-	for (const node of raw.nodes || []) {
-		// Determine the node ID - could be a string or an object with nodeId property
-		const nodeId = typeof node === "string" ? node : node.nodeId;
+	for (const nodeId of raw.nodes || []) {
 		if (!nodeId) continue;
 
 		// Get data from granular state mappings
@@ -304,22 +281,11 @@ function transformTopology(
 		const system = granularState.nodeSystem?.[nodeId];
 		const network = granularState.nodeNetwork?.[nodeId];
 
-		// Also check for inline profile on the node object (legacy support)
-		const profileFromNode =
-			typeof node === "object" ? node.nodeProfile : undefined;
-
-		const ramTotal =
-			memory?.ramTotal?.inBytes ??
-			profileFromNode?.memory?.ramTotal?.inBytes ??
-			0;
-		const ramAvailable =
-			memory?.ramAvailable?.inBytes ??
-			profileFromNode?.memory?.ramAvailable?.inBytes ??
-			0;
+		const ramTotal = memory?.ramTotal?.inBytes ?? 0;
+		const ramAvailable = memory?.ramAvailable?.inBytes ?? 0;
 		const ramUsage = Math.max(ramTotal - ramAvailable, 0);
 
-		const rawInterfaces =
-			network?.interfaces || profileFromNode?.networkInterfaces || [];
+		const rawInterfaces = network?.interfaces || [];
 		const networkInterfaces = rawInterfaces.map(transformNetworkInterface);
 
 		const ipToInterface: Record<string, string> = {};
@@ -329,12 +295,10 @@ function transformTopology(
 			}
 		}
 
-		const systemProfile = system || profileFromNode?.system;
-
 		nodes[nodeId] = {
 			system_info: {
-				model_id: identity?.modelId ?? profileFromNode?.modelId ?? "Unknown",
-				chip: identity?.chipId ?? profileFromNode?.chipId,
+				model_id: identity?.modelId ?? "Unknown",
+				chip: identity?.chipId,
 				memory: ramTotal,
 			},
 			network_interfaces: networkInterfaces,
@@ -345,17 +309,15 @@ function transformTopology(
 					ram_total: ramTotal,
 				},
 				temp:
-					systemProfile?.temp !== undefined
-						? { gpu_temp_avg: systemProfile.temp }
+					system?.temp !== undefined
+						? { gpu_temp_avg: system.temp }
 						: undefined,
 				gpu_usage:
-					systemProfile?.gpuUsage !== undefined
-						? [0, systemProfile.gpuUsage]
-						: undefined,
-				sys_power: systemProfile?.sysPower,
+					system?.gpuUsage !== undefined ? [0, system.gpuUsage] : undefined,
+				sys_power: system?.sysPower,
 			},
 			last_macmon_update: Date.now() / 1000,
-			friendly_name: identity?.friendlyName ?? profileFromNode?.friendlyName,
+			friendly_name: identity?.friendlyName,
 		};
 	}
 
@@ -367,19 +329,15 @@ function transformTopology(
 			for (const [sink, edgeList] of Object.entries(sinks)) {
 				if (!Array.isArray(edgeList)) continue;
 				for (const edge of edgeList) {
-					// Extract IP from SocketConnection (uses snake_case: ip_address)
 					let sendBackIp: string | undefined;
 					if (edge && typeof edge === "object" && "sinkMultiaddr" in edge) {
 						const multiaddr = edge.sinkMultiaddr;
 						if (multiaddr) {
-							// Try both snake_case (actual) and camelCase (in case it changes)
 							sendBackIp =
 								multiaddr.ip_address ||
-								multiaddr.ipAddress ||
 								extractIpFromMultiaddr(multiaddr.address);
 						}
 					}
-					// RDMAConnection (sourceRdmaIface/sinkRdmaIface) has no IP - edge just shows connection exists
 
 					if (nodes[source] && nodes[sink] && source !== sink) {
 						edges.push({ source, target: sink, sendBackIp });
