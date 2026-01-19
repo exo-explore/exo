@@ -1361,6 +1361,11 @@ class AppStore {
 		const assistantMessage = this.addMessage("assistant", "");
 		this.updateActiveConversation();
 
+		// Create abort controller for this request - must be defined before try block
+		// so it's available in the finally block
+		const controller = new AbortController();
+		this.currentRequestController = controller;
+
 		try {
 			// Build the messages array for the API with system prompt
 			const systemPrompt = {
@@ -1427,10 +1432,6 @@ class AppStore {
 			const requestStartTime = performance.now();
 			let firstTokenTime: number | null = null;
 			let tokenCount = 0;
-
-			// Create abort controller for this request
-			const controller = new AbortController();
-			this.currentRequestController = controller;
 
 			const response = await fetch("/v1/chat/completions", {
 				method: "POST",
@@ -1651,6 +1652,10 @@ class AppStore {
 		this.tps = null;
 		this.totalTokens = tokensToKeep.length;
 
+		// Create abort controller before try block so it's available in finally
+		const controller = new AbortController();
+		this.currentRequestController = controller;
+
 		try {
 			// Build messages for API - include the partial assistant message
 			const systemPrompt = {
@@ -1704,10 +1709,6 @@ class AppStore {
 			const requestStartTime = performance.now();
 			let firstTokenTime: number | null = null;
 			let tokenCount = tokensToKeep.length;
-
-			// Create abort controller
-			const controller = new AbortController();
-			this.currentRequestController = controller;
 
 			const response = await fetch("/v1/chat/completions", {
 				method: "POST",
