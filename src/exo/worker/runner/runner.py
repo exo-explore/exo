@@ -2,7 +2,7 @@ import base64
 import time
 from collections.abc import Generator
 from functools import cache
-from typing import Literal
+from typing import Any, Literal, cast
 
 import mlx.core as mx
 from mlx_lm.models.gpt_oss import Model as GptOssModel
@@ -74,25 +74,8 @@ from exo.worker.engines.mlx.utils_mlx import (
     load_mlx_items,
     mlx_force_oom,
 )
-from exo.worker.runner.bootstrap import logger
 from exo.worker.parsing.stream import ChunkParser, ChunkParserConfig
-
-
-ALL_PARSERS: set[str] = {
-    "hermes",
-    "qwen3",
-    "qwen3_moe",
-    "qwen3_vl",
-    "qwen3_coder",
-    "glm4_moe",
-    "minimax_m2",
-    "nemotron3_nano",
-    "functiongemma",
-    "function_parameter",
-    "iquest_coder_v1",
-    "solar_open",
-    "harmony",
-}
+from exo.worker.runner.bootstrap import logger
 
 
 def _get_parser_config(model_id: str) -> ChunkParserConfig:
@@ -116,7 +99,7 @@ def _get_parser_config(model_id: str) -> ChunkParserConfig:
     if "solar" in lower_id and "open" in lower_id:
         return ChunkParserConfig(
             reasoning_parser_name="solar_open",
-            tool_parser_name="solar_open",
+            tool_parser_name=None,
             enable_thinking=True,
         )
 
@@ -130,14 +113,14 @@ def _get_parser_config(model_id: str) -> ChunkParserConfig:
     if "glm" in lower_id or "chatglm" in lower_id:
         return ChunkParserConfig(
             reasoning_parser_name="glm4_moe",
-            tool_parser_name="glm4_moe",
+            tool_parser_name="glm47",
             enable_thinking=True,
         )
 
     if "nemotron" in lower_id and ("nano" in lower_id or "3" in lower_id):
         return ChunkParserConfig(
             reasoning_parser_name="nemotron3_nano",
-            tool_parser_name="nemotron3_nano",
+            tool_parser_name=None,
             enable_thinking=True,
         )
 
@@ -145,14 +128,14 @@ def _get_parser_config(model_id: str) -> ChunkParserConfig:
         if "vl" in lower_id:
             return ChunkParserConfig(
                 reasoning_parser_name="qwen3_vl",
-                tool_parser_name="qwen3_vl",
+                tool_parser_name=None,
                 enable_thinking=True,
             )
 
         if "moe" in lower_id:
             return ChunkParserConfig(
                 reasoning_parser_name="qwen3_moe",
-                tool_parser_name="qwen3_moe",
+                tool_parser_name=None,
                 enable_thinking=True,
             )
 
@@ -165,35 +148,21 @@ def _get_parser_config(model_id: str) -> ChunkParserConfig:
 
         return ChunkParserConfig(
             reasoning_parser_name="qwen3",
-            tool_parser_name="qwen3",
+            tool_parser_name=None,
             enable_thinking=True,
         )
 
     if "functiongemma" in lower_id or ("gemma" in lower_id and "function" in lower_id):
         return ChunkParserConfig(
             reasoning_parser_name=None,
-            tool_parser_name="functiongemma",
-            enable_thinking=True,
-        )
-
-    if "function_parameter" in lower_id or "function-parameter" in lower_id:
-        return ChunkParserConfig(
-            reasoning_parser_name=None,
-            tool_parser_name="function_parameter",
-            enable_thinking=True,
-        )
-
-    if "iquest" in lower_id or "iquest_coder_v1" in lower_id:
-        return ChunkParserConfig(
-            reasoning_parser_name=None,
-            tool_parser_name="iquest_coder_v1",
+            tool_parser_name="function_gemma",
             enable_thinking=True,
         )
 
     if "hermes" in lower_id or "tool-use" in lower_id:
         return ChunkParserConfig(
             reasoning_parser_name="hermes",
-            tool_parser_name="hermes",
+            tool_parser_name="json_tools",
             enable_thinking=True,
         )
 
@@ -364,7 +333,9 @@ def main(
                         if isinstance(model, GptOssModel):
                             mlx_generator = parse_gpt_oss(mlx_generator)
 
-                    parser = ChunkParser(_get_parser_config(shard_metadata.model_meta.model_id))
+                    parser_cfg = _get_parser_config(shard_metadata.model_meta.model_id)
+                    parser_cfg.tools = task_params.tools
+                    parser = ChunkParser(parser_cfg)
 
                     has_generated_tool_calls = False
                     for response in mlx_generator:
@@ -383,18 +354,18 @@ def main(
                                         is_last_chunk = (response.finish_reason is not None) and (i == len(parsed_chunks) - 1)
 
                                         text_payload = ""
-                                        reasoning_payload = None
-                                        tool_calls_payload = None
+                                        reasoning_payload: str | None = None
+                                        tool_calls_payload: list[dict[str, Any]] | None = None
 
                                         if isinstance(p_chunk, str):
                                             text_payload = p_chunk
-                                        elif isinstance(p_chunk, dict):
+                                        else:
                                             if "reasoning_content" in p_chunk:
-                                                reasoning_payload = p_chunk["reasoning_content"]
-                                            elif "type" in p_chunk and p_chunk["type"] == "function":
-                                                tool_calls_payload = [p_chunk]
-                                                has_generated_tool_calls = True
-                                            elif "name" in p_chunk:
+                                                reasoning_payload = cast(str, p_chunk["reasoning_content"])
+                                            elif (
+                                                ("type" in p_chunk and p_chunk["type"] == "function")
+                                                or ("name" in p_chunk)
+                                            ):
                                                 tool_calls_payload = [p_chunk]
                                                 has_generated_tool_calls = True
 

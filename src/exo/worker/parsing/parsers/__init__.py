@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from .abstract_parser import (
     AbstractReasoningParser,
@@ -9,21 +9,27 @@ from .abstract_parser import (
     ReasoningParserState,
     ToolParserState,
 )
-from .function_parameter import FunctionParameterToolParser
-from .functiongemma import FunctionGemmaToolParser
-from .glm4_moe import GLM4MoEReasoningParser, GLM4MoEToolParser
+from .glm4_moe import GLM4MoEReasoningParser
 from .harmony import HarmonyParser
-from .hermes import HermesReasoningParser, HermesToolParser
-from .minimax_m2 import MiniMaxM2ReasoningParser, MiniMaxM2ToolParser
-from .nemotron3_nano import Nemotron3NanoReasoningParser, Nemotron3NanoToolParser
-from .qwen3 import Qwen3ReasoningParser, Qwen3ToolParser
-from .qwen3_coder import Qwen3CoderToolParser
-from .qwen3_moe import Qwen3MoEReasoningParser, Qwen3MoEToolParser
-from .qwen3_vl import Qwen3VLReasoningParser, Qwen3VLToolParser
-from .iquest_coder_v1 import IQuestCoderV1ToolParser
-from .solar_open import SolarOpenReasoningParser, SolarOpenToolParser
+from .hermes import HermesReasoningParser
+from .minimax_m2 import MiniMaxM2ReasoningParser
+from .nemotron3_nano import Nemotron3NanoReasoningParser
+from .parsers import (
+    FunctionGemmaParser,
+    Glm47Parser,
+    JsonToolsParser,
+    MiniMaxM2Parser,
+    Qwen3CoderParser,
+)
+from .qwen3 import Qwen3ReasoningParser
+from .qwen3_moe import Qwen3MoEReasoningParser
+from .qwen3_vl import Qwen3VLReasoningParser
+from .solar_open import SolarOpenReasoningParser
 
-REASONING_PARSER_MAP: dict[str, type[AbstractReasoningParser]] = {
+ReasoningParserFactory = Callable[[], AbstractReasoningParser]
+ToolParserFactory = Callable[[Any | None], AbstractToolParser]
+
+REASONING_PARSER_MAP: dict[str, ReasoningParserFactory] = {
     "hermes": HermesReasoningParser,
     "qwen3": Qwen3ReasoningParser,
     "qwen3_moe": Qwen3MoEReasoningParser,
@@ -34,19 +40,12 @@ REASONING_PARSER_MAP: dict[str, type[AbstractReasoningParser]] = {
     "solar_open": SolarOpenReasoningParser,
 }
 
-TOOL_PARSER_MAP: dict[str, type[AbstractToolParser]] = {
-    "hermes": HermesToolParser,
-    "qwen3": Qwen3ToolParser,
-    "qwen3_coder": Qwen3CoderToolParser,
-    "qwen3_moe": Qwen3MoEToolParser,
-    "qwen3_vl": Qwen3VLToolParser,
-    "glm4_moe": GLM4MoEToolParser,
-    "minimax_m2": MiniMaxM2ToolParser,
-    "nemotron3_nano": Nemotron3NanoToolParser,
-    "functiongemma": FunctionGemmaToolParser,
-    "iquest_coder_v1": IQuestCoderV1ToolParser,
-    "solar_open": SolarOpenToolParser,
-    "function_parameter": FunctionParameterToolParser,
+TOOL_PARSER_MAP: dict[str, ToolParserFactory] = {
+    "json_tools": JsonToolsParser,
+    "function_gemma": FunctionGemmaParser,
+    "glm47": Glm47Parser,
+    "minimax_m2": MiniMaxM2Parser,
+    "qwen3_coder": Qwen3CoderParser,
 }
 
 UNIFIED_PARSER_MAP: dict[str, type] = {
@@ -54,13 +53,13 @@ UNIFIED_PARSER_MAP: dict[str, type] = {
 }
 
 
-def get_reasoning_parser(parser_name: str | None) -> type[AbstractReasoningParser] | None:
+def get_reasoning_parser(parser_name: str | None) -> ReasoningParserFactory | None:
     if parser_name is None:
         return None
     return REASONING_PARSER_MAP.get(parser_name.lower())
 
 
-def get_tool_parser(parser_name: str | None) -> type[AbstractToolParser] | None:
+def get_tool_parser(parser_name: str | None) -> ToolParserFactory | None:
     if parser_name is None:
         return None
     return TOOL_PARSER_MAP.get(parser_name.lower())
@@ -76,7 +75,7 @@ def get_unified_parser(parser_name: str | None) -> type | None:
 class ParsersResult:
     reasoning_parser: AbstractReasoningParser | None = None
     tool_parser: AbstractToolParser | None = None
-    unified_parser: Any | None = None
+    unified_parser: HarmonyParser | None = None
     parser_name: str | None = None
 
     @property
@@ -98,6 +97,7 @@ class ParserManager:
     def create_parsers(
         reasoning_parser_name: str | None = None,
         tool_parser_name: str | None = None,
+        tools: Any | None = None,
     ) -> ParsersResult:
         result = ParsersResult()
 
@@ -112,11 +112,13 @@ class ParserManager:
             return result
 
         if reasoning_name and reasoning_name in REASONING_PARSER_MAP:
-            result.reasoning_parser = REASONING_PARSER_MAP[reasoning_name]()
+            reasoning_factory = REASONING_PARSER_MAP[reasoning_name]
+            result.reasoning_parser = reasoning_factory()
             result.parser_name = reasoning_name
 
         if tool_name and tool_name in TOOL_PARSER_MAP:
-            result.tool_parser = TOOL_PARSER_MAP[tool_name]()
+            tool_factory = TOOL_PARSER_MAP[tool_name]
+            result.tool_parser = tool_factory(tools)
             if not result.parser_name:
                 result.parser_name = tool_name
 
@@ -156,17 +158,14 @@ __all__ = [
     "GLM4MoEReasoningParser",
     "MiniMaxM2ReasoningParser",
     "Nemotron3NanoReasoningParser",
-    "HermesToolParser",
-    "Qwen3ToolParser",
-    "Qwen3CoderToolParser",
-    "Qwen3MoEToolParser",
-    "Qwen3VLToolParser",
-    "GLM4MoEToolParser",
-    "MiniMaxM2ToolParser",
-    "Nemotron3NanoToolParser",
-    "FunctionGemmaToolParser",
-    "FunctionParameterToolParser",
     "HarmonyParser",
+    # Tool parsers
+    "JsonToolsParser",
+    "FunctionGemmaParser",
+    "Glm47Parser",
+    "MiniMaxM2Parser",
+    "Qwen3CoderParser",
+    # Registry
     "REASONING_PARSER_MAP",
     "TOOL_PARSER_MAP",
     "UNIFIED_PARSER_MAP",

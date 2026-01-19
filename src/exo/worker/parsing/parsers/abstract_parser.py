@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Dict, List, Tuple
+from typing import Any, Dict, Tuple
 
 
 class ReasoningParserState(Enum):
@@ -197,7 +197,7 @@ class AbstractToolParser:
         """
         return self.tool_close
 
-    def extract_tool_calls(self, model_output: str) -> Dict[str, List] | None:
+    def extract_tool_calls(self, model_output: str) -> dict[str, Any] | None:
         """Extract tool calls from complete model output.
 
         Parameters
@@ -222,7 +222,7 @@ class AbstractToolParser:
 
     def extract_tool_calls_streaming(
         self, chunk: str
-    ) -> Tuple[Dict[str, List] | str | None, bool]:
+    ) -> tuple[dict[str, Any] | str | None, bool]:
         """Extract tool calls from streaming chunks.
 
         Default implementation that buffers content between tool_open and tool_close

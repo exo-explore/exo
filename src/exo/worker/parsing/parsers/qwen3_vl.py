@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from .hermes import HermesReasoningParser, HermesToolParser
+from .hermes import HermesReasoningParser
 
 Qwen3VLReasoningParser = HermesReasoningParser
-Qwen3VLToolParser = HermesToolParser

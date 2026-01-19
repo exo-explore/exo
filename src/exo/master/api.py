@@ -3,7 +3,7 @@ import json
 import time
 from collections.abc import AsyncGenerator
 from http import HTTPStatus
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import anyio
 from anyio import BrokenResourceError, create_task_group

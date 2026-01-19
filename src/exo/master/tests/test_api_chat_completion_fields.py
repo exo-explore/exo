@@ -1,4 +1,7 @@
 # pyright: reportAny=false
+# pyright: reportPrivateUsage=false
+# pyright: reportUnknownMemberType=false
+# pyright: reportUnknownArgumentType=false
 
 from collections.abc import AsyncGenerator
 
@@ -38,7 +41,7 @@ async def test_collect_chat_completion_populates_thinking_and_tool_calls_and_nul
             ],
         )
 
-    api._chat_chunk_stream = _fake_stream.__get__(api, API)  # type: ignore[method-assign]
+    api._chat_chunk_stream = _fake_stream.__get__(api, API)
 
     resp = await api._collect_chat_completion(COMMAND_1_ID)
 

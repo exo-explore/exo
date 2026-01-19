@@ -1,5 +1,7 @@
 # pyright: reportAny=false
 
+# pyright: reportPrivateUsage=false
+
 from exo.worker.runner.runner import _get_parser_config
 
 
@@ -10,7 +12,7 @@ def test_get_parser_config_maps_known_model_ids() -> None:
 
     cfg = _get_parser_config("SOLAR-OPEN")
     assert cfg.reasoning_parser_name == "solar_open"
-    assert cfg.tool_parser_name == "solar_open"
+    assert cfg.tool_parser_name is None
 
     cfg = _get_parser_config("qwen3-coder")
     assert cfg.reasoning_parser_name == "qwen3"
@@ -18,7 +20,7 @@ def test_get_parser_config_maps_known_model_ids() -> None:
 
     cfg = _get_parser_config("nemotron-3-nano")
     assert cfg.reasoning_parser_name == "nemotron3_nano"
-    assert cfg.tool_parser_name == "nemotron3_nano"
+    assert cfg.tool_parser_name is None
 
     cfg = _get_parser_config("some-unknown-model")
     assert cfg.reasoning_parser_name is None

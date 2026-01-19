@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Union
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Union, cast
 
 from .parsers import ParserManager, ParsersResult, ReasoningParserState
 
@@ -28,6 +28,7 @@ class ChunkParserConfig:
 
     reasoning_parser_name: Optional[str] = None
     tool_parser_name: Optional[str] = None
+    tools: Optional[List[Dict[str, Any]]] = None
     enable_thinking: bool = True
     disable_all_parsing: bool = False
 
@@ -47,9 +48,11 @@ class ChunkParser:
 
     def __init__(self, cfg: ChunkParserConfig):
         self.cfg = cfg
+        self.tools = cfg.tools
         self.parsers: ParsersResult = ParserManager.create_parsers(
             reasoning_parser_name=cfg.reasoning_parser_name,
             tool_parser_name=cfg.tool_parser_name,
+            tools=cfg.tools,
         )
 
         if cfg.disable_all_parsing:
@@ -57,10 +60,12 @@ class ChunkParser:
             self.parsers.tool_parser = None
             self.parsers.unified_parser = None
 
-        # Respect enable_thinking when the reasoning parser says it should.
-        if (not cfg.enable_thinking) and self.parsers.reasoning_parser:
-            if self.parsers.reasoning_parser.respects_enable_thinking():
-                self.parsers.reasoning_parser = None
+        if (
+            (not cfg.enable_thinking)
+            and self.parsers.reasoning_parser
+            and self.parsers.reasoning_parser.respects_enable_thinking()
+        ):
+            self.parsers.reasoning_parser = None
 
         self._is_first_chunk = True
         self._tool_call_index = 0
@@ -72,8 +77,8 @@ class ChunkParser:
 
         out: List[ParsedChunk] = []
 
-        # Unified parser (Harmony) handles reasoning+tools+content together.
         if self.parsers.is_unified:
+            assert self.parsers.unified_parser is not None
             parsed, _done = self.parsers.unified_parser.parse_streaming(text)
             if not parsed:
                 return []
@@ -83,26 +88,26 @@ class ChunkParser:
 
             tool_calls = parsed.get("tool_calls")
             if tool_calls:
-                for tc in tool_calls:
+                tool_calls_list = cast(list[dict[str, Any]], tool_calls)
+                for tc in tool_calls_list:
                     out.append({
                         "name": tc.get("name"),
-                        "arguments": tc.get("arguments")
+                        "arguments": tc.get("arguments"),
                     })
 
-            if parsed.get("content"):
-                out.append(parsed["content"])
+            content = parsed.get("content")
+            if isinstance(content, str) and content:
+                out.append(content)
             return out
 
         reasoning_parser = self.parsers.reasoning_parser
         tool_parser = self.parsers.tool_parser
 
-        # Some reasoning parsers need the opening token prefixed for the first chunk.
         if self._is_first_chunk and reasoning_parser:
             if hasattr(reasoning_parser, "needs_redacted_reasoning_prefix") and reasoning_parser.needs_redacted_reasoning_prefix():
                 text = reasoning_parser.get_reasoning_open() + text
             self._is_first_chunk = False
 
-        # 1) Reasoning parsing happens before tool parsing.
         after_reasoning_close: Optional[str] = None
         if reasoning_parser:
             parsed_content, is_complete = reasoning_parser.extract_reasoning_streaming(text)
@@ -112,12 +117,8 @@ class ChunkParser:
                         "reasoning_content":
                         parsed_content["reasoning_content"]
                     })
-                
+
                 if parsed_content.get("content"):
-                    # If the reasoning parser returns content, we should use it as the text for the next stage
-                    # but we generally do not want to double emit it if we are chaining parsers.
-                    # However, ChunkParser logic seems to assume reasoning parser consumes input if it returns reasoning.
-                    # If it returns content, it's passthrough.
                     text = parsed_content["content"]
 
                 after_reasoning_close = parsed_content.get("after_reasoning_close_content")
@@ -127,20 +128,14 @@ class ChunkParser:
                     reasoning_parser = None
 
             elif isinstance(parsed_content, str):
-                # If it returned a string, treat it as content to be processed by tool parser
                 text = parsed_content
-                # out.append(parsed_content) # Removed direct append to allow tool parsing
 
-            # If still inside reasoning and nothing after close, stop here.
-            # We check if we are actually parsing reasoning (state != NORMAL).
             if reasoning_parser and reasoning_parser.state != ReasoningParserState.NORMAL and not after_reasoning_close:
                 return out
 
-            # Continue parsing the remainder (content after </think>, etc.)
             if after_reasoning_close:
                 text = after_reasoning_close
 
-        # 2) Tool-call parsing (may buffer until close token).
         if tool_parser:
             parsed_content, should_emit = tool_parser.extract_tool_calls_streaming(text)
             if not should_emit:
@@ -153,15 +148,16 @@ class ChunkParser:
 
                 tool_calls = parsed_content.get("tool_calls")
                 if tool_calls:
-                    for tc in tool_calls:
+                    tool_calls_list = cast(list[dict[str, Any]], tool_calls)
+                    for tc in tool_calls_list:
                         out.append({
                             "index": self._tool_call_index,
                             "id": f"call_{uuid.uuid4()}",
                             "type": "function",
                             "function": {
                                 "name": tc.get("name"),
-                                "arguments": tc.get("arguments")
-                            }
+                                "arguments": tc.get("arguments"),
+                            },
                         })
                         self._tool_call_index += 1
 
@@ -173,7 +169,6 @@ class ChunkParser:
 
             return out
 
-        # 3) Plain content
         out.append(text)
         return out
 
@@ -186,6 +181,7 @@ class ChunkParser:
         out: List[ParsedChunk] = []
 
         if self.parsers.is_unified:
+            assert self.parsers.unified_parser is not None
             up = self.parsers.unified_parser
             if getattr(up, "arguments_buffer", None) and getattr(up, "function_name_buffer", ""):
                 out.append({
