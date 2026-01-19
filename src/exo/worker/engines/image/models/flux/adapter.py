@@ -61,6 +61,12 @@ class FluxPromptData(PromptData):
         """Flux does not use conditioning latents."""
         return None
 
+    def get_batched_cfg_data(
+        self,
+    ) -> tuple[mx.array, mx.array, mx.array | None, mx.array | None] | None:
+        """Flux does not use CFG."""
+        return None
+
 
 class FluxModelAdapter(ModelAdapter):
     def __init__(

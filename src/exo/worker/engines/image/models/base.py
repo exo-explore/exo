@@ -83,6 +83,26 @@ class PromptData(ABC):
         """
         ...
 
+    @abstractmethod
+    def get_batched_cfg_data(
+        self,
+    ) -> tuple[mx.array, mx.array, mx.array | None, mx.array | None] | None:
+        """Get embeddings for CFG with batch_size=2.
+
+        Combines positive and negative embeddings into batched tensors for
+        a single forward pass. Pads shorter sequences to max length. Attention
+        mask is used to mask padding.
+
+        Returns:
+            None if model doesn't support CFG, otherwise tuple of:
+            - batched_embeds: [2, max_seq, hidden] (positive then negative)
+            - batched_mask: [2, max_seq] attention mask
+            - batched_pooled: [2, hidden] pooled embeddings or None
+            - conditioning_latents: [2, latent_seq, latent_dim] or None
+            TODO(ciaran): type this
+        """
+        ...
+
 
 class ModelAdapter(ABC):
     """Base class for model adapters with shared utilities."""

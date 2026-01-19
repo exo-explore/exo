@@ -88,6 +88,70 @@ class QwenEditPromptData(PromptData):
         """Indicates this is edit mode with conditioning latents."""
         return True
 
+    def get_batched_cfg_data(
+        self,
+    ) -> tuple[mx.array, mx.array, mx.array | None, mx.array | None] | None:
+        """Batch positive and negative embeddings for CFG with batch_size=2.
+
+        Pads shorter sequence to max length using zeros for embeddings
+        and zeros (masked) for attention mask. Duplicates conditioning
+        latents for both positive and negative passes.
+
+        Returns:
+            Tuple of (batched_embeds, batched_mask, None, batched_cond_latents)
+            - batched_embeds: [2, max_seq, hidden]
+            - batched_mask: [2, max_seq]
+            - None for pooled (Qwen doesn't use it)
+            - batched_cond_latents: [2, latent_seq, latent_dim]
+            TODO(ciaran): type this
+        """
+        pos_embeds = self._prompt_embeds  # [1, pos_seq, hidden]
+        neg_embeds = self._negative_prompt_embeds  # [1, neg_seq, hidden]
+        pos_mask = self._prompt_mask  # [1, pos_seq]
+        neg_mask = self._negative_prompt_mask  # [1, neg_seq]
+
+        pos_seq_len = pos_embeds.shape[1]
+        neg_seq_len = neg_embeds.shape[1]
+        max_seq_len = max(pos_seq_len, neg_seq_len)
+        hidden_dim = pos_embeds.shape[2]
+
+        if pos_seq_len < max_seq_len:
+            pad_len = max_seq_len - pos_seq_len
+            pos_embeds = mx.concatenate(
+                [
+                    pos_embeds,
+                    mx.zeros((1, pad_len, hidden_dim), dtype=pos_embeds.dtype),
+                ],
+                axis=1,
+            )
+            pos_mask = mx.concatenate(
+                [pos_mask, mx.zeros((1, pad_len), dtype=pos_mask.dtype)],
+                axis=1,
+            )
+
+        if neg_seq_len < max_seq_len:
+            pad_len = max_seq_len - neg_seq_len
+            neg_embeds = mx.concatenate(
+                [
+                    neg_embeds,
+                    mx.zeros((1, pad_len, hidden_dim), dtype=neg_embeds.dtype),
+                ],
+                axis=1,
+            )
+            neg_mask = mx.concatenate(
+                [neg_mask, mx.zeros((1, pad_len), dtype=neg_mask.dtype)],
+                axis=1,
+            )
+
+        batched_embeds = mx.concatenate([pos_embeds, neg_embeds], axis=0)
+        batched_mask = mx.concatenate([pos_mask, neg_mask], axis=0)
+
+        batched_cond_latents = mx.concatenate(
+            [self._conditioning_latents, self._conditioning_latents], axis=0
+        )
+
+        return batched_embeds, batched_mask, None, batched_cond_latents
+
 
 class QwenEditModelAdapter(ModelAdapter):
     """Adapter for Qwen-Image-Edit model.
@@ -401,4 +465,3 @@ class QwenEditModelAdapter(ModelAdapter):
             int(output_width),
             int(output_height),
         )
-

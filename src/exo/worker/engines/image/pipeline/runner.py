@@ -180,17 +180,7 @@ class DiffusionRunner:
             for wrapper in self.single_block_wrappers:
                 wrapper.reset_cache()
 
-    def _set_use_negative_cache(self, use_negative: bool) -> None:
-        """Switch all wrappers to negative cache for CFG."""
-        if self.joint_block_wrappers:
-            for wrapper in self.joint_block_wrappers:
-                wrapper.set_use_negative_cache(use_negative)
-        if self.single_block_wrappers:
-            for wrapper in self.single_block_wrappers:
-                wrapper.set_use_negative_cache(use_negative)
-
     def _set_text_seq_len(self, text_seq_len: int) -> None:
-        """Set text sequence length on all wrappers for current pass."""
         if self.joint_block_wrappers:
             for wrapper in self.joint_block_wrappers:
                 wrapper.set_text_seq_len(text_seq_len)
@@ -508,50 +498,40 @@ class DiffusionRunner:
         latents: mx.array,
         prompt_data: PromptData,
     ) -> mx.array:
-        conditioning_latents = prompt_data.conditioning_latents
         cond_image_grid = prompt_data.cond_image_grid
+        needs_cfg = self.adapter.needs_cfg
 
-        self._set_use_negative_cache(False)
+        if needs_cfg:
+            batched_data = prompt_data.get_batched_cfg_data()
+            assert batched_data is not None, "CFG model must provide batched data"
+            prompt_embeds, encoder_mask, batched_pooled, cond_latents = batched_data
+            pooled_embeds = (
+                batched_pooled if batched_pooled is not None else prompt_embeds
+            )
+            step_latents = mx.concatenate([latents, latents], axis=0)
+        else:
+            prompt_embeds = prompt_data.prompt_embeds
+            pooled_embeds = prompt_data.pooled_prompt_embeds
+            encoder_mask = prompt_data.get_encoder_hidden_states_mask(positive=True)
+            cond_latents = prompt_data.conditioning_latents
+            step_latents = latents
+
         noise = self._forward_pass(
-            latents,
-            prompt_data.prompt_embeds,
-            prompt_data.pooled_prompt_embeds,
+            step_latents,
+            prompt_embeds,
+            pooled_embeds,
             t=t,
             config=config,
-            encoder_hidden_states_mask=prompt_data.get_encoder_hidden_states_mask(
-                positive=True
-            ),
+            encoder_hidden_states_mask=encoder_mask,
             cond_image_grid=cond_image_grid,
-            conditioning_latents=conditioning_latents,
+            conditioning_latents=cond_latents,
         )
 
-        if self.adapter.needs_cfg:
-            negative_prompt_embeds = prompt_data.negative_prompt_embeds
-            negative_pooled_prompt_embeds = prompt_data.negative_pooled_prompt_embeds
-            assert negative_prompt_embeds is not None, (
-                "CFG requires negative_prompt_embeds"
-            )
-            assert negative_pooled_prompt_embeds is not None, (
-                "CFG requires negative_pooled_prompt_embeds"
-            )
-
-            self._set_use_negative_cache(True)
-            noise_neg = self._forward_pass(
-                latents,
-                negative_prompt_embeds,
-                negative_pooled_prompt_embeds,
-                t=t,
-                config=config,
-                encoder_hidden_states_mask=prompt_data.get_encoder_hidden_states_mask(
-                    positive=False
-                ),
-                cond_image_grid=cond_image_grid,
-                conditioning_latents=conditioning_latents,
-            )
-
+        if needs_cfg:
+            noise_pos, noise_neg = mx.split(noise, 2, axis=0)
             assert self.config.guidance_scale is not None
             noise = self.adapter.apply_guidance(
-                noise, noise_neg, guidance_scale=self.config.guidance_scale
+                noise_pos, noise_neg, guidance_scale=self.config.guidance_scale
             )
 
         return config.scheduler.step(noise=noise, timestep=t, latents=latents)
@@ -703,79 +683,63 @@ class DiffusionRunner:
         kontext_image_ids: mx.array | None = None,
     ) -> mx.array:
         prev_latents = hidden_states
+        needs_cfg = self.adapter.needs_cfg
+        cond_image_grid = prompt_data.cond_image_grid
 
         scaled_hidden_states = config.scheduler.scale_model_input(hidden_states, t)
-
-        # For edit mode: handle conditioning latents
-        conditioning_latents = prompt_data.conditioning_latents
         original_latent_tokens = scaled_hidden_states.shape[1]
-        if conditioning_latents is not None:
-            num_img_tokens = original_latent_tokens + conditioning_latents.shape[1]
+
+        if needs_cfg:
+            batched_data = prompt_data.get_batched_cfg_data()
+            assert batched_data is not None, "CFG model must provide batched data"
+            prompt_embeds, encoder_mask, batched_pooled, cond_latents = batched_data
+            pooled_embeds = (
+                batched_pooled if batched_pooled is not None else prompt_embeds
+            )
+            step_latents = mx.concatenate(
+                [scaled_hidden_states, scaled_hidden_states], axis=0
+            )
+        else:
+            prompt_embeds = prompt_data.prompt_embeds
+            pooled_embeds = prompt_data.pooled_prompt_embeds
+            encoder_mask = prompt_data.get_encoder_hidden_states_mask(positive=True)
+            cond_latents = prompt_data.conditioning_latents
+            step_latents = scaled_hidden_states
+
+        if cond_latents is not None:
+            num_img_tokens = original_latent_tokens + cond_latents.shape[1]
         else:
             num_img_tokens = original_latent_tokens
 
-        if self.is_first_stage and conditioning_latents is not None:
-            scaled_hidden_states = mx.concatenate(
-                [scaled_hidden_states, conditioning_latents], axis=1
-            )
+        if self.is_first_stage and cond_latents is not None:
+            step_latents = mx.concatenate([step_latents, cond_latents], axis=1)
 
-        text_seq_len = prompt_data.prompt_embeds.shape[1]
-        self._ensure_wrappers(
-            text_seq_len, prompt_data.get_encoder_hidden_states_mask()
-        )
+        text_seq_len = prompt_embeds.shape[1]
+        self._ensure_wrappers(text_seq_len, encoder_mask)
 
-        needs_cfg = self.adapter.needs_cfg
-
-        self._set_use_negative_cache(False)
         noise = self._run_sync_pass(
             t,
             config,
-            scaled_hidden_states,
-            prompt_data.prompt_embeds,
-            prompt_data.pooled_prompt_embeds,
-            prompt_data.get_encoder_hidden_states_mask(positive=True),
-            prompt_data.cond_image_grid,
+            step_latents,
+            prompt_embeds,
+            pooled_embeds,
+            encoder_mask,
+            cond_image_grid,
             kontext_image_ids,
             num_img_tokens,
             original_latent_tokens,
-            conditioning_latents,
+            cond_latents,
         )
-
-        if needs_cfg:
-            self._set_use_negative_cache(True)
-            negative_prompt_embeds = prompt_data.negative_prompt_embeds
-            negative_pooled_prompt_embeds = prompt_data.negative_pooled_prompt_embeds
-            assert negative_prompt_embeds is not None, (
-                "CFG requires negative_prompt_embeds"
-            )
-            assert negative_pooled_prompt_embeds is not None, (
-                "CFG requires negative_pooled_prompt_embeds"
-            )
-
-            noise_neg = self._run_sync_pass(
-                t,
-                config,
-                scaled_hidden_states,
-                negative_prompt_embeds,
-                negative_pooled_prompt_embeds,
-                prompt_data.get_encoder_hidden_states_mask(positive=False),
-                prompt_data.cond_image_grid,
-                kontext_image_ids,
-                num_img_tokens,
-                original_latent_tokens,
-                conditioning_latents,
-            )
-
-            if self.is_last_stage:
-                assert noise is not None
-                assert noise_neg is not None
-                assert self.config.guidance_scale is not None
-                noise = self.adapter.apply_guidance(
-                    noise, noise_neg, self.config.guidance_scale
-                )
 
         if self.is_last_stage:
             assert noise is not None
+            if needs_cfg:
+                noise_pos, noise_neg = mx.split(noise, 2, axis=0)
+                assert self.config.guidance_scale is not None
+                noise = self.adapter.apply_guidance(
+                    noise_pos, noise_neg, self.config.guidance_scale
+                )
+
             hidden_states = config.scheduler.step(
                 noise=noise, timestep=t, latents=prev_latents
             )
@@ -802,63 +766,43 @@ class DiffusionRunner:
         prompt_data: PromptData,
         kontext_image_ids: mx.array | None = None,
     ) -> mx.array:
-        """Execute async pipeline step with interleaved positive/negative passes."""
+        """Execute async pipeline step with batched CFG."""
         patch_latents, token_indices = self._create_patches(latents, config)
+        needs_cfg = self.adapter.needs_cfg
+        cond_image_grid = prompt_data.cond_image_grid
 
-        text_seq_len = prompt_data.prompt_embeds.shape[1]
-        self._ensure_wrappers(
-            text_seq_len, prompt_data.get_encoder_hidden_states_mask()
-        )
+        if needs_cfg:
+            batched_data = prompt_data.get_batched_cfg_data()
+            assert batched_data is not None, "CFG model must provide batched data"
+            prompt_embeds, encoder_mask, batched_pooled, _ = batched_data
+            pooled_embeds = (
+                batched_pooled if batched_pooled is not None else prompt_embeds
+            )
+        else:
+            prompt_embeds = prompt_data.prompt_embeds
+            pooled_embeds = prompt_data.pooled_prompt_embeds
+            encoder_mask = prompt_data.get_encoder_hidden_states_mask(positive=True)
 
-        encoder_mask = prompt_data.get_encoder_hidden_states_mask(positive=True)
-        text_embeddings = self.adapter.compute_text_embeddings(
-            t, config, prompt_data.pooled_prompt_embeds
-        )
+        text_seq_len = prompt_embeds.shape[1]
+        self._ensure_wrappers(text_seq_len, encoder_mask)
+        self._set_text_seq_len(text_seq_len)
+
+        if self.joint_block_wrappers:
+            for wrapper in self.joint_block_wrappers:
+                wrapper.set_encoder_mask(encoder_mask)
+
+        text_embeddings = self.adapter.compute_text_embeddings(t, config, pooled_embeds)
         image_rotary_embeddings = self.adapter.compute_rotary_embeddings(
-            prompt_data.prompt_embeds,
+            prompt_embeds,
             config,
             encoder_hidden_states_mask=encoder_mask,
-            cond_image_grid=prompt_data.cond_image_grid,
+            cond_image_grid=cond_image_grid,
             kontext_image_ids=kontext_image_ids,
         )
 
-        needs_cfg = self.adapter.needs_cfg
-        negative_prompt_embeds: mx.array | None = None
-        encoder_mask_neg: mx.array | None = None
-        text_embeddings_neg: mx.array | None = None
-        image_rotary_embeddings_neg: mx.array | None = None
-
-        if needs_cfg:
-            negative_prompt_embeds = prompt_data.negative_prompt_embeds
-            negative_pooled_prompt_embeds = prompt_data.negative_pooled_prompt_embeds
-            assert negative_prompt_embeds is not None, (
-                "CFG requires negative_prompt_embeds"
-            )
-            assert negative_pooled_prompt_embeds is not None, (
-                "CFG requires negative_pooled_prompt_embeds"
-            )
-
-            encoder_mask_neg = prompt_data.get_encoder_hidden_states_mask(
-                positive=False
-            )
-            text_embeddings_neg = self.adapter.compute_text_embeddings(
-                t, config, negative_pooled_prompt_embeds
-            )
-            image_rotary_embeddings_neg = self.adapter.compute_rotary_embeddings(
-                negative_prompt_embeds,
-                config,
-                encoder_hidden_states_mask=encoder_mask_neg,
-                cond_image_grid=prompt_data.cond_image_grid,
-                kontext_image_ids=kontext_image_ids,
-            )
-
         prev_patch_latents = [p for p in patch_latents]
-
         is_first_async_step = t == config.init_time_step + self.num_sync_steps
-
         encoder_hidden_states: mx.array | None = None
-        encoder_hidden_states_neg: mx.array | None = None
-        noise_neg: mx.array | None = None
 
         for patch_idx in range(len(patch_latents)):
             patch = patch_latents[patch_idx]
@@ -873,53 +817,27 @@ class DiffusionRunner:
                 )
                 mx.eval(patch)
 
-            self._set_use_negative_cache(False)
-            self._set_text_seq_len(prompt_data.prompt_embeds.shape[1])
-            if self.joint_block_wrappers:
-                for wrapper in self.joint_block_wrappers:
-                    wrapper.set_encoder_mask(encoder_mask)
+            step_patch = mx.concatenate([patch, patch], axis=0) if needs_cfg else patch
 
             noise, encoder_hidden_states = self._run_single_patch_pass(
-                patch=patch,
+                patch=step_patch,
                 patch_idx=patch_idx,
                 token_indices=token_indices[patch_idx],
-                prompt_embeds=prompt_data.prompt_embeds,
+                prompt_embeds=prompt_embeds,
                 text_embeddings=text_embeddings,
                 image_rotary_embeddings=image_rotary_embeddings,
                 encoder_hidden_states=encoder_hidden_states,
             )
 
-            if needs_cfg:
-                assert negative_prompt_embeds is not None
-                assert text_embeddings_neg is not None
-                assert image_rotary_embeddings_neg is not None
-
-                self._set_use_negative_cache(True)
-                self._set_text_seq_len(negative_prompt_embeds.shape[1])
-                if self.joint_block_wrappers:
-                    for wrapper in self.joint_block_wrappers:
-                        wrapper.set_encoder_mask(encoder_mask_neg)
-
-                noise_neg, encoder_hidden_states_neg = self._run_single_patch_pass(
-                    patch=patch,
-                    patch_idx=patch_idx,
-                    token_indices=token_indices[patch_idx],
-                    prompt_embeds=negative_prompt_embeds,
-                    text_embeddings=text_embeddings_neg,
-                    image_rotary_embeddings=image_rotary_embeddings_neg,
-                    encoder_hidden_states=encoder_hidden_states_neg,
-                )
-
             if self.is_last_stage:
+                assert noise is not None
                 if needs_cfg:
-                    assert noise is not None
-                    assert noise_neg is not None
+                    noise_pos, noise_neg = mx.split(noise, 2, axis=0)
                     assert self.config.guidance_scale is not None
                     noise = self.adapter.apply_guidance(
-                        noise, noise_neg, self.config.guidance_scale
+                        noise_pos, noise_neg, self.config.guidance_scale
                     )
 
-                assert noise is not None
                 patch_latents[patch_idx] = config.scheduler.step(
                     noise=noise,
                     timestep=t,
