@@ -550,6 +550,11 @@ class API:
                     self._token_chunk_stream(command.command_id),
                 ),
                 media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "close",
+                    "X-Accel-Buffering": "no",
+                },
             )
 
         try:
@@ -1067,6 +1072,11 @@ class API:
                     self._token_chunk_stream(command.command_id),
                 ),
                 media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "close",
+                    "X-Accel-Buffering": "no",
+                },
             )
 
         try:
@@ -1109,6 +1119,11 @@ class API:
                     self._token_chunk_stream(command.command_id),
                 ),
                 media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "close",
+                    "X-Accel-Buffering": "no",
+                },
             )
 
         try:
