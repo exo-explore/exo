@@ -396,6 +396,16 @@ def apply_chat_template(
     return prompt
 
 
+def detect_thinking_prompt_suffix(prompt: str, tokenizer: TokenizerWrapper) -> bool:
+    """
+    Detect if prompt ends with a thinking opening tag that should be
+    prepended to the output stream.
+    """
+    think_token = tokenizer.think_start
+
+    return think_token is not None and prompt.rstrip().endswith(think_token)
+
+
 class NullKVCache(KVCache):
     """
     A KVCache that pretends to exist but holds zero tokens.

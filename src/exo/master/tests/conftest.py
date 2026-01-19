@@ -2,28 +2,26 @@ from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import (
     MemoryUsage,
     NetworkInterfaceInfo,
-    NodePerformanceProfile,
-    SystemPerformanceProfile,
+    NodeNetworkInfo,
 )
 from exo.shared.types.topology import RDMAConnection, SocketConnection
 
 
-def create_node_profile(memory: int) -> NodePerformanceProfile:
-    return NodePerformanceProfile(
-        model_id="test",
-        chip_id="test",
-        friendly_name="test",
-        memory=MemoryUsage.from_bytes(
-            ram_total=1000,
-            ram_available=memory,
-            swap_total=1000,
-            swap_available=1000,
-        ),
-        network_interfaces=[
+def create_node_memory(memory: int) -> MemoryUsage:
+    return MemoryUsage.from_bytes(
+        ram_total=1000,
+        ram_available=memory,
+        swap_total=1000,
+        swap_available=1000,
+    )
+
+
+def create_node_network() -> NodeNetworkInfo:
+    return NodeNetworkInfo(
+        interfaces=[
             NetworkInterfaceInfo(name="en0", ip_address=f"169.254.0.{i}")
             for i in range(10)
-        ],
-        system=SystemPerformanceProfile(),
+        ]
     )
 
 
