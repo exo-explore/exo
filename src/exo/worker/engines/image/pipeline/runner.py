@@ -581,6 +581,7 @@ class DiffusionRunner:
             for wrapper in self.joint_block_wrappers:
                 wrapper.set_encoder_mask(encoder_hidden_states_mask)
 
+        encoder_hidden_states: mx.array | None = None
         if self.is_first_stage:
             hidden_states, encoder_hidden_states = self.adapter.compute_embeddings(
                 hidden_states, prompt_embeds
@@ -613,6 +614,7 @@ class DiffusionRunner:
                 )
 
             assert self.joint_block_wrappers is not None
+            assert encoder_hidden_states is not None
             for wrapper in self.joint_block_wrappers:
                 wrapper.set_patch(BlockWrapperMode.CACHING)
                 encoder_hidden_states, hidden_states = wrapper(
@@ -623,6 +625,7 @@ class DiffusionRunner:
                 )
 
         if self.owns_concat_stage:
+            assert encoder_hidden_states is not None
             concatenated = self.adapter.merge_streams(
                 hidden_states, encoder_hidden_states
             )
@@ -636,8 +639,9 @@ class DiffusionRunner:
                 mx.async_eval(concatenated)
 
         elif self.has_joint_blocks and not self.is_last_stage:
-            hidden_states = (
-                mx.distributed.send(hidden_states, self.next_rank, group=self.group),
+            assert encoder_hidden_states is not None
+            hidden_states = mx.distributed.send(
+                hidden_states, self.next_rank, group=self.group
             )
             encoder_hidden_states = mx.distributed.send(
                 encoder_hidden_states, self.next_rank, group=self.group
@@ -851,9 +855,7 @@ class DiffusionRunner:
 
                 if not self.is_first_stage and t != config.num_inference_steps - 1:
                     patch_latents[patch_idx] = mx.distributed.send(
-                        patch_latents[patch_idx],
-                        self.next_rank,
-                        group=self.group,
+                        patch_latents[patch_idx], self.next_rank, group=self.group
                     )
                     mx.async_eval(patch_latents[patch_idx])
 
