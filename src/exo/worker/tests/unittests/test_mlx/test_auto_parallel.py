@@ -5,9 +5,10 @@ import mlx.core as mx
 import pytest
 
 from exo.worker.engines.mlx.auto_parallel import (
-    CustomMlxLayer,
+    CustomMlxModule,
     PipelineFirstLayer,
     PipelineLastLayer,
+    PipelineParallelModel,
 )
 from exo.worker.tests.unittests.test_mlx.conftest import MockLayer
 
@@ -36,6 +37,18 @@ def run_pipeline_device(
         ) -> mlx_core.array:
             return x * 2
 
+    class MockModel(mlx_nn.Module):
+        def __init__(self, layers: list[mlx_nn.Module]) -> None:
+            super().__init__()
+            self.layers = layers
+
+        def __call__(
+            self, x: mlx_core.array, *args: object, **kwargs: object
+        ) -> mlx_core.array:
+            for layer in self.layers:
+                x = layer(x, *args, **kwargs)  # pyright: ignore[reportUnknownVariableType]
+            return x  # pyright: ignore[reportUnknownVariableType]
+
     try:
         group = mlx_core.distributed.init(backend="ring", strict=True)
 
@@ -43,8 +56,12 @@ def run_pipeline_device(
         first = PipelineFirstLayer(mock, r=rank, group=group)
         composed = PipelineLastLayer(first, r=rank, s=world_size, group=group)
 
+        # Wrap in a mock model, then wrap in PipelineParallelModel for all_gather
+        inner_model = MockModel([composed])
+        model = PipelineParallelModel(inner_model, group)
+
         x = mlx_core.ones((1, 4))
-        result = composed(x)
+        result = model(x)
         mlx_core.eval(result)
 
         success = result.shape == x.shape
@@ -55,7 +72,7 @@ def run_pipeline_device(
 
 def test_single_wrapper_delegates_attributes() -> None:
     mock = MockLayer()
-    wrapped = CustomMlxLayer(mock)
+    wrapped = CustomMlxModule(mock)
 
     assert wrapped.custom_attr == "test_value"  # type: ignore[attr-defined]
     assert wrapped.use_sliding is True  # type: ignore[attr-defined]
@@ -74,7 +91,7 @@ def test_composed_wrappers_delegate_attributes() -> None:
 
 def test_missing_attribute_raises() -> None:
     mock = MockLayer()
-    wrapped = CustomMlxLayer(mock)
+    wrapped = CustomMlxModule(mock)
 
     with pytest.raises(AttributeError):
         _ = wrapped.nonexistent_attr  # type: ignore[attr-defined]

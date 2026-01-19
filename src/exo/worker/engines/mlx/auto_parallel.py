@@ -41,7 +41,7 @@ class _LayerCallable(Protocol):
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array: ...
 
 
-class CustomMlxLayer(nn.Module):
+class CustomMlxModule(nn.Module):
     """Base class for replacing an MLX layer with a custom implementation."""
 
     def __init__(self, original_layer: _LayerCallable):
@@ -63,7 +63,7 @@ class CustomMlxLayer(nn.Module):
                 return getattr(original_layer, name)
 
 
-class PipelineFirstLayer(CustomMlxLayer):
+class PipelineFirstLayer(CustomMlxModule):
     def __init__(
         self,
         original_layer: _LayerCallable,
@@ -80,7 +80,7 @@ class PipelineFirstLayer(CustomMlxLayer):
         return self.original_layer(x, *args, **kwargs)
 
 
-class PipelineLastLayer(CustomMlxLayer):
+class PipelineLastLayer(CustomMlxModule):
     def __init__(
         self,
         original_layer: _LayerCallable,
@@ -108,7 +108,6 @@ class PipelineLastLayer(CustomMlxLayer):
             if cache is not None:
                 cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
 
-        output = mx.distributed.all_gather(output, group=self.group)[-output.shape[0] :]
         return output
 
 
@@ -193,7 +192,33 @@ def pipeline_auto_parallel(
         "Expected a list of layers after auto-parallel initialisation"
     )
 
-    return model
+    return PipelineParallelModel(model, group)
+
+
+class PipelineParallelModel(CustomMlxModule):
+    def __init__(self, model: nn.Module, group: mx.distributed.Group):
+        super().__init__(model)
+        self.original_call_signature = signature(self.original_layer.__call__)
+        self.group = group
+
+    def __call__(
+        self,
+        *args: object,
+        **kwargs: object,
+    ) -> mx.array:
+        logits: mx.array = self.original_layer(*args, **kwargs)  # type: ignore
+        cache = self.original_call_signature.bind_partial(
+            *args, **kwargs
+        ).arguments.get("cache", None)
+
+        if cache is not None:
+            for c in cache:  # type: ignore
+                if hasattr(c, "state") and c.state is not None:  # type: ignore
+                    c.state = mx.depends(c.state, logits)  # type: ignore
+
+        # All gather logits rather than tokens for future use cases and for simplicity
+        logits = mx.distributed.all_gather(logits, group=self.group)[-logits.shape[0] :]
+        return logits
 
 
 def tensor_auto_parallel(
@@ -401,7 +426,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
         return model
 
 
-class ShardedDeepseekV3MoE(CustomMlxLayer):
+class ShardedDeepseekV3MoE(CustomMlxModule):
     def __init__(self, layer: _LayerCallable):
         super().__init__(layer)
         self.sharding_group: mx.distributed.Group | None = None
@@ -476,7 +501,7 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
         return model
 
 
-class ShardedQwenMoE(CustomMlxLayer):
+class ShardedQwenMoE(CustomMlxModule):
     def __init__(self, layer: _LayerCallable):
         super().__init__(layer)
         self.sharding_group: mx.distributed.Group | None = None
@@ -523,7 +548,7 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
         return model
 
 
-class ShardedGptOssMoE(CustomMlxLayer):
+class ShardedGptOssMoE(CustomMlxModule):
     def __init__(self, layer: nn.Module):
         super().__init__(layer)
         self.sharding_group: mx.distributed.Group | None = None
