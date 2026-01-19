@@ -72,7 +72,8 @@
               };
               prettier = {
                 enable = true;
-                includes = [ "*.ts" ];
+                package = self'.packages.prettier-svelte;
+                includes = [ "*.ts" "*.svelte" ];
               };
               swift-format = {
                 enable = true;
