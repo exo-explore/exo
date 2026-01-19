@@ -53,43 +53,31 @@ def allocate_layers_proportionally(
     total_layers: int,
     memory_fractions: list[float],
 ) -> list[int]:
-    allocations: list[int] = []
-    for i, fraction in enumerate(memory_fractions):
-        if i == total_layers - 1:
-            node_layers = total_layers - sum(allocations)
-        else:
-            node_layers = round(
-                total_layers
-                * fraction
-            )
-            node_layers = max(1, node_layers)
-        allocations.append(node_layers)
-    return allocations
-    # n = len(memory_fractions)
-    # if n == 0:
-    #     raise ValueError("Cannot allocate layers to an empty node list")
-    # if total_layers < n:
-    #     raise ValueError(
-    #         f"Cannot distribute {total_layers} layers across {n} nodes "
-    #         "(need at least 1 layer per node)"
-    #     )
-    #
-    # # Largest remainder: floor each, then distribute remainder by fractional part
-    # raw = [f * total_layers for f in memory_fractions]
-    # result = [int(r) for r in raw]
-    # by_remainder = sorted(range(n), key=lambda i: raw[i] - result[i], reverse=True)
-    # for i in range(total_layers - sum(result)):
-    #     result[by_remainder[i]] += 1
-    #
-    # # Ensure minimum 1 per node by taking from the largest
-    # for i in range(n):
-    #     if result[i] == 0:
-    #         max_idx = max(range(n), key=lambda j: result[j])
-    #         assert result[max_idx] > 1
-    #         result[max_idx] -= 1
-    #         result[i] = 1
-    #
-    # return result
+    n = len(memory_fractions)
+    if n == 0:
+        raise ValueError("Cannot allocate layers to an empty node list")
+    if total_layers < n:
+        raise ValueError(
+            f"Cannot distribute {total_layers} layers across {n} nodes "
+            "(need at least 1 layer per node)"
+        )
+
+    # Largest remainder: floor each, then distribute remainder by fractional part
+    raw = [f * total_layers for f in memory_fractions]
+    result = [int(r) for r in raw]
+    by_remainder = sorted(range(n), key=lambda i: raw[i] - result[i], reverse=True)
+    for i in range(total_layers - sum(result)):
+        result[by_remainder[i]] += 1
+
+    # Ensure minimum 1 per node by taking from the largest
+    for i in range(n):
+        if result[i] == 0:
+            max_idx = max(range(n), key=lambda j: result[j])
+            assert result[max_idx] > 1
+            result[max_idx] -= 1
+            result[i] = 1
+
+    return result
 
 
 def get_shard_assignments_for_pipeline_parallel(
