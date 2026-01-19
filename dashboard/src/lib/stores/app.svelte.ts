@@ -435,12 +435,56 @@ class AppStore {
 
 	/**
 	 * Save conversations to localStorage
+	 * Note: We strip tokens (logprobs data) to save space - they're large and not essential for persistence
 	 */
 	private saveConversationsToStorage() {
 		try {
-			localStorage.setItem(STORAGE_KEY, JSON.stringify(this.conversations));
+			// Strip tokens from messages to save localStorage space
+			const conversationsToSave = this.conversations.map((conv) => ({
+				...conv,
+				messages: conv.messages.map((msg) => {
+					// eslint-disable-next-line @typescript-eslint/no-unused-vars
+					const { tokens, ...msgWithoutTokens } = msg;
+					return msgWithoutTokens;
+				}),
+			}));
+			localStorage.setItem(STORAGE_KEY, JSON.stringify(conversationsToSave));
 		} catch (error) {
 			console.error("Failed to save conversations:", error);
+			// If quota exceeded, try to clear old conversations and retry
+			if (error instanceof DOMException && error.name === "QuotaExceededError") {
+				console.warn("Storage quota exceeded, clearing oldest conversations...");
+				this.pruneOldConversations();
+			}
+		}
+	}
+
+	/**
+	 * Remove oldest conversations to free up storage space
+	 */
+	private pruneOldConversations() {
+		if (this.conversations.length <= 1) return;
+
+		// Sort by updatedAt and remove oldest half
+		const sorted = [...this.conversations].sort(
+			(a, b) => (b.updatedAt || 0) - (a.updatedAt || 0),
+		);
+		const keepCount = Math.max(1, Math.ceil(sorted.length / 2));
+		this.conversations = sorted.slice(0, keepCount);
+
+		// Try saving again
+		try {
+			const conversationsToSave = this.conversations.map((conv) => ({
+				...conv,
+				messages: conv.messages.map((msg) => {
+					// eslint-disable-next-line @typescript-eslint/no-unused-vars
+					const { tokens, ...msgWithoutTokens } = msg;
+					return msgWithoutTokens;
+				}),
+			}));
+			localStorage.setItem(STORAGE_KEY, JSON.stringify(conversationsToSave));
+		} catch {
+			console.error("Still failed to save after pruning");
 		}
 	}
 
