@@ -2228,6 +2228,54 @@ class AppStore {
       this.conversations.find((c) => c.id === this.activeConversationId) || null
     );
   }
+
+  /**
+   * Start a download on a specific node
+   */
+  async startDownload(nodeId: string, shardMetadata: object): Promise<void> {
+    try {
+      const response = await fetch("/download/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetNodeId: nodeId,
+          shardMetadata: shardMetadata,
+        }),
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to start download: ${response.status} - ${errorText}`,
+        );
+      }
+    } catch (error) {
+      console.error("Error starting download:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a downloaded model from a specific node
+   */
+  async deleteDownload(nodeId: string, modelId: string): Promise<void> {
+    try {
+      const response = await fetch(
+        `/download/${encodeURIComponent(nodeId)}/${encodeURIComponent(modelId)}`,
+        {
+          method: "DELETE",
+        },
+      );
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to delete download: ${response.status} - ${errorText}`,
+        );
+      }
+    } catch (error) {
+      console.error("Error deleting download:", error);
+      throw error;
+    }
+  }
 }
 
 export const appStore = new AppStore();
@@ -2333,3 +2381,9 @@ export const setImageGenerationParams = (
 ) => appStore.setImageGenerationParams(params);
 export const resetImageGenerationParams = () =>
   appStore.resetImageGenerationParams();
+
+// Download actions
+export const startDownload = (nodeId: string, shardMetadata: object) =>
+  appStore.startDownload(nodeId, shardMetadata);
+export const deleteDownload = (nodeId: string, modelId: string) =>
+  appStore.deleteDownload(nodeId, modelId);

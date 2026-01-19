@@ -80,6 +80,7 @@ class Node:
                 port=args.api_port,
                 global_event_receiver=router.receiver(topics.GLOBAL_EVENTS),
                 command_sender=router.sender(topics.COMMANDS),
+                download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 election_receiver=router.receiver(topics.ELECTION_MESSAGES),
             )
         else:
