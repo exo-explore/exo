@@ -73,8 +73,8 @@ async def test_master():
         tg.start_soon(master.run)
 
         sender_node_id = NodeId(f"{keypair.to_peer_id().to_base58()}_sender")
-        # inject a NodePerformanceProfile event
-        logger.info("inject a NodePerformanceProfile event")
+        # inject a NodeGatheredInfo event
+        logger.info("inject a NodeGatheredInfo event")
         await local_event_sender.send(
             ForwarderEvent(
                 origin_idx=0,
@@ -99,7 +99,7 @@ async def test_master():
         logger.info("wait for initial topology event")
         while len(list(master.state.topology.list_nodes())) == 0:
             await anyio.sleep(0.001)
-        while len(master.state.node_profiles) == 0:
+        while len(master.state.node_memory) == 0:
             await anyio.sleep(0.001)
 
         logger.info("inject a CreateInstance Command")

@@ -71,44 +71,46 @@ export interface Instance {
 	};
 }
 
-interface RawNodeProfile {
+// Granular node state types from the new state structure
+interface RawNodeIdentity {
 	modelId?: string;
 	chipId?: string;
 	friendlyName?: string;
-	networkInterfaces?: Array<{
-		name?: string;
-		ipAddress?: string;
-		addresses?: Array<{ address?: string } | string>;
-		ipv4?: string;
-		ipv6?: string;
-		ipAddresses?: string[];
-		ips?: string[];
-	}>;
-	memory?: {
-		ramTotal?: { inBytes: number };
-		ramAvailable?: { inBytes: number };
-		swapTotal?: { inBytes: number };
-		swapAvailable?: { inBytes: number };
-	};
-	system?: {
-		gpuUsage?: number;
-		temp?: number;
-		sysPower?: number;
-	};
 }
 
-interface RawTopologyNode {
-	nodeId: string;
-	nodeProfile?: RawNodeProfile;
+interface RawMemoryUsage {
+	ramTotal?: { inBytes: number };
+	ramAvailable?: { inBytes: number };
+	swapTotal?: { inBytes: number };
+	swapAvailable?: { inBytes: number };
 }
 
-// New connection edge types from Python SocketConnection/RDMAConnection
+interface RawSystemPerformanceProfile {
+	gpuUsage?: number;
+	temp?: number;
+	sysPower?: number;
+	pcpuUsage?: number;
+	ecpuUsage?: number;
+}
+
+interface RawNetworkInterfaceInfo {
+	name?: string;
+	ipAddress?: string;
+	addresses?: Array<{ address?: string } | string>;
+	ipv4?: string;
+	ipv6?: string;
+	ipAddresses?: string[];
+	ips?: string[];
+}
+
+interface RawNodeNetworkInfo {
+	interfaces?: RawNetworkInterfaceInfo[];
+}
+
 interface RawSocketConnection {
 	sinkMultiaddr?: {
 		address?: string;
-		// Multiaddr uses snake_case (no camelCase alias)
 		ip_address?: string;
-		ipAddress?: string; // fallback in case it changes
 		address_type?: string;
 		port?: number;
 	};
@@ -125,13 +127,9 @@ type RawConnectionEdge = RawSocketConnection | RawRDMAConnection;
 type RawConnectionsMap = Record<string, Record<string, RawConnectionEdge[]>>;
 
 interface RawTopology {
-	// nodes can be array of strings (node IDs) or array of objects with nodeId/nodeProfile
-	nodes: (string | RawTopologyNode)[];
-	// New nested mapping format
+	nodes: string[];
 	connections?: RawConnectionsMap;
 }
-
-type RawNodeProfiles = Record<string, RawNodeProfile>;
 
 export interface DownloadProgress {
 	totalBytes: number;
@@ -187,7 +185,11 @@ interface RawStateResponse {
 	>;
 	runners?: Record<string, unknown>;
 	downloads?: Record<string, unknown[]>;
-	nodeProfiles?: RawNodeProfiles;
+	// New granular node state fields
+	nodeIdentities?: Record<string, RawNodeIdentity>;
+	nodeMemory?: Record<string, RawMemoryUsage>;
+	nodeSystem?: Record<string, RawSystemPerformanceProfile>;
+	nodeNetwork?: Record<string, RawNodeNetworkInfo>;
 }
 
 export interface MessageAttachment {
@@ -222,65 +224,69 @@ export interface Conversation {
 
 const STORAGE_KEY = "exo-conversations";
 
+interface GranularNodeState {
+	nodeIdentities?: Record<string, RawNodeIdentity>;
+	nodeMemory?: Record<string, RawMemoryUsage>;
+	nodeSystem?: Record<string, RawSystemPerformanceProfile>;
+	nodeNetwork?: Record<string, RawNodeNetworkInfo>;
+}
+
+function transformNetworkInterface(iface: RawNetworkInterfaceInfo): {
+	name?: string;
+	addresses: string[];
+} {
+	const addresses: string[] = [];
+	if (iface.ipAddress && typeof iface.ipAddress === "string") {
+		addresses.push(iface.ipAddress);
+	}
+	if (Array.isArray(iface.addresses)) {
+		for (const addr of iface.addresses) {
+			if (typeof addr === "string") addresses.push(addr);
+			else if (addr && typeof addr === "object" && addr.address)
+				addresses.push(addr.address);
+		}
+	}
+	if (Array.isArray(iface.ipAddresses)) {
+		addresses.push(
+			...iface.ipAddresses.filter((a): a is string => typeof a === "string"),
+		);
+	}
+	if (Array.isArray(iface.ips)) {
+		addresses.push(
+			...iface.ips.filter((a): a is string => typeof a === "string"),
+		);
+	}
+	if (iface.ipv4 && typeof iface.ipv4 === "string") addresses.push(iface.ipv4);
+	if (iface.ipv6 && typeof iface.ipv6 === "string") addresses.push(iface.ipv6);
+
+	return {
+		name: iface.name,
+		addresses: Array.from(new Set(addresses)),
+	};
+}
+
 function transformTopology(
 	raw: RawTopology,
-	profiles?: RawNodeProfiles,
+	granularState: GranularNodeState,
 ): TopologyData {
 	const nodes: Record<string, NodeInfo> = {};
 	const edges: TopologyEdge[] = [];
 
-	// Handle nodes - can be array of strings (node IDs) or array of objects with nodeId/nodeProfile
-	for (const node of raw.nodes || []) {
-		// Determine the node ID - could be a string or an object with nodeId property
-		const nodeId = typeof node === "string" ? node : node.nodeId;
+	for (const nodeId of raw.nodes || []) {
 		if (!nodeId) continue;
 
-		// Get the profile - from the separate profiles map or from the node object itself
-		const profileFromMap = profiles?.[nodeId];
-		const profileFromNode =
-			typeof node === "object" ? node.nodeProfile : undefined;
-		const profile = { ...(profileFromNode ?? {}), ...(profileFromMap ?? {}) };
+		// Get data from granular state mappings
+		const identity = granularState.nodeIdentities?.[nodeId];
+		const memory = granularState.nodeMemory?.[nodeId];
+		const system = granularState.nodeSystem?.[nodeId];
+		const network = granularState.nodeNetwork?.[nodeId];
 
-		const ramTotal = profile?.memory?.ramTotal?.inBytes ?? 0;
-		const ramAvailable = profile?.memory?.ramAvailable?.inBytes ?? 0;
+		const ramTotal = memory?.ramTotal?.inBytes ?? 0;
+		const ramAvailable = memory?.ramAvailable?.inBytes ?? 0;
 		const ramUsage = Math.max(ramTotal - ramAvailable, 0);
 
-		const networkInterfaces = (profile?.networkInterfaces || []).map(
-			(iface) => {
-				const addresses: string[] = [];
-				if (iface.ipAddress && typeof iface.ipAddress === "string") {
-					addresses.push(iface.ipAddress);
-				}
-				if (Array.isArray(iface.addresses)) {
-					for (const addr of iface.addresses) {
-						if (typeof addr === "string") addresses.push(addr);
-						else if (addr && typeof addr === "object" && addr.address)
-							addresses.push(addr.address);
-					}
-				}
-				if (Array.isArray(iface.ipAddresses)) {
-					addresses.push(
-						...iface.ipAddresses.filter(
-							(a): a is string => typeof a === "string",
-						),
-					);
-				}
-				if (Array.isArray(iface.ips)) {
-					addresses.push(
-						...iface.ips.filter((a): a is string => typeof a === "string"),
-					);
-				}
-				if (iface.ipv4 && typeof iface.ipv4 === "string")
-					addresses.push(iface.ipv4);
-				if (iface.ipv6 && typeof iface.ipv6 === "string")
-					addresses.push(iface.ipv6);
-
-				return {
-					name: iface.name,
-					addresses: Array.from(new Set(addresses)),
-				};
-			},
-		);
+		const rawInterfaces = network?.interfaces || [];
+		const networkInterfaces = rawInterfaces.map(transformNetworkInterface);
 
 		const ipToInterface: Record<string, string> = {};
 		for (const iface of networkInterfaces) {
@@ -291,8 +297,8 @@ function transformTopology(
 
 		nodes[nodeId] = {
 			system_info: {
-				model_id: profile?.modelId ?? "Unknown",
-				chip: profile?.chipId,
+				model_id: identity?.modelId ?? "Unknown",
+				chip: identity?.chipId,
 				memory: ramTotal,
 			},
 			network_interfaces: networkInterfaces,
@@ -303,17 +309,15 @@ function transformTopology(
 					ram_total: ramTotal,
 				},
 				temp:
-					profile?.system?.temp !== undefined
-						? { gpu_temp_avg: profile.system.temp }
+					system?.temp !== undefined
+						? { gpu_temp_avg: system.temp }
 						: undefined,
 				gpu_usage:
-					profile?.system?.gpuUsage !== undefined
-						? [0, profile.system.gpuUsage]
-						: undefined,
-				sys_power: profile?.system?.sysPower,
+					system?.gpuUsage !== undefined ? [0, system.gpuUsage] : undefined,
+				sys_power: system?.sysPower,
 			},
 			last_macmon_update: Date.now() / 1000,
-			friendly_name: profile?.friendlyName,
+			friendly_name: identity?.friendlyName,
 		};
 	}
 
@@ -325,19 +329,15 @@ function transformTopology(
 			for (const [sink, edgeList] of Object.entries(sinks)) {
 				if (!Array.isArray(edgeList)) continue;
 				for (const edge of edgeList) {
-					// Extract IP from SocketConnection (uses snake_case: ip_address)
 					let sendBackIp: string | undefined;
 					if (edge && typeof edge === "object" && "sinkMultiaddr" in edge) {
 						const multiaddr = edge.sinkMultiaddr;
 						if (multiaddr) {
-							// Try both snake_case (actual) and camelCase (in case it changes)
 							sendBackIp =
 								multiaddr.ip_address ||
-								multiaddr.ipAddress ||
 								extractIpFromMultiaddr(multiaddr.address);
 						}
 					}
-					// RDMAConnection (sourceRdmaIface/sinkRdmaIface) has no IP - edge just shows connection exists
 
 					if (nodes[source] && nodes[sink] && source !== sink) {
 						edges.push({ source, target: sink, sendBackIp });
@@ -898,7 +898,12 @@ class AppStore {
 			const data: RawStateResponse = await response.json();
 
 			if (data.topology) {
-				this.topologyData = transformTopology(data.topology, data.nodeProfiles);
+				this.topologyData = transformTopology(data.topology, {
+					nodeIdentities: data.nodeIdentities,
+					nodeMemory: data.nodeMemory,
+					nodeSystem: data.nodeSystem,
+					nodeNetwork: data.nodeNetwork,
+				});
 			}
 			if (data.instances) {
 				this.instances = data.instances;

@@ -7,7 +7,7 @@ from loguru import logger
 
 from exo.shared.topology import Topology
 from exo.shared.types.common import NodeId
-from exo.shared.types.profiling import NodePerformanceProfile
+from exo.shared.types.profiling import NodeNetworkInfo
 
 REACHABILITY_ATTEMPTS = 3
 
@@ -79,7 +79,7 @@ async def check_reachability(
 async def check_reachable(
     topology: Topology,
     self_node_id: NodeId,
-    node_profiles: Mapping[NodeId, NodePerformanceProfile],
+    node_network: Mapping[NodeId, NodeNetworkInfo],
 ) -> dict[NodeId, set[str]]:
     """Check which nodes are reachable and return their IPs."""
 
@@ -98,11 +98,11 @@ async def check_reachable(
         create_task_group() as tg,
     ):
         for node_id in topology.list_nodes():
-            if node_id not in node_profiles:
+            if node_id not in node_network:
                 continue
             if node_id == self_node_id:
                 continue
-            for iface in node_profiles[node_id].network_interfaces:
+            for iface in node_network[node_id].interfaces:
                 tg.start_soon(
                     check_reachability,
                     iface.ip_address,

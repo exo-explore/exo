@@ -5,7 +5,8 @@ from exo.master.placement import (
     place_instance,
 )
 from exo.master.tests.conftest import (
-    create_node_profile,
+    create_node_memory,
+    create_node_network,
     create_rdma_connection,
     create_socket_connection,
 )
@@ -16,7 +17,7 @@ from exo.shared.types.events import InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.multiaddr import Multiaddr
-from exo.shared.types.profiling import NetworkInterfaceInfo
+from exo.shared.types.profiling import NetworkInterfaceInfo, NodeNetworkInfo
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.instances import (
     Instance,
@@ -109,10 +110,15 @@ def test_get_instance_placements_create_instance(
         source=node_id_b, sink=node_id_a, edge=create_socket_connection(6)
     )
 
-    profiles = {
-        node_id_a: create_node_profile(available_memory[0]),
-        node_id_b: create_node_profile(available_memory[1]),
-        node_id_c: create_node_profile(available_memory[2]),
+    node_memory = {
+        node_id_a: create_node_memory(available_memory[0]),
+        node_id_b: create_node_memory(available_memory[1]),
+        node_id_c: create_node_memory(available_memory[2]),
+    }
+    node_network = {
+        node_id_a: create_node_network(),
+        node_id_b: create_node_network(),
+        node_id_c: create_node_network(),
     }
     topology.add_node(node_id_a)
     topology.add_node(node_id_b)
@@ -125,7 +131,7 @@ def test_get_instance_placements_create_instance(
     topology.add_connection(conn_b_a)
 
     # act
-    placements = place_instance(cic, topology, {}, profiles)
+    placements = place_instance(cic, topology, {}, node_memory, node_network)
 
     # assert
     assert len(placements) == 1
@@ -155,7 +161,8 @@ def test_get_instance_placements_one_node_exact_fit() -> None:
     topology = Topology()
     node_id = NodeId()
     topology.add_node(node_id)
-    profiles = {node_id: create_node_profile(1000 * 1024)}
+    node_memory = {node_id: create_node_memory(1000 * 1024)}
+    node_network = {node_id: create_node_network()}
     cic = place_instance_command(
         ModelMetadata(
             model_id=ModelId("test-model"),
@@ -166,7 +173,7 @@ def test_get_instance_placements_one_node_exact_fit() -> None:
             supports_tensor=True,
         ),
     )
-    placements = place_instance(cic, topology, {}, profiles)
+    placements = place_instance(cic, topology, {}, node_memory, node_network)
 
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
@@ -181,7 +188,8 @@ def test_get_instance_placements_one_node_fits_with_extra_memory() -> None:
     topology = Topology()
     node_id = NodeId()
     topology.add_node(node_id)
-    profiles = {node_id: create_node_profile(1001 * 1024)}
+    node_memory = {node_id: create_node_memory(1001 * 1024)}
+    node_network = {node_id: create_node_network()}
     cic = place_instance_command(
         ModelMetadata(
             model_id=ModelId("test-model"),
@@ -192,7 +200,7 @@ def test_get_instance_placements_one_node_fits_with_extra_memory() -> None:
             supports_tensor=True,
         ),
     )
-    placements = place_instance(cic, topology, {}, profiles)
+    placements = place_instance(cic, topology, {}, node_memory, node_network)
 
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
@@ -207,7 +215,8 @@ def test_get_instance_placements_one_node_not_fit() -> None:
     topology = Topology()
     node_id = NodeId()
     topology.add_node(node_id)
-    profiles = {node_id: create_node_profile(1000 * 1024)}
+    node_memory = {node_id: create_node_memory(1000 * 1024)}
+    node_network = {node_id: create_node_network()}
     cic = place_instance_command(
         model_meta=ModelMetadata(
             model_id=ModelId("test-model"),
@@ -220,7 +229,7 @@ def test_get_instance_placements_one_node_not_fit() -> None:
     )
 
     with pytest.raises(ValueError, match="No cycles found with sufficient memory"):
-        place_instance(cic, topology, {}, profiles)
+        place_instance(cic, topology, {}, node_memory, node_network)
 
 
 def test_get_transition_events_no_change(instance: Instance):
@@ -278,11 +287,17 @@ def test_placement_selects_leaf_nodes(
     node_id_c = NodeId()
     node_id_d = NodeId()
 
-    profiles = {
-        node_id_a: create_node_profile(500),
-        node_id_b: create_node_profile(600),
-        node_id_c: create_node_profile(600),
-        node_id_d: create_node_profile(500),
+    node_memory = {
+        node_id_a: create_node_memory(500),
+        node_id_b: create_node_memory(600),
+        node_id_c: create_node_memory(600),
+        node_id_d: create_node_memory(500),
+    }
+    node_network = {
+        node_id_a: create_node_network(),
+        node_id_b: create_node_network(),
+        node_id_c: create_node_network(),
+        node_id_d: create_node_network(),
     }
 
     topology.add_node(node_id_a)
@@ -313,7 +328,7 @@ def test_placement_selects_leaf_nodes(
     cic = place_instance_command(model_meta=model_meta)
 
     # act
-    placements = place_instance(cic, topology, {}, profiles)
+    placements = place_instance(cic, topology, {}, node_memory, node_network)
 
     # assert
     assert len(placements) == 1
@@ -340,10 +355,10 @@ def test_tensor_rdma_backend_connectivity_matrix(
     node_b = NodeId()
     node_c = NodeId()
 
-    profiles = {
-        node_a: create_node_profile(500),
-        node_b: create_node_profile(500),
-        node_c: create_node_profile(500),
+    node_memory = {
+        node_a: create_node_memory(500),
+        node_b: create_node_memory(500),
+        node_c: create_node_memory(500),
     }
 
     ethernet_interface = NetworkInterfaceInfo(
@@ -354,9 +369,11 @@ def test_tensor_rdma_backend_connectivity_matrix(
         sink_multiaddr=Multiaddr(address="/ip4/10.0.0.1/tcp/8000")
     )
 
-    profiles[node_a].network_interfaces = [ethernet_interface]
-    profiles[node_b].network_interfaces = [ethernet_interface]
-    profiles[node_c].network_interfaces = [ethernet_interface]
+    node_network = {
+        node_a: NodeNetworkInfo(interfaces=[ethernet_interface]),
+        node_b: NodeNetworkInfo(interfaces=[ethernet_interface]),
+        node_c: NodeNetworkInfo(interfaces=[ethernet_interface]),
+    }
 
     topology.add_node(node_a)
     topology.add_node(node_b)
@@ -399,7 +416,7 @@ def test_tensor_rdma_backend_connectivity_matrix(
     )
 
     # act
-    placements = place_instance(cic, topology, {}, profiles)
+    placements = place_instance(cic, topology, {}, node_memory, node_network)
 
     # assert
     assert len(placements) == 1
