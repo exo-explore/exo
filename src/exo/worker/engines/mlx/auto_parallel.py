@@ -47,6 +47,8 @@ class CustomMlxModule(nn.Module):
     def __init__(self, original_layer: _LayerCallable):
         super().__init__()
         object.__setattr__(self, "_original_layer", original_layer)
+        # Register as child so len(self) > 0 and bool(self) is True
+        dict.__setitem__(self, "_original_layer", original_layer)
 
     @property
     def original_layer(self) -> _LayerCallable:
