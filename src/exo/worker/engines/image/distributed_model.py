@@ -1,6 +1,6 @@
 from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import Literal, Optional
 
 import mlx.core as mx
 from mflux.models.common.config.config import Config
@@ -22,18 +22,8 @@ from exo.worker.runner.bootstrap import logger
 
 
 class DistributedImageModel:
-    __slots__ = (
-        "_config",
-        "_adapter",
-        "_group",
-        "_shard_metadata",
-        "_runner",
-    )
-
     _config: ImageModelConfig
     _adapter: ModelAdapter
-    _group: Optional[mx.distributed.Group]
-    _shard_metadata: PipelineShardMetadata
     _runner: DiffusionRunner
 
     def __init__(
@@ -44,7 +34,6 @@ class DistributedImageModel:
         group: Optional[mx.distributed.Group] = None,
         quantize: int | None = None,
     ):
-        # Get model config and create adapter (adapter owns the model)
         config = get_config_for_model(model_id)
         adapter = create_adapter_for_model(config, model_id, local_path, quantize)
 
@@ -54,7 +43,6 @@ class DistributedImageModel:
                 end_layer=shard_metadata.end_layer,
             )
 
-        # Create diffusion runner (handles both single-node and distributed modes)
         num_sync_steps = config.get_num_sync_steps("medium") if group else 0
         runner = DiffusionRunner(
             config=config,
@@ -72,17 +60,14 @@ class DistributedImageModel:
             # TODO(ciaran): Do we need this?
             mx.eval(adapter.model)
 
-            # Synchronize processes before generation to avoid timeout
             mx_barrier(group)
             logger.info(f"Transformer sharded for rank {group.rank()}")
         else:
             logger.info("Single-node initialization")
 
-        object.__setattr__(self, "_config", config)
-        object.__setattr__(self, "_adapter", adapter)
-        object.__setattr__(self, "_group", group)
-        object.__setattr__(self, "_shard_metadata", shard_metadata)
-        object.__setattr__(self, "_runner", runner)
+        self._config = config
+        self._adapter = adapter
+        self._runner = runner
 
     @classmethod
     def from_bound_instance(
@@ -112,74 +97,9 @@ class DistributedImageModel:
             group=group,
         )
 
-    @property
-    def model(self) -> Any:
-        """Return the underlying mflux model via the adapter."""
-        return self._adapter.model
-
-    @property
-    def config(self) -> ImageModelConfig:
-        return self._config
-
-    @property
-    def adapter(self) -> ModelAdapter:
-        return self._adapter
-
-    @property
-    def group(self) -> Optional[mx.distributed.Group]:
-        return self._group
-
-    @property
-    def shard_metadata(self) -> PipelineShardMetadata:
-        return self._shard_metadata
-
-    @property
-    def rank(self) -> int:
-        return self._shard_metadata.device_rank
-
-    @property
-    def world_size(self) -> int:
-        return self._shard_metadata.world_size
-
-    @property
-    def is_first_stage(self) -> bool:
-        return self._shard_metadata.device_rank == 0
-
-    @property
-    def is_last_stage(self) -> bool:
-        return self._shard_metadata.device_rank == self._shard_metadata.world_size - 1
-
-    @property
-    def is_distributed(self) -> bool:
-        return self._shard_metadata.world_size > 1
-
-    @property
-    def runner(self) -> DiffusionRunner:
-        return self._runner
-
     def get_steps_for_quality(self, quality: Literal["low", "medium", "high"]) -> int:
         """Get the number of inference steps for a quality level."""
         return self._config.get_steps_for_quality(quality)
-
-    # Delegate attribute access to the underlying model via the adapter.
-    # Guarded with TYPE_CHECKING to prevent type checker complaints
-    # while still providing full delegation at runtime.
-    if not TYPE_CHECKING:
-
-        def __getattr__(self, name: str) -> Any:
-            return getattr(self._adapter.model, name)
-
-        def __setattr__(self, name: str, value: Any) -> None:
-            if name in (
-                "_config",
-                "_adapter",
-                "_group",
-                "_shard_metadata",
-                "_runner",
-            ):
-                object.__setattr__(self, name, value)
-            else:
-                setattr(self._adapter.model, name, value)
 
     def generate(
         self,
