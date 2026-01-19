@@ -607,7 +607,6 @@ class DiffusionRunner:
                 encoder_hidden_states = mx.distributed.recv_like(
                     enc_template, self.prev_rank, group=self.group
                 )
-                mx.eval(hidden_states, encoder_hidden_states)
 
             assert self.joint_block_wrappers is not None
             for wrapper in self.joint_block_wrappers:
@@ -627,17 +626,19 @@ class DiffusionRunner:
             if self.has_single_blocks or self.is_last_stage:
                 hidden_states = concatenated
             else:
-                mx.eval(
-                    mx.distributed.send(concatenated, self.next_rank, group=self.group)
+                concatenated = mx.distributed.send(
+                    concatenated, self.next_rank, group=self.group
                 )
+                mx.async_eval(concatenated)
 
         elif self.has_joint_blocks and not self.is_last_stage:
-            mx.eval(
+            hidden_states = (
                 mx.distributed.send(hidden_states, self.next_rank, group=self.group),
-                mx.distributed.send(
-                    encoder_hidden_states, self.next_rank, group=self.group
-                ),
             )
+            encoder_hidden_states = mx.distributed.send(
+                encoder_hidden_states, self.next_rank, group=self.group
+            )
+            mx.async_eval(hidden_states, encoder_hidden_states)
 
         if self.has_single_blocks:
             if not self.owns_concat_stage and not self.is_first_stage:
@@ -648,7 +649,6 @@ class DiffusionRunner:
                 hidden_states = mx.distributed.recv_like(
                     recv_template, self.prev_rank, group=self.group
                 )
-                mx.eval(hidden_states)
 
             assert self.single_block_wrappers is not None
             for wrapper in self.single_block_wrappers:
@@ -660,9 +660,10 @@ class DiffusionRunner:
                 )
 
             if not self.is_last_stage:
-                mx.eval(
-                    mx.distributed.send(hidden_states, self.next_rank, group=self.group)
+                hidden_states = mx.distributed.send(
+                    hidden_states, self.next_rank, group=self.group
                 )
+                mx.async_eval(hidden_states)
 
         hidden_states = hidden_states[:, text_seq_len:, ...]
 
@@ -745,13 +746,13 @@ class DiffusionRunner:
             )
 
             if not self.is_first_stage:
-                mx.eval(mx.distributed.send(hidden_states, 0, group=self.group))
+                hidden_states = mx.distributed.send(hidden_states, 0, group=self.group)
+                mx.async_eval(hidden_states)
 
         elif self.is_first_stage:
             hidden_states = mx.distributed.recv_like(
                 prev_latents, src=self.world_size - 1, group=self.group
             )
-            mx.eval(hidden_states)
 
         else:
             hidden_states = prev_latents
@@ -815,7 +816,6 @@ class DiffusionRunner:
                 patch = mx.distributed.recv_like(
                     patch, src=self.prev_rank, group=self.group
                 )
-                mx.eval(patch)
 
             step_patch = mx.concatenate([patch, patch], axis=0) if needs_cfg else patch
 
@@ -845,13 +845,12 @@ class DiffusionRunner:
                 )
 
                 if not self.is_first_stage and t != config.num_inference_steps - 1:
-                    mx.eval(
-                        mx.distributed.send(
-                            patch_latents[patch_idx],
-                            self.next_rank,
-                            group=self.group,
-                        )
+                    patch_latents[patch_idx] = mx.distributed.send(
+                        patch_latents[patch_idx],
+                        self.next_rank,
+                        group=self.group,
                     )
+                    mx.async_eval(patch_latents[patch_idx])
 
         return mx.concatenate(patch_latents, axis=1)
 
@@ -897,7 +896,6 @@ class DiffusionRunner:
                 patch = mx.distributed.recv_like(
                     recv_template, src=self.prev_rank, group=self.group
                 )
-                mx.eval(patch)
 
                 if patch_idx == 0:
                     enc_template = mx.zeros(
@@ -907,7 +905,6 @@ class DiffusionRunner:
                     encoder_hidden_states = mx.distributed.recv_like(
                         enc_template, src=self.prev_rank, group=self.group
                     )
-                    mx.eval(encoder_hidden_states)
 
             if self.is_first_stage:
                 patch, encoder_hidden_states = self.adapter.compute_embeddings(
@@ -932,20 +929,21 @@ class DiffusionRunner:
             if self.has_single_blocks or self.is_last_stage:
                 patch = patch_concat
             else:
-                mx.eval(
-                    mx.distributed.send(patch_concat, self.next_rank, group=self.group)
+                patch_concat = mx.distributed.send(
+                    patch_concat, self.next_rank, group=self.group
                 )
+                mx.async_eval(patch_concat)
 
         elif self.has_joint_blocks and not self.is_last_stage:
-            mx.eval(mx.distributed.send(patch, self.next_rank, group=self.group))
+            patch = mx.distributed.send(patch, self.next_rank, group=self.group)
+            mx.async_eval(patch)
 
             if patch_idx == 0:
                 assert encoder_hidden_states is not None
-                mx.eval(
-                    mx.distributed.send(
-                        encoder_hidden_states, self.next_rank, group=self.group
-                    )
+                encoder_hidden_states = mx.distributed.send(
+                    encoder_hidden_states, self.next_rank, group=self.group
                 )
+                mx.async_eval(encoder_hidden_states)
 
         if self.has_single_blocks:
             if not self.owns_concat_stage and not self.is_first_stage:
@@ -957,7 +955,6 @@ class DiffusionRunner:
                 patch = mx.distributed.recv_like(
                     recv_template, src=self.prev_rank, group=self.group
                 )
-                mx.eval(patch)
 
             assert self.single_block_wrappers is not None
             for wrapper in self.single_block_wrappers:
@@ -969,7 +966,8 @@ class DiffusionRunner:
                 )
 
             if not self.is_last_stage:
-                mx.eval(mx.distributed.send(patch, self.next_rank, group=self.group))
+                patch = mx.distributed.send(patch, self.next_rank, group=self.group)
+                mx.async_eval(patch)
 
         noise: mx.array | None = None
         if self.is_last_stage:
