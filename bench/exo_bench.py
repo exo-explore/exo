@@ -16,9 +16,6 @@ from urllib.parse import urlencode
 from loguru import logger
 from transformers import AutoTokenizer
 
-from exo.shared.models.model_cards import MODEL_CARDS
-from exo.shared.types.memory import Memory
-
 
 class ExoHttpError(RuntimeError):
     def __init__(self, status: int, reason: str, body_preview: str):

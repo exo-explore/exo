@@ -41,14 +41,12 @@ class _LayerCallable(Protocol):
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array: ...
 
 
-class CustomMlxModule(nn.Module):
+class CustomMlxLayer(nn.Module):
     """Base class for replacing an MLX layer with a custom implementation."""
 
     def __init__(self, original_layer: _LayerCallable):
         super().__init__()
         object.__setattr__(self, "_original_layer", original_layer)
-        # Register as child so len(self) > 0 and bool(self) is True
-        dict.__setitem__(self, "_original_layer", original_layer)
 
     @property
     def original_layer(self) -> _LayerCallable:
@@ -65,7 +63,7 @@ class CustomMlxModule(nn.Module):
                 return getattr(original_layer, name)
 
 
-class PipelineFirstLayer(CustomMlxModule):
+class PipelineFirstLayer(CustomMlxLayer):
     def __init__(
         self,
         original_layer: _LayerCallable,
@@ -82,7 +80,7 @@ class PipelineFirstLayer(CustomMlxModule):
         return self.original_layer(x, *args, **kwargs)
 
 
-class PipelineLastLayer(CustomMlxModule):
+class PipelineLastLayer(CustomMlxLayer):
     def __init__(
         self,
         original_layer: _LayerCallable,
@@ -194,33 +192,37 @@ def pipeline_auto_parallel(
         "Expected a list of layers after auto-parallel initialisation"
     )
 
-    return PipelineParallelModel(model, group)
+    return patch_pipeline_model(model, group)
 
 
-class PipelineParallelModel(CustomMlxModule):
-    def __init__(self, model: nn.Module, group: mx.distributed.Group):
-        super().__init__(model)
-        self.original_call_signature = signature(self.original_layer.__call__)
-        self.group = group
+def patch_pipeline_model(model: nn.Module, group: mx.distributed.Group) -> nn.Module:
+    # Patch __call__ on the model's class
+    cls = model.__class__
+    original_call = cls.__call__
+    call_signature = signature(original_call)
 
-    def __call__(
-        self,
+    def patched_call(
+        self: nn.Module,
         *args: object,
         **kwargs: object,
     ) -> mx.array:
-        logits: mx.array = self.original_layer(*args, **kwargs)  # type: ignore
-        cache = self.original_call_signature.bind_partial(
-            *args, **kwargs
-        ).arguments.get("cache", None)
+        logits: mx.array = original_call(self, *args, **kwargs)  # type: ignore
+        cache = call_signature.bind_partial(self, *args, **kwargs).arguments.get(
+            "cache", None
+        )
 
-        if cache is not None:
-            for c in cache:  # type: ignore
-                if hasattr(c, "state") and c.state is not None:  # type: ignore
-                    c.state = mx.depends(c.state, logits)  # type: ignore
+        # Add dependency to last cache entry to ensure distributed ops are evaluated
+        if cache is not None and len(cache) > 0:  # type: ignore
+            c = cache[-1]  # type: ignore
+            if hasattr(c, "state") and c.state is not None:  # type: ignore
+                c.state = mx.depends(c.state, logits)  # type: ignore
 
-        # All gather logits rather than tokens for future use cases and for simplicity
-        logits = mx.distributed.all_gather(logits, group=self.group)[-logits.shape[0] :]
+        logits = mx.distributed.all_gather(logits, group=group)[-logits.shape[0] :]
+
         return logits
+
+    cls.__call__ = patched_call  # type: ignore
+    return model
 
 
 def tensor_auto_parallel(
@@ -428,7 +430,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
         return model
 
 
-class ShardedDeepseekV3MoE(CustomMlxModule):
+class ShardedDeepseekV3MoE(CustomMlxLayer):
     def __init__(self, layer: _LayerCallable):
         super().__init__(layer)
         self.sharding_group: mx.distributed.Group | None = None
@@ -503,7 +505,7 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
         return model
 
 
-class ShardedQwenMoE(CustomMlxModule):
+class ShardedQwenMoE(CustomMlxLayer):
     def __init__(self, layer: _LayerCallable):
         super().__init__(layer)
         self.sharding_group: mx.distributed.Group | None = None
@@ -550,7 +552,7 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
         return model
 
 
-class ShardedGptOssMoE(CustomMlxModule):
+class ShardedGptOssMoE(CustomMlxLayer):
     def __init__(self, layer: nn.Module):
         super().__init__(layer)
         self.sharding_group: mx.distributed.Group | None = None

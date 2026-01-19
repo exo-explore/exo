@@ -5,10 +5,10 @@ import mlx.core as mx
 import pytest
 
 from exo.worker.engines.mlx.auto_parallel import (
-    CustomMlxModule,
+    CustomMlxLayer,
     PipelineFirstLayer,
     PipelineLastLayer,
-    PipelineParallelModel,
+    patch_pipeline_model
 )
 from exo.worker.tests.unittests.test_mlx.conftest import MockLayer
 
@@ -58,7 +58,7 @@ def run_pipeline_device(
 
         # Wrap in a mock model, then wrap in PipelineParallelModel for all_gather
         inner_model = MockModel([composed])
-        model = PipelineParallelModel(inner_model, group)
+        model = patch_pipeline_model(inner_model, group)
 
         x = mlx_core.ones((1, 4))
         result = model(x)
@@ -72,7 +72,7 @@ def run_pipeline_device(
 
 def test_single_wrapper_delegates_attributes() -> None:
     mock = MockLayer()
-    wrapped = CustomMlxModule(mock)
+    wrapped = CustomMlxLayer(mock)
 
     assert wrapped.custom_attr == "test_value"  # type: ignore[attr-defined]
     assert wrapped.use_sliding is True  # type: ignore[attr-defined]
@@ -91,7 +91,7 @@ def test_composed_wrappers_delegate_attributes() -> None:
 
 def test_missing_attribute_raises() -> None:
     mock = MockLayer()
-    wrapped = CustomMlxModule(mock)
+    wrapped = CustomMlxLayer(mock)
 
     with pytest.raises(AttributeError):
         _ = wrapped.nonexistent_attr  # type: ignore[attr-defined]
