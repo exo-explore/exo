@@ -5,6 +5,7 @@ import shutil
 import ssl
 import time
 import traceback
+from collections.abc import Awaitable
 from datetime import timedelta
 from pathlib import Path
 from typing import Callable, Literal
@@ -525,7 +526,7 @@ async def download_progress_for_local_path(
 
 async def download_shard(
     shard: ShardMetadata,
-    on_progress: Callable[[ShardMetadata, RepoDownloadProgress], None],
+    on_progress: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
     max_parallel_downloads: int = 8,
     skip_download: bool = False,
     allow_patterns: list[str] | None = None,
@@ -566,9 +567,9 @@ async def download_shard(
     )
     file_progress: dict[str, RepoFileDownloadProgress] = {}
 
-    def on_progress_wrapper(
+    async def on_progress_wrapper(
         file: FileListEntry, curr_bytes: int, total_bytes: int, is_renamed: bool
-    ):
+    ) -> None:
         start_time = (
             file_progress[file.path].start_time
             if file.path in file_progress
@@ -604,7 +605,7 @@ async def download_shard(
             else "in_progress",
             start_time=start_time,
         )
-        on_progress(
+        await on_progress(
             shard,
             calculate_repo_progress(
                 shard,
@@ -632,14 +633,21 @@ async def download_shard(
 
     semaphore = asyncio.Semaphore(max_parallel_downloads)
 
-    async def download_with_semaphore(file: FileListEntry):
+    def schedule_progress(
+        file: FileListEntry, curr_bytes: int, total_bytes: int, is_renamed: bool
+    ) -> None:
+        asyncio.create_task(
+            on_progress_wrapper(file, curr_bytes, total_bytes, is_renamed)
+        )
+
+    async def download_with_semaphore(file: FileListEntry) -> None:
         async with semaphore:
             await download_file_with_retry(
                 str(shard.model_meta.model_id),
                 revision,
                 file.path,
                 target_dir,
-                lambda curr_bytes, total_bytes, is_renamed: on_progress_wrapper(
+                lambda curr_bytes, total_bytes, is_renamed: schedule_progress(
                     file, curr_bytes, total_bytes, is_renamed
                 ),
             )
@@ -651,7 +659,7 @@ async def download_shard(
     final_repo_progress = calculate_repo_progress(
         shard, str(shard.model_meta.model_id), revision, file_progress, all_start_time
     )
-    on_progress(shard, final_repo_progress)
+    await on_progress(shard, final_repo_progress)
     if gguf := next((f for f in filtered_file_list if f.path.endswith(".gguf")), None):
         return target_dir / gguf.path, final_repo_progress
     else:

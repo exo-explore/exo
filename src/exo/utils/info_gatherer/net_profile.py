@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 import anyio
 import httpx
 from anyio import create_task_group
@@ -5,6 +7,7 @@ from loguru import logger
 
 from exo.shared.topology import Topology
 from exo.shared.types.common import NodeId
+from exo.shared.types.profiling import NodePerformanceProfile
 
 REACHABILITY_ATTEMPTS = 3
 
@@ -18,8 +21,9 @@ async def check_reachability(
     """Check if a node is reachable at the given IP and verify its identity."""
     if ":" in target_ip:
         # TODO: use real IpAddress types
-        target_ip = f"[{target_ip}]"
-    url = f"http://{target_ip}:52415/node_id"
+        url = f"http://[{target_ip}]:52415/node_id"
+    else:
+        url = f"http://{target_ip}:52415/node_id"
 
     remote_node_id = None
     last_error = None
@@ -73,7 +77,9 @@ async def check_reachability(
 
 
 async def check_reachable(
-    topology: Topology, self_node_id: NodeId
+    topology: Topology,
+    self_node_id: NodeId,
+    node_profiles: Mapping[NodeId, NodePerformanceProfile],
 ) -> dict[NodeId, set[str]]:
     """Check which nodes are reachable and return their IPs."""
 
@@ -91,16 +97,16 @@ async def check_reachable(
         httpx.AsyncClient(timeout=timeout, limits=limits) as client,
         create_task_group() as tg,
     ):
-        for node in topology.list_nodes():
-            if not node.node_profile:
+        for node_id in topology.list_nodes():
+            if node_id not in node_profiles:
                 continue
-            if node.node_id == self_node_id:
+            if node_id == self_node_id:
                 continue
-            for iface in node.node_profile.network_interfaces:
+            for iface in node_profiles[node_id].network_interfaces:
                 tg.start_soon(
                     check_reachability,
                     iface.ip_address,
-                    node.node_id,
+                    node_id,
                     reachable,
                     client,
                 )

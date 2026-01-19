@@ -28,9 +28,8 @@ def bar(send: MpSender[str]):
     send.close()
 
 
-# not async, just want the fail_after
 @pytest.mark.anyio
-async def test_channel_setup():
+async def test_channel_ipc():
     with fail_after(0.5):
         s, r = mp_channel[str]()
         p1 = mp.Process(target=foo, args=(r,))
