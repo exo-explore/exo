@@ -299,14 +299,16 @@ def _find_ip_prioritised(
     4. Any other IP address
     """
     ips = list(_find_connection_ip(node, other_node, cycle_digraph))
-    # We expect a unique iface -> ip mapping
-    iface_map = {_find_interface_name_for_ip(ip, other_node): ip for ip, _ in ips}
 
-    en0_ip = iface_map.get("en0")
+    other_iface_to_ip = {
+        _find_interface_name_for_ip(ip, other_node): ip for ip, _ in ips
+    }
+
+    en0_ip = other_iface_to_ip.get("en0")
     if en0_ip:
         return en0_ip
 
-    en1_ip = iface_map.get("en1")
+    en1_ip = other_iface_to_ip.get("en1")
     if en1_ip:
         return en1_ip
 

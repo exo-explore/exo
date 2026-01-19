@@ -31,7 +31,7 @@ dependencies = [
     "bidict>=0.23.1",
     "mlx>=0.30.1; sys_platform == 'darwin'",
     "mlx[cpu]>=0.30.1; sys_platform == 'linux'",
-    "mlx-lm>=0.28.3",
+    "mlx-lm==0.30.4",
     "tiktoken>=0.12.0", # required for kimi k2 tokenizer
     "hypercorn>=0.18.0",
     "openai-harmony>=0.0.8",

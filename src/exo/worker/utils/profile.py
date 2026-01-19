@@ -28,10 +28,14 @@ from .system_info import (
 
 
 async def get_metrics_async() -> Metrics | None:
-    """Return detailed Metrics on macOS or a minimal fallback elsewhere."""
+    if platform.system().lower() != "darwin":
+        return None
 
-    if platform.system().lower() == "darwin":
+    try:
         return await macmon_get_metrics_async()
+    except MacMonError as e:
+        logger.opt(exception=e).warning("macmon unavailable; skipping system metrics")
+        return None
 
 
 def get_memory_profile() -> MemoryPerformanceProfile:
@@ -74,8 +78,6 @@ async def start_polling_node_metrics(
     while True:
         try:
             metrics = await get_metrics_async()
-            if metrics is None:
-                return
 
             network_interfaces = get_network_interfaces()
             # these awaits could be joined but realistically they should be cached
@@ -93,12 +95,16 @@ async def start_polling_node_metrics(
                     network_interfaces=network_interfaces,
                     memory=memory_profile,
                     system=SystemPerformanceProfile(
-                        gpu_usage=metrics.gpu_usage[1],
-                        temp=metrics.temp.gpu_temp_avg,
-                        sys_power=metrics.sys_power,
-                        pcpu_usage=metrics.pcpu_usage[1],
-                        ecpu_usage=metrics.ecpu_usage[1],
-                        ane_power=metrics.ane_power,
+                        gpu_usage=metrics.gpu_usage[1] if metrics is not None else 0.0,
+                        temp=metrics.temp.gpu_temp_avg if metrics is not None else 0.0,
+                        sys_power=metrics.sys_power if metrics is not None else 0.0,
+                        pcpu_usage=metrics.pcpu_usage[1]
+                        if metrics is not None
+                        else 0.0,
+                        ecpu_usage=metrics.ecpu_usage[1]
+                        if metrics is not None
+                        else 0.0,
+                        ane_power=metrics.ane_power if metrics is not None else 0.0,
                     ),
                 )
             )
@@ -109,6 +115,5 @@ async def start_polling_node_metrics(
             )
         except MacMonError as e:
             logger.opt(exception=e).error("Resource Monitor encountered error")
-            return
         finally:
             await anyio.sleep(poll_interval_s)
