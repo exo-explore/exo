@@ -234,11 +234,11 @@ class DistributedImageModel:
         ):
             if isinstance(result, tuple):
                 # Partial image: (GeneratedImage, partial_index, total_partials)
-                generated_image, partial_idx, total_partials = result
-                yield (generated_image.image, partial_idx, total_partials)
+                image, partial_idx, total_partials = result
+                yield (image, partial_idx, total_partials)
             else:
                 logger.info("generated image")
-                yield result.image
+                yield result
 
 
 def initialize_image_model(bound_instance: BoundInstance) -> DistributedImageModel:

@@ -6,6 +6,7 @@ import mlx.core as mx
 from mflux.models.common.config.config import Config
 from mflux.models.common.latent_creator.latent_creator import Img2Img, LatentCreator
 from mflux.utils.image_util import ImageUtil
+from PIL import Image
 
 from exo.worker.engines.image.config import ImageModelConfig
 
@@ -225,7 +226,7 @@ class ModelAdapter(ABC):
         runtime_config: Config,
         seed: int,
         prompt: str,
-    ) -> Any:
+    ) -> Image.Image:
         """Decode latents to image. Shared implementation."""
         latents = self._get_latent_creator().unpack_latents(
             latents=latents,
@@ -236,7 +237,7 @@ class ModelAdapter(ABC):
         # TODO(ciaran):
         # from mflux.models.common.vae.vae_util import VAEUtil
         # VAEUtil.decode(vae=self.model.vae, latents=latents, tiling_config=self.tiling_config)
-        return ImageUtil.to_image(
+        generated_image = ImageUtil.to_image(
             decoded_latents=decoded,
             config=runtime_config,
             seed=seed,
@@ -248,6 +249,7 @@ class ModelAdapter(ABC):
             image_strength=runtime_config.image_strength,
             generation_time=0,
         )
+        return generated_image.image
 
     @abstractmethod
     def encode_prompt(
