@@ -113,6 +113,13 @@ enum NetworkSetupHelper {
         let plistExists = manager.fileExists(atPath: plistDestination)
         guard scriptExists, plistExists else { return false }
         guard
+            let installedScript = try? String(contentsOfFile: scriptDestination, encoding: .utf8),
+            installedScript.trimmingCharacters(in: .whitespacesAndNewlines)
+                == setupScript.trimmingCharacters(in: .whitespacesAndNewlines)
+        else {
+            return false
+        }
+        guard
             let data = try? Data(contentsOf: URL(fileURLWithPath: plistDestination)),
             let plist = try? PropertyListSerialization.propertyList(
                 from: data, options: [], format: nil) as? [String: Any]
