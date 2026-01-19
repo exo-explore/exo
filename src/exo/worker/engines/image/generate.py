@@ -10,6 +10,7 @@ import mlx.core as mx
 from PIL import Image
 
 from exo.shared.types.api import (
+    AdvancedImageParams,
     ImageEditsInternalParams,
     ImageGenerationStats,
     ImageGenerationTaskParams,
@@ -47,13 +48,15 @@ def warmup_image_generator(model: DistributedImageModel) -> Image.Image | None:
         dummy_path = Path(tmpdir) / "warmup.png"
         dummy_image.save(dummy_path)
 
+        warmup_params = AdvancedImageParams(num_inference_steps=2)
+
         for result in model.generate(
             prompt="Warmup",
             height=256,
             width=256,
             quality="low",
-            seed=2,
             image_path=dummy_path,
+            advanced_params=warmup_params,
         ):
             if not isinstance(result, tuple):
                 return result
