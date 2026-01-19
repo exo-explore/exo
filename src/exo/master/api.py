@@ -19,8 +19,8 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
-from exo.shared.models.model_cards import MODEL_CARDS
-from exo.shared.models.model_meta import get_model_meta
+from exo.shared.models.model_cards import MODEL_CARDS, ModelCard, ModelId
+from exo.shared.models.model_meta import get_model_card
 from exo.shared.types.api import (
     BenchChatCompletionResponse,
     BenchChatCompletionTaskParams,
@@ -59,7 +59,6 @@ from exo.shared.types.events import (
     IndexedEvent,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
@@ -87,12 +86,12 @@ def chunk_to_response(
     )
 
 
-async def resolve_model_meta(model_id: str) -> ModelMetadata:
+async def resolve_model_card(model_id: str) -> ModelCard:
     if model_id in MODEL_CARDS:
         model_card = MODEL_CARDS[model_id]
-        return model_card.metadata
+        return model_card
     else:
-        return await get_model_meta(model_id)
+        return await get_model_card(model_id)
 
 
 class API:
@@ -197,7 +196,7 @@ class API:
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
-            model_meta=await resolve_model_meta(payload.model_id),
+            model_card=await resolve_model_card(payload.model_id),
             sharding=payload.sharding,
             instance_meta=payload.instance_meta,
             min_nodes=payload.min_nodes,
@@ -207,15 +206,15 @@ class API:
         return CreateInstanceResponse(
             message="Command received.",
             command_id=command.command_id,
-            model_meta=command.model_meta,
+            model_card=command.model_card,
         )
 
     async def create_instance(
         self, payload: CreateInstanceParams
     ) -> CreateInstanceResponse:
         instance = payload.instance
-        model_meta = await resolve_model_meta(instance.shard_assignments.model_id)
-        required_memory = model_meta.storage_size
+        model_card = await resolve_model_card(instance.shard_assignments.model_id)
+        required_memory = model_card.storage_size
         available_memory = self._calculate_total_available_memory()
 
         if required_memory > available_memory:
@@ -232,7 +231,7 @@ class API:
         return CreateInstanceResponse(
             message="Command received.",
             command_id=command.command_id,
-            model_meta=model_meta,
+            model_card=model_card,
         )
 
     async def get_placement(
@@ -242,12 +241,12 @@ class API:
         instance_meta: InstanceMeta = InstanceMeta.MlxRing,
         min_nodes: int = 1,
     ) -> Instance:
-        model_meta = await resolve_model_meta(model_id)
+        model_card = await resolve_model_card(model_id)
 
         try:
             placements = get_instance_placements(
                 PlaceInstance(
-                    model_meta=model_meta,
+                    model_card=model_card,
                     sharding=sharding,
                     instance_meta=instance_meta,
                     min_nodes=min_nodes,
@@ -279,7 +278,7 @@ class API:
         if len(list(self.state.topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
-        cards = [card for card in MODEL_CARDS.values() if card.short_id == model_id]
+        cards = [card for card in MODEL_CARDS.values() if card.model_id == model_id]
         if not cards:
             raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
 
@@ -297,13 +296,12 @@ class API:
         # TODO: PDD
         # instance_combinations.append((Sharding.PrefillDecodeDisaggregation, InstanceMeta.MlxRing, 1))
 
-        for card in cards:
-            model_meta = card.metadata
+        for model_card in cards:
             for sharding, instance_meta, min_nodes in instance_combinations:
                 try:
                     placements = get_instance_placements(
                         PlaceInstance(
-                            model_meta=model_meta,
+                            model_card=model_card,
                             sharding=sharding,
                             instance_meta=instance_meta,
                             min_nodes=min_nodes,
@@ -313,17 +311,17 @@ class API:
                         current_instances=self.state.instances,
                     )
                 except ValueError as exc:
-                    if (card.model_id, sharding, instance_meta, 0) not in seen:
+                    if (model_card.model_id, sharding, instance_meta, 0) not in seen:
                         previews.append(
                             PlacementPreview(
-                                model_id=card.model_id,
+                                model_id=model_card.model_id,
                                 sharding=sharding,
                                 instance_meta=instance_meta,
                                 instance=None,
                                 error=str(exc),
                             )
                         )
-                    seen.add((card.model_id, sharding, instance_meta, 0))
+                    seen.add((model_card.model_id, sharding, instance_meta, 0))
                     continue
 
                 current_ids = set(self.state.instances.keys())
@@ -334,17 +332,17 @@ class API:
                 ]
 
                 if len(new_instances) != 1:
-                    if (card.model_id, sharding, instance_meta, 0) not in seen:
+                    if (model_card.model_id, sharding, instance_meta, 0) not in seen:
                         previews.append(
                             PlacementPreview(
-                                model_id=card.model_id,
+                                model_id=model_card.model_id,
                                 sharding=sharding,
                                 instance_meta=instance_meta,
                                 instance=None,
                                 error="Expected exactly one new instance from placement",
                             )
                         )
-                    seen.add((card.model_id, sharding, instance_meta, 0))
+                    seen.add((model_card.model_id, sharding, instance_meta, 0))
                     continue
 
                 instance = new_instances[0]
@@ -353,7 +351,7 @@ class API:
 
                 memory_delta_by_node: dict[str, int] = {}
                 if node_ids:
-                    total_bytes = model_meta.storage_size.in_bytes
+                    total_bytes = model_card.storage_size.in_bytes
                     per_node = total_bytes // len(node_ids)
                     remainder = total_bytes % len(node_ids)
                     for index, node_id in enumerate(sorted(node_ids, key=str)):
@@ -361,14 +359,14 @@ class API:
                         memory_delta_by_node[str(node_id)] = per_node + extra
 
                 if (
-                    card.model_id,
+                    model_card.model_id,
                     sharding,
                     instance_meta,
                     len(node_ids),
                 ) not in seen:
                     previews.append(
                         PlacementPreview(
-                            model_id=card.model_id,
+                            model_id=model_card.model_id,
                             sharding=sharding,
                             instance_meta=instance_meta,
                             instance=instance,
@@ -376,7 +374,7 @@ class API:
                             error=None,
                         )
                     )
-                seen.add((card.model_id, sharding, instance_meta, len(node_ids)))
+                seen.add((model_card.model_id, sharding, instance_meta, len(node_ids)))
 
         return PlacementPreviewResponse(previews=previews)
 
@@ -551,8 +549,8 @@ class API:
         self, payload: ChatCompletionTaskParams
     ) -> ChatCompletionResponse | StreamingResponse:
         """Handle chat completions, supporting both streaming and non-streaming responses."""
-        model_meta = await resolve_model_meta(payload.model)
-        payload.model = model_meta.model_id
+        model_card = await resolve_model_card(payload.model)
+        payload.model = model_card.model_id
 
         if not any(
             instance.shard_assignments.model_id == payload.model
@@ -578,8 +576,8 @@ class API:
     async def bench_chat_completions(
         self, payload: BenchChatCompletionTaskParams
     ) -> BenchChatCompletionResponse:
-        model_meta = await resolve_model_meta(payload.model)
-        payload.model = model_meta.model_id
+        model_card = await resolve_model_card(payload.model)
+        payload.model = model_card.model_id
 
         if not any(
             instance.shard_assignments.model_id == payload.model
@@ -612,13 +610,13 @@ class API:
         return ModelList(
             data=[
                 ModelListModel(
-                    id=card.short_id,
+                    id=card.model_id,
                     hugging_face_id=card.model_id,
-                    name=card.name,
-                    description=card.description,
-                    tags=card.tags,
-                    storage_size_megabytes=int(card.metadata.storage_size.in_mb),
-                    supports_tensor=card.metadata.supports_tensor,
+                    name=card.model_id.short(),
+                    description="",
+                    tags=[],
+                    storage_size_megabytes=int(card.storage_size.in_mb),
+                    supports_tensor=card.supports_tensor,
                 )
                 for card in MODEL_CARDS.values()
             ]

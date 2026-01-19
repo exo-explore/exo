@@ -6,9 +6,8 @@ from huggingface_hub import model_info
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from exo.shared.models.model_cards import MODEL_CARDS
+from exo.shared.models.model_cards import MODEL_CARDS, ModelCard, ModelId
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata
 from exo.worker.download.download_utils import (
     ModelSafetensorsIndex,
     download_file_with_retry,
@@ -92,18 +91,18 @@ async def get_safetensors_size(model_id: str) -> Memory:
     return Memory.from_bytes(info.safetensors.total)
 
 
-_model_meta_cache: dict[str, ModelMetadata] = {}
+_model_card_cache: dict[str, ModelCard] = {}
 
 
-async def get_model_meta(model_id: str) -> ModelMetadata:
-    if model_id in _model_meta_cache:
-        return _model_meta_cache[model_id]
-    model_meta = await _get_model_meta(model_id)
-    _model_meta_cache[model_id] = model_meta
-    return model_meta
+async def get_model_card(model_id: str) -> ModelCard:
+    if model_id in _model_card_cache:
+        return _model_card_cache[model_id]
+    model_card = await _get_model_card(model_id)
+    _model_card_cache[model_id] = model_card
+    return model_card
 
 
-async def _get_model_meta(model_id: str) -> ModelMetadata:
+async def _get_model_card(model_id: str) -> ModelCard:
     """Fetches storage size and number of layers for a Hugging Face model, returns Pydantic ModelMeta."""
     config_data = await get_config_data(model_id)
     num_layers = config_data.layer_count
@@ -113,14 +112,11 @@ async def _get_model_meta(model_id: str) -> ModelMetadata:
         None,
     )
 
-    return ModelMetadata(
+    return ModelCard(
         model_id=ModelId(model_id),
-        pretty_name=model_card.name if model_card is not None else model_id,
         storage_size=mem_size_bytes,
         n_layers=num_layers,
         hidden_size=config_data.hidden_size or 0,
         # TODO: all custom models currently do not support tensor. We could add a dynamic test for this?
-        supports_tensor=model_card.metadata.supports_tensor
-        if model_card is not None
-        else False,
+        supports_tensor=model_card.supports_tensor if model_card is not None else False,
     )

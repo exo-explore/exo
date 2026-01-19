@@ -496,9 +496,9 @@ def main() -> int:
                     and "tensor" in sharding.lower()
                 ):
                     model_card = MODEL_CARDS[short_id]
-                    if model_card.metadata.storage_size > Memory.from_gb(10):
+                    if model_card.storage_size > Memory.from_gb(10):
                         logger.info(
-                            f"Skipping tensor ring as this is too slow for model of size {model_card.metadata.storage_size} on {n_nodes=}"
+                            f"Skipping tensor ring as this is too slow for model of size {model_card.storage_size} on {n_nodes=}"
                         )
                         continue
                 for tg in tg_list:

@@ -9,12 +9,12 @@ from exo.master.tests.conftest import (
     create_rdma_connection,
     create_socket_connection,
 )
+from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.topology import Topology
 from exo.shared.types.commands import PlaceInstance
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import NetworkInterfaceInfo
 from exo.shared.types.topology import Connection, SocketConnection
@@ -42,21 +42,20 @@ def instance() -> Instance:
 
 
 @pytest.fixture
-def model_meta() -> ModelMetadata:
-    return ModelMetadata(
+def model_card() -> ModelCard:
+    return ModelCard(
         model_id=ModelId("test-model"),
         storage_size=Memory.from_kb(1000),
-        pretty_name="Test Model",
         n_layers=10,
         hidden_size=30,
         supports_tensor=True,
     )
 
 
-def place_instance_command(model_meta: ModelMetadata) -> PlaceInstance:
+def place_instance_command(model_card: ModelCard) -> PlaceInstance:
     return PlaceInstance(
         command_id=CommandId(),
-        model_meta=model_meta,
+        model_card=model_card,
         sharding=Sharding.Pipeline,
         instance_meta=InstanceMeta.MlxRing,
         min_nodes=1,
@@ -75,16 +74,16 @@ def test_get_instance_placements_create_instance(
     available_memory: tuple[int, int, int],
     total_layers: int,
     expected_layers: tuple[int, int, int],
-    model_meta: ModelMetadata,
+    model_card: ModelCard,
 ):
     # arrange
-    model_meta.n_layers = total_layers
-    model_meta.storage_size.in_bytes = sum(
+    model_card.n_layers = total_layers
+    model_card.storage_size.in_bytes = sum(
         available_memory
     )  # make it exactly fit across all nodes
     topology = Topology()
 
-    cic = place_instance_command(model_meta)
+    cic = place_instance_command(model_card)
     node_id_a = NodeId()
     node_id_b = NodeId()
     node_id_c = NodeId()
@@ -131,7 +130,7 @@ def test_get_instance_placements_create_instance(
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
     instance = placements[instance_id]
-    assert instance.shard_assignments.model_id == model_meta.model_id
+    assert instance.shard_assignments.model_id == model_card.model_id
 
     runner_id_a = instance.shard_assignments.node_to_runner[node_id_a]
     runner_id_b = instance.shard_assignments.node_to_runner[node_id_b]
@@ -157,10 +156,9 @@ def test_get_instance_placements_one_node_exact_fit() -> None:
     topology.add_node(node_id)
     profiles = {node_id: create_node_profile(1000 * 1024)}
     cic = place_instance_command(
-        ModelMetadata(
+        ModelCard(
             model_id=ModelId("test-model"),
             storage_size=Memory.from_kb(1000),
-            pretty_name="Test Model",
             n_layers=10,
             hidden_size=1000,
             supports_tensor=True,
@@ -183,10 +181,9 @@ def test_get_instance_placements_one_node_fits_with_extra_memory() -> None:
     topology.add_node(node_id)
     profiles = {node_id: create_node_profile(1001 * 1024)}
     cic = place_instance_command(
-        ModelMetadata(
+        ModelCard(
             model_id=ModelId("test-model"),
             storage_size=Memory.from_kb(1000),
-            pretty_name="Test Model",
             n_layers=10,
             hidden_size=1000,
             supports_tensor=True,
@@ -209,10 +206,9 @@ def test_get_instance_placements_one_node_not_fit() -> None:
     topology.add_node(node_id)
     profiles = {node_id: create_node_profile(1000 * 1024)}
     cic = place_instance_command(
-        model_meta=ModelMetadata(
+        model_card=ModelCard(
             model_id=ModelId("test-model"),
             storage_size=Memory.from_kb(1001),
-            pretty_name="Test Model",
             n_layers=10,
             hidden_size=1000,
             supports_tensor=True,
@@ -266,12 +262,14 @@ def test_get_transition_events_delete_instance(instance: Instance):
 
 
 def test_placement_selects_leaf_nodes(
-    model_meta: ModelMetadata,
+    model_card: ModelCard,
 ):
     # arrange
     topology = Topology()
 
-    model_meta.storage_size = Memory.from_bytes(1000)
+    # Model requires more than any single node but fits within a 3-node cycle
+    model_card.storage_size.in_bytes = 1500
+    model_card.n_layers = 12
 
     node_id_a = NodeId()
     node_id_b = NodeId()
@@ -310,7 +308,7 @@ def test_placement_selects_leaf_nodes(
         Connection(source=node_id_d, sink=node_id_c, edge=create_socket_connection(1))
     )
 
-    cic = place_instance_command(model_meta=model_meta)
+    cic = place_instance_command(model_card=model_card)
 
     # act
     placements = place_instance(cic, topology, {}, profiles)
@@ -329,12 +327,12 @@ def test_placement_selects_leaf_nodes(
 
 
 def test_tensor_rdma_backend_connectivity_matrix(
-    model_meta: ModelMetadata,
+    model_card: ModelCard,
 ):
     # arrange
     topology = Topology()
-    model_meta.n_layers = 12
-    model_meta.storage_size.in_bytes = 1500
+    model_card.n_layers = 12
+    model_card.storage_size.in_bytes = 1500
 
     node_a = NodeId()
     node_b = NodeId()
@@ -394,7 +392,7 @@ def test_tensor_rdma_backend_connectivity_matrix(
         sharding=Sharding.Tensor,
         instance_meta=InstanceMeta.MlxJaccl,
         command_id=CommandId(),
-        model_meta=model_meta,
+        model_card=model_card,
         min_nodes=1,
     )
 

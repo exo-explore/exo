@@ -8,6 +8,7 @@ from loguru import logger
 
 from exo.routing.connection_message import ConnectionMessage, ConnectionMessageType
 from exo.shared.apply import apply
+from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import ForwarderCommand, RequestEventLog
 from exo.shared.types.common import NodeId, SessionId
 from exo.shared.types.events import (
@@ -22,7 +23,6 @@ from exo.shared.types.events import (
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
 )
-from exo.shared.types.models import ModelId
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
@@ -186,11 +186,11 @@ class Worker:
                         )
                     )
                 case DownloadModel(shard_metadata=shard):
-                    if shard.model_meta.model_id not in self.download_status:
+                    if shard.model_card.model_id not in self.download_status:
                         progress = DownloadPending(
                             shard_metadata=shard, node_id=self.node_id
                         )
-                        self.download_status[shard.model_meta.model_id] = progress
+                        self.download_status[shard.model_card.model_id] = progress
                         await self.event_sender.send(
                             NodeDownloadProgress(download_progress=progress)
                         )
@@ -205,7 +205,7 @@ class Worker:
                             node_id=self.node_id,
                             total_bytes=initial_progress.total_bytes,
                         )
-                        self.download_status[shard.model_meta.model_id] = progress
+                        self.download_status[shard.model_card.model_id] = progress
                         await self.event_sender.send(
                             NodeDownloadProgress(download_progress=progress)
                         )
@@ -339,7 +339,7 @@ class Worker:
                 initial_progress
             ),
         )
-        self.download_status[task.shard_metadata.model_meta.model_id] = status
+        self.download_status[task.shard_metadata.model_card.model_id] = status
         self.event_sender.send_nowait(NodeDownloadProgress(download_progress=status))
 
         last_progress_time = 0.0
@@ -356,7 +356,7 @@ class Worker:
                     node_id=self.node_id,
                     total_bytes=progress.total_bytes,
                 )
-                self.download_status[shard.model_meta.model_id] = status
+                self.download_status[shard.model_card.model_id] = status
                 await self.event_sender.send(
                     NodeDownloadProgress(download_progress=status)
                 )
@@ -376,7 +376,7 @@ class Worker:
                         progress
                     ),
                 )
-                self.download_status[shard.model_meta.model_id] = status
+                self.download_status[shard.model_card.model_id] = status
                 await self.event_sender.send(
                     NodeDownloadProgress(download_progress=status)
                 )
@@ -478,7 +478,7 @@ class Worker:
                     else:
                         continue
 
-                    self.download_status[progress.shard.model_meta.model_id] = status
+                    self.download_status[progress.shard.model_card.model_id] = status
                     await self.event_sender.send(
                         NodeDownloadProgress(download_progress=status)
                     )
