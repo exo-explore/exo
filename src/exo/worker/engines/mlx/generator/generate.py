@@ -156,12 +156,9 @@ def mlx_generate(
         sampler=sampler,
         logits_processors=logits_processors,
         prompt_cache=caches,
-        # TODO: Dynamically change prefill step size to be the maximum possible without timing out.
         prefill_step_size=2048,
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
-        return_logprob=True,
-        return_top_logprobs=5,
     ):
         logger.info(out.text)
         accumulated_text += out.text
