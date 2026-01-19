@@ -34,7 +34,8 @@ from exo.shared.types.worker.instances import (
 )
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import PipelineShardMetadata, TensorShardMetadata
-from exo.utils.channels import MpReceiver, MpSender, mp_channel
+from exo.utils.channels import MpReceiver, MpSender, channel, mp_channel
+from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
 from exo.worker.download.impl_shard_downloader import (
     build_full_shard,
     exo_shard_downloader,
@@ -65,6 +66,7 @@ async def main():
     app = FastAPI()
     app.post("/ring")(ring_backend)
     app.post("/jaccl")(jaccl_backend)
+    app.post("/tb_detection")(tb_detection)
     shutdown = anyio.Event()
     await serve(
         app,  # type: ignore
@@ -74,6 +76,15 @@ async def main():
     await anyio.sleep_forever()
     # gracefully shutdown the api
     shutdown.set()
+
+
+async def tb_detection():
+    send, recv = channel[GatheredInfo]()
+    ig = InfoGatherer(send)
+    with anyio.move_on_after(1):
+        await ig._monitor_system_profiler()  # pyright: ignore[reportPrivateUsage]
+    with recv:
+        return recv.collect()
 
 
 async def assert_downloads():
@@ -209,16 +220,16 @@ async def jaccl_backend(test: Tests):
             break
     else:
         raise ValueError(f"{weird_hn} not in {test.devs}")
-    return await execute_test(test, jaccl_instance(test, iid, hn), hn)
+    return await execute_test(test, jaccl_instance(test, iid), hn)
 
 
-def jaccl_instance(test: Tests, iid: InstanceId, hn: str):
+def jaccl_instance(test: Tests, iid: InstanceId):
     meta = MODEL_CARDS[test.model_id].metadata
     world_size = len(test.devs)
 
     return MlxJacclInstance(
         instance_id=iid,
-        ibv_devices=[[None, "rdma_en3"], ["rdma_en3", None]],
+        jaccl_devices=[[None, "rdma_en3"], ["rdma_en3", None]],
         # rank 0 is always coordinator
         jaccl_coordinators={
             NodeId(host[0]): test.devs[0][1] + ":52416" for host in test.devs

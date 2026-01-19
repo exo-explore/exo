@@ -99,20 +99,36 @@ interface RawNodeProfile {
 
 interface RawTopologyNode {
 	nodeId: string;
-	nodeProfile: RawNodeProfile;
+	nodeProfile?: RawNodeProfile;
 }
 
-interface RawTopologyConnection {
-	localNodeId: string;
-	sendBackNodeId: string;
-	sendBackMultiaddr?:
-		| { multiaddr?: string; address?: string; ip_address?: string }
-		| string;
+// New connection edge types from Python SocketConnection/RDMAConnection
+interface RawSocketConnection {
+	sinkMultiaddr?: {
+		address?: string;
+		// Multiaddr uses snake_case (no camelCase alias)
+		ip_address?: string;
+		ipAddress?: string; // fallback in case it changes
+		address_type?: string;
+		port?: number;
+	};
 }
+
+interface RawRDMAConnection {
+	sourceRdmaIface?: string;
+	sinkRdmaIface?: string;
+}
+
+type RawConnectionEdge = RawSocketConnection | RawRDMAConnection;
+
+// New nested mapping format: { source: { sink: [edge1, edge2, ...] } }
+type RawConnectionsMap = Record<string, Record<string, RawConnectionEdge[]>>;
 
 interface RawTopology {
-	nodes: RawTopologyNode[];
-	connections?: RawTopologyConnection[];
+	// nodes can be array of strings (node IDs) or array of objects with nodeId/nodeProfile
+	nodes: (string | RawTopologyNode)[];
+	// New nested mapping format
+	connections?: RawConnectionsMap;
 }
 
 type RawNodeProfiles = Record<string, RawNodeProfile>;
@@ -213,9 +229,18 @@ function transformTopology(
 	const nodes: Record<string, NodeInfo> = {};
 	const edges: TopologyEdge[] = [];
 
+	// Handle nodes - can be array of strings (node IDs) or array of objects with nodeId/nodeProfile
 	for (const node of raw.nodes || []) {
-		const mergedProfile = profiles?.[node.nodeId];
-		const profile = { ...(node.nodeProfile ?? {}), ...(mergedProfile ?? {}) };
+		// Determine the node ID - could be a string or an object with nodeId property
+		const nodeId = typeof node === "string" ? node : node.nodeId;
+		if (!nodeId) continue;
+
+		// Get the profile - from the separate profiles map or from the node object itself
+		const profileFromMap = profiles?.[nodeId];
+		const profileFromNode =
+			typeof node === "object" ? node.nodeProfile : undefined;
+		const profile = { ...(profileFromNode ?? {}), ...(profileFromMap ?? {}) };
+
 		const ramTotal = profile?.memory?.ramTotal?.inBytes ?? 0;
 		const ramAvailable = profile?.memory?.ramAvailable?.inBytes ?? 0;
 		const ramUsage = Math.max(ramTotal - ramAvailable, 0);
@@ -264,7 +289,7 @@ function transformTopology(
 			}
 		}
 
-		nodes[node.nodeId] = {
+		nodes[nodeId] = {
 			system_info: {
 				model_id: profile?.modelId ?? "Unknown",
 				chip: profile?.chipId,
@@ -292,29 +317,34 @@ function transformTopology(
 		};
 	}
 
-	for (const conn of raw.connections || []) {
-		if (!conn.localNodeId || !conn.sendBackNodeId) continue;
-		if (conn.localNodeId === conn.sendBackNodeId) continue;
-		if (!nodes[conn.localNodeId] || !nodes[conn.sendBackNodeId]) continue;
+	// Handle connections - nested mapping format { source: { sink: [edges] } }
+	const connections = raw.connections;
+	if (connections && typeof connections === "object") {
+		for (const [source, sinks] of Object.entries(connections)) {
+			if (!sinks || typeof sinks !== "object") continue;
+			for (const [sink, edgeList] of Object.entries(sinks)) {
+				if (!Array.isArray(edgeList)) continue;
+				for (const edge of edgeList) {
+					// Extract IP from SocketConnection (uses snake_case: ip_address)
+					let sendBackIp: string | undefined;
+					if (edge && typeof edge === "object" && "sinkMultiaddr" in edge) {
+						const multiaddr = edge.sinkMultiaddr;
+						if (multiaddr) {
+							// Try both snake_case (actual) and camelCase (in case it changes)
+							sendBackIp =
+								multiaddr.ip_address ||
+								multiaddr.ipAddress ||
+								extractIpFromMultiaddr(multiaddr.address);
+						}
+					}
+					// RDMAConnection (sourceRdmaIface/sinkRdmaIface) has no IP - edge just shows connection exists
 
-		let sendBackIp: string | undefined;
-		if (conn.sendBackMultiaddr) {
-			const multi = conn.sendBackMultiaddr;
-			if (typeof multi === "string") {
-				sendBackIp = extractIpFromMultiaddr(multi);
-			} else {
-				sendBackIp =
-					multi.ip_address ||
-					extractIpFromMultiaddr(multi.multiaddr) ||
-					extractIpFromMultiaddr(multi.address);
+					if (nodes[source] && nodes[sink] && source !== sink) {
+						edges.push({ source, target: sink, sendBackIp });
+					}
+				}
 			}
 		}
-
-		edges.push({
-			source: conn.localNodeId,
-			target: conn.sendBackNodeId,
-			sendBackIp,
-		});
 	}
 
 	return { nodes, edges };
