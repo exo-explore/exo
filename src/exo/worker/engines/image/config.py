@@ -22,26 +22,13 @@ class ImageModelConfig(BaseModel):
 
     # Model identification
     model_family: str  # "flux", "fibo", "qwen"
-    model_variant: str  # "schnell", "dev", etc.
-
-    # Architecture parameters
-    hidden_dim: int
-    num_heads: int
-    head_dim: int
 
     # Block configuration - ordered sequence of block types
     block_configs: tuple[TransformerBlockConfig, ...]
 
-    # Tokenization parameters
-    patch_size: int  # 2 for Flux/Qwen
-    vae_scale_factor: int  # 8 for Flux, 16 for others
-
     # Inference parameters
     default_steps: dict[str, int]  # {"low": X, "medium": Y, "high": Z}
     num_sync_steps_factor: float  # Fraction of steps for sync phase
-
-    # Feature flags
-    uses_attention_mask: bool  # True for Fibo
 
     # CFG (Classifier-Free Guidance) parameters
     guidance_scale: float | None = None  # None or <= 1.0 disables CFG

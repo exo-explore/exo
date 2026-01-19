@@ -200,10 +200,6 @@ class DistributedImageModel:
         else:
             steps = self._config.get_steps_for_quality(quality)
 
-        image_strength: float | None = None
-        if advanced_params is not None and advanced_params.image_strength is not None:
-            image_strength = advanced_params.image_strength
-
         guidance_override: float | None = None
         if advanced_params is not None and advanced_params.guidance is not None:
             guidance_override = advanced_params.guidance
@@ -226,7 +222,6 @@ class DistributedImageModel:
             width=width,
             image_path=image_path,
             model_config=self._adapter.model.model_config,
-            image_strength=image_strength,
         )
 
         for result in self._runner.generate_image(

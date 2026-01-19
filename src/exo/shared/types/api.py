@@ -235,7 +235,6 @@ class AdvancedImageParams(BaseModel):
     seed: Annotated[int, Field(ge=0)] | None = None
     num_inference_steps: Annotated[int, Field(ge=1, le=100)] | None = None
     guidance: Annotated[float, Field(ge=1.0, le=20.0)] | None = None
-    image_strength: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
     negative_prompt: str | None = None
 
 
@@ -266,15 +265,22 @@ class BenchImageGenerationTaskParams(ImageGenerationTaskParams):
 class ImageEditsTaskParams(BaseModel):
     image: UploadFile
     prompt: str
-    input_fidelity: float = 0.7
+    background: str | None = None
+    input_fidelity: float | None = None
+    mask: UploadFile | None = None
     model: str
     n: int | None = 1
-    quality: Literal["high", "medium", "low"] | None = "medium"
+    output_compression: int | None = None
     output_format: Literal["png", "jpeg", "webp"] = "png"
+    partial_images: int | None = 0
+    quality: Literal["high", "medium", "low"] | None = "medium"
     response_format: Literal["url", "b64_json"] | None = "b64_json"
     size: str | None = "1024x1024"
+    stream: bool | None = False
     user: str | None = None
     advanced_params: AdvancedImageParams | None = None
+    # Internal flag for benchmark mode - set by API, preserved through serialization
+    bench: bool = False
 
 
 class ImageEditsInternalParams(BaseModel):
@@ -289,7 +295,7 @@ class ImageEditsInternalParams(BaseModel):
     output_format: Literal["png", "jpeg", "webp"] = "png"
     response_format: Literal["url", "b64_json"] | None = "b64_json"
     size: str | None = "1024x1024"
-    image_strength: float = 0.7
+    image_strength: float | None = 0.7
     stream: bool = False
     partial_images: int | None = 0
     advanced_params: AdvancedImageParams | None = None
