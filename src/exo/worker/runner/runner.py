@@ -1,6 +1,8 @@
 import time
 from collections.abc import Generator
+from contextlib import contextmanager
 from functools import cache
+from typing import cast
 
 import mlx.core as mx
 from mlx_lm.models.gpt_oss import Model as GptOssModel
@@ -13,6 +15,7 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
 
 from exo.shared.types.api import ChatCompletionMessageText
 from exo.shared.types.chunks import TokenChunk
+from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -20,6 +23,7 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
+from exo.shared.types.models import ModelId
 from exo.shared.types.tasks import (
     ChatCompletion,
     ConnectToGroup,
@@ -48,6 +52,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import MpReceiver, MpSender
+from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
@@ -55,6 +60,33 @@ from exo.worker.engines.mlx.utils_mlx import (
     mlx_force_oom,
 )
 from exo.worker.runner.bootstrap import logger
+
+
+@contextmanager
+def send_error_chunk_on_exception(
+    event_sender: MpSender[Event],
+    command_id: CommandId,
+    model_id: ModelId,
+    device_rank: int,
+):
+    try:
+        yield
+    except Exception as e:
+        logger.error(e)
+        if device_rank == 0:
+            event_sender.send(
+                ChunkGenerated(
+                    command_id=command_id,
+                    chunk=TokenChunk(
+                        idx=0,
+                        model=model_id,
+                        text="",
+                        token_id=0,
+                        finish_reason="error",
+                        error_message=str(e),
+                    ),
+                )
+            )
 
 
 def main(
@@ -118,7 +150,20 @@ def main(
                         )
                     )
 
-                    model, tokenizer = load_mlx_items(bound_instance, group)
+                    def on_model_load_timeout() -> None:
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id,
+                                runner_status=RunnerFailed(
+                                    error_message="Model loading timed out"
+                                ),
+                            )
+                        )
+                        time.sleep(0.5)
+
+                    model, tokenizer = load_mlx_items(
+                        bound_instance, group, on_timeout=on_model_load_timeout
+                    )
 
                     current_status = RunnerLoaded()
                     logger.info("runner loaded")
@@ -135,7 +180,7 @@ def main(
 
                     logger.info(f"warming up inference for instance: {instance}")
                     toks = warmup_inference(
-                        model=model,
+                        model=cast(Model, model),
                         tokenizer=tokenizer,
                         # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
                     )
@@ -148,8 +193,6 @@ def main(
                 case ChatCompletion(task_params=task_params, command_id=command_id) if (
                     isinstance(current_status, RunnerReady)
                 ):
-                    assert model
-                    assert tokenizer
                     logger.info(f"received chat request: {str(task)[:500]}")
                     current_status = RunnerRunning()
                     logger.info("runner running")
@@ -158,41 +201,47 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
-                    assert task_params.messages[0].content is not None
-                    _check_for_debug_prompts(task_params.messages[0].content)
+                    with send_error_chunk_on_exception(
+                        event_sender,
+                        command_id,
+                        shard_metadata.model_meta.model_id,
+                        shard_metadata.device_rank,
+                    ):
+                        assert model
+                        assert tokenizer
+                        assert task_params.messages[0].content is not None
+                        _check_for_debug_prompts(task_params.messages[0].content)
 
-                    # Generate responses using the actual MLX generation
-                    mlx_generator = mlx_generate(
-                        model=model,
-                        tokenizer=tokenizer,
-                        task=task_params,
-                    )
+                        # Generate responses using the actual MLX generation
+                        mlx_generator = mlx_generate(
+                            model=cast(Model, model),
+                            tokenizer=tokenizer,
+                            task=task_params,
+                        )
 
-                    # GPT-OSS specific parsing to match other model formats.
-                    if isinstance(model, GptOssModel):
-                        mlx_generator = parse_gpt_oss(mlx_generator)
+                        # GPT-OSS specific parsing to match other model formats.
+                        if isinstance(model, GptOssModel):
+                            mlx_generator = parse_gpt_oss(mlx_generator)
 
-                    # TODO: Add tool call parser here
+                        # TODO: Add tool call parser here
 
-                    for response in mlx_generator:
-                        match response:
-                            case GenerationResponse():
-                                if shard_metadata.device_rank == 0:
-                                    event_sender.send(
-                                        ChunkGenerated(
-                                            command_id=command_id,
-                                            chunk=TokenChunk(
-                                                idx=response.token,
-                                                model=shard_metadata.model_meta.model_id,
-                                                text=response.text,
-                                                token_id=response.token,
-                                                finish_reason=response.finish_reason,
-                                                stats=response.stats,
-                                            ),
+                        for response in mlx_generator:
+                            match response:
+                                case GenerationResponse():
+                                    if shard_metadata.device_rank == 0:
+                                        event_sender.send(
+                                            ChunkGenerated(
+                                                command_id=command_id,
+                                                chunk=TokenChunk(
+                                                    idx=response.token,
+                                                    model=shard_metadata.model_meta.model_id,
+                                                    text=response.text,
+                                                    token_id=response.token,
+                                                    finish_reason=response.finish_reason,
+                                                    stats=response.stats,
+                                                ),
+                                            )
                                         )
-                                    )
-                                # case TokenizedResponse():
-                                # TODO: something here ig
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
