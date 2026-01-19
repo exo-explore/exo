@@ -121,6 +121,21 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_runner, "mlx_generate", fake_generate)
 
 
+# Use a fake event_sender to remove test flakiness.
+class EventCollector:
+    def __init__(self) -> None:
+        self.events: list[Event] = []
+
+    def send(self, event: Event) -> None:
+        self.events.append(event)
+
+    def close(self) -> None:
+        pass
+
+    def join(self) -> None:
+        pass
+
+
 def _run(tasks: Iterable[Task]):
     bound_instance = get_bound_mlx_ring_instance(
         instance_id=INSTANCE_1_ID,
@@ -130,22 +145,20 @@ def _run(tasks: Iterable[Task]):
     )
 
     task_sender, task_receiver = mp_channel[Task]()
-    event_sender, event_receiver = mp_channel[Event]()
+    event_sender = EventCollector()
 
-    with task_sender, event_receiver:
+    with task_sender:
         for t in tasks:
             task_sender.send(t)
 
         # worst monkeypatch known to man
         # this is some c++ nonsense
-        event_sender.close = nothin
-        event_sender.join = nothin
         task_receiver.close = nothin
         task_receiver.join = nothin
 
-        mlx_runner.main(bound_instance, event_sender, task_receiver)
+        mlx_runner.main(bound_instance, event_sender, task_receiver)  # type: ignore[arg-type]
 
-        return event_receiver.collect()
+        return event_sender.events
 
 
 def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):

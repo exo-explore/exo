@@ -40,6 +40,31 @@ uv run ruff check
 nix fmt
 ```
 
+## Pre-Commit Checks (REQUIRED)
+
+**IMPORTANT: Always run these checks before committing code. CI will fail if these don't pass.**
+
+```bash
+# 1. Type checking - MUST pass with 0 errors
+uv run basedpyright
+
+# 2. Linting - MUST pass
+uv run ruff check
+
+# 3. Formatting - MUST be applied
+nix fmt
+
+# 4. Tests - MUST pass
+uv run pytest
+```
+
+Run all checks in sequence:
+```bash
+uv run basedpyright && uv run ruff check && nix fmt && uv run pytest
+```
+
+If `nix fmt` changes any files, stage them before committing. The CI runs `nix flake check` which verifies formatting, linting, and runs Rust tests.
+
 ## Architecture
 
 ### Node Composition
