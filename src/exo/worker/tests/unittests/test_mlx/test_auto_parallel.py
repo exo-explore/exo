@@ -8,7 +8,7 @@ from exo.worker.engines.mlx.auto_parallel import (
     CustomMlxLayer,
     PipelineFirstLayer,
     PipelineLastLayer,
-    patch_pipeline_model
+    patch_pipeline_model,
 )
 from exo.worker.tests.unittests.test_mlx.conftest import MockLayer
 
@@ -63,7 +63,6 @@ def run_pipeline_device(
         x = mlx_core.ones((1, 4))
         result = model(x)
         mlx_core.eval(result)
-
         success = result.shape == x.shape
         result_queue.put((rank, success, result))  # pyright: ignore[reportAny]
     except Exception as e:

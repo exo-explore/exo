@@ -195,14 +195,14 @@ def pipeline_auto_parallel(
     return patch_pipeline_model(model, group)
 
 
-def patch_pipeline_model(model: nn.Module, group: mx.distributed.Group) -> nn.Module:
+def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
     # Patch __call__ on the model's class
     cls = model.__class__
-    original_call = cls.__call__
-    call_signature = signature(original_call)
+    original_call = cls.__call__  # type :ignore
+    call_signature = signature(original_call)  # type :ignore
 
     def patched_call(
-        self: nn.Module,
+        self: T,
         *args: object,
         **kwargs: object,
     ) -> mx.array:
@@ -217,11 +217,13 @@ def patch_pipeline_model(model: nn.Module, group: mx.distributed.Group) -> nn.Mo
             if hasattr(c, "state") and c.state is not None:  # type: ignore
                 c.state = mx.depends(c.state, logits)  # type: ignore
 
-        logits = mx.distributed.all_gather(logits, group=group)[-logits.shape[0] :]
+        logits = mx.distributed.all_gather(logits, group=group)[
+            -logits.shape[0] :
+        ]  # type :ignore
 
         return logits
 
-    cls.__call__ = patched_call  # type: ignore
+    cls.__call__ = patched_call
     return model
 
 
