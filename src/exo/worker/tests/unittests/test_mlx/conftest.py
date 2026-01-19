@@ -1,4 +1,8 @@
 # type: ignore
+import json
+import os
+import tempfile
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -7,6 +11,14 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from exo.shared.constants import EXO_MODELS_DIR
+from exo.shared.types.api import ChatCompletionMessage
+from exo.shared.types.memory import Memory
+from exo.shared.types.models import ModelId, ModelMetadata
+from exo.shared.types.tasks import ChatCompletionTaskParams
+from exo.shared.types.worker.shards import PipelineShardMetadata, TensorShardMetadata
+from exo.worker.engines.mlx import Model
+from exo.worker.engines.mlx.generator.generate import mlx_generate
+from exo.worker.engines.mlx.utils_mlx import shard_and_load
 
 
 class MockLayer(nn.Module):
@@ -28,9 +40,6 @@ class PipelineTestConfig:
 
 
 def create_hostfile(world_size: int, base_port: int) -> tuple[str, list[str]]:
-    import json
-    import tempfile
-
     hosts = [f"127.0.0.1:{base_port + i}" for i in range(world_size)]
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
@@ -63,25 +72,11 @@ def run_gpt_oss_pipeline_device(
     result_queue: Any,  # pyright: ignore[reportAny]
     max_tokens: int = 200,
 ) -> None:
-    import os
-    import traceback
-
     os.environ["MLX_HOSTFILE"] = hostfile_path
     os.environ["MLX_RANK"] = str(rank)
 
-    import mlx.core as mlx_core
-
-    from exo.shared.types.api import ChatCompletionMessage
-    from exo.shared.types.memory import Memory
-    from exo.shared.types.models import ModelId, ModelMetadata
-    from exo.shared.types.tasks import ChatCompletionTaskParams
-    from exo.shared.types.worker.shards import PipelineShardMetadata
-    from exo.worker.engines.mlx import Model
-    from exo.worker.engines.mlx.generator.generate import mlx_generate
-    from exo.worker.engines.mlx.utils_mlx import shard_and_load
-
     try:
-        group = mlx_core.distributed.init(backend="ring", strict=True)
+        group = mx.distributed.init(backend="ring", strict=True)
 
         start_layer, end_layer = layer_splits[rank]
 
@@ -148,25 +143,11 @@ def run_gpt_oss_tensor_parallel_device(
     result_queue: Any,  # pyright: ignore[reportAny]
     max_tokens: int = 10,
 ) -> None:
-    import os
-    import traceback
-
     os.environ["MLX_HOSTFILE"] = hostfile_path
     os.environ["MLX_RANK"] = str(rank)
 
-    import mlx.core as mlx_core
-
-    from exo.shared.types.api import ChatCompletionMessage
-    from exo.shared.types.memory import Memory
-    from exo.shared.types.models import ModelId, ModelMetadata
-    from exo.shared.types.tasks import ChatCompletionTaskParams
-    from exo.shared.types.worker.shards import TensorShardMetadata
-    from exo.worker.engines.mlx import Model
-    from exo.worker.engines.mlx.generator.generate import mlx_generate
-    from exo.worker.engines.mlx.utils_mlx import shard_and_load
-
     try:
-        group = mlx_core.distributed.init(backend="ring", strict=True)
+        group = mx.distributed.init(backend="ring", strict=True)
 
         # For tensor parallelism, all devices run all layers
         shard_meta = TensorShardMetadata(

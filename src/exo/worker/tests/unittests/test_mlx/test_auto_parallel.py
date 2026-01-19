@@ -1,7 +1,11 @@
+import json
 import multiprocessing as mp
+import os
+import tempfile
 from typing import Any
 
 import mlx.core as mx
+import mlx.nn as mlx_nn
 import pytest
 
 from exo.worker.engines.mlx.auto_parallel import (
@@ -24,17 +28,12 @@ def run_pipeline_device(
     os.environ["MLX_HOSTFILE"] = hostfile_path
     os.environ["MLX_RANK"] = str(rank)
 
-    import mlx.core as mlx_core
-    import mlx.nn as mlx_nn
-
     class MockLayerInner(mlx_nn.Module):
         def __init__(self) -> None:
             super().__init__()
             self.custom_attr = "test_value"
 
-        def __call__(
-            self, x: mlx_core.array, *args: object, **kwargs: object
-        ) -> mlx_core.array:
+        def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
             return x * 2
 
     class MockModel(mlx_nn.Module):
@@ -42,15 +41,13 @@ def run_pipeline_device(
             super().__init__()
             self.layers = layers
 
-        def __call__(
-            self, x: mlx_core.array, *args: object, **kwargs: object
-        ) -> mlx_core.array:
+        def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
             for layer in self.layers:
                 x = layer(x, *args, **kwargs)  # pyright: ignore[reportUnknownVariableType]
             return x  # pyright: ignore[reportUnknownVariableType]
 
     try:
-        group = mlx_core.distributed.init(backend="ring", strict=True)
+        group = mx.distributed.init(backend="ring", strict=True)
 
         mock = MockLayerInner()
         first = PipelineFirstLayer(mock, r=rank, group=group)
@@ -60,9 +57,9 @@ def run_pipeline_device(
         inner_model = MockModel([composed])
         model = patch_pipeline_model(inner_model, group)
 
-        x = mlx_core.ones((1, 4))
+        x = mx.ones((1, 4))
         result = model(x)
-        mlx_core.eval(result)
+        mx.eval(result)
         success = result.shape == x.shape
         result_queue.put((rank, success, result))  # pyright: ignore[reportAny]
     except Exception as e:
@@ -97,10 +94,6 @@ def test_missing_attribute_raises() -> None:
 
 
 def test_composed_call_works() -> None:
-    import json
-    import os
-    import tempfile
-
     ctx = mp.get_context("spawn")
 
     world_size = 2
