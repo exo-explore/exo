@@ -345,8 +345,7 @@ class Worker:
         last_progress_time = 0.0
         throttle_interval_secs = 1.0
 
-        # TODO: i hate callbacks
-        def download_progress_callback(
+        async def download_progress_callback(
             shard: ShardMetadata, progress: RepoDownloadProgress
         ) -> None:
             nonlocal self
@@ -358,11 +357,10 @@ class Worker:
                     total_bytes=progress.total_bytes,
                 )
                 self.download_status[shard.model_meta.model_id] = status
-                # Footgun!
-                self.event_sender.send_nowait(
+                await self.event_sender.send(
                     NodeDownloadProgress(download_progress=status)
                 )
-                self.event_sender.send_nowait(
+                await self.event_sender.send(
                     TaskStatusUpdated(
                         task_id=task.task_id, task_status=TaskStatus.Complete
                     )
@@ -379,7 +377,7 @@ class Worker:
                     ),
                 )
                 self.download_status[shard.model_meta.model_id] = status
-                self.event_sender.send_nowait(
+                await self.event_sender.send(
                     NodeDownloadProgress(download_progress=status)
                 )
                 last_progress_time = current_time()
