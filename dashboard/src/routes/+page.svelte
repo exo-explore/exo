@@ -47,7 +47,7 @@ const sidebarVisible = $derived(chatSidebarVisible());
 	let mounted = $state(false);
 
 	// Instance launch state
-	let models = $state<Array<{id: string, name?: string, storage_size_megabytes?: number}>>([]);
+	let models = $state<Array<{id: string, hugging_face_id?: string, name?: string, storage_size_megabytes?: number}>>([]);
 	let selectedSharding = $state<'Pipeline' | 'Tensor'>('Pipeline');
 	type InstanceMeta = 'MlxRing' | 'MlxIbv' | 'MlxJaccl';
 	
@@ -59,7 +59,7 @@ const sidebarVisible = $derived(chatSidebarVisible());
 		instanceType: InstanceMeta;
 		minNodes: number;
 	}
-	
+
 	function saveLaunchDefaults(): void {
 		const defaults: LaunchDefaults = {
 			modelId: selectedPreviewModelId(),
@@ -88,16 +88,16 @@ const sidebarVisible = $derived(chatSidebarVisible());
 	function applyLaunchDefaults(availableModels: Array<{id: string}>, maxNodes: number): void {
 		const defaults = loadLaunchDefaults();
 		if (!defaults) return;
-		
+
 		// Apply sharding and instance type unconditionally
 		selectedSharding = defaults.sharding;
 		selectedInstanceType = defaults.instanceType;
-		
+
 		// Apply minNodes if valid (between 1 and maxNodes)
 		if (defaults.minNodes && defaults.minNodes >= 1 && defaults.minNodes <= maxNodes) {
 			selectedMinNodes = defaults.minNodes;
 		}
-		
+
 		// Only apply model if it exists in the available models
 		if (defaults.modelId && availableModels.some(m => m.id === defaults.modelId)) {
 			selectPreviewModel(defaults.modelId);
@@ -109,11 +109,19 @@ const sidebarVisible = $derived(chatSidebarVisible());
 	let minNodesInitialized = $state(false);
 	let launchingModelId = $state<string | null>(null);
 let instanceDownloadExpandedNodes = $state<Set<string>>(new Set());
-	
+
+	// Draft model edit modal state
+	let editingDraftInstanceId = $state<string | null>(null);
+	let editDraftModel = $state<string | null>(null);
+	let editNumDraftTokens = $state<number>(4);
+	let isDraftEditDropdownOpen = $state(false);
+	let draftEditDropdownSearch = $state('');
+	let isSavingDraftModel = $state(false);
+
 	// Custom dropdown state
 	let isModelDropdownOpen = $state(false);
 	let modelDropdownSearch = $state('');
-	
+
 	// Slider dragging state
 	let isDraggingSlider = $state(false);
 	let sliderTrackElement: HTMLDivElement | null = $state(null);
@@ -362,47 +370,36 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 
 	async function launchInstance(modelId: string, specificPreview?: PlacementPreview | null) {
 		if (!modelId || launchingModelId) return;
-		
+
 		launchingModelId = modelId;
-		
+
 		try {
 			// Use the specific preview if provided, otherwise fall back to filtered preview
 			const preview = specificPreview ?? filteredPreview();
-			
-			let instanceData: unknown;
-			
-			if (preview?.instance) {
-				// Use the instance from the preview
-				instanceData = preview.instance;
-			} else {
-				// Fallback: GET placement from API
-				const placementResponse = await fetch(
-					`/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${selectedSharding}&instance_meta=${selectedInstanceType}&min_nodes=${selectedMinNodes}`
-				);
-				
-				if (!placementResponse.ok) {
-					const errorText = await placementResponse.text();
-					console.error('Failed to get placement:', errorText);
-					return;
-				}
-				
-				instanceData = await placementResponse.json();
-			}
-			
-			// POST the instance to create it
-			const response = await fetch('/instance', {
+
+			let response: Response;
+
+			// Use /place_instance endpoint - it handles placement and creation in one step
+			const placePayload = {
+				model_id: modelId,
+				sharding: preview?.sharding ?? selectedSharding,
+				instance_meta: preview?.instance_meta ?? selectedInstanceType,
+				min_nodes: selectedMinNodes,
+			};
+
+			response = await fetch('/place_instance', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ instance: instanceData })
+				body: JSON.stringify(placePayload)
 			});
-			
+
 			if (!response.ok) {
 				const errorText = await response.text();
 				console.error('Failed to launch instance:', errorText);
 			} else {
 				// Always auto-select the newly launched model so the user chats to what they just launched
 				setSelectedChatModel(modelId);
-				
+
 				// Scroll to the bottom of instances container to show the new instance
 				// Use multiple attempts to ensure DOM has updated with the new instance
 				const scrollToBottom = () => {
@@ -797,6 +794,52 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		}
 	}
 
+	// Open draft model edit modal for an instance
+	function openDraftModelEdit(instanceId: string, currentDraftModel: string | null, currentNumTokens: number | null) {
+		editingDraftInstanceId = instanceId;
+		editDraftModel = currentDraftModel;
+		editNumDraftTokens = currentNumTokens ?? 4;
+		isDraftEditDropdownOpen = false;
+		draftEditDropdownSearch = '';
+	}
+
+	// Close draft model edit modal
+	function closeDraftModelEdit() {
+		editingDraftInstanceId = null;
+		editDraftModel = null;
+		editNumDraftTokens = 4;
+		isDraftEditDropdownOpen = false;
+		draftEditDropdownSearch = '';
+	}
+
+	// Save draft model settings for an instance
+	async function saveDraftModel() {
+		if (!editingDraftInstanceId || isSavingDraftModel) return;
+
+		isSavingDraftModel = true;
+		try {
+			const response = await fetch(`/instance/${editingDraftInstanceId}/draft_model`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					draft_model: editDraftModel,
+					num_draft_tokens: editNumDraftTokens,
+				})
+			});
+
+			if (!response.ok) {
+				const errorText = await response.text();
+				console.error('Failed to set draft model:', errorText);
+			} else {
+				closeDraftModelEdit();
+			}
+		} catch (error) {
+			console.error('Error setting draft model:', error);
+		} finally {
+			isSavingDraftModel = false;
+		}
+	}
+
 	// Helper to unwrap tagged unions like { MlxRingInstance: {...} }
 	function getTagged(obj: unknown): [string | null, unknown] {
 		if (!obj || typeof obj !== 'object') return [null, null];
@@ -816,30 +859,34 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	}
 
 	// Get instance details: type (MLX Ring/IBV), sharding (Pipeline/Tensor), and node names
-	function getInstanceInfo(instanceWrapped: unknown): { 
-		instanceType: string; 
-		sharding: string; 
+	function getInstanceInfo(instanceWrapped: unknown): {
+		instanceType: string;
+		sharding: string;
 		nodeNames: string[];
 		nodeIds: string[];
 		nodeCount: number;
+		draftModel: string | null;
+		numDraftTokens: number | null;
 	} {
 		const [instanceTag, instance] = getTagged(instanceWrapped);
 		if (!instance || typeof instance !== 'object') {
-			return { instanceType: 'Unknown', sharding: 'Unknown', nodeNames: [], nodeIds: [], nodeCount: 0 };
+			return { instanceType: 'Unknown', sharding: 'Unknown', nodeNames: [], nodeIds: [], nodeCount: 0, draftModel: null, numDraftTokens: null };
 		}
-		
+
 		// Instance type from tag
 		let instanceType = 'Unknown';
 		if (instanceTag === 'MlxRingInstance') instanceType = 'MLX Ring';
 		else if (instanceTag === 'MlxIbvInstance' || instanceTag === 'MlxJacclInstance') instanceType = 'MLX RDMA';
-		
-		const inst = instance as { 
-			shardAssignments?: { 
-				nodeToRunner?: Record<string, string>; 
+
+		const inst = instance as {
+			shardAssignments?: {
+				nodeToRunner?: Record<string, string>;
 				runnerToShard?: Record<string, unknown>;
-			} 
+			};
+			draftModel?: string;
+			numDraftTokens?: number;
 		};
-		
+
 		// Sharding strategy from first shard
 		let sharding = 'Unknown';
 		const runnerToShard = inst.shardAssignments?.runnerToShard || {};
@@ -850,7 +897,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			else if (shardTag === 'TensorShardMetadata') sharding = 'Tensor';
 			else if (shardTag === 'PrefillDecodeShardMetadata') sharding = 'Prefill/Decode';
 		}
-		
+
 		// Node names from topology
 		const nodeToRunner = inst.shardAssignments?.nodeToRunner || {};
 		const nodeIds = Object.keys(nodeToRunner);
@@ -858,8 +905,12 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			const node = data?.nodes?.[nodeId];
 			return node?.friendly_name || nodeId.slice(0, 8);
 		});
-		
-		return { instanceType, sharding, nodeNames, nodeIds, nodeCount: nodeIds.length };
+
+		// Draft model for speculative decoding
+		const draftModel = inst.draftModel ?? null;
+		const numDraftTokens = inst.numDraftTokens ?? null;
+
+		return { instanceType, sharding, nodeNames, nodeIds, nodeCount: nodeIds.length, draftModel, numDraftTokens };
 	}
 
 	function formatLastUpdate(): string {
@@ -1335,16 +1386,31 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 												<div class="w-1.5 h-1.5 {isDownloading ? 'bg-blue-400 animate-pulse' : isFailed ? 'bg-red-400' : isLoading ? 'bg-yellow-400 animate-pulse' : isReady ? 'bg-green-400' : 'bg-teal-400'} rounded-full shadow-[0_0_6px_currentColor]"></div>
 												<span class="text-exo-light-gray font-mono text-sm tracking-wider">{id.slice(0, 8).toUpperCase()}</span>
 											</div>
-											<button 
-												onclick={() => deleteInstance(id)}
-												class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
-											>
-												DELETE
-											</button>
+											<div class="flex items-center gap-2">
+												<!-- Draft Model Button -->
+												<button
+													onclick={() => openDraftModelEdit(id, instanceInfo.draftModel, instanceInfo.numDraftTokens)}
+													class="p-1.5 font-mono border transition-all duration-200 cursor-pointer {instanceInfo.draftModel ? 'border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/20 hover:border-cyan-500' : 'border-exo-medium-gray/50 text-white/40 hover:text-cyan-400 hover:border-cyan-500/50'}"
+													title={instanceInfo.draftModel ? `Draft: ${instanceInfo.draftModel.split('/').pop()} (${instanceInfo.numDraftTokens}t)` : 'Configure speculative decoding'}
+												>
+													<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+														<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+													</svg>
+												</button>
+												<button
+													onclick={() => deleteInstance(id)}
+													class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
+												>
+													DELETE
+												</button>
+											</div>
 											</div>
 											<div class="pl-2">
 												<div class="text-exo-yellow text-xs font-mono tracking-wide truncate">{getInstanceModelId(instance)}</div>
 												<div class="text-white/60 text-xs font-mono">Strategy: <span class="text-white/80">{instanceInfo.sharding} ({instanceInfo.instanceType})</span></div>
+												{#if instanceInfo.draftModel}
+													<div class="text-white/60 text-xs font-mono">Draft: <span class="text-cyan-400">{instanceInfo.draftModel.split('/').pop()}</span>{#if instanceInfo.numDraftTokens}<span class="text-white/40"> ({instanceInfo.numDraftTokens}t)</span>{/if}</div>
+												{/if}
 												{#if instanceModelId && instanceModelId !== 'Unknown' && instanceModelId !== 'Unknown Model'}
 													<a
 														class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
@@ -1679,7 +1745,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 								</div>
 							</div>
 						</div>
-						
+
 						<!-- Selected Model Preview -->
 						<div class="space-y-3">
 							{#if models.length === 0}
@@ -1838,16 +1904,31 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 													<div class="w-1.5 h-1.5 {isDownloading ? 'bg-blue-400 animate-pulse' : isFailed ? 'bg-red-400' : isLoading ? 'bg-yellow-400 animate-pulse' : isReady ? 'bg-green-400' : 'bg-teal-400'} rounded-full shadow-[0_0_6px_currentColor]"></div>
 													<span class="text-exo-light-gray font-mono text-sm tracking-wider">{id.slice(0, 8).toUpperCase()}</span>
 												</div>
-												<button 
-													onclick={() => deleteInstance(id)}
-													class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
-												>
-													DELETE
-												</button>
+												<div class="flex items-center gap-2">
+													<!-- Draft Model Button -->
+													<button
+														onclick={() => openDraftModelEdit(id, instanceInfo.draftModel, instanceInfo.numDraftTokens)}
+														class="p-1.5 font-mono border transition-all duration-200 cursor-pointer {instanceInfo.draftModel ? 'border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/20 hover:border-cyan-500' : 'border-exo-medium-gray/50 text-white/40 hover:text-cyan-400 hover:border-cyan-500/50'}"
+														title={instanceInfo.draftModel ? `Draft: ${instanceInfo.draftModel.split('/').pop()} (${instanceInfo.numDraftTokens}t)` : 'Configure speculative decoding'}
+													>
+														<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+															<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+														</svg>
+													</button>
+													<button
+														onclick={() => deleteInstance(id)}
+														class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
+													>
+														DELETE
+													</button>
+												</div>
 												</div>
 												<div class="pl-2">
 													<div class="text-exo-yellow text-xs font-mono tracking-wide truncate">{getInstanceModelId(instance)}</div>
 													<div class="text-white/60 text-xs font-mono">Strategy: <span class="text-white/80">{instanceInfo.sharding} ({instanceInfo.instanceType})</span></div>
+													{#if instanceInfo.draftModel}
+														<div class="text-white/60 text-xs font-mono">Draft: <span class="text-cyan-400">{instanceInfo.draftModel.split('/').pop()}</span>{#if instanceInfo.numDraftTokens}<span class="text-white/40"> ({instanceInfo.numDraftTokens}t)</span>{/if}</div>
+													{/if}
 														{#if instanceModelId && instanceModelId !== 'Unknown' && instanceModelId !== 'Unknown Model'}
 															<a
 																class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
@@ -1978,4 +2059,120 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		{/if}
 	</main>
 
+	<!-- Draft Model Edit Modal -->
+	{#if editingDraftInstanceId}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+			onclick={closeDraftModelEdit}
+			onkeydown={(e) => e.key === 'Escape' && closeDraftModelEdit()}
+		>
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<div
+				class="bg-exo-dark-gray border border-exo-medium-gray/50 rounded-lg shadow-2xl p-6 w-full max-w-md mx-4"
+				onclick={(e) => e.stopPropagation()}
+			>
+				<div class="flex items-center justify-between mb-4">
+					<h3 class="text-lg font-mono text-exo-yellow tracking-wide">Speculative Decoding</h3>
+					<button
+						onclick={closeDraftModelEdit}
+						class="text-white/60 hover:text-white transition-colors cursor-pointer"
+						aria-label="Close"
+					>
+						<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+						</svg>
+					</button>
+				</div>
+
+				<p class="text-white/60 text-sm font-mono mb-4">
+					Configure a draft model for faster generation. The draft model proposes tokens that the main model verifies.
+				</p>
+
+				<!-- Draft Model Dropdown -->
+				<div class="mb-4">
+					<div class="text-xs text-white/70 font-mono mb-2">Draft Model:</div>
+					<div class="relative">
+						<button
+							onclick={() => { isDraftEditDropdownOpen = !isDraftEditDropdownOpen; draftEditDropdownSearch = ''; }}
+							class="w-full px-3 py-2 text-left text-sm font-mono border rounded transition-all duration-200 cursor-pointer flex items-center justify-between gap-2 {editDraftModel ? 'bg-transparent text-cyan-400 border-cyan-500/50' : 'bg-transparent text-white/50 border-exo-medium-gray/50 hover:border-cyan-500/50'}"
+						>
+							<span class="truncate">{editDraftModel ? editDraftModel.split('/').pop() : 'None'}</span>
+							<svg class="w-4 h-4 flex-shrink-0 transition-transform {isDraftEditDropdownOpen ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+							</svg>
+						</button>
+						{#if isDraftEditDropdownOpen}
+							<div class="absolute top-full left-0 right-0 mt-1 bg-exo-dark-gray border border-exo-medium-gray/50 rounded shadow-lg z-50 max-h-48 overflow-hidden flex flex-col">
+								<div class="p-2 border-b border-exo-medium-gray/30">
+									<input
+										type="text"
+										bind:value={draftEditDropdownSearch}
+										placeholder="Search models..."
+										class="w-full px-2 py-1.5 text-sm font-mono bg-transparent border border-exo-medium-gray/50 rounded text-white/90 placeholder:text-white/30 focus:outline-none focus:border-cyan-500/50"
+									/>
+								</div>
+								<div class="overflow-y-auto max-h-36">
+									<!-- None option -->
+									<button
+										onclick={() => { editDraftModel = null; isDraftEditDropdownOpen = false; }}
+										class="w-full px-3 py-2 text-left text-sm font-mono tracking-wide transition-colors duration-100 flex items-center gap-2 {editDraftModel === null ? 'bg-transparent text-cyan-400 cursor-pointer' : 'text-white/80 hover:text-cyan-400 cursor-pointer'}"
+									>
+										<span>None (Disable)</span>
+									</button>
+									{#each models.filter(m => (m.name ?? m.id).toLowerCase().includes(draftEditDropdownSearch.toLowerCase())) as model}
+										{@const sizeGB = (model.storage_size_megabytes ?? 0) / 1024}
+										{@const modelHfId = model.hugging_face_id ?? model.id}
+										<button
+											onclick={() => { editDraftModel = modelHfId; isDraftEditDropdownOpen = false; }}
+											class="w-full px-3 py-2 text-left text-sm font-mono tracking-wide transition-colors duration-100 flex items-center justify-between gap-2 {editDraftModel === modelHfId ? 'bg-transparent text-cyan-400 cursor-pointer' : 'text-white/80 hover:text-cyan-400 cursor-pointer'}"
+										>
+											<span class="truncate">{model.name || model.id}</span>
+											<span class="flex-shrink-0 text-xs text-white/50">
+												{sizeGB >= 1 ? sizeGB.toFixed(0) : sizeGB.toFixed(1)}GB
+											</span>
+										</button>
+									{:else}
+										<div class="px-3 py-2 text-xs text-white/50 font-mono">No models found</div>
+									{/each}
+								</div>
+							</div>
+						{/if}
+					</div>
+				</div>
+
+				<!-- Draft Tokens -->
+				{#if editDraftModel}
+					<div class="mb-6">
+						<div class="text-xs text-white/70 font-mono mb-2">Draft Tokens per Iteration:</div>
+						<div class="flex items-center gap-2">
+							{#each [2, 3, 4, 5, 6] as n}
+								<button
+									onclick={() => editNumDraftTokens = n}
+									class="w-8 h-8 text-sm font-mono rounded transition-all {editNumDraftTokens === n ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50' : 'text-white/50 hover:text-white/80 border border-exo-medium-gray/50 hover:border-white/30'} cursor-pointer"
+								>{n}</button>
+							{/each}
+						</div>
+					</div>
+				{/if}
+
+				<!-- Action Buttons -->
+				<div class="flex items-center justify-end gap-3">
+					<button
+						onclick={closeDraftModelEdit}
+						class="px-4 py-2 text-sm font-mono text-white/70 hover:text-white transition-colors cursor-pointer"
+					>
+						Cancel
+					</button>
+					<button
+						onclick={saveDraftModel}
+						disabled={isSavingDraftModel}
+						class="px-4 py-2 text-sm font-mono border border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/20 hover:border-cyan-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+					>
+						{isSavingDraftModel ? 'Saving...' : 'Save'}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
 </div>

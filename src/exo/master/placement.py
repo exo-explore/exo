@@ -3,8 +3,6 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Sequence
 
-from loguru import logger
-
 from exo.master.placement_utils import (
     filter_cycles_by_memory,
     get_mlx_ibv_devices_matrix,
@@ -55,7 +53,6 @@ def place_instance(
 ) -> dict[InstanceId, Instance]:
     all_nodes = list(topology.list_nodes())
 
-    logger.info("finding cycles:")
     cycles = topology.get_cycles()
     singleton_cycles = [[node] for node in all_nodes]
     candidate_cycles = list(
@@ -128,10 +125,6 @@ def place_instance(
     target_instances = dict(deepcopy(current_instances))
 
     if len(selected_cycle) == 1:
-        logger.warning(
-            "You have likely selected ibv for a single node instance; falling back to MlxRing"
-        )
-
         command.instance_meta = InstanceMeta.MlxRing
 
     # TODO: Single node instances
@@ -151,6 +144,8 @@ def place_instance(
                 shard_assignments=shard_assignments,
                 ibv_devices=mlx_ibv_devices,
                 jaccl_coordinators=mlx_jaccl_coordinators,
+                draft_model=command.draft_model,
+                num_draft_tokens=command.num_draft_tokens,
             )
         case InstanceMeta.MlxRing:
             ephemeral_port = random_ephemeral_port()
@@ -164,6 +159,8 @@ def place_instance(
                 shard_assignments=shard_assignments,
                 hosts_by_node=hosts_by_node,
                 ephemeral_port=ephemeral_port,
+                draft_model=command.draft_model,
+                num_draft_tokens=command.num_draft_tokens,
             )
 
     return target_instances
