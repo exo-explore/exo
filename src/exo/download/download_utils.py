@@ -24,6 +24,13 @@ from pydantic import (
     TypeAdapter,
 )
 
+from exo.download.huggingface_utils import (
+    filter_repo_objects,
+    get_allow_patterns,
+    get_auth_headers,
+    get_hf_endpoint,
+    get_hf_token,
+)
 from exo.shared.constants import EXO_MODELS_DIR
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
@@ -35,13 +42,6 @@ from exo.shared.types.worker.downloads import (
     RepoFileDownloadProgress,
 )
 from exo.shared.types.worker.shards import ShardMetadata
-from exo.worker.download.huggingface_utils import (
-    filter_repo_objects,
-    get_allow_patterns,
-    get_auth_headers,
-    get_hf_endpoint,
-    get_hf_token,
-)
 
 
 class HuggingFaceAuthenticationError(Exception):
