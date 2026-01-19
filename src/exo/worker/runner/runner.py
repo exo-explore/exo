@@ -26,7 +26,6 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
-from exo.shared.types.models import ModelId
 from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.tasks import (
     ChatCompletion,
@@ -217,14 +216,10 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
-                    with send_error_chunk_on_exception(
-                        event_sender,
-                        command_id,
-                        shard_metadata.model_meta.model_id,
-                        shard_metadata.device_rank,
-                    ):
-                        assert model and not isinstance(model, DistributedImageModel)
-                        assert tokenizer
+                    assert model and not isinstance(model, DistributedImageModel)
+                    assert tokenizer
+
+                    try:
                         _check_for_debug_prompts(task_params)
 
                         # Build prompt once - used for both generation and thinking detection
