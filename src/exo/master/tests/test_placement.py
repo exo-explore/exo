@@ -70,7 +70,7 @@ def place_instance_command(model_meta: ModelMetadata) -> PlaceInstance:
     [
         ((500, 500, 1000), 12, (3, 3, 6)),
         ((500, 500, 500), 12, (4, 4, 4)),
-        ((312, 518, 1024), 12, (2, 3, 7)),
+        ((312, 468, 1092), 12, (2, 3, 7)),
     ],
 )
 def test_get_instance_placements_create_instance(
