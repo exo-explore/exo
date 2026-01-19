@@ -196,8 +196,9 @@ class DiffusionRunner:
     ) -> set[int]:
         """Calculate which timesteps should produce partial images.
 
-        Evenly spaces `partial_images` captures across the diffusion loop.
-        Does NOT include the final timestep (that's the complete image).
+        Places the first partial after step 1 for fast initial feedback,
+        then evenly spaces remaining partials with equal gaps between them
+        and from the last partial to the final image.
 
         Args:
             partial_images: Number of partial images to capture
@@ -217,12 +218,20 @@ class DiffusionRunner:
         if partial_images >= total_steps - 1:
             return set(range(init_time_step, num_inference_steps - 1))
 
-        step_interval = total_steps / (partial_images + 1)
         capture_steps: set[int] = set()
-        for i in range(1, partial_images + 1):
-            step_idx = int(init_time_step + i * step_interval)
-            if step_idx < num_inference_steps - 1:
-                capture_steps.add(step_idx)
+
+        first_capture = init_time_step + 1
+        capture_steps.add(first_capture)
+
+        if partial_images == 1:
+            return capture_steps
+
+        final_step = num_inference_steps - 1
+        remaining_range = final_step - first_capture
+
+        for i in range(1, partial_images):
+            step_idx = first_capture + int(i * remaining_range / partial_images)
+            capture_steps.add(step_idx)
 
         return capture_steps
 
