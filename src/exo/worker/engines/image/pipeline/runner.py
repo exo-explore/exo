@@ -595,17 +595,17 @@ class DiffusionRunner:
 
         if self.has_joint_blocks:
             if not self.is_first_stage:
-                recv_template = mx.zeros(
-                    (batch_size, num_img_tokens, hidden_dim), dtype=dtype
+                hidden_states = mx.distributed.recv(
+                    (batch_size, num_img_tokens, hidden_dim),
+                    dtype,
+                    self.prev_rank,
+                    group=self.group,
                 )
-                hidden_states = mx.distributed.recv_like(
-                    recv_template, self.prev_rank, group=self.group
-                )
-                enc_template = mx.zeros(
-                    (batch_size, text_seq_len, hidden_dim), dtype=dtype
-                )
-                encoder_hidden_states = mx.distributed.recv_like(
-                    enc_template, self.prev_rank, group=self.group
+                encoder_hidden_states = mx.distributed.recv(
+                    (batch_size, text_seq_len, hidden_dim),
+                    dtype,
+                    self.prev_rank,
+                    group=self.group,
                 )
 
             assert self.joint_block_wrappers is not None
@@ -642,12 +642,11 @@ class DiffusionRunner:
 
         if self.has_single_blocks:
             if not self.owns_concat_stage and not self.is_first_stage:
-                recv_template = mx.zeros(
+                hidden_states = mx.distributed.recv(
                     (batch_size, text_seq_len + num_img_tokens, hidden_dim),
-                    dtype=dtype,
-                )
-                hidden_states = mx.distributed.recv_like(
-                    recv_template, self.prev_rank, group=self.group
+                    dtype,
+                    self.prev_rank,
+                    group=self.group,
                 )
 
             assert self.single_block_wrappers is not None
@@ -889,21 +888,19 @@ class DiffusionRunner:
         if self.has_joint_blocks:
             if not self.is_first_stage:
                 patch_len = patch.shape[1]
-                recv_template = mx.zeros(
+                patch = mx.distributed.recv(
                     (batch_size, patch_len, hidden_dim),
-                    dtype=patch.dtype,
-                )
-                patch = mx.distributed.recv_like(
-                    recv_template, src=self.prev_rank, group=self.group
+                    patch.dtype,
+                    self.prev_rank,
+                    group=self.group,
                 )
 
                 if patch_idx == 0:
-                    enc_template = mx.zeros(
+                    encoder_hidden_states = mx.distributed.recv(
                         (batch_size, text_seq_len, hidden_dim),
-                        dtype=patch.dtype,
-                    )
-                    encoder_hidden_states = mx.distributed.recv_like(
-                        enc_template, src=self.prev_rank, group=self.group
+                        patch.dtype,
+                        self.prev_rank,
+                        group=self.group,
                     )
 
             if self.is_first_stage:
@@ -948,12 +945,11 @@ class DiffusionRunner:
         if self.has_single_blocks:
             if not self.owns_concat_stage and not self.is_first_stage:
                 patch_len = patch.shape[1]
-                recv_template = mx.zeros(
+                patch = mx.distributed.recv(
                     (batch_size, text_seq_len + patch_len, hidden_dim),
-                    dtype=patch.dtype,
-                )
-                patch = mx.distributed.recv_like(
-                    recv_template, src=self.prev_rank, group=self.group
+                    patch.dtype,
+                    self.prev_rank,
+                    group=self.group,
                 )
 
             assert self.single_block_wrappers is not None
