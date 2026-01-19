@@ -45,7 +45,7 @@ class QwenPromptData(PromptData):
     @property
     def pooled_prompt_embeds(self) -> mx.array:
         """Placeholder for protocol compliance - Qwen doesn't use pooled embeds."""
-        return self._prompt_embeds  # Use prompt_embeds as placeholder
+        return self._prompt_embeds
 
     @property
     def negative_prompt_embeds(self) -> mx.array:
@@ -206,18 +206,14 @@ class QwenModelAdapter(ModelAdapter):
             start_layer:end_layer
         ]
 
-    def encode_prompt(self, prompt: str) -> QwenPromptData:
-        """Encode prompt into QwenPromptData.
-
-        Qwen uses classifier-free guidance with explicit negative prompts.
-        Returns a QwenPromptData container with all 4 tensors.
-        """
-
+    def encode_prompt(
+        self, prompt: str, negative_prompt: str | None = None
+    ) -> QwenPromptData:
         assert isinstance(self.model.prompt_cache, dict)
         assert isinstance(self.model.tokenizers, dict)
 
-        # TODO(ciaran): empty string as default negative prompt
-        negative_prompt = ""
+        if negative_prompt is None or negative_prompt == "":
+            negative_prompt = " "
 
         prompt_embeds, prompt_mask, neg_embeds, neg_mask = (
             QwenPromptEncoder.encode_prompt(
@@ -242,9 +238,7 @@ class QwenModelAdapter(ModelAdapter):
         prompt_embeds: mx.array,
     ) -> tuple[mx.array, mx.array]:
         """Compute image and text embeddings."""
-        # Image embedding
         embedded_hidden = self._transformer.img_in(hidden_states)
-        # Text embedding: first normalize, then project
         encoder_hidden_states = self._transformer.txt_norm(prompt_embeds)
         embedded_encoder = self._transformer.txt_in(encoder_hidden_states)
         return embedded_hidden, embedded_encoder

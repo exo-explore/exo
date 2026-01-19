@@ -250,11 +250,14 @@ class ModelAdapter(ABC):
         )
 
     @abstractmethod
-    def encode_prompt(self, prompt: str) -> "PromptData":
+    def encode_prompt(
+        self, prompt: str, negative_prompt: str | None = None
+    ) -> "PromptData":
         """Encode prompt into model-specific prompt data.
 
         Args:
             prompt: Text prompt
+            negative_prompt: Negative prompt for CFG
 
         Returns:
             PromptData containing embeddings (and model-specific extras)

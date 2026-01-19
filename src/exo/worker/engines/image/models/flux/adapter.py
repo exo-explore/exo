@@ -145,8 +145,10 @@ class FluxModelAdapter(ModelAdapter):
             single_start:single_end
         ]
 
-    def encode_prompt(self, prompt: str) -> FluxPromptData:
-        """Encode prompt into FluxPromptData."""
+    def encode_prompt(
+        self, prompt: str, negative_prompt: str | None = None
+    ) -> FluxPromptData:
+        del negative_prompt
 
         assert isinstance(self.model.prompt_cache, dict)
         assert isinstance(self.model.tokenizers, dict)

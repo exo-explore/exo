@@ -1,5 +1,6 @@
 import base64
 import io
+import random
 import tempfile
 import time
 from pathlib import Path
@@ -74,7 +75,12 @@ def generate_image(
     """
     width, height = parse_size(task.size)
     quality: Literal["low", "medium", "high"] = task.quality or "medium"
-    seed = 2  # TODO(ciaran): Randomise when not testing anymore
+
+    advanced_params = task.advanced_params
+    if advanced_params is not None and advanced_params.seed is not None:
+        seed = advanced_params.seed
+    else:
+        seed = random.randint(0, 2**32 - 1)
 
     is_bench = getattr(task, "bench", False)
 
@@ -103,6 +109,7 @@ def generate_image(
             seed=seed,
             image_path=image_path,
             partial_images=partial_images,
+            advanced_params=advanced_params,
         ):
             if isinstance(result, tuple):
                 # Partial image: (Image, partial_index, total_partials)

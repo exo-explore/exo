@@ -177,7 +177,6 @@ class QwenEditModelAdapter(ModelAdapter):
         )
         self._transformer = self._model.transformer
 
-        # Store dimensions and image paths (set via set_image_dimensions)
         self._vl_width: int | None = None
         self._vl_height: int | None = None
         self._vae_width: int | None = None
@@ -261,18 +260,9 @@ class QwenEditModelAdapter(ModelAdapter):
             width=runtime_config.width,
         )
 
-    def encode_prompt(self, prompt: str) -> QwenEditPromptData:
-        """Encode prompt with input images using vision-language encoder.
-
-        Uses stored image_paths from set_image_dimensions() for VL encoding.
-
-        Args:
-            prompt: Text prompt for editing
-
-        Returns:
-            QwenEditPromptData with VL embeddings and conditioning latents
-        """
-        # Ensure image_paths and dimensions were set via set_image_dimensions()
+    def encode_prompt(
+        self, prompt: str, negative_prompt: str | None = None
+    ) -> QwenEditPromptData:
         if (
             self._image_paths is None
             or self._vl_height is None
@@ -285,7 +275,9 @@ class QwenEditModelAdapter(ModelAdapter):
                 "for QwenEditModelAdapter"
             )
 
-        negative_prompt = ""
+        if negative_prompt is None or negative_prompt == "":
+            negative_prompt = " "
+
         image_paths = self._image_paths
 
         # TODO(ciaran): config is untyped and unused, unsure if Config or RuntimeConfig is intended

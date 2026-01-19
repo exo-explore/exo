@@ -6,6 +6,7 @@ import mlx.core as mx
 from mflux.models.common.config.config import Config
 from PIL import Image
 
+from exo.shared.types.api import AdvancedImageParams
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.download.download_utils import build_model_path
@@ -189,9 +190,27 @@ class DistributedImageModel:
         seed: int = 2,
         image_path: Path | None = None,
         partial_images: int = 0,
+        advanced_params: AdvancedImageParams | None = None,
     ) -> Generator[Image.Image | tuple[Image.Image, int, int], None, None]:
-        # Determine number of inference steps based on quality
-        steps = self._config.get_steps_for_quality(quality)
+        if (
+            advanced_params is not None
+            and advanced_params.num_inference_steps is not None
+        ):
+            steps = advanced_params.num_inference_steps
+        else:
+            steps = self._config.get_steps_for_quality(quality)
+
+        image_strength: float | None = None
+        if advanced_params is not None and advanced_params.image_strength is not None:
+            image_strength = advanced_params.image_strength
+
+        guidance_override: float | None = None
+        if advanced_params is not None and advanced_params.guidance is not None:
+            guidance_override = advanced_params.guidance
+
+        negative_prompt: str | None = None
+        if advanced_params is not None and advanced_params.negative_prompt is not None:
+            negative_prompt = advanced_params.negative_prompt
 
         # For edit mode: compute dimensions from input image
         # This also stores image_paths in the adapter for encode_prompt()
@@ -207,25 +226,25 @@ class DistributedImageModel:
             width=width,
             image_path=image_path,
             model_config=self._adapter.model.model_config,
+            image_strength=image_strength,
         )
 
-        # Generate images via the runner
         for result in self._runner.generate_image(
             runtime_config=config,
             prompt=prompt,
             seed=seed,
             partial_images=partial_images,
+            guidance_override=guidance_override,
+            negative_prompt=negative_prompt,
         ):
             if isinstance(result, tuple):
                 # Partial image: (GeneratedImage, partial_index, total_partials)
                 generated_image, partial_idx, total_partials = result
                 yield (generated_image.image, partial_idx, total_partials)
             else:
-                # Final image: GeneratedImage
                 logger.info("generated image")
                 yield result.image
 
 
 def initialize_image_model(bound_instance: BoundInstance) -> DistributedImageModel:
-    """Initialize DistributedImageModel from a BoundInstance."""
     return DistributedImageModel.from_bound_instance(bound_instance)

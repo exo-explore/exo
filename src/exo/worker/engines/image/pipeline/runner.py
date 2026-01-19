@@ -100,6 +100,8 @@ class DiffusionRunner:
         self.total_single = config.single_block_count
         self.total_layers = config.total_blocks
 
+        self._guidance_override: float | None = None
+
         self._compute_assigned_blocks()
 
     def _compute_assigned_blocks(self) -> None:
@@ -147,6 +149,11 @@ class DiffusionRunner:
     @property
     def is_distributed(self) -> bool:
         return self.group is not None
+
+    def _get_effective_guidance_scale(self) -> float | None:
+        if self._guidance_override is not None:
+            return self._guidance_override
+        return self.config.guidance_scale
 
     def _ensure_wrappers(
         self,
@@ -241,6 +248,8 @@ class DiffusionRunner:
         prompt: str,
         seed: int,
         partial_images: int = 0,
+        guidance_override: float | None = None,
+        negative_prompt: str | None = None,
     ):
         """Primary entry point for image generation.
 
@@ -259,13 +268,15 @@ class DiffusionRunner:
             prompt: Text prompt
             seed: Random seed
             partial_images: Number of intermediate images to yield (0 for none)
+            guidance_override: Optional override for guidance scale (CFG)
 
         Yields:
             Partial images as (GeneratedImage, partial_index, total_partials) tuples
             Final GeneratedImage
         """
+        self._guidance_override = guidance_override
         latents = self.adapter.create_latents(seed, runtime_config)
-        prompt_data = self.adapter.encode_prompt(prompt)
+        prompt_data = self.adapter.encode_prompt(prompt, negative_prompt)
 
         capture_steps = self._calculate_capture_steps(
             partial_images=partial_images,
@@ -538,9 +549,10 @@ class DiffusionRunner:
 
         if needs_cfg:
             noise_pos, noise_neg = mx.split(noise, 2, axis=0)
-            assert self.config.guidance_scale is not None
+            guidance_scale = self._get_effective_guidance_scale()
+            assert guidance_scale is not None
             noise = self.adapter.apply_guidance(
-                noise_pos, noise_neg, guidance_scale=self.config.guidance_scale
+                noise_pos, noise_neg, guidance_scale=guidance_scale
             )
 
         return config.scheduler.step(noise=noise, timestep=t, latents=latents)
@@ -744,9 +756,10 @@ class DiffusionRunner:
             assert noise is not None
             if needs_cfg:
                 noise_pos, noise_neg = mx.split(noise, 2, axis=0)
-                assert self.config.guidance_scale is not None
+                guidance_scale = self._get_effective_guidance_scale()
+                assert guidance_scale is not None
                 noise = self.adapter.apply_guidance(
-                    noise_pos, noise_neg, self.config.guidance_scale
+                    noise_pos, noise_neg, guidance_scale
                 )
 
             hidden_states = config.scheduler.step(
@@ -841,9 +854,10 @@ class DiffusionRunner:
                 assert noise is not None
                 if needs_cfg:
                     noise_pos, noise_neg = mx.split(noise, 2, axis=0)
-                    assert self.config.guidance_scale is not None
+                    guidance_scale = self._get_effective_guidance_scale()
+                    assert guidance_scale is not None
                     noise = self.adapter.apply_guidance(
-                        noise_pos, noise_neg, self.config.guidance_scale
+                        noise_pos, noise_neg, guidance_scale
                     )
 
                 patch_latents[patch_idx] = config.scheduler.step(
