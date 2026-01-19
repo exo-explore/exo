@@ -70,6 +70,88 @@ Group = mx.distributed.Group
 resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 4096))
 
 
+def normalize_tool_call_arguments(message_dict: dict[str, Any]) -> dict[str, Any]:
+    """
+    Normalize tool call arguments from JSON strings to Python dictionaries.
+
+    This function handles the conversion between OpenAI API format (where tool_call.arguments
+    are JSON strings) and Transformers/Jinja2 template format (where arguments should be dicts).
+    """
+    # Create a shallow copy to avoid mutating the original message
+    normalized_message = message_dict.copy()
+
+    # Handle tool_calls if present
+    if normalized_message.get("tool_calls"):
+        tool_calls = normalized_message["tool_calls"]  # type: ignore[assignment]
+
+        if isinstance(tool_calls, list):
+            normalized_tool_calls = []  # type: ignore[assignment]
+            for tool_call in tool_calls:
+                if not isinstance(tool_call, dict):
+                    normalized_tool_calls.append(tool_call)
+                    continue
+
+                normalized_tool_call = tool_call.copy()
+
+                # Handle OpenAI format: {"type": "function", "function": {"name": "...", "arguments": "..."}}
+                function = normalized_tool_call.get("function")  # type: ignore[assignment]
+                if isinstance(function, dict) and "arguments" in function:
+                    arguments = function["arguments"]  # type: ignore[assignment]
+
+                    # Convert JSON string to dict if needed
+                    if isinstance(arguments, str):
+                        try:
+                            function["arguments"] = json.loads(arguments)
+                        except (json.JSONDecodeError, TypeError) as e:
+                            logger.warning(
+                                f"Failed to parse tool call arguments as JSON: {e}. Using empty dict."
+                            )
+                            function["arguments"] = {}
+                    elif not isinstance(arguments, dict):
+                        # If arguments is not a dict and not a string, convert to dict
+                        function["arguments"] = {"value": arguments}
+
+                # Handle alternate format: {"name": "...", "arguments": "..."}
+                elif "arguments" in normalized_tool_call:
+                    arguments = normalized_tool_call["arguments"]  # type: ignore[assignment]
+
+                    if isinstance(arguments, str):
+                        try:
+                            normalized_tool_call["arguments"] = json.loads(arguments)
+                        except (json.JSONDecodeError, TypeError) as e:
+                            logger.warning(
+                                f"Failed to parse tool call arguments as JSON: {e}. Using empty dict."
+                            )
+                            normalized_tool_call["arguments"] = {}
+                    elif not isinstance(arguments, dict):
+                        normalized_tool_call["arguments"] = {"value": arguments}
+
+                normalized_tool_calls.append(normalized_tool_call)  # type: ignore[arg-type]
+
+            normalized_message["tool_calls"] = normalized_tool_calls
+
+    # Handle legacy function_call field if present
+    if "function_call" in normalized_message and isinstance(
+        normalized_message["function_call"], dict
+    ):
+        function_call = normalized_message["function_call"]  # type: ignore[assignment]
+        if "arguments" in function_call:
+            arguments = function_call["arguments"]  # type: ignore[assignment]
+
+            if isinstance(arguments, str):
+                try:
+                    function_call["arguments"] = json.loads(arguments)
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.warning(
+                        f"Failed to parse function_call arguments as JSON: {e}. Using empty dict."
+                    )
+                    function_call["arguments"] = {}
+            elif not isinstance(arguments, dict):
+                function_call["arguments"] = {"value": arguments}
+
+    return normalized_message
+
+
 # TODO: Test this
 #  ALSO https://github.com/exo-explore/exo/pull/233#discussion_r2549683673
 def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
@@ -386,9 +468,9 @@ def apply_chat_template(
             continue
 
         # Null values are not valid when applying templates in tokenizer
-        formatted_messages.append(
-            {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
-        )
+        message_dict = {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
+        normalized_message = normalize_tool_call_arguments(message_dict)
+        formatted_messages.append(normalized_message)
 
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,
