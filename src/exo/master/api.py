@@ -19,9 +19,17 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
+from exo.shared.models.architecture_support import supports_tensor_parallel
 from exo.shared.models.model_cards import MODEL_CARDS
-from exo.shared.models.model_meta import get_model_meta
+from exo.shared.models.model_meta import (
+    get_config_data,
+    get_model_meta,
+    get_safetensors_size,
+)
+from exo.shared.models.model_registry import get_registry
 from exo.shared.types.api import (
+    AddCustomModelRequest,
+    AddCustomModelResponse,
     BenchChatCompletionResponse,
     BenchChatCompletionTaskParams,
     ChatCompletionChoice,
@@ -29,17 +37,20 @@ from exo.shared.types.api import (
     ChatCompletionResponse,
     CreateInstanceParams,
     CreateInstanceResponse,
+    DeleteCustomModelResponse,
     DeleteInstanceResponse,
     ErrorInfo,
     ErrorResponse,
     FinishReason,
     GenerationStats,
+    HuggingFaceModelInfo,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
     PlacementPreview,
     PlacementPreviewResponse,
     StreamingChoiceResponse,
+    UpdateCustomModelRequest,
 )
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.commands import (
@@ -59,7 +70,7 @@ from exo.shared.types.events import (
     IndexedEvent,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata
+from exo.shared.types.models import ModelConfig, ModelId, ModelMetadata
 from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
@@ -194,6 +205,12 @@ class API:
         self.app.post("/bench/chat/completions")(self.bench_chat_completions)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
+        # Custom model management endpoints
+        self.app.post("/models/custom")(self.add_custom_model)
+        self.app.delete("/models/custom")(self.delete_custom_model)
+        self.app.patch("/models/custom")(self.update_custom_model)
+        # HuggingFace model search
+        self.app.get("/models/search")(self.search_models)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -280,7 +297,7 @@ class API:
         if len(list(self.state.topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
-        cards = [card for card in MODEL_CARDS.values() if card.short_id == model_id]
+        cards = [card for card in MODEL_CARDS.values() if card.model_id == model_id]
         if not cards:
             raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
 
@@ -614,17 +631,220 @@ class API:
         return ModelList(
             data=[
                 ModelListModel(
-                    id=card.short_id,
-                    hugging_face_id=card.model_id,
+                    id=card.model_id,
                     name=card.name,
                     description=card.description,
                     tags=card.tags,
                     storage_size_megabytes=int(card.metadata.storage_size.in_mb),
                     supports_tensor=card.metadata.supports_tensor,
+                    base_model=card.base_model_id,
+                    base_model_name=card.base_model_name,
+                    quantization=card.quantization,
+                    architecture=card.architecture,
+                    tagline=card.tagline,
+                    capabilities=card.capabilities,
+                    family=card.family,
                 )
                 for card in MODEL_CARDS.values()
             ]
         )
+
+    async def add_custom_model(
+        self, payload: AddCustomModelRequest
+    ) -> AddCustomModelResponse:
+        """Add a custom model by fetching metadata from HuggingFace."""
+        model_id = payload.model_id
+        registry = get_registry()
+
+        # Check if model already exists
+        existing = registry.get(model_id)
+        if existing is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model {model_id} already exists in the registry",
+            )
+
+        # Fetch metadata from HuggingFace
+        try:
+            config_data = await get_config_data(model_id)
+            storage_size = await get_safetensors_size(model_id)
+        except FileNotFoundError as e:
+            logger.error(f"Model not found: {model_id}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model '{model_id}' not found on HuggingFace Hub. Please check the model ID and ensure the model exists.",
+            ) from e
+        except ValueError as e:
+            # Raised when config.json doesn't have required fields
+            logger.error(f"Invalid config for {model_id}: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model '{model_id}' has an invalid or unsupported config.json: {e}",
+            ) from e
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "403" in error_msg or "gated" in error_msg or "access" in error_msg:
+                logger.error(f"Model access denied: {model_id}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Model '{model_id}' is gated or requires authentication. Please ensure you have access to this model.",
+                ) from e
+            logger.error(f"Failed to fetch metadata for {model_id}: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to fetch model metadata from HuggingFace: {e}",
+            ) from e
+
+        # Generate name from model_id
+        name = model_id.split("/")[-1] if "/" in model_id else model_id
+
+        # Get architecture and derive tensor support from it
+        architecture = config_data.architecture
+        tensor_support = supports_tensor_parallel(architecture)
+
+        # Create config
+        config = ModelConfig(
+            model_id=model_id,
+            name=name,
+            description="",
+            tags=[],
+            supports_tensor=tensor_support,
+            storage_size_bytes=storage_size.in_bytes,
+            n_layers=config_data.layer_count,
+            hidden_size=config_data.hidden_dim,
+            is_user_added=True,
+            architecture=architecture,
+        )
+
+        # Add to registry (persists to disk)
+        registry.add_user_model(config)
+
+        return AddCustomModelResponse(
+            model_id=config.model_id,
+            name=config.name,
+            storage_size_bytes=config.storage_size_bytes,
+            n_layers=config.n_layers,
+            hidden_size=config.hidden_size,
+            supports_tensor=config.supports_tensor,
+            is_user_added=True,
+        )
+
+    async def delete_custom_model(self, model_id: str) -> DeleteCustomModelResponse:
+        """Delete a user-added custom model."""
+        registry = get_registry()
+
+        config = registry.get(model_id)
+        if config is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model {model_id} not found",
+            )
+
+        if not config.is_user_added:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete built-in model {model_id}",
+            )
+
+        success = registry.remove_user_model(model_id)
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to remove model {model_id}",
+            )
+
+        return DeleteCustomModelResponse(
+            message=f"Model {model_id} deleted successfully",
+            model_id=model_id,
+        )
+
+    async def update_custom_model(
+        self, model_id: str, payload: UpdateCustomModelRequest
+    ) -> AddCustomModelResponse:
+        """Update a user-added custom model configuration."""
+        registry = get_registry()
+
+        config = registry.get(model_id)
+        if config is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model {model_id} not found",
+            )
+
+        if not config.is_user_added:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot update built-in model {model_id}",
+            )
+
+        # Build updates dict from non-None fields
+        updates: dict[str, object] = {}
+        if payload.name is not None:
+            updates["name"] = payload.name
+        if payload.description is not None:
+            updates["description"] = payload.description
+        if payload.supports_tensor is not None:
+            updates["supports_tensor"] = payload.supports_tensor
+
+        if not updates:
+            raise HTTPException(
+                status_code=400,
+                detail="No updates provided",
+            )
+
+        updated = registry.update_user_model(model_id, **updates)
+        if updated is None:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to update model {model_id}",
+            )
+
+        return AddCustomModelResponse(
+            model_id=updated.model_id,
+            name=updated.name,
+            storage_size_bytes=updated.storage_size_bytes,
+            n_layers=updated.n_layers,
+            hidden_size=updated.hidden_size,
+            supports_tensor=updated.supports_tensor,
+            is_user_added=True,
+        )
+
+    async def search_models(
+        self,
+        query: str = "",
+        author: str = "mlx-community",
+        limit: int = 20,
+    ) -> list[HuggingFaceModelInfo]:
+        """Search HuggingFace Hub for models."""
+        from huggingface_hub import HfApi
+
+        try:
+            api = HfApi()
+            models = api.list_models(
+                author=author if author else None,
+                search=query if query else None,
+                sort="downloads",
+                direction=-1,
+                limit=limit,
+            )
+
+            return [
+                HuggingFaceModelInfo(
+                    id=m.id,
+                    author=m.author or "",
+                    downloads=m.downloads or 0,
+                    likes=m.likes or 0,
+                    last_modified=str(m.last_modified) if m.last_modified else "",
+                    tags=list(m.tags) if m.tags else [],
+                )
+                for m in models
+            ]
+        except Exception as e:
+            logger.error(f"Failed to search HuggingFace Hub: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to search HuggingFace Hub: {e}",
+            ) from e
 
     async def run(self):
         cfg = Config()

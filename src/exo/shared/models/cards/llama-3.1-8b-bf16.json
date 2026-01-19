@@ -1,0 +1,11 @@
+{
+  "model_id": "mlx-community/Meta-Llama-3.1-8B-Instruct-bf16",
+  "name": "Llama 3.1 8B (BF16)",
+  "description": "Llama 3.1 is a large language model trained on the Llama 3.1 dataset.",
+  "tags": [],
+  "supports_tensor": true,
+  "storage_size_bytes": 16882073600,
+  "n_layers": 32,
+  "hidden_size": 4096,
+  "is_user_added": false
+}

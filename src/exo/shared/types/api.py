@@ -27,18 +27,26 @@ class ErrorResponse(BaseModel):
 
 
 class ModelListModel(BaseModel):
-    id: str
+    id: str  # Full HuggingFace model_id (e.g., "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit")
     object: str = "model"
     created: int = Field(default_factory=lambda: int(time.time()))
     owned_by: str = "exo"
     # openwebui fields
-    hugging_face_id: str = Field(default="")
     name: str = Field(default="")
     description: str = Field(default="")
     context_length: int = Field(default=0)
     tags: list[str] = Field(default=[])
     storage_size_megabytes: int = Field(default=0)
     supports_tensor: bool = Field(default=False)
+    # Grouped model fields (new)
+    base_model: str = Field(default="")  # Base model id (e.g., "llama-3.1-8b")
+    base_model_name: str = Field(default="")  # Display name (e.g., "Llama 3.1 8B")
+    quantization: str = Field(default="")  # Quantization type (e.g., "4bit", "8bit")
+    architecture: str = Field(default="")  # HuggingFace model_type (e.g., "llama")
+    # UI display fields
+    tagline: str = Field(default="")  # Short description (max 60 chars)
+    capabilities: list[str] = Field(default=[])  # e.g., ["text", "thinking", "code"]
+    family: str = Field(default="")  # Model family (e.g., "llama", "qwen")
 
 
 class ModelList(BaseModel):
@@ -213,3 +221,47 @@ class DeleteInstanceResponse(BaseModel):
     message: str
     command_id: CommandId
     instance_id: InstanceId
+
+
+class AddCustomModelRequest(BaseModel):
+    """Request body for adding a custom model."""
+
+    model_id: str  # HuggingFace repo ID (e.g., "mlx-community/Some-Model-4bit")
+
+
+class AddCustomModelResponse(BaseModel):
+    """Response after adding a custom model."""
+
+    model_id: str  # Full HuggingFace model_id
+    name: str
+    storage_size_bytes: int
+    n_layers: int
+    hidden_size: int
+    supports_tensor: bool
+    is_user_added: bool
+
+
+class UpdateCustomModelRequest(BaseModel):
+    """Request body for updating a custom model."""
+
+    name: str | None = None
+    description: str | None = None
+    supports_tensor: bool | None = None
+
+
+class DeleteCustomModelResponse(BaseModel):
+    """Response after deleting a custom model."""
+
+    message: str
+    model_id: str  # Full HuggingFace model_id that was deleted
+
+
+class HuggingFaceModelInfo(BaseModel):
+    """Search result from HuggingFace Hub."""
+
+    id: str  # Full model ID (e.g., "mlx-community/Llama-3.2-1B-Instruct-4bit")
+    author: str
+    downloads: int
+    likes: int
+    last_modified: str
+    tags: list[str]

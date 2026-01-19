@@ -1,0 +1,11 @@
+{
+  "model_id": "mlx-community/GLM-4.7-4bit",
+  "name": "GLM 4.7 4bit",
+  "description": "GLM 4.7 4bit",
+  "tags": [],
+  "supports_tensor": true,
+  "storage_size_bytes": 198556925568,
+  "n_layers": 91,
+  "hidden_size": 5120,
+  "is_user_added": false
+}

@@ -1,0 +1,11 @@
+{
+  "model_id": "mlx-community/Meta-Llama-3.1-70B-Instruct-4bit",
+  "name": "Llama 3.1 70B (4-bit)",
+  "description": "Llama 3.1 is a large language model trained on the Llama 3.1 dataset.",
+  "tags": [],
+  "supports_tensor": true,
+  "storage_size_bytes": 40652242944,
+  "n_layers": 80,
+  "hidden_size": 8192,
+  "is_user_added": false
+}

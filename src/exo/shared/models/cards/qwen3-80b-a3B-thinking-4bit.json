@@ -1,0 +1,11 @@
+{
+  "model_id": "mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit",
+  "name": "Qwen3 80B A3B Thinking (4-bit)",
+  "description": "Qwen3 80B Reasoning model",
+  "tags": [],
+  "supports_tensor": true,
+  "storage_size_bytes": 88814387200,
+  "n_layers": 48,
+  "hidden_size": 2048,
+  "is_user_added": false
+}

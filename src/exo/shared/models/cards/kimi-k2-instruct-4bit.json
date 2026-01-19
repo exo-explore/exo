@@ -1,0 +1,11 @@
+{
+  "model_id": "mlx-community/Kimi-K2-Instruct-4bit",
+  "name": "Kimi K2 Instruct (4-bit)",
+  "description": "Kimi K2 is a large language model trained on the Kimi K2 dataset.",
+  "tags": [],
+  "supports_tensor": true,
+  "storage_size_bytes": 620622774272,
+  "n_layers": 61,
+  "hidden_size": 7168,
+  "is_user_added": false
+}

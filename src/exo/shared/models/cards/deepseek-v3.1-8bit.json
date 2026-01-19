@@ -1,0 +1,11 @@
+{
+  "model_id": "mlx-community/DeepSeek-V3.1-8bit",
+  "name": "DeepSeek V3.1 (8-bit)",
+  "description": "DeepSeek V3.1 is a large language model trained on the DeepSeek V3.1 dataset.",
+  "tags": [],
+  "supports_tensor": true,
+  "storage_size_bytes": 765577920512,
+  "n_layers": 61,
+  "hidden_size": 7168,
+  "is_user_added": false
+}

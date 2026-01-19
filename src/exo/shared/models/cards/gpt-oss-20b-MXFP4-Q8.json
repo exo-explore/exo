@@ -1,0 +1,11 @@
+{
+  "model_id": "mlx-community/gpt-oss-20b-MXFP4-Q8",
+  "name": "GPT-OSS 20B (MXFP4-Q8, MLX)",
+  "description": "OpenAI's GPT-OSS 20B is a medium-sized MoE model for lower-latency and local or specialized use cases; this variant is a 4-bit MLX conversion for Apple Silicon.",
+  "tags": [],
+  "supports_tensor": true,
+  "storage_size_bytes": 12025908224,
+  "n_layers": 24,
+  "hidden_size": 2880,
+  "is_user_added": false
+}

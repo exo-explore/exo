@@ -1,0 +1,11 @@
+{
+  "model_id": "mlx-community/gpt-oss-120b-MXFP4-Q8",
+  "name": "GPT-OSS 120B (MXFP4-Q8, MLX)",
+  "description": "OpenAI's GPT-OSS 120B is a 117B-parameter Mixture-of-Experts model designed for high-reasoning and general-purpose use; this variant is a 4-bit MLX conversion for Apple Silicon.",
+  "tags": [],
+  "supports_tensor": true,
+  "storage_size_bytes": 70652212224,
+  "n_layers": 36,
+  "hidden_size": 2880,
+  "is_user_added": false
+}
