@@ -1,8 +1,6 @@
 import time
 from collections.abc import Generator
-from contextlib import contextmanager
 from functools import cache
-from typing import cast
 
 import mlx.core as mx
 from mlx_lm.models.gpt_oss import Model as GptOssModel
@@ -15,7 +13,6 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
 
 from exo.shared.types.api import ChatCompletionMessageText
 from exo.shared.types.chunks import TokenChunk
-from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -23,7 +20,6 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
-from exo.shared.types.models import ModelId
 from exo.shared.types.tasks import (
     ChatCompletion,
     ConnectToGroup,
@@ -52,7 +48,6 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import MpReceiver, MpSender
-from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
@@ -60,33 +55,6 @@ from exo.worker.engines.mlx.utils_mlx import (
     mlx_force_oom,
 )
 from exo.worker.runner.bootstrap import logger
-
-
-@contextmanager
-def send_error_chunk_on_exception(
-    event_sender: MpSender[Event],
-    command_id: CommandId,
-    model_id: ModelId,
-    device_rank: int,
-):
-    try:
-        yield
-    except Exception as e:
-        logger.error(e)
-        if device_rank == 0:
-            event_sender.send(
-                ChunkGenerated(
-                    command_id=command_id,
-                    chunk=TokenChunk(
-                        idx=0,
-                        model=model_id,
-                        text="",
-                        token_id=0,
-                        finish_reason="error",
-                        error_message=str(e),
-                    ),
-                )
-            )
 
 
 def main(
@@ -99,6 +67,7 @@ def main(
         bound_instance.bound_runner_id,
         bound_instance.bound_shard,
     )
+    device_rank = shard_metadata.device_rank
     logger.info("hello from the runner")
     if getattr(shard_metadata, "immediate_exception", False):
         raise Exception("Fake exception - runner failed to spin up.")
@@ -180,7 +149,7 @@ def main(
 
                     logger.info(f"warming up inference for instance: {instance}")
                     toks = warmup_inference(
-                        model=cast(Model, model),
+                        model=model,
                         tokenizer=tokenizer,
                         # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
                     )
@@ -201,20 +170,16 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
-                    with send_error_chunk_on_exception(
-                        event_sender,
-                        command_id,
-                        shard_metadata.model_meta.model_id,
-                        shard_metadata.device_rank,
-                    ):
-                        assert model
-                        assert tokenizer
-                        assert task_params.messages[0].content is not None
+                    assert model
+                    assert tokenizer
+                    assert task_params.messages[0].content is not None
+
+                    try:
                         _check_for_debug_prompts(task_params.messages[0].content)
 
                         # Generate responses using the actual MLX generation
                         mlx_generator = mlx_generate(
-                            model=cast(Model, model),
+                            model=model,
                             tokenizer=tokenizer,
                             task=task_params,
                         )
@@ -228,7 +193,7 @@ def main(
                         for response in mlx_generator:
                             match response:
                                 case GenerationResponse():
-                                    if shard_metadata.device_rank == 0:
+                                    if device_rank == 0:
                                         event_sender.send(
                                             ChunkGenerated(
                                                 command_id=command_id,
@@ -242,6 +207,24 @@ def main(
                                                 ),
                                             )
                                         )
+
+                    # can we make this more explicit?
+                    except Exception as e:
+                        if device_rank == 0:
+                            event_sender.send(
+                                ChunkGenerated(
+                                    command_id=command_id,
+                                    chunk=TokenChunk(
+                                        idx=0,
+                                        model=shard_metadata.model_meta.model_id,
+                                        text="",
+                                        token_id=0,
+                                        finish_reason="error",
+                                        error_message=str(e),
+                                    ),
+                                )
+                            )
+                        raise
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
