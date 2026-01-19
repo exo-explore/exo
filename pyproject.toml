@@ -126,3 +126,6 @@ env = [
   "EXO_TESTS=1"
 ]
 addopts = "-m 'not slow'"
+filterwarnings = [
+    "ignore:builtin type Swig:DeprecationWarning",
+]
