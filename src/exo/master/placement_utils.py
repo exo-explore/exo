@@ -49,33 +49,95 @@ def get_smallest_cycles(cycles: list[list[NodeInfo]]) -> list[list[NodeInfo]]:
     return [cycle for cycle in cycles if len(cycle) == min_nodes]
 
 
+def allocate_layers_proportionally(
+    total_layers: int,
+    memory_fractions: list[float],
+) -> list[int]:
+    allocations: list[int] = []
+    for i, fraction in enumerate(memory_fractions):
+        if i == total_layers - 1:
+            node_layers = total_layers - sum(allocations)
+        else:
+            node_layers = round(
+                total_layers
+                * fraction
+            )
+            node_layers = max(1, node_layers)
+        allocations.append(node_layers)
+    return allocations
+    # n = len(memory_fractions)
+    # if n == 0:
+    #     raise ValueError("Cannot allocate layers to an empty node list")
+    # if total_layers < n:
+    #     raise ValueError(
+    #         f"Cannot distribute {total_layers} layers across {n} nodes "
+    #         "(need at least 1 layer per node)"
+    #     )
+    #
+    # # Largest remainder: floor each, then distribute remainder by fractional part
+    # raw = [f * total_layers for f in memory_fractions]
+    # result = [int(r) for r in raw]
+    # by_remainder = sorted(range(n), key=lambda i: raw[i] - result[i], reverse=True)
+    # for i in range(total_layers - sum(result)):
+    #     result[by_remainder[i]] += 1
+    #
+    # # Ensure minimum 1 per node by taking from the largest
+    # for i in range(n):
+    #     if result[i] == 0:
+    #         max_idx = max(range(n), key=lambda j: result[j])
+    #         assert result[max_idx] > 1
+    #         result[max_idx] -= 1
+    #         result[i] = 1
+    #
+    # return result
+
+
 def get_shard_assignments_for_pipeline_parallel(
     model_meta: ModelMetadata,
     selected_cycle: list[NodeWithProfile],
 ):
+    if not selected_cycle:
+        raise ValueError("Cannot create shard assignments for empty node cycle")
+
     cycle_memory = sum(
         (node.node_profile.memory.ram_available for node in selected_cycle),
         start=Memory(),
     )
+
+    if cycle_memory.in_bytes == 0:
+        raise ValueError("Cannot create shard assignments: total available memory is 0")
+
     total_layers = model_meta.n_layers
     world_size = len(selected_cycle)
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
 
-    layers_assigned = 0
-    for i, node in enumerate(selected_cycle):
-        if i == len(selected_cycle) - 1:
-            node_layers = total_layers - layers_assigned
-        else:
-            node_layers = round(
-                total_layers
-                * (
-                    node.node_profile.memory.ram_available.in_bytes
-                    / cycle_memory.in_bytes
-                )
-            )
-            node_layers = max(1, node_layers)
+    layer_allocations = allocate_layers_proportionally(
+        total_layers=total_layers,
+        memory_fractions=[
+            node.node_profile.memory.ram_available.in_bytes / cycle_memory.in_bytes
+            for node in selected_cycle
+        ],
+    )
 
+    # Validate each node has sufficient memory for its assigned layers
+    memory_per_layer = model_meta.storage_size.in_bytes / total_layers
+    for i, (node, node_layers) in enumerate(
+        zip(selected_cycle, layer_allocations, strict=True)
+    ):
+        required_memory = node_layers * memory_per_layer
+        available_memory = node.node_profile.memory.ram_available.in_bytes
+        if required_memory > available_memory:
+            raise ValueError(
+                f"Node {i} ({node.node_id}) has insufficient memory: "
+                f"requires {required_memory / (1024**3):.2f} GB for {node_layers} layers, "
+                f"but only has {available_memory / (1024**3):.2f} GB available"
+            )
+
+    layers_assigned = 0
+    for i, (node, node_layers) in enumerate(
+        zip(selected_cycle, layer_allocations, strict=True)
+    ):
         runner_id = RunnerId()
 
         shard = PipelineShardMetadata(
