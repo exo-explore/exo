@@ -50,7 +50,13 @@ from exo.shared.types.commands import (
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
-from exo.shared.types.events import ChunkGenerated, Event, ForwarderEvent, IndexedEvent, ModelDeleted
+from exo.shared.types.events import (
+    ChunkGenerated,
+    Event,
+    ForwarderEvent,
+    IndexedEvent,
+    ModelDeleted,
+)
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.state import State
@@ -593,7 +599,6 @@ class API:
 
         # Send ModelDeleted event if event sender is available
         if self.event_sender:
-
             event = ModelDeleted(model_id=ModelId(model_id))
             await self.event_sender.send(event)
 
