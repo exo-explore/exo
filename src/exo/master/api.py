@@ -155,18 +155,19 @@ class API:
         self.paused_ev = anyio.Event()
 
     def _setup_exception_handlers(self) -> None:
-        @self.app.exception_handler(HTTPException)
-        async def http_exception_handler(  # pyright: ignore[reportUnusedFunction]
-            _: Request, exc: HTTPException
-        ) -> JSONResponse:
-            err = ErrorResponse(
-                error=ErrorInfo(
-                    message=exc.detail,
-                    type=HTTPStatus(exc.status_code).phrase,
-                    code=exc.status_code,
-                )
+        self.app.exception_handler(HTTPException)(self.http_exception_handler)
+
+    async def http_exception_handler(
+        self, _: Request, exc: HTTPException
+    ) -> JSONResponse:
+        err = ErrorResponse(
+            error=ErrorInfo(
+                message=exc.detail,
+                type=HTTPStatus(exc.status_code).phrase,
+                code=exc.status_code,
             )
-            return JSONResponse(err.model_dump(), status_code=exc.status_code)
+        )
+        return JSONResponse(err.model_dump(), status_code=exc.status_code)
 
     def _setup_cors(self) -> None:
         self.app.add_middleware(
