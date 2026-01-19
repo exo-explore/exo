@@ -56,6 +56,7 @@ from exo.shared.types.api import (
     DeleteInstanceResponse,
     ErrorInfo,
     ErrorResponse,
+    FinishReason,
     GenerationStats,
     ImageData,
     ImageEditsInternalParams,
@@ -474,10 +475,6 @@ class API:
     async def _collect_chat_completion_with_stats(
         self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
-        import time
-
-        from exo.shared.types.api import FinishReason
-
         text_parts: list[str] = []
         model: str | None = None
         finish_reason: FinishReason | None = None
