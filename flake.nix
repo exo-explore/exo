@@ -90,6 +90,7 @@
           packages =
             if pkgs.stdenv.isDarwin then {
               metal = pkgs.callPackage ./nix/metalWrapper.nix { metalVersion = "310"; };
+              mlx = pkgs.callPackage ./nix/mlx.nix {};
             } else { };
 
           devShells.default = with pkgs; pkgs.mkShell {

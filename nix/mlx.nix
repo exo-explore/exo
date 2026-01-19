@@ -1,7 +1,9 @@
 { stdenv
 , lib
-, buildPythonPackage
 , fetchFromGitHub
+, fetchPypi
+, pyprojectHook
+, pypaInstallHook
 , replaceVars
 , fetchzip
 , setuptools
@@ -32,7 +34,7 @@ let
     hash = "sha256-7n2eI2lw/S+Us6l7YPAATKwcIbRRpaQ8VmES7S8ZjY8=";
   };
 
-  mlx = buildPythonPackage rec {
+  mlx = stdenv.mkDerivation rec {
     pname = "mlx";
     version = "0.30.1";
     pyproject = true;
@@ -98,6 +100,8 @@ let
     nativeBuildInputs = [
       cmake
       metal
+      pyprojectHook
+      pypaInstallHook
     ];
 
     buildInputs = [
