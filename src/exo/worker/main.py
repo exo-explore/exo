@@ -409,7 +409,7 @@ class Worker:
             conns = await check_reachable(
                 self.state.topology,
                 self.node_id,
-                self.state.node_profiles,
+                self.state.node_network,
             )
             for nid in conns:
                 for ip in conns[nid]:

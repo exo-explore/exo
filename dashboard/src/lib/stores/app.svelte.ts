@@ -71,30 +71,50 @@ export interface Instance {
 	};
 }
 
+// Granular node state types from the new state structure
+interface RawNodeIdentity {
+	modelId?: string;
+	chipId?: string;
+	friendlyName?: string;
+}
+
+interface RawMemoryUsage {
+	ramTotal?: { inBytes: number };
+	ramAvailable?: { inBytes: number };
+	swapTotal?: { inBytes: number };
+	swapAvailable?: { inBytes: number };
+}
+
+interface RawSystemPerformanceProfile {
+	gpuUsage?: number;
+	temp?: number;
+	sysPower?: number;
+	pcpuUsage?: number;
+	ecpuUsage?: number;
+}
+
+interface RawNetworkInterfaceInfo {
+	name?: string;
+	ipAddress?: string;
+	addresses?: Array<{ address?: string } | string>;
+	ipv4?: string;
+	ipv6?: string;
+	ipAddresses?: string[];
+	ips?: string[];
+}
+
+interface RawNodeNetworkInfo {
+	interfaces?: RawNetworkInterfaceInfo[];
+}
+
+// Legacy RawNodeProfile for backwards compatibility with inline profiles
 interface RawNodeProfile {
 	modelId?: string;
 	chipId?: string;
 	friendlyName?: string;
-	networkInterfaces?: Array<{
-		name?: string;
-		ipAddress?: string;
-		addresses?: Array<{ address?: string } | string>;
-		ipv4?: string;
-		ipv6?: string;
-		ipAddresses?: string[];
-		ips?: string[];
-	}>;
-	memory?: {
-		ramTotal?: { inBytes: number };
-		ramAvailable?: { inBytes: number };
-		swapTotal?: { inBytes: number };
-		swapAvailable?: { inBytes: number };
-	};
-	system?: {
-		gpuUsage?: number;
-		temp?: number;
-		sysPower?: number;
-	};
+	networkInterfaces?: RawNetworkInterfaceInfo[];
+	memory?: RawMemoryUsage;
+	system?: RawSystemPerformanceProfile;
 }
 
 interface RawTopologyNode {
@@ -130,8 +150,6 @@ interface RawTopology {
 	// New nested mapping format
 	connections?: RawConnectionsMap;
 }
-
-type RawNodeProfiles = Record<string, RawNodeProfile>;
 
 export interface DownloadProgress {
 	totalBytes: number;
@@ -187,7 +205,11 @@ interface RawStateResponse {
 	>;
 	runners?: Record<string, unknown>;
 	downloads?: Record<string, unknown[]>;
-	nodeProfiles?: RawNodeProfiles;
+	// New granular node state fields
+	nodeIdentities?: Record<string, RawNodeIdentity>;
+	nodeMemory?: Record<string, RawMemoryUsage>;
+	nodeSystem?: Record<string, RawSystemPerformanceProfile>;
+	nodeNetwork?: Record<string, RawNodeNetworkInfo>;
 }
 
 export interface MessageAttachment {
@@ -222,9 +244,50 @@ export interface Conversation {
 
 const STORAGE_KEY = "exo-conversations";
 
+interface GranularNodeState {
+	nodeIdentities?: Record<string, RawNodeIdentity>;
+	nodeMemory?: Record<string, RawMemoryUsage>;
+	nodeSystem?: Record<string, RawSystemPerformanceProfile>;
+	nodeNetwork?: Record<string, RawNodeNetworkInfo>;
+}
+
+function transformNetworkInterface(iface: RawNetworkInterfaceInfo): {
+	name?: string;
+	addresses: string[];
+} {
+	const addresses: string[] = [];
+	if (iface.ipAddress && typeof iface.ipAddress === "string") {
+		addresses.push(iface.ipAddress);
+	}
+	if (Array.isArray(iface.addresses)) {
+		for (const addr of iface.addresses) {
+			if (typeof addr === "string") addresses.push(addr);
+			else if (addr && typeof addr === "object" && addr.address)
+				addresses.push(addr.address);
+		}
+	}
+	if (Array.isArray(iface.ipAddresses)) {
+		addresses.push(
+			...iface.ipAddresses.filter((a): a is string => typeof a === "string"),
+		);
+	}
+	if (Array.isArray(iface.ips)) {
+		addresses.push(
+			...iface.ips.filter((a): a is string => typeof a === "string"),
+		);
+	}
+	if (iface.ipv4 && typeof iface.ipv4 === "string") addresses.push(iface.ipv4);
+	if (iface.ipv6 && typeof iface.ipv6 === "string") addresses.push(iface.ipv6);
+
+	return {
+		name: iface.name,
+		addresses: Array.from(new Set(addresses)),
+	};
+}
+
 function transformTopology(
 	raw: RawTopology,
-	profiles?: RawNodeProfiles,
+	granularState: GranularNodeState,
 ): TopologyData {
 	const nodes: Record<string, NodeInfo> = {};
 	const edges: TopologyEdge[] = [];
@@ -235,52 +298,29 @@ function transformTopology(
 		const nodeId = typeof node === "string" ? node : node.nodeId;
 		if (!nodeId) continue;
 
-		// Get the profile - from the separate profiles map or from the node object itself
-		const profileFromMap = profiles?.[nodeId];
+		// Get data from granular state mappings
+		const identity = granularState.nodeIdentities?.[nodeId];
+		const memory = granularState.nodeMemory?.[nodeId];
+		const system = granularState.nodeSystem?.[nodeId];
+		const network = granularState.nodeNetwork?.[nodeId];
+
+		// Also check for inline profile on the node object (legacy support)
 		const profileFromNode =
 			typeof node === "object" ? node.nodeProfile : undefined;
-		const profile = { ...(profileFromNode ?? {}), ...(profileFromMap ?? {}) };
 
-		const ramTotal = profile?.memory?.ramTotal?.inBytes ?? 0;
-		const ramAvailable = profile?.memory?.ramAvailable?.inBytes ?? 0;
+		const ramTotal =
+			memory?.ramTotal?.inBytes ??
+			profileFromNode?.memory?.ramTotal?.inBytes ??
+			0;
+		const ramAvailable =
+			memory?.ramAvailable?.inBytes ??
+			profileFromNode?.memory?.ramAvailable?.inBytes ??
+			0;
 		const ramUsage = Math.max(ramTotal - ramAvailable, 0);
 
-		const networkInterfaces = (profile?.networkInterfaces || []).map(
-			(iface) => {
-				const addresses: string[] = [];
-				if (iface.ipAddress && typeof iface.ipAddress === "string") {
-					addresses.push(iface.ipAddress);
-				}
-				if (Array.isArray(iface.addresses)) {
-					for (const addr of iface.addresses) {
-						if (typeof addr === "string") addresses.push(addr);
-						else if (addr && typeof addr === "object" && addr.address)
-							addresses.push(addr.address);
-					}
-				}
-				if (Array.isArray(iface.ipAddresses)) {
-					addresses.push(
-						...iface.ipAddresses.filter(
-							(a): a is string => typeof a === "string",
-						),
-					);
-				}
-				if (Array.isArray(iface.ips)) {
-					addresses.push(
-						...iface.ips.filter((a): a is string => typeof a === "string"),
-					);
-				}
-				if (iface.ipv4 && typeof iface.ipv4 === "string")
-					addresses.push(iface.ipv4);
-				if (iface.ipv6 && typeof iface.ipv6 === "string")
-					addresses.push(iface.ipv6);
-
-				return {
-					name: iface.name,
-					addresses: Array.from(new Set(addresses)),
-				};
-			},
-		);
+		const rawInterfaces =
+			network?.interfaces || profileFromNode?.networkInterfaces || [];
+		const networkInterfaces = rawInterfaces.map(transformNetworkInterface);
 
 		const ipToInterface: Record<string, string> = {};
 		for (const iface of networkInterfaces) {
@@ -289,10 +329,12 @@ function transformTopology(
 			}
 		}
 
+		const systemProfile = system || profileFromNode?.system;
+
 		nodes[nodeId] = {
 			system_info: {
-				model_id: profile?.modelId ?? "Unknown",
-				chip: profile?.chipId,
+				model_id: identity?.modelId ?? profileFromNode?.modelId ?? "Unknown",
+				chip: identity?.chipId ?? profileFromNode?.chipId,
 				memory: ramTotal,
 			},
 			network_interfaces: networkInterfaces,
@@ -303,17 +345,17 @@ function transformTopology(
 					ram_total: ramTotal,
 				},
 				temp:
-					profile?.system?.temp !== undefined
-						? { gpu_temp_avg: profile.system.temp }
+					systemProfile?.temp !== undefined
+						? { gpu_temp_avg: systemProfile.temp }
 						: undefined,
 				gpu_usage:
-					profile?.system?.gpuUsage !== undefined
-						? [0, profile.system.gpuUsage]
+					systemProfile?.gpuUsage !== undefined
+						? [0, systemProfile.gpuUsage]
 						: undefined,
-				sys_power: profile?.system?.sysPower,
+				sys_power: systemProfile?.sysPower,
 			},
 			last_macmon_update: Date.now() / 1000,
-			friendly_name: profile?.friendlyName,
+			friendly_name: identity?.friendlyName ?? profileFromNode?.friendlyName,
 		};
 	}
 
@@ -898,7 +940,12 @@ class AppStore {
 			const data: RawStateResponse = await response.json();
 
 			if (data.topology) {
-				this.topologyData = transformTopology(data.topology, data.nodeProfiles);
+				this.topologyData = transformTopology(data.topology, {
+					nodeIdentities: data.nodeIdentities,
+					nodeMemory: data.nodeMemory,
+					nodeSystem: data.nodeSystem,
+					nodeNetwork: data.nodeNetwork,
+				});
 			}
 			if (data.instances) {
 				this.instances = data.instances;

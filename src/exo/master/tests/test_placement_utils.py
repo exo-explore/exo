@@ -1,5 +1,3 @@
-from copy import copy
-
 import pytest
 
 from exo.master.placement_utils import (
@@ -10,16 +8,17 @@ from exo.master.placement_utils import (
     get_shard_assignments,
     get_smallest_cycles,
 )
-from exo.master.tests.conftest import create_node_profile, create_socket_connection
+from exo.master.tests.conftest import (
+    create_node_memory,
+    create_socket_connection,
+)
 from exo.shared.topology import Topology
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.profiling import (
-    MemoryUsage,
     NetworkInterfaceInfo,
-    NodePerformanceProfile,
-    SystemPerformanceProfile,
+    NodeNetworkInfo,
 )
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.shards import Sharding
@@ -36,9 +35,9 @@ def test_filter_cycles_by_memory():
         source=node2_id, sink=node1_id, edge=create_socket_connection(2)
     )
 
-    node1 = create_node_profile(1000 * 1024)
-    node2 = create_node_profile(1000 * 1024)
-    node_profiles = {node1_id: node1, node2_id: node2}
+    node1_mem = create_node_memory(1000 * 1024)
+    node2_mem = create_node_memory(1000 * 1024)
+    node_memory = {node1_id: node1_mem, node2_id: node2_mem}
 
     topology = Topology()
     topology.add_node(node1_id)
@@ -51,9 +50,7 @@ def test_filter_cycles_by_memory():
     assert len(cycles[0]) == 2
 
     # act
-    filtered_cycles = filter_cycles_by_memory(
-        cycles, node_profiles, Memory.from_bytes(1)
-    )
+    filtered_cycles = filter_cycles_by_memory(cycles, node_memory, Memory.from_bytes(1))
 
     # assert
     assert len(filtered_cycles) == 1
@@ -72,9 +69,9 @@ def test_filter_cycles_by_insufficient_memory():
         source=node2_id, sink=node1_id, edge=create_socket_connection(2)
     )
 
-    node1 = create_node_profile(1000 * 1024)
-    node2 = create_node_profile(1000 * 1024)
-    node_profiles = {node1_id: node1, node2_id: node2}
+    node1_mem = create_node_memory(1000 * 1024)
+    node2_mem = create_node_memory(1000 * 1024)
+    node_memory = {node1_id: node1_mem, node2_id: node2_mem}
 
     topology = Topology()
     topology.add_node(node1_id)
@@ -84,7 +81,7 @@ def test_filter_cycles_by_insufficient_memory():
 
     # act
     filtered_cycles = filter_cycles_by_memory(
-        topology.get_cycles(), node_profiles, Memory.from_kb(2001)
+        topology.get_cycles(), node_memory, Memory.from_kb(2001)
     )
 
     # assert
@@ -109,13 +106,13 @@ def test_filter_multiple_cycles_by_memory():
         source=node_c_id, sink=node_b_id, edge=create_socket_connection(4)
     )
 
-    node_a = create_node_profile(500 * 1024)
-    node_b = create_node_profile(500 * 1024)
-    node_c = create_node_profile(1000 * 1024)
-    node_profiles = {
-        node_a_id: node_a,
-        node_b_id: node_b,
-        node_c_id: node_c,
+    node_a_mem = create_node_memory(500 * 1024)
+    node_b_mem = create_node_memory(500 * 1024)
+    node_c_mem = create_node_memory(1000 * 1024)
+    node_memory = {
+        node_a_id: node_a_mem,
+        node_b_id: node_b_mem,
+        node_c_id: node_c_mem,
     }
 
     topology = Topology()
@@ -130,9 +127,7 @@ def test_filter_multiple_cycles_by_memory():
     cycles = topology.get_cycles()
 
     # act
-    filtered_cycles = filter_cycles_by_memory(
-        cycles, node_profiles, Memory.from_kb(1500)
-    )
+    filtered_cycles = filter_cycles_by_memory(cycles, node_memory, Memory.from_kb(1500))
 
     # assert
     assert len(filtered_cycles) == 1
@@ -228,13 +223,13 @@ def test_get_shard_assignments(
     topology.add_connection(connection3)
     topology.add_connection(connection4)
 
-    node_a = create_node_profile(available_memory[0] * 1024)
-    node_b = create_node_profile(available_memory[1] * 1024)
-    node_c = create_node_profile(available_memory[2] * 1024)
-    node_profiles = {
-        node_a_id: node_a,
-        node_b_id: node_b,
-        node_c_id: node_c,
+    node_a_mem = create_node_memory(available_memory[0] * 1024)
+    node_b_mem = create_node_memory(available_memory[1] * 1024)
+    node_c_mem = create_node_memory(available_memory[2] * 1024)
+    node_memory = {
+        node_a_id: node_a_mem,
+        node_b_id: node_b_mem,
+        node_c_id: node_c_mem,
     }
 
     model_meta = ModelMetadata(
@@ -253,7 +248,7 @@ def test_get_shard_assignments(
 
     # act
     shard_assignments = get_shard_assignments(
-        model_meta, selected_cycle, Sharding.Pipeline, node_profiles=node_profiles
+        model_meta, selected_cycle, Sharding.Pipeline, node_memory=node_memory
     )
 
     # assert
@@ -343,38 +338,28 @@ def test_get_mlx_jaccl_coordinators():
         source=node_a_id, sink=node_c_id, edge=create_socket_connection(6)
     )
 
-    npp = NodePerformanceProfile(
-        model_id="test",
-        chip_id="test",
-        friendly_name="test",
-        memory=MemoryUsage.from_bytes(
-            ram_total=0,
-            ram_available=0,
-            swap_total=0,
-            swap_available=0,
-        ),
-        network_interfaces=[],
-        system=SystemPerformanceProfile(),
+    network_a = NodeNetworkInfo(
+        interfaces=[
+            NetworkInterfaceInfo(name="en0", ip_address="169.254.0.5"),
+            NetworkInterfaceInfo(name="en0", ip_address="169.254.0.2"),
+        ]
     )
-    npp_a = copy(npp)
-    npp_a.network_interfaces = [
-        NetworkInterfaceInfo(name="en0", ip_address="169.254.0.5"),
-        NetworkInterfaceInfo(name="en0", ip_address="169.254.0.2"),
-    ]
-    npp_b = copy(npp)
-    npp_b.network_interfaces = [
-        NetworkInterfaceInfo(name="en0", ip_address="169.254.0.1"),
-        NetworkInterfaceInfo(name="en0", ip_address="169.254.0.4"),
-    ]
-    npp_c = copy(npp)
-    npp_c.network_interfaces = [
-        NetworkInterfaceInfo(name="en0", ip_address="169.254.0.3"),
-        NetworkInterfaceInfo(name="en0", ip_address="169.254.0.6"),
-    ]
-    node_profiles = {
-        node_a_id: npp_a,
-        node_b_id: npp_b,
-        node_c_id: npp_c,
+    network_b = NodeNetworkInfo(
+        interfaces=[
+            NetworkInterfaceInfo(name="en0", ip_address="169.254.0.1"),
+            NetworkInterfaceInfo(name="en0", ip_address="169.254.0.4"),
+        ]
+    )
+    network_c = NodeNetworkInfo(
+        interfaces=[
+            NetworkInterfaceInfo(name="en0", ip_address="169.254.0.3"),
+            NetworkInterfaceInfo(name="en0", ip_address="169.254.0.6"),
+        ]
+    )
+    node_network = {
+        node_a_id: network_a,
+        node_b_id: network_b,
+        node_c_id: network_c,
     }
 
     topology = Topology()
@@ -394,7 +379,7 @@ def test_get_mlx_jaccl_coordinators():
         node_a_id,
         coordinator_port=5000,
         cycle_digraph=topology,
-        node_profiles=node_profiles,
+        node_network=node_network,
     )
 
     # assert
@@ -496,9 +481,9 @@ def test_get_shard_assignments_insufficient_memory_raises():
     topology = Topology()
 
     # Node C has only 10 KB but would need 50 KB for 1 layer (1000 KB / 20 layers)
-    node_a = create_node_profile(900 * 1024)
-    node_b = create_node_profile(50 * 1024)
-    node_c = create_node_profile(10 * 1024)  # Insufficient memory
+    node_a_mem = create_node_memory(900 * 1024)
+    node_b_mem = create_node_memory(50 * 1024)
+    node_c_mem = create_node_memory(10 * 1024)  # Insufficient memory
 
     topology.add_node(node_a_id)
     topology.add_node(node_b_id)
@@ -521,10 +506,10 @@ def test_get_shard_assignments_insufficient_memory_raises():
     topology.add_connection(conn_c_a)
     topology.add_connection(conn_b_a)
 
-    profiles = {
-        node_a_id: node_a,
-        node_b_id: node_b,
-        node_c_id: node_c,
+    node_memory = {
+        node_a_id: node_a_mem,
+        node_b_id: node_b_mem,
+        node_c_id: node_c_mem,
     }
 
     model_meta = ModelMetadata(
@@ -539,4 +524,6 @@ def test_get_shard_assignments_insufficient_memory_raises():
     selected_cycle = cycles[0]
 
     with pytest.raises(ValueError, match="insufficient memory"):
-        get_shard_assignments(model_meta, selected_cycle, Sharding.Pipeline, profiles)
+        get_shard_assignments(
+            model_meta, selected_cycle, Sharding.Pipeline, node_memory
+        )

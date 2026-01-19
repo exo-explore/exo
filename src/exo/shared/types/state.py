@@ -11,7 +11,6 @@ from exo.shared.types.profiling import (
     MemoryUsage,
     NodeIdentity,
     NodeNetworkInfo,
-    NodePerformanceProfile,
     NodeThunderboltInfo,
     SystemPerformanceProfile,
 )
@@ -52,42 +51,6 @@ class State(CamelCaseModel):
     node_system: Mapping[NodeId, SystemPerformanceProfile] = {}
     node_network: Mapping[NodeId, NodeNetworkInfo] = {}
     node_thunderbolt: Mapping[NodeId, NodeThunderboltInfo] = {}
-
-    @property
-    def node_profiles(self) -> Mapping[NodeId, NodePerformanceProfile]:
-        """Backwards-compatible property reconstructing NodePerformanceProfile from granular mappings."""
-        all_node_ids: set[NodeId] = (
-            set(self.node_identities.keys())
-            | set(self.node_memory.keys())
-            | set(self.node_system.keys())
-            | set(self.node_network.keys())
-            | set(self.node_thunderbolt.keys())
-        )
-
-        result: dict[NodeId, NodePerformanceProfile] = {}
-        for node_id in all_node_ids:
-            identity = self.node_identities.get(node_id, NodeIdentity())
-            memory = self.node_memory.get(
-                node_id,
-                MemoryUsage.from_bytes(
-                    ram_total=0, ram_available=0, swap_total=0, swap_available=0
-                ),
-            )
-            system = self.node_system.get(node_id, SystemPerformanceProfile())
-            network = self.node_network.get(node_id, NodeNetworkInfo())
-            thunderbolt = self.node_thunderbolt.get(node_id, NodeThunderboltInfo())
-
-            result[node_id] = NodePerformanceProfile(
-                model_id=identity.model_id,
-                chip_id=identity.chip_id,
-                friendly_name=identity.friendly_name,
-                memory=memory,
-                network_interfaces=network.interfaces,
-                tb_interfaces=thunderbolt.interfaces,
-                system=system,
-            )
-
-        return result
 
     @field_serializer("topology", mode="plain")
     def _encode_topology(self, value: Topology) -> TopologySnapshot:
