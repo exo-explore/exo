@@ -4,6 +4,7 @@ from functools import cache
 
 import mlx.core as mx
 from mlx_lm.models.gpt_oss import Model as GptOssModel
+from mlx_lm.tokenizer_utils import TokenizerWrapper
 from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     HarmonyEncodingName,
     Role,
@@ -193,14 +194,13 @@ def main(
                         # GPT-OSS specific parsing to match other model formats.
                         if isinstance(model, GptOssModel):
                             mlx_generator = parse_gpt_oss(mlx_generator)
-                        else:
-                            # For other thinking models (GLM, etc.), check if we need to
-                            # prepend the thinking tag that was consumed by the chat template
-                            thinking_prefix = detect_thinking_prompt_suffix(prompt)
-                            if thinking_prefix is not None:
-                                mlx_generator = parse_thinking_models(
-                                    mlx_generator, thinking_prefix
-                                )
+
+                        # For other thinking models (GLM, etc.), check if we need to
+                        # prepend the thinking tag that was consumed by the chat template
+                        if detect_thinking_prompt_suffix(prompt, tokenizer):
+                            mlx_generator = parse_thinking_models(
+                                mlx_generator, tokenizer
+                            )
 
                         # TODO: Add tool call parser here
 
@@ -309,7 +309,7 @@ def parse_gpt_oss(
 
 def parse_thinking_models(
     responses: Generator[GenerationResponse],
-    thinking_prefix: str,
+    tokenizer: TokenizerWrapper,
 ) -> Generator[GenerationResponse]:
     """
     For models that inject thinking tags in the prompt (like GLM-4.7),
@@ -320,8 +320,12 @@ def parse_thinking_models(
     for response in responses:
         if first:
             first = False
-            # Yield the thinking prefix using first token's metadata
-            yield response.model_copy(update={"text": thinking_prefix})
+            yield response.model_copy(
+                update={
+                    "text": tokenizer.think_start,
+                    "token": tokenizer.think_start,
+                }
+            )
         yield response
 
 
