@@ -58,7 +58,7 @@ from exo.shared.types.worker.runners import (
 )
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.image import (
-    ImageGenerator,
+    DistributedImageModel,
     generate_image,
     initialize_image_model,
     warmup_image_generator,
@@ -200,7 +200,7 @@ def main(
                         ModelTask.TextToImage in model_tasks
                         or ModelTask.ImageToImage in model_tasks
                     ):
-                        assert isinstance(model, ImageGenerator)
+                        assert isinstance(model, DistributedImageModel)
                         image = warmup_image_generator(model=model)
                         if image is not None:
                             logger.info(f"warmed up by generating {image.size} image")
@@ -292,7 +292,7 @@ def main(
                 case ImageGeneration(
                     task_params=task_params, command_id=command_id
                 ) if isinstance(current_status, RunnerReady):
-                    assert isinstance(model, ImageGenerator)
+                    assert isinstance(model, DistributedImageModel)
                     logger.info(f"received image generation request: {str(task)[:500]}")
                     current_status = RunnerRunning()
                     logger.info("runner running")
@@ -335,7 +335,7 @@ def main(
                 case ImageEdits(task_params=task_params, command_id=command_id) if (
                     isinstance(current_status, RunnerReady)
                 ):
-                    assert isinstance(model, ImageGenerator)
+                    assert isinstance(model, DistributedImageModel)
                     logger.info(f"received image edits request: {str(task)[:500]}")
                     current_status = RunnerRunning()
                     logger.info("runner running")

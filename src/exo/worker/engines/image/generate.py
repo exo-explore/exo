@@ -18,7 +18,7 @@ from exo.shared.types.worker.runner_response import (
     ImageGenerationResponse,
     PartialImageResponse,
 )
-from exo.worker.engines.image.base import ImageGenerator
+from exo.worker.engines.image.distributed_model import DistributedImageModel
 
 
 def parse_size(size_str: str | None) -> tuple[int, int]:
@@ -38,7 +38,7 @@ def parse_size(size_str: str | None) -> tuple[int, int]:
     return (1024, 1024)
 
 
-def warmup_image_generator(model: ImageGenerator) -> Image.Image | None:
+def warmup_image_generator(model: DistributedImageModel) -> Image.Image | None:
     """Warmup the image generator with a small image."""
     with tempfile.TemporaryDirectory() as tmpdir:
         # Create a small dummy image for warmup (needed for edit models)
@@ -60,7 +60,7 @@ def warmup_image_generator(model: ImageGenerator) -> Image.Image | None:
 
 
 def generate_image(
-    model: ImageGenerator,
+    model: DistributedImageModel,
     task: ImageGenerationTaskParams | ImageEditsInternalParams,
 ) -> Generator[ImageGenerationResponse | PartialImageResponse, None, None]:
     """Generate image(s), optionally yielding partial results.
