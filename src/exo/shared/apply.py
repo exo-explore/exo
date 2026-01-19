@@ -197,7 +197,7 @@ def apply_runner_deleted(event: RunnerDeleted, state: State) -> State:
 
 def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
     topology = copy.deepcopy(state.topology)
-    state.topology.remove_node(event.node_id)
+    topology.remove_node(event.node_id)
     last_seen = {
         key: value for key, value in state.last_seen.items() if key != event.node_id
     }
