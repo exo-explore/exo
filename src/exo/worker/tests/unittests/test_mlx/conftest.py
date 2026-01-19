@@ -7,10 +7,6 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from exo.shared.constants import EXO_MODELS_DIR
-from exo.worker.engines.mlx.auto_parallel import (
-    PipelineFirstLayer,
-    PipelineLastLayer,
-)
 
 
 class MockLayer(nn.Module):

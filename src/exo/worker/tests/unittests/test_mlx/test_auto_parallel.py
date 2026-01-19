@@ -9,7 +9,7 @@ from exo.worker.engines.mlx.auto_parallel import (
     PipelineFirstLayer,
     PipelineLastLayer,
 )
-from exo.worker.tests.unittests.test_mlx.conftest import MockLayer, run_pipeline_device
+from exo.worker.tests.unittests.test_mlx.conftest import MockLayer
 
 
 def run_pipeline_device(
