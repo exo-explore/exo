@@ -127,6 +127,7 @@ async def generate_chat_stream(
 
         if chunk.finish_reason is not None:
             yield "data: [DONE]\n\n"
+            return
 
 
 async def collect_chat_response(
