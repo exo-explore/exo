@@ -452,8 +452,13 @@ class AppStore {
 		} catch (error) {
 			console.error("Failed to save conversations:", error);
 			// If quota exceeded, try to clear old conversations and retry
-			if (error instanceof DOMException && error.name === "QuotaExceededError") {
-				console.warn("Storage quota exceeded, clearing oldest conversations...");
+			if (
+				error instanceof DOMException &&
+				error.name === "QuotaExceededError"
+			) {
+				console.warn(
+					"Storage quota exceeded, clearing oldest conversations...",
+				);
 				this.pruneOldConversations();
 			}
 		}
