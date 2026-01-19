@@ -110,6 +110,60 @@ def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
     return eos
 
 
+def extract_top_logprobs(
+    logprobs: mx.array,
+    tokenizer: TokenizerWrapper,
+    top_k: int,
+    selected_token: int,
+) -> tuple[float, list[TopLogprobItem]]:
+    """Extract the selected token's logprob and top-k alternative tokens.
+
+    Args:
+        logprobs: Full vocabulary logprobs array from MLX
+        tokenizer: Tokenizer for decoding token IDs to strings
+        top_k: Number of top alternatives to return
+        selected_token: The token ID that was actually sampled
+
+    Returns:
+        Tuple of (selected_token_logprob, list of TopLogprobItem for top-k tokens)
+    """
+    # Get the logprob of the selected token
+    selected_logprob = float(logprobs[selected_token].item())
+
+    # Get top-k indices (most probable tokens)
+    # mx.argpartition gives indices that would partition the array
+    # We negate logprobs since argpartition finds smallest, and we want largest
+    top_k = min(top_k, logprobs.shape[0])  # Don't exceed vocab size
+    top_indices = mx.argpartition(-logprobs, top_k)[:top_k]
+
+    # Get the actual logprob values for these indices
+    top_values = logprobs[top_indices]
+
+    # Sort by logprob (descending) for consistent ordering
+    sort_order = mx.argsort(-top_values)
+    top_indices = top_indices[sort_order]
+    top_values = top_values[sort_order]
+
+    # Convert to list of TopLogprobItem
+    top_logprob_items: list[TopLogprobItem] = []
+    for i in range(top_k):
+        token_id = int(top_indices[i].item())
+        token_logprob = float(top_values[i].item())
+        # Decode token ID to string
+        token_str = tokenizer.decode([token_id])
+        # Get byte representation
+        token_bytes = list(token_str.encode("utf-8"))
+        top_logprob_items.append(
+            TopLogprobItem(
+                token=token_str,
+                logprob=token_logprob,
+                bytes=token_bytes,
+            )
+        )
+
+    return selected_logprob, top_logprob_items
+
+
 def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
@@ -197,21 +251,13 @@ def mlx_generate(
                     f"Model generated unexpected finish_reason: {out.finish_reason}"
                 )
 
-        # Extract logprobs if available
-        logprob: float | None = getattr(out, "logprob", None)
-        top_logprobs_raw: list[tuple[int, float]] | None = getattr(
-            out, "top_logprobs", None
+        # Extract logprobs from the full vocabulary logprobs array
+        logprob, top_logprobs = extract_top_logprobs(
+            logprobs=out.logprobs,
+            tokenizer=tokenizer,
+            top_k=5,
+            selected_token=out.token,
         )
-
-        top_logprobs: list[TopLogprobItem] | None = None
-        if top_logprobs_raw is not None:
-            top_logprobs = [
-                TopLogprobItem(
-                    token=text if i == 0 else tokenizer.decode([tok_id]),
-                    logprob=float(lp),
-                )
-                for i, (tok_id, lp) in enumerate(top_logprobs_raw)
-            ]
 
         yield GenerationResponse(
             text=text,
