@@ -179,11 +179,15 @@ def main(
                     try:
                         _check_for_debug_prompts(task_params.messages[0].content)
 
+                        # Build prompt once - used for both generation and thinking detection
+                        prompt = apply_chat_template(tokenizer, task_params)
+
                         # Generate responses using the actual MLX generation
                         mlx_generator = mlx_generate(
                             model=model,
                             tokenizer=tokenizer,
                             task=task_params,
+                            prompt=prompt,
                         )
 
                         # GPT-OSS specific parsing to match other model formats.
@@ -192,7 +196,6 @@ def main(
                         else:
                             # For other thinking models (GLM, etc.), check if we need to
                             # prepend the thinking tag that was consumed by the chat template
-                            prompt = apply_chat_template(tokenizer, task_params)
                             thinking_prefix = detect_thinking_prompt_suffix(prompt)
                             if thinking_prefix is not None:
                                 mlx_generator = parse_thinking_models(
