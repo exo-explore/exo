@@ -18,7 +18,7 @@ from exo.shared.types.api import (
     LogprobsContentItem,
     StreamingChoiceResponse,
 )
-from exo.shared.types.chunks import TokenChunk
+from exo.shared.types.chunks import PrefillProgressData, StreamEvent, TokenChunk
 from exo.shared.types.common import CommandId
 from exo.shared.types.openai_responses import ResponseInputMessage, ResponsesRequest
 
@@ -108,11 +108,22 @@ def chunk_to_response(
 
 async def generate_chat_stream(
     command_id: CommandId,
-    chunk_stream: AsyncGenerator[TokenChunk, None],
+    event_stream: AsyncGenerator[StreamEvent, None],
 ) -> AsyncGenerator[str, None]:
-    """Generate Chat Completions API streaming events from TokenChunks."""
+    """Generate Chat Completions API streaming events from StreamEvents.
+
+    Handles both TokenChunks (token generation) and PrefillProgressData (prefill progress).
+    """
     try:
-        async for chunk in chunk_stream:
+        async for event in event_stream:
+            if isinstance(event, PrefillProgressData):
+                # Send prefill progress as a named SSE event
+                progress_json = f'{{"processed":{event.processed_tokens},"total":{event.total_tokens}}}'
+                yield f"event: prefill_progress\ndata: {progress_json}\n\n"
+                continue
+
+            # TokenChunk handling
+            chunk = event
             if chunk.finish_reason == "error":
                 error_response = ErrorResponse(
                     error=ErrorInfo(

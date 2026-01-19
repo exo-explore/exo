@@ -2,7 +2,6 @@ import base64
 import json
 import time
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Literal, cast
 
@@ -73,7 +72,13 @@ from exo.shared.types.api import (
     PlacementPreview,
     PlacementPreviewResponse,
 )
-from exo.shared.types.chunks import ImageChunk, InputImageChunk, TokenChunk
+from exo.shared.types.chunks import (
+    ImageChunk,
+    InputImageChunk,
+    PrefillProgressData,
+    StreamEvent,
+    TokenChunk,
+)
 from exo.shared.types.claude_api import (
     ClaudeMessagesRequest,
     ClaudeMessagesResponse,
@@ -114,18 +119,6 @@ from exo.utils.event_buffer import OrderedBuffer
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
     return f"image/{image_format or 'png'}"
-
-
-@dataclass
-class PrefillProgressData:
-    """Data class for prefill progress events."""
-
-    processed_tokens: int
-    total_tokens: int
-
-
-# Union type for stream events
-StreamEvent = TokenChunk | PrefillProgressData
 
 
 async def resolve_model_card(model_id: ModelId) -> ModelCard:
@@ -633,7 +626,7 @@ class API:
             return StreamingResponse(
                 generate_chat_stream(
                     command.command_id,
-                    self._chat_chunk_stream(command.command_id),
+                    self._stream_events(command.command_id),
                 ),
                 media_type="text/event-stream",
                 headers={
