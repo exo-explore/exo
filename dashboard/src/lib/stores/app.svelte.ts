@@ -196,6 +196,12 @@ export interface TokenData {
 	topLogprobs: TopLogprob[];
 }
 
+// Prefill progress data for long prompts
+export interface PrefillProgress {
+	processed: number;
+	total: number;
+}
+
 export interface Message {
 	id: string;
 	role: "user" | "assistant" | "system";
@@ -206,6 +212,7 @@ export interface Message {
 	ttftMs?: number; // Time to first token in ms (for assistant messages)
 	tps?: number; // Tokens per second (for assistant messages)
 	tokens?: TokenData[]; // Token-level data for uncertainty visualization
+	prefillProgress?: PrefillProgress | null; // Prefill progress for long prompts
 }
 
 export interface Conversation {
@@ -1512,6 +1519,7 @@ class AppStore {
 			let fullContent = "";
 			let buffer = "";
 			const collectedTokens: TokenData[] = [];
+			let currentEventType = ""; // Track SSE event type
 
 			while (true) {
 				const { done, value } = await reader.read();
@@ -1525,20 +1533,57 @@ class AppStore {
 
 				for (const line of lines) {
 					const trimmed = line.trim();
-					if (!trimmed) continue;
+					if (!trimmed) {
+						// Empty line resets event type
+						currentEventType = "";
+						continue;
+					}
+
+					// Handle event type declaration
+					if (trimmed.startsWith("event: ")) {
+						currentEventType = trimmed.slice(7);
+						continue;
+					}
 
 					if (trimmed.startsWith("data: ")) {
 						const data = trimmed.slice(6);
-						if (data === "[DONE]") continue;
+						if (data === "[DONE]") {
+							currentEventType = "";
+							continue;
+						}
 
 						try {
 							const parsed = JSON.parse(data);
+
+							// Handle prefill progress events
+							if (currentEventType === "prefill_progress") {
+								const idx = this.messages.findIndex(
+									(m) => m.id === assistantMessage.id,
+								);
+								if (idx !== -1) {
+									this.messages[idx].prefillProgress = {
+										processed: parsed.processed,
+										total: parsed.total,
+									};
+								}
+								continue;
+							}
+
+							// Handle regular token data
 							const delta = parsed.choices?.[0]?.delta?.content;
 							if (delta) {
 								// Track first token for TTFT
 								if (firstTokenTime === null) {
 									firstTokenTime = performance.now();
 									this.ttftMs = firstTokenTime - requestStartTime;
+								}
+
+								// Clear prefill progress when first token arrives
+								const msgIdx = this.messages.findIndex(
+									(m) => m.id === assistantMessage.id,
+								);
+								if (msgIdx !== -1 && this.messages[msgIdx].prefillProgress) {
+									this.messages[msgIdx].prefillProgress = null;
 								}
 
 								// Count tokens (each SSE chunk is typically one token)

@@ -2,6 +2,7 @@ import base64
 import json
 import time
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Literal, cast
 
@@ -19,6 +20,7 @@ from loguru import logger
 
 from exo.master.adapters.chat_completions import (
     chat_request_to_internal,
+    chunk_to_response,
     collect_chat_response,
     generate_chat_stream,
 )
@@ -94,6 +96,7 @@ from exo.shared.types.events import (
     Event,
     ForwarderEvent,
     IndexedEvent,
+    PrefillProgress,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.openai_responses import (
@@ -111,6 +114,18 @@ from exo.utils.event_buffer import OrderedBuffer
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
     return f"image/{image_format or 'png'}"
+
+
+@dataclass
+class PrefillProgressData:
+    """Data class for prefill progress events."""
+
+    processed_tokens: int
+    total_tokens: int
+
+
+# Union type for stream events
+StreamEvent = TokenChunk | PrefillProgressData
 
 
 async def resolve_model_card(model_id: ModelId) -> ModelCard:
@@ -166,7 +181,7 @@ class API:
             name="dashboard",
         )
 
-        self._chat_completion_queues: dict[CommandId, Sender[TokenChunk]] = {}
+        self._chat_completion_queues: dict[CommandId, Sender[StreamEvent]] = {}
         self._image_generation_queues: dict[CommandId, Sender[ImageChunk]] = {}
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup | None = None
@@ -443,20 +458,23 @@ class API:
             instance_id=instance_id,
         )
 
-    async def _token_chunk_stream(
+    async def _stream_events(
         self, command_id: CommandId
-    ) -> AsyncGenerator[TokenChunk, None]:
-        """Yield `TokenChunk`s for a given command until completion.
+    ) -> AsyncGenerator[StreamEvent, None]:
+        """Yield stream events (TokenChunks or PrefillProgressData) for a command.
 
         This is the internal low-level stream used by all API adapters.
         """
         try:
-            self._chat_completion_queues[command_id], recv = channel[TokenChunk]()
+            self._chat_completion_queues[command_id], recv = channel[StreamEvent]()
 
-            with recv as token_chunks:
-                async for chunk in token_chunks:
-                    yield chunk
-                    if chunk.finish_reason is not None:
+            with recv as events:
+                async for event in events:
+                    yield event
+                    if (
+                        isinstance(event, TokenChunk)
+                        and event.finish_reason is not None
+                    ):
                         break
 
         except anyio.get_cancelled_exc_class():
@@ -472,6 +490,74 @@ class API:
             await self._send(command)
             del self._chat_completion_queues[command_id]
 
+    async def _chat_chunk_stream(
+        self, command_id: CommandId
+    ) -> AsyncGenerator[TokenChunk, None]:
+        """Yield only TokenChunks, filtering out progress events."""
+
+        async for event in self._stream_events(command_id):
+            if isinstance(event, TokenChunk):
+                yield event
+
+    async def _generate_chat_stream(
+        self, command_id: CommandId
+    ) -> AsyncGenerator[str, None]:
+        """Generate chat completion stream as JSON strings."""
+
+        async for event in self._stream_events(command_id):
+            if isinstance(event, PrefillProgressData):
+                # Send prefill progress as a named SSE event
+                progress_json = f'{{"processed":{event.processed_tokens},"total":{event.total_tokens}}}'
+                yield f"event: prefill_progress\ndata: {progress_json}\n\n"
+            else:
+                # TokenChunk - regular token generation
+                chunk_response: ChatCompletionResponse = chunk_to_response(
+                    event, command_id
+                )
+                logger.debug(f"chunk_response: {chunk_response}")
+
+                yield f"data: {chunk_response.model_dump_json()}\n\n"
+
+                if event.finish_reason is not None:
+                    yield "data: [DONE]\n\n"
+
+    async def _collect_chat_completion(
+        self, command_id: CommandId
+    ) -> ChatCompletionResponse:
+        """Collect all token chunks for a chat completion and return a single response."""
+
+        text_parts: list[str] = []
+        model: str | None = None
+        finish_reason: FinishReason | None = None
+
+        async for chunk in self._chat_chunk_stream(command_id):
+            if model is None:
+                model = chunk.model
+
+            text_parts.append(chunk.text)
+
+            if chunk.finish_reason is not None:
+                finish_reason = chunk.finish_reason
+
+        combined_text = "".join(text_parts)
+        assert model is not None
+
+        return ChatCompletionResponse(
+            id=command_id,
+            created=int(time.time()),
+            model=model,
+            choices=[
+                ChatCompletionChoice(
+                    index=0,
+                    message=ChatCompletionMessage(
+                        role="assistant",
+                        content=combined_text,
+                    ),
+                    finish_reason=finish_reason,
+                )
+            ],
+        )
+
     async def _collect_chat_completion_with_stats(
         self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
@@ -481,7 +567,7 @@ class API:
 
         stats: GenerationStats | None = None
 
-        async for chunk in self._token_chunk_stream(command_id):
+        async for chunk in self._chat_chunk_stream(command_id):
             if chunk.finish_reason == "error":
                 raise HTTPException(
                     status_code=500,
@@ -547,7 +633,7 @@ class API:
             return StreamingResponse(
                 generate_chat_stream(
                     command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                    self._chat_chunk_stream(command.command_id),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -560,7 +646,7 @@ class API:
         try:
             return await collect_chat_response(
                 command.command_id,
-                self._token_chunk_stream(command.command_id),
+                self._chat_chunk_stream(command.command_id),
             )
         except ValueError as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
@@ -1069,7 +1155,7 @@ class API:
                 generate_claude_stream(
                     command.command_id,
                     payload.model,
-                    self._token_chunk_stream(command.command_id),
+                    self._chat_chunk_stream(command.command_id),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1083,7 +1169,7 @@ class API:
             return await collect_claude_response(
                 command.command_id,
                 payload.model,
-                self._token_chunk_stream(command.command_id),
+                self._chat_chunk_stream(command.command_id),
             )
         except ValueError as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
@@ -1116,7 +1202,7 @@ class API:
                 generate_responses_stream(
                     command.command_id,
                     payload.model,
-                    self._token_chunk_stream(command.command_id),
+                    self._chat_chunk_stream(command.command_id),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1130,7 +1216,7 @@ class API:
             return await collect_responses_response(
                 command.command_id,
                 payload.model,
-                self._token_chunk_stream(command.command_id),
+                self._chat_chunk_stream(command.command_id),
             )
         except ValueError as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
@@ -1216,6 +1302,18 @@ class API:
                                     self._image_generation_queues.pop(
                                         event.command_id, None
                                     )
+                    elif isinstance(event, PrefillProgress):
+                        queue = self._chat_completion_queues.get(event.command_id)
+                        if queue is not None:
+                            try:
+                                await queue.send(
+                                    PrefillProgressData(
+                                        processed_tokens=event.processed_tokens,
+                                        total_tokens=event.total_tokens,
+                                    )
+                                )
+                            except BrokenResourceError:
+                                self._chat_completion_queues.pop(event.command_id, None)
 
     async def _pause_on_new_election(self):
         with self.election_receiver as ems:

@@ -76,7 +76,7 @@ def warmup_inference(
         max_tokens=50,
         sampler=sampler,
         prompt_cache=cache,
-        prefill_step_size=2048,
+        prefill_step_size=256,  # Temporarily reduced from 2048 for testing progress bar
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
     ):
@@ -170,6 +170,7 @@ def mlx_generate(
     task: ResponsesRequest,
     prompt: str,
     is_bench: bool = False,
+    on_prefill_progress: Callable[[int, int], None] | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -210,9 +211,11 @@ def mlx_generate(
         sampler=sampler,
         logits_processors=logits_processors,
         prompt_cache=caches,
-        prefill_step_size=2048,
+        # TODO: Dynamically change prefill step size to be the maximum possible without timing out.
+        prefill_step_size=256,  # Temporarily reduced from 2048 for testing progress bar
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
+        prompt_progress_callback=on_prefill_progress,
     ):
         logger.info(out.text)
         accumulated_text += out.text

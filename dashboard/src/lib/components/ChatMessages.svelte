@@ -7,10 +7,13 @@
     editAndRegenerate,
     regenerateLastResponse,
     setEditingImage,
+    regenerateFromToken,
+    isUncertaintyViewEnabled,
   } from "$lib/stores/app.svelte";
-  import type { Message } from "$lib/stores/app.svelte";
   import type { MessageAttachment } from "$lib/stores/app.svelte";
   import MarkdownContent from "./MarkdownContent.svelte";
+  import TokenHeatmap from "./TokenHeatmap.svelte";
+  import PrefillProgressBar from "./PrefillProgressBar.svelte";
 
   interface Props {
     class?: string;
@@ -397,6 +400,10 @@
             {:else}
               <!-- Assistant message styling -->
               <div class="p-3 sm:p-4">
+                {#if message.prefillProgress}
+                  <!-- Prefill progress bar -->
+                  <PrefillProgressBar progress={message.prefillProgress} class="mb-3" />
+                {/if}
                 {#if message.thinking && message.thinking.trim().length > 0}
                   <div
                     class="mb-3 rounded border border-exo-yellow/20 bg-exo-black/40"
@@ -548,9 +555,19 @@
                       >
                     </div>
                   {:else if message.content || (loading && !message.attachments?.some((a) => a.type === "generated-image"))}
-                    <MarkdownContent
-                      content={message.content || (loading ? response : "")}
-                    />
+                    {#if message.role === 'assistant' && isUncertaintyViewEnabled(message.id) && message.tokens && message.tokens.length > 0}
+                      <!-- Uncertainty heatmap view -->
+                      <TokenHeatmap
+                        tokens={message.tokens}
+                        isGenerating={loading}
+                        onRegenerateFrom={(tokenIndex) => regenerateFromToken(message.id, tokenIndex)}
+                      />
+                    {:else}
+                      <!-- Normal markdown view -->
+                      <MarkdownContent
+                        content={message.content || (loading ? response : "")}
+                      />
+                    {/if}
                     {#if loading && !message.content}
                       <span
                         class="inline-block w-2 h-4 bg-exo-yellow/70 ml-1 cursor-blink"
