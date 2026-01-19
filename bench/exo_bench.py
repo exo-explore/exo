@@ -16,9 +16,6 @@ from urllib.parse import urlencode
 from loguru import logger
 from transformers import AutoTokenizer
 
-from exo.shared.models.model_cards import MODEL_CARDS
-from exo.shared.types.memory import Memory
-
 
 class ExoHttpError(RuntimeError):
     def __init__(self, status: int, reason: str, body_preview: str):
@@ -490,17 +487,17 @@ def main() -> int:
                 logger.debug(f"  warmup {i + 1}/{args.warmup} done")
 
             for pp in pp_list:
-                if (
-                    pp * n_nodes > 2048
-                    and "ring" in instance_meta.lower()
-                    and "tensor" in sharding.lower()
-                ):
-                    model_card = MODEL_CARDS[short_id]
-                    if model_card.metadata.storage_size > Memory.from_gb(10):
-                        logger.info(
-                            f"Skipping tensor ring as this is too slow for model of size {model_card.metadata.storage_size} on {n_nodes=}"
-                        )
-                        continue
+                # if (
+                #     pp * n_nodes > 2048
+                #     and "ring" in instance_meta.lower()
+                #     and "tensor" in sharding.lower()
+                # ):
+                #     model_card = MODEL_CARDS[short_id]
+                #     if model_card.metadata.storage_size > Memory.from_gb(10):
+                #         logger.info(
+                #             f"Skipping tensor ring as this is too slow for model of size {model_card.metadata.storage_size} on {n_nodes=}"
+                #         )
+                #         continue
                 for tg in tg_list:
                     runs: list[dict[str, Any]] = []
                     for r in range(args.repeat):

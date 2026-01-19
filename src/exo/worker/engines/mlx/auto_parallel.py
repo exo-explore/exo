@@ -108,7 +108,6 @@ class PipelineLastLayer(CustomMlxLayer):
             if cache is not None:
                 cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
 
-        output = mx.distributed.all_gather(output, group=self.group)[-output.shape[0] :]
         return output
 
 
@@ -193,6 +192,36 @@ def pipeline_auto_parallel(
         "Expected a list of layers after auto-parallel initialisation"
     )
 
+    return patch_pipeline_model(model, group)
+
+
+def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
+    # Patch __call__ on the model's class
+    cls = model.__class__
+    original_call = cls.__call__  # type :ignore
+    call_signature = signature(original_call)  # type :ignore
+
+    def patched_call(
+        self: T,
+        *args: object,
+        **kwargs: object,
+    ) -> mx.array:
+        logits: mx.array = original_call(self, *args, **kwargs)  # type: ignore
+        cache = call_signature.bind_partial(self, *args, **kwargs).arguments.get(
+            "cache", None
+        )
+
+        # Add dependency to last cache entry to ensure distributed ops are evaluated
+        if cache is not None:
+            cache[-1].state = mx.depends(cache[-1].state, logits)  # type: ignore
+
+        logits = mx.distributed.all_gather(logits, group=group)[
+            -logits.shape[0] :
+        ]  # type :ignore
+
+        return logits
+
+    cls.__call__ = patched_call
     return model
 
 
