@@ -43,13 +43,11 @@ class DistributedImageModel:
                 end_layer=shard_metadata.end_layer,
             )
 
-        num_sync_steps = config.get_num_sync_steps("medium") if group else 0
         runner = DiffusionRunner(
             config=config,
             adapter=adapter,
             group=group,
             shard_metadata=shard_metadata,
-            num_sync_steps=num_sync_steps,
         )
 
         if group is not None:
@@ -144,6 +142,8 @@ class DistributedImageModel:
             model_config=self._adapter.model.model_config,
         )
 
+        num_sync_steps = self._config.get_num_sync_steps(steps)
+
         for result in self._runner.generate_image(
             runtime_config=config,
             prompt=prompt,
@@ -151,6 +151,7 @@ class DistributedImageModel:
             partial_images=partial_images,
             guidance_override=guidance_override,
             negative_prompt=negative_prompt,
+            num_sync_steps=num_sync_steps,
         ):
             if isinstance(result, tuple):
                 # Partial image: (GeneratedImage, partial_index, total_partials)

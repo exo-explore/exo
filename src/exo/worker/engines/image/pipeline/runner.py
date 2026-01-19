@@ -61,7 +61,6 @@ class DiffusionRunner:
         adapter: ModelAdapter,
         group: Optional[mx.distributed.Group],
         shard_metadata: PipelineShardMetadata,
-        num_sync_steps: int = 1,
         num_patches: Optional[int] = None,
     ):
         """Initialize the diffusion runner.
@@ -71,7 +70,6 @@ class DiffusionRunner:
             adapter: Model adapter for model-specific operations
             group: MLX distributed group (None for single-node mode)
             shard_metadata: Pipeline shard metadata with layer assignments
-            num_sync_steps: Number of synchronous timesteps before async mode
             num_patches: Number of patches for async mode (defaults to world_size)
         """
         self.config = config
@@ -93,7 +91,6 @@ class DiffusionRunner:
             self.start_layer = shard_metadata.start_layer
             self.end_layer = shard_metadata.end_layer
 
-        self.num_sync_steps = num_sync_steps
         self.num_patches = num_patches if num_patches else max(1, self.world_size)
 
         self.total_joint = config.joint_block_count
@@ -250,6 +247,7 @@ class DiffusionRunner:
         partial_images: int = 0,
         guidance_override: float | None = None,
         negative_prompt: str | None = None,
+        num_sync_steps: int = 1,
     ):
         """Primary entry point for image generation.
 
@@ -291,6 +289,7 @@ class DiffusionRunner:
             seed=seed,
             prompt=prompt,
             capture_steps=capture_steps,
+            num_sync_steps=num_sync_steps,
         )
 
         partial_index = 0
@@ -325,28 +324,9 @@ class DiffusionRunner:
         runtime_config: Config,
         seed: int,
         prompt: str,
+        num_sync_steps: int,
         capture_steps: set[int] | None = None,
     ):
-        """Execute the diffusion loop, optionally yielding at capture steps.
-
-        When capture_steps is provided and non-empty, this becomes a generator
-        that yields (latents, step_index) tuples at the specified timesteps.
-        Only the last stage yields (others have incomplete latents).
-
-        Args:
-            latents: Initial noise latents
-            prompt_data: Encoded prompt data
-            runtime_config: RuntimeConfig with scheduler, steps, dimensions
-            seed: Random seed (for callbacks)
-            prompt: Text prompt (for callbacks)
-            capture_steps: Set of timestep indices to capture (None = no captures)
-
-        Yields:
-            (latents, step_index) tuples at capture steps (last stage only)
-
-        Returns:
-            Final denoised latents ready for VAE decoding
-        """
         if capture_steps is None:
             capture_steps = set()
 
@@ -369,6 +349,7 @@ class DiffusionRunner:
                     config=runtime_config,
                     latents=latents,
                     prompt_data=prompt_data,
+                    num_sync_steps=num_sync_steps,
                 )
 
                 ctx.in_loop(
@@ -493,10 +474,11 @@ class DiffusionRunner:
         config: Config,
         latents: mx.array,
         prompt_data: PromptData,
+        num_sync_steps: int,
     ) -> mx.array:
         if self.group is None:
             return self._single_node_step(t, config, latents, prompt_data)
-        elif t < config.init_time_step + self.num_sync_steps:
+        elif t < config.init_time_step + num_sync_steps:
             return self._sync_pipeline_step(
                 t,
                 config,
@@ -509,6 +491,7 @@ class DiffusionRunner:
                 config,
                 latents,
                 prompt_data,
+                is_first_async_step=t == config.init_time_step + num_sync_steps,
             )
 
     def _single_node_step(
@@ -786,6 +769,7 @@ class DiffusionRunner:
         config: Config,
         latents: mx.array,
         prompt_data: PromptData,
+        is_first_async_step: bool,
         kontext_image_ids: mx.array | None = None,
     ) -> mx.array:
         """Execute async pipeline step with batched CFG."""
@@ -823,7 +807,6 @@ class DiffusionRunner:
         )
 
         prev_patch_latents = [p for p in patch_latents]
-        is_first_async_step = t == config.init_time_step + self.num_sync_steps
         encoder_hidden_states: mx.array | None = None
 
         for patch_idx in range(len(patch_latents)):
