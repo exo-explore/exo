@@ -53,6 +53,26 @@ class NetworkInterfaceInfo(CamelCaseModel):
     ip_address: str
 
 
+class NodeIdentity(CamelCaseModel):
+    """Static and slow-changing node identification data."""
+
+    model_id: str = "Unknown"
+    chip_id: str = "Unknown"
+    friendly_name: str = "Unknown"
+
+
+class NodeNetworkInfo(CamelCaseModel):
+    """Network interface information for a node."""
+
+    interfaces: Sequence[NetworkInterfaceInfo] = []
+
+
+class NodeThunderboltInfo(CamelCaseModel):
+    """Thunderbolt interface identifiers for a node."""
+
+    interfaces: Sequence[ThunderboltIdentifier] = []
+
+
 class NodePerformanceProfile(CamelCaseModel):
     model_id: str = "Unknown"
     chip_id: str = "Unknown"
