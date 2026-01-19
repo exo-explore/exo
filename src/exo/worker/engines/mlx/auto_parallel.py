@@ -168,11 +168,21 @@ def pipeline_auto_parallel(
         inner_model_instance.layer_types = inner_model_instance.layer_types[  # type: ignore
             start_layer:end_layer
         ]
-        inner_model_instance.swa_idx = inner_model_instance.layer_types.index(  # type: ignore
-            "sliding_attention"
+        # We can assume the model has at least one layer thanks to placement.
+        # If a layer type doesn't exist, we can set it to 0.
+        inner_model_instance.swa_idx = (
+            0
+            if "sliding_attention" not in inner_model_instance.layer_types  # type: ignore
+            else inner_model_instance.layer_types.index(  # type: ignore
+                "sliding_attention"
+            )
         )
-        inner_model_instance.ga_idx = inner_model_instance.layer_types.index(  # type: ignore
-            "full_attention"
+        inner_model_instance.ga_idx = (
+            0
+            if "full_attention" not in inner_model_instance.layer_types  # type: ignore
+            else inner_model_instance.layer_types.index(  # type: ignore
+                "full_attention"
+            )
         )
 
     _set_layers(model, layers)
