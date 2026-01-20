@@ -110,26 +110,10 @@ class PipelineFirstLayer(CustomMlxLayer):
         super().__init__(original_layer)
         self.r: int = r
         self.group = group
-        self.iteration: int = 0
-        # Shared storage for hidden states from previous rank
-        self._pending_hidden: mx.array | None = None
-
-    def set_pending_hidden(self, hidden: mx.array) -> None:
-        """Called by PipelineLastLayer to pass hidden states."""
-        self._pending_hidden = hidden
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
-        self.iteration += 1
         if self.r != 0:
-            # Use all_gather instead of send/recv - it's synchronized across all ranks
-            # Rank 0 contributes real hidden states, other ranks contribute placeholder
-            gathered = mx.distributed.all_gather(x, group=self.group)
-            mx.eval(gathered)
-            # Extract hidden states from rank r-1 (previous rank in pipeline)
-            # all_gather concatenates along axis 0, so we need to slice appropriately
-            batch_size = x.shape[0]
-            x = gathered[(self.r - 1) * batch_size : self.r * batch_size]
-            logger.info(f"[rank {self.r}] iter={self.iteration} RECV shape={x.shape}, mean={float(mx.mean(x)):.6f}")
+            x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -146,10 +130,8 @@ class PipelineLastLayer(CustomMlxLayer):
         self.s: int = s
         self.group = group
         self.original_layer_signature = signature(self.original_layer.__call__)
-        self.iteration: int = 0
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
-        self.iteration += 1
         cache = self.original_layer_signature.bind_partial(
             x, *args, **kwargs
         ).arguments.get("cache", None)
@@ -157,14 +139,11 @@ class PipelineLastLayer(CustomMlxLayer):
         output: mx.array = self.original_layer(x, *args, **kwargs)
 
         if self.r != self.s - 1:
-            mx.eval(output)
-            logger.info(f"[rank {self.r}] iter={self.iteration} SEND shape={output.shape}, mean={float(mx.mean(output)):.6f}")
-            # Use all_gather instead of send - it's synchronized across all ranks
-            # This all_gather pairs with the one in PipelineFirstLayer
-            gathered = mx.distributed.all_gather(output, group=self.group)
-            mx.eval(gathered)
+            output = mx.distributed.send(
+                output, (self.r + 1) % self.s, group=self.group
+            )
             if cache is not None:
-                cache.keys = mx.depends(cache.keys, gathered)  # type: ignore[reportUnknownMemberType]
+                cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
 
         return output
 
@@ -269,25 +248,13 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
             "cache", None
         )
 
-        logger.info(
-            f"[rank {group.rank()}] pre-gather logits shape: {logits.shape}, "
-            f"cache entries: {len(cache) if cache else 0}"
-        )
-
-        pre_gather_shape = logits.shape[0]
-        logits = mx.distributed.all_gather(logits, group=group)
-
-        logger.info(
-            f"[rank {group.rank()}] post-gather logits shape: {logits.shape}, "
-            f"slicing [-{pre_gather_shape}:]"
-        )
-
-        logits = logits[-pre_gather_shape:]
-
-        mx.eval(logits)
+        # Add dependency to last cache entry to ensure distributed ops are evaluated
         if cache is not None:
-            for c in cache:  # type: ignore
-                mx.eval(c.state)  # type: ignore
+            cache[-1].state = mx.depends(cache[-1].state, logits)  # type: ignore
+
+        logits = mx.distributed.all_gather(logits, group=group)[
+            -logits.shape[0] :
+        ]  # type :ignore
 
         return logits
 
