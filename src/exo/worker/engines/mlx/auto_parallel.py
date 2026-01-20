@@ -46,9 +46,11 @@ class CustomMlxLayer(nn.Module):
 
     def __init__(self, original_layer: _LayerCallable):
         super().__init__()
-        # Set twice to avoid __setattr__ recursion
         object.__setattr__(self, "_original_layer", original_layer)
-        self.original_layer: _LayerCallable = original_layer
+
+    @property
+    def original_layer(self) -> _LayerCallable:
+        return cast(_LayerCallable, object.__getattribute__(self, "_original_layer"))
 
     # Calls __getattr__ for any attributes not found on nn.Module (e.g. use_sliding)
     if not TYPE_CHECKING:
@@ -58,7 +60,7 @@ class CustomMlxLayer(nn.Module):
                 return super().__getattr__(name)
             except AttributeError:
                 original_layer = object.__getattribute__(self, "_original_layer")
-                return object.__getattribute__(original_layer, name)
+                return getattr(original_layer, name)
 
 
 class PipelineFirstLayer(CustomMlxLayer):
@@ -106,7 +108,6 @@ class PipelineLastLayer(CustomMlxLayer):
             if cache is not None:
                 cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
 
-        output = mx.distributed.all_gather(output, group=self.group)[-output.shape[0] :]
         return output
 
 
@@ -168,11 +169,21 @@ def pipeline_auto_parallel(
         inner_model_instance.layer_types = inner_model_instance.layer_types[  # type: ignore
             start_layer:end_layer
         ]
-        inner_model_instance.swa_idx = inner_model_instance.layer_types.index(  # type: ignore
-            "sliding_attention"
+        # We can assume the model has at least one layer thanks to placement.
+        # If a layer type doesn't exist, we can set it to 0.
+        inner_model_instance.swa_idx = (
+            0
+            if "sliding_attention" not in inner_model_instance.layer_types  # type: ignore
+            else inner_model_instance.layer_types.index(  # type: ignore
+                "sliding_attention"
+            )
         )
-        inner_model_instance.ga_idx = inner_model_instance.layer_types.index(  # type: ignore
-            "full_attention"
+        inner_model_instance.ga_idx = (
+            0
+            if "full_attention" not in inner_model_instance.layer_types  # type: ignore
+            else inner_model_instance.layer_types.index(  # type: ignore
+                "full_attention"
+            )
         )
 
     _set_layers(model, layers)
@@ -181,6 +192,36 @@ def pipeline_auto_parallel(
         "Expected a list of layers after auto-parallel initialisation"
     )
 
+    return patch_pipeline_model(model, group)
+
+
+def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
+    # Patch __call__ on the model's class
+    cls = model.__class__
+    original_call = cls.__call__  # type :ignore
+    call_signature = signature(original_call)  # type :ignore
+
+    def patched_call(
+        self: T,
+        *args: object,
+        **kwargs: object,
+    ) -> mx.array:
+        logits: mx.array = original_call(self, *args, **kwargs)  # type: ignore
+        cache = call_signature.bind_partial(self, *args, **kwargs).arguments.get(
+            "cache", None
+        )
+
+        # Add dependency to last cache entry to ensure distributed ops are evaluated
+        if cache is not None:
+            cache[-1].state = mx.depends(cache[-1].state, logits)  # type: ignore
+
+        logits = mx.distributed.all_gather(logits, group=group)[
+            -logits.shape[0] :
+        ]  # type :ignore
+
+        return logits
+
+    cls.__call__ = patched_call
     return model
 
 

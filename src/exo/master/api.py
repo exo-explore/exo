@@ -1,13 +1,14 @@
 import time
 from collections.abc import AsyncGenerator
+from http import HTTPStatus
 from typing import cast
 
 import anyio
-from anyio import create_task_group
+from anyio import BrokenResourceError, create_task_group
 from anyio.abc import TaskGroup
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
 from hypercorn.config import Config
@@ -29,6 +30,8 @@ from exo.shared.types.api import (
     CreateInstanceParams,
     CreateInstanceResponse,
     DeleteInstanceResponse,
+    ErrorInfo,
+    ErrorResponse,
     FinishReason,
     GenerationStats,
     ModelList,
@@ -49,7 +52,12 @@ from exo.shared.types.commands import (
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
-from exo.shared.types.events import ChunkGenerated, Event, ForwarderEvent, IndexedEvent
+from exo.shared.types.events import (
+    ChunkGenerated,
+    Event,
+    ForwarderEvent,
+    IndexedEvent,
+)
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.state import State
@@ -115,6 +123,7 @@ class API:
         self.paused_ev: anyio.Event = anyio.Event()
 
         self.app = FastAPI()
+        self._setup_exception_handlers()
         self._setup_cors()
         self._setup_routes()
 
@@ -144,6 +153,21 @@ class API:
         self.paused = False
         self.paused_ev.set()
         self.paused_ev = anyio.Event()
+
+    def _setup_exception_handlers(self) -> None:
+        self.app.exception_handler(HTTPException)(self.http_exception_handler)
+
+    async def http_exception_handler(
+        self, _: Request, exc: HTTPException
+    ) -> JSONResponse:
+        err = ErrorResponse(
+            error=ErrorInfo(
+                message=exc.detail,
+                type=HTTPStatus(exc.status_code).phrase,
+                code=exc.status_code,
+            )
+        )
+        return JSONResponse(err.model_dump(), status_code=exc.status_code)
 
     def _setup_cors(self) -> None:
         self.app.add_middleware(
@@ -228,6 +252,8 @@ class API:
                     instance_meta=instance_meta,
                     min_nodes=min_nodes,
                 ),
+                node_memory=self.state.node_memory,
+                node_network=self.state.node_network,
                 topology=self.state.topology,
                 current_instances=self.state.instances,
             )
@@ -283,6 +309,8 @@ class API:
                             instance_meta=instance_meta,
                             min_nodes=min_nodes,
                         ),
+                        node_memory=self.state.node_memory,
+                        node_network=self.state.node_network,
                         topology=self.state.topology,
                         current_instances=self.state.instances,
                     )
@@ -406,6 +434,18 @@ class API:
         """Generate chat completion stream as JSON strings."""
 
         async for chunk in self._chat_chunk_stream(command_id):
+            if chunk.finish_reason == "error":
+                error_response = ErrorResponse(
+                    error=ErrorInfo(
+                        message=chunk.error_message or "Internal server error",
+                        type="InternalServerError",
+                        code=500,
+                    )
+                )
+                yield f"data: {error_response.model_dump_json()}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
             chunk_response: ChatCompletionResponse = chunk_to_response(
                 chunk, command_id
             )
@@ -426,6 +466,12 @@ class API:
         finish_reason: FinishReason | None = None
 
         async for chunk in self._chat_chunk_stream(command_id):
+            if chunk.finish_reason == "error":
+                raise HTTPException(
+                    status_code=500,
+                    detail=chunk.error_message or "Internal server error",
+                )
+
             if model is None:
                 model = chunk.model
 
@@ -463,6 +509,12 @@ class API:
         stats: GenerationStats | None = None
 
         async for chunk in self._chat_chunk_stream(command_id):
+            if chunk.finish_reason == "error":
+                raise HTTPException(
+                    status_code=500,
+                    detail=chunk.error_message or "Internal server error",
+                )
+
             if model is None:
                 model = chunk.model
 
@@ -552,9 +604,8 @@ class API:
         """Calculate total available memory across all nodes in bytes."""
         total_available = Memory()
 
-        for node in self.state.topology.list_nodes():
-            if node.node_profile is not None:
-                total_available += node.node_profile.memory.ram_available
+        for memory in self.state.node_memory.values():
+            total_available += memory.ram_available
 
         return total_available
 
@@ -607,14 +658,14 @@ class API:
                 for idx, event in self.event_buffer.drain_indexed():
                     self._event_log.append(event)
                     self.state = apply(self.state, IndexedEvent(event=event, idx=idx))
-                    if (
-                        isinstance(event, ChunkGenerated)
-                        and event.command_id in self._chat_completion_queues
-                    ):
+                    if isinstance(event, ChunkGenerated):
                         assert isinstance(event.chunk, TokenChunk)
-                        await self._chat_completion_queues[event.command_id].send(
-                            event.chunk
-                        )
+                        queue = self._chat_completion_queues.get(event.command_id)
+                        if queue is not None:
+                            try:
+                                await queue.send(event.chunk)
+                            except BrokenResourceError:
+                                self._chat_completion_queues.pop(event.command_id, None)
 
     async def _pause_on_new_election(self):
         with self.election_receiver as ems:

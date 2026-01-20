@@ -2,7 +2,7 @@
 
 import platform
 import pytest
-from exo.worker.utils.profile import get_memory_bandwidth
+from exo.utils.info_gatherer.info_gatherer import NodeMemoryBandwidth
 
 
 @pytest.mark.skipif(
@@ -10,7 +10,7 @@ from exo.worker.utils.profile import get_memory_bandwidth
     reason="MLX bandwidth profiling only works on macOS",
 )
 async def test_get_memory_bandwidth() -> None:
-    """get_memory_bandwidth should return a positive bandwidth value."""
-    bandwidth = await get_memory_bandwidth()
-    assert bandwidth is not None
-    assert bandwidth > 0
+    """NodeMemoryBandwidth.gather should return a positive bandwidth value."""
+    bandwidth_info = await NodeMemoryBandwidth.gather()
+    assert bandwidth_info.memory_bandwidth is not None
+    assert bandwidth_info.memory_bandwidth > 0

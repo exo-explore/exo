@@ -11,8 +11,19 @@ from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 
 FinishReason = Literal[
-    "stop", "length", "tool_calls", "content_filter", "function_call"
+    "stop", "length", "tool_calls", "content_filter", "function_call", "error"
 ]
+
+
+class ErrorInfo(BaseModel):
+    message: str
+    type: str
+    param: str | None = None
+    code: int
+
+
+class ErrorResponse(BaseModel):
+    error: ErrorInfo
 
 
 class ModelListModel(BaseModel):

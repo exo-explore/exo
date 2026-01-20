@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable
 from copy import copy
 from datetime import timedelta
 from pathlib import Path
@@ -31,7 +32,8 @@ class ShardDownloader(ABC):
 
     @abstractmethod
     def on_progress(
-        self, callback: Callable[[ShardMetadata, RepoDownloadProgress], None]
+        self,
+        callback: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
     ) -> None:
         pass
 
@@ -59,7 +61,8 @@ class NoopShardDownloader(ShardDownloader):
         return Path("/tmp/noop_shard")
 
     def on_progress(
-        self, callback: Callable[[ShardMetadata, RepoDownloadProgress], None]
+        self,
+        callback: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
     ) -> None:
         pass
 

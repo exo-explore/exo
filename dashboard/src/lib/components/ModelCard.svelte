@@ -197,7 +197,7 @@ function toggleNodeDetails(nodeId: string): void {
 	// Uses API preview data when available, falls back to local estimation
 	const placementPreview = $derived(() => {
 		const nodeArray = nodeList();
-		if (nodeArray.length === 0) return { nodes: [], canFit: false, totalAvailable: 0, error: null };
+		if (nodeArray.length === 0) return { nodes: [], canFit: false, totalAvailable: 0, topoWidth: 260, topoHeight: 90, error: null };
 		
 		const numNodes = nodeArray.length;
 		const iconSize = numNodes === 1 ? 50 : 36;

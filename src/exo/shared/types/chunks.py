@@ -22,6 +22,7 @@ class TokenChunk(BaseChunk):
     token_id: int
     finish_reason: FinishReason | None = None
     stats: GenerationStats | None = None
+    error_message: str | None = None
 
 
 class ImageChunk(BaseChunk):

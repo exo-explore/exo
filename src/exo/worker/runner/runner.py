@@ -4,6 +4,7 @@ from functools import cache
 
 import mlx.core as mx
 from mlx_lm.models.gpt_oss import Model as GptOssModel
+from mlx_lm.tokenizer_utils import TokenizerWrapper
 from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     HarmonyEncodingName,
     Role,
@@ -50,6 +51,8 @@ from exo.shared.types.worker.runners import (
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
+    apply_chat_template,
+    detect_thinking_prompt_suffix,
     initialize_mlx,
     load_mlx_items,
     mlx_force_oom,
@@ -67,6 +70,7 @@ def main(
         bound_instance.bound_runner_id,
         bound_instance.bound_shard,
     )
+    device_rank = shard_metadata.device_rank
     logger.info("hello from the runner")
     if getattr(shard_metadata, "immediate_exception", False):
         raise Exception("Fake exception - runner failed to spin up.")
@@ -118,7 +122,20 @@ def main(
                         )
                     )
 
-                    model, tokenizer = load_mlx_items(bound_instance, group)
+                    def on_model_load_timeout() -> None:
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id,
+                                runner_status=RunnerFailed(
+                                    error_message="Model loading timed out"
+                                ),
+                            )
+                        )
+                        time.sleep(0.5)
+
+                    model, tokenizer = load_mlx_items(
+                        bound_instance, group, on_timeout=on_model_load_timeout
+                    )
 
                     current_status = RunnerLoaded()
                     logger.info("runner loaded")
@@ -148,8 +165,6 @@ def main(
                 case ChatCompletion(task_params=task_params, command_id=command_id) if (
                     isinstance(current_status, RunnerReady)
                 ):
-                    assert model
-                    assert tokenizer
                     logger.info(f"received chat request: {str(task)[:500]}")
                     current_status = RunnerRunning()
                     logger.info("runner running")
@@ -158,41 +173,72 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
+                    assert model
+                    assert tokenizer
                     assert task_params.messages[0].content is not None
-                    _check_for_debug_prompts(task_params.messages[0].content)
 
-                    # Generate responses using the actual MLX generation
-                    mlx_generator = mlx_generate(
-                        model=model,
-                        tokenizer=tokenizer,
-                        task=task_params,
-                    )
+                    try:
+                        _check_for_debug_prompts(task_params.messages[0].content)
 
-                    # GPT-OSS specific parsing to match other model formats.
-                    if isinstance(model, GptOssModel):
-                        mlx_generator = parse_gpt_oss(mlx_generator)
+                        # Build prompt once - used for both generation and thinking detection
+                        prompt = apply_chat_template(tokenizer, task_params)
 
-                    # TODO: Add tool call parser here
+                        # Generate responses using the actual MLX generation
+                        mlx_generator = mlx_generate(
+                            model=model,
+                            tokenizer=tokenizer,
+                            task=task_params,
+                            prompt=prompt,
+                        )
 
-                    for response in mlx_generator:
-                        match response:
-                            case GenerationResponse():
-                                if shard_metadata.device_rank == 0:
-                                    event_sender.send(
-                                        ChunkGenerated(
-                                            command_id=command_id,
-                                            chunk=TokenChunk(
-                                                idx=response.token,
-                                                model=shard_metadata.model_meta.model_id,
-                                                text=response.text,
-                                                token_id=response.token,
-                                                finish_reason=response.finish_reason,
-                                                stats=response.stats,
-                                            ),
+                        # GPT-OSS specific parsing to match other model formats.
+                        if isinstance(model, GptOssModel):
+                            mlx_generator = parse_gpt_oss(mlx_generator)
+
+                        # For other thinking models (GLM, etc.), check if we need to
+                        # prepend the thinking tag that was consumed by the chat template
+                        if detect_thinking_prompt_suffix(prompt, tokenizer):
+                            mlx_generator = parse_thinking_models(
+                                mlx_generator, tokenizer
+                            )
+
+                        # TODO: Add tool call parser here
+
+                        for response in mlx_generator:
+                            match response:
+                                case GenerationResponse():
+                                    if device_rank == 0:
+                                        event_sender.send(
+                                            ChunkGenerated(
+                                                command_id=command_id,
+                                                chunk=TokenChunk(
+                                                    idx=response.token,
+                                                    model=shard_metadata.model_meta.model_id,
+                                                    text=response.text,
+                                                    token_id=response.token,
+                                                    finish_reason=response.finish_reason,
+                                                    stats=response.stats,
+                                                ),
+                                            )
                                         )
-                                    )
-                                # case TokenizedResponse():
-                                # TODO: something here ig
+
+                    # can we make this more explicit?
+                    except Exception as e:
+                        if device_rank == 0:
+                            event_sender.send(
+                                ChunkGenerated(
+                                    command_id=command_id,
+                                    chunk=TokenChunk(
+                                        idx=0,
+                                        model=shard_metadata.model_meta.model_id,
+                                        text="",
+                                        token_id=0,
+                                        finish_reason="error",
+                                        error_message=str(e),
+                                    ),
+                                )
+                            )
+                        raise
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
@@ -259,6 +305,28 @@ def parse_gpt_oss(
                 yield response.model_copy(update={"text": "</think>"})
             yield response
             break
+
+
+def parse_thinking_models(
+    responses: Generator[GenerationResponse],
+    tokenizer: TokenizerWrapper,
+) -> Generator[GenerationResponse]:
+    """
+    For models that inject thinking tags in the prompt (like GLM-4.7),
+    prepend the thinking tag to the output stream so the frontend
+    can properly parse thinking content.
+    """
+    first = True
+    for response in responses:
+        if first:
+            first = False
+            yield response.model_copy(
+                update={
+                    "text": tokenizer.think_start,
+                    "token": tokenizer.think_start_id,  # type: ignore
+                }
+            )
+        yield response
 
 
 EXO_RUNNER_MUST_FAIL = "EXO RUNNER MUST FAIL"
