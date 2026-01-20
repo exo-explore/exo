@@ -25,19 +25,21 @@ from exo.worker.engines.image.distributed_model import DistributedImageModel
 
 def parse_size(size_str: str | None) -> tuple[int, int]:
     """Parse size parameter like '1024x1024' to (width, height) tuple."""
-    if not size_str or size_str == "auto":
-        size_str = "1024x1024"
+    if not size_str:
+        return (1024, 1024)
 
     try:
         parts = size_str.split("x")
         if len(parts) == 2:
             width, height = int(parts[0]), int(parts[1])
-            return (width, height)
+            if width > 0 and height > 0:
+                return (width, height)
     except (ValueError, AttributeError):
         pass
 
-    # Default fallback
-    return (1024, 1024)
+    raise ValueError(
+        f"Invalid size format: '{size_str}'. Expected 'WIDTHxHEIGHT' (e.g., '1024x1024')"
+    )
 
 
 def warmup_image_generator(model: DistributedImageModel) -> Image.Image | None:
