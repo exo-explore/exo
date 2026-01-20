@@ -317,7 +317,7 @@ def tensor_auto_parallel(
     elif hasattr(model, "shard"):
         try:
             model.shard(group)  # type: ignore
-            return patch_distributed_model(model)
+            return model
         except (AttributeError, TypeError, NameError):
             pass
 
