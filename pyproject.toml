@@ -17,8 +17,8 @@ dependencies = [
     "loguru>=0.7.3",
     "exo_pyo3_bindings", # rust bindings
     "anyio==4.11.0",
-    "mlx==0.30.3; sys_platform == 'darwin'",
-    "mlx[cpu]==0.30.3; sys_platform == 'linux'",
+    "mlx; sys_platform == 'darwin'",
+    "mlx[cpu]; sys_platform == 'linux'",
     "mlx-lm @ git+https://github.com/AlexCheema/mlx-lm.git@fix-transformers-5.0.0rc2",
     "tiktoken>=0.12.0", # required for kimi k2 tokenizer
     "hypercorn>=0.18.0",
@@ -59,6 +59,7 @@ members = [
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
+mlx = { git = "https://github.com/ml-explore/mlx.git", branch = "main" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }
 # mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }
