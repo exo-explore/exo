@@ -48,6 +48,8 @@ from exo.shared.types.api import (
     ImageGenerationResponse,
     ImageGenerationStats,
     ImageGenerationTaskParams,
+    ImageListItem,
+    ImageListResponse,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
@@ -230,7 +232,8 @@ class API:
         self.app.post("/bench/images/generations")(self.bench_image_generations)
         self.app.post("/v1/images/edits", response_model=None)(self.image_edits)
         self.app.post("/bench/images/edits")(self.bench_image_edits)
-        self.app.get("/v1/images/{image_id}")(self.get_image)
+        self.app.get("/images")(self.list_images)
+        self.app.get("/images/{image_id}")(self.get_image)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
 
@@ -661,6 +664,21 @@ class API:
             raise HTTPException(status_code=404, detail="Image not found or expired")
         return FileResponse(path=stored.file_path, media_type=stored.content_type)
 
+    async def list_images(self, request: Request) -> ImageListResponse:
+        """List all stored images."""
+        stored_images = self._image_store.list_images()
+        return ImageListResponse(
+            data=[
+                ImageListItem(
+                    image_id=img.image_id,
+                    url=self._build_image_url(request, img.image_id),
+                    content_type=img.content_type,
+                    expires_at=img.expires_at,
+                )
+                for img in stored_images
+            ]
+        )
+
     def _build_image_url(self, request: Request, image_id: ImageId) -> str:
         host = request.headers.get("host", f"localhost:{self.port}")
         scheme = "https" if request.url.scheme == "https" else "http"
@@ -894,7 +912,7 @@ class API:
         return BenchImageGenerationResponse(data=images, generation_stats=stats)
 
     async def bench_image_generations(
-        self, payload: BenchImageGenerationTaskParams
+        self, request: Request, payload: BenchImageGenerationTaskParams
     ) -> BenchImageGenerationResponse:
         payload.model = await self._validate_image_model(payload.model)
 
@@ -907,7 +925,7 @@ class API:
         await self._send(command)
 
         return await self._collect_image_generation_with_stats(
-            request=None,
+            request=request,
             command_id=command.command_id,
             num_images=payload.n or 1,
             response_format=payload.response_format or "b64_json",
@@ -1027,6 +1045,7 @@ class API:
 
     async def bench_image_edits(
         self,
+        request: Request,
         image: UploadFile = File(...),  # noqa: B008
         prompt: str = Form(...),
         model: str = Form(...),
@@ -1050,7 +1069,7 @@ class API:
         )
 
         return await self._collect_image_generation_with_stats(
-            request=None,
+            request=request,
             command_id=command.command_id,
             num_images=n,
             response_format=response_format,

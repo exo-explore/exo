@@ -329,3 +329,14 @@ class ImageGenerationResponse(BaseModel):
 
 class BenchImageGenerationResponse(ImageGenerationResponse):
     generation_stats: ImageGenerationStats | None = None
+
+
+class ImageListItem(BaseModel, frozen=True):
+    image_id: str
+    url: str
+    content_type: str
+    expires_at: float
+
+
+class ImageListResponse(BaseModel, frozen=True):
+    data: list[ImageListItem]

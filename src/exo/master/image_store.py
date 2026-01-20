@@ -48,6 +48,10 @@ class ImageStore:
 
         return stored
 
+    def list_images(self) -> list[StoredImage]:
+        now = time.time()
+        return [stored for stored in self._images.values() if now <= stored.expires_at]
+
     def cleanup_expired(self) -> int:
         now = time.time()
         expired_ids = [

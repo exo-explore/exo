@@ -15,7 +15,9 @@ import aiofiles
 import aiofiles.os as aios
 import aiohttp
 import certifi
-from huggingface_hub import snapshot_download
+from huggingface_hub import (
+    snapshot_download,  # pyright: ignore[reportUnknownVariableType]
+)
 from loguru import logger
 from pydantic import (
     DirectoryPath,
