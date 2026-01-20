@@ -8,9 +8,9 @@ from loguru import logger
 from exo.shared.topology import Topology
 from exo.shared.types.commands import LaunchFLASH
 from exo.shared.types.common import Host, NodeId
-from exo.shared.types.topology import SocketConnection
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
+from exo.shared.types.topology import SocketConnection
 from exo.shared.types.worker.instances import FLASHInstance, Instance, InstanceId
 from exo.shared.types.worker.runners import (
     RunnerId,
