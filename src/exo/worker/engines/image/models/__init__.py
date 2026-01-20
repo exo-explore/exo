@@ -19,7 +19,9 @@ __all__: list[str] = []
 
 # Type alias for adapter factory functions
 # Factory takes (config, model_id, local_path, quantize) and returns a ModelAdapter
-AdapterFactory = Callable[[ImageModelConfig, str, Path, int | None], ModelAdapter[Any, Any]]
+AdapterFactory = Callable[
+    [ImageModelConfig, str, Path, int | None], ModelAdapter[Any, Any]
+]
 
 # Registry maps model_family string to adapter factory
 _ADAPTER_REGISTRY: dict[str, AdapterFactory] = {

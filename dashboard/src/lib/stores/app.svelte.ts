@@ -427,7 +427,9 @@ class AppStore {
     chatSidebarVisible = $state(true); // Shown by default
 
     // Image generation params
-    imageGenerationParams = $state<ImageGenerationParams>({ ...DEFAULT_IMAGE_PARAMS });
+    imageGenerationParams = $state<ImageGenerationParams>({
+        ...DEFAULT_IMAGE_PARAMS,
+    });
 
     // Image editing state
     editingImage = $state<EditingImage | null>(null);
@@ -1828,7 +1830,11 @@ class AppStore {
     /**
      * Edit an image using the image edit API
      */
-    async editImage(prompt: string, imageDataUrl: string, modelId?: string): Promise<void> {
+    async editImage(
+        prompt: string,
+        imageDataUrl: string,
+        modelId?: string,
+    ): Promise<void> {
         if (!prompt.trim() || !imageDataUrl || this.isLoading) return;
 
         if (!this.hasStartedChat) {
@@ -1879,24 +1885,44 @@ class AppStore {
             formData.append("quality", params.quality);
             formData.append("size", params.size);
             formData.append("response_format", "b64_json");
-            formData.append("stream", "1");  // Use "1" instead of "true" for reliable FastAPI boolean parsing
+            formData.append("stream", "1"); // Use "1" instead of "true" for reliable FastAPI boolean parsing
             formData.append("partial_images", "3");
             formData.append("input_fidelity", params.inputFidelity);
 
             // Advanced params
             if (params.seed !== null) {
-                formData.append("advanced_params", JSON.stringify({
-                    seed: params.seed,
-                    ...(params.numInferenceSteps !== null && { num_inference_steps: params.numInferenceSteps }),
-                    ...(params.guidance !== null && { guidance: params.guidance }),
-                    ...(params.negativePrompt !== null && params.negativePrompt.trim() !== "" && { negative_prompt: params.negativePrompt }),
-                }));
-            } else if (params.numInferenceSteps !== null || params.guidance !== null || (params.negativePrompt !== null && params.negativePrompt.trim() !== "")) {
-                formData.append("advanced_params", JSON.stringify({
-                    ...(params.numInferenceSteps !== null && { num_inference_steps: params.numInferenceSteps }),
-                    ...(params.guidance !== null && { guidance: params.guidance }),
-                    ...(params.negativePrompt !== null && params.negativePrompt.trim() !== "" && { negative_prompt: params.negativePrompt }),
-                }));
+                formData.append(
+                    "advanced_params",
+                    JSON.stringify({
+                        seed: params.seed,
+                        ...(params.numInferenceSteps !== null && {
+                            num_inference_steps: params.numInferenceSteps,
+                        }),
+                        ...(params.guidance !== null && { guidance: params.guidance }),
+                        ...(params.negativePrompt !== null &&
+                            params.negativePrompt.trim() !== "" && {
+                            negative_prompt: params.negativePrompt,
+                        }),
+                    }),
+                );
+            } else if (
+                params.numInferenceSteps !== null ||
+                params.guidance !== null ||
+                (params.negativePrompt !== null && params.negativePrompt.trim() !== "")
+            ) {
+                formData.append(
+                    "advanced_params",
+                    JSON.stringify({
+                        ...(params.numInferenceSteps !== null && {
+                            num_inference_steps: params.numInferenceSteps,
+                        }),
+                        ...(params.guidance !== null && { guidance: params.guidance }),
+                        ...(params.negativePrompt !== null &&
+                            params.negativePrompt.trim() !== "" && {
+                            negative_prompt: params.negativePrompt,
+                        }),
+                    }),
+                );
             }
 
             const apiResponse = await fetch("/v1/images/edits", {
@@ -2050,8 +2076,11 @@ export const sendMessage = (
 ) => appStore.sendMessage(content, files);
 export const generateImage = (prompt: string, modelId?: string) =>
     appStore.generateImage(prompt, modelId);
-export const editImage = (prompt: string, imageDataUrl: string, modelId?: string) =>
-    appStore.editImage(prompt, imageDataUrl, modelId);
+export const editImage = (
+    prompt: string,
+    imageDataUrl: string,
+    modelId?: string,
+) => appStore.editImage(prompt, imageDataUrl, modelId);
 export const editingImage = () => appStore.editingImage;
 export const setEditingImage = (imageDataUrl: string, sourceMessage: Message) =>
     appStore.setEditingImage(imageDataUrl, sourceMessage);
@@ -2099,7 +2128,8 @@ export const refreshState = () => appStore.fetchState();
 
 // Image generation params
 export const imageGenerationParams = () => appStore.getImageGenerationParams();
-export const setImageGenerationParams = (params: Partial<ImageGenerationParams>) =>
-    appStore.setImageGenerationParams(params);
+export const setImageGenerationParams = (
+    params: Partial<ImageGenerationParams>,
+) => appStore.setImageGenerationParams(params);
 export const resetImageGenerationParams = () =>
     appStore.resetImageGenerationParams();
