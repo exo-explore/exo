@@ -334,14 +334,22 @@ def tensor_auto_parallel(
         group=group,
     )
 
-    if hasattr(model, "shard"):
+    if isinstance(model, GptOssModel):
+        tensor_parallel_sharding_strategy = GptOssShardingStrategy(
+            group,
+            all_to_sharded_linear,
+            sharded_to_all_linear,
+            all_to_sharded_linear_in_place,
+            sharded_to_all_linear_in_place,
+        )
+    elif hasattr(model, "shard"):
         try:
             model.shard(group)  # type: ignore
             return patch_tensor_model(model)
         except (AttributeError, TypeError, NameError):
             pass
 
-    if isinstance(model, (LlamaModel, Ministral3Model)):
+    elif isinstance(model, (LlamaModel, Ministral3Model)):
         logger.warning("shouldn't be hit - upstream sharding exists")
         tensor_parallel_sharding_strategy = LlamaShardingStrategy(
             group,
@@ -375,15 +383,6 @@ def tensor_auto_parallel(
             all_to_sharded_linear_in_place,
             sharded_to_all_linear_in_place,
         )
-    elif isinstance(model, GptOssModel):
-        tensor_parallel_sharding_strategy = GptOssShardingStrategy(
-            group,
-            all_to_sharded_linear,
-            sharded_to_all_linear,
-            all_to_sharded_linear_in_place,
-            sharded_to_all_linear_in_place,
-        )
-
     else:
         raise ValueError(f"Unsupported model type: {type(model)}")
 
