@@ -65,11 +65,11 @@ def api_request(
                     print(f"  {error_json['detail']}")
             except json.JSONDecodeError:
                 print(f"  {error_body}")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
     except URLError as e:
         print(f"Connection error: {e.reason}")
         print(f"Is Exo running at {get_api_base()}?")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
 
 def truncate_id(instance_id: str, length: int = 8) -> str:

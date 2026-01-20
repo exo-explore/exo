@@ -14,6 +14,10 @@ import socket
 import subprocess
 import threading
 
+from loguru import logger
+
+# Use core types for serialization compatibility
+from exo.shared.types.worker.instances import FLASHInstance
 from exo.shared.types.events import (
     Event,
     RunnerStatusUpdated,
@@ -26,7 +30,7 @@ from exo.shared.types.tasks import (
     Task,
     TaskStatus,
 )
-from exo.shared.types.worker.instances import BoundInstance, FLASHInstance
+from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import (
     RunnerFailed,
     RunnerIdle,
@@ -38,7 +42,6 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
 )
 from exo.utils.channels import MpReceiver, MpSender
-from exo.worker.runner.bootstrap import logger
 
 # Find mpirun in PATH, fallback to common locations
 MPIRUN_PATH = shutil.which("mpirun") or "/opt/homebrew/bin/mpirun"
@@ -117,7 +120,7 @@ def main(
     bound_instance: BoundInstance,
     event_sender: MpSender[Event],
     task_receiver: MpReceiver[Task],
-):
+) -> None:
     """Main FLASH runner loop.
 
     Coordinator: generates hostfile and runs mpirun (uses exo-rsh instead of SSH)

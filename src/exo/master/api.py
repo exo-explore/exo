@@ -54,9 +54,7 @@ from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
-    LaunchFLASH,
     PlaceInstance,
-    StopFLASH,
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
@@ -66,7 +64,6 @@ from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.instances import (
-    FLASHInstance,
     Instance,
     InstanceId,
     InstanceMeta,
@@ -151,6 +148,7 @@ class API:
         self.app = FastAPI()
         self._setup_cors()
         self._setup_routes()
+        self._register_plugin_routes()
 
         self.app.mount(
             "/",
@@ -204,12 +202,58 @@ class API:
         self.app.post("/bench/chat/completions")(self.bench_chat_completions)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
-        # FLASH simulation endpoints
-        self.app.post("/flash/launch")(self.launch_flash)
-        self.app.delete("/flash/{instance_id}")(self.stop_flash)
-        self.app.get("/flash/instances")(self.list_flash_instances)
         # Remote execution endpoint (used by exo-rsh for MPI)
         self.app.post("/execute")(self.execute)
+
+    def _register_plugin_routes(self) -> None:
+        """Register API routes from all loaded plugins."""
+        import functools
+        import inspect
+
+        from exo.plugins.context import PluginContext
+        from exo.plugins.registry import PluginRegistry
+
+        registry = PluginRegistry.get()
+
+        for method, path, handler, plugin in registry.get_all_api_routes():
+            # Create a wrapper that injects the plugin context while preserving
+            # the original function signature for FastAPI parameter extraction
+            @functools.wraps(handler)
+            async def wrapped_handler(  # pyright: ignore[reportAny]
+                *args: Any,  # pyright: ignore[reportAny]
+                _handler: Any = handler,  # pyright: ignore[reportAny]
+                **kwargs: Any,  # pyright: ignore[reportAny]
+            ) -> Any:
+                context = PluginContext(
+                    state=self.state,
+                    send_command=self._send,
+                    node_id=self.node_id,
+                )
+                # Pass context as first argument, then forward all other args
+                return await _handler(context, *args, **kwargs)  # pyright: ignore[reportAny]
+
+            # Modify the wrapper signature to match the original handler
+            # but without the 'ctx' parameter (we inject it)
+            orig_sig = inspect.signature(handler)
+            params = list(orig_sig.parameters.values())
+            # Remove the first parameter (ctx: PluginContext)
+            if params and params[0].name in ("ctx", "context"):
+                params = params[1:]
+            wrapped_handler.__signature__ = orig_sig.replace(parameters=params)  # pyright: ignore[reportAttributeAccessIssue]
+
+            # Register the route based on HTTP method
+            if method == "get":
+                self.app.get(path)(wrapped_handler)
+            elif method == "post":
+                self.app.post(path)(wrapped_handler)
+            elif method == "delete":
+                self.app.delete(path)(wrapped_handler)
+            elif method == "put":
+                self.app.put(path)(wrapped_handler)
+
+            logger.debug(
+                f"Registered plugin route: {method.upper()} {path} ({plugin.name})"
+            )
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -653,86 +697,6 @@ class API:
                 for card in MODEL_CARDS.values()
             ]
         )
-
-    async def launch_flash(
-        self,
-        simulation_name: str,
-        flash_executable_path: str,
-        working_directory: str,
-        parameter_file_path: str = "",
-        ranks_per_node: int = 1,
-        min_nodes: int = 1,
-        hosts: str = "",
-    ) -> dict[str, str]:
-        """Launch a FLASH MPI simulation across the cluster.
-
-        Args:
-            hosts: Optional comma-separated hostnames (e.g., "s14,james21-1").
-                   If not provided, IPs are discovered from topology edges.
-        """
-        command = LaunchFLASH(
-            simulation_name=simulation_name,
-            flash_executable_path=flash_executable_path,
-            parameter_file_path=parameter_file_path,
-            working_directory=working_directory,
-            ranks_per_node=ranks_per_node,
-            min_nodes=min_nodes,
-            hosts=hosts,
-        )
-        await self._send(command)
-
-        return {
-            "message": "FLASH launch command received",
-            "command_id": str(command.command_id),
-            "simulation_name": simulation_name,
-        }
-
-    async def stop_flash(self, instance_id: InstanceId) -> dict[str, str]:
-        """Stop a running FLASH simulation."""
-        if instance_id not in self.state.instances:
-            raise HTTPException(status_code=404, detail="Instance not found")
-
-        instance = self.state.instances[instance_id]
-        if not isinstance(instance, FLASHInstance):
-            raise HTTPException(
-                status_code=400, detail="Instance is not a FLASH simulation"
-            )
-
-        command = StopFLASH(instance_id=instance_id)
-        await self._send(command)
-
-        return {
-            "message": "Stop command received",
-            "command_id": str(command.command_id),
-            "instance_id": str(instance_id),
-        }
-
-    async def list_flash_instances(self) -> list[dict[str, Any]]:
-        """List all FLASH simulation instances."""
-        flash_instances: list[dict[str, Any]] = []
-        for instance_id, instance in self.state.instances.items():
-            if isinstance(instance, FLASHInstance):
-                # Get runner statuses for this instance
-                runner_statuses: dict[str, str | None] = {}
-                for (
-                    node_id,
-                    runner_id,
-                ) in instance.shard_assignments.node_to_runner.items():
-                    runner_status = self.state.runners.get(runner_id)
-                    runner_statuses[str(node_id)] = (
-                        str(runner_status) if runner_status else None
-                    )
-
-                flash_instances.append(
-                    {
-                        "instance_id": str(instance_id),
-                        "simulation_name": instance.simulation_name,
-                        "total_ranks": instance.total_ranks,
-                        "working_directory": instance.working_directory,
-                        "runner_statuses": runner_statuses,
-                    }
-                )
-        return flash_instances
 
     async def execute(self, request: ExecuteRequest) -> ExecuteResponse:
         """Execute a command locally. Used by exo-rsh for MPI remote execution."""

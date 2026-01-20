@@ -6,7 +6,6 @@ from exo.shared.types.events import Event, RunnerStatusUpdated
 from exo.shared.types.tasks import Task
 from exo.shared.types.worker.instances import (
     BoundInstance,
-    FLASHInstance,
     MlxJacclInstance,
 )
 from exo.shared.types.worker.runners import RunnerFailed
@@ -26,11 +25,19 @@ def entrypoint(
 
     # Route based on instance type
     try:
-        if isinstance(bound_instance.instance, FLASHInstance):
-            # FLASH MPI simulation runner
-            from exo.worker.runner.flash_runner import main
+        from exo.plugins.registry import PluginRegistry, discover_plugins
 
-            main(bound_instance, event_sender, task_receiver)
+        # Discover plugins in subprocess (they aren't inherited from main process)
+        discover_plugins()
+
+        registry = PluginRegistry.get()
+        instance = bound_instance.instance
+
+        # Check if a plugin handles this instance type
+        plugin = registry.get_plugin_for_instance(instance)
+        if plugin is not None:
+            # Delegate to plugin runner
+            plugin.create_runner(bound_instance, event_sender, task_receiver)
         else:
             # MLX runner (default)
             if (

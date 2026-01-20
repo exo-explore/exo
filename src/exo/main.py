@@ -213,6 +213,11 @@ def main():
     logger.info("Starting EXO")
     logger.info(f"EXO_LIBP2P_NAMESPACE: {os.getenv('EXO_LIBP2P_NAMESPACE')}")
 
+    # Discover and register plugins
+    from exo.plugins.registry import discover_plugins
+
+    discover_plugins()
+
     node = anyio.run(Node.create, args)
     anyio.run(node.run)
     logger.info("EXO Shutdown complete")

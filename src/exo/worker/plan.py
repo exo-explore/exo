@@ -23,7 +23,6 @@ from exo.shared.types.worker.downloads import (
 )
 from exo.shared.types.worker.instances import (
     BoundInstance,
-    FLASHInstance,
     Instance,
     InstanceId,
 )
@@ -55,10 +54,15 @@ def plan(
     all_runners: Mapping[RunnerId, RunnerStatus],  # all global
     tasks: Mapping[TaskId, Task],
 ) -> Task | None:
-    # Check for FLASH instance tasks first
-    flash_task = _plan_flash(runners, instances)
-    if flash_task is not None:
-        return flash_task
+    from exo.plugins.registry import PluginRegistry
+
+    registry = PluginRegistry.get()
+
+    # Check plugin tasks first
+    for plugin in registry.all_plugins():
+        task = plugin.plan_task(runners, instances)
+        if task is not None:
+            return task
 
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
@@ -70,34 +74,6 @@ def plan(
         or _ready_to_warmup(runners, all_runners)
         or _pending_tasks(runners, tasks, all_runners)
     )
-
-
-def _plan_flash(
-    runners: Mapping[RunnerId, RunnerSupervisor],
-    instances: Mapping[InstanceId, Instance],
-) -> Task | None:
-    """Plan tasks specifically for FLASH instances.
-
-    FLASH instances have a simpler lifecycle:
-    - CreateRunner (handled by _create_runner)
-    - LoadModel (starts the simulation immediately)
-    - Shutdown (handled by _kill_runner)
-
-    This function handles the LoadModel step for FLASH instances,
-    skipping the MLX-specific download/init/warmup steps.
-    """
-    for runner in runners.values():
-        instance = runner.bound_instance.instance
-
-        # Only handle FLASH instances
-        if not isinstance(instance, FLASHInstance):
-            continue
-
-        # If runner is idle, emit LoadModel to start the simulation
-        if isinstance(runner.status, RunnerIdle):
-            return LoadModel(instance_id=instance.instance_id)
-
-    return None
 
 
 def _kill_runner(
@@ -151,9 +127,16 @@ def _model_needs_download(
     runners: Mapping[RunnerId, RunnerSupervisor],
     download_status: Mapping[ModelId, DownloadProgress],
 ) -> DownloadModel | None:
+    from exo.plugins.registry import PluginRegistry
+
+    registry = PluginRegistry.get()
+
     for runner in runners.values():
-        # FLASH instances don't need model downloads
-        if isinstance(runner.bound_instance.instance, FLASHInstance):
+        instance = runner.bound_instance.instance
+
+        # Check if any plugin wants to skip download for this instance
+        plugin = registry.get_plugin_for_instance(instance)
+        if plugin is not None and plugin.should_skip_download(instance):
             continue
 
         model_id = runner.bound_instance.bound_shard.model_meta.model_id
