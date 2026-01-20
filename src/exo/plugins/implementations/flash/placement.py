@@ -6,14 +6,11 @@ from copy import deepcopy
 from loguru import logger
 
 from exo.shared.topology import Topology
-
-# Use core types for serialization compatibility
 from exo.shared.types.commands import LaunchFLASH
-from exo.shared.types.worker.instances import FLASHInstance
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
-from exo.shared.types.worker.instances import Instance, InstanceId
+from exo.shared.types.worker.instances import FLASHInstance, Instance, InstanceId
 from exo.shared.types.worker.runners import (
     RunnerId,
     ShardAssignments,

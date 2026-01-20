@@ -16,8 +16,6 @@ import threading
 
 from loguru import logger
 
-# Use core types for serialization compatibility
-from exo.shared.types.worker.instances import FLASHInstance
 from exo.shared.types.events import (
     Event,
     RunnerStatusUpdated,
@@ -30,7 +28,7 @@ from exo.shared.types.tasks import (
     Task,
     TaskStatus,
 )
-from exo.shared.types.worker.instances import BoundInstance
+from exo.shared.types.worker.instances import BoundInstance, FLASHInstance
 from exo.shared.types.worker.runners import (
     RunnerFailed,
     RunnerIdle,
