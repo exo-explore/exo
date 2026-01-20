@@ -18,6 +18,7 @@ def _check_model_exists() -> bool:
 
 
 pytestmark = [
+    pytest.mark.slow,
     pytest.mark.skipif(
         not _check_model_exists(),
         reason=f"GPT-OSS model not found at {DEFAULT_GPT_OSS_CONFIG.model_path}",

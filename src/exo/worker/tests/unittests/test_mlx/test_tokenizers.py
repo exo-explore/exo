@@ -89,6 +89,8 @@ def get_test_models() -> list[tuple[str, ModelCard]]:
 
 TEST_MODELS: list[tuple[str, ModelCard]] = get_test_models()
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.fixture(scope="module")
 def event_loop():
