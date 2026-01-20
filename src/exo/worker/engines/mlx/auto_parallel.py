@@ -334,22 +334,14 @@ def tensor_auto_parallel(
         group=group,
     )
 
-    if isinstance(model, GptOssModel):
-        tensor_parallel_sharding_strategy = GptOssShardingStrategy(
-            group,
-            all_to_sharded_linear,
-            sharded_to_all_linear,
-            all_to_sharded_linear_in_place,
-            sharded_to_all_linear_in_place,
-        )
-    elif hasattr(model, "shard"):
+    if hasattr(model, "shard") and not isinstance(model, GptOssModel):
         try:
             model.shard(group)  # type: ignore
             return patch_tensor_model(model)
         except (AttributeError, TypeError, NameError):
             pass
 
-    elif isinstance(model, (LlamaModel, Ministral3Model)):
+    if isinstance(model, (LlamaModel, Ministral3Model)):
         logger.warning("shouldn't be hit - upstream sharding exists")
         tensor_parallel_sharding_strategy = LlamaShardingStrategy(
             group,
@@ -377,6 +369,14 @@ def tensor_auto_parallel(
         )
     elif isinstance(model, (Qwen3MoeModel, Glm4MoeModel, Qwen3NextModel)):
         tensor_parallel_sharding_strategy = QwenShardingStrategy(
+            group,
+            all_to_sharded_linear,
+            sharded_to_all_linear,
+            all_to_sharded_linear_in_place,
+            sharded_to_all_linear_in_place,
+        )
+    elif isinstance(model, GptOssModel):
+        tensor_parallel_sharding_strategy = GptOssShardingStrategy(
             group,
             all_to_sharded_linear,
             sharded_to_all_linear,
