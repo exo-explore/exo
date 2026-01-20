@@ -6,11 +6,5 @@ import mlx.core as mx
 from mlx import nn
 
 class QwenTimeTextEmbed(nn.Module):
-    def __init__(self, timestep_proj_dim: int = ..., inner_dim: int = ...) -> None:
-        ...
-    
-    def __call__(self, timestep: mx.array, hidden_states: mx.array) -> mx.array:
-        ...
-    
-
-
+    def __init__(self, timestep_proj_dim: int = ..., inner_dim: int = ...) -> None: ...
+    def __call__(self, timestep: mx.array, hidden_states: mx.array) -> mx.array: ...

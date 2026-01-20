@@ -6,11 +6,5 @@ import mlx.core as mx
 from mlx import nn
 
 class AdaLayerNormContinuous(nn.Module):
-    def __init__(self, embedding_dim: int, conditioning_embedding_dim: int) -> None:
-        ...
-    
-    def __call__(self, x: mx.array, text_embeddings: mx.array) -> mx.array:
-        ...
-    
-
-
+    def __init__(self, embedding_dim: int, conditioning_embedding_dim: int) -> None: ...
+    def __call__(self, x: mx.array, text_embeddings: mx.array) -> mx.array: ...

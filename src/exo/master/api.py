@@ -925,7 +925,7 @@ class API:
 
     async def image_edits(
         self,
-        image: UploadFile = File(...),
+        image: UploadFile = File(...),  # noqa: B008
         prompt: str = Form(...),
         model: str = Form(...),
         n: int = Form(1),
@@ -971,7 +971,7 @@ class API:
 
     async def bench_image_edits(
         self,
-        image: UploadFile = File(...),
+        image: UploadFile = File(...),  # noqa: B008
         prompt: str = Form(...),
         model: str = Form(...),
         n: int = Form(1),

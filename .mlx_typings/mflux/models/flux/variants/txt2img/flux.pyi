@@ -6,7 +6,9 @@ from pathlib import Path
 from mlx import nn
 from typing import Any
 from mflux.models.common.config.model_config import ModelConfig
-from mflux.models.flux.model.flux_text_encoder.clip_encoder.clip_encoder import CLIPEncoder
+from mflux.models.flux.model.flux_text_encoder.clip_encoder.clip_encoder import (
+    CLIPEncoder,
+)
 from mflux.models.flux.model.flux_text_encoder.t5_encoder.t5_encoder import T5Encoder
 from mflux.models.flux.model.flux_transformer.transformer import Transformer
 from mflux.models.flux.model.flux_vae.vae import VAE
@@ -23,21 +25,29 @@ class Flux1(nn.Module):
     prompt_cache: dict[str, Any]
     tokenizers: dict[str, Any]
 
-    def __init__(self, quantize: int | None = ..., model_path: str | None = ..., lora_paths: list[str] | None = ..., lora_scales: list[float] | None = ..., model_config: ModelConfig = ...) -> None:
-        ...
-    
-    def generate_image(self, seed: int, prompt: str, num_inference_steps: int = ..., height: int = ..., width: int = ..., guidance: float = ..., image_path: Path | str | None = ..., image_strength: float | None = ..., scheduler: str = ..., negative_prompt: str | None = ...) -> GeneratedImage:
-        ...
-    
+    def __init__(
+        self,
+        quantize: int | None = ...,
+        model_path: str | None = ...,
+        lora_paths: list[str] | None = ...,
+        lora_scales: list[float] | None = ...,
+        model_config: ModelConfig = ...,
+    ) -> None: ...
+    def generate_image(
+        self,
+        seed: int,
+        prompt: str,
+        num_inference_steps: int = ...,
+        height: int = ...,
+        width: int = ...,
+        guidance: float = ...,
+        image_path: Path | str | None = ...,
+        image_strength: float | None = ...,
+        scheduler: str = ...,
+        negative_prompt: str | None = ...,
+    ) -> GeneratedImage: ...
     @staticmethod
-    def from_name(model_name: str, quantize: int | None = ...) -> Flux1:
+    def from_name(model_name: str, quantize: int | None = ...) -> Flux1: ...
+    def save_model(self, base_path: str) -> None: ...
+    def freeze(self, **kwargs):  # -> None:
         ...
-    
-    def save_model(self, base_path: str) -> None:
-        ...
-    
-    def freeze(self, **kwargs): # -> None:
-        ...
-    
-
-

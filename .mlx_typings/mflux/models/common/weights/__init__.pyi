@@ -8,4 +8,11 @@ from mflux.models.common.weights.loading.weight_definition import ComponentDefin
 from mflux.models.common.weights.loading.weight_loader import WeightLoader
 from mflux.models.common.weights.saving.model_saver import ModelSaver
 
-__all__ = ["ComponentDefinition", "LoadedWeights", "MetaData", "ModelSaver", "WeightApplier", "WeightLoader"]
+__all__ = [
+    "ComponentDefinition",
+    "LoadedWeights",
+    "MetaData",
+    "ModelSaver",
+    "WeightApplier",
+    "WeightLoader",
+]

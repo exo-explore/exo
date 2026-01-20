@@ -12,10 +12,7 @@ class AbsoluteBoxValues:
     left: int
     ...
 
-
-class BoxValueError(ValueError):
-    ...
-
+class BoxValueError(ValueError): ...
 
 @dataclass
 class BoxValues:
@@ -23,12 +20,6 @@ class BoxValues:
     right: int | str
     bottom: int | str
     left: int | str
-    def normalize_to_dimensions(self, width, height) -> AbsoluteBoxValues:
-        ...
-    
+    def normalize_to_dimensions(self, width, height) -> AbsoluteBoxValues: ...
     @staticmethod
-    def parse(value, delimiter=...) -> BoxValues:
-        ...
-    
-
-
+    def parse(value, delimiter=...) -> BoxValues: ...

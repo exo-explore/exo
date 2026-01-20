@@ -6,11 +6,5 @@ import mlx.core as mx
 from mlx import nn
 
 class QwenTimestepEmbedding(nn.Module):
-    def __init__(self, proj_dim: int, inner_dim: int) -> None:
-        ...
-    
-    def __call__(self, x: mx.array) -> mx.array:
-        ...
-    
-
-
+    def __init__(self, proj_dim: int, inner_dim: int) -> None: ...
+    def __call__(self, x: mx.array) -> mx.array: ...

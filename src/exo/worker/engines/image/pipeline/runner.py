@@ -20,7 +20,9 @@ from exo.worker.engines.image.pipeline.block_wrapper import (
 )
 
 
-def calculate_patch_heights(latent_height: int, num_patches: int):
+def calculate_patch_heights(
+    latent_height: int, num_patches: int
+) -> tuple[list[int], int]:
     patch_height = ceil(latent_height / num_patches)
 
     actual_num_patches = ceil(latent_height / patch_height)
@@ -32,10 +34,12 @@ def calculate_patch_heights(latent_height: int, num_patches: int):
     return patch_heights, actual_num_patches
 
 
-def calculate_token_indices(patch_heights: list[int], latent_width: int):
+def calculate_token_indices(
+    patch_heights: list[int], latent_width: int
+) -> list[tuple[int, int]]:
     tokens_per_row = latent_width
 
-    token_ranges = []
+    token_ranges: list[tuple[int, int]] = []
     cumulative_height = 0
 
     for h in patch_heights:
@@ -295,16 +299,16 @@ class DiffusionRunner:
                         yield (partial_image, partial_index, total_partials)
                         partial_index += 1
             except StopIteration as e:
-                latents = e.value
+                latents = e.value  # pyright: ignore[reportAny]
         else:
             try:
                 while True:
                     next(diffusion_gen)
             except StopIteration as e:
-                latents = e.value
+                latents = e.value  # pyright: ignore[reportAny]
 
         if self.is_last_stage:
-            yield self.adapter.decode_latents(latents, runtime_config, seed, prompt)
+            yield self.adapter.decode_latents(latents, runtime_config, seed, prompt)  # pyright: ignore[reportAny]
 
     def _run_diffusion_loop(
         self,
@@ -323,11 +327,11 @@ class DiffusionRunner:
 
         time_steps = tqdm(range(runtime_config.num_inference_steps))
 
-        ctx = self.adapter.model.callbacks.start(
+        ctx = self.adapter.model.callbacks.start(  # pyright: ignore[reportAny]
             seed=seed, prompt=prompt, config=runtime_config
         )
 
-        ctx.before_loop(
+        ctx.before_loop(  # pyright: ignore[reportAny]
             latents=latents,
         )
 
@@ -341,7 +345,7 @@ class DiffusionRunner:
                     num_sync_steps=num_sync_steps,
                 )
 
-                ctx.in_loop(
+                ctx.in_loop(  # pyright: ignore[reportAny]
                     t=t,
                     latents=latents,
                 )
@@ -352,12 +356,12 @@ class DiffusionRunner:
                     yield (latents, t)
 
             except KeyboardInterrupt:  # noqa: PERF203
-                ctx.interruption(t=t, latents=latents)
+                ctx.interruption(t=t, latents=latents)  # pyright: ignore[reportAny]
                 raise StopImageGenerationException(
                     f"Stopping image generation at step {t + 1}/{len(time_steps)}"
                 ) from None
 
-        ctx.after_loop(latents=latents)
+        ctx.after_loop(latents=latents)  # pyright: ignore[reportAny]
 
         return latents
 
@@ -396,10 +400,10 @@ class DiffusionRunner:
             for wrapper in self.joint_block_wrappers:
                 wrapper.set_encoder_mask(encoder_hidden_states_mask)
 
-        scaled_latents = config.scheduler.scale_model_input(latents, t)
+        scaled_latents = config.scheduler.scale_model_input(latents, t)  # pyright: ignore[reportAny]
 
         # For edit mode: concatenate with conditioning latents
-        original_latent_tokens = scaled_latents.shape[1]
+        original_latent_tokens: int = scaled_latents.shape[1]  # pyright: ignore[reportAny]
         if conditioning_latents is not None:
             scaled_latents = mx.concatenate(
                 [scaled_latents, conditioning_latents], axis=1
@@ -519,7 +523,7 @@ class DiffusionRunner:
                 noise_pos, noise_neg, guidance_scale=guidance_scale
             )
 
-        return config.scheduler.step(noise=noise, timestep=t, latents=latents)
+        return config.scheduler.step(noise=noise, timestep=t, latents=latents)  # pyright: ignore[reportAny]
 
     def _create_patches(
         self,
@@ -677,8 +681,8 @@ class DiffusionRunner:
         needs_cfg = self.adapter.needs_cfg
         cond_image_grid = prompt_data.cond_image_grid
 
-        scaled_hidden_states = config.scheduler.scale_model_input(hidden_states, t)
-        original_latent_tokens = scaled_hidden_states.shape[1]
+        scaled_hidden_states = config.scheduler.scale_model_input(hidden_states, t)  # pyright: ignore[reportAny]
+        original_latent_tokens: int = scaled_hidden_states.shape[1]  # pyright: ignore[reportAny]
 
         if needs_cfg:
             batched_data = prompt_data.get_batched_cfg_data()
@@ -695,10 +699,10 @@ class DiffusionRunner:
             pooled_embeds = prompt_data.pooled_prompt_embeds
             encoder_mask = prompt_data.get_encoder_hidden_states_mask(positive=True)
             cond_latents = prompt_data.conditioning_latents
-            step_latents = scaled_hidden_states
+            step_latents = scaled_hidden_states  # pyright: ignore[reportAny]
 
         if cond_latents is not None:
-            num_img_tokens = original_latent_tokens + cond_latents.shape[1]
+            num_img_tokens: int = original_latent_tokens + cond_latents.shape[1]
         else:
             num_img_tokens = original_latent_tokens
 
@@ -732,7 +736,7 @@ class DiffusionRunner:
                     noise_pos, noise_neg, guidance_scale
                 )
 
-            hidden_states = config.scheduler.step(
+            hidden_states = config.scheduler.step(  # pyright: ignore[reportAny]
                 noise=noise, timestep=t, latents=prev_latents
             )
 
@@ -831,7 +835,7 @@ class DiffusionRunner:
                         noise_pos, noise_neg, guidance_scale
                     )
 
-                patch_latents[patch_idx] = config.scheduler.step(
+                patch_latents[patch_idx] = config.scheduler.step(  # pyright: ignore[reportAny]
                     noise=noise,
                     timestep=t,
                     latents=prev_patch_latents[patch_idx],

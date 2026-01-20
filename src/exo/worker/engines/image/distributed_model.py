@@ -53,10 +53,10 @@ class DistributedImageModel:
         if group is not None:
             logger.info("Initialized distributed diffusion runner")
 
-            mx.eval(adapter.model.parameters())
+            mx.eval(adapter.model.parameters())  # pyright: ignore[reportAny]
 
             # TODO(ciaran): Do we need this?
-            mx.eval(adapter.model)
+            mx.eval(adapter.model)  # pyright: ignore[reportAny]
 
             mx_barrier(group)
             logger.info(f"Transformer sharded for rank {group.rank()}")
@@ -139,7 +139,7 @@ class DistributedImageModel:
             height=height,
             width=width,
             image_path=image_path,
-            model_config=self._adapter.model.model_config,
+            model_config=self._adapter.model.model_config,  # pyright: ignore[reportAny]
         )
 
         num_sync_steps = self._config.get_num_sync_steps(steps)

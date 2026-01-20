@@ -6,11 +6,5 @@ import mlx.core as mx
 from mlx import nn
 
 class QwenRMSNorm(nn.Module):
-    def __init__(self, hidden_size: int, eps: float = ...) -> None:
-        ...
-    
-    def __call__(self, hidden_states: mx.array) -> mx.array:
-        ...
-    
-
-
+    def __init__(self, hidden_size: int, eps: float = ...) -> None: ...
+    def __call__(self, hidden_states: mx.array) -> mx.array: ...

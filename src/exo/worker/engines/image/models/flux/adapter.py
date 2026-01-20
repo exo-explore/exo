@@ -83,7 +83,7 @@ class FluxModelAdapter(ModelAdapter[Flux1, Transformer]):
 
     @property
     def hidden_dim(self) -> int:
-        return self._transformer.x_embedder.weight.shape[0]
+        return self._transformer.x_embedder.weight.shape[0]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
     @property
     def needs_cfg(self) -> bool:
@@ -153,8 +153,8 @@ class FluxModelAdapter(ModelAdapter[Flux1, Transformer]):
         prompt_embeds, pooled_prompt_embeds = PromptEncoder.encode_prompt(
             prompt=prompt,
             prompt_cache=self.model.prompt_cache,
-            t5_tokenizer=self.model.tokenizers["t5"],
-            clip_tokenizer=self.model.tokenizers["clip"],
+            t5_tokenizer=self.model.tokenizers["t5"],  # pyright: ignore[reportAny]
+            clip_tokenizer=self.model.tokenizers["clip"],  # pyright: ignore[reportAny]
             t5_text_encoder=self.model.t5_text_encoder,
             clip_text_encoder=self.model.clip_text_encoder,
         )

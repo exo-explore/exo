@@ -39,8 +39,8 @@ class ImageChunk(BaseChunk):
     stats: ImageGenerationStats | None = None
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
-        for name, value in super().__repr_args__():
-            if name == "data" and hasattr(value, "__len__"):
+        for name, value in super().__repr_args__():  # pyright: ignore[reportAny]
+            if name == "data" and hasattr(value, "__len__"):  # pyright: ignore[reportAny]
                 yield name, f"<{len(self.data)} chars>"
             elif name is not None:
                 yield name, value
@@ -53,8 +53,8 @@ class InputImageChunk(BaseChunk):
     total_chunks: int
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
-        for name, value in super().__repr_args__():
-            if name == "data" and hasattr(value, "__len__"):
+        for name, value in super().__repr_args__():  # pyright: ignore[reportAny]
+            if name == "data" and hasattr(value, "__len__"):  # pyright: ignore[reportAny]
                 yield name, f"<{len(self.data)} chars>"
             elif name is not None:
                 yield name, value

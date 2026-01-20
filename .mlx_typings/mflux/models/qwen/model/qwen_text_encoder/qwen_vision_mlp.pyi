@@ -6,11 +6,5 @@ import mlx.core as mx
 from mlx import nn
 
 class VisionMLP(nn.Module):
-    def __init__(self, dim: int, hidden_dim: int) -> None:
-        ...
-    
-    def __call__(self, x: mx.array) -> mx.array:
-        ...
-    
-
-
+    def __init__(self, dim: int, hidden_dim: int) -> None: ...
+    def __call__(self, x: mx.array) -> mx.array: ...

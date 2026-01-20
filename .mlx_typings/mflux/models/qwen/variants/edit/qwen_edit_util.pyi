@@ -7,8 +7,12 @@ from mflux.models.common.vae.tiling_config import TilingConfig
 
 class QwenEditUtil:
     @staticmethod
-    def create_image_conditioning_latents(vae, height: int, width: int, image_paths: list[str] | str, vl_width: int | None = ..., vl_height: int | None = ..., tiling_config: TilingConfig | None = ...) -> tuple[mx.array, mx.array, int, int, int]:
-        ...
-    
-
-
+    def create_image_conditioning_latents(
+        vae,
+        height: int,
+        width: int,
+        image_paths: list[str] | str,
+        vl_width: int | None = ...,
+        vl_height: int | None = ...,
+        tiling_config: TilingConfig | None = ...,
+    ) -> tuple[mx.array, mx.array, int, int, int]: ...

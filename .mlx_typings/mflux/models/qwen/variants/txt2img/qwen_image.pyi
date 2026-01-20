@@ -22,18 +22,29 @@ class QwenImage(nn.Module):
     prompt_cache: dict[str, Any]
     tokenizers: dict[str, Any]
 
-    def __init__(self, quantize: int | None = ..., model_path: str | None = ..., lora_paths: list[str] | None = ..., lora_scales: list[float] | None = ..., model_config: ModelConfig = ...) -> None:
-        ...
-    
-    def generate_image(self, seed: int, prompt: str, num_inference_steps: int = ..., height: int = ..., width: int = ..., guidance: float = ..., image_path: Path | str | None = ..., image_strength: float | None = ..., scheduler: str = ..., negative_prompt: str | None = ...) -> GeneratedImage:
-        ...
-    
-    def save_model(self, base_path: str) -> None:
-        ...
-    
+    def __init__(
+        self,
+        quantize: int | None = ...,
+        model_path: str | None = ...,
+        lora_paths: list[str] | None = ...,
+        lora_scales: list[float] | None = ...,
+        model_config: ModelConfig = ...,
+    ) -> None: ...
+    def generate_image(
+        self,
+        seed: int,
+        prompt: str,
+        num_inference_steps: int = ...,
+        height: int = ...,
+        width: int = ...,
+        guidance: float = ...,
+        image_path: Path | str | None = ...,
+        image_strength: float | None = ...,
+        scheduler: str = ...,
+        negative_prompt: str | None = ...,
+    ) -> GeneratedImage: ...
+    def save_model(self, base_path: str) -> None: ...
     @staticmethod
-    def compute_guided_noise(noise: mx.array, noise_negative: mx.array, guidance: float) -> mx.array:
-        ...
-    
-
-
+    def compute_guided_noise(
+        noise: mx.array, noise_negative: mx.array, guidance: float
+    ) -> mx.array: ...

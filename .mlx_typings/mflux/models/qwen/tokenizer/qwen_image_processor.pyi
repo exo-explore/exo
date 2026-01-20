@@ -8,18 +8,33 @@ from PIL import Image
 
 OPENAI_CLIP_MEAN = ...
 OPENAI_CLIP_STD = ...
-def smart_resize(height: int, width: int, factor: int = ..., min_pixels: int = ..., max_pixels: int = ...) -> tuple[int, int]:
-    ...
+
+def smart_resize(
+    height: int,
+    width: int,
+    factor: int = ...,
+    min_pixels: int = ...,
+    max_pixels: int = ...,
+) -> tuple[int, int]: ...
 
 class QwenImageProcessor:
-    def __init__(self, min_pixels: int = ..., max_pixels: int = ..., patch_size: int = ..., temporal_patch_size: int = ..., merge_size: int = ..., image_mean: Optional[list[float]] = ..., image_std: Optional[list[float]] = ...) -> None:
-        ...
-    
-    def preprocess(self, images: Union[Image.Image, list[Image.Image]]) -> tuple[np.ndarray, np.ndarray]:
-        ...
-    
-    def get_number_of_image_patches(self, height: int, width: int, min_pixels: Optional[int] = ..., max_pixels: Optional[int] = ...) -> int:
-        ...
-    
-
-
+    def __init__(
+        self,
+        min_pixels: int = ...,
+        max_pixels: int = ...,
+        patch_size: int = ...,
+        temporal_patch_size: int = ...,
+        merge_size: int = ...,
+        image_mean: Optional[list[float]] = ...,
+        image_std: Optional[list[float]] = ...,
+    ) -> None: ...
+    def preprocess(
+        self, images: Union[Image.Image, list[Image.Image]]
+    ) -> tuple[np.ndarray, np.ndarray]: ...
+    def get_number_of_image_patches(
+        self,
+        height: int,
+        width: int,
+        min_pixels: Optional[int] = ...,
+        max_pixels: Optional[int] = ...,
+    ) -> int: ...

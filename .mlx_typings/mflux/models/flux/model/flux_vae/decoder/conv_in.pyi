@@ -6,11 +6,5 @@ import mlx.core as mx
 import mlx.nn as nn
 
 class ConvIn(nn.Module):
-    def __init__(self) -> None:
-        ...
-    
-    def __call__(self, input_array: mx.array) -> mx.array:
-        ...
-    
-
-
+    def __init__(self) -> None: ...
+    def __call__(self, input_array: mx.array) -> mx.array: ...

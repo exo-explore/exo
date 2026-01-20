@@ -22,11 +22,10 @@ class JointAttention(nn.Module):
     to_out: list[Any]
     to_add_out: nn.Linear
 
-    def __init__(self) -> None:
-        ...
-
-    def __call__(self, hidden_states: mx.array, encoder_hidden_states: mx.array, image_rotary_emb: mx.array) -> tuple[mx.array, mx.array]:
-        ...
-    
-
-
+    def __init__(self) -> None: ...
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        encoder_hidden_states: mx.array,
+        image_rotary_emb: mx.array,
+    ) -> tuple[mx.array, mx.array]: ...

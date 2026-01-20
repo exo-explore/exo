@@ -6,11 +6,5 @@ import mlx.core as mx
 from mlx import nn
 
 class QwenTimesteps(nn.Module):
-    def __init__(self, proj_dim: int = ..., scale: float = ...) -> None:
-        ...
-    
-    def __call__(self, timesteps: mx.array) -> mx.array:
-        ...
-    
-
-
+    def __init__(self, proj_dim: int = ..., scale: float = ...) -> None: ...
+    def __call__(self, timesteps: mx.array) -> mx.array: ...

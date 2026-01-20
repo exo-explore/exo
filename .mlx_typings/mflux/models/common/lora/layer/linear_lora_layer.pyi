@@ -6,14 +6,17 @@ from mlx import nn
 
 class LoRALinear(nn.Module):
     @staticmethod
-    def from_linear(linear: nn.Linear | nn.QuantizedLinear, r: int = ..., scale: float = ...): # -> LoRALinear:
+    def from_linear(
+        linear: nn.Linear | nn.QuantizedLinear, r: int = ..., scale: float = ...
+    ):  # -> LoRALinear:
         ...
-    
-    def __init__(self, input_dims: int, output_dims: int, r: int = ..., scale: float = ..., bias: bool = ...) -> None:
+    def __init__(
+        self,
+        input_dims: int,
+        output_dims: int,
+        r: int = ...,
+        scale: float = ...,
+        bias: bool = ...,
+    ) -> None: ...
+    def __call__(self, x):  # -> array:
         ...
-    
-    def __call__(self, x): # -> array:
-        ...
-    
-
-

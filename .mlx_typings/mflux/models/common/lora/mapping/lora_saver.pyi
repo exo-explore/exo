@@ -6,8 +6,4 @@ import mlx.nn as nn
 
 class LoRASaver:
     @staticmethod
-    def bake_and_strip_lora(module: nn.Module) -> nn.Module:
-        ...
-    
-
-
+    def bake_and_strip_lora(module: nn.Module) -> nn.Module: ...

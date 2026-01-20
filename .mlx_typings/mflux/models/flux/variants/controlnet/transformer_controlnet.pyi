@@ -8,11 +8,18 @@ from mflux.models.common.config.config import Config
 from mflux.models.common.config.model_config import ModelConfig
 
 class TransformerControlnet(nn.Module):
-    def __init__(self, model_config: ModelConfig, num_transformer_blocks: int = ..., num_single_transformer_blocks: int = ...) -> None:
-        ...
-    
-    def __call__(self, t: int, config: Config, hidden_states: mx.array, prompt_embeds: mx.array, pooled_prompt_embeds: mx.array, controlnet_condition: mx.array) -> tuple[list[mx.array], list[mx.array]]:
-        ...
-    
-
-
+    def __init__(
+        self,
+        model_config: ModelConfig,
+        num_transformer_blocks: int = ...,
+        num_single_transformer_blocks: int = ...,
+    ) -> None: ...
+    def __call__(
+        self,
+        t: int,
+        config: Config,
+        hidden_states: mx.array,
+        prompt_embeds: mx.array,
+        pooled_prompt_embeds: mx.array,
+        controlnet_condition: mx.array,
+    ) -> tuple[list[mx.array], list[mx.array]]: ...

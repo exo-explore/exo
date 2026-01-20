@@ -16,11 +16,11 @@ class PatternMatch:
     transpose: bool
     transform: Callable[[mx.array], mx.array] | None = ...
 
-
 class LoRALoader:
     @staticmethod
-    def load_and_apply_lora(lora_mapping: list[LoRATarget], transformer: nn.Module, lora_paths: list[str] | None = ..., lora_scales: list[float] | None = ...) -> tuple[list[str], list[float]]:
-        ...
-    
-
-
+    def load_and_apply_lora(
+        lora_mapping: list[LoRATarget],
+        transformer: nn.Module,
+        lora_paths: list[str] | None = ...,
+        lora_scales: list[float] | None = ...,
+    ) -> tuple[list[str], list[float]]: ...

@@ -7,34 +7,23 @@ import PIL.Image
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
-from mflux.models.flux.variants.concept_attention.joint_transformer_block_concept import LayerAttentionData
+from mflux.models.flux.variants.concept_attention.joint_transformer_block_concept import (
+    LayerAttentionData,
+)
 
 @dataclass
 class TimestepAttentionData:
     t: int
     attention_information: List[LayerAttentionData]
-    def stack_img_attentions(self) -> mx.array:
-        ...
-    
-    def stack_concept_attentions(self) -> mx.array:
-        ...
-    
-
+    def stack_img_attentions(self) -> mx.array: ...
+    def stack_concept_attentions(self) -> mx.array: ...
 
 class GenerationAttentionData:
-    def __init__(self) -> None:
+    def __init__(self) -> None: ...
+    def append(self, timestep_attention: TimestepAttentionData):  # -> None:
         ...
-    
-    def append(self, timestep_attention: TimestepAttentionData): # -> None:
-        ...
-    
-    def stack_all_img_attentions(self) -> mx.array:
-        ...
-    
-    def stack_all_concept_attentions(self) -> mx.array:
-        ...
-    
-
+    def stack_all_img_attentions(self) -> mx.array: ...
+    def stack_all_concept_attentions(self) -> mx.array: ...
 
 @dataclass
 class ConceptHeatmap:
@@ -44,11 +33,7 @@ class ConceptHeatmap:
     timesteps: List[int]
     height: int
     width: int
-    def save(self, path: str | Path, export_json_metadata: bool = ..., overwrite: bool = ...) -> None:
-        ...
-    
-    def get_metadata(self) -> dict:
-        ...
-    
-
-
+    def save(
+        self, path: str | Path, export_json_metadata: bool = ..., overwrite: bool = ...
+    ) -> None: ...
+    def get_metadata(self) -> dict: ...

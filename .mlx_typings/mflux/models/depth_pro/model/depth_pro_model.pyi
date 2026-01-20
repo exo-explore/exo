@@ -6,11 +6,7 @@ import mlx.core as mx
 import mlx.nn as nn
 
 class DepthProModel(nn.Module):
-    def __init__(self) -> None:
-        ...
-    
-    def __call__(self, x0: mx.array, x1: mx.array, x2: mx.array) -> tuple[mx.array, mx.array]:
-        ...
-    
-
-
+    def __init__(self) -> None: ...
+    def __call__(
+        self, x0: mx.array, x1: mx.array, x2: mx.array
+    ) -> tuple[mx.array, mx.array]: ...

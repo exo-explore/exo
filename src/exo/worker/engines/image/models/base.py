@@ -185,9 +185,9 @@ class ModelAdapter(ABC, Generic[ModelT, TransformerT]):
             height=runtime_config.height,
             width=runtime_config.width,
             img2img=Img2Img(
-                vae=model.vae,
+                vae=model.vae,  # pyright: ignore[reportAny]
                 latent_creator=self._get_latent_creator(),
-                sigmas=runtime_config.scheduler.sigmas,
+                sigmas=runtime_config.scheduler.sigmas,  # pyright: ignore[reportAny]
                 init_time_step=runtime_config.init_time_step,
                 image_path=runtime_config.image_path,
             ),
@@ -201,23 +201,23 @@ class ModelAdapter(ABC, Generic[ModelT, TransformerT]):
         prompt: str,
     ) -> Image.Image:
         model: Any = self.model  # Allow attribute access on model
-        latents = self._get_latent_creator().unpack_latents(
+        latents = self._get_latent_creator().unpack_latents(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
             latents=latents,
             height=runtime_config.height,
             width=runtime_config.width,
         )
-        decoded = model.vae.decode(latents)
+        decoded = model.vae.decode(latents)  # pyright: ignore[reportAny]
         # TODO(ciaran):
         # from mflux.models.common.vae.vae_util import VAEUtil
         # VAEUtil.decode(vae=model.vae, latents=latents, tiling_config=self.tiling_config)
         generated_image = ImageUtil.to_image(
-            decoded_latents=decoded,
+            decoded_latents=decoded,  # pyright: ignore[reportAny]
             config=runtime_config,
             seed=seed,
             prompt=prompt,
-            quantization=model.bits,
-            lora_paths=model.lora_paths,
-            lora_scales=model.lora_scales,
+            quantization=model.bits,  # pyright: ignore[reportAny]
+            lora_paths=model.lora_paths,  # pyright: ignore[reportAny]
+            lora_scales=model.lora_scales,  # pyright: ignore[reportAny]
             image_path=runtime_config.image_path,
             image_strength=runtime_config.image_strength,
             generation_time=0,
@@ -291,5 +291,5 @@ class ModelAdapter(ABC, Generic[ModelT, TransformerT]):
         text_embeddings: mx.array,
     ) -> mx.array:
         transformer: Any = self.transformer
-        hidden_states = transformer.norm_out(hidden_states, text_embeddings)
-        return transformer.proj_out(hidden_states)
+        hidden_states = transformer.norm_out(hidden_states, text_embeddings)  # pyright: ignore[reportAny]
+        return transformer.proj_out(hidden_states)  # pyright: ignore[reportAny]

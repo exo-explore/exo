@@ -6,11 +6,5 @@ import mlx.core as mx
 import mlx.nn as nn
 
 class LayerScale(nn.Module):
-    def __init__(self, dims: int, init_values: float = ...) -> None:
-        ...
-    
-    def __call__(self, x: mx.array) -> mx.array:
-        ...
-    
-
-
+    def __init__(self, dims: int, init_values: float = ...) -> None: ...
+    def __call__(self, x: mx.array) -> mx.array: ...

@@ -13,13 +13,16 @@ class LayerAttentionData:
     concept_attention: mx.array
     ...
 
-
 class JointTransformerBlockConcept(nn.Module):
-    def __init__(self, layer) -> None:
-        ...
-    
-    def __call__(self, layer_idx: int, hidden_states: mx.array, encoder_hidden_states: mx.array, encoder_hidden_states_concept: mx.array, text_embeddings: mx.array, text_embeddings_concept: mx.array, rotary_embeddings: mx.array, rotary_embeddings_concept: mx.array) -> tuple[mx.array, mx.array, mx.array, LayerAttentionData]:
-        ...
-    
-
-
+    def __init__(self, layer) -> None: ...
+    def __call__(
+        self,
+        layer_idx: int,
+        hidden_states: mx.array,
+        encoder_hidden_states: mx.array,
+        encoder_hidden_states_concept: mx.array,
+        text_embeddings: mx.array,
+        text_embeddings_concept: mx.array,
+        rotary_embeddings: mx.array,
+        rotary_embeddings_concept: mx.array,
+    ) -> tuple[mx.array, mx.array, mx.array, LayerAttentionData]: ...

@@ -8,8 +8,9 @@ from mflux.models.common.weights.mapping.weight_mapping import WeightTarget
 
 class WeightMapper:
     @staticmethod
-    def apply_mapping(hf_weights: Dict[str, mx.array], mapping: List[WeightTarget], num_blocks: Optional[int] = ..., num_layers: Optional[int] = ...) -> Dict:
-        ...
-    
-
-
+    def apply_mapping(
+        hf_weights: Dict[str, mx.array],
+        mapping: List[WeightTarget],
+        num_blocks: Optional[int] = ...,
+        num_layers: Optional[int] = ...,
+    ) -> Dict: ...

@@ -6,14 +6,21 @@ import mlx.core as mx
 from mlx import nn
 
 class QwenEncoder(nn.Module):
-    def __init__(self, vocab_size: int = ..., hidden_size: int = ..., num_hidden_layers: int = ..., max_position_embeddings: int = ..., rope_theta: float = ...) -> None:
-        ...
-    
-    def get_image_features(self, pixel_values: mx.array, image_grid_thw: mx.array) -> mx.array:
-        ...
-    
-    def __call__(self, input_ids: mx.array, attention_mask: mx.array, pixel_values: mx.array | None = ..., image_grid_thw: mx.array | None = ...) -> mx.array:
-        ...
-    
-
-
+    def __init__(
+        self,
+        vocab_size: int = ...,
+        hidden_size: int = ...,
+        num_hidden_layers: int = ...,
+        max_position_embeddings: int = ...,
+        rope_theta: float = ...,
+    ) -> None: ...
+    def get_image_features(
+        self, pixel_values: mx.array, image_grid_thw: mx.array
+    ) -> mx.array: ...
+    def __call__(
+        self,
+        input_ids: mx.array,
+        attention_mask: mx.array,
+        pixel_values: mx.array | None = ...,
+        image_grid_thw: mx.array | None = ...,
+    ) -> mx.array: ...

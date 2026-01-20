@@ -6,11 +6,19 @@ import mlx.core as mx
 from mlx import nn
 
 class QwenEncoderLayer(nn.Module):
-    def __init__(self, hidden_size: int = ..., num_attention_heads: int = ..., num_key_value_heads: int = ..., intermediate_size: int = ..., rms_norm_eps: float = ..., max_position_embeddings: int = ..., rope_theta: float = ...) -> None:
-        ...
-    
-    def __call__(self, hidden_states: mx.array, attention_mask: mx.array | None = ..., position_embeddings: tuple[mx.array, mx.array] | None = ...) -> mx.array:
-        ...
-    
-
-
+    def __init__(
+        self,
+        hidden_size: int = ...,
+        num_attention_heads: int = ...,
+        num_key_value_heads: int = ...,
+        intermediate_size: int = ...,
+        rms_norm_eps: float = ...,
+        max_position_embeddings: int = ...,
+        rope_theta: float = ...,
+    ) -> None: ...
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        attention_mask: mx.array | None = ...,
+        position_embeddings: tuple[mx.array, mx.array] | None = ...,
+    ) -> mx.array: ...

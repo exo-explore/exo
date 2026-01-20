@@ -6,16 +6,8 @@ import mlx.core as mx
 
 class ZImageLatentCreator:
     @staticmethod
-    def create_noise(seed: int, height: int, width: int) -> mx.array:
-        ...
-    
+    def create_noise(seed: int, height: int, width: int) -> mx.array: ...
     @staticmethod
-    def pack_latents(latents: mx.array, height: int, width: int) -> mx.array:
-        ...
-    
+    def pack_latents(latents: mx.array, height: int, width: int) -> mx.array: ...
     @staticmethod
-    def unpack_latents(latents: mx.array, height: int, width: int) -> mx.array:
-        ...
-    
-
-
+    def unpack_latents(latents: mx.array, height: int, width: int) -> mx.array: ...

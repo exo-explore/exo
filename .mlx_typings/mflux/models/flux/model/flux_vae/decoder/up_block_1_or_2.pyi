@@ -6,11 +6,5 @@ import mlx.core as mx
 from mlx import nn
 
 class UpBlock1Or2(nn.Module):
-    def __init__(self) -> None:
-        ...
-    
-    def __call__(self, input_array: mx.array) -> mx.array:
-        ...
-    
-
-
+    def __init__(self) -> None: ...
+    def __call__(self, input_array: mx.array) -> mx.array: ...

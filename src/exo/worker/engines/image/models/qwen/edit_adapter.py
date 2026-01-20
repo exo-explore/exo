@@ -278,11 +278,11 @@ class QwenEditModelAdapter(ModelAdapter[QwenImageEdit, QwenTransformer]):
             prompt_mask,
             negative_prompt_embeds,
             negative_prompt_mask,
-        ) = self._model._encode_prompts_with_images(  # pyright: ignore[reportPrivateUsage]
+        ) = self._model._encode_prompts_with_images(
             prompt,
             negative_prompt,
             dims.image_paths,
-            self._config,
+            self._config,  # pyright: ignore[reportArgumentType]
             dims.vl_width,
             dims.vl_height,
         )
@@ -293,7 +293,7 @@ class QwenEditModelAdapter(ModelAdapter[QwenImageEdit, QwenTransformer]):
             cond_h_patches,
             cond_w_patches,
             num_images,
-        ) = QwenEditUtil.create_image_conditioning_latents(
+        ) = QwenEditUtil.create_image_conditioning_latents(  # pyright: ignore[reportUnknownMemberType]
             vae=self._model.vae,
             height=dims.vae_height,
             width=dims.vae_width,
@@ -345,10 +345,10 @@ class QwenEditModelAdapter(ModelAdapter[QwenImageEdit, QwenTransformer]):
                 "for Qwen text embeddings"
             )
 
-        timestep = QwenTransformer._compute_timestep(t, runtime_config)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        timestep = QwenTransformer._compute_timestep(t, runtime_config)  # noqa: SLF001
         batch_size = ref_tensor.shape[0]
         timestep = mx.broadcast_to(timestep, (batch_size,)).astype(mx.float32)
-        return self._transformer.time_text_embed(timestep, ref_tensor)
+        return self._transformer.time_text_embed(timestep, ref_tensor)  # pyright: ignore[reportAny]
 
     def compute_rotary_embeddings(
         self,
@@ -365,9 +365,9 @@ class QwenEditModelAdapter(ModelAdapter[QwenImageEdit, QwenTransformer]):
                 "encoder_hidden_states_mask is required for Qwen RoPE computation"
             )
 
-        return QwenTransformer._compute_rotary_embeddings(  # pyright: ignore[reportPrivateUsage]
+        return QwenTransformer._compute_rotary_embeddings(
             encoder_hidden_states_mask=encoder_hidden_states_mask,
-            pos_embed=self._transformer.pos_embed,
+            pos_embed=self._transformer.pos_embed,  # pyright: ignore[reportAny]
             config=runtime_config,
             cond_image_grid=cond_image_grid,
         )

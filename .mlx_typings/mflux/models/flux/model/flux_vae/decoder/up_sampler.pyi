@@ -6,15 +6,8 @@ import mlx.core as mx
 from mlx import nn
 
 class UpSampler(nn.Module):
-    def __init__(self, conv_in: int, conv_out: int) -> None:
-        ...
-    
-    def __call__(self, input_array: mx.array) -> mx.array:
-        ...
-    
+    def __init__(self, conv_in: int, conv_out: int) -> None: ...
+    def __call__(self, input_array: mx.array) -> mx.array: ...
     @staticmethod
-    def up_sample_nearest(x: mx.array, scale: int = ...): # -> array:
+    def up_sample_nearest(x: mx.array, scale: int = ...):  # -> array:
         ...
-    
-
-

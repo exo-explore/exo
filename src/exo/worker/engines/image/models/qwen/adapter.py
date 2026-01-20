@@ -212,7 +212,7 @@ class QwenModelAdapter(ModelAdapter[QwenImage, QwenTransformer]):
                 prompt=prompt,
                 negative_prompt=negative_prompt,
                 prompt_cache=self.model.prompt_cache,
-                qwen_tokenizer=self.model.tokenizers["qwen"],
+                qwen_tokenizer=self.model.tokenizers["qwen"],  # pyright: ignore[reportAny]
                 qwen_text_encoder=self.model.text_encoder,
             )
         )
@@ -252,10 +252,10 @@ class QwenModelAdapter(ModelAdapter[QwenImage, QwenTransformer]):
                 "for Qwen text embeddings"
             )
 
-        timestep = QwenTransformer._compute_timestep(t, runtime_config)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        timestep = QwenTransformer._compute_timestep(t, runtime_config)  # noqa: SLF001
         batch_size = ref_tensor.shape[0]
         timestep = mx.broadcast_to(timestep, (batch_size,)).astype(mx.float32)
-        return self._transformer.time_text_embed(timestep, ref_tensor)
+        return self._transformer.time_text_embed(timestep, ref_tensor)  # pyright: ignore[reportAny]
 
     def compute_rotary_embeddings(
         self,
@@ -272,9 +272,9 @@ class QwenModelAdapter(ModelAdapter[QwenImage, QwenTransformer]):
                 "encoder_hidden_states_mask is required for Qwen RoPE computation"
             )
 
-        return QwenTransformer._compute_rotary_embeddings(  # pyright: ignore[reportPrivateUsage]
+        return QwenTransformer._compute_rotary_embeddings(
             encoder_hidden_states_mask=encoder_hidden_states_mask,
-            pos_embed=self._transformer.pos_embed,
+            pos_embed=self._transformer.pos_embed,  # pyright: ignore[reportAny]
             config=runtime_config,
             cond_image_grid=cond_image_grid,
         )

@@ -161,7 +161,7 @@ class FluxJointBlockWrapper(JointBlockWrapper[JointTransformerBlock]):
         context_attn_output = attn_out[:, : self._text_seq_len, :]
         hidden_attn_output = attn_out[:, self._text_seq_len :, :]
 
-        hidden_attn_output = attn.to_out[0](hidden_attn_output)
+        hidden_attn_output = attn.to_out[0](hidden_attn_output)  # pyright: ignore[reportAny]
         context_attn_output = attn.to_add_out(context_attn_output)
 
         assert self._hidden_mod is not None
@@ -169,7 +169,7 @@ class FluxJointBlockWrapper(JointBlockWrapper[JointTransformerBlock]):
 
         hidden_states = JointTransformerBlock.apply_norm_and_feed_forward(
             hidden_states=hidden_states,
-            attn_output=hidden_attn_output,
+            attn_output=hidden_attn_output,  # pyright: ignore[reportAny]
             gate_mlp=self._hidden_mod.gate_mlp,
             gate_msa=self._hidden_mod.gate_msa,
             scale_mlp=self._hidden_mod.scale_mlp,
@@ -270,7 +270,7 @@ class FluxSingleBlockWrapper(SingleBlockWrapper[SingleTransformerBlock]):
 
         assert self._norm_state is not None
 
-        output = self.block._apply_feed_forward_and_projection(  # pyright: ignore[reportPrivateUsage]
+        output = self.block._apply_feed_forward_and_projection(
             norm_hidden_states=self._norm_state.norm_hidden,
             attn_output=attn_out,
             gate=self._norm_state.gate,

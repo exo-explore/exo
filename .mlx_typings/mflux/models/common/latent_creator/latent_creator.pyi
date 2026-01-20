@@ -10,28 +10,40 @@ from mflux.models.common.vae.tiling_config import TilingConfig
 from mflux.models.fibo.latent_creator.fibo_latent_creator import FiboLatentCreator
 from mflux.models.flux.latent_creator.flux_latent_creator import FluxLatentCreator
 from mflux.models.qwen.latent_creator.qwen_latent_creator import QwenLatentCreator
-from mflux.models.z_image.latent_creator.z_image_latent_creator import ZImageLatentCreator
+from mflux.models.z_image.latent_creator.z_image_latent_creator import (
+    ZImageLatentCreator,
+)
 
 if TYPE_CHECKING:
-    LatentCreatorType: TypeAlias = type[FiboLatentCreator | FluxLatentCreator | QwenLatentCreator | ZImageLatentCreator]
-class Img2Img:
-    def __init__(self, vae: nn.Module, latent_creator: LatentCreatorType, sigmas: mx.array, init_time_step: int, image_path: str | Path | None, tiling_config: TilingConfig | None = ...) -> None:
-        ...
-    
+    LatentCreatorType: TypeAlias = type[
+        FiboLatentCreator | FluxLatentCreator | QwenLatentCreator | ZImageLatentCreator
+    ]
 
+class Img2Img:
+    def __init__(
+        self,
+        vae: nn.Module,
+        latent_creator: LatentCreatorType,
+        sigmas: mx.array,
+        init_time_step: int,
+        image_path: str | Path | None,
+        tiling_config: TilingConfig | None = ...,
+    ) -> None: ...
 
 class LatentCreator:
     @staticmethod
-    def create_for_txt2img_or_img2img(seed: int, height: int, width: int, img2img: Img2Img) -> mx.array:
-        ...
-    
+    def create_for_txt2img_or_img2img(
+        seed: int, height: int, width: int, img2img: Img2Img
+    ) -> mx.array: ...
     @staticmethod
-    def encode_image(vae: nn.Module, image_path: str | Path, height: int, width: int, tiling_config: TilingConfig | None = ...) -> mx.array:
-        ...
-    
+    def encode_image(
+        vae: nn.Module,
+        image_path: str | Path,
+        height: int,
+        width: int,
+        tiling_config: TilingConfig | None = ...,
+    ) -> mx.array: ...
     @staticmethod
-    def add_noise_by_interpolation(clean: mx.array, noise: mx.array, sigma: float) -> mx.array:
-        ...
-    
-
-
+    def add_noise_by_interpolation(
+        clean: mx.array, noise: mx.array, sigma: float
+    ) -> mx.array: ...

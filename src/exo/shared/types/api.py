@@ -302,7 +302,7 @@ class ImageEditsInternalParams(BaseModel):
     bench: bool = False
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
-        for name, value in super().__repr_args__():
+        for name, value in super().__repr_args__():  # pyright: ignore[reportAny]
             if name == "image_data":
                 yield name, f"<{len(self.image_data)} chars>"
             elif name is not None:
@@ -315,7 +315,7 @@ class ImageData(BaseModel):
     revised_prompt: str | None = None
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
-        for name, value in super().__repr_args__():
+        for name, value in super().__repr_args__():  # pyright: ignore[reportAny]
             if name == "b64_json" and self.b64_json is not None:
                 yield name, f"<{len(self.b64_json)} chars>"
             elif name is not None:

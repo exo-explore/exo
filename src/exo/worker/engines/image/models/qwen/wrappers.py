@@ -56,27 +56,23 @@ class QwenJointBlockWrapper(JointBlockWrapper[QwenTransformerBlock]):
         attn = self.block.attn
 
         img_mod_params = self.block.img_mod_linear(
-            self.block.img_mod_silu(text_embeddings)
+            self.block.img_mod_silu(text_embeddings)  # pyright: ignore[reportUnknownArgumentType]
         )
         txt_mod_params = self.block.txt_mod_linear(
-            self.block.txt_mod_silu(text_embeddings)
+            self.block.txt_mod_silu(text_embeddings)  # pyright: ignore[reportUnknownArgumentType]
         )
 
         img_mod1, img_mod2 = mx.split(img_mod_params, 2, axis=-1)
         txt_mod1, txt_mod2 = mx.split(txt_mod_params, 2, axis=-1)
 
         img_normed = self.block.img_norm1(hidden_states)
-        img_modulated, img_gate1 = QwenTransformerBlock._modulate(  # pyright: ignore[reportPrivateUsage]
-            img_normed, img_mod1
-        )
+        img_modulated, img_gate1 = QwenTransformerBlock._modulate(img_normed, img_mod1)
         self._img_mod = QwenStreamModulation(
             mod1=img_mod1, mod2=img_mod2, gate1=img_gate1
         )
 
         txt_normed = self.block.txt_norm1(encoder_hidden_states)
-        txt_modulated, txt_gate1 = QwenTransformerBlock._modulate(  # pyright: ignore[reportPrivateUsage]
-            txt_normed, txt_mod1
-        )
+        txt_modulated, txt_gate1 = QwenTransformerBlock._modulate(txt_normed, txt_mod1)
         self._txt_mod = QwenStreamModulation(
             mod1=txt_mod1, mod2=txt_mod2, gate1=txt_gate1
         )
@@ -122,10 +118,10 @@ class QwenJointBlockWrapper(JointBlockWrapper[QwenTransformerBlock]):
             img_cos = img_cos[self._patch_start : self._patch_end]
             img_sin = img_sin[self._patch_start : self._patch_end]
 
-        img_query = QwenAttention._apply_rope_qwen(img_query, img_cos, img_sin)  # pyright: ignore[reportPrivateUsage]
-        img_key = QwenAttention._apply_rope_qwen(img_key, img_cos, img_sin)  # pyright: ignore[reportPrivateUsage]
-        txt_query = QwenAttention._apply_rope_qwen(txt_query, txt_cos, txt_sin)  # pyright: ignore[reportPrivateUsage]
-        txt_key = QwenAttention._apply_rope_qwen(txt_key, txt_cos, txt_sin)  # pyright: ignore[reportPrivateUsage]
+        img_query = QwenAttention._apply_rope_qwen(img_query, img_cos, img_sin)
+        img_key = QwenAttention._apply_rope_qwen(img_key, img_cos, img_sin)
+        txt_query = QwenAttention._apply_rope_qwen(txt_query, txt_cos, txt_sin)
+        txt_key = QwenAttention._apply_rope_qwen(txt_key, txt_cos, txt_sin)
 
         img_query = mx.transpose(img_query, (0, 2, 1, 3))
         img_key = mx.transpose(img_key, (0, 2, 1, 3))
@@ -146,7 +142,7 @@ class QwenJointBlockWrapper(JointBlockWrapper[QwenTransformerBlock]):
     ) -> mx.array:
         attn = self.block.attn
 
-        mask = QwenAttention._convert_mask_for_qwen(  # pyright: ignore[reportPrivateUsage]
+        mask = QwenAttention._convert_mask_for_qwen(
             mask=self._encoder_hidden_states_mask,
             joint_seq_len=key.shape[2],
             txt_seq_len=self._text_seq_len,
@@ -156,7 +152,7 @@ class QwenJointBlockWrapper(JointBlockWrapper[QwenTransformerBlock]):
         key_bshd = mx.transpose(key, (0, 2, 1, 3))
         value_bshd = mx.transpose(value, (0, 2, 1, 3))
 
-        return attn._compute_attention_qwen(  # pyright: ignore[reportPrivateUsage]
+        return attn._compute_attention_qwen(
             query=query_bshd,
             key=key_bshd,
             value=value_bshd,
@@ -179,26 +175,26 @@ class QwenJointBlockWrapper(JointBlockWrapper[QwenTransformerBlock]):
         txt_attn_output = attn_out[:, : self._text_seq_len, :]
         img_attn_output = attn_out[:, self._text_seq_len :, :]
 
-        img_attn_output = attn.attn_to_out[0](img_attn_output)
+        img_attn_output = attn.attn_to_out[0](img_attn_output)  # pyright: ignore[reportAny]
         txt_attn_output = attn.to_add_out(txt_attn_output)
 
-        hidden_states = hidden_states + self._img_mod.gate1 * img_attn_output
+        hidden_states = hidden_states + self._img_mod.gate1 * img_attn_output  # pyright: ignore[reportAny]
         encoder_hidden_states = (
             encoder_hidden_states + self._txt_mod.gate1 * txt_attn_output
         )
 
         img_normed2 = self.block.img_norm2(hidden_states)
-        img_modulated2, img_gate2 = QwenTransformerBlock._modulate(  # pyright: ignore[reportPrivateUsage]
+        img_modulated2, img_gate2 = QwenTransformerBlock._modulate(
             img_normed2, self._img_mod.mod2
         )
-        img_mlp_output = self.block.img_ff(img_modulated2)
-        hidden_states = hidden_states + img_gate2 * img_mlp_output
+        img_mlp_output = self.block.img_ff(img_modulated2)  # pyright: ignore[reportAny]
+        hidden_states = hidden_states + img_gate2 * img_mlp_output  # pyright: ignore[reportAny]
 
         txt_normed2 = self.block.txt_norm2(encoder_hidden_states)
-        txt_modulated2, txt_gate2 = QwenTransformerBlock._modulate(  # pyright: ignore[reportPrivateUsage]
+        txt_modulated2, txt_gate2 = QwenTransformerBlock._modulate(
             txt_normed2, self._txt_mod.mod2
         )
-        txt_mlp_output = self.block.txt_ff(txt_modulated2)
-        encoder_hidden_states = encoder_hidden_states + txt_gate2 * txt_mlp_output
+        txt_mlp_output = self.block.txt_ff(txt_modulated2)  # pyright: ignore[reportAny]
+        encoder_hidden_states = encoder_hidden_states + txt_gate2 * txt_mlp_output  # pyright: ignore[reportAny]
 
         return encoder_hidden_states, hidden_states

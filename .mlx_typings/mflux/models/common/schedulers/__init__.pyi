@@ -6,23 +6,21 @@ from .flow_match_euler_discrete_scheduler import FlowMatchEulerDiscreteScheduler
 from .linear_scheduler import LinearScheduler
 from .seedvr2_euler_scheduler import SeedVR2EulerScheduler
 
-__all__ = ["LinearScheduler", "FlowMatchEulerDiscreteScheduler", "SeedVR2EulerScheduler"]
-class SchedulerModuleNotFound(ValueError):
-    ...
+__all__ = [
+    "LinearScheduler",
+    "FlowMatchEulerDiscreteScheduler",
+    "SeedVR2EulerScheduler",
+]
 
-
-class SchedulerClassNotFound(ValueError):
-    ...
-
-
-class InvalidSchedulerType(TypeError):
-    ...
-
+class SchedulerModuleNotFound(ValueError): ...
+class SchedulerClassNotFound(ValueError): ...
+class InvalidSchedulerType(TypeError): ...
 
 SCHEDULER_REGISTRY = ...
-def register_contrib(scheduler_object, scheduler_name=...): # -> None:
-    ...
 
-def try_import_external_scheduler(scheduler_object_path: str): # -> type[BaseScheduler]:
+def register_contrib(scheduler_object, scheduler_name=...):  # -> None:
     ...
-
+def try_import_external_scheduler(
+    scheduler_object_path: str,
+):  # -> type[BaseScheduler]:
+    ...

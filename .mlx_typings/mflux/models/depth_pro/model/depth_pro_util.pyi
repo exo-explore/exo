@@ -7,16 +7,9 @@ import mlx.nn as nn
 
 class DepthProUtil:
     @staticmethod
-    def split(x: mx.array, overlap_ratio: float = ...) -> mx.array:
-        ...
-    
+    def split(x: mx.array, overlap_ratio: float = ...) -> mx.array: ...
     @staticmethod
-    def interpolate(x: mx.array, size=..., scale_factor=...): # -> array:
+    def interpolate(x: mx.array, size=..., scale_factor=...):  # -> array:
         ...
-    
     @staticmethod
-    def apply_conv(x: mx.array, conv_module: nn.Module) -> mx.array:
-        ...
-    
-
-
+    def apply_conv(x: mx.array, conv_module: nn.Module) -> mx.array: ...

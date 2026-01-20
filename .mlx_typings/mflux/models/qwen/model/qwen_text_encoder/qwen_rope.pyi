@@ -6,11 +6,16 @@ import mlx.core as mx
 from mlx import nn
 
 class QwenRotaryEmbedding(nn.Module):
-    def __init__(self, dim: int, max_position_embeddings: int = ..., base: float = ..., device: str = ..., scaling_factor: float = ..., rope_type: str = ..., config=...) -> None:
-        ...
-    
-    def __call__(self, x: mx.array, position_ids: mx.array) -> tuple[mx.array, mx.array]:
-        ...
-    
-
-
+    def __init__(
+        self,
+        dim: int,
+        max_position_embeddings: int = ...,
+        base: float = ...,
+        device: str = ...,
+        scaling_factor: float = ...,
+        rope_type: str = ...,
+        config=...,
+    ) -> None: ...
+    def __call__(
+        self, x: mx.array, position_ids: mx.array
+    ) -> tuple[mx.array, mx.array]: ...

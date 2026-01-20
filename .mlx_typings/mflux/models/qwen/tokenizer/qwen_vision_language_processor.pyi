@@ -7,11 +7,17 @@ from PIL import Image
 from mflux.models.qwen.tokenizer.qwen_image_processor import QwenImageProcessor
 
 class QwenVisionLanguageProcessor:
-    def __init__(self, tokenizer, image_processor: Optional[QwenImageProcessor] = ..., image_token: str = ..., video_token: str = ...) -> None:
-        ...
-    
-    def __call__(self, images: Optional[Union[Image.Image, list[Image.Image]]] = ..., text: Optional[Union[str, list[str]]] = ..., padding: bool = ..., return_tensors: Optional[str] = ...) -> dict:
-        ...
-    
-
-
+    def __init__(
+        self,
+        tokenizer,
+        image_processor: Optional[QwenImageProcessor] = ...,
+        image_token: str = ...,
+        video_token: str = ...,
+    ) -> None: ...
+    def __call__(
+        self,
+        images: Optional[Union[Image.Image, list[Image.Image]]] = ...,
+        text: Optional[Union[str, list[str]]] = ...,
+        padding: bool = ...,
+        return_tensors: Optional[str] = ...,
+    ) -> dict: ...

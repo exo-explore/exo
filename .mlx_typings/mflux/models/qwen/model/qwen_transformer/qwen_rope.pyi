@@ -6,11 +6,11 @@ import mlx.core as mx
 from mlx import nn
 
 class QwenEmbedRopeMLX(nn.Module):
-    def __init__(self, theta: int, axes_dim: list[int], scale_rope: bool = ...) -> None:
-        ...
-    
-    def __call__(self, video_fhw: tuple[int, int, int] | list[tuple[int, int, int]], txt_seq_lens: list[int]) -> tuple[tuple[mx.array, mx.array], tuple[mx.array, mx.array]]:
-        ...
-    
-
-
+    def __init__(
+        self, theta: int, axes_dim: list[int], scale_rope: bool = ...
+    ) -> None: ...
+    def __call__(
+        self,
+        video_fhw: tuple[int, int, int] | list[tuple[int, int, int]],
+        txt_seq_lens: list[int],
+    ) -> tuple[tuple[mx.array, mx.array], tuple[mx.array, mx.array]]: ...
