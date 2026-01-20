@@ -305,6 +305,15 @@ def tensor_auto_parallel(
         group=group,
     )
 
+    if isinstance(model, GptOssModel):
+        tensor_parallel_sharding_strategy = GptOssShardingStrategy(
+            group,
+            all_to_sharded_linear,
+            sharded_to_all_linear,
+            all_to_sharded_linear_in_place,
+            sharded_to_all_linear_in_place,
+        )
+
     if hasattr(model, "shard"):
         try:
             model.shard(group)  # type: ignore
@@ -346,15 +355,6 @@ def tensor_auto_parallel(
             all_to_sharded_linear_in_place,
             sharded_to_all_linear_in_place,
         )
-    elif isinstance(model, GptOssModel):
-        tensor_parallel_sharding_strategy = GptOssShardingStrategy(
-            group,
-            all_to_sharded_linear,
-            sharded_to_all_linear,
-            all_to_sharded_linear_in_place,
-            sharded_to_all_linear_in_place,
-        )
-
     else:
         raise ValueError(f"Unsupported model type: {type(model)}")
 
