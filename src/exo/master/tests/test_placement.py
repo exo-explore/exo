@@ -276,9 +276,7 @@ def test_placement_selects_leaf_nodes(
     # arrange
     topology = Topology()
 
-    # Model requires more than any single node but fits within a 3-node cycle
-    model_card.storage_size.in_bytes = 1500
-    model_card.n_layers = 12
+    model_card.storage_size = Memory.from_bytes(1000)
 
     node_id_a = NodeId()
     node_id_b = NodeId()
