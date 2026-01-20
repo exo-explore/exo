@@ -12,7 +12,7 @@ from exo.worker.engines.mlx.auto_parallel import (
     CustomMlxLayer,
     PipelineFirstLayer,
     PipelineLastLayer,
-    patch_pipeline_model,
+    patch_distributed_model,
 )
 from exo.worker.tests.unittests.test_mlx.conftest import MockLayer
 
@@ -55,7 +55,7 @@ def run_pipeline_device(
 
         # Wrap in a mock model, then wrap in PipelineParallelModel for all_gather
         inner_model = MockModel([composed])
-        model = patch_pipeline_model(inner_model, group)
+        model = patch_distributed_model(inner_model)
 
         x = mx.ones((1, 4))
         result = model(x)
@@ -143,7 +143,7 @@ def test_composed_call_works() -> None:
             # With world_size=2 and each layer doing x*2:
             #   - Rank 0: 1.0 * 2 = 2.0 (sends to rank 1)
             #   - Rank 1: 2.0 * 2 = 4.0 (last rank, final result)
-            expected = 2.0 * (2 ** rank)  # 2.0 for rank 0, 4.0 for rank 1
+            expected = 2.0 * (2**rank)  # 2.0 for rank 0, 4.0 for rank 1
             assert (result_array == expected).all(), (
                 f"Device {rank}: expected {expected}, got {result_array}"
             )

@@ -18,7 +18,7 @@ from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.shards import PipelineShardMetadata, TensorShardMetadata
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.generator.generate import mlx_generate
-from exo.worker.engines.mlx.utils_mlx import shard_and_load, apply_chat_template
+from exo.worker.engines.mlx.utils_mlx import apply_chat_template, shard_and_load
 
 
 class MockLayer(nn.Module):
@@ -121,10 +121,7 @@ def run_gpt_oss_pipeline_device(
 
         generated_text = ""
         for response in mlx_generate(
-            model=model,
-            tokenizer=tokenizer,
-            task=task,
-            prompt=prompt
+            model=model, tokenizer=tokenizer, task=task, prompt=prompt
         ):
             generated_text += response.text
             if response.finish_reason is not None:
@@ -190,10 +187,7 @@ def run_gpt_oss_tensor_parallel_device(
 
         generated_text = ""
         for response in mlx_generate(
-            model=model,
-            tokenizer=tokenizer,
-            task=task,
-            prompt=prompt
+            model=model, tokenizer=tokenizer, task=task, prompt=prompt
         ):
             generated_text += response.text
             if response.finish_reason is not None:

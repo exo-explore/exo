@@ -229,10 +229,12 @@ def pipeline_auto_parallel(
         "Expected a list of layers after auto-parallel initialisation"
     )
 
-    return patch_pipeline_model(model, group)
+    if isinstance(model, (GptOssModel, Qwen3MoeModel, Qwen3NextModel)):
+        model = patch_distributed_model(model)
+    return model
 
 
-def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
+def patch_distributed_model[T](model: T) -> T:
     # Patch __call__ on the model's class
     cls = model.__class__
     original_call = cls.__call__  # type :ignore
@@ -251,32 +253,6 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
         # Add dependency to last cache entry to ensure distributed ops are evaluated
         if cache is not None:
             cache[-1].state = mx.depends(cache[-1].state, logits)  # type: ignore
-
-        return logits
-
-    cls.__call__ = patched_call
-    return model
-
-
-def patch_tensor_model[T](model: T) -> T:
-    """Patch model's __call__ to ensure distributed ops sync during inference."""
-    cls = model.__class__
-    original_call = cls.__call__
-    call_signature = signature(original_call)
-
-    def patched_call(
-        self: T,
-        *args: object,
-        **kwargs: object,
-    ) -> mx.array:
-        logits: mx.array = original_call(self, *args, **kwargs)  # pyright: ignore[reportAny]
-        cache = call_signature.bind_partial(self, *args, **kwargs).arguments.get(
-            "cache", None
-        )
-
-        # Add dependency to last cache entry to ensure distributed ops are evaluated
-        if cache is not None and len(cache) > 0:  # pyright: ignore[reportAny]
-            cache[-1].state = mx.depends(cache[-1].state, logits)  # pyright: ignore[reportAny,reportUnknownMemberType]
 
         return logits
 
@@ -333,7 +309,7 @@ def tensor_auto_parallel(
     if hasattr(model, "shard"):
         try:
             model.shard(group)  # type: ignore
-            return patch_tensor_model(model)
+            return patch_distributed_model(model)
         except (AttributeError, TypeError, NameError):
             pass
 
@@ -386,7 +362,7 @@ def tensor_auto_parallel(
     model = tensor_parallel_sharding_strategy.shard_model(
         model, timeout_seconds, on_timeout
     )
-    return patch_tensor_model(model)
+    return patch_distributed_model(model)
 
 
 class TensorParallelShardingStrategy(ABC):
