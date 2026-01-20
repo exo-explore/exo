@@ -314,12 +314,12 @@ def tensor_auto_parallel(
             sharded_to_all_linear_in_place,
         )
 
-    elif hasattr(model, "shard"):
-        try:
-            model.shard(group)  # type: ignore
-            return model
-        except (AttributeError, TypeError, NameError):
-            pass
+    # elif hasattr(model, "shard"):
+    #     try:
+    #         model.shard(group)  # type: ignore
+    #         return model
+    #     except (AttributeError, TypeError, NameError):
+    #         pass
 
     elif isinstance(model, (LlamaModel, Ministral3Model)):
         logger.warning("shouldn't be hit - upstream sharding exists")
