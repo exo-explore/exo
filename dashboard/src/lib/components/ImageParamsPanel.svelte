@@ -136,8 +136,8 @@
 
 				<!-- Dropdown Panel - fixed positioning to escape overflow:hidden -->
 				<div
-					class="fixed bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto"
-					style="bottom: calc(100vh - {sizeDropdownPosition().top}px + 4px); left: {sizeDropdownPosition().left}px; width: {sizeDropdownPosition().width}px;"
+					class="fixed bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto min-w-max"
+					style="bottom: calc(100vh - {sizeDropdownPosition().top}px + 4px); left: {sizeDropdownPosition().left}px;"
 				>
 					<div class="py-1">
 						{#each sizeOptions as size}
@@ -197,8 +197,8 @@
 
 				<!-- Dropdown Panel - fixed positioning to escape overflow:hidden -->
 				<div
-					class="fixed bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto"
-					style="bottom: calc(100vh - {qualityDropdownPosition().top}px + 4px); left: {qualityDropdownPosition().left}px; width: {qualityDropdownPosition().width}px;"
+					class="fixed bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto min-w-max"
+					style="bottom: calc(100vh - {qualityDropdownPosition().top}px + 4px); left: {qualityDropdownPosition().left}px;"
 				>
 					<div class="py-1">
 						{#each qualityOptions as quality}
