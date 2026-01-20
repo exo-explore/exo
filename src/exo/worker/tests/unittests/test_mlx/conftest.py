@@ -11,8 +11,9 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from exo.shared.constants import EXO_MODELS_DIR
-from exo.shared.models.model_cards import ModelCard, ModelId
+from exo.shared.models.model_cards import ModelCard
 from exo.shared.types.api import ChatCompletionMessage
+from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.shards import PipelineShardMetadata, TensorShardMetadata

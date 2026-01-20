@@ -1,16 +1,18 @@
-from pydantic import PositiveInt
+from typing import Annotated
 
-from exo.shared.types.common import Id
+import aiofiles
+import aiofiles.os as aios
+import tomlkit
+from anyio import Path, open_file
+from huggingface_hub import model_info
+from loguru import logger
+from pydantic import BaseModel, Field, PositiveInt
+
+from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.utils.pydantic_ext import CamelCaseModel
 
-
-class ModelId(Id):
-    def normalize(self) -> str:
-        return self.replace("/", "--")
-
-    def short(self) -> str:
-        return self.split("/")[-1]
+_card_cache: dict[str, "ModelCard"] = {}
 
 
 class ModelCard(CamelCaseModel):
@@ -19,6 +21,43 @@ class ModelCard(CamelCaseModel):
     n_layers: PositiveInt
     hidden_size: PositiveInt
     supports_tensor: bool
+
+    async def save(self, path: Path) -> None:
+        async with await open_file(path, "w") as f:
+            py = self.model_dump()
+            data = tomlkit.dumps(py)  # pyright: ignore[reportUnknownMemberType]
+            await f.write(data)
+
+    @staticmethod
+    async def load_from_path(path: Path) -> "ModelCard":
+        async with await open_file(path, "r") as f:
+            py = tomlkit.loads(await f.read())
+            return ModelCard.model_validate(py)
+
+    @staticmethod
+    async def load(model_id: ModelId) -> "ModelCard":
+        if model_id in MODEL_CARDS:
+            return MODEL_CARDS[model_id]
+        return await ModelCard.from_hf(model_id)
+
+    @staticmethod
+    async def from_hf(model_id: ModelId) -> "ModelCard":
+        """Fetches storage size and number of layers for a Hugging Face model, returns Pydantic ModelMeta."""
+        if (mc := _card_cache.get(model_id)) is not None:
+            return mc
+        config_data = await get_config_data(model_id)
+        num_layers = config_data.layer_count
+        mem_size_bytes = await get_safetensors_size(model_id)
+
+        mc = ModelCard(
+            model_id=ModelId(model_id),
+            storage_size=mem_size_bytes,
+            n_layers=num_layers,
+            hidden_size=config_data.hidden_size or 0,
+            supports_tensor=config_data.supports_tensor,
+        )
+        _card_cache[model_id] = mc
+        return mc
 
 
 MODEL_CARDS: dict[str, ModelCard] = {
@@ -308,3 +347,99 @@ MODEL_CARDS: dict[str, ModelCard] = {
         supports_tensor=True,
     ),
 }
+
+from exo.worker.download.download_utils import (  # noqa: E402
+    ModelSafetensorsIndex,
+    download_file_with_retry,
+    ensure_models_dir,
+)
+
+
+class ConfigData(BaseModel):
+    model_config = {"extra": "ignore"}  # Allow unknown fields
+
+    # Common field names for number of layers across different architectures
+    num_hidden_layers: Annotated[int, Field(ge=0)] | None = None
+    num_layers: Annotated[int, Field(ge=0)] | None = None
+    n_layer: Annotated[int, Field(ge=0)] | None = None
+    n_layers: Annotated[int, Field(ge=0)] | None = None  # Sometimes used
+    num_decoder_layers: Annotated[int, Field(ge=0)] | None = None  # Transformer models
+    decoder_layers: Annotated[int, Field(ge=0)] | None = None  # Some architectures
+    hidden_size: Annotated[int, Field(ge=0)] | None = None
+    architectures: list[str] | None = None
+
+    @property
+    def supports_tensor(self) -> bool:
+        return self.architectures in [
+            ["Glm4MoeLiteForCausalLM"],
+            ["DeepseekV32ForCausalLM"],
+            ["DeepseekV3ForCausalLM"],
+            ["Qwen3NextForCausalLM"],
+            ["Qwen3MoeForCausalLM"],
+            ["MiniMaxM2ForCausalLM"],
+            ["LlamaForCausalLM"],
+            ["GptOssForCausalLM"],
+        ]
+
+    @property
+    def layer_count(self) -> int:
+        # Check common field names for layer count
+        layer_fields = [
+            self.num_hidden_layers,
+            self.num_layers,
+            self.n_layer,
+            self.n_layers,
+            self.num_decoder_layers,
+            self.decoder_layers,
+        ]
+
+        for layer_count in layer_fields:
+            if layer_count is not None:
+                return layer_count
+
+        raise ValueError(
+            f"No layer count found in config.json: {self.model_dump_json()}"
+        )
+
+
+async def get_config_data(model_id: ModelId) -> ConfigData:
+    """Downloads and parses config.json for a model."""
+    target_dir = (await ensure_models_dir()) / model_id.normalize()
+    await aios.makedirs(target_dir, exist_ok=True)
+    config_path = await download_file_with_retry(
+        model_id,
+        "main",
+        "config.json",
+        target_dir,
+        lambda curr_bytes, total_bytes, is_renamed: logger.info(
+            f"Downloading config.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
+        ),
+    )
+    async with aiofiles.open(config_path, "r") as f:
+        return ConfigData.model_validate_json(await f.read())
+
+
+async def get_safetensors_size(model_id: ModelId) -> Memory:
+    """Gets model size from safetensors index or falls back to HF API."""
+    target_dir = (await ensure_models_dir()) / model_id.normalize()
+    await aios.makedirs(target_dir, exist_ok=True)
+    index_path = await download_file_with_retry(
+        model_id,
+        "main",
+        "model.safetensors.index.json",
+        target_dir,
+        lambda curr_bytes, total_bytes, is_renamed: logger.info(
+            f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
+        ),
+    )
+    async with aiofiles.open(index_path, "r") as f:
+        index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
+
+    metadata = index_data.metadata
+    if metadata is not None:
+        return Memory.from_bytes(metadata.total_size)
+
+    info = model_info(model_id)
+    if info.safetensors is None:
+        raise ValueError(f"No safetensors info found for {model_id}")
+    return Memory.from_bytes(info.safetensors.total)

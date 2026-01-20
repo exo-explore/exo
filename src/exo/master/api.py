@@ -19,8 +19,11 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
-from exo.shared.models.model_cards import MODEL_CARDS, ModelCard, ModelId
-from exo.shared.models.model_meta import get_model_card
+from exo.shared.models.model_cards import (
+    MODEL_CARDS,
+    ModelCard,
+    ModelId,
+)
 from exo.shared.types.api import (
     BenchChatCompletionResponse,
     BenchChatCompletionTaskParams,
@@ -86,12 +89,12 @@ def chunk_to_response(
     )
 
 
-async def resolve_model_card(model_id: str) -> ModelCard:
+async def resolve_model_card(model_id: ModelId) -> ModelCard:
     if model_id in MODEL_CARDS:
         model_card = MODEL_CARDS[model_id]
         return model_card
     else:
-        return await get_model_card(model_id)
+        return await ModelCard.from_hf(model_id)
 
 
 class API:
@@ -236,7 +239,7 @@ class API:
 
     async def get_placement(
         self,
-        model_id: str,
+        model_id: ModelId,
         sharding: Sharding = Sharding.Pipeline,
         instance_meta: InstanceMeta = InstanceMeta.MlxRing,
         min_nodes: int = 1,
@@ -551,7 +554,7 @@ class API:
         self, payload: ChatCompletionTaskParams
     ) -> ChatCompletionResponse | StreamingResponse:
         """Handle chat completions, supporting both streaming and non-streaming responses."""
-        model_card = await resolve_model_card(payload.model)
+        model_card = await resolve_model_card(ModelId(payload.model))
         payload.model = model_card.model_id
 
         if not any(
@@ -578,7 +581,7 @@ class API:
     async def bench_chat_completions(
         self, payload: BenchChatCompletionTaskParams
     ) -> BenchChatCompletionResponse:
-        model_card = await resolve_model_card(payload.model)
+        model_card = await resolve_model_card(ModelId(payload.model))
         payload.model = model_card.model_id
 
         if not any(
