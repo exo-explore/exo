@@ -248,9 +248,9 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
             "cache", None
         )
 
-        # Add dependency to last cache entry to ensure distributed ops are evaluated
-        if cache is not None:
-            cache[-1].state = mx.depends(cache[-1].state, logits)  # type: ignore
+        # # Add dependency to last cache entry to ensure distributed ops are evaluated
+        # if cache is not None:
+        #     cache[-1].state = mx.depends(cache[-1].state, logits)  # type: ignore
 
         logits = mx.distributed.all_gather(logits, group=group)[
             -logits.shape[0] :
