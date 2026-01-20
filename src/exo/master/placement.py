@@ -120,7 +120,7 @@ def place_instance(
     target_instances = dict(deepcopy(current_instances))
 
     if len(selected_cycle) == 1:
-        logger.warning(
+        logger.debug(
             "You have likely selected jaccl for a single node instance; falling back to MlxRing"
         )
 
