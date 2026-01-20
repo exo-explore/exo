@@ -16,12 +16,6 @@ from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType
 from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from loguru import logger
-from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
-    HarmonyEncodingName,
-    Role,
-    StreamableParser,
-    load_harmony_encoding,
-)
 from pydantic import BaseModel
 
 from exo.master.placement import place_instance as get_instance_placements

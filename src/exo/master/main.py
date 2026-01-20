@@ -165,7 +165,9 @@ class Master:
 
                                 self.command_task_mapping[command.command_id] = task_id
                             case DeleteInstance():
-                                placement = delete_instance(command, self.state.instances)
+                                placement = delete_instance(
+                                    command, self.state.instances
+                                )
                                 transition_events = get_transition_events(
                                     self.state.instances, placement
                                 )
@@ -200,7 +202,10 @@ class Master:
                                         ]
                                     )
                                 )
-                                if command.finished_command_id in self.command_task_mapping:
+                                if (
+                                    command.finished_command_id
+                                    in self.command_task_mapping
+                                ):
                                     del self.command_task_mapping[
                                         command.finished_command_id
                                     ]

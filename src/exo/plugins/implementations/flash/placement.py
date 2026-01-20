@@ -8,6 +8,7 @@ from loguru import logger
 from exo.shared.topology import Topology
 from exo.shared.types.commands import LaunchFLASH
 from exo.shared.types.common import Host, NodeId
+from exo.shared.types.topology import SocketConnection
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.worker.instances import FLASHInstance, Instance, InstanceId
@@ -60,9 +61,9 @@ def place_flash_instance(
         supports_tensor=False,
     )
 
-    for i, node_info in enumerate(selected_nodes):
+    for i, node_id in enumerate(selected_nodes):
         runner_id = RunnerId()
-        node_to_runner[node_info.node_id] = runner_id
+        node_to_runner[node_id] = runner_id
         runner_to_shard[runner_id] = PipelineShardMetadata(
             device_rank=i,
             world_size=len(selected_nodes),
@@ -85,52 +86,43 @@ def place_flash_instance(
     if command.hosts:
         explicit_hosts = [h.strip() for h in command.hosts.split(",") if h.strip()]
         logger.info(f"FLASH placement: explicit hosts provided: {explicit_hosts}")
-        for i, node_info in enumerate(selected_nodes):
+        for i, node_id in enumerate(selected_nodes):
             if i < len(explicit_hosts):
-                hosts_by_node[node_info.node_id] = [Host(ip=explicit_hosts[i], port=0)]
+                hosts_by_node[node_id] = [Host(ip=explicit_hosts[i], port=0)]
                 logger.info(
-                    f"FLASH placement: node {node_info.node_id} (rank {i}) -> IP {explicit_hosts[i]}"
+                    f"FLASH placement: node {node_id} (rank {i}) -> IP {explicit_hosts[i]}"
                 )
             else:
                 logger.warning(
                     f"Not enough hosts provided for node {i}, using localhost"
                 )
-                hosts_by_node[node_info.node_id] = [Host(ip="127.0.0.1", port=0)]
+                hosts_by_node[node_id] = [Host(ip="127.0.0.1", port=0)]
         logger.info(
             f"FLASH placement: coordinator will be rank 0 at IP {explicit_hosts[0]}"
         )
     else:
         # Try to get IPs from topology edges
-        for node_info in selected_nodes:
+        for node_id in selected_nodes:
             node_hosts: list[Host] = []
 
             # Get IP from outgoing edges (connections to other nodes via mDNS discovery)
-            for _, edge_data in topology.out_edges(node_info.node_id):
-                if hasattr(edge_data, "send_back_multiaddr"):
-                    # Extract IP from multiaddr like /ip4/192.168.1.100/tcp/52415
-                    multiaddr = str(edge_data.send_back_multiaddr)
-                    if "/ip4/" in multiaddr:
-                        parts = multiaddr.split("/")
-                        try:
-                            ip_idx = parts.index("ip4") + 1
-                            ip = parts[ip_idx]
-                            # Skip link-local and localhost addresses
-                            if not ip.startswith("169.254.") and not ip.startswith(
-                                "127."
-                            ):
-                                node_hosts.append(Host(ip=ip, port=0))
-                                break
-                        except (ValueError, IndexError):
-                            pass
+            for conn in topology.out_edges(node_id):
+                if isinstance(conn.edge, SocketConnection):
+                    # Extract IP from multiaddr
+                    ip = conn.edge.sink_multiaddr.ip_address
+                    # Skip link-local and localhost addresses
+                    if not ip.startswith("169.254.") and not ip.startswith("127."):
+                        node_hosts.append(Host(ip=ip, port=0))
+                        break
 
             # Last resort: use localhost (will only work for single-node)
             if not node_hosts:
                 logger.warning(
-                    f"Could not determine IP for node {node_info.node_id}, using localhost"
+                    f"Could not determine IP for node {node_id}, using localhost"
                 )
                 node_hosts.append(Host(ip="127.0.0.1", port=0))
 
-            hosts_by_node[node_info.node_id] = node_hosts
+            hosts_by_node[node_id] = node_hosts
 
     total_ranks = len(selected_nodes) * command.ranks_per_node
 
