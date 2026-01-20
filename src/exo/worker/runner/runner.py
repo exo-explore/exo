@@ -71,6 +71,7 @@ def main(
         bound_instance.bound_shard,
     )
     device_rank = shard_metadata.device_rank
+    world_size = shard_metadata.world_size
     logger.info("hello from the runner")
     if getattr(shard_metadata, "immediate_exception", False):
         raise Exception("Fake exception - runner failed to spin up.")
@@ -207,7 +208,7 @@ def main(
                         for response in mlx_generator:
                             match response:
                                 case GenerationResponse():
-                                    if device_rank == 0:
+                                    if device_rank == world_size - 1:
                                         event_sender.send(
                                             ChunkGenerated(
                                                 command_id=command_id,

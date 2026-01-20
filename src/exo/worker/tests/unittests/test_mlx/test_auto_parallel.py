@@ -138,9 +138,14 @@ def test_composed_call_works() -> None:
                 f"Device {rank} failed: {errors.get(rank, 'unknown')}"
             )
             result_array = results[rank]
-            # Both devices see the final result (4.0) after all_gather
-            assert (result_array == 4.0).all(), (
-                f"Device {rank}: expected 4.0, got {result_array}"
+            # Each device sees its local result: intermediate ranks return their
+            # computed output (before sending), last rank returns the final result.
+            # With world_size=2 and each layer doing x*2:
+            #   - Rank 0: 1.0 * 2 = 2.0 (sends to rank 1)
+            #   - Rank 1: 2.0 * 2 = 4.0 (last rank, final result)
+            expected = 2.0 * (2 ** rank)  # 2.0 for rank 0, 4.0 for rank 1
+            assert (result_array == expected).all(), (
+                f"Device {rank}: expected {expected}, got {result_array}"
             )
     finally:
         os.unlink(hostfile_path)
