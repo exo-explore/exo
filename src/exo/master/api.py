@@ -631,7 +631,7 @@ class API:
 
         Raises HTTPException 404 if no instance is found for the model.
         """
-        model_card = await resolve_model_card(model)
+        model_card = await resolve_model_card(ModelId(model))
         resolved_model = model_card.model_id
         if not any(
             instance.shard_assignments.model_id == resolved_model
