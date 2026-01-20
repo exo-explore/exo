@@ -10,8 +10,8 @@ import pytest
 
 from exo.worker.engines.mlx.auto_parallel import (
     CustomMlxLayer,
-    PipelineFirstLayer,
-    PipelineLastLayer,
+    patch_pipeline_first_layer,
+    patch_pipeline_last_layer,
     patch_pipeline_model,
 )
 from exo.worker.tests.unittests.test_mlx.conftest import MockLayer
@@ -50,8 +50,8 @@ def run_pipeline_device(
         group = mx.distributed.init(backend="ring", strict=True)
 
         mock = MockLayerInner()
-        first = PipelineFirstLayer(mock, r=rank, group=group)
-        composed = PipelineLastLayer(first, r=rank, s=world_size, group=group)
+        first = patch_pipeline_first_layer(mock, group)
+        composed = patch_pipeline_last_layer(first, group)
 
         # Wrap in a mock model, then wrap in PipelineParallelModel for all_gather
         inner_model = MockModel([composed])
@@ -78,8 +78,8 @@ def test_composed_wrappers_delegate_attributes() -> None:
     mock = MockLayer()
     group = mx.distributed.init()
 
-    first = PipelineFirstLayer(mock, r=0, group=group)
-    composed = PipelineLastLayer(first, r=0, s=1, group=group)
+    first = patch_pipeline_first_layer(mock, group)
+    composed = patch_pipeline_last_layer(first, group)
 
     assert composed.custom_attr == "test_value"  # type: ignore[attr-defined]
     assert composed.use_sliding is True  # type: ignore[attr-defined]

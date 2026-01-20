@@ -66,6 +66,7 @@ def eval_with_timeout(
     finally:
         completed.set()
 
+
 class CustomMlxLayer(nn.Module):
     """Base class for replacing an MLX layer with a custom implementation."""
 
@@ -103,7 +104,7 @@ def patch_pipeline_first_layer(
             return orig_call(self, x, *args, **kwargs)
 
     pipeline_layer.__class__ = PatchedFirstLayer
-            
+
     return pipeline_layer
 
 
@@ -113,7 +114,7 @@ def patch_pipeline_last_layer(
     cls = type(pipeline_layer)
     orig_call = cast(Callable[..., mx.array], cls.__call__)
     orig_call_sig = signature(orig_call)
-    
+
     rank = group.rank()
     size = group.size()
 
@@ -126,17 +127,16 @@ def patch_pipeline_last_layer(
             output: mx.array = orig_call(self, x, *args, **kwargs)
 
             if rank != size - 1:
-                output = mx.distributed.send(
-                    output, (rank + 1) % size, group=group
-                )
+                output = mx.distributed.send(output, (rank + 1) % size, group=group)
                 if cache is not None:
                     cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
 
             return output
 
     pipeline_layer.__class__ = PatchedLastLayer
-            
+
     return pipeline_layer
+
 
 def _inner_model(model: nn.Module) -> nn.Module:
     inner = getattr(model, "model", None)
@@ -515,10 +515,10 @@ class ShardedDeepseekV3MoE(CustomMlxLayer):
     def __call__(self, x: mx.array) -> mx.array:
         if self.sharding_group is not None:
             x = sum_gradients(self.sharding_group)(x)
-        y = self.original_layer.__call__(x) # type: ignore
+        y = self.original_layer.__call__(x)  # type: ignore
         if self.sharding_group is not None:
             y = mx.distributed.all_sum(y, group=self.sharding_group)  # type: ignore
-        return y # type: ignore
+        return y  # type: ignore
 
 
 class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
@@ -606,10 +606,10 @@ class ShardedQwenMoE(CustomMlxLayer):
     def __call__(self, x: mx.array) -> mx.array:
         if self.sharding_group is not None:
             x = sum_gradients(self.sharding_group)(x)
-        y = self.original_layer.__call__(x) # type: ignore
+        y = self.original_layer.__call__(x)  # type: ignore
         if self.sharding_group is not None:
-            y = mx.distributed.all_sum(y, group=self.sharding_group) # type: ignore
-        return y # type: ignore
+            y = mx.distributed.all_sum(y, group=self.sharding_group)  # type: ignore
+        return y  # type: ignore
 
 
 class GptOssShardingStrategy(TensorParallelShardingStrategy):
@@ -661,7 +661,7 @@ class ShardedGptOssMoE(CustomMlxLayer):
     def __call__(self, x: mx.array) -> mx.array:
         if self.sharding_group is not None:
             x = sum_gradients(self.sharding_group)(x)
-        y = self.original_layer(x) # type: ignore
+        y = self.original_layer(x)  # type: ignore
         if self.sharding_group is not None:
-            y = mx.distributed.all_sum(y, group=self.sharding_group) # type: ignore
-        return y # type: ignore
+            y = mx.distributed.all_sum(y, group=self.sharding_group)  # type: ignore
+        return y  # type: ignore
