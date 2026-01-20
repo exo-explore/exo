@@ -31,7 +31,7 @@ class MlxRingInstance(BaseInstance):
 
 
 class MlxJacclInstance(BaseInstance):
-    ibv_devices: list[list[str | None]]
+    jaccl_devices: list[list[str | None]]
     jaccl_coordinators: dict[NodeId, str]
 
 

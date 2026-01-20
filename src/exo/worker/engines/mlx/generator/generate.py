@@ -119,6 +119,7 @@ def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
     task: ChatCompletionTaskParams,
+    prompt: str,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -129,11 +130,6 @@ def mlx_generate(
 
     if task.seed is not None:
         mx.random.seed(task.seed)
-
-    prompt = apply_chat_template(
-        tokenizer=tokenizer,
-        chat_task_data=task,
-    )
 
     caches = make_kv_cache(model=model)
 

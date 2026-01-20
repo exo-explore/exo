@@ -11,10 +11,8 @@ from exo.shared.types.events import (
     IndexedEvent,
     InstanceCreated,
     InstanceDeleted,
-    NodeCreated,
     NodeDownloadProgress,
-    NodeMemoryMeasured,
-    NodePerformanceMeasured,
+    NodeGatheredInfo,
     NodeTimedOut,
     RunnerDeleted,
     RunnerStatusUpdated,
@@ -27,13 +25,27 @@ from exo.shared.types.events import (
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
 )
-from exo.shared.types.profiling import NodePerformanceProfile, SystemPerformanceProfile
+from exo.shared.types.profiling import (
+    NodeIdentity,
+    NodeNetworkInfo,
+    NodeThunderboltInfo,
+)
 from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
-from exo.shared.types.topology import NodeInfo
+from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
+from exo.utils.info_gatherer.info_gatherer import (
+    MacmonMetrics,
+    MacThunderboltConnections,
+    MacThunderboltIdentifiers,
+    MemoryUsage,
+    MiscData,
+    NodeConfig,
+    NodeNetworkInterfaces,
+    StaticNodeInformation,
+)
 
 
 def event_apply(event: Event, state: State) -> State:
@@ -47,16 +59,12 @@ def event_apply(event: Event, state: State) -> State:
             return apply_instance_created(event, state)
         case InstanceDeleted():
             return apply_instance_deleted(event, state)
-        case NodeCreated():
-            return apply_topology_node_created(event, state)
         case NodeTimedOut():
             return apply_node_timed_out(event, state)
-        case NodePerformanceMeasured():
-            return apply_node_performance_measured(event, state)
         case NodeDownloadProgress():
             return apply_node_download_progress(event, state)
-        case NodeMemoryMeasured():
-            return apply_node_memory_measured(event, state)
+        case NodeGatheredInfo():
+            return apply_node_gathered_info(event, state)
         case RunnerDeleted():
             return apply_runner_deleted(event, state)
         case RunnerStatusUpdated():
@@ -188,120 +196,133 @@ def apply_runner_deleted(event: RunnerDeleted, state: State) -> State:
 
 
 def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
-    topology = copy.copy(state.topology)
-    state.topology.remove_node(event.node_id)
-    node_profiles = {
-        key: value for key, value in state.node_profiles.items() if key != event.node_id
-    }
+    topology = copy.deepcopy(state.topology)
+    topology.remove_node(event.node_id)
     last_seen = {
         key: value for key, value in state.last_seen.items() if key != event.node_id
     }
+    downloads = {
+        key: value for key, value in state.downloads.items() if key != event.node_id
+    }
+    # Clean up all granular node mappings
+    node_identities = {
+        key: value
+        for key, value in state.node_identities.items()
+        if key != event.node_id
+    }
+    node_memory = {
+        key: value for key, value in state.node_memory.items() if key != event.node_id
+    }
+    node_system = {
+        key: value for key, value in state.node_system.items() if key != event.node_id
+    }
+    node_network = {
+        key: value for key, value in state.node_network.items() if key != event.node_id
+    }
+    node_thunderbolt = {
+        key: value
+        for key, value in state.node_thunderbolt.items()
+        if key != event.node_id
+    }
     return state.model_copy(
         update={
+            "downloads": downloads,
             "topology": topology,
-            "node_profiles": node_profiles,
             "last_seen": last_seen,
+            "node_identities": node_identities,
+            "node_memory": node_memory,
+            "node_system": node_system,
+            "node_network": node_network,
+            "node_thunderbolt": node_thunderbolt,
         }
     )
 
 
-def apply_node_performance_measured(
-    event: NodePerformanceMeasured, state: State
-) -> State:
-    new_profiles: Mapping[NodeId, NodePerformanceProfile] = {
-        **state.node_profiles,
-        event.node_id: event.node_profile,
-    }
-    last_seen: Mapping[NodeId, datetime] = {
-        **state.last_seen,
-        event.node_id: datetime.fromisoformat(event.when),
-    }
-    state = state.model_copy(update={"node_profiles": new_profiles})
-    topology = copy.copy(state.topology)
-    # TODO: NodeCreated
-    if not topology.contains_node(event.node_id):
-        topology.add_node(NodeInfo(node_id=event.node_id))
-    topology.update_node_profile(event.node_id, event.node_profile)
-    return state.model_copy(
-        update={
-            "node_profiles": new_profiles,
-            "topology": topology,
-            "last_seen": last_seen,
-        }
-    )
+def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
+    topology = copy.deepcopy(state.topology)
+    topology.add_node(event.node_id)
+    info = event.info
 
-
-def apply_node_memory_measured(event: NodeMemoryMeasured, state: State) -> State:
-    existing = state.node_profiles.get(event.node_id)
-    topology = copy.copy(state.topology)
-
-    if existing is None:
-        created = NodePerformanceProfile(
-            model_id="unknown",
-            chip_id="unknown",
-            friendly_name="Unknown",
-            memory=event.memory,
-            network_interfaces=[],
-            system=SystemPerformanceProfile(
-                # TODO: flops_fp16=0.0,
-                gpu_usage=0.0,
-                temp=0.0,
-                sys_power=0.0,
-                pcpu_usage=0.0,
-                ecpu_usage=0.0,
-                ane_power=0.0,
-            ),
-        )
-        created_profiles: Mapping[NodeId, NodePerformanceProfile] = {
-            **state.node_profiles,
-            event.node_id: created,
-        }
-        last_seen: Mapping[NodeId, datetime] = {
+    # Build update dict with only the mappings that change
+    update: dict[str, object] = {
+        "last_seen": {
             **state.last_seen,
             event.node_id: datetime.fromisoformat(event.when),
-        }
-        if not topology.contains_node(event.node_id):
-            topology.add_node(NodeInfo(node_id=event.node_id))
-            # TODO: NodeCreated
-        topology.update_node_profile(event.node_id, created)
-        return state.model_copy(
-            update={
-                "node_profiles": created_profiles,
-                "topology": topology,
-                "last_seen": last_seen,
-            }
-        )
-
-    updated = existing.model_copy(update={"memory": event.memory})
-    updated_profiles: Mapping[NodeId, NodePerformanceProfile] = {
-        **state.node_profiles,
-        event.node_id: updated,
+        },
+        "topology": topology,
     }
-    # TODO: NodeCreated
-    if not topology.contains_node(event.node_id):
-        topology.add_node(NodeInfo(node_id=event.node_id))
-    topology.update_node_profile(event.node_id, updated)
-    return state.model_copy(
-        update={"node_profiles": updated_profiles, "topology": topology}
-    )
 
+    match info:
+        case MacmonMetrics():
+            update["node_system"] = {
+                **state.node_system,
+                event.node_id: info.system_profile,
+            }
+            update["node_memory"] = {**state.node_memory, event.node_id: info.memory}
+        case MemoryUsage():
+            update["node_memory"] = {**state.node_memory, event.node_id: info}
+        case NodeConfig():
+            pass
+        case MiscData():
+            current_identity = state.node_identities.get(event.node_id, NodeIdentity())
+            new_identity = current_identity.model_copy(
+                update={"friendly_name": info.friendly_name}
+            )
+            update["node_identities"] = {
+                **state.node_identities,
+                event.node_id: new_identity,
+            }
+        case StaticNodeInformation():
+            current_identity = state.node_identities.get(event.node_id, NodeIdentity())
+            new_identity = current_identity.model_copy(
+                update={"model_id": info.model, "chip_id": info.chip}
+            )
+            update["node_identities"] = {
+                **state.node_identities,
+                event.node_id: new_identity,
+            }
+        case NodeNetworkInterfaces():
+            update["node_network"] = {
+                **state.node_network,
+                event.node_id: NodeNetworkInfo(interfaces=info.ifaces),
+            }
+        case MacThunderboltIdentifiers():
+            update["node_thunderbolt"] = {
+                **state.node_thunderbolt,
+                event.node_id: NodeThunderboltInfo(interfaces=info.idents),
+            }
+        case MacThunderboltConnections():
+            conn_map = {
+                tb_ident.domain_uuid: (nid, tb_ident.rdma_interface)
+                for nid in state.node_thunderbolt
+                for tb_ident in state.node_thunderbolt[nid].interfaces
+            }
+            as_rdma_conns = [
+                Connection(
+                    source=event.node_id,
+                    sink=conn_map[tb_conn.sink_uuid][0],
+                    edge=RDMAConnection(
+                        source_rdma_iface=conn_map[tb_conn.source_uuid][1],
+                        sink_rdma_iface=conn_map[tb_conn.sink_uuid][1],
+                    ),
+                )
+                for tb_conn in info.conns
+                if tb_conn.source_uuid in conn_map
+                if tb_conn.sink_uuid in conn_map
+            ]
+            topology.replace_all_out_rdma_connections(event.node_id, as_rdma_conns)
 
-def apply_topology_node_created(event: NodeCreated, state: State) -> State:
-    topology = copy.copy(state.topology)
-    topology.add_node(NodeInfo(node_id=event.node_id))
-    return state.model_copy(update={"topology": topology})
+    return state.model_copy(update=update)
 
 
 def apply_topology_edge_created(event: TopologyEdgeCreated, state: State) -> State:
-    topology = copy.copy(state.topology)
-    topology.add_connection(event.edge)
+    topology = copy.deepcopy(state.topology)
+    topology.add_connection(event.conn)
     return state.model_copy(update={"topology": topology})
 
 
 def apply_topology_edge_deleted(event: TopologyEdgeDeleted, state: State) -> State:
-    topology = copy.copy(state.topology)
-    if not topology.contains_connection(event.edge):
-        return state
-    topology.remove_connection(event.edge)
+    topology = copy.deepcopy(state.topology)
+    topology.remove_connection(event.conn)
     # TODO: Clean up removing the reverse connection
     return state.model_copy(update={"topology": topology})

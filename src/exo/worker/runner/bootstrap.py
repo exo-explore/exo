@@ -20,10 +20,25 @@ def entrypoint(
     task_receiver: MpReceiver[Task],
     _logger: "loguru.Logger",
 ) -> None:
+    # Set FAST_SYNCH based on env var or JACCL device count
+    fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
+    if fast_synch_override == "on" or (
+        fast_synch_override != "off"
+        and (
+            isinstance(bound_instance.instance, MlxJacclInstance)
+            and len(bound_instance.instance.jaccl_devices) >= 2
+        )
+    ):
+        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
+    else:
+        os.environ["MLX_METAL_FAST_SYNCH"] = "0"
+
     global logger
     logger = _logger
 
-    # Route based on instance type
+    logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
+
+    # Route based on instance type (plugins or default MLX)
     try:
         from exo.plugins.registry import PluginRegistry, discover_plugins
 
@@ -40,12 +55,6 @@ def entrypoint(
             plugin.create_runner(bound_instance, event_sender, task_receiver)
         else:
             # MLX runner (default)
-            if (
-                isinstance(bound_instance.instance, MlxJacclInstance)
-                and len(bound_instance.instance.ibv_devices) >= 2
-            ):
-                os.environ["MLX_METAL_FAST_SYNCH"] = "1"
-
             from exo.worker.runner.runner import main
 
             main(bound_instance, event_sender, task_receiver)

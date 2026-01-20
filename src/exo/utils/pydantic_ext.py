@@ -19,8 +19,17 @@ class CamelCaseModel(BaseModel):
         alias_generator=to_camel,
         validate_by_name=True,
         extra="forbid",
-        # I want to reenable this ASAP, but it's causing an issue with TaskStatus
         strict=True,
+    )
+
+
+class FrozenModel(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        validate_by_name=True,
+        extra="forbid",
+        strict=True,
+        frozen=True,
     )
 
 

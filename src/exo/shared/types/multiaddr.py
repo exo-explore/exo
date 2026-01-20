@@ -1,10 +1,11 @@
 import re
 from typing import ClassVar
 
-from pydantic import BaseModel, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, computed_field, field_validator
 
 
 class Multiaddr(BaseModel):
+    model_config = ConfigDict(frozen=True)
     address: str
 
     PATTERNS: ClassVar[list[str]] = [
