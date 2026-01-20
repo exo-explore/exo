@@ -37,7 +37,14 @@ This makes reviews faster and helps us maintain code quality as the project evol
 
 Write pure functions where possible. When adding new code, prefer Rust unless there's a good reason otherwise. Leverage the type systems available to you - Rust's type system, Python type hints, and TypeScript types. Comments should explain why you're doing something, not what the code does - especially for non-obvious decisions.
 
-Run `nix fmt` to auto-format your code before submitting.
+Run `nix fmt` to auto-format your code before submitting. This command formats code across all languages used in the project:
+
+- **Python** (src/ directory) - formatted with ruff
+- **Rust** (rust/ directory) - formatted with rustfmt
+- **TypeScript** (dashboard/ directory) - formatted with prettier
+- **Swift** (app/ directory) - formatted with swift-format
+
+If you're contributing to the web dashboard (TypeScript/Svelte) or macOS app (Swift), make sure to run `nix fmt` before submitting your pull request to ensure consistent code style.
 
 ## Testing
 
