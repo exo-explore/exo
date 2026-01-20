@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import AsyncIterator, Callable
 
 from exo.shared.models.model_cards import MODEL_CARDS
-from exo.shared.models.model_meta import get_model_meta
+from exo.shared.models.model_meta import get_model_card
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
     ShardMetadata,
@@ -20,21 +20,21 @@ def exo_shard_downloader(max_parallel_downloads: int = 8) -> ShardDownloader:
 
 
 async def build_base_shard(model_id: str) -> ShardMetadata:
-    model_meta = await get_model_meta(model_id)
+    model_card = await get_model_card(model_id)
     return PipelineShardMetadata(
-        model_meta=model_meta,
+        model_card=model_card,
         device_rank=0,
         world_size=1,
         start_layer=0,
-        end_layer=model_meta.n_layers,
-        n_layers=model_meta.n_layers,
+        end_layer=model_card.n_layers,
+        n_layers=model_card.n_layers,
     )
 
 
 async def build_full_shard(model_id: str) -> PipelineShardMetadata:
     base_shard = await build_base_shard(model_id)
     return PipelineShardMetadata(
-        model_meta=base_shard.model_meta,
+        model_card=base_shard.model_card,
         device_rank=base_shard.device_rank,
         world_size=base_shard.world_size,
         start_layer=base_shard.start_layer,
@@ -93,11 +93,11 @@ class CachedShardDownloader(ShardDownloader):
     async def ensure_shard(
         self, shard: ShardMetadata, config_only: bool = False
     ) -> Path:
-        if (shard.model_meta.model_id, shard) in self.cache:
-            return self.cache[(shard.model_meta.model_id, shard)]
+        if (shard.model_card.model_id, shard) in self.cache:
+            return self.cache[(shard.model_card.model_id, shard)]
 
         target_dir = await self.shard_downloader.ensure_shard(shard, config_only)
-        self.cache[(shard.model_meta.model_id, shard)] = target_dir
+        self.cache[(shard.model_card.model_id, shard)] = target_dir
         return target_dir
 
     async def get_shard_download_status(

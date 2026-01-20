@@ -82,7 +82,7 @@ async def tb_detection():
     send, recv = channel[GatheredInfo]()
     ig = InfoGatherer(send)
     with anyio.move_on_after(1):
-        await ig._monitor_system_profiler()  # pyright: ignore[reportPrivateUsage]
+        await ig._monitor_system_profiler_thunderbolt_data()  # pyright: ignore[reportPrivateUsage]
     with recv:
         return recv.collect()
 
@@ -135,7 +135,7 @@ def ring_instance(test: Tests, iid: InstanceId, hn: str) -> Instance:
     else:
         raise ValueError(f"{hn} not in {test.devs}")
 
-    meta = MODEL_CARDS[test.model_id].metadata
+    card = MODEL_CARDS[test.model_id]
     instance = MlxRingInstance(
         instance_id=iid,
         ephemeral_port=52416,
@@ -145,15 +145,15 @@ def ring_instance(test: Tests, iid: InstanceId, hn: str) -> Instance:
             node_to_runner={NodeId(host[0]): RunnerId(host[0]) for host in test.devs},
             runner_to_shard={
                 RunnerId(test.devs[i][0]): PipelineShardMetadata(
-                    model_meta=meta,
+                    model_card=card,
                     device_rank=i,
                     world_size=world_size,
-                    start_layer=(meta.n_layers // world_size) * i,
+                    start_layer=(card.n_layers // world_size) * i,
                     end_layer=min(
-                        meta.n_layers, (meta.n_layers // world_size) * (i + 1)
+                        card.n_layers, (card.n_layers // world_size) * (i + 1)
                     ),
-                    n_layers=min(meta.n_layers, (meta.n_layers // world_size) * (i + 1))
-                    - (meta.n_layers // world_size) * i,
+                    n_layers=min(card.n_layers, (card.n_layers // world_size) * (i + 1))
+                    - (card.n_layers // world_size) * i,
                 )
                 for i in range(world_size)
             },
@@ -224,7 +224,7 @@ async def jaccl_backend(test: Tests):
 
 
 def jaccl_instance(test: Tests, iid: InstanceId):
-    meta = MODEL_CARDS[test.model_id].metadata
+    card = MODEL_CARDS[test.model_id]
     world_size = len(test.devs)
 
     return MlxJacclInstance(
@@ -239,12 +239,12 @@ def jaccl_instance(test: Tests, iid: InstanceId):
             node_to_runner={NodeId(host[0]): RunnerId(host[0]) for host in test.devs},
             runner_to_shard={
                 RunnerId(test.devs[i][0]): TensorShardMetadata(
-                    model_meta=meta,
+                    model_card=card,
                     device_rank=i,
                     world_size=world_size,
-                    start_layer=meta.n_layers,
-                    end_layer=meta.n_layers,
-                    n_layers=meta.n_layers,
+                    start_layer=card.n_layers,
+                    end_layer=card.n_layers,
+                    n_layers=card.n_layers,
                 )
                 for i in range(world_size)
             },

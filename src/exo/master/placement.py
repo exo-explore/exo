@@ -14,6 +14,7 @@ from exo.master.placement_utils import (
     get_shard_assignments,
     get_smallest_cycles,
 )
+from exo.shared.models.model_cards import ModelId
 from exo.shared.topology import Topology
 from exo.shared.types.commands import (
     CreateInstance,
@@ -23,7 +24,6 @@ from exo.shared.types.commands import (
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import Event, InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
 from exo.shared.types.worker.instances import (
     Instance,
@@ -60,27 +60,27 @@ def place_instance(
     cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
     cycles_with_sufficient_memory = filter_cycles_by_memory(
-        candidate_cycles, node_memory, command.model_meta.storage_size
+        candidate_cycles, node_memory, command.model_card.storage_size
     )
     if len(cycles_with_sufficient_memory) == 0:
         raise ValueError("No cycles found with sufficient memory")
 
     if command.sharding == Sharding.Tensor:
-        if not command.model_meta.supports_tensor:
+        if not command.model_card.supports_tensor:
             raise ValueError(
-                f"Requested Tensor sharding but this model does not support tensor parallelism: {command.model_meta.model_id}"
+                f"Requested Tensor sharding but this model does not support tensor parallelism: {command.model_card.model_id}"
             )
         # TODO: the condition here for tensor parallel is not correct, but it works good enough for now.
         cycles_with_sufficient_memory = [
             cycle
             for cycle in cycles_with_sufficient_memory
-            if command.model_meta.hidden_size % len(cycle) == 0
+            if command.model_card.hidden_size % len(cycle) == 0
         ]
         if not cycles_with_sufficient_memory:
             raise ValueError(
-                f"No tensor sharding found for model with hidden_size {command.model_meta.hidden_size} candidate cycles"
+                f"No tensor sharding found for model with hidden_size {command.model_card.hidden_size} candidate cycles"
             )
-    if command.sharding == Sharding.Pipeline and command.model_meta.model_id == ModelId(
+    if command.sharding == Sharding.Pipeline and command.model_card.model_id == ModelId(
         "mlx-community/DeepSeek-V3.1-8bit"
     ):
         raise ValueError(
@@ -111,7 +111,7 @@ def place_instance(
     )
 
     shard_assignments = get_shard_assignments(
-        command.model_meta, selected_cycle, command.sharding, node_memory
+        command.model_card, selected_cycle, command.sharding, node_memory
     )
 
     cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle.node_ids)

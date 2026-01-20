@@ -75,7 +75,7 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
     return Memory.from_float_kb(
         (model_shard_meta.end_layer - model_shard_meta.start_layer)
         / model_shard_meta.n_layers
-        * model_shard_meta.model_meta.storage_size.in_kb
+        * model_shard_meta.model_card.storage_size.in_kb
         / (
             1
             if isinstance(model_shard_meta, PipelineShardMetadata)
@@ -206,7 +206,7 @@ def load_mlx_items(
 ) -> tuple[Model, TokenizerWrapper]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
-        model_path = build_model_path(bound_instance.bound_shard.model_meta.model_id)
+        model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
         start_time = time.perf_counter()
         model, _ = load_model(model_path, strict=True)
         end_time = time.perf_counter()
@@ -234,7 +234,7 @@ def shard_and_load(
     group: Group,
     on_timeout: TimeoutCallback | None = None,
 ) -> tuple[nn.Module, TokenizerWrapper]:
-    model_path = build_model_path(shard_metadata.model_meta.model_id)
+    model_path = build_model_path(shard_metadata.model_card.model_id)
 
     model, _ = load_model(model_path, lazy=True, strict=False)
     logger.debug(model)
@@ -293,7 +293,7 @@ def shard_and_load(
 
 def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerWrapper:
     """Load tokenizer for a model shard. Delegates to load_tokenizer_for_model_id."""
-    return load_tokenizer_for_model_id(shard_metadata.model_meta.model_id, model_path)
+    return load_tokenizer_for_model_id(shard_metadata.model_card.model_id, model_path)
 
 
 def get_eos_token_ids_for_model(model_id: str) -> list[int] | None:

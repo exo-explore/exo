@@ -2,8 +2,8 @@
 
 from collections.abc import Mapping, Sequence
 
+from exo.shared.models.model_cards import ModelId
 from exo.shared.types.common import NodeId
-from exo.shared.types.models import ModelId
 from exo.shared.types.tasks import (
     ChatCompletion,
     ConnectToGroup,
@@ -114,7 +114,7 @@ def _model_needs_download(
     download_status: Mapping[ModelId, DownloadProgress],
 ) -> DownloadModel | None:
     for runner in runners.values():
-        model_id = runner.bound_instance.bound_shard.model_meta.model_id
+        model_id = runner.bound_instance.bound_shard.model_card.model_id
         if isinstance(runner.status, RunnerIdle) and (
             model_id not in download_status
             or not isinstance(
@@ -191,7 +191,7 @@ def _load_model(
             nid in global_download_status
             and any(
                 isinstance(dp, DownloadCompleted)
-                and dp.shard_metadata.model_meta.model_id == shard_assignments.model_id
+                and dp.shard_metadata.model_card.model_id == shard_assignments.model_id
                 for dp in global_download_status[nid]
             )
             for nid in shard_assignments.node_to_runner

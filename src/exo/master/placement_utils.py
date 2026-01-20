@@ -2,10 +2,10 @@ from collections.abc import Generator, Mapping
 
 from loguru import logger
 
+from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Topology
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelMetadata
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
 from exo.shared.types.topology import Cycle, RDMAConnection, SocketConnection
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments
@@ -75,7 +75,7 @@ def allocate_layers_proportionally(
 
 
 def get_shard_assignments_for_pipeline_parallel(
-    model_meta: ModelMetadata,
+    model_card: ModelCard,
     cycle: Cycle,
     node_memory: Mapping[NodeId, MemoryUsage],
 ):
@@ -86,11 +86,10 @@ def get_shard_assignments_for_pipeline_parallel(
         (node_memory[node_id].ram_available for node_id in cycle.node_ids),
         start=Memory(),
     )
-
     if cycle_memory.in_bytes == 0:
         raise ValueError("Cannot create shard assignments: total available memory is 0")
 
-    total_layers = model_meta.n_layers
+    total_layers = model_card.n_layers
     world_size = len(cycle)
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
@@ -104,7 +103,7 @@ def get_shard_assignments_for_pipeline_parallel(
     )
 
     # Validate each node has sufficient memory for its assigned layers
-    memory_per_layer = model_meta.storage_size.in_bytes / total_layers
+    memory_per_layer = model_card.storage_size.in_bytes / total_layers
     for i, (node_id, node_layers) in enumerate(
         zip(cycle.node_ids, layer_allocations, strict=True)
     ):
@@ -124,7 +123,7 @@ def get_shard_assignments_for_pipeline_parallel(
         runner_id = RunnerId()
 
         shard = PipelineShardMetadata(
-            model_meta=model_meta,
+            model_card=model_card,
             device_rank=i,
             world_size=world_size,
             start_layer=layers_assigned,
@@ -137,7 +136,7 @@ def get_shard_assignments_for_pipeline_parallel(
         layers_assigned += node_layers
 
     shard_assignments = ShardAssignments(
-        model_id=model_meta.model_id,
+        model_id=model_card.model_id,
         runner_to_shard=runner_to_shard,
         node_to_runner=node_to_runner,
     )
@@ -146,17 +145,17 @@ def get_shard_assignments_for_pipeline_parallel(
 
 
 def get_shard_assignments_for_tensor_parallel(
-    model_meta: ModelMetadata,
+    model_card: ModelCard,
     cycle: Cycle,
 ):
-    total_layers = model_meta.n_layers
+    total_layers = model_card.n_layers
     world_size = len(cycle)
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
 
     for i, node_id in enumerate(cycle):
         shard = TensorShardMetadata(
-            model_meta=model_meta,
+            model_card=model_card,
             device_rank=i,
             world_size=world_size,
             start_layer=0,
@@ -170,7 +169,7 @@ def get_shard_assignments_for_tensor_parallel(
         node_to_runner[node_id] = runner_id
 
     shard_assignments = ShardAssignments(
-        model_id=model_meta.model_id,
+        model_id=model_card.model_id,
         runner_to_shard=runner_to_shard,
         node_to_runner=node_to_runner,
     )
@@ -179,7 +178,7 @@ def get_shard_assignments_for_tensor_parallel(
 
 
 def get_shard_assignments(
-    model_meta: ModelMetadata,
+    model_card: ModelCard,
     cycle: Cycle,
     sharding: Sharding,
     node_memory: Mapping[NodeId, MemoryUsage],
@@ -187,13 +186,13 @@ def get_shard_assignments(
     match sharding:
         case Sharding.Pipeline:
             return get_shard_assignments_for_pipeline_parallel(
-                model_meta=model_meta,
+                model_card=model_card,
                 cycle=cycle,
                 node_memory=node_memory,
             )
         case Sharding.Tensor:
             return get_shard_assignments_for_tensor_parallel(
-                model_meta=model_meta,
+                model_card=model_card,
                 cycle=cycle,
             )
 

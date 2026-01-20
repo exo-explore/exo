@@ -460,10 +460,10 @@ async def resolve_allow_patterns(shard: ShardMetadata) -> list[str]:
     # (iii) Tensor parallel requires all files.
     return ["*"]
     try:
-        weight_map = await get_weight_map(str(shard.model_meta.model_id))
+        weight_map = await get_weight_map(str(shard.model_card.model_id))
         return get_allow_patterns(weight_map, shard)
     except Exception:
-        logger.error(f"Error getting weight map for {shard.model_meta.model_id=}")
+        logger.error(f"Error getting weight map for {shard.model_card.model_id=}")
         logger.error(traceback.format_exc())
         return ["*"]
 
@@ -532,18 +532,18 @@ async def download_shard(
     allow_patterns: list[str] | None = None,
 ) -> tuple[Path, RepoDownloadProgress]:
     if not skip_download:
-        logger.info(f"Downloading {shard.model_meta.model_id=}")
+        logger.info(f"Downloading {shard.model_card.model_id=}")
 
     # Handle local paths
-    if await aios.path.exists(str(shard.model_meta.model_id)):
-        logger.info(f"Using local model path {shard.model_meta.model_id}")
-        local_path = Path(str(shard.model_meta.model_id))
+    if await aios.path.exists(str(shard.model_card.model_id)):
+        logger.info(f"Using local model path {shard.model_card.model_id}")
+        local_path = Path(str(shard.model_card.model_id))
         return local_path, await download_progress_for_local_path(
-            str(shard.model_meta.model_id), shard, local_path
+            str(shard.model_card.model_id), shard, local_path
         )
 
     revision = "main"
-    target_dir = await ensure_models_dir() / str(shard.model_meta.model_id).replace(
+    target_dir = await ensure_models_dir() / str(shard.model_card.model_id).replace(
         "/", "--"
     )
     if not skip_download:
@@ -552,13 +552,13 @@ async def download_shard(
     if not allow_patterns:
         allow_patterns = await resolve_allow_patterns(shard)
 
-    logger.info(f"Downloading {shard.model_meta.model_id=} with {allow_patterns=}")
+    logger.info(f"Downloading {shard.model_card.model_id=} with {allow_patterns=}")
 
     all_start_time = time.time()
     # TODO: currently not recursive. Some models might require subdirectories - thus this will need to be changed.
     #  Update: <- This does not seem to be the case. Yay?
     file_list = await fetch_file_list_with_cache(
-        str(shard.model_meta.model_id), revision, recursive=True
+        str(shard.model_card.model_id), revision, recursive=True
     )
     filtered_file_list = list(
         filter_repo_objects(
@@ -592,7 +592,7 @@ async def download_shard(
             else timedelta(seconds=0)
         )
         file_progress[file.path] = RepoFileDownloadProgress(
-            repo_id=str(shard.model_meta.model_id),
+            repo_id=str(shard.model_card.model_id),
             repo_revision=revision,
             file_path=file.path,
             downloaded=Memory.from_bytes(curr_bytes),
@@ -609,7 +609,7 @@ async def download_shard(
             shard,
             calculate_repo_progress(
                 shard,
-                str(shard.model_meta.model_id),
+                str(shard.model_card.model_id),
                 revision,
                 file_progress,
                 all_start_time,
@@ -619,7 +619,7 @@ async def download_shard(
     for file in filtered_file_list:
         downloaded_bytes = await get_downloaded_size(target_dir / file.path)
         file_progress[file.path] = RepoFileDownloadProgress(
-            repo_id=str(shard.model_meta.model_id),
+            repo_id=str(shard.model_card.model_id),
             repo_revision=revision,
             file_path=file.path,
             downloaded=Memory.from_bytes(downloaded_bytes),
@@ -643,7 +643,7 @@ async def download_shard(
     async def download_with_semaphore(file: FileListEntry) -> None:
         async with semaphore:
             await download_file_with_retry(
-                str(shard.model_meta.model_id),
+                str(shard.model_card.model_id),
                 revision,
                 file.path,
                 target_dir,
@@ -657,7 +657,7 @@ async def download_shard(
             *[download_with_semaphore(file) for file in filtered_file_list]
         )
     final_repo_progress = calculate_repo_progress(
-        shard, str(shard.model_meta.model_id), revision, file_progress, all_start_time
+        shard, str(shard.model_card.model_id), revision, file_progress, all_start_time
     )
     await on_progress(shard, final_repo_progress)
     if gguf := next((f for f in filtered_file_list if f.path.endswith(".gguf")), None):

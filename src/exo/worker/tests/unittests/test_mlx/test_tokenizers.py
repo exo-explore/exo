@@ -76,13 +76,13 @@ def get_test_models() -> list[tuple[str, ModelCard]]:
     """Get a representative sample of models to test."""
     # Pick one model from each family to test
     families: dict[str, tuple[str, ModelCard]] = {}
-    for short_id, card in MODEL_CARDS.items():
+    for _, card in MODEL_CARDS.items():
         # Extract family name (e.g., "llama-3.1" from "llama-3.1-8b")
-        parts = short_id.split("-")
+        parts = card.model_id.short().split("-")
         family = "-".join(parts[:2]) if len(parts) >= 2 else parts[0]
 
         if family not in families:
-            families[family] = (short_id, card)
+            families[family] = (card.model_id.short(), card)
 
     return list(families.values())
 
