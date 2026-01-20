@@ -928,10 +928,14 @@ class API:
         size: str = Form("1024x1024"),
         response_format: Literal["url", "b64_json"] = Form("b64_json"),
         input_fidelity: Literal["low", "high"] = Form("low"),
-        stream: bool = Form(False),
-        partial_images: int = Form(0),
+        stream: str = Form("false"),
+        partial_images: str = Form("0"),
     ) -> ImageGenerationResponse | StreamingResponse:
         """Handle image editing requests (img2img)."""
+        # Parse string form values to proper types
+        stream_bool = stream.lower() in ("true", "1", "yes")
+        partial_images_int = int(partial_images) if partial_images.isdigit() else 0
+
         command = await self._send_image_edits_command(
             image=image,
             prompt=prompt,
@@ -940,12 +944,12 @@ class API:
             size=size,
             response_format=response_format,
             input_fidelity=input_fidelity,
-            stream=stream,
-            partial_images=partial_images,
+            stream=stream_bool,
+            partial_images=partial_images_int,
             bench=False,
         )
 
-        if stream and partial_images and partial_images > 0:
+        if stream_bool and partial_images_int > 0:
             return StreamingResponse(
                 self._generate_image_stream(
                     command_id=command.command_id,

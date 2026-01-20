@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { isLoading, sendMessage, generateImage, selectedChatModel, setSelectedChatModel, instances, ttftMs, tps, totalTokens } from '$lib/stores/app.svelte';
+	import { isLoading, sendMessage, generateImage, editImage, editingImage, clearEditingImage, selectedChatModel, setSelectedChatModel, instances, ttftMs, tps, totalTokens } from '$lib/stores/app.svelte';
 	import ChatAttachments from './ChatAttachments.svelte';
 	import ImageParamsPanel from './ImageParamsPanel.svelte';
 	import type { ChatUploadedFile } from '$lib/types/files';
@@ -34,6 +34,8 @@
 	const currentTtft = $derived(ttftMs());
 	const currentTps = $derived(tps());
 	const currentTokens = $derived(totalTokens());
+	const currentEditingImage = $derived(editingImage());
+	const isEditMode = $derived(currentEditingImage !== null);
 	
 	// Custom dropdown state
 	let isModelDropdownOpen = $state(false);
@@ -57,11 +59,29 @@
 		return tasks.includes('TextToImage') || tasks.includes('ImageToImage');
 	}
 
+	// Check if a model supports only image editing (ImageToImage but not TextToImage)
+	function modelSupportsOnlyImageEditing(modelId: string): boolean {
+		const tasks = modelTasks[modelId] || [];
+		return tasks.includes('ImageToImage') && !tasks.includes('TextToImage');
+	}
+
+	// Check if a model supports image editing (ImageToImage)
+	function modelSupportsImageEditing(modelId: string): boolean {
+		const tasks = modelTasks[modelId] || [];
+		return tasks.includes('ImageToImage');
+	}
+
 	// Check if the currently selected model supports image generation
 	const isImageModel = $derived(() => {
 		if (!currentModel) return false;
 		return modelSupportsImageGeneration(currentModel);
 	});
+
+	// Show edit mode when: explicit edit mode OR (model supports ImageToImage AND files attached)
+	const shouldShowEditMode = $derived(
+		isEditMode ||
+		(currentModel && modelSupportsImageEditing(currentModel) && uploadedFiles.length > 0)
+	);
 
 	// Extract available models from running instances
 	const availableModels = $derived(() => {
@@ -198,21 +218,33 @@
 
 	function handleSubmit() {
 		if ((!message.trim() && uploadedFiles.length === 0) || loading) return;
-		
+
 		const content = message.trim();
 		const files = [...uploadedFiles];
-		
+
 		message = '';
 		uploadedFiles = [];
 		resetTextareaHeight();
-		
-		// Use image generation for image models
-		if (isImageModel() && content) {
+
+		// Use image editing if in edit mode
+		if (isEditMode && currentEditingImage && content) {
+			editImage(content, currentEditingImage.imageDataUrl);
+		}
+		// If user attached an image with an ImageToImage model, use edit endpoint
+		else if (currentModel && modelSupportsImageEditing(currentModel) && files.length > 0 && content) {
+			// Use the first attached image for editing
+			const imageFile = files[0];
+			if (imageFile.preview) {
+				editImage(content, imageFile.preview);
+			}
+		}
+		else if (isImageModel() && content) {
+			// Use image generation for text-to-image models
 			generateImage(content);
 		} else {
 			sendMessage(content, files);
 		}
-		
+
 		// Refocus the textarea after sending
 		setTimeout(() => textareaRef?.focus(), 10);
 	}
@@ -285,6 +317,27 @@
 			</div>
 		{/if}
 		
+		<!-- Edit mode banner -->
+		{#if isEditMode && currentEditingImage}
+			<div class="flex items-center gap-3 px-3 py-2 bg-exo-yellow/10 border-b border-exo-yellow/30">
+				<img
+					src={currentEditingImage.imageDataUrl}
+					alt="Source for editing"
+					class="w-10 h-10 object-cover rounded border border-exo-yellow/30"
+				/>
+				<div class="flex-1">
+					<span class="text-xs font-mono tracking-wider uppercase text-exo-yellow">EDITING IMAGE</span>
+				</div>
+				<button
+					type="button"
+					onclick={() => clearEditingImage()}
+					class="px-2 py-1 text-xs font-mono tracking-wider uppercase bg-exo-medium-gray/30 text-exo-light-gray border border-exo-medium-gray/50 rounded hover:bg-exo-medium-gray/50 hover:text-exo-yellow transition-colors cursor-pointer"
+				>
+					CANCEL
+				</button>
+			</div>
+		{/if}
+
 		<!-- Model selector (when enabled) -->
 		{#if showModelSelector && availableModels().length > 0}
 			<div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-exo-medium-gray/30">
@@ -381,9 +434,9 @@
 			</div>
 		{/if}
 
-		<!-- Image params panel (shown for image models) -->
-		{#if showModelSelector && isImageModel()}
-			<ImageParamsPanel />
+		<!-- Image params panel (shown for image models or edit mode) -->
+		{#if showModelSelector && (isImageModel() || isEditMode)}
+			<ImageParamsPanel isEditMode={isEditMode} />
 		{/if}
 
 		<!-- Attached files preview -->
@@ -420,7 +473,7 @@
 				onkeydown={handleKeydown}
 				oninput={handleInput}
 				onpaste={handlePaste}
-				placeholder={isImageModel() ? 'Describe the image you want to generate...' : placeholder}
+				placeholder={isEditMode ? 'Describe how to edit this image...' : (isImageModel() ? 'Describe the image you want to generate...' : placeholder)}
 				disabled={loading}
 				rows={1}
 				class="flex-1 resize-none bg-transparent text-foreground placeholder:text-exo-light-gray/60 placeholder:text-sm placeholder:tracking-[0.15em] placeholder:leading-7 focus:outline-none focus:ring-0 focus:border-none disabled:opacity-50 text-sm leading-7 font-mono"
@@ -431,16 +484,23 @@
 				type="submit"
 				disabled={!canSend || loading}
 				class="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-xs tracking-[0.1em] sm:tracking-[0.15em] uppercase font-medium transition-all duration-200 whitespace-nowrap
-					{!canSend || loading 
-						? 'bg-exo-medium-gray/50 text-exo-light-gray cursor-not-allowed' 
+					{!canSend || loading
+						? 'bg-exo-medium-gray/50 text-exo-light-gray cursor-not-allowed'
 						: 'bg-exo-yellow text-exo-black hover:bg-exo-yellow-darker hover:shadow-[0_0_20px_rgba(255,215,0,0.3)]'}"
-				aria-label={isImageModel() ? "Generate image" : "Send message"}
+				aria-label={shouldShowEditMode ? "Edit image" : (isImageModel() ? "Generate image" : "Send message")}
 			>
 				{#if loading}
 					<span class="inline-flex items-center gap-1 sm:gap-2">
 						<span class="w-2.5 h-2.5 sm:w-3 sm:h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
-						<span class="hidden sm:inline">{isImageModel() ? 'GENERATING' : 'PROCESSING'}</span>
+						<span class="hidden sm:inline">{shouldShowEditMode ? 'EDITING' : (isImageModel() ? 'GENERATING' : 'PROCESSING')}</span>
 						<span class="sm:hidden">...</span>
+					</span>
+				{:else if shouldShowEditMode}
+					<span class="inline-flex items-center gap-1.5">
+						<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+						</svg>
+						<span>EDIT</span>
 					</span>
 				{:else if isImageModel()}
 					<span class="inline-flex items-center gap-1.5">

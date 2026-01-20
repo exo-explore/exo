@@ -6,6 +6,12 @@
 		type ImageGenerationParams,
 	} from "$lib/stores/app.svelte";
 
+	interface Props {
+		isEditMode?: boolean;
+	}
+
+	let { isEditMode = false }: Props = $props();
+
 	let showAdvanced = $state(false);
 
 	// Custom dropdown state
@@ -27,6 +33,15 @@
 	});
 
 	const params = $derived(imageGenerationParams());
+
+	const inputFidelityOptions: ImageGenerationParams["inputFidelity"][] = [
+		"low",
+		"high",
+	];
+
+	function handleInputFidelityChange(value: ImageGenerationParams["inputFidelity"]) {
+		setImageGenerationParams({ inputFidelity: value });
+	}
 
 	const sizeOptions: ImageGenerationParams["size"][] = [
 		"512x512",
@@ -225,6 +240,31 @@
 				</div>
 			{/if}
 		</div>
+
+		<!-- Input Fidelity (edit mode only) -->
+		{#if isEditMode}
+			<div class="flex items-center gap-1.5">
+				<span class="text-xs text-exo-light-gray uppercase tracking-wider"
+					>FIDELITY:</span
+				>
+				<div class="flex rounded overflow-hidden border border-exo-yellow/30">
+					{#each inputFidelityOptions as fidelity}
+						<button
+							type="button"
+							onclick={() => handleInputFidelityChange(fidelity)}
+							class="px-2 py-1 text-xs font-mono uppercase transition-all duration-200 cursor-pointer {
+								params.inputFidelity === fidelity
+									? 'bg-exo-yellow text-exo-black'
+									: 'bg-exo-medium-gray/50 text-exo-light-gray hover:text-exo-yellow'
+							}"
+							title={fidelity === 'low' ? 'More creative variation' : 'Closer to original'}
+						>
+							{fidelity}
+						</button>
+					{/each}
+				</div>
+			</div>
+		{/if}
 
 		<!-- Spacer -->
 		<div class="flex-1"></div>

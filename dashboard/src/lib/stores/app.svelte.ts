@@ -235,6 +235,14 @@ export interface ImageGenerationParams {
     numInferenceSteps: number | null;
     guidance: number | null;
     negativePrompt: string | null;
+    // Edit mode params
+    inputFidelity: "low" | "high";
+}
+
+// Image being edited
+export interface EditingImage {
+    imageDataUrl: string;
+    sourceMessage: Message;
 }
 
 const DEFAULT_IMAGE_PARAMS: ImageGenerationParams = {
@@ -244,6 +252,7 @@ const DEFAULT_IMAGE_PARAMS: ImageGenerationParams = {
     numInferenceSteps: null,
     guidance: null,
     negativePrompt: null,
+    inputFidelity: "low",
 };
 
 interface GranularNodeState {
@@ -420,6 +429,9 @@ class AppStore {
     // Image generation params
     imageGenerationParams = $state<ImageGenerationParams>({ ...DEFAULT_IMAGE_PARAMS });
 
+    // Image editing state
+    editingImage = $state<EditingImage | null>(null);
+
     private fetchInterval: ReturnType<typeof setInterval> | null = null;
     private previewsInterval: ReturnType<typeof setInterval> | null = null;
     private lastConversationPersistTs = 0;
@@ -574,6 +586,14 @@ class AppStore {
     resetImageGenerationParams() {
         this.imageGenerationParams = { ...DEFAULT_IMAGE_PARAMS };
         this.saveImageGenerationParamsToStorage();
+    }
+
+    setEditingImage(imageDataUrl: string, sourceMessage: Message) {
+        this.editingImage = { imageDataUrl, sourceMessage };
+    }
+
+    clearEditingImage() {
+        this.editingImage = null;
     }
 
     /**
@@ -1806,6 +1826,168 @@ class AppStore {
     }
 
     /**
+     * Edit an image using the image edit API
+     */
+    async editImage(prompt: string, imageDataUrl: string, modelId?: string): Promise<void> {
+        if (!prompt.trim() || !imageDataUrl || this.isLoading) return;
+
+        if (!this.hasStartedChat) {
+            this.startChat();
+        }
+
+        this.isLoading = true;
+        this.currentResponse = "";
+
+        // Add user message with the edit prompt
+        const userMessage: Message = {
+            id: generateUUID(),
+            role: "user",
+            content: prompt,
+            timestamp: Date.now(),
+        };
+        this.messages.push(userMessage);
+
+        // Create placeholder for assistant message with generating state
+        const assistantMessage = this.addMessage("assistant", "");
+        this.messages[this.messages.length - 1].content = "Editing image...";
+        this.updateActiveConversation();
+
+        // Clear editing state
+        this.editingImage = null;
+
+        try {
+            // Determine the model to use
+            let model = modelId || this.selectedChatModel;
+            if (!model) {
+                throw new Error(
+                    "No model selected. Please select an image generation model.",
+                );
+            }
+
+            // Convert base64 data URL to blob
+            const response = await fetch(imageDataUrl);
+            const imageBlob = await response.blob();
+
+            // Build FormData request
+            const formData = new FormData();
+            formData.append("model", model);
+            formData.append("prompt", prompt);
+            formData.append("image", imageBlob, "image.png");
+
+            // Add params from image generation params
+            const params = this.imageGenerationParams;
+            formData.append("quality", params.quality);
+            formData.append("size", params.size);
+            formData.append("response_format", "b64_json");
+            formData.append("stream", "1");  // Use "1" instead of "true" for reliable FastAPI boolean parsing
+            formData.append("partial_images", "3");
+            formData.append("input_fidelity", params.inputFidelity);
+
+            // Advanced params
+            if (params.seed !== null) {
+                formData.append("advanced_params", JSON.stringify({
+                    seed: params.seed,
+                    ...(params.numInferenceSteps !== null && { num_inference_steps: params.numInferenceSteps }),
+                    ...(params.guidance !== null && { guidance: params.guidance }),
+                    ...(params.negativePrompt !== null && params.negativePrompt.trim() !== "" && { negative_prompt: params.negativePrompt }),
+                }));
+            } else if (params.numInferenceSteps !== null || params.guidance !== null || (params.negativePrompt !== null && params.negativePrompt.trim() !== "")) {
+                formData.append("advanced_params", JSON.stringify({
+                    ...(params.numInferenceSteps !== null && { num_inference_steps: params.numInferenceSteps }),
+                    ...(params.guidance !== null && { guidance: params.guidance }),
+                    ...(params.negativePrompt !== null && params.negativePrompt.trim() !== "" && { negative_prompt: params.negativePrompt }),
+                }));
+            }
+
+            const apiResponse = await fetch("/v1/images/edits", {
+                method: "POST",
+                body: formData,
+            });
+
+            if (!apiResponse.ok) {
+                const errorText = await apiResponse.text();
+                throw new Error(`API error: ${apiResponse.status} - ${errorText}`);
+            }
+
+            const reader = apiResponse.body?.getReader();
+            if (!reader) {
+                throw new Error("No response body");
+            }
+
+            const decoder = new TextDecoder();
+            let buffer = "";
+            const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+
+                // Process complete lines
+                const lines = buffer.split("\n");
+                buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+
+                    if (trimmed.startsWith("data: ")) {
+                        const data = trimmed.slice(6);
+                        if (data === "[DONE]") continue;
+
+                        try {
+                            const parsed = JSON.parse(data);
+                            const imageData = parsed.data?.b64_json;
+
+                            if (imageData && idx !== -1) {
+                                if (parsed.type === "partial") {
+                                    // Update with partial image and progress
+                                    const partialNum = (parsed.partial_index ?? 0) + 1;
+                                    const totalPartials = parsed.total_partials ?? 3;
+                                    this.messages[idx].content =
+                                        `Editing... ${partialNum}/${totalPartials}`;
+                                    this.messages[idx].attachments = [
+                                        {
+                                            type: "generated-image",
+                                            name: "edited-image.png",
+                                            preview: `data:image/png;base64,${imageData}`,
+                                            mimeType: "image/png",
+                                        },
+                                    ];
+                                } else if (parsed.type === "final") {
+                                    // Final image
+                                    this.messages[idx].content = "";
+                                    this.messages[idx].attachments = [
+                                        {
+                                            type: "generated-image",
+                                            name: "edited-image.png",
+                                            preview: `data:image/png;base64,${imageData}`,
+                                            mimeType: "image/png",
+                                        },
+                                    ];
+                                }
+                            }
+                        } catch {
+                            // Ignore parse errors for incomplete JSON
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.error("Error editing image:", error);
+            const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
+            if (idx !== -1) {
+                this.messages[idx].content =
+                    `Error: ${error instanceof Error ? error.message : "Failed to edit image"}`;
+            }
+        } finally {
+            this.isLoading = false;
+            this.updateActiveConversation();
+        }
+    }
+
+    /**
      * Clear current chat and go back to welcome state
      */
     clearChat() {
@@ -1868,6 +2050,12 @@ export const sendMessage = (
 ) => appStore.sendMessage(content, files);
 export const generateImage = (prompt: string, modelId?: string) =>
     appStore.generateImage(prompt, modelId);
+export const editImage = (prompt: string, imageDataUrl: string, modelId?: string) =>
+    appStore.editImage(prompt, imageDataUrl, modelId);
+export const editingImage = () => appStore.editingImage;
+export const setEditingImage = (imageDataUrl: string, sourceMessage: Message) =>
+    appStore.setEditingImage(imageDataUrl, sourceMessage);
+export const clearEditingImage = () => appStore.clearEditingImage();
 export const clearChat = () => appStore.clearChat();
 export const setSelectedChatModel = (modelId: string) =>
     appStore.setSelectedModel(modelId);
