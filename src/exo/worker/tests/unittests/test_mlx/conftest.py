@@ -11,9 +11,9 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from exo.shared.constants import EXO_MODELS_DIR
+from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.api import ChatCompletionMessage
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.shards import PipelineShardMetadata, TensorShardMetadata
 from exo.worker.engines.mlx import Model
@@ -81,9 +81,8 @@ def run_gpt_oss_pipeline_device(
         start_layer, end_layer = layer_splits[rank]
 
         shard_meta = PipelineShardMetadata(
-            model_meta=ModelMetadata(
+            model_card=ModelCard(
                 model_id=ModelId(DEFAULT_GPT_OSS_MODEL_ID),
-                pretty_name="GPT-OSS 20B",
                 storage_size=Memory.from_gb(12),
                 n_layers=24,
                 hidden_size=2880,
@@ -151,9 +150,8 @@ def run_gpt_oss_tensor_parallel_device(
 
         # For tensor parallelism, all devices run all layers
         shard_meta = TensorShardMetadata(
-            model_meta=ModelMetadata(
+            model_card=ModelCard(
                 model_id=ModelId(DEFAULT_GPT_OSS_MODEL_ID),
-                pretty_name="GPT-OSS 20B",
                 storage_size=Memory.from_gb(12),
                 n_layers=24,
                 hidden_size=2880,

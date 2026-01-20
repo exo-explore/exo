@@ -434,8 +434,8 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		const shardData = shardObj[shardKeys[0]] as Record<string, unknown>;
 		if (!shardData) return null;
 		
-		// Model meta is nested: shard.model_meta.model_id
-		const modelMeta = shardData.model_meta ?? shardData.modelMeta;
+		// Model meta is nested: shard.model_card.model_id
+		const modelMeta = shardData.model_card ?? shardData.modelCard;
 		if (!modelMeta || typeof modelMeta !== 'object') return null;
 		
 		const meta = modelMeta as Record<string, unknown>;

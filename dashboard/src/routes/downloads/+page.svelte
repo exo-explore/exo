@@ -98,7 +98,7 @@
 		const shardData = shardObj[shardKeys[0]] as Record<string, unknown>;
 		if (!shardData) return null;
 
-		const modelMeta = shardData.model_meta ?? shardData.modelMeta;
+		const modelMeta = shardData.model_card ?? shardData.modelCard;
 		if (!modelMeta || typeof modelMeta !== 'object') return null;
 
 		const meta = modelMeta as Record<string, unknown>;
@@ -190,7 +190,7 @@
 						const shardKeys = Object.keys(shardObj);
 						if (shardKeys.length !== 1) return null;
 						const shardData = shardObj[shardKeys[0]] as Record<string, unknown>;
-						const modelMeta = shardData?.model_meta ?? shardData?.modelMeta;
+						const modelMeta = shardData?.model_card ?? shardData?.modelCard;
 						if (!modelMeta || typeof modelMeta !== 'object') return null;
 						const meta = modelMeta as Record<string, unknown>;
 						return (meta.prettyName as string) ?? null;

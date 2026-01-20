@@ -1,7 +1,7 @@
 from typing import Final
 
+from exo.shared.models.model_cards import ModelId
 from exo.shared.types.common import CommandId, NodeId
-from exo.shared.types.models import ModelId
 from exo.shared.types.tasks import TaskId
 from exo.shared.types.worker.instances import InstanceId, RunnerId
 

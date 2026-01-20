@@ -213,7 +213,7 @@ def main(
                                                 command_id=command_id,
                                                 chunk=TokenChunk(
                                                     idx=response.token,
-                                                    model=shard_metadata.model_meta.model_id,
+                                                    model=shard_metadata.model_card.model_id,
                                                     text=response.text,
                                                     token_id=response.token,
                                                     finish_reason=response.finish_reason,
@@ -230,7 +230,7 @@ def main(
                                     command_id=command_id,
                                     chunk=TokenChunk(
                                         idx=0,
-                                        model=shard_metadata.model_meta.model_id,
+                                        model=shard_metadata.model_card.model_id,
                                         text="",
                                         token_id=0,
                                         finish_reason="error",
