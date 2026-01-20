@@ -71,7 +71,7 @@ class DistributedImageModel:
     def from_bound_instance(
         cls, bound_instance: BoundInstance
     ) -> "DistributedImageModel":
-        model_id = bound_instance.bound_shard.model_meta.model_id
+        model_id = bound_instance.bound_shard.model_card.model_id
         model_path = build_model_path(model_id)
 
         shard_metadata = bound_instance.bound_shard

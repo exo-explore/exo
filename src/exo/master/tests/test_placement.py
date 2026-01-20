@@ -10,7 +10,7 @@ from exo.master.tests.conftest import (
     create_rdma_connection,
     create_socket_connection,
 )
-from exo.shared.models.model_cards import ModelCard, ModelId
+from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.commands import PlaceInstance
 from exo.shared.types.common import CommandId, NodeId
@@ -50,6 +50,7 @@ def model_card() -> ModelCard:
         n_layers=10,
         hidden_size=30,
         supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
     )
 
 
@@ -169,6 +170,7 @@ def test_get_instance_placements_one_node_exact_fit() -> None:
             n_layers=10,
             hidden_size=1000,
             supports_tensor=True,
+            tasks=[ModelTask.TextGeneration],
         ),
     )
     placements = place_instance(cic, topology, {}, node_memory, node_network)
@@ -195,6 +197,7 @@ def test_get_instance_placements_one_node_fits_with_extra_memory() -> None:
             n_layers=10,
             hidden_size=1000,
             supports_tensor=True,
+            tasks=[ModelTask.TextGeneration],
         ),
     )
     placements = place_instance(cic, topology, {}, node_memory, node_network)
@@ -221,6 +224,7 @@ def test_get_instance_placements_one_node_not_fit() -> None:
             n_layers=10,
             hidden_size=1000,
             supports_tensor=True,
+            tasks=[ModelTask.TextGeneration],
         ),
     )
 

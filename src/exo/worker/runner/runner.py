@@ -13,8 +13,8 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     load_harmony_encoding,
 )
 
-from exo.master.api import get_model_card
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE
+from exo.shared.models.model_cards import ModelId, ModelTask
 from exo.shared.types.api import ChatCompletionMessageText, ImageGenerationStats
 from exo.shared.types.chunks import ImageChunk, TokenChunk
 from exo.shared.types.common import CommandId
@@ -25,7 +25,6 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
-from exo.shared.types.models import ModelId, ModelTask
 from exo.shared.types.tasks import (
     ChatCompletion,
     ConnectToGroup,
@@ -65,6 +64,7 @@ from exo.worker.engines.image import (
     initialize_image_model,
     warmup_image_generator,
 )
+from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
@@ -95,13 +95,9 @@ def main(
 
     setup_start_time = time.time()
 
-    model = None
+    model: Model | DistributedImageModel | None = None
     tokenizer = None
     group = None
-
-    model_card = get_model_card(shard_metadata.model_meta.model_id)
-    assert model_card
-    model_tasks = model_card.tasks
 
     current_status: RunnerStatus = RunnerIdle()
     logger.info("runner created")
@@ -153,18 +149,19 @@ def main(
                         )
                         time.sleep(0.5)
 
-                    # TODO(ciaran): switch
-                    if ModelTask.TextGeneration in model_tasks:
+                    if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
                         model, tokenizer = load_mlx_items(
                             bound_instance, group, on_timeout=on_model_load_timeout
                         )
                     elif (
-                        ModelTask.TextToImage in model_tasks
-                        or ModelTask.ImageToImage in model_tasks
+                        ModelTask.TextToImage in shard_metadata.model_card.tasks
+                        or ModelTask.ImageToImage in shard_metadata.model_card.tasks
                     ):
                         model = initialize_image_model(bound_instance)
                     else:
-                        raise ValueError(f"Unknown model task(s): {model_card.tasks}")
+                        raise ValueError(
+                            f"Unknown model task(s): {shard_metadata.model_card.tasks}"
+                        )
 
                     current_status = RunnerLoaded()
                     logger.info("runner loaded")
@@ -180,8 +177,8 @@ def main(
                     )
 
                     logger.info(f"warming up inference for instance: {instance}")
-                    if ModelTask.TextGeneration in model_tasks:
-                        assert model and not isinstance(model, DistributedImageModel)
+                    if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
+                        assert not isinstance(model, DistributedImageModel)
                         assert tokenizer
 
                         toks = warmup_inference(
@@ -194,8 +191,8 @@ def main(
                             f"runner initialized in {time.time() - setup_start_time} seconds"
                         )
                     elif (
-                        ModelTask.TextToImage in model_tasks
-                        or ModelTask.ImageToImage in model_tasks
+                        ModelTask.TextToImage in shard_metadata.model_card.tasks
+                        or ModelTask.ImageToImage in shard_metadata.model_card.tasks
                     ):
                         assert isinstance(model, DistributedImageModel)
                         image = warmup_image_generator(model=model)
@@ -513,7 +510,7 @@ def _process_image_response(
     _send_image_chunk(
         encoded_data=encoded_data,
         command_id=command_id,
-        model_id=shard_metadata.model_meta.model_id,
+        model_id=shard_metadata.model_card.model_id,
         event_sender=event_sender,
         image_index=response.partial_index if is_partial else image_index,
         is_partial=is_partial,

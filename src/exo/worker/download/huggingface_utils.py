@@ -108,9 +108,9 @@ def get_allow_patterns(weight_map: dict[str, str], shard: ShardMetadata) -> list
     )
     shard_specific_patterns: set[str] = set()
 
-    if shard.model_meta.components is not None:
+    if shard.model_card.components is not None:
         shardable_component = next(
-            (c for c in shard.model_meta.components if c.can_shard), None
+            (c for c in shard.model_card.components if c.can_shard), None
         )
 
         if weight_map and shardable_component:
@@ -142,7 +142,7 @@ def get_allow_patterns(weight_map: dict[str, str], shard: ShardMetadata) -> list
             shard_specific_patterns = set(["*.safetensors"])
 
         # TODO(ciaran): temporary - Include all files from non-shardable components that have no index file
-        for component in shard.model_meta.components:
+        for component in shard.model_card.components:
             if not component.can_shard and component.safetensors_index_filename is None:
                 component_pattern = f"{component.component_path.rstrip('/')}/*"
                 shard_specific_patterns.add(component_pattern)
