@@ -7,7 +7,7 @@ import tomlkit
 from anyio import Path, open_file
 from huggingface_hub import model_info
 from loguru import logger
-from pydantic import BaseModel, Field, PositiveInt
+from pydantic import BaseModel, BeforeValidator, Field, PositiveInt
 
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
@@ -20,6 +20,15 @@ class ModelTask(str, Enum):
     TextGeneration = "TextGeneration"
     TextToImage = "TextToImage"
     ImageToImage = "ImageToImage"
+
+
+def _coerce_model_task(v: object) -> object:
+    if isinstance(v, str):
+        return ModelTask(v)
+    return v
+
+
+CoercedModelTask = Annotated[ModelTask, BeforeValidator(_coerce_model_task)]
 
 
 class ComponentInfo(CamelCaseModel):
@@ -37,7 +46,7 @@ class ModelCard(CamelCaseModel):
     n_layers: PositiveInt
     hidden_size: PositiveInt
     supports_tensor: bool
-    tasks: list[ModelTask]
+    tasks: list[CoercedModelTask]
     components: list[ComponentInfo] | None = None
 
     async def save(self, path: Path) -> None:
@@ -73,7 +82,7 @@ class ModelCard(CamelCaseModel):
             n_layers=num_layers,
             hidden_size=config_data.hidden_size or 0,
             supports_tensor=config_data.supports_tensor,
-            task=ModelTask.TextGeneration,
+            tasks=[ModelTask.TextGeneration],
         )
         _card_cache[model_id] = mc
         return mc
