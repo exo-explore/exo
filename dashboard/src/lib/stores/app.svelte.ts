@@ -230,6 +230,7 @@ export interface ImageGenerationParams {
 	// Basic params
 	size: "512x512" | "768x768" | "1024x1024" | "1024x768" | "768x1024";
 	quality: "low" | "medium" | "high";
+	outputFormat: "png" | "jpeg";
 	// Advanced params
 	seed: number | null;
 	numInferenceSteps: number | null;
@@ -248,6 +249,7 @@ export interface EditingImage {
 const DEFAULT_IMAGE_PARAMS: ImageGenerationParams = {
 	size: "1024x1024",
 	quality: "medium",
+	outputFormat: "png",
 	seed: null,
 	numInferenceSteps: null,
 	guidance: null,
@@ -1717,6 +1719,7 @@ class AppStore {
 				prompt,
 				quality: params.quality,
 				size: params.size,
+				output_format: params.outputFormat,
 				response_format: "b64_json",
 				stream: true,
 				partial_images: 3,
@@ -1781,6 +1784,8 @@ class AppStore {
 							const imageData = parsed.data?.b64_json;
 
 							if (imageData && idx !== -1) {
+								const format = parsed.format || "png";
+								const mimeType = `image/${format}`;
 								if (parsed.type === "partial") {
 									// Update with partial image and progress
 									const partialNum = (parsed.partial_index ?? 0) + 1;
@@ -1790,9 +1795,9 @@ class AppStore {
 									this.messages[idx].attachments = [
 										{
 											type: "generated-image",
-											name: "generated-image.png",
-											preview: `data:image/png;base64,${imageData}`,
-											mimeType: "image/png",
+											name: `generated-image.${format}`,
+											preview: `data:${mimeType};base64,${imageData}`,
+											mimeType,
 										},
 									];
 								} else if (parsed.type === "final") {
@@ -1801,9 +1806,9 @@ class AppStore {
 									this.messages[idx].attachments = [
 										{
 											type: "generated-image",
-											name: "generated-image.png",
-											preview: `data:image/png;base64,${imageData}`,
-											mimeType: "image/png",
+											name: `generated-image.${format}`,
+											preview: `data:${mimeType};base64,${imageData}`,
+											mimeType,
 										},
 									];
 								}
@@ -1884,6 +1889,7 @@ class AppStore {
 			const params = this.imageGenerationParams;
 			formData.append("quality", params.quality);
 			formData.append("size", params.size);
+			formData.append("output_format", params.outputFormat);
 			formData.append("response_format", "b64_json");
 			formData.append("stream", "1"); // Use "1" instead of "true" for reliable FastAPI boolean parsing
 			formData.append("partial_images", "3");
@@ -1967,6 +1973,8 @@ class AppStore {
 							const imageData = parsed.data?.b64_json;
 
 							if (imageData && idx !== -1) {
+								const format = parsed.format || "png";
+								const mimeType = `image/${format}`;
 								if (parsed.type === "partial") {
 									// Update with partial image and progress
 									const partialNum = (parsed.partial_index ?? 0) + 1;
@@ -1976,9 +1984,9 @@ class AppStore {
 									this.messages[idx].attachments = [
 										{
 											type: "generated-image",
-											name: "edited-image.png",
-											preview: `data:image/png;base64,${imageData}`,
-											mimeType: "image/png",
+											name: `edited-image.${format}`,
+											preview: `data:${mimeType};base64,${imageData}`,
+											mimeType,
 										},
 									];
 								} else if (parsed.type === "final") {
@@ -1987,9 +1995,9 @@ class AppStore {
 									this.messages[idx].attachments = [
 										{
 											type: "generated-image",
-											name: "edited-image.png",
-											preview: `data:image/png;base64,${imageData}`,
-											mimeType: "image/png",
+											name: `edited-image.${format}`,
+											preview: `data:${mimeType};base64,${imageData}`,
+											mimeType,
 										},
 									];
 								}

@@ -403,7 +403,8 @@ function isThinkingExpanded(messageId: string): boolean {
 															if (attachment.preview) {
 																const link = document.createElement('a');
 																link.href = attachment.preview;
-																link.download = `generated-image-${Date.now()}.png`;
+																const ext = attachment.name?.split('.').pop() || 'png';
+																link.download = `generated-image-${Date.now()}.${ext}`;
 																link.click();
 															}
 														}}

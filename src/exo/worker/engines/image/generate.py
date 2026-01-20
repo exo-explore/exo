@@ -123,6 +123,8 @@ def generate_image(
                 image_format = task.output_format.upper()
                 if image_format == "JPG":
                     image_format = "JPEG"
+                if image_format == "JPEG" and image.mode == "RGBA":
+                    image = image.convert("RGB")
                 image.save(buffer, format=image_format)
 
                 yield PartialImageResponse(
@@ -163,6 +165,8 @@ def generate_image(
                 image_format = task.output_format.upper()
                 if image_format == "JPG":
                     image_format = "JPEG"
+                if image_format == "JPEG" and image.mode == "RGBA":
+                    image = image.convert("RGB")
                 image.save(buffer, format=image_format)
 
                 yield ImageGenerationResponse(

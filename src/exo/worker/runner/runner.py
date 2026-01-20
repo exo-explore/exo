@@ -464,6 +464,7 @@ def _send_image_chunk(
     partial_index: int | None = None,
     total_partials: int | None = None,
     stats: ImageGenerationStats | None = None,
+    image_format: str | None = None,
 ) -> None:
     """Send base64-encoded image data as chunks via events."""
     data_chunks = [
@@ -490,6 +491,7 @@ def _send_image_chunk(
                     partial_index=partial_index,
                     total_partials=total_partials,
                     stats=chunk_stats,
+                    format=image_format,
                 ),
             )
         )
@@ -517,6 +519,7 @@ def _process_image_response(
         partial_index=response.partial_index if is_partial else None,
         total_partials=response.total_partials if is_partial else None,
         stats=stats,
+        image_format=response.format,
     )
 
 

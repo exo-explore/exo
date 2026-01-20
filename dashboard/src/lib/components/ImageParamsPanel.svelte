@@ -39,8 +39,17 @@
 		"high",
 	];
 
+	const outputFormatOptions: ImageGenerationParams["outputFormat"][] = [
+		"png",
+		"jpeg",
+	];
+
 	function handleInputFidelityChange(value: ImageGenerationParams["inputFidelity"]) {
 		setImageGenerationParams({ inputFidelity: value });
+	}
+
+	function handleOutputFormatChange(value: ImageGenerationParams["outputFormat"]) {
+		setImageGenerationParams({ outputFormat: value });
 	}
 
 	const sizeOptions: ImageGenerationParams["size"][] = [
@@ -239,6 +248,28 @@
 					</div>
 				</div>
 			{/if}
+		</div>
+
+		<!-- Format -->
+		<div class="flex items-center gap-1.5">
+			<span class="text-xs text-exo-light-gray uppercase tracking-wider"
+				>FORMAT:</span
+			>
+			<div class="flex rounded overflow-hidden border border-exo-yellow/30">
+				{#each outputFormatOptions as format}
+					<button
+						type="button"
+						onclick={() => handleOutputFormatChange(format)}
+						class="px-2 py-1 text-xs font-mono uppercase transition-all duration-200 cursor-pointer {
+							params.outputFormat === format
+								? 'bg-exo-yellow text-exo-black'
+								: 'bg-exo-medium-gray/50 text-exo-light-gray hover:text-exo-yellow'
+						}"
+					>
+						{format}
+					</button>
+				{/each}
+			</div>
 		</div>
 
 		<!-- Input Fidelity (edit mode only) -->

@@ -720,6 +720,7 @@ class API:
                                 "type": "partial",
                                 "partial_index": partial_idx,
                                 "total_partials": total_partials,
+                                "format": chunk.format,
                                 "data": {
                                     "b64_json": full_data
                                     if response_format == "b64_json"
@@ -732,6 +733,7 @@ class API:
                             event_data = {
                                 "type": "final",
                                 "image_index": chunk.image_index,
+                                "format": chunk.format,
                                 "data": {
                                     "b64_json": full_data
                                     if response_format == "b64_json"
