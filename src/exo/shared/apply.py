@@ -36,6 +36,7 @@ from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
+from exo.shared.types.profiling import NodeBandwidth
 from exo.utils.info_gatherer.info_gatherer import (
     MacmonMetrics,
     MacThunderboltConnections,
@@ -43,6 +44,7 @@ from exo.utils.info_gatherer.info_gatherer import (
     MemoryUsage,
     MiscData,
     NodeConfig,
+    NodeMemoryBandwidth,
     NodeNetworkInterfaces,
     StaticNodeInformation,
 )
@@ -224,6 +226,11 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
         for key, value in state.node_thunderbolt.items()
         if key != event.node_id
     }
+    node_bandwidth = {
+        key: value
+        for key, value in state.node_bandwidth.items()
+        if key != event.node_id
+    }
     return state.model_copy(
         update={
             "downloads": downloads,
@@ -234,6 +241,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
             "node_system": node_system,
             "node_network": node_network,
             "node_thunderbolt": node_thunderbolt,
+            "node_bandwidth": node_bandwidth,
         }
     )
 
@@ -311,6 +319,11 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 if tb_conn.sink_uuid in conn_map
             ]
             topology.replace_all_out_rdma_connections(event.node_id, as_rdma_conns)
+        case NodeMemoryBandwidth():
+            update["node_bandwidth"] = {
+                **state.node_bandwidth,
+                event.node_id: NodeBandwidth(memory_bandwidth=info.memory_bandwidth),
+            }
 
     return state.model_copy(update=update)
 

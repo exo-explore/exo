@@ -29,7 +29,12 @@ from exo.utils.channels import Sender
 from exo.utils.pydantic_ext import TaggedModel
 
 from .macmon import MacmonMetrics
-from .system_info import get_friendly_name, get_model_and_chip, get_network_interfaces
+from .system_info import (
+    get_friendly_name,
+    get_model_and_chip,
+    get_network_interfaces,
+    profile_memory_bandwidth,
+)
 
 IS_DARWIN = sys.platform == "darwin"
 
@@ -85,6 +90,32 @@ class MiscData(TaggedModel):
         return cls(friendly_name=await get_friendly_name())
 
 
+class NodeMemoryBandwidth(TaggedModel):
+    """Memory bandwidth information gathered once at startup."""
+
+    memory_bandwidth: int | None = None
+
+    @classmethod
+    async def gather(cls) -> Self:
+        """Profile memory bandwidth with retries. Returns None if all attempts fail."""
+        for attempt in range(1, 6):
+            try:
+                bandwidth = await anyio.to_thread.run_sync(profile_memory_bandwidth)
+                logger.info(f"Memory bandwidth: {bandwidth / 1e9:.1f} GB/s")
+                return cls(memory_bandwidth=bandwidth)
+            except Exception as e:
+                if attempt < 5:
+                    logger.warning(
+                        f"Memory bandwidth profiling attempt {attempt} failed: {e}"
+                    )
+                    await anyio.sleep(1)
+                else:
+                    logger.error(
+                        f"Memory bandwidth profiling failed after 5 attempts: {e}"
+                    )
+        return cls(memory_bandwidth=None)
+
+
 async def _gather_iface_map() -> dict[str, str] | None:
     proc = await anyio.run_process(
         ["networksetup", "-listallhardwareports"], check=False
@@ -114,6 +145,7 @@ GatheredInfo = (
     | NodeConfig
     | MiscData
     | StaticNodeInformation
+    | NodeMemoryBandwidth
 )
 
 
@@ -142,6 +174,11 @@ class InfoGatherer:
                 await self.info_sender.send(nc)
             sni = await StaticNodeInformation.gather()
             await self.info_sender.send(sni)
+
+            # Gather memory bandwidth once at startup (macOS only)
+            if IS_DARWIN:
+                bandwidth = await NodeMemoryBandwidth.gather()
+                await self.info_sender.send(bandwidth)
 
     def shutdown(self):
         self._tg.cancel_scope.cancel()

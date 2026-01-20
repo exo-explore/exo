@@ -527,3 +527,168 @@ def test_get_shard_assignments_insufficient_memory_raises():
         get_shard_assignments(
             model_meta, selected_cycle, Sharding.Pipeline, node_memory
         )
+
+
+def test_get_shard_assignments_bandwidth_aware():
+    """Test bandwidth-aware shard assignment gives more layers to faster nodes."""
+    # arrange
+    node_a_id = NodeId()
+    node_b_id = NodeId()
+    node_c_id = NodeId()
+
+    # Create nodes with identical RAM (plenty of it)
+    # Using 1GB to ensure no RAM constraints (model is small)
+    node_a_mem = create_node_memory(1024 * 1024 * 1024)
+    node_b_mem = create_node_memory(1024 * 1024 * 1024)
+    node_c_mem = create_node_memory(1024 * 1024 * 1024)
+
+    node_memory = {
+        node_a_id: node_a_mem,
+        node_b_id: node_b_mem,
+        node_c_id: node_c_mem,
+    }
+
+    # Set Bandwidths: A=400 (Fastest), B=200, C=100 (Slowest)
+    node_bandwidth = {
+        node_a_id: 400_000_000_000,
+        node_b_id: 200_000_000_000,
+        node_c_id: 100_000_000_000,
+    }
+
+    topology = Topology()
+    topology.add_node(node_a_id)
+    topology.add_node(node_b_id)
+    topology.add_node(node_c_id)
+
+    topology.add_connection(
+        Connection(source=node_a_id, sink=node_b_id, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_b_id, sink=node_c_id, edge=create_socket_connection(2))
+    )
+    topology.add_connection(
+        Connection(source=node_c_id, sink=node_a_id, edge=create_socket_connection(3))
+    )
+    topology.add_connection(
+        Connection(source=node_b_id, sink=node_a_id, edge=create_socket_connection(4))
+    )
+    topology.add_connection(
+        Connection(source=node_c_id, sink=node_b_id, edge=create_socket_connection(5))
+    )
+    topology.add_connection(
+        Connection(source=node_a_id, sink=node_c_id, edge=create_socket_connection(6))
+    )
+
+    model_meta = ModelMetadata(
+        model_id=ModelId("test-model"),
+        pretty_name="Test Model",
+        n_layers=30,  # 30 layers
+        storage_size=Memory.from_kb(300),  # 10KB per layer
+        hidden_size=1000,
+        supports_tensor=True,
+    )
+
+    cycles = topology.get_cycles()
+    selected_cycle = next(cycle for cycle in cycles if len(cycle) == 3)
+
+    # act
+    shard_assignments = get_shard_assignments(
+        model_meta, selected_cycle, Sharding.Pipeline, node_memory, node_bandwidth
+    )
+
+    # assert
+    runner_id_a = shard_assignments.node_to_runner[node_a_id]
+    runner_id_b = shard_assignments.node_to_runner[node_b_id]
+    runner_id_c = shard_assignments.node_to_runner[node_c_id]
+
+    # Get layer counts
+    layers_a = (
+        shard_assignments.runner_to_shard[runner_id_a].end_layer
+        - shard_assignments.runner_to_shard[runner_id_a].start_layer
+    )
+    layers_b = (
+        shard_assignments.runner_to_shard[runner_id_b].end_layer
+        - shard_assignments.runner_to_shard[runner_id_b].start_layer
+    )
+    layers_c = (
+        shard_assignments.runner_to_shard[runner_id_c].end_layer
+        - shard_assignments.runner_to_shard[runner_id_c].start_layer
+    )
+
+    # Check total
+    assert layers_a + layers_b + layers_c == 30
+
+    # Check that the fastest node (A with 400GB/s) gets saturated first.
+    # With strict greedy assignment and plenty of RAM:
+    # 1. Reserve: A=1, B=1, C=1. Remaining=27.
+    # 2. Sort: [A, B, C]
+    # 3. A takes min(remaining=27, capacity=huge) = 27.
+    # 4. A=28, B=1, C=1.
+
+    assert layers_a == 28
+    assert layers_b == 1
+    assert layers_c == 1
+
+
+def test_get_shard_assignments_falls_back_without_bandwidth():
+    """Test that without bandwidth data, assignment falls back to RAM-proportional."""
+    # arrange
+    node_a_id = NodeId()
+    node_b_id = NodeId()
+
+    # Create nodes with different RAM amounts
+    node_a_mem = create_node_memory(500 * 1024)  # 500KB
+    node_b_mem = create_node_memory(1000 * 1024)  # 1000KB
+
+    node_memory = {
+        node_a_id: node_a_mem,
+        node_b_id: node_b_mem,
+    }
+
+    topology = Topology()
+    topology.add_node(node_a_id)
+    topology.add_node(node_b_id)
+
+    topology.add_connection(
+        Connection(source=node_a_id, sink=node_b_id, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_b_id, sink=node_a_id, edge=create_socket_connection(2))
+    )
+
+    model_meta = ModelMetadata(
+        model_id=ModelId("test-model"),
+        pretty_name="Test Model",
+        n_layers=12,
+        storage_size=Memory.from_kb(100),
+        hidden_size=1000,
+        supports_tensor=True,
+    )
+
+    cycles = topology.get_cycles()
+    selected_cycle = next(cycle for cycle in cycles if len(cycle) == 2)
+
+    # act - no bandwidth data provided
+    shard_assignments = get_shard_assignments(
+        model_meta, selected_cycle, Sharding.Pipeline, node_memory
+    )
+
+    # assert - should use RAM-proportional assignment
+    runner_id_a = shard_assignments.node_to_runner[node_a_id]
+    runner_id_b = shard_assignments.node_to_runner[node_b_id]
+
+    layers_a = (
+        shard_assignments.runner_to_shard[runner_id_a].end_layer
+        - shard_assignments.runner_to_shard[runner_id_a].start_layer
+    )
+    layers_b = (
+        shard_assignments.runner_to_shard[runner_id_b].end_layer
+        - shard_assignments.runner_to_shard[runner_id_b].start_layer
+    )
+
+    # Total should be preserved
+    assert layers_a + layers_b == 12
+
+    # With 500KB vs 1000KB (1:2 ratio), expect ~4 and ~8 layers
+    assert layers_a == 4
+    assert layers_b == 8

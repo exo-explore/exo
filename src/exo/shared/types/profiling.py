@@ -71,3 +71,9 @@ class NodeThunderboltInfo(CamelCaseModel):
     """Thunderbolt interface identifiers for a node."""
 
     interfaces: Sequence[ThunderboltIdentifier] = []
+
+
+class NodeBandwidth(CamelCaseModel):
+    """Memory bandwidth information for a node."""
+
+    memory_bandwidth: int | None = None

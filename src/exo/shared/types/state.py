@@ -9,6 +9,7 @@ from exo.shared.topology import Topology, TopologySnapshot
 from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import (
     MemoryUsage,
+    NodeBandwidth,
     NodeIdentity,
     NodeNetworkInfo,
     NodeThunderboltInfo,
@@ -51,6 +52,7 @@ class State(CamelCaseModel):
     node_system: Mapping[NodeId, SystemPerformanceProfile] = {}
     node_network: Mapping[NodeId, NodeNetworkInfo] = {}
     node_thunderbolt: Mapping[NodeId, NodeThunderboltInfo] = {}
+    node_bandwidth: Mapping[NodeId, NodeBandwidth] = {}
 
     @field_serializer("topology", mode="plain")
     def _encode_topology(self, value: Topology) -> TopologySnapshot:
