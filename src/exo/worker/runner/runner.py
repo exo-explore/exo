@@ -17,6 +17,7 @@ from exo.master.api import get_model_card
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE
 from exo.shared.types.api import ChatCompletionMessageText, ImageGenerationStats
 from exo.shared.types.chunks import ImageChunk, TokenChunk
+from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -24,7 +25,7 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
-from exo.shared.types.models import ModelTask
+from exo.shared.types.models import ModelId, ModelTask
 from exo.shared.types.tasks import (
     ChatCompletion,
     ConnectToGroup,
@@ -56,6 +57,7 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
+from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.image import (
     DistributedImageModel,
@@ -63,7 +65,6 @@ from exo.worker.engines.image import (
     initialize_image_model,
     warmup_image_generator,
 )
-from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
@@ -73,10 +74,6 @@ from exo.worker.engines.mlx.utils_mlx import (
     mlx_force_oom,
 )
 from exo.worker.runner.bootstrap import logger
-
-from exo.shared.types.common import CommandId
-from exo.shared.types.models import ModelId
-from exo.shared.types.worker.shards import ShardMetadata
 
 
 def main(
@@ -184,7 +181,7 @@ def main(
 
                     logger.info(f"warming up inference for instance: {instance}")
                     if ModelTask.TextGeneration in model_tasks:
-                        assert model and isinstance(model, Model)
+                        assert model and not isinstance(model, DistributedImageModel)
                         assert tokenizer
 
                         toks = warmup_inference(
@@ -220,7 +217,7 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
-                    assert model and isinstance(model, Model)
+                    assert model and not isinstance(model, DistributedImageModel)
                     assert tokenizer
                     assert task_params.messages[0].content is not None
 

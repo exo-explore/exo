@@ -10,12 +10,12 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Callable, Literal
 from urllib.parse import urljoin
-from huggingface_hub._snapshot_download import snapshot_download
 
 import aiofiles
 import aiofiles.os as aios
 import aiohttp
 import certifi
+from huggingface_hub._snapshot_download import snapshot_download
 from loguru import logger
 from pydantic import (
     DirectoryPath,
