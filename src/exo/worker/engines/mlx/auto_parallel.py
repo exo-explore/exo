@@ -321,7 +321,7 @@ def tensor_auto_parallel(
         except (AttributeError, TypeError, NameError):
             pass
 
-    if isinstance(model, (LlamaModel, Ministral3Model)):
+    elif isinstance(model, (LlamaModel, Ministral3Model)):
         logger.warning("shouldn't be hit - upstream sharding exists")
         tensor_parallel_sharding_strategy = LlamaShardingStrategy(
             group,
