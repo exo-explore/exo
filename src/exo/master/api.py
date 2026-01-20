@@ -106,8 +106,12 @@ async def resolve_model_card(model_id: ModelId) -> ModelCard:
     if model_id in MODEL_CARDS:
         model_card = MODEL_CARDS[model_id]
         return model_card
-    else:
-        return await ModelCard.from_hf(model_id)
+
+    for card in MODEL_CARDS.values():
+        if card.model_id == ModelId(model_id):
+            return card
+
+    return await ModelCard.from_hf(model_id)
 
 
 class API:
@@ -627,7 +631,7 @@ class API:
 
         Raises HTTPException 404 if no instance is found for the model.
         """
-        model_card = await get_model_card(model)
+        model_card = await resolve_model_card(model)
         resolved_model = model_card.model_id
         if not any(
             instance.shard_assignments.model_id == resolved_model
