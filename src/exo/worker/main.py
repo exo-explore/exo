@@ -278,6 +278,10 @@ class Worker:
                             response_format=task.task_params.response_format,
                             size=task.task_params.size,
                             image_strength=task.task_params.image_strength,
+                            bench=task.task_params.bench,
+                            stream=task.task_params.stream,
+                            partial_images=task.task_params.partial_images,
+                            advanced_params=task.task_params.advanced_params,
                         ),
                     )
                     # Cleanup buffers
