@@ -8,6 +8,24 @@
 
 	let showAdvanced = $state(false);
 
+	// Custom dropdown state
+	let isSizeDropdownOpen = $state(false);
+	let isQualityDropdownOpen = $state(false);
+	let sizeButtonRef: HTMLButtonElement | undefined = $state();
+	let qualityButtonRef: HTMLButtonElement | undefined = $state();
+
+	const sizeDropdownPosition = $derived(() => {
+		if (!sizeButtonRef || !isSizeDropdownOpen) return { top: 0, left: 0, width: 0 };
+		const rect = sizeButtonRef.getBoundingClientRect();
+		return { top: rect.top, left: rect.left, width: rect.width };
+	});
+
+	const qualityDropdownPosition = $derived(() => {
+		if (!qualityButtonRef || !isQualityDropdownOpen) return { top: 0, left: 0, width: 0 };
+		const rect = qualityButtonRef.getBoundingClientRect();
+		return { top: rect.top, left: rect.left, width: rect.width };
+	});
+
 	const params = $derived(imageGenerationParams());
 
 	const sizeOptions: ImageGenerationParams["size"][] = [
@@ -24,16 +42,14 @@
 		"high",
 	];
 
-	function handleSizeChange(event: Event) {
-		const value = (event.target as HTMLSelectElement)
-			.value as ImageGenerationParams["size"];
+	function selectSize(value: ImageGenerationParams["size"]) {
 		setImageGenerationParams({ size: value });
+		isSizeDropdownOpen = false;
 	}
 
-	function handleQualityChange(event: Event) {
-		const value = (event.target as HTMLSelectElement)
-			.value as ImageGenerationParams["quality"];
+	function selectQuality(value: ImageGenerationParams["quality"]) {
 		setImageGenerationParams({ quality: value });
+		isQualityDropdownOpen = false;
 	}
 
 	function handleSeedChange(event: Event) {
@@ -93,15 +109,60 @@
 			<span class="text-xs text-exo-light-gray uppercase tracking-wider"
 				>SIZE:</span
 			>
-			<select
-				value={params.size}
-				onchange={handleSizeChange}
-				class="bg-exo-medium-gray/50 border border-exo-yellow/30 rounded px-2 py-1 text-xs font-mono text-exo-yellow cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70"
-			>
-				{#each sizeOptions as size}
-					<option value={size}>{size}</option>
-				{/each}
-			</select>
+			<div class="relative">
+				<button
+					bind:this={sizeButtonRef}
+					type="button"
+					onclick={() => isSizeDropdownOpen = !isSizeDropdownOpen}
+					class="bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-2 pr-6 py-1 text-xs font-mono text-exo-yellow cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 {isSizeDropdownOpen ? 'border-exo-yellow/70' : ''}"
+				>
+					{params.size}
+				</button>
+				<div class="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-200 {isSizeDropdownOpen ? 'rotate-180' : ''}">
+					<svg class="w-3 h-3 text-exo-yellow/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+					</svg>
+				</div>
+			</div>
+
+			{#if isSizeDropdownOpen}
+				<!-- Backdrop to close dropdown -->
+				<button
+					type="button"
+					class="fixed inset-0 z-[9998] cursor-default"
+					onclick={() => isSizeDropdownOpen = false}
+					aria-label="Close dropdown"
+				></button>
+
+				<!-- Dropdown Panel - fixed positioning to escape overflow:hidden -->
+				<div
+					class="fixed bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto"
+					style="bottom: calc(100vh - {sizeDropdownPosition().top}px + 4px); left: {sizeDropdownPosition().left}px; width: {sizeDropdownPosition().width}px;"
+				>
+					<div class="py-1">
+						{#each sizeOptions as size}
+							<button
+								type="button"
+								onclick={() => selectSize(size)}
+								class="w-full px-3 py-1.5 text-left text-xs font-mono tracking-wide transition-colors duration-100 flex items-center gap-2 {
+									params.size === size
+									? 'bg-transparent text-exo-yellow'
+									: 'text-exo-light-gray hover:text-exo-yellow'
+								}"
+							>
+								{#if params.size === size}
+									<svg class="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+										<path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+									</svg>
+								{:else}
+									<span class="w-3"></span>
+								{/if}
+								<span>{size}</span>
+							</button>
+						{/each}
+					</div>
+				</div>
+			{/if}
 		</div>
 
 		<!-- Quality -->
@@ -109,15 +170,60 @@
 			<span class="text-xs text-exo-light-gray uppercase tracking-wider"
 				>QUALITY:</span
 			>
-			<select
-				value={params.quality}
-				onchange={handleQualityChange}
-				class="bg-exo-medium-gray/50 border border-exo-yellow/30 rounded px-2 py-1 text-xs font-mono text-exo-yellow cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70"
-			>
-				{#each qualityOptions as quality}
-					<option value={quality}>{quality.toUpperCase()}</option>
-				{/each}
-			</select>
+			<div class="relative">
+				<button
+					bind:this={qualityButtonRef}
+					type="button"
+					onclick={() => isQualityDropdownOpen = !isQualityDropdownOpen}
+					class="bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-2 pr-6 py-1 text-xs font-mono text-exo-yellow cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 {isQualityDropdownOpen ? 'border-exo-yellow/70' : ''}"
+				>
+					{params.quality.toUpperCase()}
+				</button>
+				<div class="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-200 {isQualityDropdownOpen ? 'rotate-180' : ''}">
+					<svg class="w-3 h-3 text-exo-yellow/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+					</svg>
+				</div>
+			</div>
+
+			{#if isQualityDropdownOpen}
+				<!-- Backdrop to close dropdown -->
+				<button
+					type="button"
+					class="fixed inset-0 z-[9998] cursor-default"
+					onclick={() => isQualityDropdownOpen = false}
+					aria-label="Close dropdown"
+				></button>
+
+				<!-- Dropdown Panel - fixed positioning to escape overflow:hidden -->
+				<div
+					class="fixed bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto"
+					style="bottom: calc(100vh - {qualityDropdownPosition().top}px + 4px); left: {qualityDropdownPosition().left}px; width: {qualityDropdownPosition().width}px;"
+				>
+					<div class="py-1">
+						{#each qualityOptions as quality}
+							<button
+								type="button"
+								onclick={() => selectQuality(quality)}
+								class="w-full px-3 py-1.5 text-left text-xs font-mono tracking-wide transition-colors duration-100 flex items-center gap-2 {
+									params.quality === quality
+									? 'bg-transparent text-exo-yellow'
+									: 'text-exo-light-gray hover:text-exo-yellow'
+								}"
+							>
+								{#if params.quality === quality}
+									<svg class="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+										<path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+									</svg>
+								{:else}
+									<span class="w-3"></span>
+								{/if}
+								<span>{quality.toUpperCase()}</span>
+							</button>
+						{/each}
+					</div>
+				</div>
+			{/if}
 		</div>
 
 		<!-- Spacer -->
