@@ -13,92 +13,50 @@ from mflux.utils.box_values import AbsoluteBoxValues
 from mflux.utils.generated_image import GeneratedImage
 
 log = ...
-
 class ImageUtil:
     @staticmethod
-    def to_image(
-        decoded_latents: mx.array,
-        config: Config,
-        seed: int,
-        prompt: str,
-        quantization: int,
-        generation_time: float,
-        lora_paths: list[str] | None = ...,
-        lora_scales: list[float] | None = ...,
-        controlnet_image_path: str | Path | None = ...,
-        image_path: str | Path | None = ...,
-        image_paths: list[str] | list[Path] | None = ...,
-        redux_image_paths: list[str] | list[Path] | None = ...,
-        redux_image_strengths: list[float] | None = ...,
-        image_strength: float | None = ...,
-        masked_image_path: str | Path | None = ...,
-        depth_image_path: str | Path | None = ...,
-        concept_heatmap: ConceptHeatmap | None = ...,
-        negative_prompt: str | None = ...,
-        init_metadata: dict[str, Any] | None = ...,
-    ) -> GeneratedImage: ...
-    @staticmethod
-    def to_composite_image(
-        generated_images: list[GeneratedImage],
-    ) -> PIL.Image.Image: ...
-    @staticmethod
-    def to_array(image: PIL.Image.Image, is_mask: bool = ...) -> mx.array: ...
-    @staticmethod
-    def load_image(
-        image_or_path: PIL.Image.Image | StrOrBytesPath,
-    ) -> PIL.Image.Image: ...
-    @staticmethod
-    def expand_image(
-        image: PIL.Image.Image,
-        box_values: AbsoluteBoxValues | None = ...,
-        top: int | str = ...,
-        right: int | str = ...,
-        bottom: int | str = ...,
-        left: int | str = ...,
-        fill_color: tuple = ...,
-    ) -> PIL.Image.Image: ...
-    @staticmethod
-    def create_outpaint_mask_image(
-        orig_width: int, orig_height: int, **create_bordered_image_kwargs
-    ):  # -> Image:
+    def to_image(decoded_latents: mx.array, config: Config, seed: int, prompt: str, quantization: int, generation_time: float, lora_paths: list[str] | None = ..., lora_scales: list[float] | None = ..., controlnet_image_path: str | Path | None = ..., image_path: str | Path | None = ..., image_paths: list[str] | list[Path] | None = ..., redux_image_paths: list[str] | list[Path] | None = ..., redux_image_strengths: list[float] | None = ..., image_strength: float | None = ..., masked_image_path: str | Path | None = ..., depth_image_path: str | Path | None = ..., concept_heatmap: ConceptHeatmap | None = ..., negative_prompt: str | None = ..., init_metadata: dict[str, Any] | None = ...) -> GeneratedImage:
         ...
+    
     @staticmethod
-    def create_bordered_image(
-        orig_width: int,
-        orig_height: int,
-        border_color: tuple,
-        content_color: tuple,
-        box_values: AbsoluteBoxValues | None = ...,
-        top: int | str = ...,
-        right: int | str = ...,
-        bottom: int | str = ...,
-        left: int | str = ...,
-    ) -> PIL.Image.Image: ...
+    def to_composite_image(generated_images: list[GeneratedImage]) -> PIL.Image.Image:
+        ...
+    
     @staticmethod
-    def scale_to_dimensions(
-        image: PIL.Image.Image, target_width: int, target_height: int
-    ) -> PIL.Image.Image: ...
+    def to_array(image: PIL.Image.Image, is_mask: bool = ...) -> mx.array:
+        ...
+    
     @staticmethod
-    def save_image(
-        image: PIL.Image.Image,
-        path: str | Path,
-        metadata: dict | None = ...,
-        export_json_metadata: bool = ...,
-        overwrite: bool = ...,
-    ) -> None: ...
+    def load_image(image_or_path: PIL.Image.Image | StrOrBytesPath) -> PIL.Image.Image:
+        ...
+    
     @staticmethod
-    def preprocess_for_model(
-        image: PIL.Image.Image,
-        target_size: tuple = ...,
-        mean: list = ...,
-        std: list = ...,
-        resample: int = ...,
-    ) -> mx.array: ...
+    def expand_image(image: PIL.Image.Image, box_values: AbsoluteBoxValues | None = ..., top: int | str = ..., right: int | str = ..., bottom: int | str = ..., left: int | str = ..., fill_color: tuple = ...) -> PIL.Image.Image:
+        ...
+    
     @staticmethod
-    def preprocess_for_depth_pro(
-        image: PIL.Image.Image,
-        target_size: tuple = ...,
-        mean: list = ...,
-        std: list = ...,
-        resample: int = ...,
-    ) -> mx.array: ...
+    def create_outpaint_mask_image(orig_width: int, orig_height: int, **create_bordered_image_kwargs): # -> Image:
+        ...
+    
+    @staticmethod
+    def create_bordered_image(orig_width: int, orig_height: int, border_color: tuple, content_color: tuple, box_values: AbsoluteBoxValues | None = ..., top: int | str = ..., right: int | str = ..., bottom: int | str = ..., left: int | str = ...) -> PIL.Image.Image:
+        ...
+    
+    @staticmethod
+    def scale_to_dimensions(image: PIL.Image.Image, target_width: int, target_height: int) -> PIL.Image.Image:
+        ...
+    
+    @staticmethod
+    def save_image(image: PIL.Image.Image, path: str | Path, metadata: dict | None = ..., export_json_metadata: bool = ..., overwrite: bool = ...) -> None:
+        ...
+    
+    @staticmethod
+    def preprocess_for_model(image: PIL.Image.Image, target_size: tuple = ..., mean: list = ..., std: list = ..., resample: int = ...) -> mx.array:
+        ...
+    
+    @staticmethod
+    def preprocess_for_depth_pro(image: PIL.Image.Image, target_size: tuple = ..., mean: list = ..., std: list = ..., resample: int = ...) -> mx.array:
+        ...
+    
+
+

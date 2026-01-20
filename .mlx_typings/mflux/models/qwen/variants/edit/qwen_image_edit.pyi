@@ -23,27 +23,12 @@ class QwenImageEdit(nn.Module):
     prompt_cache: dict[str, Any]
     tokenizers: dict[str, Any]
 
-    def __init__(
-        self,
-        quantize: int | None = ...,
-        model_path: str | None = ...,
-        lora_paths: list[str] | None = ...,
-        lora_scales: list[float] | None = ...,
-        model_config: ModelConfig = ...,
-    ) -> None: ...
-    def generate_image(
-        self,
-        seed: int,
-        prompt: str,
-        image_paths: list[str],
-        num_inference_steps: int = ...,
-        height: int | None = ...,
-        width: int | None = ...,
-        guidance: float = ...,
-        image_path: Path | str | None = ...,
-        scheduler: str = ...,
-        negative_prompt: str | None = ...,
-    ) -> GeneratedImage: ...
+    def __init__(self, quantize: int | None = ..., model_path: str | None = ..., lora_paths: list[str] | None = ..., lora_scales: list[float] | None = ..., model_config: ModelConfig = ...) -> None:
+        ...
+
+    def generate_image(self, seed: int, prompt: str, image_paths: list[str], num_inference_steps: int = ..., height: int | None = ..., width: int | None = ..., guidance: float = ..., image_path: Path | str | None = ..., scheduler: str = ..., negative_prompt: str | None = ...) -> GeneratedImage:
+        ...
+
     def _encode_prompts_with_images(
         self,
         prompt: str,
@@ -52,4 +37,8 @@ class QwenImageEdit(nn.Module):
         config: Config,
         vl_width: int | None,
         vl_height: int | None,
-    ) -> tuple[mx.array, mx.array, mx.array, mx.array]: ...
+    ) -> tuple[mx.array, mx.array, mx.array, mx.array]:
+        ...
+    
+
+

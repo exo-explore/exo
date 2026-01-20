@@ -6,11 +6,19 @@ import mlx.core as mx
 from mlx import nn
 
 class T5SelfAttention(nn.Module):
-    def __init__(self) -> None: ...
-    def __call__(self, hidden_states: mx.array) -> mx.array: ...
-    @staticmethod
-    def shape(states):  # -> array:
+    def __init__(self) -> None:
         ...
-    @staticmethod
-    def un_shape(states):  # -> array:
+    
+    def __call__(self, hidden_states: mx.array) -> mx.array:
         ...
+    
+    @staticmethod
+    def shape(states): # -> array:
+        ...
+    
+    @staticmethod
+    def un_shape(states): # -> array:
+        ...
+    
+
+

@@ -6,48 +6,24 @@ from mflux.models.common.config import ModelConfig
 
 class FluxInitializer:
     @staticmethod
-    def init(
-        model,
-        model_config: ModelConfig,
-        quantize: int | None,
-        model_path: str | None = ...,
-        lora_paths: list[str] | None = ...,
-        lora_scales: list[float] | None = ...,
-        custom_transformer=...,
-    ) -> None: ...
+    def init(model, model_config: ModelConfig, quantize: int | None, model_path: str | None = ..., lora_paths: list[str] | None = ..., lora_scales: list[float] | None = ..., custom_transformer=...) -> None:
+        ...
+    
     @staticmethod
-    def init_depth(
-        model,
-        model_config: ModelConfig,
-        quantize: int | None,
-        model_path: str | None = ...,
-        lora_paths: list[str] | None = ...,
-        lora_scales: list[float] | None = ...,
-    ) -> None: ...
+    def init_depth(model, model_config: ModelConfig, quantize: int | None, model_path: str | None = ..., lora_paths: list[str] | None = ..., lora_scales: list[float] | None = ...) -> None:
+        ...
+    
     @staticmethod
-    def init_redux(
-        model,
-        model_config: ModelConfig,
-        quantize: int | None,
-        model_path: str | None = ...,
-        lora_paths: list[str] | None = ...,
-        lora_scales: list[float] | None = ...,
-    ) -> None: ...
+    def init_redux(model, model_config: ModelConfig, quantize: int | None, model_path: str | None = ..., lora_paths: list[str] | None = ..., lora_scales: list[float] | None = ...) -> None:
+        ...
+    
     @staticmethod
-    def init_controlnet(
-        model,
-        model_config: ModelConfig,
-        quantize: int | None,
-        model_path: str | None = ...,
-        lora_paths: list[str] | None = ...,
-        lora_scales: list[float] | None = ...,
-    ) -> None: ...
+    def init_controlnet(model, model_config: ModelConfig, quantize: int | None, model_path: str | None = ..., lora_paths: list[str] | None = ..., lora_scales: list[float] | None = ...) -> None:
+        ...
+    
     @staticmethod
-    def init_concept(
-        model,
-        model_config: ModelConfig,
-        quantize: int | None,
-        model_path: str | None = ...,
-        lora_paths: list[str] | None = ...,
-        lora_scales: list[float] | None = ...,
-    ) -> None: ...
+    def init_concept(model, model_config: ModelConfig, quantize: int | None, model_path: str | None = ..., lora_paths: list[str] | None = ..., lora_scales: list[float] | None = ...) -> None:
+        ...
+    
+
+

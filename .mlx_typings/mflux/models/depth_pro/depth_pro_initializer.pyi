@@ -6,4 +6,8 @@ from mflux.models.depth_pro.model.depth_pro_model import DepthProModel
 
 class DepthProInitializer:
     @staticmethod
-    def init(model: DepthProModel, quantize: int | None = ...) -> None: ...
+    def init(model: DepthProModel, quantize: int | None = ...) -> None:
+        ...
+    
+
+

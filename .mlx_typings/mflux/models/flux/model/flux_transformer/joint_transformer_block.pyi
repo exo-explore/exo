@@ -6,9 +6,7 @@ import mlx.core as mx
 from mlx import nn
 from typing import Any
 from mflux.models.flux.model.flux_transformer.joint_attention import JointAttention
-from mflux.models.flux.model.flux_transformer.ada_layer_norm_zero import (
-    AdaLayerNormZero,
-)
+from mflux.models.flux.model.flux_transformer.ada_layer_norm_zero import AdaLayerNormZero
 
 class JointTransformerBlock(nn.Module):
     attn: JointAttention
@@ -19,22 +17,15 @@ class JointTransformerBlock(nn.Module):
     ff: nn.Module
     ff_context: nn.Module
 
-    def __init__(self, layer: Any) -> None: ...
-    def __call__(
-        self,
-        hidden_states: mx.array,
-        encoder_hidden_states: mx.array,
-        text_embeddings: mx.array,
-        rotary_embeddings: mx.array,
-    ) -> tuple[mx.array, mx.array]: ...
+    def __init__(self, layer: Any) -> None:
+        ...
+
+    def __call__(self, hidden_states: mx.array, encoder_hidden_states: mx.array, text_embeddings: mx.array, rotary_embeddings: mx.array) -> tuple[mx.array, mx.array]:
+        ...
+
     @staticmethod
-    def apply_norm_and_feed_forward(
-        hidden_states: mx.array,
-        attn_output: mx.array,
-        gate_mlp: mx.array,
-        gate_msa: mx.array,
-        scale_mlp: mx.array,
-        shift_mlp: mx.array,
-        norm_layer: nn.Module,
-        ff_layer: nn.Module,
-    ) -> mx.array: ...
+    def apply_norm_and_feed_forward(hidden_states: mx.array, attn_output: mx.array, gate_mlp: mx.array, gate_msa: mx.array, scale_mlp: mx.array, shift_mlp: mx.array, norm_layer: nn.Module, ff_layer: nn.Module) -> mx.array:
+        ...
+    
+
+

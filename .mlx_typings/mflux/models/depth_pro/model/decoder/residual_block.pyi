@@ -6,5 +6,11 @@ import mlx.core as mx
 import mlx.nn as nn
 
 class ResidualBlock(nn.Module):
-    def __init__(self, num_features: int) -> None: ...
-    def __call__(self, x: mx.array) -> mx.array: ...
+    def __init__(self, num_features: int) -> None:
+        ...
+    
+    def __call__(self, x: mx.array) -> mx.array:
+        ...
+    
+
+

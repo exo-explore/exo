@@ -9,45 +9,23 @@ from mflux.models.common.config import ModelConfig
 from mflux.models.flux.variants.concept_attention.attention_data import ConceptHeatmap
 
 log = ...
-
 class GeneratedImage:
     image: PIL.Image.Image
 
-    def __init__(
-        self,
-        image: PIL.Image.Image,
-        model_config: ModelConfig,
-        seed: int,
-        prompt: str,
-        steps: int,
-        guidance: float | None,
-        precision: mx.Dtype,
-        quantization: int,
-        generation_time: float,
-        lora_paths: list[str] | None = ...,
-        lora_scales: list[float] | None = ...,
-        height: int | None = ...,
-        width: int | None = ...,
-        controlnet_image_path: str | Path | None = ...,
-        controlnet_strength: float | None = ...,
-        image_path: str | Path | None = ...,
-        image_paths: list[str] | list[Path] | None = ...,
-        image_strength: float | None = ...,
-        masked_image_path: str | Path | None = ...,
-        depth_image_path: str | Path | None = ...,
-        redux_image_paths: list[str] | list[Path] | None = ...,
-        redux_image_strengths: list[float] | None = ...,
-        concept_heatmap: ConceptHeatmap | None = ...,
-        negative_prompt: str | None = ...,
-        init_metadata: dict | None = ...,
-    ) -> None: ...
-    def get_right_half(self) -> GeneratedImage: ...
-    def save(
-        self, path: str | Path, export_json_metadata: bool = ..., overwrite: bool = ...
-    ) -> None: ...
-    def save_with_heatmap(
-        self, path: str | Path, export_json_metadata: bool = ..., overwrite: bool = ...
-    ) -> None: ...
-    def save_concept_heatmap(
-        self, path: str | Path, export_json_metadata: bool = ..., overwrite: bool = ...
-    ) -> None: ...
+    def __init__(self, image: PIL.Image.Image, model_config: ModelConfig, seed: int, prompt: str, steps: int, guidance: float | None, precision: mx.Dtype, quantization: int, generation_time: float, lora_paths: list[str] | None = ..., lora_scales: list[float] | None = ..., height: int | None = ..., width: int | None = ..., controlnet_image_path: str | Path | None = ..., controlnet_strength: float | None = ..., image_path: str | Path | None = ..., image_paths: list[str] | list[Path] | None = ..., image_strength: float | None = ..., masked_image_path: str | Path | None = ..., depth_image_path: str | Path | None = ..., redux_image_paths: list[str] | list[Path] | None = ..., redux_image_strengths: list[float] | None = ..., concept_heatmap: ConceptHeatmap | None = ..., negative_prompt: str | None = ..., init_metadata: dict | None = ...) -> None:
+        ...
+    
+    def get_right_half(self) -> GeneratedImage:
+        ...
+    
+    def save(self, path: str | Path, export_json_metadata: bool = ..., overwrite: bool = ...) -> None:
+        ...
+    
+    def save_with_heatmap(self, path: str | Path, export_json_metadata: bool = ..., overwrite: bool = ...) -> None:
+        ...
+    
+    def save_concept_heatmap(self, path: str | Path, export_json_metadata: bool = ..., overwrite: bool = ...) -> None:
+        ...
+    
+
+

@@ -6,5 +6,11 @@ import mlx.core as mx
 from mlx import nn
 
 class QwenMLP(nn.Module):
-    def __init__(self, hidden_size: int, intermediate_size: int) -> None: ...
-    def __call__(self, hidden_states: mx.array) -> mx.array: ...
+    def __init__(self, hidden_size: int, intermediate_size: int) -> None:
+        ...
+    
+    def __call__(self, hidden_states: mx.array) -> mx.array:
+        ...
+    
+
+

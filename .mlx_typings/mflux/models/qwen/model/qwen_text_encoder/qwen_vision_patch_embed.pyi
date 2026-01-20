@@ -6,11 +6,11 @@ import mlx.core as mx
 from mlx import nn
 
 class VisionPatchEmbed(nn.Module):
-    def __init__(
-        self,
-        patch_size: int = ...,
-        temporal_patch_size: int = ...,
-        in_channels: int = ...,
-        embed_dim: int = ...,
-    ) -> None: ...
-    def __call__(self, hidden_states: mx.array) -> mx.array: ...
+    def __init__(self, patch_size: int = ..., temporal_patch_size: int = ..., in_channels: int = ..., embed_dim: int = ...) -> None:
+        ...
+    
+    def __call__(self, hidden_states: mx.array) -> mx.array:
+        ...
+    
+
+

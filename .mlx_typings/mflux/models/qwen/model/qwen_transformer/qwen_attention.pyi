@@ -24,30 +24,26 @@ class QwenAttention(nn.Module):
     attn_to_out: list[Any]
     to_add_out: nn.Linear
 
-    def __init__(
-        self, dim: int = ..., num_heads: int = ..., head_dim: int = ...
-    ) -> None: ...
-    def __call__(
-        self,
-        img_modulated: mx.array,
-        txt_modulated: mx.array,
-        encoder_hidden_states_mask: mx.array | None,
-        image_rotary_emb: tuple[mx.array, mx.array],
-        block_idx: int | None = ...,
-    ) -> tuple[mx.array, mx.array]: ...
+    def __init__(self, dim: int = ..., num_heads: int = ..., head_dim: int = ...) -> None:
+        ...
+
+    def __call__(self, img_modulated: mx.array, txt_modulated: mx.array, encoder_hidden_states_mask: mx.array | None, image_rotary_emb: tuple[mx.array, mx.array], block_idx: int | None = ...) -> tuple[mx.array, mx.array]:
+        ...
+
     def _compute_attention_qwen(
-        self,
-        query: mx.array,
-        key: mx.array,
-        value: mx.array,
-        mask: mx.array | None,
-        block_idx: int | None,
-    ) -> mx.array: ...
+        self, query: mx.array, key: mx.array, value: mx.array, mask: mx.array | None, block_idx: int | None
+    ) -> mx.array:
+        ...
+
     @staticmethod
     def _convert_mask_for_qwen(
         mask: mx.array | None, joint_seq_len: int, txt_seq_len: int
-    ) -> mx.array | None: ...
+    ) -> mx.array | None:
+        ...
+
     @staticmethod
-    def _apply_rope_qwen(
-        x: mx.array, cos_vals: mx.array, sin_vals: mx.array
-    ) -> mx.array: ...
+    def _apply_rope_qwen(x: mx.array, cos_vals: mx.array, sin_vals: mx.array) -> mx.array:
+        ...
+    
+
+

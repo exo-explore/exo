@@ -6,11 +6,11 @@ import mlx.core as mx
 import mlx.nn as nn
 
 class UpSampleBlock(nn.Module):
-    def __init__(
-        self,
-        dim_in: int = ...,
-        dim_int: int = ...,
-        dim_out: int = ...,
-        upsample_layers: int = ...,
-    ) -> None: ...
-    def __call__(self, x: mx.array) -> mx.array: ...
+    def __init__(self, dim_in: int = ..., dim_int: int = ..., dim_out: int = ..., upsample_layers: int = ...) -> None:
+        ...
+    
+    def __call__(self, x: mx.array) -> mx.array:
+        ...
+    
+
+

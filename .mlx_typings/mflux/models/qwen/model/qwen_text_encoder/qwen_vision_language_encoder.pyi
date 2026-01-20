@@ -6,11 +6,11 @@ import mlx.core as mx
 from mlx import nn
 
 class QwenVisionLanguageEncoder(nn.Module):
-    def __init__(self, encoder=...) -> None: ...
-    def __call__(
-        self,
-        input_ids: mx.array,
-        attention_mask: mx.array | None = ...,
-        pixel_values: mx.array | None = ...,
-        image_grid_thw: mx.array | None = ...,
-    ) -> tuple[mx.array, mx.array]: ...
+    def __init__(self, encoder=...) -> None:
+        ...
+    
+    def __call__(self, input_ids: mx.array, attention_mask: mx.array | None = ..., pixel_values: mx.array | None = ..., image_grid_thw: mx.array | None = ...) -> tuple[mx.array, mx.array]:
+        ...
+    
+
+

@@ -20,17 +20,15 @@ class QwenTransformerBlock(nn.Module):
     img_ff: Any
     txt_ff: Any
 
-    def __init__(
-        self, dim: int = ..., num_heads: int = ..., head_dim: int = ...
-    ) -> None: ...
-    def __call__(
-        self,
-        hidden_states: mx.array,
-        encoder_hidden_states: mx.array,
-        encoder_hidden_states_mask: mx.array | None,
-        text_embeddings: mx.array,
-        image_rotary_emb: tuple[mx.array, mx.array],
-        block_idx: int | None = ...,
-    ) -> tuple[mx.array, mx.array]: ...
+    def __init__(self, dim: int = ..., num_heads: int = ..., head_dim: int = ...) -> None:
+        ...
+
+    def __call__(self, hidden_states: mx.array, encoder_hidden_states: mx.array, encoder_hidden_states_mask: mx.array | None, text_embeddings: mx.array, image_rotary_emb: tuple[mx.array, mx.array], block_idx: int | None = ...) -> tuple[mx.array, mx.array]:
+        ...
+
     @staticmethod
-    def _modulate(x: mx.array, mod_params: mx.array) -> tuple[mx.array, mx.array]: ...
+    def _modulate(x: mx.array, mod_params: mx.array) -> tuple[mx.array, mx.array]:
+        ...
+    
+
+

@@ -6,24 +6,14 @@ import mlx.core as mx
 from mlx import nn
 from mflux.models.common.config.config import Config
 from mflux.models.common.config.model_config import ModelConfig
-from mflux.models.flux.variants.concept_attention.attention_data import (
-    TimestepAttentionData,
-)
+from mflux.models.flux.variants.concept_attention.attention_data import TimestepAttentionData
 
 class TransformerConcept(nn.Module):
-    def __init__(
-        self,
-        model_config: ModelConfig,
-        num_transformer_blocks: int = ...,
-        num_single_transformer_blocks: int = ...,
-    ) -> None: ...
-    def __call__(
-        self,
-        t: int,
-        config: Config,
-        hidden_states: mx.array,
-        prompt_embeds: mx.array,
-        prompt_embeds_concept: mx.array,
-        pooled_prompt_embeds: mx.array,
-        pooled_prompt_embeds_concept: mx.array,
-    ) -> tuple[mx.array, TimestepAttentionData]: ...
+    def __init__(self, model_config: ModelConfig, num_transformer_blocks: int = ..., num_single_transformer_blocks: int = ...) -> None:
+        ...
+    
+    def __call__(self, t: int, config: Config, hidden_states: mx.array, prompt_embeds: mx.array, prompt_embeds_concept: mx.array, pooled_prompt_embeds: mx.array, pooled_prompt_embeds_concept: mx.array) -> tuple[mx.array, TimestepAttentionData]:
+        ...
+    
+
+

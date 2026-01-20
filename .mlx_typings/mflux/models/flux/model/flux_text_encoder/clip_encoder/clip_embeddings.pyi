@@ -6,5 +6,11 @@ import mlx.core as mx
 from mlx import nn
 
 class CLIPEmbeddings(nn.Module):
-    def __init__(self, dims: int) -> None: ...
-    def __call__(self, tokens: mx.array) -> mx.array: ...
+    def __init__(self, dims: int) -> None:
+        ...
+    
+    def __call__(self, tokens: mx.array) -> mx.array:
+        ...
+    
+
+

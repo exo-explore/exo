@@ -6,21 +6,17 @@ import mlx.core as mx
 from mlx import nn
 
 class VisionTransformer(nn.Module):
-    def __init__(
-        self,
-        patch_size: int = ...,
-        temporal_patch_size: int = ...,
-        in_channels: int = ...,
-        embed_dim: int = ...,
-        depth: int = ...,
-        num_heads: int = ...,
-        mlp_ratio: float = ...,
-        hidden_size: int = ...,
-        spatial_merge_size: int = ...,
-        window_size: int = ...,
-        fullatt_block_indexes: list = ...,
-    ) -> None: ...
-    def get_window_index(self, grid_thw: mx.array):  # -> tuple[array, array]:
+    def __init__(self, patch_size: int = ..., temporal_patch_size: int = ..., in_channels: int = ..., embed_dim: int = ..., depth: int = ..., num_heads: int = ..., mlp_ratio: float = ..., hidden_size: int = ..., spatial_merge_size: int = ..., window_size: int = ..., fullatt_block_indexes: list = ...) -> None:
         ...
-    def rot_pos_emb(self, grid_thw: mx.array) -> mx.array: ...
-    def __call__(self, pixel_values: mx.array, grid_thw: mx.array) -> mx.array: ...
+    
+    def get_window_index(self, grid_thw: mx.array): # -> tuple[array, array]:
+        ...
+    
+    def rot_pos_emb(self, grid_thw: mx.array) -> mx.array:
+        ...
+    
+    def __call__(self, pixel_values: mx.array, grid_thw: mx.array) -> mx.array:
+        ...
+    
+
+

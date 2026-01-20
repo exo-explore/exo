@@ -6,12 +6,11 @@ import mlx.core as mx
 from mlx import nn
 
 class QwenImageCausalConv3D(nn.Module):
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        kernel_size: int = ...,
-        stride: int = ...,
-        padding: int = ...,
-    ) -> None: ...
-    def __call__(self, x: mx.array) -> mx.array: ...
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int = ..., stride: int = ..., padding: int = ...) -> None:
+        ...
+    
+    def __call__(self, x: mx.array) -> mx.array:
+        ...
+    
+
+

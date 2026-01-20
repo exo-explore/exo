@@ -6,20 +6,12 @@ from mflux.models.common.config import ModelConfig
 
 class QwenImageInitializer:
     @staticmethod
-    def init(
-        model,
-        model_config: ModelConfig,
-        quantize: int | None,
-        model_path: str | None = ...,
-        lora_paths: list[str] | None = ...,
-        lora_scales: list[float] | None = ...,
-    ) -> None: ...
+    def init(model, model_config: ModelConfig, quantize: int | None, model_path: str | None = ..., lora_paths: list[str] | None = ..., lora_scales: list[float] | None = ...) -> None:
+        ...
+    
     @staticmethod
-    def init_edit(
-        model,
-        model_config: ModelConfig,
-        quantize: int | None,
-        model_path: str | None = ...,
-        lora_paths: list[str] | None = ...,
-        lora_scales: list[float] | None = ...,
-    ) -> None: ...
+    def init_edit(model, model_config: ModelConfig, quantize: int | None, model_path: str | None = ..., lora_paths: list[str] | None = ..., lora_scales: list[float] | None = ...) -> None:
+        ...
+    
+
+

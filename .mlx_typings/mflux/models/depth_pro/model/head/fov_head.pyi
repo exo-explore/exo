@@ -6,5 +6,11 @@ import mlx.core as mx
 import mlx.nn as nn
 
 class FOVHead(nn.Module):
-    def __init__(self) -> None: ...
-    def __call__(self, x: mx.array) -> mx.array: ...
+    def __init__(self) -> None:
+        ...
+    
+    def __call__(self, x: mx.array) -> mx.array:
+        ...
+    
+
+

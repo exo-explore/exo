@@ -6,11 +6,11 @@ import mlx.core as mx
 from mlx import nn
 
 class QwenImageUpBlock3D(nn.Module):
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        num_res_blocks: int = ...,
-        upsample_mode: str = ...,
-    ) -> None: ...
-    def __call__(self, x: mx.array) -> mx.array: ...
+    def __init__(self, in_channels: int, out_channels: int, num_res_blocks: int = ..., upsample_mode: str = ...) -> None:
+        ...
+    
+    def __call__(self, x: mx.array) -> mx.array:
+        ...
+    
+
+

@@ -6,7 +6,11 @@ import mlx.core as mx
 from mlx import nn
 
 class AdaLayerNormZeroSingle(nn.Module):
-    def __init__(self) -> None: ...
-    def __call__(
-        self, hidden_states: mx.array, text_embeddings: mx.array
-    ) -> tuple[mx.array, mx.array]: ...
+    def __init__(self) -> None:
+        ...
+
+    def __call__(self, hidden_states: mx.array, text_embeddings: mx.array) -> tuple[mx.array, mx.array]:
+        ...
+    
+
+

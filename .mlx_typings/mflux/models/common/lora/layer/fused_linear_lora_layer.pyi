@@ -6,8 +6,11 @@ from mlx import nn
 from mflux.models.common.lora.layer.linear_lora_layer import LoRALinear
 
 class FusedLoRALinear(nn.Module):
-    def __init__(
-        self, base_linear: nn.Linear | nn.QuantizedLinear, loras: list[LoRALinear]
-    ) -> None: ...
-    def __call__(self, x):  # -> array:
+    def __init__(self, base_linear: nn.Linear | nn.QuantizedLinear, loras: list[LoRALinear]) -> None:
         ...
+    
+    def __call__(self, x): # -> array:
+        ...
+    
+
+

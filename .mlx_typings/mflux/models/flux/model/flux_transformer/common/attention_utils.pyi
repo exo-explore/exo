@@ -7,35 +7,24 @@ from mlx import nn
 
 class AttentionUtils:
     @staticmethod
-    def process_qkv(
-        hidden_states: mx.array,
-        to_q: nn.Linear,
-        to_k: nn.Linear,
-        to_v: nn.Linear,
-        norm_q: nn.RMSNorm,
-        norm_k: nn.RMSNorm,
-        num_heads: int,
-        head_dim: int,
-    ) -> tuple[mx.array, mx.array, mx.array]: ...
+    def process_qkv(hidden_states: mx.array, to_q: nn.Linear, to_k: nn.Linear, to_v: nn.Linear, norm_q: nn.RMSNorm, norm_k: nn.RMSNorm, num_heads: int, head_dim: int) -> tuple[mx.array, mx.array, mx.array]:
+        ...
+
     @staticmethod
-    def compute_attention(
-        query: mx.array,
-        key: mx.array,
-        value: mx.array,
-        batch_size: int,
-        num_heads: int,
-        head_dim: int,
-        mask: mx.array | None = ...,
-    ) -> mx.array: ...
+    def compute_attention(query: mx.array, key: mx.array, value: mx.array, batch_size: int, num_heads: int, head_dim: int, mask: mx.array | None = ...) -> mx.array:
+        ...
+
     @staticmethod
-    def convert_key_padding_mask_to_additive_mask(
-        mask: mx.array | None, joint_seq_len: int, txt_seq_len: int
-    ) -> mx.array | None: ...
+    def convert_key_padding_mask_to_additive_mask(mask: mx.array | None, joint_seq_len: int, txt_seq_len: int) -> mx.array | None:
+        ...
+
     @staticmethod
-    def apply_rope(
-        xq: mx.array, xk: mx.array, freqs_cis: mx.array
-    ) -> tuple[mx.array, mx.array]: ...
+    def apply_rope(xq: mx.array, xk: mx.array, freqs_cis: mx.array) -> tuple[mx.array, mx.array]:
+        ...
+
     @staticmethod
-    def apply_rope_bshd(
-        xq: mx.array, xk: mx.array, cos: mx.array, sin: mx.array
-    ) -> tuple[mx.array, mx.array]: ...
+    def apply_rope_bshd(xq: mx.array, xk: mx.array, cos: mx.array, sin: mx.array) -> tuple[mx.array, mx.array]:
+        ...
+    
+
+

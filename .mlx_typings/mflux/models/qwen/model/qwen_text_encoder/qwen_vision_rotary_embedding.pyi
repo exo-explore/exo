@@ -6,5 +6,11 @@ import mlx.core as mx
 from mlx import nn
 
 class VisionRotaryEmbedding(nn.Module):
-    def __init__(self, dim: int, theta: float = ...) -> None: ...
-    def __call__(self, max_grid_size: int) -> mx.array: ...
+    def __init__(self, dim: int, theta: float = ...) -> None:
+        ...
+    
+    def __call__(self, max_grid_size: int) -> mx.array:
+        ...
+    
+
+

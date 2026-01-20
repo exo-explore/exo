@@ -6,22 +6,17 @@ import mlx.core as mx
 import numpy as np
 from typing import Union
 from PIL import Image
-from mflux.models.qwen.tokenizer.qwen_vision_language_processor import (
-    QwenVisionLanguageProcessor,
-)
+from mflux.models.qwen.tokenizer.qwen_vision_language_processor import QwenVisionLanguageProcessor
 
 class QwenVisionLanguageTokenizer:
-    def __init__(
-        self,
-        processor: QwenVisionLanguageProcessor,
-        max_length: int = ...,
-        use_picture_prefix: bool = ...,
-    ) -> None: ...
-    def tokenize_with_image(
-        self,
-        prompt: str,
-        image: Union[Image.Image, np.ndarray, str, list],
-        vl_width: int | None = ...,
-        vl_height: int | None = ...,
-    ) -> tuple[mx.array, mx.array, mx.array, mx.array]: ...
-    def tokenize_text_only(self, prompt: str) -> tuple[mx.array, mx.array]: ...
+    def __init__(self, processor: QwenVisionLanguageProcessor, max_length: int = ..., use_picture_prefix: bool = ...) -> None:
+        ...
+    
+    def tokenize_with_image(self, prompt: str, image: Union[Image.Image, np.ndarray, str, list], vl_width: int | None = ..., vl_height: int | None = ...) -> tuple[mx.array, mx.array, mx.array, mx.array]:
+        ...
+    
+    def tokenize_text_only(self, prompt: str) -> tuple[mx.array, mx.array]:
+        ...
+    
+
+

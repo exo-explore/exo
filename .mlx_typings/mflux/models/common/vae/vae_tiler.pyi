@@ -7,21 +7,12 @@ from typing import Callable
 
 class VAETiler:
     @staticmethod
-    def encode_image_tiled(
-        *,
-        image: mx.array,
-        encode_fn: Callable[[mx.array], mx.array],
-        latent_channels: int,
-        tile_size: tuple[int, int] = ...,
-        tile_overlap: tuple[int, int] = ...,
-        spatial_scale: int = ...,
-    ) -> mx.array: ...
+    def encode_image_tiled(*, image: mx.array, encode_fn: Callable[[mx.array], mx.array], latent_channels: int, tile_size: tuple[int, int] = ..., tile_overlap: tuple[int, int] = ..., spatial_scale: int = ...) -> mx.array:
+        ...
+    
     @staticmethod
-    def decode_image_tiled(
-        *,
-        latent: mx.array,
-        decode_fn: Callable[[mx.array], mx.array],
-        tile_size: tuple[int, int] = ...,
-        tile_overlap: tuple[int, int] = ...,
-        spatial_scale: int = ...,
-    ) -> mx.array: ...
+    def decode_image_tiled(*, latent: mx.array, decode_fn: Callable[[mx.array], mx.array], tile_size: tuple[int, int] = ..., tile_overlap: tuple[int, int] = ..., spatial_scale: int = ...) -> mx.array:
+        ...
+    
+
+

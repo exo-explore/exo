@@ -6,4 +6,8 @@ from mflux.models.common.lora.mapping.lora_mapping import LoRAMapping, LoRATarge
 
 class FluxLoRAMapping(LoRAMapping):
     @staticmethod
-    def get_mapping() -> list[LoRATarget]: ...
+    def get_mapping() -> list[LoRATarget]:
+        ...
+    
+
+

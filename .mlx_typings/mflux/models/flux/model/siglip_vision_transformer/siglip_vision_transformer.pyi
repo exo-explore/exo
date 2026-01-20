@@ -6,5 +6,11 @@ import mlx.core as mx
 from mlx import nn
 
 class SiglipVisionTransformer(nn.Module):
-    def __init__(self) -> None: ...
-    def __call__(self, pixel_values: mx.array) -> mx.array: ...
+    def __init__(self) -> None:
+        ...
+    
+    def __call__(self, pixel_values: mx.array) -> mx.array:
+        ...
+    
+
+

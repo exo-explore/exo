@@ -6,7 +6,11 @@ import mlx.core as mx
 from mlx import nn
 
 class EncoderCLIP(nn.Module):
-    def __init__(self, num_encoder_layers: int) -> None: ...
-    def __call__(
-        self, tokens: mx.array, causal_attention_mask: mx.array
-    ) -> mx.array: ...
+    def __init__(self, num_encoder_layers: int) -> None:
+        ...
+    
+    def __call__(self, tokens: mx.array, causal_attention_mask: mx.array) -> mx.array:
+        ...
+    
+
+

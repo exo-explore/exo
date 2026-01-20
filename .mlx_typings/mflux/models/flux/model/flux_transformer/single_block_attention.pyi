@@ -14,7 +14,11 @@ class SingleBlockAttention(nn.Module):
     norm_q: nn.RMSNorm
     norm_k: nn.RMSNorm
 
-    def __init__(self) -> None: ...
-    def __call__(
-        self, hidden_states: mx.array, image_rotary_emb: mx.array
-    ) -> mx.array: ...
+    def __init__(self) -> None:
+        ...
+
+    def __call__(self, hidden_states: mx.array, image_rotary_emb: mx.array) -> mx.array:
+        ...
+    
+
+

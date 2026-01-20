@@ -7,7 +7,11 @@ from mlx import nn
 from mflux.models.common.config import ModelConfig
 
 class TimeTextEmbed(nn.Module):
-    def __init__(self, model_config: ModelConfig) -> None: ...
-    def __call__(
-        self, time_step: mx.array, pooled_projection: mx.array, guidance: mx.array
-    ) -> mx.array: ...
+    def __init__(self, model_config: ModelConfig) -> None:
+        ...
+    
+    def __call__(self, time_step: mx.array, pooled_projection: mx.array, guidance: mx.array) -> mx.array:
+        ...
+    
+
+

@@ -6,5 +6,11 @@ import mlx.core as mx
 from mlx import nn
 
 class QwenImageMidBlock3D(nn.Module):
-    def __init__(self, dim: int, num_layers: int = ...) -> None: ...
-    def __call__(self, x: mx.array) -> mx.array: ...
+    def __init__(self, dim: int, num_layers: int = ...) -> None:
+        ...
+    
+    def __call__(self, x: mx.array) -> mx.array:
+        ...
+    
+
+

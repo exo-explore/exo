@@ -6,5 +6,11 @@ import mlx.core as mx
 import mlx.nn as nn
 
 class FeatureFusionBlock2d(nn.Module):
-    def __init__(self, num_features: int, deconv: bool = ...) -> None: ...
-    def __call__(self, x0: mx.array, x1: mx.array | None = ...) -> mx.array: ...
+    def __init__(self, num_features: int, deconv: bool = ...) -> None:
+        ...
+    
+    def __call__(self, x0: mx.array, x1: mx.array | None = ...) -> mx.array:
+        ...
+    
+
+
