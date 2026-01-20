@@ -194,6 +194,7 @@ def pipeline_auto_parallel(
     device_rank, world_size = model_shard_meta.device_rank, model_shard_meta.world_size
 
     layers = layers[start_layer:end_layer]
+
     layers[0] = PipelineFirstLayer(layers[0], device_rank, group=group)
     layers[-1] = PipelineLastLayer(
         layers[-1],
@@ -229,9 +230,7 @@ def pipeline_auto_parallel(
         "Expected a list of layers after auto-parallel initialisation"
     )
 
-    if isinstance(model, (GptOssModel, Qwen3MoeModel, Qwen3NextModel)):
-        model = patch_distributed_model(model)
-    return model
+    return patch_distributed_model(model)
 
 
 def patch_distributed_model[T](model: T) -> T:
