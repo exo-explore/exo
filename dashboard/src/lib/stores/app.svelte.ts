@@ -227,25 +227,23 @@ const IMAGE_PARAMS_STORAGE_KEY = "exo-image-generation-params";
 
 // Image generation params interface matching backend API
 export interface ImageGenerationParams {
-	// Basic params
-	size: "512x512" | "768x768" | "1024x1024" | "1024x768" | "768x1024";
-	quality: "low" | "medium" | "high";
-	outputFormat: "png" | "jpeg" | "webp";
-	// Advanced params
-	seed: number | null;
-	numInferenceSteps: number | null;
-	guidance: number | null;
-	negativePrompt: string | null;
+    // Basic params
+    size: "512x512" | "768x768" | "1024x1024" | "1024x768" | "768x1024";
+    quality: "low" | "medium" | "high";
+    // Advanced params
+    seed: number | null;
+    numInferenceSteps: number | null;
+    guidance: number | null;
+    negativePrompt: string | null;
 }
 
 const DEFAULT_IMAGE_PARAMS: ImageGenerationParams = {
-	size: "1024x1024",
-	quality: "medium",
-	outputFormat: "png",
-	seed: null,
-	numInferenceSteps: null,
-	guidance: null,
-	negativePrompt: null,
+    size: "1024x1024",
+    quality: "medium",
+    seed: null,
+    numInferenceSteps: null,
+    guidance: null,
+    negativePrompt: null,
 };
 
 interface GranularNodeState {
@@ -1697,7 +1695,6 @@ class AppStore {
                 prompt,
                 quality: params.quality,
                 size: params.size,
-                output_format: params.outputFormat,
                 response_format: "b64_json",
                 stream: true,
                 partial_images: 3,
@@ -1712,8 +1709,8 @@ class AppStore {
                     ...(params.guidance !== null && { guidance: params.guidance }),
                     ...(params.negativePrompt !== null &&
                         params.negativePrompt.trim() !== "" && {
-                            negative_prompt: params.negativePrompt,
-                        }),
+                        negative_prompt: params.negativePrompt,
+                    }),
                 };
             }
 
