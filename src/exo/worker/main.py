@@ -413,11 +413,6 @@ class Worker:
             )
             for nid in conns:
                 for ip in conns[nid]:
-                    if "127.0.0.1" in ip or "localhost" in ip:
-                        logger.warning(
-                            f"Loopback connection should not happen: {ip=} for {nid=}"
-                        )
-
                     edge = SocketConnection(
                         # nonsense multiaddr
                         sink_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/52415")
@@ -437,6 +432,9 @@ class Worker:
 
             for conn in self.state.topology.out_edges(self.node_id):
                 if not isinstance(conn.edge, SocketConnection):
+                    continue
+                # ignore mDNS discovered connections
+                if conn.edge.sink_multiaddr.port != 52415:
                     continue
                 if (
                     conn.sink not in conns
