@@ -413,11 +413,6 @@ class Worker:
             )
             for nid in conns:
                 for ip in conns[nid]:
-                    if "127.0.0.1" in ip or "localhost" in ip:
-                        logger.warning(
-                            f"Loopback connection should not happen: {ip=} for {nid=}"
-                        )
-
                     edge = SocketConnection(
                         # nonsense multiaddr
                         sink_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/52415")
