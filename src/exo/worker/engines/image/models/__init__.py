@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.models.base import ModelAdapter
@@ -19,7 +19,7 @@ __all__: list[str] = []
 
 # Type alias for adapter factory functions
 # Factory takes (config, model_id, local_path, quantize) and returns a ModelAdapter
-AdapterFactory = Callable[[ImageModelConfig, str, Path, int | None], ModelAdapter]
+AdapterFactory = Callable[[ImageModelConfig, str, Path, int | None], ModelAdapter[Any, Any]]
 
 # Registry maps model_family string to adapter factory
 _ADAPTER_REGISTRY: dict[str, AdapterFactory] = {
@@ -63,7 +63,7 @@ def create_adapter_for_model(
     model_id: str,
     local_path: Path,
     quantize: int | None = None,
-) -> ModelAdapter:
+) -> ModelAdapter[Any, Any]:
     """Create a model adapter for the given configuration.
 
     Args:

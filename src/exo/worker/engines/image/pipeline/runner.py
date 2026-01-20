@@ -1,5 +1,5 @@
 from math import ceil
-from typing import Optional
+from typing import Any, Optional
 
 import mlx.core as mx
 from mflux.models.common.config.config import Config
@@ -8,7 +8,11 @@ from tqdm import tqdm
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.engines.image.config import ImageModelConfig
-from exo.worker.engines.image.models.base import ModelAdapter, PromptData
+from exo.worker.engines.image.models.base import (
+    ModelAdapter,
+    PromptData,
+    RotaryEmbeddings,
+)
 from exo.worker.engines.image.pipeline.block_wrapper import (
     BlockWrapperMode,
     JointBlockWrapper,
@@ -47,9 +51,6 @@ def calculate_token_indices(patch_heights: list[int], latent_width: int):
 class DiffusionRunner:
     """Orchestrates the diffusion loop for image generation.
 
-    This class owns the entire diffusion process, handling both single-node
-    and distributed (PipeFusion) modes.
-
     In distributed mode, it implements PipeFusion with:
     - Sync pipeline for initial timesteps (full image, all devices in lockstep)
     - Async pipeline for later timesteps (patches processed independently)
@@ -58,20 +59,11 @@ class DiffusionRunner:
     def __init__(
         self,
         config: ImageModelConfig,
-        adapter: ModelAdapter,
+        adapter: ModelAdapter[Any, Any],
         group: Optional[mx.distributed.Group],
         shard_metadata: PipelineShardMetadata,
         num_patches: Optional[int] = None,
     ):
-        """Initialize the diffusion runner.
-
-        Args:
-            config: Model configuration (architecture, block counts, etc.)
-            adapter: Model adapter for model-specific operations
-            group: MLX distributed group (None for single-node mode)
-            shard_metadata: Pipeline shard metadata with layer assignments
-            num_patches: Number of patches for async mode (defaults to world_size)
-        """
         self.config = config
         self.adapter = adapter
         self.group = group
@@ -130,8 +122,8 @@ class DiffusionRunner:
         )
 
         # Wrappers created lazily on first forward (need text_seq_len)
-        self.joint_block_wrappers: list[JointBlockWrapper] | None = None
-        self.single_block_wrappers: list[SingleBlockWrapper] | None = None
+        self.joint_block_wrappers: list[JointBlockWrapper[Any]] | None = None
+        self.single_block_wrappers: list[SingleBlockWrapper[Any]] | None = None
         self._wrappers_initialized = False
         self._current_text_seq_len: int | None = None
 
@@ -258,9 +250,6 @@ class DiffusionRunner:
         4. Run diffusion loop (yielding partials if requested)
         5. Decode to image
 
-        When partial_images > 0, yields (GeneratedImage, partial_index, total_partials)
-        tuples for intermediate images, then yields the final GeneratedImage.
-
         Args:
             settings: Generation config (steps, height, width)
             prompt: Text prompt
@@ -359,7 +348,6 @@ class DiffusionRunner:
 
                 mx.eval(latents)
 
-                # Yield partial latents at capture steps (only on last stage)
                 if t in capture_steps and self.is_last_stage:
                     yield (latents, t)
 
@@ -387,13 +375,6 @@ class DiffusionRunner:
         conditioning_latents: mx.array | None = None,
     ) -> mx.array:
         """Run a single forward pass through the transformer.
-
-        This is the internal method called by adapters via compute_step_noise.
-        Returns noise prediction without applying scheduler step.
-
-        For edit mode, concatenates conditioning latents with generated latents
-        before the transformer, and extracts only the generated portion after.
-
         Args:
             latents: Input latents (already scaled by caller)
             prompt_embeds: Text embeddings
@@ -779,7 +760,6 @@ class DiffusionRunner:
         is_first_async_step: bool,
         kontext_image_ids: mx.array | None = None,
     ) -> mx.array:
-        """Execute async pipeline step with batched CFG."""
         patch_latents, token_indices = self._create_patches(latents, config)
         needs_cfg = self.adapter.needs_cfg
         cond_image_grid = prompt_data.cond_image_grid
@@ -872,7 +852,7 @@ class DiffusionRunner:
         token_indices: tuple[int, int],
         prompt_embeds: mx.array,
         text_embeddings: mx.array,
-        image_rotary_embeddings: mx.array,
+        image_rotary_embeddings: RotaryEmbeddings,
         encoder_hidden_states: mx.array | None,
     ) -> tuple[mx.array | None, mx.array | None]:
         """Process a single patch through the forward pipeline.

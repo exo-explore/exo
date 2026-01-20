@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import mlx.core as mx
 from mflux.models.common.config import ModelConfig
@@ -11,7 +12,11 @@ from mflux.models.qwen.model.qwen_transformer.qwen_transformer import QwenTransf
 from mflux.models.qwen.variants.txt2img.qwen_image import QwenImage
 
 from exo.worker.engines.image.config import ImageModelConfig
-from exo.worker.engines.image.models.base import ModelAdapter, PromptData
+from exo.worker.engines.image.models.base import (
+    ModelAdapter,
+    PromptData,
+    RotaryEmbeddings,
+)
 from exo.worker.engines.image.models.qwen.wrappers import QwenJointBlockWrapper
 from exo.worker.engines.image.pipeline.block_wrapper import (
     JointBlockWrapper,
@@ -20,11 +25,6 @@ from exo.worker.engines.image.pipeline.block_wrapper import (
 
 
 class QwenPromptData(PromptData):
-    """Container for Qwen prompt encoding results.
-
-    Implements PromptData protocol with additional Qwen-specific attributes.
-    """
-
     def __init__(
         self,
         prompt_embeds: mx.array,
@@ -39,26 +39,21 @@ class QwenPromptData(PromptData):
 
     @property
     def prompt_embeds(self) -> mx.array:
-        """Text embeddings from encoder."""
         return self._prompt_embeds
 
     @property
     def pooled_prompt_embeds(self) -> mx.array:
-        """Placeholder for protocol compliance - Qwen doesn't use pooled embeds."""
         return self._prompt_embeds
 
     @property
     def negative_prompt_embeds(self) -> mx.array:
-        """Negative prompt embeddings for CFG."""
         return self._negative_prompt_embeds
 
     @property
     def negative_pooled_prompt_embeds(self) -> mx.array:
-        """Placeholder - Qwen doesn't use pooled embeds."""
         return self._negative_prompt_embeds
 
     def get_encoder_hidden_states_mask(self, positive: bool = True) -> mx.array:
-        """Return encoder_hidden_states_mask for the appropriate prompt."""
         if positive:
             return self._prompt_mask
         else:
@@ -68,12 +63,10 @@ class QwenPromptData(PromptData):
     def cond_image_grid(
         self,
     ) -> tuple[int, int, int] | list[tuple[int, int, int]] | None:
-        """Standard Qwen does not use conditioning image grid."""
         return None
 
     @property
     def conditioning_latents(self) -> mx.array | None:
-        """Standard Qwen does not use conditioning latents."""
         return None
 
     def get_batched_cfg_data(
@@ -91,10 +84,10 @@ class QwenPromptData(PromptData):
             - None for pooled (Qwen doesn't use it)
             - conditioning_latents: [2, latent_seq, latent_dim] or None
         """
-        pos_embeds = self._prompt_embeds  # [1, pos_seq, hidden]
-        neg_embeds = self._negative_prompt_embeds  # [1, neg_seq, hidden]
-        pos_mask = self._prompt_mask  # [1, pos_seq]
-        neg_mask = self._negative_prompt_mask  # [1, neg_seq]
+        pos_embeds = self._prompt_embeds
+        neg_embeds = self._negative_prompt_embeds
+        pos_mask = self._prompt_mask
+        neg_mask = self._negative_prompt_mask
 
         pos_seq_len = pos_embeds.shape[1]
         neg_seq_len = neg_embeds.shape[1]
@@ -141,7 +134,7 @@ class QwenPromptData(PromptData):
         return batched_embeds, batched_mask, None, cond_latents
 
 
-class QwenModelAdapter(ModelAdapter):
+class QwenModelAdapter(ModelAdapter[QwenImage, QwenTransformer]):
     """Adapter for Qwen-Image model.
 
     Key differences from Flux:
@@ -183,7 +176,7 @@ class QwenModelAdapter(ModelAdapter):
         self,
         text_seq_len: int,
         encoder_hidden_states_mask: mx.array | None = None,
-    ) -> list[JointBlockWrapper]:
+    ) -> list[JointBlockWrapper[Any]]:
         """Create wrapped joint blocks for Qwen."""
         return [
             QwenJointBlockWrapper(block, text_seq_len, encoder_hidden_states_mask)
@@ -193,8 +186,7 @@ class QwenModelAdapter(ModelAdapter):
     def get_single_block_wrappers(
         self,
         text_seq_len: int,
-    ) -> list[SingleBlockWrapper]:
-        """Qwen has no single blocks."""
+    ) -> list[SingleBlockWrapper[Any]]:
         return []
 
     def slice_transformer_blocks(
@@ -237,7 +229,6 @@ class QwenModelAdapter(ModelAdapter):
         hidden_states: mx.array,
         prompt_embeds: mx.array,
     ) -> tuple[mx.array, mx.array]:
-        """Compute image and text embeddings."""
         embedded_hidden = self._transformer.img_in(hidden_states)
         encoder_hidden_states = self._transformer.txt_norm(prompt_embeds)
         embedded_encoder = self._transformer.txt_in(encoder_hidden_states)
@@ -250,15 +241,6 @@ class QwenModelAdapter(ModelAdapter):
         pooled_prompt_embeds: mx.array | None = None,
         hidden_states: mx.array | None = None,
     ) -> mx.array:
-        """Compute time/text embeddings.
-
-        For Qwen, the time_text_embed only uses hidden_states for:
-        - batch_size (shape[0])
-        - dtype
-
-        This allows us to pass any tensor (latents, prompt_embeds) as a fallback
-        when embedded hidden_states are not yet available.
-        """
         # Use hidden_states if provided, otherwise fall back to pooled_prompt_embeds
         # (which for Qwen is the same as prompt_embeds)
         ref_tensor = (
@@ -270,7 +252,7 @@ class QwenModelAdapter(ModelAdapter):
                 "for Qwen text embeddings"
             )
 
-        timestep = QwenTransformer._compute_timestep(t, runtime_config)  # noqa: SLF001
+        timestep = QwenTransformer._compute_timestep(t, runtime_config)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
         batch_size = ref_tensor.shape[0]
         timestep = mx.broadcast_to(timestep, (batch_size,)).astype(mx.float32)
         return self._transformer.time_text_embed(timestep, ref_tensor)
@@ -284,21 +266,13 @@ class QwenModelAdapter(ModelAdapter):
         | list[tuple[int, int, int]]
         | None = None,
         kontext_image_ids: mx.array | None = None,
-    ) -> tuple[mx.array, mx.array]:
-        """Compute 3D rotary embeddings for Qwen.
-
-        Qwen uses video-aware 3D RoPE with separate embeddings for image and text.
-
-        Returns:
-            tuple[tuple[mx.array, mx.array], tuple[mx.array, mx.array]]:
-                ((img_cos, img_sin), (txt_cos, txt_sin))
-        """
+    ) -> RotaryEmbeddings:
         if encoder_hidden_states_mask is None:
             raise ValueError(
                 "encoder_hidden_states_mask is required for Qwen RoPE computation"
             )
 
-        return QwenTransformer._compute_rotary_embeddings(  # noqa: SLF001
+        return QwenTransformer._compute_rotary_embeddings(  # pyright: ignore[reportPrivateUsage]
             encoder_hidden_states_mask=encoder_hidden_states_mask,
             pos_embed=self._transformer.pos_embed,
             config=runtime_config,

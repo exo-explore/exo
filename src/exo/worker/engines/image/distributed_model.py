@@ -1,6 +1,6 @@
 from collections.abc import Generator
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 import mlx.core as mx
 from mflux.models.common.config.config import Config
@@ -23,7 +23,7 @@ from exo.worker.runner.bootstrap import logger
 
 class DistributedImageModel:
     _config: ImageModelConfig
-    _adapter: ModelAdapter
+    _adapter: ModelAdapter[Any, Any]
     _runner: DiffusionRunner
 
     def __init__(

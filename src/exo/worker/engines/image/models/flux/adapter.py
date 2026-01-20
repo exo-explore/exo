@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import mlx.core as mx
 from mflux.models.common.config.config import Config
@@ -9,7 +10,11 @@ from mflux.models.flux.model.flux_transformer.transformer import Transformer
 from mflux.models.flux.variants.txt2img.flux import Flux1
 
 from exo.worker.engines.image.config import ImageModelConfig
-from exo.worker.engines.image.models.base import ModelAdapter, PromptData
+from exo.worker.engines.image.models.base import (
+    ModelAdapter,
+    PromptData,
+    RotaryEmbeddings,
+)
 from exo.worker.engines.image.models.flux.wrappers import (
     FluxJointBlockWrapper,
     FluxSingleBlockWrapper,
@@ -21,8 +26,6 @@ from exo.worker.engines.image.pipeline.block_wrapper import (
 
 
 class FluxPromptData(PromptData):
-    """Container for Flux prompt encoding results."""
-
     def __init__(self, prompt_embeds: mx.array, pooled_prompt_embeds: mx.array):
         self._prompt_embeds = prompt_embeds
         self._pooled_prompt_embeds = pooled_prompt_embeds
@@ -37,38 +40,32 @@ class FluxPromptData(PromptData):
 
     @property
     def negative_prompt_embeds(self) -> mx.array | None:
-        """Flux does not use CFG."""
         return None
 
     @property
     def negative_pooled_prompt_embeds(self) -> mx.array | None:
-        """Flux does not use CFG."""
         return None
 
     def get_encoder_hidden_states_mask(self, positive: bool = True) -> mx.array | None:
-        """Flux does not use encoder hidden states mask."""
         return None
 
     @property
     def cond_image_grid(
         self,
     ) -> tuple[int, int, int] | list[tuple[int, int, int]] | None:
-        """Flux does not use conditioning image grid."""
         return None
 
     @property
     def conditioning_latents(self) -> mx.array | None:
-        """Flux does not use conditioning latents."""
         return None
 
     def get_batched_cfg_data(
         self,
     ) -> tuple[mx.array, mx.array, mx.array | None, mx.array | None] | None:
-        """Flux does not use CFG."""
         return None
 
 
-class FluxModelAdapter(ModelAdapter):
+class FluxModelAdapter(ModelAdapter[Flux1, Transformer]):
     def __init__(
         self,
         config: ImageModelConfig,
@@ -99,7 +96,7 @@ class FluxModelAdapter(ModelAdapter):
         self,
         text_seq_len: int,
         encoder_hidden_states_mask: mx.array | None = None,
-    ) -> list[JointBlockWrapper]:
+    ) -> list[JointBlockWrapper[Any]]:
         """Create wrapped joint blocks for Flux."""
         return [
             FluxJointBlockWrapper(block, text_seq_len)
@@ -109,7 +106,7 @@ class FluxModelAdapter(ModelAdapter):
     def get_single_block_wrappers(
         self,
         text_seq_len: int,
-    ) -> list[SingleBlockWrapper]:
+    ) -> list[SingleBlockWrapper[Any]]:
         """Create wrapped single blocks for Flux."""
         return [
             FluxSingleBlockWrapper(block, text_seq_len)
@@ -201,7 +198,7 @@ class FluxModelAdapter(ModelAdapter):
         | list[tuple[int, int, int]]
         | None = None,
         kontext_image_ids: mx.array | None = None,
-    ) -> mx.array:
+    ) -> RotaryEmbeddings:
         return Transformer.compute_rotary_embeddings(
             prompt_embeds,
             self._transformer.pos_embed,

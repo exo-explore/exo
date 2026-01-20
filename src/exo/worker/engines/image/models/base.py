@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 import mlx.core as mx
 from mflux.models.common.config.config import Config
@@ -16,51 +16,33 @@ if TYPE_CHECKING:
         SingleBlockWrapper,
     )
 
+ModelT = TypeVar("ModelT")
+TransformerT = TypeVar("TransformerT")
+
+RotaryEmbeddings = mx.array | tuple[mx.array, mx.array]
+
 
 class PromptData(ABC):
-    """Abstract base class for encoded prompt data.
-
-    All adapters must return prompt data that inherits from this class.
-    Model-specific prompt data classes can add additional attributes
-    (e.g., attention masks for Qwen).
-    """
+    @property
+    @abstractmethod
+    def prompt_embeds(self) -> mx.array: ...
 
     @property
     @abstractmethod
-    def prompt_embeds(self) -> mx.array:
-        """Text embeddings from encoder."""
-        ...
+    def pooled_prompt_embeds(self) -> mx.array: ...
 
     @property
     @abstractmethod
-    def pooled_prompt_embeds(self) -> mx.array:
-        """Pooled text embeddings (for Flux) or placeholder (for Qwen)."""
-        ...
+    def negative_prompt_embeds(self) -> mx.array | None: ...
 
     @property
     @abstractmethod
-    def negative_prompt_embeds(self) -> mx.array | None:
-        """Negative prompt embeddings for CFG (None if not using CFG)."""
-        ...
-
-    @property
-    @abstractmethod
-    def negative_pooled_prompt_embeds(self) -> mx.array | None:
-        """Negative pooled embeddings for CFG (None if not using CFG)."""
-        ...
+    def negative_pooled_prompt_embeds(self) -> mx.array | None: ...
 
     @abstractmethod
-    def get_encoder_hidden_states_mask(self, positive: bool = True) -> mx.array | None:
-        """Get encoder hidden states mask for attention.
-
-        Args:
-            positive: If True, return mask for positive prompt pass.
-                     If False, return mask for negative prompt pass.
-
-        Returns:
-            Attention mask array (Qwen) or None (Flux).
-        """
-        ...
+    def get_encoder_hidden_states_mask(
+        self, positive: bool = True
+    ) -> mx.array | None: ...
 
     @property
     @abstractmethod
@@ -70,7 +52,7 @@ class PromptData(ABC):
         """Conditioning image grid dimensions for edit mode.
 
         Returns:
-            Grid dimensions (Qwen edit) or None (standard generation).
+            Grid dimensions (edit) or None (standard generation).
         """
         ...
 
@@ -105,53 +87,42 @@ class PromptData(ABC):
         ...
 
 
-class ModelAdapter(ABC):
-    """Base class for model adapters with shared utilities."""
-
+class ModelAdapter(ABC, Generic[ModelT, TransformerT]):
     _config: ImageModelConfig
-    _model: Any
-    _transformer: Any
+    _model: ModelT
+    _transformer: TransformerT
 
     @property
     def config(self) -> ImageModelConfig:
         return self._config
 
     @property
-    def model(self) -> Any:
+    def model(self) -> ModelT:
         return self._model
 
     @property
-    def transformer(self) -> Any:
+    def transformer(self) -> TransformerT:
         return self._transformer
 
     @property
     @abstractmethod
-    def hidden_dim(self) -> int:
-        """Return the size of hidden_dim."""
-        ...
+    def hidden_dim(self) -> int: ...
 
     @property
     @abstractmethod
     def needs_cfg(self) -> bool:
-        """Whether this model uses classifier-free guidance.
-
-        Returns:
-            True if model requires two forward passes with guidance (e.g., Qwen)
-            False if model uses a single forward pass (e.g., Flux)
-        """
+        """Whether this model uses classifier-free guidance."""
         ...
 
     @abstractmethod
-    def _get_latent_creator(self) -> type:
-        """Return the latent creator class for this model."""
-        ...
+    def _get_latent_creator(self) -> type: ...
 
     @abstractmethod
     def get_joint_block_wrappers(
         self,
         text_seq_len: int,
         encoder_hidden_states_mask: mx.array | None = None,
-    ) -> list["JointBlockWrapper"]:
+    ) -> list["JointBlockWrapper[Any]"]:
         """Create wrapped joint transformer blocks with pipefusion support.
 
         Args:
@@ -167,7 +138,7 @@ class ModelAdapter(ABC):
     def get_single_block_wrappers(
         self,
         text_seq_len: int,
-    ) -> list["SingleBlockWrapper"]:
+    ) -> list["SingleBlockWrapper[Any]"]:
         """Create wrapped single transformer blocks with pipefusion support.
 
         Args:
@@ -199,6 +170,7 @@ class ModelAdapter(ABC):
         """Default implementation: no dimension computation needed.
 
         Override in edit adapters to compute dimensions from input image.
+        TODO(ciaran): this is a hack
 
         Returns:
             None (use user-specified dimensions)
@@ -207,12 +179,13 @@ class ModelAdapter(ABC):
 
     def create_latents(self, seed: int, runtime_config: Config) -> mx.array:
         """Create initial latents. Uses model-specific latent creator."""
+        model: Any = self.model
         return LatentCreator.create_for_txt2img_or_img2img(
             seed=seed,
             height=runtime_config.height,
             width=runtime_config.width,
             img2img=Img2Img(
-                vae=self.model.vae,
+                vae=model.vae,
                 latent_creator=self._get_latent_creator(),
                 sigmas=runtime_config.scheduler.sigmas,
                 init_time_step=runtime_config.init_time_step,
@@ -227,24 +200,24 @@ class ModelAdapter(ABC):
         seed: int,
         prompt: str,
     ) -> Image.Image:
-        """Decode latents to image. Shared implementation."""
+        model: Any = self.model  # Allow attribute access on model
         latents = self._get_latent_creator().unpack_latents(
             latents=latents,
             height=runtime_config.height,
             width=runtime_config.width,
         )
-        decoded = self.model.vae.decode(latents)
+        decoded = model.vae.decode(latents)
         # TODO(ciaran):
         # from mflux.models.common.vae.vae_util import VAEUtil
-        # VAEUtil.decode(vae=self.model.vae, latents=latents, tiling_config=self.tiling_config)
+        # VAEUtil.decode(vae=model.vae, latents=latents, tiling_config=self.tiling_config)
         generated_image = ImageUtil.to_image(
             decoded_latents=decoded,
             config=runtime_config,
             seed=seed,
             prompt=prompt,
-            quantization=self.model.bits,
-            lora_paths=self.model.lora_paths,
-            lora_scales=self.model.lora_scales,
+            quantization=model.bits,
+            lora_paths=model.lora_paths,
+            lora_scales=model.lora_scales,
             image_path=runtime_config.image_path,
             image_strength=runtime_config.image_strength,
             generation_time=0,
@@ -254,34 +227,14 @@ class ModelAdapter(ABC):
     @abstractmethod
     def encode_prompt(
         self, prompt: str, negative_prompt: str | None = None
-    ) -> "PromptData":
-        """Encode prompt into model-specific prompt data.
-
-        Args:
-            prompt: Text prompt
-            negative_prompt: Negative prompt for CFG
-
-        Returns:
-            PromptData containing embeddings (and model-specific extras)
-        """
-        ...
+    ) -> "PromptData": ...
 
     @abstractmethod
     def compute_embeddings(
         self,
         hidden_states: mx.array,
         prompt_embeds: mx.array,
-    ) -> tuple[mx.array, mx.array]:
-        """Compute x_embedder and context_embedder outputs.
-
-        Args:
-            hidden_states: Input latent states
-            prompt_embeds: Text embeddings from encoder
-
-        Returns:
-            Tuple of (embedded_hidden_states, embedded_encoder_states)
-        """
-        ...
+    ) -> tuple[mx.array, mx.array]: ...
 
     @abstractmethod
     def compute_text_embeddings(
@@ -290,19 +243,7 @@ class ModelAdapter(ABC):
         runtime_config: Config,
         pooled_prompt_embeds: mx.array | None = None,
         hidden_states: mx.array | None = None,
-    ) -> mx.array:
-        """Compute time/text embeddings for conditioning.
-
-        Args:
-            t: Current timestep
-            runtime_config: Runtime configuration
-            pooled_prompt_embeds: Pooled text embeddings (used by Flux)
-            hidden_states: Image hidden states
-
-        Returns:
-            Text embeddings tensor
-        """
-        ...
+    ) -> mx.array: ...
 
     @abstractmethod
     def compute_rotary_embeddings(
@@ -314,21 +255,7 @@ class ModelAdapter(ABC):
         | list[tuple[int, int, int]]
         | None = None,
         kontext_image_ids: mx.array | None = None,
-    ) -> Any:
-        """Compute rotary position embeddings.
-
-        Args:
-            prompt_embeds: Text embeddings
-            runtime_config: Runtime configuration
-            encoder_hidden_states_mask: Attention mask for text (Qwen)
-            cond_image_grid: Conditioning image grid dimensions (Qwen edit)
-            kontext_image_ids: Kontext image position IDs (Flux)
-
-        Returns:
-            Flux: mx.array
-            Qwen: tuple[mx.array, mx.array]
-        """
-        ...
+    ) -> RotaryEmbeddings: ...
 
     def merge_streams(
         self,
@@ -363,14 +290,6 @@ class ModelAdapter(ABC):
         hidden_states: mx.array,
         text_embeddings: mx.array,
     ) -> mx.array:
-        """Apply final norm and projection.
-
-        Args:
-            hidden_states: Hidden states (image only, text already removed)
-            text_embeddings: Conditioning embeddings
-
-        Returns:
-            Projected output
-        """
-        hidden_states = self._transformer.norm_out(hidden_states, text_embeddings)
-        return self._transformer.proj_out(hidden_states)
+        transformer: Any = self.transformer
+        hidden_states = transformer.norm_out(hidden_states, text_embeddings)
+        return transformer.proj_out(hidden_states)

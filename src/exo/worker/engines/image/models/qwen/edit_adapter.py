@@ -1,5 +1,7 @@
 import math
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import mlx.core as mx
 from mflux.models.common.config.config import Config
@@ -9,7 +11,11 @@ from mflux.models.qwen.variants.edit.qwen_edit_util import QwenEditUtil
 from mflux.models.qwen.variants.edit.qwen_image_edit import QwenImageEdit
 
 from exo.worker.engines.image.config import ImageModelConfig
-from exo.worker.engines.image.models.base import ModelAdapter, PromptData
+from exo.worker.engines.image.models.base import (
+    ModelAdapter,
+    PromptData,
+    RotaryEmbeddings,
+)
 from exo.worker.engines.image.models.qwen.wrappers import QwenJointBlockWrapper
 from exo.worker.engines.image.pipeline.block_wrapper import (
     JointBlockWrapper,
@@ -17,12 +23,16 @@ from exo.worker.engines.image.pipeline.block_wrapper import (
 )
 
 
+@dataclass(frozen=True)
+class EditImageDimensions:
+    vl_width: int
+    vl_height: int
+    vae_width: int
+    vae_height: int
+    image_paths: list[str]
+
+
 class QwenEditPromptData(PromptData):
-    """Container for Qwen edit prompt encoding results.
-
-    Includes vision-language encoded embeddings and edit-specific conditioning.
-    """
-
     def __init__(
         self,
         prompt_embeds: mx.array,
@@ -43,26 +53,21 @@ class QwenEditPromptData(PromptData):
 
     @property
     def prompt_embeds(self) -> mx.array:
-        """Text embeddings from vision-language encoder."""
         return self._prompt_embeds
 
     @property
     def pooled_prompt_embeds(self) -> mx.array:
-        """Placeholder for protocol compliance - Qwen doesn't use pooled embeds."""
         return self._prompt_embeds
 
     @property
     def negative_prompt_embeds(self) -> mx.array:
-        """Negative prompt embeddings for CFG."""
         return self._negative_prompt_embeds
 
     @property
     def negative_pooled_prompt_embeds(self) -> mx.array:
-        """Placeholder - Qwen doesn't use pooled embeds."""
         return self._negative_prompt_embeds
 
     def get_encoder_hidden_states_mask(self, positive: bool = True) -> mx.array:
-        """Return encoder_hidden_states_mask for the appropriate prompt."""
         if positive:
             return self._prompt_mask
         else:
@@ -70,22 +75,18 @@ class QwenEditPromptData(PromptData):
 
     @property
     def cond_image_grid(self) -> tuple[int, int, int] | list[tuple[int, int, int]]:
-        """Conditioning image grid dimensions."""
         return self._cond_image_grid
 
     @property
     def conditioning_latents(self) -> mx.array:
-        """Static image conditioning latents to concatenate with generated latents."""
         return self._conditioning_latents
 
     @property
     def qwen_image_ids(self) -> mx.array:
-        """Spatial position IDs for conditioning images."""
         return self._qwen_image_ids
 
     @property
     def is_edit_mode(self) -> bool:
-        """Indicates this is edit mode with conditioning latents."""
         return True
 
     def get_batched_cfg_data(
@@ -105,10 +106,10 @@ class QwenEditPromptData(PromptData):
             - batched_cond_latents: [2, latent_seq, latent_dim]
             TODO(ciaran): type this
         """
-        pos_embeds = self._prompt_embeds  # [1, pos_seq, hidden]
-        neg_embeds = self._negative_prompt_embeds  # [1, neg_seq, hidden]
-        pos_mask = self._prompt_mask  # [1, pos_seq]
-        neg_mask = self._negative_prompt_mask  # [1, neg_seq]
+        pos_embeds = self._prompt_embeds
+        neg_embeds = self._negative_prompt_embeds
+        pos_mask = self._prompt_mask
+        neg_mask = self._negative_prompt_mask
 
         pos_seq_len = pos_embeds.shape[1]
         neg_seq_len = neg_embeds.shape[1]
@@ -153,7 +154,7 @@ class QwenEditPromptData(PromptData):
         return batched_embeds, batched_mask, None, batched_cond_latents
 
 
-class QwenEditModelAdapter(ModelAdapter):
+class QwenEditModelAdapter(ModelAdapter[QwenImageEdit, QwenTransformer]):
     """Adapter for Qwen-Image-Edit model.
 
     Key differences from standard QwenModelAdapter:
@@ -177,11 +178,7 @@ class QwenEditModelAdapter(ModelAdapter):
         )
         self._transformer = self._model.transformer
 
-        self._vl_width: int | None = None
-        self._vl_height: int | None = None
-        self._vae_width: int | None = None
-        self._vae_height: int | None = None
-        self._image_paths: list[str] | None = None
+        self._edit_dimensions: EditImageDimensions | None = None
 
     @property
     def config(self) -> ImageModelConfig:
@@ -204,14 +201,14 @@ class QwenEditModelAdapter(ModelAdapter):
         gs = self._config.guidance_scale
         return gs is not None and gs > 1.0
 
-    def _get_latent_creator(self) -> type:
+    def _get_latent_creator(self) -> type[QwenLatentCreator]:
         return QwenLatentCreator
 
     def get_joint_block_wrappers(
         self,
         text_seq_len: int,
         encoder_hidden_states_mask: mx.array | None = None,
-    ) -> list[JointBlockWrapper]:
+    ) -> list[JointBlockWrapper[Any]]:
         """Create wrapped joint blocks for Qwen Edit."""
         return [
             QwenJointBlockWrapper(block, text_seq_len, encoder_hidden_states_mask)
@@ -221,7 +218,7 @@ class QwenEditModelAdapter(ModelAdapter):
     def get_single_block_wrappers(
         self,
         text_seq_len: int,
-    ) -> list[SingleBlockWrapper]:
+    ) -> list[SingleBlockWrapper[Any]]:
         """Qwen has no single blocks."""
         return []
 
@@ -245,11 +242,13 @@ class QwenEditModelAdapter(ModelAdapter):
         vl_w, vl_h, vae_w, vae_h, out_w, out_h = self._compute_dimensions_from_image(
             image_path
         )
-        self._vl_width = vl_w
-        self._vl_height = vl_h
-        self._vae_width = vae_w
-        self._vae_height = vae_h
-        self._image_paths = [str(image_path)]
+        self._edit_dimensions = EditImageDimensions(
+            vl_width=vl_w,
+            vl_height=vl_h,
+            vae_width=vae_w,
+            vae_height=vae_h,
+            image_paths=[str(image_path)],
+        )
         return out_w, out_h
 
     def create_latents(self, seed: int, runtime_config: Config) -> mx.array:
@@ -263,13 +262,8 @@ class QwenEditModelAdapter(ModelAdapter):
     def encode_prompt(
         self, prompt: str, negative_prompt: str | None = None
     ) -> QwenEditPromptData:
-        if (
-            self._image_paths is None
-            or self._vl_height is None
-            or self._vl_width is None
-            or self._vae_height is None
-            or self._vae_width is None
-        ):
+        dims = self._edit_dimensions
+        if dims is None:
             raise RuntimeError(
                 "set_image_dimensions() must be called before encode_prompt() "
                 "for QwenEditModelAdapter"
@@ -278,21 +272,19 @@ class QwenEditModelAdapter(ModelAdapter):
         if negative_prompt is None or negative_prompt == "":
             negative_prompt = " "
 
-        image_paths = self._image_paths
-
         # TODO(ciaran): config is untyped and unused, unsure if Config or RuntimeConfig is intended
         (
             prompt_embeds,
             prompt_mask,
             negative_prompt_embeds,
             negative_prompt_mask,
-        ) = self._model._encode_prompts_with_images(
+        ) = self._model._encode_prompts_with_images(  # pyright: ignore[reportPrivateUsage]
             prompt,
             negative_prompt,
-            image_paths,
+            dims.image_paths,
             self._config,
-            self._vl_width,
-            self._vl_height,
+            dims.vl_width,
+            dims.vl_height,
         )
 
         (
@@ -303,14 +295,13 @@ class QwenEditModelAdapter(ModelAdapter):
             num_images,
         ) = QwenEditUtil.create_image_conditioning_latents(
             vae=self._model.vae,
-            height=self._vae_height,
-            width=self._vae_width,
-            image_paths=image_paths,
-            vl_width=self._vl_width,
-            vl_height=self._vl_height,
+            height=dims.vae_height,
+            width=dims.vae_width,
+            image_paths=dims.image_paths,
+            vl_width=dims.vl_width,
+            vl_height=dims.vl_height,
         )
 
-        # Build cond_image_grid
         if num_images > 1:
             cond_image_grid: tuple[int, int, int] | list[tuple[int, int, int]] = [
                 (1, cond_h_patches, cond_w_patches) for _ in range(num_images)
@@ -333,7 +324,6 @@ class QwenEditModelAdapter(ModelAdapter):
         hidden_states: mx.array,
         prompt_embeds: mx.array,
     ) -> tuple[mx.array, mx.array]:
-        """Compute image and text embeddings."""
         embedded_hidden = self._transformer.img_in(hidden_states)
         encoder_hidden_states = self._transformer.txt_norm(prompt_embeds)
         embedded_encoder = self._transformer.txt_in(encoder_hidden_states)
@@ -346,7 +336,6 @@ class QwenEditModelAdapter(ModelAdapter):
         pooled_prompt_embeds: mx.array | None = None,
         hidden_states: mx.array | None = None,
     ) -> mx.array:
-        """Compute time/text embeddings."""
         ref_tensor = (
             hidden_states if hidden_states is not None else pooled_prompt_embeds
         )
@@ -356,7 +345,7 @@ class QwenEditModelAdapter(ModelAdapter):
                 "for Qwen text embeddings"
             )
 
-        timestep = QwenTransformer._compute_timestep(t, runtime_config)  # noqa: SLF001
+        timestep = QwenTransformer._compute_timestep(t, runtime_config)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
         batch_size = ref_tensor.shape[0]
         timestep = mx.broadcast_to(timestep, (batch_size,)).astype(mx.float32)
         return self._transformer.time_text_embed(timestep, ref_tensor)
@@ -370,27 +359,18 @@ class QwenEditModelAdapter(ModelAdapter):
         | list[tuple[int, int, int]]
         | None = None,
         kontext_image_ids: mx.array | None = None,
-    ) -> tuple[mx.array, mx.array]:
-        """Compute 3D rotary embeddings for Qwen edit."""
+    ) -> RotaryEmbeddings:
         if encoder_hidden_states_mask is None:
             raise ValueError(
                 "encoder_hidden_states_mask is required for Qwen RoPE computation"
             )
 
-        return QwenTransformer._compute_rotary_embeddings(  # noqa: SLF001
+        return QwenTransformer._compute_rotary_embeddings(  # pyright: ignore[reportPrivateUsage]
             encoder_hidden_states_mask=encoder_hidden_states_mask,
             pos_embed=self._transformer.pos_embed,
             config=runtime_config,
             cond_image_grid=cond_image_grid,
         )
-
-    def merge_streams(
-        self,
-        hidden_states: mx.array,
-        encoder_hidden_states: mx.array,
-    ) -> mx.array:
-        """Merge image and text streams."""
-        return mx.concatenate([encoder_hidden_states, hidden_states], axis=1)
 
     def apply_guidance(
         self,
@@ -409,11 +389,6 @@ class QwenEditModelAdapter(ModelAdapter):
     def _compute_dimensions_from_image(
         self, image_path: Path
     ) -> tuple[int, int, int, int, int, int]:
-        """Compute VL and VAE dimensions from input image.
-
-        Returns:
-            (vl_width, vl_height, vae_width, vae_height, output_width, output_height)
-        """
         from mflux.utils.image_util import ImageUtil
 
         pil_image = ImageUtil.load_image(str(image_path)).convert("RGB")

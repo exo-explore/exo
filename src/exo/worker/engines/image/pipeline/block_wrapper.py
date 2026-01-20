@@ -1,10 +1,13 @@
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Self
+from typing import Generic, Self, TypeVar
 
 import mlx.core as mx
 
+from exo.worker.engines.image.models.base import RotaryEmbeddings
 from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
+
+BlockT = TypeVar("BlockT")
 
 
 class BlockWrapperMode(Enum):
@@ -93,36 +96,26 @@ class BlockWrapperMixin:
         self._kv_cache = None
 
 
-class JointBlockWrapper(BlockWrapperMixin, ABC):
+class JointBlockWrapper(BlockWrapperMixin, ABC, Generic[BlockT]):
     """Base class for joint transformer block wrappers with pipefusion support.
 
-    Subclass this to add pipefusion support to any model's joint blocks.
     The wrapper:
     - Owns its KV cache (created lazily on first CACHING forward)
     - Controls the forward pass flow (CACHING vs PATCHED mode)
     - Handles patch slicing and cache operations
-
-    Model subclass provides:
-    - _compute_qkv: Compute Q, K, V tensors (norms, projections, RoPE)
-    - _compute_attention: Run scaled dot-product attention
-    - _apply_output: Apply output projection, feed-forward, residuals
     """
 
-    def __init__(self, block: Any, text_seq_len: int):
-        """Initialize the joint block wrapper.
+    block: BlockT
 
-        Args:
-            block: The joint transformer block to wrap
-            text_seq_len: Number of text tokens (constant for entire generation)
-        """
+    def __init__(self, block: BlockT, text_seq_len: int):
         self.block = block
         self._init_cache_state(text_seq_len)
 
     def set_encoder_mask(self, mask: mx.array | None) -> None:  # noqa: B027
         """Set the encoder hidden states mask for attention.
 
-        Override in subclasses that use attention masks (e.g., Qwen).
-        Default is a no-op for models that don't use masks (e.g., Flux).
+        Override in subclasses that use attention masks
+        Default is a no-op for models that don't use masks
         """
         del mask  # Unused in base class
 
@@ -131,19 +124,8 @@ class JointBlockWrapper(BlockWrapperMixin, ABC):
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: Any,
+        rotary_embeddings: RotaryEmbeddings,
     ) -> tuple[mx.array, mx.array]:
-        """Apply the joint block.
-
-        Args:
-            hidden_states: Image hidden states [B, num_img_tokens, D]
-            encoder_hidden_states: Text hidden states [B, text_seq_len, D]
-            text_embeddings: Conditioning embeddings [B, D]
-            rotary_embeddings: Rotary position embeddings (model-specific format)
-
-        Returns:
-            Tuple of (encoder_hidden_states, hidden_states) - text and image outputs
-        """
         if self._mode == BlockWrapperMode.CACHING:
             return self._forward_caching(
                 hidden_states, encoder_hidden_states, text_embeddings, rotary_embeddings
@@ -157,10 +139,9 @@ class JointBlockWrapper(BlockWrapperMixin, ABC):
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: Any,
+        rotary_embeddings: RotaryEmbeddings,
     ) -> tuple[mx.array, mx.array]:
         """CACHING mode: Full attention, store image K/V in cache."""
-        # Model computes Q/K/V for full sequence
         query, key, value = self._compute_qkv(
             hidden_states, encoder_hidden_states, text_embeddings, rotary_embeddings
         )
@@ -180,9 +161,8 @@ class JointBlockWrapper(BlockWrapperMixin, ABC):
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: Any,
+        rotary_embeddings: RotaryEmbeddings,
     ) -> tuple[mx.array, mx.array]:
-        """PATCHED mode: Compute patch Q/K/V, use cached image K/V for attention."""
         # hidden_states is already the patch (provided by runner)
         patch_hidden = hidden_states
 
@@ -214,40 +194,14 @@ class JointBlockWrapper(BlockWrapperMixin, ABC):
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: Any,
+        rotary_embeddings: RotaryEmbeddings,
         patch_mode: bool = False,
-    ) -> tuple[mx.array, mx.array, mx.array]:
-        """Compute Q, K, V tensors for sequence.
-
-        Includes normalization, projections, concatenation, and RoPE.
-
-        Args:
-            hidden_states: Image hidden states [B, num_img_tokens, D] or patch [B, patch_len, D]
-            encoder_hidden_states: Text hidden states [B, text_seq_len, D]
-            text_embeddings: Conditioning embeddings [B, D]
-            rotary_embeddings: Rotary position embeddings
-            patch_mode: If True, slice RoPE for current patch range
-
-        Returns:
-            Tuple of (query, key, value) with shape [B, H, text+img/patch, head_dim]
-        """
-        ...
+    ) -> tuple[mx.array, mx.array, mx.array]: ...
 
     @abstractmethod
     def _compute_attention(
         self, query: mx.array, key: mx.array, value: mx.array
-    ) -> mx.array:
-        """Compute scaled dot-product attention.
-
-        Args:
-            query: Query tensor [B, H, Q_len, head_dim]
-            key: Key tensor [B, H, KV_len, head_dim]
-            value: Value tensor [B, H, KV_len, head_dim]
-
-        Returns:
-            Attention output [B, Q_len, D]
-        """
-        ...
+    ) -> mx.array: ...
 
     @abstractmethod
     def _apply_output(
@@ -256,35 +210,19 @@ class JointBlockWrapper(BlockWrapperMixin, ABC):
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
-    ) -> tuple[mx.array, mx.array]:
-        """Apply output projection, feed-forward, and residuals.
-
-        Args:
-            attn_out: Attention output [B, text+img, D]
-            hidden_states: Original image hidden states (for residual)
-            encoder_hidden_states: Original text hidden states (for residual)
-            text_embeddings: Conditioning embeddings
-
-        Returns:
-            Tuple of (encoder_hidden_states, hidden_states) - updated text and image
-        """
-        ...
+    ) -> tuple[mx.array, mx.array]: ...
 
 
-class SingleBlockWrapper(BlockWrapperMixin, ABC):
+class SingleBlockWrapper(BlockWrapperMixin, ABC, Generic[BlockT]):
     """Base class for single-stream transformer block wrappers.
 
     Similar to JointBlockWrapper but for blocks that operate on a single
     concatenated [text, image] stream rather than separate streams.
     """
 
-    def __init__(self, block: Any, text_seq_len: int):
-        """Initialize the single block wrapper.
+    block: BlockT
 
-        Args:
-            block: The single transformer block to wrap
-            text_seq_len: Number of text tokens (constant for entire generation)
-        """
+    def __init__(self, block: BlockT, text_seq_len: int):
         self.block = block
         self._init_cache_state(text_seq_len)
 
@@ -292,18 +230,8 @@ class SingleBlockWrapper(BlockWrapperMixin, ABC):
         self,
         hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: Any,
+        rotary_embeddings: RotaryEmbeddings,
     ) -> mx.array:
-        """Apply the single block.
-
-        Args:
-            hidden_states: Concatenated [text, image] hidden states
-            text_embeddings: Conditioning embeddings [B, D]
-            rotary_embeddings: Rotary position embeddings
-
-        Returns:
-            Updated hidden states [B, text+img, D]
-        """
         if self._mode == BlockWrapperMode.CACHING:
             return self._forward_caching(
                 hidden_states, text_embeddings, rotary_embeddings
@@ -314,7 +242,7 @@ class SingleBlockWrapper(BlockWrapperMixin, ABC):
         self,
         hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: Any,
+        rotary_embeddings: RotaryEmbeddings,
     ) -> mx.array:
         """CACHING mode: Full attention, store image K/V in cache."""
         query, key, value = self._compute_qkv(
@@ -333,10 +261,9 @@ class SingleBlockWrapper(BlockWrapperMixin, ABC):
         self,
         hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: Any,
+        rotary_embeddings: RotaryEmbeddings,
     ) -> mx.array:
         """PATCHED mode: Compute patch Q/K/V, use cached image K/V for attention."""
-        # hidden_states is already [text, patch]
         query, key, value = self._compute_qkv(
             hidden_states, text_embeddings, rotary_embeddings, patch_mode=True
         )
@@ -358,28 +285,14 @@ class SingleBlockWrapper(BlockWrapperMixin, ABC):
         self,
         hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: Any,
+        rotary_embeddings: RotaryEmbeddings,
         patch_mode: bool = False,
-    ) -> tuple[mx.array, mx.array, mx.array]:
-        """Compute Q, K, V tensors for sequence.
-
-        Args:
-            hidden_states: Concatenated [text, image] hidden states
-            text_embeddings: Conditioning embeddings [B, D]
-            rotary_embeddings: Rotary position embeddings
-            patch_mode: If True, slice RoPE for current patch range
-
-        Returns:
-            Tuple of (query, key, value) with shape [B, H, seq_len, head_dim]
-        """
-        ...
+    ) -> tuple[mx.array, mx.array, mx.array]: ...
 
     @abstractmethod
     def _compute_attention(
         self, query: mx.array, key: mx.array, value: mx.array
-    ) -> mx.array:
-        """Compute scaled dot-product attention."""
-        ...
+    ) -> mx.array: ...
 
     @abstractmethod
     def _apply_output(
@@ -387,6 +300,4 @@ class SingleBlockWrapper(BlockWrapperMixin, ABC):
         attn_out: mx.array,
         hidden_states: mx.array,
         text_embeddings: mx.array,
-    ) -> mx.array:
-        """Apply output projection, feed-forward, and residuals."""
-        ...
+    ) -> mx.array: ...
