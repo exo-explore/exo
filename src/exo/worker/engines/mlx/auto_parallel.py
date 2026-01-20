@@ -314,7 +314,7 @@ def tensor_auto_parallel(
             sharded_to_all_linear_in_place,
         )
 
-    if hasattr(model, "shard"):
+    elif hasattr(model, "shard"):
         try:
             model.shard(group)  # type: ignore
             return patch_distributed_model(model)
