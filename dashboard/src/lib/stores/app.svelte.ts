@@ -223,6 +223,30 @@ export interface Conversation {
 }
 
 const STORAGE_KEY = "exo-conversations";
+const IMAGE_PARAMS_STORAGE_KEY = "exo-image-generation-params";
+
+// Image generation params interface matching backend API
+export interface ImageGenerationParams {
+	// Basic params
+	size: "512x512" | "768x768" | "1024x1024" | "1024x768" | "768x1024";
+	quality: "low" | "medium" | "high";
+	outputFormat: "png" | "jpeg" | "webp";
+	// Advanced params
+	seed: number | null;
+	numInferenceSteps: number | null;
+	guidance: number | null;
+	negativePrompt: string | null;
+}
+
+const DEFAULT_IMAGE_PARAMS: ImageGenerationParams = {
+	size: "1024x1024",
+	quality: "medium",
+	outputFormat: "png",
+	seed: null,
+	numInferenceSteps: null,
+	guidance: null,
+	negativePrompt: null,
+};
 
 interface GranularNodeState {
     nodeIdentities?: Record<string, RawNodeIdentity>;
@@ -395,6 +419,9 @@ class AppStore {
     topologyOnlyMode = $state(false);
     chatSidebarVisible = $state(true); // Shown by default
 
+    // Image generation params
+    imageGenerationParams = $state<ImageGenerationParams>({ ...DEFAULT_IMAGE_PARAMS });
+
     private fetchInterval: ReturnType<typeof setInterval> | null = null;
     private previewsInterval: ReturnType<typeof setInterval> | null = null;
     private lastConversationPersistTs = 0;
@@ -406,6 +433,7 @@ class AppStore {
             this.loadDebugModeFromStorage();
             this.loadTopologyOnlyModeFromStorage();
             this.loadChatSidebarVisibleFromStorage();
+            this.loadImageGenerationParamsFromStorage();
         }
     }
 
@@ -505,6 +533,49 @@ class AppStore {
         } catch (error) {
             console.error("Failed to save chat sidebar visibility:", error);
         }
+    }
+
+    private loadImageGenerationParamsFromStorage() {
+        try {
+            const stored = localStorage.getItem(IMAGE_PARAMS_STORAGE_KEY);
+            if (stored) {
+                const parsed = JSON.parse(stored) as Partial<ImageGenerationParams>;
+                this.imageGenerationParams = {
+                    ...DEFAULT_IMAGE_PARAMS,
+                    ...parsed,
+                };
+            }
+        } catch (error) {
+            console.error("Failed to load image generation params:", error);
+        }
+    }
+
+    private saveImageGenerationParamsToStorage() {
+        try {
+            localStorage.setItem(
+                IMAGE_PARAMS_STORAGE_KEY,
+                JSON.stringify(this.imageGenerationParams),
+            );
+        } catch (error) {
+            console.error("Failed to save image generation params:", error);
+        }
+    }
+
+    getImageGenerationParams(): ImageGenerationParams {
+        return this.imageGenerationParams;
+    }
+
+    setImageGenerationParams(params: Partial<ImageGenerationParams>) {
+        this.imageGenerationParams = {
+            ...this.imageGenerationParams,
+            ...params,
+        };
+        this.saveImageGenerationParamsToStorage();
+    }
+
+    resetImageGenerationParams() {
+        this.imageGenerationParams = { ...DEFAULT_IMAGE_PARAMS };
+        this.saveImageGenerationParamsToStorage();
     }
 
     /**
@@ -1613,20 +1684,45 @@ class AppStore {
                 );
             }
 
+            // Build request body using image generation params
+            const params = this.imageGenerationParams;
+            const hasAdvancedParams =
+                params.seed !== null ||
+                params.numInferenceSteps !== null ||
+                params.guidance !== null ||
+                (params.negativePrompt !== null && params.negativePrompt.trim() !== "");
+
+            const requestBody: Record<string, unknown> = {
+                model,
+                prompt,
+                quality: params.quality,
+                size: params.size,
+                output_format: params.outputFormat,
+                response_format: "b64_json",
+                stream: true,
+                partial_images: 3,
+            };
+
+            if (hasAdvancedParams) {
+                requestBody.advanced_params = {
+                    ...(params.seed !== null && { seed: params.seed }),
+                    ...(params.numInferenceSteps !== null && {
+                        num_inference_steps: params.numInferenceSteps,
+                    }),
+                    ...(params.guidance !== null && { guidance: params.guidance }),
+                    ...(params.negativePrompt !== null &&
+                        params.negativePrompt.trim() !== "" && {
+                            negative_prompt: params.negativePrompt,
+                        }),
+                };
+            }
+
             const response = await fetch("/v1/images/generations", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
                 },
-                body: JSON.stringify({
-                    model,
-                    prompt,
-                    quality: "medium",
-                    size: "1024x1024",
-                    response_format: "b64_json",
-                    stream: true,
-                    partial_images: 3,
-                }),
+                body: JSON.stringify(requestBody),
             });
 
             if (!response.ok) {
@@ -1815,3 +1911,10 @@ export const toggleChatSidebarVisible = () =>
 export const setChatSidebarVisible = (visible: boolean) =>
     appStore.setChatSidebarVisible(visible);
 export const refreshState = () => appStore.fetchState();
+
+// Image generation params
+export const imageGenerationParams = () => appStore.getImageGenerationParams();
+export const setImageGenerationParams = (params: Partial<ImageGenerationParams>) =>
+    appStore.setImageGenerationParams(params);
+export const resetImageGenerationParams = () =>
+    appStore.resetImageGenerationParams();

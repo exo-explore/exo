@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { isLoading, sendMessage, generateImage, selectedChatModel, setSelectedChatModel, instances, ttftMs, tps, totalTokens } from '$lib/stores/app.svelte';
 	import ChatAttachments from './ChatAttachments.svelte';
+	import ImageParamsPanel from './ImageParamsPanel.svelte';
 	import type { ChatUploadedFile } from '$lib/types/files';
 	import { processUploadedFiles, getAcceptString } from '$lib/types/files';
 
@@ -379,7 +380,12 @@
 				{/if}
 			</div>
 		{/if}
-		
+
+		<!-- Image params panel (shown for image models) -->
+		{#if showModelSelector && isImageModel()}
+			<ImageParamsPanel />
+		{/if}
+
 		<!-- Attached files preview -->
 		{#if uploadedFiles.length > 0}
 			<div class="px-3 pt-3">
