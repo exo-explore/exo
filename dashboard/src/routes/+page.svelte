@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { TopologyGraph, ChatForm, ChatMessages, ChatSidebar, ModelCard } from '$lib/components';
-	import { 
-		hasStartedChat, 
-		isTopologyMinimized, 
-		topologyData, 
+	import { TopologyGraph, ChatForm, ChatMessages, ChatSidebar, ModelCard, ModelPickerModal } from '$lib/components';
+	import {
+		hasStartedChat,
+		isTopologyMinimized,
+		topologyData,
 		lastUpdate,
 		clearChat,
 		instances,
@@ -25,6 +25,7 @@
 		type DownloadProgress,
 		type PlacementPreview
 	} from '$lib/stores/app.svelte';
+	import { favorites, toggleFavorite } from '$lib/stores/favorites.svelte';
 	import HeaderNav from '$lib/components/HeaderNav.svelte';
 	import { fade, fly } from 'svelte/transition';
 	import { cubicInOut } from 'svelte/easing';
@@ -47,7 +48,26 @@ const sidebarVisible = $derived(chatSidebarVisible());
 	let mounted = $state(false);
 
 	// Instance launch state
-	let models = $state<Array<{id: string, name?: string, storage_size_megabytes?: number}>>([]);
+	// Model type with new grouping fields
+	interface ModelInfo {
+		id: string; // Full HuggingFace model_id (e.g., "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit")
+		name?: string;
+		storage_size_megabytes?: number;
+		base_model?: string;
+		base_model_name?: string;
+		quantization?: string;
+		architecture?: string;
+		supports_tensor?: boolean;
+		tagline?: string;
+		capabilities?: string[];
+		family?: string;
+	}
+
+	// Model picker modal state
+	let isModelPickerOpen = $state(false);
+	const favoritesSet = $derived(favorites());
+	const existingModelIds = $derived(new Set(models.map(m => m.id)));
+	let models = $state<Array<ModelInfo>>([]);
 	let selectedSharding = $state<'Pipeline' | 'Tensor'>('Pipeline');
 	type InstanceMeta = 'MlxRing' | 'MlxIbv' | 'MlxJaccl';
 	
@@ -113,6 +133,7 @@ let instanceDownloadExpandedNodes = $state<Set<string>>(new Set());
 	// Custom dropdown state
 	let isModelDropdownOpen = $state(false);
 	let modelDropdownSearch = $state('');
+
 	
 	// Slider dragging state
 	let isDraggingSlider = $state(false);
@@ -240,23 +261,43 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 
 	// Helper to check if a model can be launched (has valid placement with >= minNodes)
 	function canModelFit(modelId: string): boolean {
+		// Helper to check memory based on model info
+		const checkModelMemory = (): boolean => {
+			const model = models.find(m => m.id === modelId);
+			if (!model) return true; // Unknown model, be permissive
+			return hasEnoughMemory(model);
+		};
+
+		// If no previews are loaded yet, fall back to memory check
+		if (!previewsData || previewsData.length === 0) {
+			return checkModelMemory();
+		}
+
+		// Find previews for this specific model
+		const modelPreviews = previewsData.filter(
+			(p: PlacementPreview) => p.model_id === modelId
+		);
+
+		// If we have no previews for this model, fall back to memory check
+		if (modelPreviews.length === 0) {
+			return checkModelMemory();
+		}
 
 		// Find previews matching the model, sharding, and instance type
-		const matchingPreviews = previewsData.filter(
-			(p: PlacementPreview) => 
-				p.model_id === modelId && 
-				p.sharding === selectedSharding && 
+		const matchingPreviews = modelPreviews.filter(
+			(p: PlacementPreview) =>
+				p.sharding === selectedSharding &&
 				matchesSelectedRuntime(p.instance_meta) &&
 				p.error === null &&
 				p.memory_delta_by_node !== null
 		);
-		
+
 		// Check if any preview has node count >= selectedMinNodes
 		return matchingPreviews.some((p: PlacementPreview) => getPreviewNodeCount(p) >= selectedMinNodes);
 	}
 	
 	// Helper to get model size in GB (from megabytes)
-	function getModelSizeGB(model: {id: string, name?: string, storage_size_megabytes?: number}): number {
+	function getModelSizeGB(model: ModelInfo): number {
 		if (model.storage_size_megabytes) {
 			return model.storage_size_megabytes / 1024;
 		}
@@ -274,7 +315,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	});
 	
 	// Check if a model has enough memory to run
-	function hasEnoughMemory(model: {id: string, name?: string, storage_size_megabytes?: number}): boolean {
+	function hasEnoughMemory(model: ModelInfo): boolean {
 		const modelSizeGB = getModelSizeGB(model);
 		return modelSizeGB <= availableMemoryGB();
 	}
@@ -287,14 +328,78 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			const bCanFit = hasEnoughMemory(b);
 			if (aCanFit && !bCanFit) return -1;
 			if (!aCanFit && bCanFit) return 1;
-			
+
 			// Then: sort by size (biggest first)
 			const aSize = getModelSizeGB(a);
 			const bSize = getModelSizeGB(b);
 			return bSize - aSize;
 		});
 	});
-	
+
+	// Group models by base_model for two-step selection
+	interface ModelGroup {
+		id: string;
+		name: string;
+		variants: ModelInfo[];
+		smallestVariant: ModelInfo;
+		hasMultipleVariants: boolean;
+	}
+
+	const groupedModels = $derived(() => {
+		const groups = new Map<string, ModelGroup>();
+
+		for (const model of models) {
+			const groupId = model.base_model || model.id;
+			const groupName = model.base_model_name || model.name || model.id;
+
+			if (!groups.has(groupId)) {
+				groups.set(groupId, {
+					id: groupId,
+					name: groupName,
+					variants: [],
+					smallestVariant: model,
+					hasMultipleVariants: false,
+				});
+			}
+
+			const group = groups.get(groupId)!;
+			group.variants.push(model);
+
+			// Track smallest variant (for display when collapsed)
+			if ((model.storage_size_megabytes || 0) < (group.smallestVariant.storage_size_megabytes || Infinity)) {
+				group.smallestVariant = model;
+			}
+		}
+
+		// Sort variants within each group by size
+		for (const group of groups.values()) {
+			group.variants.sort((a, b) => (a.storage_size_megabytes || 0) - (b.storage_size_megabytes || 0));
+			group.hasMultipleVariants = group.variants.length > 1;
+		}
+
+		// Convert to array and sort by smallest variant size (biggest first)
+		return Array.from(groups.values()).sort((a, b) => {
+			const aCanFit = hasEnoughMemory(a.smallestVariant);
+			const bCanFit = hasEnoughMemory(b.smallestVariant);
+			if (aCanFit && !bCanFit) return -1;
+			if (!aCanFit && bCanFit) return 1;
+			return (b.smallestVariant.storage_size_megabytes || 0) - (a.smallestVariant.storage_size_megabytes || 0);
+		});
+	});
+
+	// State for expanded model groups in dropdown
+	let expandedGroups = $state<Set<string>>(new Set());
+
+	function toggleGroupExpanded(groupId: string) {
+		const next = new Set(expandedGroups);
+		if (next.has(groupId)) {
+			next.delete(groupId);
+		} else {
+			next.add(groupId);
+		}
+		expandedGroups = next;
+	}
+
 	// Compute model tags (FASTEST, BIGGEST)
 	const modelTags = $derived(() => {
 		const tags: Record<string, string[]> = {};
@@ -357,6 +462,85 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			}
 		} catch (error) {
 			console.error('Failed to fetch models:', error);
+		}
+	}
+
+	async function addModelFromPicker(modelId: string): Promise<void> {
+		const response = await fetch('/models/custom', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ model_id: modelId })
+		});
+
+		if (!response.ok) {
+			let errorMessage = 'Failed to add model';
+			let isAlreadyExists = false;
+			try {
+				const data = await response.json();
+				// Handle various error formats
+				// Format: {"error": {"message": "...", "type": "..."}}
+				if (data.error?.message) {
+					errorMessage = data.error.message;
+					isAlreadyExists = errorMessage.toLowerCase().includes('already exists');
+				}
+				// Format: {"detail": "..."} or {"detail": {...}}
+				else if (data.detail) {
+					if (typeof data.detail === 'string') {
+						errorMessage = data.detail;
+					} else if (typeof data.detail === 'object') {
+						const detail = data.detail;
+						if (detail.msg) {
+							errorMessage = detail.msg;
+						} else if (detail.message) {
+							errorMessage = detail.message;
+						} else if (Array.isArray(detail) && detail[0]?.msg) {
+							errorMessage = detail.map((e: { msg?: string }) =>
+								e.msg || JSON.stringify(e)
+							).join('; ');
+						} else {
+							errorMessage = JSON.stringify(detail);
+						}
+					}
+					isAlreadyExists = errorMessage.toLowerCase().includes('already exists');
+				}
+				// Format: {"message": "..."}
+				else if (typeof data.message === 'string') {
+					errorMessage = data.message;
+					isAlreadyExists = errorMessage.toLowerCase().includes('already exists');
+				}
+			} catch {
+				try {
+					const text = await response.text();
+					if (text) errorMessage = text.slice(0, 200);
+				} catch {
+					errorMessage = `Server error (${response.status})`;
+				}
+			}
+
+			// If model already exists, refresh the list and don't throw
+			if (isAlreadyExists) {
+				await fetchModels();
+				return; // Success - model is already there
+			}
+
+			throw new Error(errorMessage);
+		}
+
+		// Refresh models list after adding
+		await fetchModels();
+	}
+
+	async function deleteCustomModel(shortId: string) {
+		try {
+			const response = await fetch(`/models/custom/${encodeURIComponent(shortId)}`, {
+				method: 'DELETE'
+			});
+
+			if (response.ok) {
+				await fetchModels();
+			}
+		} catch (error) {
+			console.error('Failed to delete custom model:', error);
 		}
 	}
 
@@ -1477,15 +1661,15 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 							<div class="w-2 h-2 border border-exo-yellow/60 rotate-45"></div>
 							<h3 class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase">Launch Instance</h3>
 							<div class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"></div>
-							<span class="text-sm text-white/70 font-mono">{models.length} models</span>
+							<span class="text-sm text-white/70 font-mono">{models.length}</span>
 						</div>
 						
-						<!-- Model Dropdown (Custom) -->
+						<!-- Model Picker Trigger -->
 						<div class="flex-shrink-0 mb-3 relative">
 							<button
 								type="button"
-								onclick={() => isModelDropdownOpen = !isModelDropdownOpen}
-								class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-2.5 text-sm font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 {isModelDropdownOpen ? 'border-exo-yellow/70' : ''}"
+								onclick={() => isModelPickerOpen = true}
+								class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-2.5 text-sm font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70"
 							>
 								{#if selectedModelId}
 									{@const foundModel = models.find(m => m.id === selectedModelId)}
@@ -1502,71 +1686,11 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 									<span class="text-white/50">— SELECT MODEL —</span>
 								{/if}
 							</button>
-							<div class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-200 {isModelDropdownOpen ? 'rotate-180' : ''}">
+							<div class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
 								<svg class="w-4 h-4 text-exo-yellow/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
 								</svg>
 							</div>
-							
-							{#if isModelDropdownOpen}
-								<!-- Backdrop to close dropdown -->
-								<button 
-									type="button"
-									class="fixed inset-0 z-40 cursor-default" 
-									onclick={() => isModelDropdownOpen = false}
-									aria-label="Close dropdown"
-								></button>
-								
-								<!-- Dropdown Panel -->
-							<div class="absolute top-full left-0 right-0 mt-1 bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-50 max-h-64 overflow-y-auto">
-								<!-- Search within dropdown -->
-								<div class="sticky top-0 bg-exo-dark-gray border-b border-exo-medium-gray/30 p-2">
-										<input
-											type="text"
-											placeholder="Search models..."
-											bind:value={modelDropdownSearch}
-											class="w-full bg-exo-dark-gray/60 border border-exo-medium-gray/30 rounded px-2 py-1.5 text-xs font-mono text-white/80 placeholder:text-white/40 focus:outline-none focus:border-exo-yellow/50"
-										/>
-									</div>
-									
-									<!-- Options -->
-									<div class="py-1">
-										{#each sortedModels().filter(m => 
-											!modelDropdownSearch || 
-											(m.name || m.id).toLowerCase().includes(modelDropdownSearch.toLowerCase())
-										) as model}
-											{@const sizeGB = getModelSizeGB(model)}
-											{@const modelCanFit = hasEnoughMemory(model)}
-											<button
-												type="button"
-												onclick={() => {
-													if (modelCanFit) {
-														selectPreviewModel(model.id);
-														saveLaunchDefaults();
-														isModelDropdownOpen = false;
-														modelDropdownSearch = '';
-													}
-												}}
-												disabled={!modelCanFit}
-												class="w-full px-3 py-2 text-left text-sm font-mono tracking-wide transition-colors duration-100 flex items-center justify-between gap-2 {
-													selectedModelId === model.id 
-														? 'bg-transparent text-exo-yellow cursor-pointer' 
-														: modelCanFit 
-															? 'text-white/80 hover:text-exo-yellow cursor-pointer' 
-															: 'text-white/30 cursor-default'
-												}"
-											>
-												<span class="truncate">{model.name || model.id}</span>
-												<span class="flex-shrink-0 text-xs {modelCanFit ? 'text-white/50' : 'text-red-400/60'}">
-													{sizeGB >= 1 ? sizeGB.toFixed(0) : sizeGB.toFixed(1)}GB
-												</span>
-											</button>
-										{:else}
-											<div class="px-3 py-2 text-xs text-white/50 font-mono">No models found</div>
-										{/each}
-									</div>
-								</div>
-							{/if}
 						</div>
 						
 						<!-- Configuration Options -->
@@ -1979,3 +2103,20 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	</main>
 
 </div>
+
+<!-- Model Picker Modal -->
+<ModelPickerModal
+	isOpen={isModelPickerOpen}
+	{models}
+	selectedModelId={selectedModelId}
+	favorites={favoritesSet}
+	{existingModelIds}
+	canModelFit={canModelFit}
+	onSelect={(modelId) => {
+		selectPreviewModel(modelId);
+		saveLaunchDefaults();
+	}}
+	onClose={() => isModelPickerOpen = false}
+	onToggleFavorite={toggleFavorite}
+	onAddModel={addModelFromPicker}
+/>

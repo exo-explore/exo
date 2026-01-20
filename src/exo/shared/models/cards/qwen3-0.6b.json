@@ -1,0 +1,11 @@
+{
+  "model_id": "mlx-community/Qwen3-0.6B-4bit",
+  "name": "Qwen3 0.6B (4-bit)",
+  "description": "Qwen3 0.6B is a large language model trained on the Qwen3 0.6B dataset.",
+  "tags": [],
+  "supports_tensor": false,
+  "storage_size_bytes": 342884352,
+  "n_layers": 28,
+  "hidden_size": 1024,
+  "is_user_added": false
+}

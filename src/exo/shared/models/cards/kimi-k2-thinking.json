@@ -1,0 +1,11 @@
+{
+  "model_id": "mlx-community/Kimi-K2-Thinking",
+  "name": "Kimi K2 Thinking (4-bit)",
+  "description": "Kimi K2 Thinking is the latest, most capable version of open-source thinking model.",
+  "tags": [],
+  "supports_tensor": true,
+  "storage_size_bytes": 706522120192,
+  "n_layers": 61,
+  "hidden_size": 7168,
+  "is_user_added": false
+}

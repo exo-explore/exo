@@ -190,21 +190,32 @@ def parse_int_list(values: list[str]) -> list[int]:
     return out
 
 
-def resolve_model_short_id(client: ExoClient, model_arg: str) -> tuple[str, str]:
+def resolve_model_id(client: ExoClient, model_arg: str) -> str:
+    """Resolve a model argument to a full model_id.
+
+    The model_arg can be a full model_id (e.g., "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit")
+    or a partial match against registered models.
+
+    Returns:
+        The full model_id for the model.
+
+    Raises:
+        ValueError: If the model is not found in the registry.
+    """
     models = client.request_json("GET", "/models") or {}
     data = models.get("data") or []
 
+    # First try exact match
     for m in data:
         if m.get("id") == model_arg:
-            short_id = str(m["id"])
-            full_id = str(m.get("hugging_face_id") or m["id"])
-            return short_id, full_id
+            return str(m["id"])
 
+    # Then try partial match (for backwards compatibility)
+    model_arg_lower = model_arg.lower()
     for m in data:
-        if m.get("hugging_face_id") == model_arg:
-            short_id = str(m["id"])
-            full_id = str(m["hugging_face_id"])
-            return short_id, full_id
+        model_id = str(m.get("id") or "")
+        if model_arg_lower in model_id.lower():
+            return model_id
 
     raise ValueError(f"Model not found in /models: {model_arg}")
 
@@ -370,15 +381,15 @@ def main() -> int:
         return 2
 
     client = ExoClient(args.host, args.port, timeout_s=args.timeout)
-    short_id, full_model_id = resolve_model_short_id(client, args.model)
+    model_id = resolve_model_id(client, args.model)
 
     previews_resp = client.request_json(
-        "GET", "/instance/previews", params={"model_id": short_id}
+        "GET", "/instance/previews", params={"model_id": model_id}
     )
     previews = previews_resp.get("previews") or []
 
     tokenizer = AutoTokenizer.from_pretrained(
-        full_model_id,
+        model_id,
         trust_remote_code=True,
     )
     if tokenizer is None:
@@ -386,7 +397,7 @@ def main() -> int:
 
     try:
         prompt_sizer = PromptSizer(tokenizer)
-        logger.debug(f"[exo-bench] loaded tokenizer: {full_model_id} for prompt sizer")
+        logger.debug(f"[exo-bench] loaded tokenizer: {model_id} for prompt sizer")
     except Exception:
         logger.error("[exo-bench] tokenizer usable but prompt sizing failed")
         raise
@@ -443,7 +454,7 @@ def main() -> int:
         reverse=True,
     )
 
-    logger.debug(f"exo-bench model: short_id={short_id} full_id={full_model_id}")
+    logger.debug(f"exo-bench model: {model_id}")
     logger.info(f"placements: {len(selected)}")
     for p in selected:
         logger.info(
@@ -482,37 +493,25 @@ def main() -> int:
         try:
             for i in range(args.warmup):
                 run_one_completion(
-                    client, full_model_id, pp_list[0], tg_list[0], prompt_sizer
+                    client, model_id, pp_list[0], tg_list[0], prompt_sizer
                 )
                 logger.debug(f"  warmup {i + 1}/{args.warmup} done")
 
             for pp in pp_list:
-                # if (
-                #     pp * n_nodes > 2048
-                #     and "ring" in instance_meta.lower()
-                #     and "tensor" in sharding.lower()
-                # ):
-                #     model_card = MODEL_CARDS[short_id]
-                #     if model_card.metadata.storage_size > Memory.from_gb(10):
-                #         logger.info(
-                #             f"Skipping tensor ring as this is too slow for model of size {model_card.metadata.storage_size} on {n_nodes=}"
-                #         )
-                #         continue
                 for tg in tg_list:
                     runs: list[dict[str, Any]] = []
                     for r in range(args.repeat):
                         time.sleep(3)
                         try:
                             row, actual_pp_tokens = run_one_completion(
-                                client, full_model_id, pp, tg, prompt_sizer
+                                client, model_id, pp, tg, prompt_sizer
                             )
                         except Exception as e:
                             logger.error(e)
                             continue
                         row.update(
                             {
-                                "model_short_id": short_id,
-                                "model_id": full_model_id,
+                                "model_id": model_id,
                                 "placement_sharding": sharding,
                                 "placement_instance_meta": instance_meta,
                                 "placement_nodes": n_nodes,

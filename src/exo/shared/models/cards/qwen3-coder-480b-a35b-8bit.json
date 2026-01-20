@@ -1,0 +1,11 @@
+{
+  "model_id": "mlx-community/Qwen3-Coder-480B-A35B-Instruct-8bit",
+  "name": "Qwen3 Coder 480B A35B (8-bit)",
+  "description": "Qwen3 Coder 480B (Active 35B) is a large language model trained on the Qwen3 Coder 480B dataset.",
+  "tags": [],
+  "supports_tensor": true,
+  "storage_size_bytes": 579820584960,
+  "n_layers": 62,
+  "hidden_size": 6144,
+  "is_user_added": false
+}

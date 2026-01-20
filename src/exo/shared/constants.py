@@ -40,6 +40,9 @@ EXO_TEST_LOG = EXO_CACHE_HOME / "exo_test.log"
 EXO_NODE_ID_KEYPAIR = EXO_CONFIG_HOME / "node_id.keypair"
 EXO_CONFIG_FILE = EXO_CONFIG_HOME / "config.toml"
 
+# User-added custom models (config)
+EXO_USER_MODELS_DIR = EXO_CONFIG_HOME / "models"
+
 # libp2p topics for event forwarding
 LIBP2P_LOCAL_EVENTS_TOPIC = "worker_events"
 LIBP2P_GLOBAL_EVENTS_TOPIC = "global_events"

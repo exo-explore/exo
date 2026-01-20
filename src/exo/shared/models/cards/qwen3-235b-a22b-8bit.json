@@ -1,0 +1,11 @@
+{
+  "model_id": "mlx-community/Qwen3-235B-A22B-Instruct-2507-8bit",
+  "name": "Qwen3 235B A22B (8-bit)",
+  "description": "Qwen3 235B (Active 22B) is a large language model trained on the Qwen3 235B dataset.",
+  "tags": [],
+  "supports_tensor": true,
+  "storage_size_bytes": 268435456000,
+  "n_layers": 94,
+  "hidden_size": 4096,
+  "is_user_added": false
+}

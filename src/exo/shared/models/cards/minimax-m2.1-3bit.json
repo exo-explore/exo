@@ -1,0 +1,11 @@
+{
+  "model_id": "mlx-community/MiniMax-M2.1-3bit",
+  "name": "MiniMax M2.1 3bit",
+  "description": "MiniMax M2.1 3bit",
+  "tags": [],
+  "supports_tensor": true,
+  "storage_size_bytes": 100086644736,
+  "n_layers": 61,
+  "hidden_size": 3072,
+  "is_user_added": false
+}

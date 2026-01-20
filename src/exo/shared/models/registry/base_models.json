@@ -1,0 +1,202 @@
+{
+  "base_models": [
+    {
+      "id": "llama-3.1-8b",
+      "family": "llama",
+      "name": "Llama 3.1 8B",
+      "description": "Meta's Llama 3.1 8B instruction-tuned model with 128K context window",
+      "tagline": "Fast and capable instruction-following model",
+      "capabilities": ["text"],
+      "architecture": "llama",
+      "n_layers": 32,
+      "hidden_size": 4096
+    },
+    {
+      "id": "llama-3.1-70b",
+      "family": "llama",
+      "name": "Llama 3.1 70B",
+      "description": "Meta's Llama 3.1 70B instruction-tuned model with 128K context window",
+      "tagline": "Powerful general-purpose model with 128K context",
+      "capabilities": ["text", "code"],
+      "architecture": "llama",
+      "n_layers": 80,
+      "hidden_size": 8192
+    },
+    {
+      "id": "llama-3.2-1b",
+      "family": "llama",
+      "name": "Llama 3.2 1B",
+      "description": "Meta's Llama 3.2 1B lightweight instruction-tuned model",
+      "tagline": "Ultra-lightweight for edge and mobile",
+      "capabilities": ["text"],
+      "architecture": "llama",
+      "n_layers": 16,
+      "hidden_size": 2048
+    },
+    {
+      "id": "llama-3.2-3b",
+      "family": "llama",
+      "name": "Llama 3.2 3B",
+      "description": "Meta's Llama 3.2 3B instruction-tuned model",
+      "tagline": "Compact model balancing size and capability",
+      "capabilities": ["text"],
+      "architecture": "llama",
+      "n_layers": 28,
+      "hidden_size": 3072
+    },
+    {
+      "id": "llama-3.3-70b",
+      "family": "llama",
+      "name": "Llama 3.3 70B",
+      "description": "Meta's Llama 3.3 70B instruction-tuned model with improved performance",
+      "tagline": "Meta's flagship open-weight model",
+      "capabilities": ["text", "code"],
+      "architecture": "llama",
+      "n_layers": 80,
+      "hidden_size": 8192
+    },
+    {
+      "id": "deepseek-v3.1",
+      "family": "deepseek",
+      "name": "DeepSeek V3.1",
+      "description": "DeepSeek's V3.1 model with 685B parameters using MoE architecture",
+      "tagline": "State-of-the-art MoE with 685B parameters",
+      "capabilities": ["text", "thinking", "code"],
+      "architecture": "deepseek_v32",
+      "n_layers": 61,
+      "hidden_size": 7168
+    },
+    {
+      "id": "kimi-k2",
+      "family": "kimi",
+      "name": "Kimi K2",
+      "description": "Moonshot AI's Kimi K2 large language model",
+      "tagline": "Powerful MoE from Moonshot AI",
+      "capabilities": ["text", "code"],
+      "architecture": "deepseek_v3",
+      "n_layers": 61,
+      "hidden_size": 7168
+    },
+    {
+      "id": "qwen3-0.6b",
+      "family": "qwen",
+      "name": "Qwen3 0.6B",
+      "description": "Alibaba's Qwen3 0.6B lightweight model",
+      "tagline": "Tiny but capable for simple tasks",
+      "capabilities": ["text"],
+      "architecture": "qwen2",
+      "n_layers": 28,
+      "hidden_size": 1024
+    },
+    {
+      "id": "qwen3-30b-a3b",
+      "family": "qwen",
+      "name": "Qwen3 30B A3B",
+      "description": "Alibaba's Qwen3 30B with A3B MoE architecture",
+      "tagline": "Efficient MoE for balanced performance",
+      "capabilities": ["text", "code"],
+      "architecture": "qwen3_moe",
+      "n_layers": 48,
+      "hidden_size": 2048
+    },
+    {
+      "id": "qwen3-80b-a3b",
+      "family": "qwen",
+      "name": "Qwen3 80B A3B",
+      "description": "Alibaba's Qwen3 80B with A3B MoE architecture",
+      "tagline": "Large-scale MoE with strong capabilities",
+      "capabilities": ["text", "code"],
+      "architecture": "qwen3_moe",
+      "n_layers": 128,
+      "hidden_size": 2048
+    },
+    {
+      "id": "qwen3-80b-a3b-thinking",
+      "family": "qwen",
+      "name": "Qwen3 80B A3B Thinking",
+      "description": "Alibaba's Qwen3 80B A3B with enhanced reasoning capabilities",
+      "tagline": "Reasoning-enhanced large MoE model",
+      "capabilities": ["text", "thinking", "code"],
+      "architecture": "qwen3_moe",
+      "n_layers": 128,
+      "hidden_size": 2048
+    },
+    {
+      "id": "qwen3-235b-a22b",
+      "family": "qwen",
+      "name": "Qwen3 235B A22B",
+      "description": "Alibaba's Qwen3 235B with A22B MoE architecture",
+      "tagline": "Massive open model for general intelligence",
+      "capabilities": ["text", "code"],
+      "architecture": "qwen3_moe",
+      "n_layers": 94,
+      "hidden_size": 4096
+    },
+    {
+      "id": "qwen3-coder-480b-a35b",
+      "family": "qwen",
+      "name": "Qwen3 Coder 480B A35B",
+      "description": "Alibaba's Qwen3 Coder 480B optimized for code generation",
+      "tagline": "Massive code-specialized MoE model",
+      "capabilities": ["text", "code"],
+      "architecture": "qwen3_moe",
+      "n_layers": 128,
+      "hidden_size": 5120
+    },
+    {
+      "id": "gpt-oss-120b",
+      "family": "gpt-oss",
+      "name": "GPT-OSS 120B",
+      "description": "Open source GPT model with 120B parameters",
+      "tagline": "Large open-source GPT with MoE",
+      "capabilities": ["text", "code"],
+      "architecture": "gpt_oss_moe",
+      "n_layers": 128,
+      "hidden_size": 4096
+    },
+    {
+      "id": "gpt-oss-20b",
+      "family": "gpt-oss",
+      "name": "GPT-OSS 20B",
+      "description": "Open source GPT model with 20B parameters",
+      "tagline": "Compact open-source GPT",
+      "capabilities": ["text"],
+      "architecture": "gpt_oss",
+      "n_layers": 48,
+      "hidden_size": 2560
+    },
+    {
+      "id": "glm-4.5-air",
+      "family": "glm",
+      "name": "GLM 4.5 Air",
+      "description": "Zhipu AI's GLM 4.5 Air model",
+      "tagline": "Lightweight Chinese-English bilingual model",
+      "capabilities": ["text"],
+      "architecture": "glm4_moe",
+      "n_layers": 40,
+      "hidden_size": 4096
+    },
+    {
+      "id": "glm-4.7",
+      "family": "glm",
+      "name": "GLM 4.7",
+      "description": "Zhipu AI's GLM 4.7 model with MoE architecture",
+      "tagline": "Large-scale Chinese-English MoE",
+      "capabilities": ["text", "code"],
+      "architecture": "glm4_moe",
+      "n_layers": 91,
+      "hidden_size": 5120
+    },
+    {
+      "id": "minimax-m2.1",
+      "family": "minimax",
+      "name": "MiniMax M2.1",
+      "description": "MiniMax's M2.1 large language model",
+      "tagline": "High-performance general-purpose model",
+      "capabilities": ["text", "code"],
+      "architecture": "minimax",
+      "n_layers": 80,
+      "hidden_size": 6144
+    }
+  ]
+}
