@@ -334,7 +334,7 @@ def tensor_auto_parallel(
         group=group,
     )
 
-    if hasattr(model, "shard"):
+    if hasattr(model, "shard") and not isinstance(model, GptOssModel):
         try:
             model.shard(group)  # type: ignore
             return patch_tensor_model(model)
@@ -383,7 +383,6 @@ def tensor_auto_parallel(
             all_to_sharded_linear_in_place,
             sharded_to_all_linear_in_place,
         )
-
     else:
         raise ValueError(f"Unsupported model type: {type(model)}")
 
