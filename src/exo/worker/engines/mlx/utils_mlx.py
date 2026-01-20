@@ -23,6 +23,7 @@ from mlx_lm.models.deepseek_v3 import DeepseekV3Model
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+from exo.shared.models.model_cards import ModelId
 from exo.worker.engines.mlx.constants import (
     CACHE_GROUP_SIZE,
     KV_CACHE_BITS,
@@ -296,7 +297,7 @@ def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerW
     return load_tokenizer_for_model_id(shard_metadata.model_card.model_id, model_path)
 
 
-def get_eos_token_ids_for_model(model_id: str) -> list[int] | None:
+def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     """
     Get the EOS token IDs for a model based on its ID.
 
@@ -320,7 +321,9 @@ def get_eos_token_ids_for_model(model_id: str) -> list[int] | None:
     return None
 
 
-def load_tokenizer_for_model_id(model_id: str, model_path: Path) -> TokenizerWrapper:
+def load_tokenizer_for_model_id(
+    model_id: ModelId, model_path: Path
+) -> TokenizerWrapper:
     """
     Load tokenizer for a model given its ID and local path.
 

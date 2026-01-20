@@ -1,6 +1,5 @@
 import exo.worker.plan as plan_mod
-from exo.shared.models.model_cards import ModelId
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import ModelId, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import LoadModel
 from exo.shared.types.worker.downloads import DownloadCompleted, DownloadProgress

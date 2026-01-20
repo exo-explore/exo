@@ -25,6 +25,14 @@ class NodeId(Id):
     pass
 
 
+class ModelId(Id):
+    def normalize(self) -> str:
+        return self.replace("/", "--")
+
+    def short(self) -> str:
+        return self.split("/")[-1]
+
+
 class SessionId(CamelCaseModel):
     master_node_id: NodeId
     election_clock: int
