@@ -552,7 +552,8 @@ async def download_shard(
     if not allow_patterns:
         allow_patterns = await resolve_allow_patterns(shard)
 
-    logger.info(f"Downloading {shard.model_card.model_id=} with {allow_patterns=}")
+    if not skip_download:
+        logger.info(f"Downloading {shard.model_card.model_id=} with {allow_patterns=}")
 
     all_start_time = time.time()
     # TODO: currently not recursive. Some models might require subdirectories - thus this will need to be changed.
