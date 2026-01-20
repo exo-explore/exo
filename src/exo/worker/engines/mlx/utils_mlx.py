@@ -2,9 +2,7 @@ import json
 import os
 import resource
 import sys
-import threading
 import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -59,6 +57,8 @@ from exo.shared.types.worker.shards import (
 from exo.worker.download.download_utils import build_model_path
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.auto_parallel import (
+    TimeoutCallback,
+    eval_with_timeout,
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
@@ -86,41 +86,6 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
 
 class ModelLoadingTimeoutError(Exception):
     pass
-
-
-TimeoutCallback = Callable[[], None]
-
-
-def eval_with_timeout(
-    mlx_item: Any,  # pyright: ignore[reportAny]
-    timeout_seconds: float = 60.0,
-    on_timeout: TimeoutCallback | None = None,
-) -> None:
-    """Evaluate MLX item with a hard timeout.
-
-    If on_timeout callback is provided, it will be called before terminating
-    the process. This allows the runner to send a failure event before exit.
-    """
-    completed = threading.Event()
-
-    def watchdog() -> None:
-        if not completed.wait(timeout=timeout_seconds):
-            logger.error(
-                f"mlx_item evaluation timed out after {timeout_seconds:.0f}s. "
-                "This may indicate an issue with FAST_SYNCH and tensor parallel sharding. "
-                "Terminating process."
-            )
-            if on_timeout is not None:
-                on_timeout()
-            os._exit(1)
-
-    watchdog_thread = threading.Thread(target=watchdog, daemon=True)
-    watchdog_thread.start()
-
-    try:
-        mx.eval(mlx_item)  # pyright: ignore[reportAny]
-    finally:
-        completed.set()
 
 
 def mx_barrier(group: Group | None = None):
@@ -204,10 +169,10 @@ def mlx_distributed_init(
 
                 # TODO: update once upstream fixes
                 logger.info(
-                    f"rank {rank} MLX_IBV_DEVICES: {coordination_file} with devices: {jaccl_devices_json}"
+                    f"rank {rank} MLX_JACCL_DEVICES: {coordination_file} with devices: {jaccl_devices_json}"
                 )
                 logger.info(f"rank {rank} MLX_JACCL_COORDINATOR: {jaccl_coordinator}")
-                os.environ["MLX_IBV_DEVICES"] = coordination_file
+                os.environ["MLX_JACCL_DEVICES"] = coordination_file
                 os.environ["MLX_RANK"] = str(rank)
                 os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
                 group = mx.distributed.init(backend="jaccl", strict=True)
@@ -296,14 +261,6 @@ def shard_and_load(
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 
-    match shard_metadata:
-        case TensorShardMetadata():
-            logger.info(f"loading model from {model_path} with tensor parallelism")
-            model = tensor_auto_parallel(model, group)
-        case PipelineShardMetadata():
-            logger.info(f"loading model from {model_path} with pipeline parallelism")
-            model = pipeline_auto_parallel(model, group, shard_metadata)
-
     # Estimate timeout based on model size
     base_timeout = float(os.environ.get("EXO_MODEL_LOAD_TIMEOUT", "60"))
     model_size_gb = get_weights_size(shard_metadata).in_bytes / (1024**3)
@@ -312,7 +269,15 @@ def shard_and_load(
         f"Evaluating model parameters with timeout of {timeout_seconds:.0f}s "
         f"(model size: {model_size_gb:.1f}GB)"
     )
-    eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
+
+    match shard_metadata:
+        case TensorShardMetadata():
+            logger.info(f"loading model from {model_path} with tensor parallelism")
+            model = tensor_auto_parallel(model, group, timeout_seconds, on_timeout)
+        case PipelineShardMetadata():
+            logger.info(f"loading model from {model_path} with pipeline parallelism")
+            model = pipeline_auto_parallel(model, group, shard_metadata)
+            eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
 
     # TODO: Do we need this?
     mx.eval(model)
@@ -347,6 +312,9 @@ def get_eos_token_ids_for_model(model_id: str) -> list[int] | None:
     model_id_lower = model_id.lower()
     if "kimi-k2" in model_id_lower:
         return [163586]
+    elif "glm-4.7-flash" in model_id_lower:
+        # 154820: <|endoftext|>, 154827: <|user|>, 154829: <|observation|>
+        return [154820, 154827, 154829]
     elif "glm" in model_id_lower:
         return [151336, 151329, 151338]
     return None
@@ -429,6 +397,16 @@ def apply_chat_template(
     logger.info(prompt)
 
     return prompt
+
+
+def detect_thinking_prompt_suffix(prompt: str, tokenizer: TokenizerWrapper) -> bool:
+    """
+    Detect if prompt ends with a thinking opening tag that should be
+    prepended to the output stream.
+    """
+    think_token = tokenizer.think_start
+
+    return think_token is not None and prompt.rstrip().endswith(think_token)
 
 
 class NullKVCache(KVCache):

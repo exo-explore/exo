@@ -263,6 +263,35 @@ MODEL_CARDS: dict[str, ModelCard] = {
         hidden_size=5120,
         supports_tensor=True,
     ),
+    # glm 4.7 flash
+    "glm-4.7-flash-4bit": ModelCard(
+        model_id=ModelId("mlx-community/GLM-4.7-Flash-4bit"),
+        storage_size=Memory.from_gb(18),
+        n_layers=47,
+        hidden_size=2048,
+        supports_tensor=True,
+    ),
+    "glm-4.7-flash-5bit": ModelCard(
+        model_id=ModelId("mlx-community/GLM-4.7-Flash-5bit"),
+        storage_size=Memory.from_gb(21),
+        n_layers=47,
+        hidden_size=2048,
+        supports_tensor=True,
+    ),
+    "glm-4.7-flash-6bit": ModelCard(
+        model_id=ModelId("mlx-community/GLM-4.7-Flash-6bit"),
+        storage_size=Memory.from_gb(25),
+        n_layers=47,
+        hidden_size=2048,
+        supports_tensor=True,
+    ),
+    "glm-4.7-flash-8bit": ModelCard(
+        model_id=ModelId("mlx-community/GLM-4.7-Flash-8bit"),
+        storage_size=Memory.from_gb(32),
+        n_layers=47,
+        hidden_size=2048,
+        supports_tensor=True,
+    ),
     # minimax-m2
     "minimax-m2.1-8bit": ModelCard(
         model_id=ModelId("mlx-community/MiniMax-M2.1-8bit"),

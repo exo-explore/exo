@@ -3,11 +3,6 @@ import pytest
 from exo.shared.topology import Topology
 from exo.shared.types.common import NodeId
 from exo.shared.types.multiaddr import Multiaddr
-from exo.shared.types.profiling import (
-    MemoryUsage,
-    NodePerformanceProfile,
-    SystemPerformanceProfile,
-)
 from exo.shared.types.topology import Connection, SocketConnection
 
 
@@ -20,22 +15,6 @@ def topology() -> Topology:
 def socket_connection() -> SocketConnection:
     return SocketConnection(
         sink_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1235"),
-    )
-
-
-@pytest.fixture
-def node_profile() -> NodePerformanceProfile:
-    memory_profile = MemoryUsage.from_bytes(
-        ram_total=1000, ram_available=1000, swap_total=1000, swap_available=1000
-    )
-    system_profile = SystemPerformanceProfile()
-    return NodePerformanceProfile(
-        model_id="test",
-        chip_id="test",
-        friendly_name="test",
-        memory=memory_profile,
-        network_interfaces=[],
-        system=system_profile,
     )
 
 

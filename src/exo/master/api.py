@@ -251,7 +251,8 @@ class API:
                     instance_meta=instance_meta,
                     min_nodes=min_nodes,
                 ),
-                node_profiles=self.state.node_profiles,
+                node_memory=self.state.node_memory,
+                node_network=self.state.node_network,
                 topology=self.state.topology,
                 current_instances=self.state.instances,
             )
@@ -306,7 +307,8 @@ class API:
                             instance_meta=instance_meta,
                             min_nodes=min_nodes,
                         ),
-                        node_profiles=self.state.node_profiles,
+                        node_memory=self.state.node_memory,
+                        node_network=self.state.node_network,
                         topology=self.state.topology,
                         current_instances=self.state.instances,
                     )
@@ -600,8 +602,8 @@ class API:
         """Calculate total available memory across all nodes in bytes."""
         total_available = Memory()
 
-        for profile in self.state.node_profiles.values():
-            total_available += profile.memory.ram_available
+        for memory in self.state.node_memory.values():
+            total_available += memory.ram_available
 
         return total_available
 

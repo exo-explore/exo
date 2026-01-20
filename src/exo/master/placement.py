@@ -24,7 +24,7 @@ from exo.shared.types.commands import (
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import Event, InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import NodePerformanceProfile
+from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
 from exo.shared.types.worker.instances import (
     Instance,
     InstanceId,
@@ -54,12 +54,13 @@ def place_instance(
     command: PlaceInstance,
     topology: Topology,
     current_instances: Mapping[InstanceId, Instance],
-    node_profiles: Mapping[NodeId, NodePerformanceProfile],
+    node_memory: Mapping[NodeId, MemoryUsage],
+    node_network: Mapping[NodeId, NodeNetworkInfo],
 ) -> dict[InstanceId, Instance]:
     cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
     cycles_with_sufficient_memory = filter_cycles_by_memory(
-        candidate_cycles, node_profiles, command.model_card.storage_size
+        candidate_cycles, node_memory, command.model_card.storage_size
     )
     if len(cycles_with_sufficient_memory) == 0:
         raise ValueError("No cycles found with sufficient memory")
@@ -104,13 +105,13 @@ def place_instance(
     selected_cycle = max(
         cycles_with_leaf_nodes if cycles_with_leaf_nodes != [] else smallest_cycles,
         key=lambda cycle: sum(
-            (node_profiles[node_id].memory.ram_available for node_id in cycle),
+            (node_memory[node_id].ram_available for node_id in cycle),
             start=Memory(),
         ),
     )
 
     shard_assignments = get_shard_assignments(
-        command.model_card, selected_cycle, command.sharding, node_profiles
+        command.model_card, selected_cycle, command.sharding, node_memory
     )
 
     cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle.node_ids)
@@ -136,7 +137,7 @@ def place_instance(
                 coordinator=selected_cycle.node_ids[0],
                 coordinator_port=random_ephemeral_port(),
                 cycle_digraph=cycle_digraph,
-                node_profiles=node_profiles,
+                node_network=node_network,
             )
             target_instances[instance_id] = MlxJacclInstance(
                 instance_id=instance_id,
@@ -150,7 +151,7 @@ def place_instance(
                 selected_cycle=selected_cycle,
                 cycle_digraph=cycle_digraph,
                 ephemeral_port=ephemeral_port,
-                node_profiles=node_profiles,
+                node_network=node_network,
             )
             target_instances[instance_id] = MlxRingInstance(
                 instance_id=instance_id,

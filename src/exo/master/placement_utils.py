@@ -6,7 +6,7 @@ from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Topology
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import NodePerformanceProfile
+from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
 from exo.shared.types.topology import Cycle, RDMAConnection, SocketConnection
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import (
@@ -19,16 +19,16 @@ from exo.shared.types.worker.shards import (
 
 def filter_cycles_by_memory(
     cycles: list[Cycle],
-    node_profiles: Mapping[NodeId, NodePerformanceProfile],
+    node_memory: Mapping[NodeId, MemoryUsage],
     required_memory: Memory,
 ) -> list[Cycle]:
     filtered_cycles: list[Cycle] = []
     for cycle in cycles:
-        if not all(node in node_profiles for node in cycle):
+        if not all(node in node_memory for node in cycle):
             continue
 
         total_mem = sum(
-            (node_profiles[node_id].memory.ram_available for node_id in cycle.node_ids),
+            (node_memory[node_id].ram_available for node_id in cycle.node_ids),
             start=Memory(),
         )
         if total_mem >= required_memory:
@@ -77,13 +77,13 @@ def allocate_layers_proportionally(
 def get_shard_assignments_for_pipeline_parallel(
     model_card: ModelCard,
     cycle: Cycle,
-    node_profiles: Mapping[NodeId, NodePerformanceProfile],
+    node_memory: Mapping[NodeId, MemoryUsage],
 ):
     if not cycle.node_ids:
         raise ValueError("Cannot create shard assignments for empty node cycle")
 
     cycle_memory = sum(
-        (node_profiles[node_id].memory.ram_available for node_id in cycle.node_ids),
+        (node_memory[node_id].ram_available for node_id in cycle.node_ids),
         start=Memory(),
     )
     if cycle_memory.in_bytes == 0:
@@ -97,7 +97,7 @@ def get_shard_assignments_for_pipeline_parallel(
     layer_allocations = allocate_layers_proportionally(
         total_layers=total_layers,
         memory_fractions=[
-            node_profiles[node_id].memory.ram_available.in_bytes / cycle_memory.in_bytes
+            node_memory[node_id].ram_available.in_bytes / cycle_memory.in_bytes
             for node_id in cycle.node_ids
         ],
     )
@@ -108,7 +108,7 @@ def get_shard_assignments_for_pipeline_parallel(
         zip(cycle.node_ids, layer_allocations, strict=True)
     ):
         required_memory = node_layers * memory_per_layer
-        available_memory = node_profiles[node_id].memory.ram_available.in_bytes
+        available_memory = node_memory[node_id].ram_available.in_bytes
         if required_memory > available_memory:
             raise ValueError(
                 f"Node {i} ({node_id}) has insufficient memory: "
@@ -181,14 +181,14 @@ def get_shard_assignments(
     model_card: ModelCard,
     cycle: Cycle,
     sharding: Sharding,
-    node_profiles: Mapping[NodeId, NodePerformanceProfile],
+    node_memory: Mapping[NodeId, MemoryUsage],
 ) -> ShardAssignments:
     match sharding:
         case Sharding.Pipeline:
             return get_shard_assignments_for_pipeline_parallel(
                 model_card=model_card,
                 cycle=cycle,
-                node_profiles=node_profiles,
+                node_memory=node_memory,
             )
         case Sharding.Tensor:
             return get_shard_assignments_for_tensor_parallel(
@@ -287,10 +287,10 @@ def _find_connection_ip(
 
 
 def _find_interface_name_for_ip(
-    ip_address: str, node_profile: NodePerformanceProfile
+    ip_address: str, node_network: NodeNetworkInfo
 ) -> str | None:
     """Find the interface name for an IP address on a node (any interface)."""
-    for interface in node_profile.network_interfaces:
+    for interface in node_network.interfaces:
         if interface.ip_address == ip_address:
             return interface.name
 
@@ -301,7 +301,7 @@ def _find_ip_prioritised(
     node_id: NodeId,
     other_node_id: NodeId,
     cycle_digraph: Topology,
-    node_profiles: Mapping[NodeId, NodePerformanceProfile],
+    node_network: Mapping[NodeId, NodeNetworkInfo],
 ) -> str | None:
     # TODO: Actually prioritize in the correct Ethernet > Wifi > Non-TB > TB order.
     """Find an IP address between nodes with prioritization.
@@ -315,7 +315,9 @@ def _find_ip_prioritised(
     ips = list(_find_connection_ip(node_id, other_node_id, cycle_digraph))
     # We expect a unique iface -> ip mapping
     iface_map = {
-        _find_interface_name_for_ip(ip, node_profiles[other_node_id]): ip
+        _find_interface_name_for_ip(
+            ip, node_network.get(other_node_id, NodeNetworkInfo())
+        ): ip
         for ip, _ in ips
     }
 
@@ -344,7 +346,7 @@ def get_mlx_ring_hosts_by_node(
     selected_cycle: Cycle,
     cycle_digraph: Topology,
     ephemeral_port: int,
-    node_profiles: Mapping[NodeId, NodePerformanceProfile],
+    node_network: Mapping[NodeId, NodeNetworkInfo],
 ) -> dict[NodeId, list[Host]]:
     """Generate per-node host lists for MLX ring backend.
 
@@ -376,7 +378,7 @@ def get_mlx_ring_hosts_by_node(
                 continue
 
             connection_ip = _find_ip_prioritised(
-                node_id, other_node_id, cycle_digraph, node_profiles
+                node_id, other_node_id, cycle_digraph, node_network
             )
             if connection_ip is None:
                 logger.warning(
@@ -397,7 +399,7 @@ def get_mlx_jaccl_coordinators(
     coordinator: NodeId,
     coordinator_port: int,
     cycle_digraph: Topology,
-    node_profiles: Mapping[NodeId, NodePerformanceProfile],
+    node_network: Mapping[NodeId, NodeNetworkInfo],
 ) -> dict[NodeId, str]:
     """Get the coordinator addresses for MLX JACCL (rank 0 device).
 
@@ -410,7 +412,7 @@ def get_mlx_jaccl_coordinators(
         if n == coordinator:
             return "0.0.0.0"
 
-        ip = _find_ip_prioritised(n, coordinator, cycle_digraph, node_profiles)
+        ip = _find_ip_prioritised(n, coordinator, cycle_digraph, node_network)
         if ip is not None:
             return ip
 

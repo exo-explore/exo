@@ -114,6 +114,10 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, 1)))
     monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", nothin)
+    # Mock apply_chat_template since we're using a fake tokenizer (integer 1).
+    # Returns a prompt without thinking tag so detect_thinking_prompt_suffix returns None.
+    monkeypatch.setattr(mlx_runner, "apply_chat_template", make_nothin("test prompt"))
+    monkeypatch.setattr(mlx_runner, "detect_thinking_prompt_suffix", make_nothin(False))
 
     def fake_generate(*_1: object, **_2: object):
         yield GenerationResponse(token=0, text="hi", finish_reason="stop")
