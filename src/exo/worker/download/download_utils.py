@@ -17,17 +17,20 @@ import aiohttp
 import certifi
 from loguru import logger
 from pydantic import (
-    BaseModel,
-    ConfigDict,
     DirectoryPath,
-    Field,
-    PositiveInt,
     TypeAdapter,
 )
 
 from exo.shared.constants import EXO_MODELS_DIR
+from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
-from exo.shared.types.worker.downloads import DownloadProgressData
+from exo.shared.types.worker.downloads import (
+    DownloadProgressData,
+    FileListEntry,
+    ModelSafetensorsIndex,
+    RepoDownloadProgress,
+    RepoFileDownloadProgress,
+)
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.worker.download.huggingface_utils import (
     filter_repo_objects,
@@ -35,53 +38,6 @@ from exo.worker.download.huggingface_utils import (
     get_auth_headers,
     get_hf_endpoint,
 )
-
-
-class ModelSafetensorsIndexMetadata(BaseModel):
-    total_size: PositiveInt
-
-
-class ModelSafetensorsIndex(BaseModel):
-    metadata: ModelSafetensorsIndexMetadata | None
-    weight_map: dict[str, str]
-
-
-class FileListEntry(BaseModel):
-    type: Literal["file", "directory"]
-    path: str
-    size: int | None = None
-
-
-class RepoFileDownloadProgress(BaseModel):
-    repo_id: str
-    repo_revision: str
-    file_path: str
-    downloaded: Memory
-    downloaded_this_session: Memory
-    total: Memory
-    speed: float
-    eta: timedelta
-    status: Literal["not_started", "in_progress", "complete"]
-    start_time: float
-
-    model_config = ConfigDict(frozen=True)
-
-
-class RepoDownloadProgress(BaseModel):
-    repo_id: str
-    repo_revision: str
-    shard: ShardMetadata
-    completed_files: int
-    total_files: int
-    downloaded_bytes: Memory
-    downloaded_bytes_this_session: Memory
-    total_bytes: Memory
-    overall_speed: float
-    overall_eta: timedelta
-    status: Literal["not_started", "in_progress", "complete"]
-    file_progress: dict[str, RepoFileDownloadProgress] = Field(default_factory=dict)
-
-    model_config = ConfigDict(frozen=True)
 
 
 def trim_etag(etag: str) -> str:
@@ -125,12 +81,12 @@ def map_repo_download_progress_to_download_progress_data(
     )
 
 
-def build_model_path(model_id: str) -> DirectoryPath:
-    return EXO_MODELS_DIR / model_id.replace("/", "--")
+def build_model_path(model_id: ModelId) -> DirectoryPath:
+    return EXO_MODELS_DIR / model_id.normalize()
 
 
-async def resolve_model_path_for_repo(repo_id: str) -> Path:
-    return (await ensure_models_dir()) / repo_id.replace("/", "--")
+async def resolve_model_path_for_repo(model_id: ModelId) -> Path:
+    return (await ensure_models_dir()) / model_id.normalize()
 
 
 async def ensure_models_dir() -> Path:
@@ -138,8 +94,8 @@ async def ensure_models_dir() -> Path:
     return EXO_MODELS_DIR
 
 
-async def delete_model(repo_id: str) -> bool:
-    model_dir = await ensure_models_dir() / repo_id.replace("/", "--")
+async def delete_model(model_id: ModelId) -> bool:
+    model_dir = await ensure_models_dir() / model_id.normalize()
     if not await aios.path.exists(model_dir):
         return False
     await asyncio.to_thread(shutil.rmtree, model_dir, ignore_errors=False)
@@ -164,19 +120,17 @@ async def seed_models(seed_dir: str | Path):
 
 
 async def fetch_file_list_with_cache(
-    repo_id: str, revision: str = "main", recursive: bool = False
+    model_id: ModelId, revision: str = "main", recursive: bool = False
 ) -> list[FileListEntry]:
-    target_dir = (
-        (await ensure_models_dir()) / "caches" / str(repo_id).replace("/", "--")
-    )
+    target_dir = (await ensure_models_dir()) / "caches" / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)
-    cache_file = (
-        target_dir / f"{repo_id.replace('/', '--')}--{revision}--file_list.json"
-    )
+    cache_file = target_dir / f"{model_id.normalize()}--{revision}--file_list.json"
     if await aios.path.exists(cache_file):
         async with aiofiles.open(cache_file, "r") as f:
             return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
-    file_list = await fetch_file_list_with_retry(repo_id, revision, recursive=recursive)
+    file_list = await fetch_file_list_with_retry(
+        model_id, revision, recursive=recursive
+    )
     await aios.makedirs(cache_file.parent, exist_ok=True)
     async with aiofiles.open(cache_file, "w") as f:
         await f.write(TypeAdapter(list[FileListEntry]).dump_json(file_list).decode())
@@ -184,25 +138,25 @@ async def fetch_file_list_with_cache(
 
 
 async def fetch_file_list_with_retry(
-    repo_id: str, revision: str = "main", path: str = "", recursive: bool = False
+    model_id: ModelId, revision: str = "main", path: str = "", recursive: bool = False
 ) -> list[FileListEntry]:
     n_attempts = 30
     for attempt in range(n_attempts):
         try:
-            return await _fetch_file_list(repo_id, revision, path, recursive)
+            return await _fetch_file_list(model_id, revision, path, recursive)
         except Exception as e:
             if attempt == n_attempts - 1:
                 raise e
             await asyncio.sleep(min(8, 0.1 * float(2.0 ** int(attempt))))
     raise Exception(
-        f"Failed to fetch file list for {repo_id=} {revision=} {path=} {recursive=}"
+        f"Failed to fetch file list for {model_id=} {revision=} {path=} {recursive=}"
     )
 
 
 async def _fetch_file_list(
-    repo_id: str, revision: str = "main", path: str = "", recursive: bool = False
+    model_id: ModelId, revision: str = "main", path: str = "", recursive: bool = False
 ) -> list[FileListEntry]:
-    api_url = f"{get_hf_endpoint()}/api/models/{repo_id}/tree/{revision}"
+    api_url = f"{get_hf_endpoint()}/api/models/{model_id}/tree/{revision}"
     url = f"{api_url}/{path}" if path else api_url
 
     headers = await get_download_headers()
@@ -219,7 +173,7 @@ async def _fetch_file_list(
                     files.append(FileListEntry.model_validate(item))
                 elif item.type == "directory" and recursive:
                     subfiles = await _fetch_file_list(
-                        repo_id, revision, item.path, recursive
+                        model_id, revision, item.path, recursive
                     )
                     files.extend(subfiles)
             return files
@@ -276,10 +230,10 @@ async def calc_hash(path: Path, hash_type: Literal["sha1", "sha256"] = "sha1") -
 
 
 async def file_meta(
-    repo_id: str, revision: str, path: str, redirected_location: str | None = None
+    model_id: ModelId, revision: str, path: str, redirected_location: str | None = None
 ) -> tuple[int, str]:
     url = (
-        urljoin(f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/", path)
+        urljoin(f"{get_hf_endpoint()}/{model_id}/resolve/{revision}/", path)
         if redirected_location is None
         else f"{get_hf_endpoint()}{redirected_location}"
     )
@@ -298,7 +252,7 @@ async def file_meta(
                 return content_length, etag
             # Otherwise, follow the redirect to get authoritative size/hash
             redirected_location = r.headers.get("location")
-            return await file_meta(repo_id, revision, path, redirected_location)
+            return await file_meta(model_id, revision, path, redirected_location)
         content_length = int(
             r.headers.get("x-linked-size") or r.headers.get("content-length") or 0
         )
@@ -310,7 +264,7 @@ async def file_meta(
 
 
 async def download_file_with_retry(
-    repo_id: str,
+    model_id: ModelId,
     revision: str,
     path: str,
     target_dir: Path,
@@ -320,23 +274,23 @@ async def download_file_with_retry(
     for attempt in range(n_attempts):
         try:
             return await _download_file(
-                repo_id, revision, path, target_dir, on_progress
+                model_id, revision, path, target_dir, on_progress
             )
         except Exception as e:
             if isinstance(e, FileNotFoundError) or attempt == n_attempts - 1:
                 raise e
             logger.error(
-                f"Download error on attempt {attempt}/{n_attempts} for {repo_id=} {revision=} {path=} {target_dir=}"
+                f"Download error on attempt {attempt}/{n_attempts} for {model_id=} {revision=} {path=} {target_dir=}"
             )
             logger.error(traceback.format_exc())
             await asyncio.sleep(min(8, 0.1 * (2.0**attempt)))
     raise Exception(
-        f"Failed to download file {repo_id=} {revision=} {path=} {target_dir=}"
+        f"Failed to download file {model_id=} {revision=} {path=} {target_dir=}"
     )
 
 
 async def _download_file(
-    repo_id: str,
+    model_id: ModelId,
     revision: str,
     path: str,
     target_dir: Path,
@@ -345,7 +299,7 @@ async def _download_file(
     if await aios.path.exists(target_dir / path):
         return target_dir / path
     await aios.makedirs((target_dir / path).parent, exist_ok=True)
-    length, etag = await file_meta(repo_id, revision, path)
+    length, etag = await file_meta(model_id, revision, path)
     remote_hash = etag[:-5] if etag.endswith("-gzip") else etag
     partial_path = target_dir / f"{path}.partial"
     resume_byte_pos = (
@@ -354,7 +308,7 @@ async def _download_file(
         else None
     )
     if resume_byte_pos != length:
-        url = urljoin(f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/", path)
+        url = urljoin(f"{get_hf_endpoint()}/{model_id}/resolve/{revision}/", path)
         headers = await get_download_headers()
         if resume_byte_pos:
             headers["Range"] = f"bytes={resume_byte_pos}-"
@@ -394,7 +348,7 @@ async def _download_file(
 
 def calculate_repo_progress(
     shard: ShardMetadata,
-    repo_id: str,
+    model_id: ModelId,
     revision: str,
     file_progress: dict[str, RepoFileDownloadProgress],
     all_start_time: float,
@@ -423,7 +377,7 @@ def calculate_repo_progress(
         else "not_started"
     )
     return RepoDownloadProgress(
-        repo_id=repo_id,
+        repo_id=model_id,
         repo_revision=revision,
         shard=shard,
         completed_files=len(
@@ -442,11 +396,11 @@ def calculate_repo_progress(
     )
 
 
-async def get_weight_map(repo_id: str, revision: str = "main") -> dict[str, str]:
-    target_dir = (await ensure_models_dir()) / str(repo_id).replace("/", "--")
+async def get_weight_map(model_id: ModelId, revision: str = "main") -> dict[str, str]:
+    target_dir = (await ensure_models_dir()) / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)
     index_file = await download_file_with_retry(
-        repo_id, revision, "model.safetensors.index.json", target_dir
+        model_id, revision, "model.safetensors.index.json", target_dir
     )
     async with aiofiles.open(index_file, "r") as f:
         index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
@@ -477,53 +431,6 @@ async def get_downloaded_size(path: Path) -> int:
     return 0
 
 
-async def download_progress_for_local_path(
-    repo_id: str, shard: ShardMetadata, local_path: Path
-) -> RepoDownloadProgress:
-    file_progress: dict[str, RepoFileDownloadProgress] = {}
-    total_files = 0
-    total_bytes = 0
-
-    if await aios.path.isdir(local_path):
-        for root, _, files in os.walk(local_path):
-            for f in files:
-                if f.endswith((".safetensors", ".bin", ".pt", ".gguf", ".json")):
-                    file_path = Path(root) / f
-                    size = (await aios.stat(file_path)).st_size
-                    rel_path = str(file_path.relative_to(local_path))
-                    file_progress[rel_path] = RepoFileDownloadProgress(
-                        repo_id=repo_id,
-                        repo_revision="local",
-                        file_path=rel_path,
-                        downloaded=Memory.from_bytes(size),
-                        downloaded_this_session=Memory.from_bytes(0),
-                        total=Memory.from_bytes(size),
-                        speed=0,
-                        eta=timedelta(0),
-                        status="complete",
-                        start_time=time.time(),
-                    )
-                    total_files += 1
-                    total_bytes += size
-    else:
-        raise ValueError(f"Local path {local_path} is not a directory")
-
-    return RepoDownloadProgress(
-        repo_id=repo_id,
-        repo_revision="local",
-        shard=shard,
-        completed_files=total_files,
-        total_files=total_files,
-        downloaded_bytes=Memory.from_bytes(total_bytes),
-        downloaded_bytes_this_session=Memory.from_bytes(0),
-        total_bytes=Memory.from_bytes(total_bytes),
-        overall_speed=0,
-        overall_eta=timedelta(0),
-        status="complete",
-        file_progress=file_progress,
-    )
-
-
 async def download_shard(
     shard: ShardMetadata,
     on_progress: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
@@ -533,14 +440,6 @@ async def download_shard(
 ) -> tuple[Path, RepoDownloadProgress]:
     if not skip_download:
         logger.info(f"Downloading {shard.model_card.model_id=}")
-
-    # Handle local paths
-    if await aios.path.exists(str(shard.model_card.model_id)):
-        logger.info(f"Using local model path {shard.model_card.model_id}")
-        local_path = Path(str(shard.model_card.model_id))
-        return local_path, await download_progress_for_local_path(
-            str(shard.model_card.model_id), shard, local_path
-        )
 
     revision = "main"
     target_dir = await ensure_models_dir() / str(shard.model_card.model_id).replace(
@@ -552,13 +451,14 @@ async def download_shard(
     if not allow_patterns:
         allow_patterns = await resolve_allow_patterns(shard)
 
-    logger.info(f"Downloading {shard.model_card.model_id=} with {allow_patterns=}")
+    if not skip_download:
+        logger.info(f"Downloading {shard.model_card.model_id=} with {allow_patterns=}")
 
     all_start_time = time.time()
     # TODO: currently not recursive. Some models might require subdirectories - thus this will need to be changed.
     #  Update: <- This does not seem to be the case. Yay?
     file_list = await fetch_file_list_with_cache(
-        str(shard.model_card.model_id), revision, recursive=True
+        shard.model_card.model_id, revision, recursive=True
     )
     filtered_file_list = list(
         filter_repo_objects(
@@ -592,7 +492,7 @@ async def download_shard(
             else timedelta(seconds=0)
         )
         file_progress[file.path] = RepoFileDownloadProgress(
-            repo_id=str(shard.model_card.model_id),
+            repo_id=shard.model_card.model_id,
             repo_revision=revision,
             file_path=file.path,
             downloaded=Memory.from_bytes(curr_bytes),
@@ -609,7 +509,7 @@ async def download_shard(
             shard,
             calculate_repo_progress(
                 shard,
-                str(shard.model_card.model_id),
+                shard.model_card.model_id,
                 revision,
                 file_progress,
                 all_start_time,
@@ -619,7 +519,7 @@ async def download_shard(
     for file in filtered_file_list:
         downloaded_bytes = await get_downloaded_size(target_dir / file.path)
         file_progress[file.path] = RepoFileDownloadProgress(
-            repo_id=str(shard.model_card.model_id),
+            repo_id=shard.model_card.model_id,
             repo_revision=revision,
             file_path=file.path,
             downloaded=Memory.from_bytes(downloaded_bytes),
@@ -643,7 +543,7 @@ async def download_shard(
     async def download_with_semaphore(file: FileListEntry) -> None:
         async with semaphore:
             await download_file_with_retry(
-                str(shard.model_card.model_id),
+                shard.model_card.model_id,
                 revision,
                 file.path,
                 target_dir,
@@ -657,7 +557,7 @@ async def download_shard(
             *[download_with_semaphore(file) for file in filtered_file_list]
         )
     final_repo_progress = calculate_repo_progress(
-        shard, str(shard.model_card.model_id), revision, file_progress, all_start_time
+        shard, shard.model_card.model_id, revision, file_progress, all_start_time
     )
     await on_progress(shard, final_repo_progress)
     if gguf := next((f for f in filtered_file_list if f.path.endswith(".gguf")), None):

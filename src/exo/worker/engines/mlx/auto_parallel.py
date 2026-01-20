@@ -83,11 +83,11 @@ class CustomMlxLayer(nn.Module):
 
     def __init__(self, original_layer: _LayerCallable):
         super().__init__()
-        object.__setattr__(self, "_original_layer", original_layer)
+        dict.__setitem__(self, "_original_layer", original_layer)  # pyright: ignore[reportUnknownMemberType]
 
     @property
     def original_layer(self) -> _LayerCallable:
-        return cast(_LayerCallable, object.__getattribute__(self, "_original_layer"))
+        return cast(_LayerCallable, self["_original_layer"])
 
     # Calls __getattr__ for any attributes not found on nn.Module (e.g. use_sliding)
     if not TYPE_CHECKING:
@@ -96,7 +96,7 @@ class CustomMlxLayer(nn.Module):
             try:
                 return super().__getattr__(name)
             except AttributeError:
-                original_layer = object.__getattribute__(self, "_original_layer")
+                original_layer = cast(_LayerCallable, self["_original_layer"])
                 return getattr(original_layer, name)
 
 
