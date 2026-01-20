@@ -349,8 +349,19 @@ def main(
                     for response in generate_image(model=model, task=task_params):
                         if shard_metadata.device_rank == shard_metadata.world_size - 1:
                             match response:
+                                case PartialImageResponse():
+                                    logger.info(
+                                        f"sending partial ImageChunk {response.partial_index}/{response.total_partials}"
+                                    )
+                                    _process_image_response(
+                                        response,
+                                        command_id,
+                                        shard_metadata,
+                                        event_sender,
+                                        image_index,
+                                    )
                                 case ImageGenerationResponse():
-                                    logger.info("sending ImageChunk")
+                                    logger.info("sending final ImageChunk")
                                     _process_image_response(
                                         response,
                                         command_id,
@@ -359,8 +370,6 @@ def main(
                                         image_index,
                                     )
                                     image_index += 1
-                                case PartialImageResponse():
-                                    pass  # Image edits don't support partial images
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
