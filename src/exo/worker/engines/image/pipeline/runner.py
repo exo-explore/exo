@@ -612,6 +612,7 @@ class DiffusionRunner:
                     self.prev_rank,
                     group=self.group,
                 )
+                mx.eval(hidden_states, encoder_hidden_states)
 
             assert self.joint_block_wrappers is not None
             assert encoder_hidden_states is not None
@@ -656,6 +657,7 @@ class DiffusionRunner:
                     self.prev_rank,
                     group=self.group,
                 )
+                mx.eval(hidden_states)
 
             assert self.single_block_wrappers is not None
             for wrapper in self.single_block_wrappers:
@@ -761,6 +763,7 @@ class DiffusionRunner:
             hidden_states = mx.distributed.recv_like(
                 prev_latents, src=self.world_size - 1, group=self.group
             )
+            mx.eval(hidden_states)
 
         else:
             hidden_states = prev_latents
@@ -824,6 +827,7 @@ class DiffusionRunner:
                 patch = mx.distributed.recv_like(
                     patch, src=self.prev_rank, group=self.group
                 )
+                mx.eval(patch)
 
             step_patch = mx.concatenate([patch, patch], axis=0) if needs_cfg else patch
 
@@ -902,6 +906,7 @@ class DiffusionRunner:
                     self.prev_rank,
                     group=self.group,
                 )
+                mx.eval(patch)
 
                 if patch_idx == 0:
                     encoder_hidden_states = mx.distributed.recv(
@@ -910,6 +915,7 @@ class DiffusionRunner:
                         self.prev_rank,
                         group=self.group,
                     )
+                    mx.eval(encoder_hidden_states)
 
             if self.is_first_stage:
                 patch, encoder_hidden_states = self.adapter.compute_embeddings(
@@ -959,6 +965,7 @@ class DiffusionRunner:
                     self.prev_rank,
                     group=self.group,
                 )
+                mx.eval(patch)
 
             assert self.single_block_wrappers is not None
             for wrapper in self.single_block_wrappers:
