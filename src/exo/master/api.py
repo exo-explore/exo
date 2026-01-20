@@ -10,16 +10,17 @@ from anyio import BrokenResourceError, create_task_group
 from anyio.abc import TaskGroup
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
 from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from loguru import logger
 
+from exo.master.image_store import ImageId, ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
-from exo.shared.constants import EXO_MAX_CHUNK_SIZE
+from exo.shared.constants import EXO_IMAGE_CACHE_DIR, EXO_MAX_CHUNK_SIZE
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import (
@@ -83,6 +84,15 @@ from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.dashboard_path import find_dashboard
 from exo.utils.event_buffer import OrderedBuffer
+
+
+def _format_to_content_type(image_format: str | None) -> str:
+    content_types = {
+        "png": "image/png",
+        "jpeg": "image/jpeg",
+        "webp": "image/webp",
+    }
+    return content_types.get(image_format or "png", "image/png")
 
 
 def chunk_to_response(
@@ -157,6 +167,7 @@ class API:
 
         self._chat_completion_queues: dict[CommandId, Sender[TokenChunk]] = {}
         self._image_generation_queues: dict[CommandId, Sender[ImageChunk]] = {}
+        self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup | None = None
 
     def reset(self, new_session_id: SessionId, result_clock: int):
@@ -219,6 +230,7 @@ class API:
         self.app.post("/bench/images/generations")(self.bench_image_generations)
         self.app.post("/v1/images/edits", response_model=None)(self.image_edits)
         self.app.post("/bench/images/edits")(self.bench_image_edits)
+        self.app.get("/v1/images/{image_id}")(self.get_image)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
 
@@ -643,8 +655,19 @@ class API:
             )
         return resolved_model
 
+    async def get_image(self, image_id: str) -> FileResponse:
+        stored = self._image_store.get(ImageId(image_id))
+        if stored is None:
+            raise HTTPException(status_code=404, detail="Image not found or expired")
+        return FileResponse(path=stored.file_path, media_type=stored.content_type)
+
+    def _build_image_url(self, request: Request, image_id: ImageId) -> str:
+        host = request.headers.get("host", f"localhost:{self.port}")
+        scheme = "https" if request.url.scheme == "https" else "http"
+        return f"{scheme}://{host}/v1/images/{image_id}"
+
     async def image_generations(
-        self, payload: ImageGenerationTaskParams
+        self, request: Request, payload: ImageGenerationTaskParams
     ) -> ImageGenerationResponse | StreamingResponse:
         """Handle image generation requests.
 
@@ -662,6 +685,7 @@ class API:
         if payload.stream and payload.partial_images and payload.partial_images > 0:
             return StreamingResponse(
                 self._generate_image_stream(
+                    request=request,
                     command_id=command.command_id,
                     num_images=payload.n or 1,
                     response_format=payload.response_format or "b64_json",
@@ -671,6 +695,7 @@ class API:
 
         # Non-streaming: collect all image chunks
         return await self._collect_image_generation(
+            request=request,
             command_id=command.command_id,
             num_images=payload.n or 1,
             response_format=payload.response_format or "b64_json",
@@ -678,6 +703,7 @@ class API:
 
     async def _generate_image_stream(
         self,
+        request: Request,
         command_id: CommandId,
         num_images: int,
         response_format: str,
@@ -715,7 +741,7 @@ class API:
                         partial_idx, total_partials = image_metadata[key]
 
                         if chunk.is_partial:
-                            # Yield partial image event
+                            # Yield partial image event (always use b64_json for partials)
                             event_data = {
                                 "type": "partial",
                                 "partial_index": partial_idx,
@@ -730,16 +756,26 @@ class API:
                             yield f"data: {json.dumps(event_data)}\n\n"
                         else:
                             # Final image
-                            event_data = {
-                                "type": "final",
-                                "image_index": chunk.image_index,
-                                "format": chunk.format,
-                                "data": {
-                                    "b64_json": full_data
-                                    if response_format == "b64_json"
-                                    else None,
-                                },
-                            }
+                            if response_format == "url":
+                                image_bytes = base64.b64decode(full_data)
+                                content_type = _format_to_content_type(chunk.format)
+                                stored = self._image_store.store(
+                                    image_bytes, content_type
+                                )
+                                url = self._build_image_url(request, stored.image_id)
+                                event_data = {
+                                    "type": "final",
+                                    "image_index": chunk.image_index,
+                                    "format": chunk.format,
+                                    "data": {"url": url},
+                                }
+                            else:
+                                event_data = {
+                                    "type": "final",
+                                    "image_index": chunk.image_index,
+                                    "format": chunk.format,
+                                    "data": {"b64_json": full_data},
+                                }
                             yield f"data: {json.dumps(event_data)}\n\n"
                             images_complete += 1
 
@@ -761,6 +797,7 @@ class API:
 
     async def _collect_image_chunks(
         self,
+        request: Request | None,
         command_id: CommandId,
         num_images: int,
         response_format: str,
@@ -771,6 +808,7 @@ class API:
         # Only track non-partial (final) images
         image_chunks: dict[int, dict[int, str]] = {}
         image_total_chunks: dict[int, int] = {}
+        image_formats: dict[int, str | None] = {}
         images_complete = 0
         stats: ImageGenerationStats | None = None
 
@@ -786,6 +824,7 @@ class API:
                         if chunk.image_index not in image_chunks:
                             image_chunks[chunk.image_index] = {}
                             image_total_chunks[chunk.image_index] = chunk.total_chunks
+                            image_formats[chunk.image_index] = chunk.format
 
                         image_chunks[chunk.image_index][chunk.chunk_index] = chunk.data
 
@@ -805,12 +844,21 @@ class API:
             for image_idx in range(num_images):
                 chunks_dict = image_chunks[image_idx]
                 full_data = "".join(chunks_dict[i] for i in range(len(chunks_dict)))
-                images.append(
-                    ImageData(
-                        b64_json=full_data if response_format == "b64_json" else None,
-                        url=None,
+                if response_format == "url" and request is not None:
+                    image_bytes = base64.b64decode(full_data)
+                    content_type = _format_to_content_type(image_formats.get(image_idx))
+                    stored = self._image_store.store(image_bytes, content_type)
+                    url = self._build_image_url(request, stored.image_id)
+                    images.append(ImageData(b64_json=None, url=url))
+                else:
+                    images.append(
+                        ImageData(
+                            b64_json=full_data
+                            if response_format == "b64_json"
+                            else None,
+                            url=None,
+                        )
                     )
-                )
 
             return (images, stats if capture_stats else None)
         except anyio.get_cancelled_exc_class():
@@ -822,24 +870,26 @@ class API:
 
     async def _collect_image_generation(
         self,
+        request: Request,
         command_id: CommandId,
         num_images: int,
         response_format: str,
     ) -> ImageGenerationResponse:
         """Collect all image chunks (non-streaming) and return a single response."""
         images, _ = await self._collect_image_chunks(
-            command_id, num_images, response_format, capture_stats=False
+            request, command_id, num_images, response_format, capture_stats=False
         )
         return ImageGenerationResponse(data=images)
 
     async def _collect_image_generation_with_stats(
         self,
+        request: Request | None,
         command_id: CommandId,
         num_images: int,
         response_format: str,
     ) -> BenchImageGenerationResponse:
         images, stats = await self._collect_image_chunks(
-            command_id, num_images, response_format, capture_stats=True
+            request, command_id, num_images, response_format, capture_stats=True
         )
         return BenchImageGenerationResponse(data=images, generation_stats=stats)
 
@@ -857,6 +907,7 @@ class API:
         await self._send(command)
 
         return await self._collect_image_generation_with_stats(
+            request=None,
             command_id=command.command_id,
             num_images=payload.n or 1,
             response_format=payload.response_format or "b64_json",
@@ -927,6 +978,7 @@ class API:
 
     async def image_edits(
         self,
+        request: Request,
         image: UploadFile = File(...),  # noqa: B008
         prompt: str = Form(...),
         model: str = Form(...),
@@ -958,6 +1010,7 @@ class API:
         if stream_bool and partial_images_int > 0:
             return StreamingResponse(
                 self._generate_image_stream(
+                    request=request,
                     command_id=command.command_id,
                     num_images=n,
                     response_format=response_format,
@@ -966,6 +1019,7 @@ class API:
             )
 
         return await self._collect_image_generation(
+            request=request,
             command_id=command.command_id,
             num_images=n,
             response_format=response_format,
@@ -996,6 +1050,7 @@ class API:
         )
 
         return await self._collect_image_generation_with_stats(
+            request=None,
             command_id=command.command_id,
             num_images=n,
             response_format=response_format,
@@ -1041,6 +1096,7 @@ class API:
             logger.info("Starting API")
             tg.start_soon(self._apply_state)
             tg.start_soon(self._pause_on_new_election)
+            tg.start_soon(self._cleanup_expired_images)
             print_startup_banner(self.port)
             await serve(
                 cast(ASGIFramework, self.app),
@@ -1087,6 +1143,15 @@ class API:
             async for message in ems:
                 if message.clock > self.last_completed_election:
                     self.paused = True
+
+    async def _cleanup_expired_images(self):
+        """Periodically clean up expired images from the store."""
+        cleanup_interval_seconds = 300  # 5 minutes
+        while True:
+            await anyio.sleep(cleanup_interval_seconds)
+            removed = self._image_store.cleanup_expired()
+            if removed > 0:
+                logger.debug(f"Cleaned up {removed} expired images")
 
     async def _send(self, command: Command):
         while self.paused:
