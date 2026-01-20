@@ -477,53 +477,6 @@ async def get_downloaded_size(path: Path) -> int:
     return 0
 
 
-async def download_progress_for_local_path(
-    repo_id: str, shard: ShardMetadata, local_path: Path
-) -> RepoDownloadProgress:
-    file_progress: dict[str, RepoFileDownloadProgress] = {}
-    total_files = 0
-    total_bytes = 0
-
-    if await aios.path.isdir(local_path):
-        for root, _, files in os.walk(local_path):
-            for f in files:
-                if f.endswith((".safetensors", ".bin", ".pt", ".gguf", ".json")):
-                    file_path = Path(root) / f
-                    size = (await aios.stat(file_path)).st_size
-                    rel_path = str(file_path.relative_to(local_path))
-                    file_progress[rel_path] = RepoFileDownloadProgress(
-                        repo_id=repo_id,
-                        repo_revision="local",
-                        file_path=rel_path,
-                        downloaded=Memory.from_bytes(size),
-                        downloaded_this_session=Memory.from_bytes(0),
-                        total=Memory.from_bytes(size),
-                        speed=0,
-                        eta=timedelta(0),
-                        status="complete",
-                        start_time=time.time(),
-                    )
-                    total_files += 1
-                    total_bytes += size
-    else:
-        raise ValueError(f"Local path {local_path} is not a directory")
-
-    return RepoDownloadProgress(
-        repo_id=repo_id,
-        repo_revision="local",
-        shard=shard,
-        completed_files=total_files,
-        total_files=total_files,
-        downloaded_bytes=Memory.from_bytes(total_bytes),
-        downloaded_bytes_this_session=Memory.from_bytes(0),
-        total_bytes=Memory.from_bytes(total_bytes),
-        overall_speed=0,
-        overall_eta=timedelta(0),
-        status="complete",
-        file_progress=file_progress,
-    )
-
-
 async def download_shard(
     shard: ShardMetadata,
     on_progress: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
@@ -533,14 +486,6 @@ async def download_shard(
 ) -> tuple[Path, RepoDownloadProgress]:
     if not skip_download:
         logger.info(f"Downloading {shard.model_card.model_id=}")
-
-    # Handle local paths
-    if await aios.path.exists(str(shard.model_card.model_id)):
-        logger.info(f"Using local model path {shard.model_card.model_id}")
-        local_path = Path(str(shard.model_card.model_id))
-        return local_path, await download_progress_for_local_path(
-            str(shard.model_card.model_id), shard, local_path
-        )
 
     revision = "main"
     target_dir = await ensure_models_dir() / str(shard.model_card.model_id).replace(
