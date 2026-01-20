@@ -169,10 +169,10 @@ def mlx_distributed_init(
 
                 # TODO: update once upstream fixes
                 logger.info(
-                    f"rank {rank} MLX_IBV_DEVICES: {coordination_file} with devices: {jaccl_devices_json}"
+                    f"rank {rank} MLX_JACCL_DEVICES: {coordination_file} with devices: {jaccl_devices_json}"
                 )
                 logger.info(f"rank {rank} MLX_JACCL_COORDINATOR: {jaccl_coordinator}")
-                os.environ["MLX_IBV_DEVICES"] = coordination_file
+                os.environ["MLX_JACCL_DEVICES"] = coordination_file
                 os.environ["MLX_RANK"] = str(rank)
                 os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
                 group = mx.distributed.init(backend="jaccl", strict=True)
@@ -312,6 +312,9 @@ def get_eos_token_ids_for_model(model_id: str) -> list[int] | None:
     model_id_lower = model_id.lower()
     if "kimi-k2" in model_id_lower:
         return [163586]
+    elif "glm-4.7-flash" in model_id_lower:
+        # 154820: <|endoftext|>, 154827: <|user|>, 154829: <|observation|>
+        return [154820, 154827, 154829]
     elif "glm" in model_id_lower:
         return [151336, 151329, 151338]
     return None

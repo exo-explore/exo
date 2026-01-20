@@ -17,8 +17,8 @@ dependencies = [
     "loguru>=0.7.3",
     "exo_pyo3_bindings", # rust bindings
     "anyio==4.11.0",
-    "mlx==0.30.1; sys_platform == 'darwin'",
-    "mlx[cpu]==0.30.1; sys_platform == 'linux'",
+    "mlx==0.30.3; sys_platform == 'darwin'",
+    "mlx[cpu]==0.30.3; sys_platform == 'linux'",
     "mlx-lm @ git+https://github.com/AlexCheema/mlx-lm.git@fix-transformers-5.0.0rc2",
     "tiktoken>=0.12.0", # required for kimi k2 tokenizer
     "hypercorn>=0.18.0",

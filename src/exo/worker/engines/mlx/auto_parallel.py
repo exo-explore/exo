@@ -566,7 +566,7 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
                 layer.block_sparse_moe.switch_mlp.up_proj
             )
             layer.block_sparse_moe = ShardedQwenMoE(layer.block_sparse_moe)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
-            layer.block_sparse_moe.sharding_group = self.group
+            layer.block_sparse_moe.sharding_group = self.group  # pyright: ignore[reportAttributeAccessIssue]
 
         return model
 
@@ -661,7 +661,7 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
             self.all_to_sharded_linear_in_place(layer.mlp.experts.up_proj)
 
             layer.mlp = ShardedGptOssMoE(layer.mlp)  # type: ignore
-            layer.mlp.sharding_group = self.group
+            layer.mlp.sharding_group = self.group  # pyright: ignore[reportAttributeAccessIssue]
 
         return model
 
