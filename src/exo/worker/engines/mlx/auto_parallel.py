@@ -153,16 +153,30 @@ class PipelineLastLayer(CustomMlxLayer):
                 cache.keys = mx.depends(cache.keys, sent)  # type: ignore[reportUnknownMemberType]
 
         if self.r == self.s - 1:
-            mx.eval(logits)
-            logger.info(f"[patch_pipeline_model] send logits to rank 0, shape={logits.shape}")
-            sent = mx.distributed.send(logits, dst=0, group=group)
-            mx.eval(sent)
+            mx.eval(output)
+            out_sum = output.sum().item()
+            logger.info(f"[patch_pipeline_model] send logits to rank 0, shape={output.shape}, sum={out_sum:.4f}")
+            output = mx.distributed.send(output, dst=0, group=self.group)
+            mx.eval(output)
             logger.info(f"[patch_pipeline_model] send done")
-        elif rank == 0:
-            logger.info(f"[patch_pipeline_model] recv_like logits from rank {self.s - 1}, shape={logits.shape}")
-            logits = mx.distributed.recv_like(logits, src=self.s - 1, group=group)
-            mx.eval(logits)
-            logger.info(f"[patch_pipeline_model] recv_like done")
+            output = mx.distributed.recv_like(output, src=0, group=self.group)
+            mx.eval(output)
+            recv_sum = output.sum().item()
+            logger.info(f"[patch_pipeline_model] recv_like_r done, sum={recv_sum:.4f}")
+
+        elif self.r == 0:
+            logger.info(f"[patch_pipeline_model] recv_like logits from rank {self.s - 1}, shape={output.shape}")
+            output = mx.distributed.recv_like(output, src=self.s - 1, group=self.group)
+            mx.eval(output)
+            recv_sum = output.sum().item()
+            logger.info(f"[patch_pipeline_model] recv_like done, sum={recv_sum:.4f}")
+            output = mx.distributed.send(output, dst=self.s - 1, group=self.group)
+            mx.eval(output)
+            logger.info(f"[patch_pipeline_model] send_r done")
+
+        # Synchronize before next iteration to ensure all JACCL operations complete
+        mx.synchronize()
+        logger.info(f"[PipelineLastLayer] iteration complete, synchronized")
 
         return output
 
