@@ -238,6 +238,9 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
     original_call = cls.__call__  # type :ignore
     call_signature = signature(original_call)  # type :ignore
 
+    world_size = group.size()
+    rank = group.rank()
+
     def patched_call(
         self: T,
         *args: object,
@@ -252,9 +255,13 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
         if cache is not None:
             cache[-1].state = mx.depends(cache[-1].state, logits)  # type: ignore
 
-        logits = mx.distributed.all_gather(logits, group=group)[
-            -logits.shape[0] :
-        ]  # type :ignore
+        # Use send/recv instead of all_gather to get logits to rank 0
+        # (JACCL recv picks up all_gather data instead of send data)
+        if world_size > 1:
+            if rank == world_size - 1:
+                sent = mx.distributed.send(logits, dst=0, group=group)
+            elif rank == 0:
+                logits = mx.distributed.recv_like(logits, src=world_size - 1, group=group)
 
         return logits
 
