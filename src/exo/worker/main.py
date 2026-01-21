@@ -9,13 +9,15 @@ from loguru import logger
 from exo.routing.connection_message import ConnectionMessage, ConnectionMessageType
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelId
+from exo.shared.types.api import ImageEditsInternalParams
 from exo.shared.types.commands import ForwarderCommand, RequestEventLog
-from exo.shared.types.common import NodeId, SessionId
+from exo.shared.types.common import CommandId, NodeId, SessionId
 from exo.shared.types.events import (
     Event,
     EventId,
     ForwarderEvent,
     IndexedEvent,
+    InputChunkReceived,
     NodeDownloadProgress,
     NodeGatheredInfo,
     TaskCreated,
@@ -28,6 +30,7 @@ from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     CreateRunner,
     DownloadModel,
+    ImageEdits,
     Shutdown,
     Task,
     TaskStatus,
@@ -93,6 +96,10 @@ class Worker:
 
         self.event_sender, self.event_receiver = channel[Event]()
 
+        # Buffer for input image chunks (for image editing)
+        self.input_chunk_buffer: dict[CommandId, dict[int, str]] = {}
+        self.input_chunk_counts: dict[CommandId, int] = {}
+
     async def run(self):
         logger.info("Starting Worker")
 
@@ -157,6 +164,17 @@ class Worker:
                 for idx, event in indexed_events:
                     self.state = apply(self.state, IndexedEvent(idx=idx, event=event))
 
+                    # Buffer input image chunks for image editing
+                    if isinstance(event, InputChunkReceived):
+                        cmd_id = event.command_id
+                        if cmd_id not in self.input_chunk_buffer:
+                            self.input_chunk_buffer[cmd_id] = {}
+                            self.input_chunk_counts[cmd_id] = event.chunk.total_chunks
+
+                        self.input_chunk_buffer[cmd_id][event.chunk.chunk_index] = (
+                            event.chunk.data
+                        )
+
     async def plan_step(self):
         while True:
             await anyio.sleep(0.1)
@@ -169,6 +187,8 @@ class Worker:
                 self.state.instances,
                 self.state.runners,
                 self.state.tasks,
+                self.input_chunk_buffer,
+                self.input_chunk_counts,
             )
             if task is None:
                 continue
@@ -232,6 +252,46 @@ class Worker:
                                 task_id=task.task_id, task_status=TaskStatus.TimedOut
                             )
                         )
+                case ImageEdits() if task.task_params.total_input_chunks > 0:
+                    # Assemble image from chunks and inject into task
+                    cmd_id = task.command_id
+                    chunks = self.input_chunk_buffer.get(cmd_id, {})
+                    assembled = "".join(chunks[i] for i in range(len(chunks)))
+                    logger.info(
+                        f"Assembled input image from {len(chunks)} chunks, "
+                        f"total size: {len(assembled)} bytes"
+                    )
+                    # Create modified task with assembled image data
+                    modified_task = ImageEdits(
+                        task_id=task.task_id,
+                        command_id=task.command_id,
+                        instance_id=task.instance_id,
+                        task_status=task.task_status,
+                        task_params=ImageEditsInternalParams(
+                            image_data=assembled,
+                            total_input_chunks=task.task_params.total_input_chunks,
+                            prompt=task.task_params.prompt,
+                            model=task.task_params.model,
+                            n=task.task_params.n,
+                            quality=task.task_params.quality,
+                            output_format=task.task_params.output_format,
+                            response_format=task.task_params.response_format,
+                            size=task.task_params.size,
+                            image_strength=task.task_params.image_strength,
+                            bench=task.task_params.bench,
+                            stream=task.task_params.stream,
+                            partial_images=task.task_params.partial_images,
+                            advanced_params=task.task_params.advanced_params,
+                        ),
+                    )
+                    # Cleanup buffers
+                    if cmd_id in self.input_chunk_buffer:
+                        del self.input_chunk_buffer[cmd_id]
+                    if cmd_id in self.input_chunk_counts:
+                        del self.input_chunk_counts[cmd_id]
+                    await self.runners[self._task_to_runner_id(task)].start_task(
+                        modified_task
+                    )
                 case task:
                     await self.runners[self._task_to_runner_id(task)].start_task(task)
 

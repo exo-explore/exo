@@ -11,7 +11,7 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from exo.shared.constants import EXO_MODELS_DIR
-from exo.shared.models.model_cards import ModelCard
+from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.api import ChatCompletionMessage
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
@@ -19,7 +19,7 @@ from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.shards import PipelineShardMetadata, TensorShardMetadata
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.generator.generate import mlx_generate
-from exo.worker.engines.mlx.utils_mlx import shard_and_load
+from exo.worker.engines.mlx.utils_mlx import apply_chat_template, shard_and_load
 
 
 class MockLayer(nn.Module):
@@ -88,6 +88,7 @@ def run_gpt_oss_pipeline_device(
                 n_layers=24,
                 hidden_size=2880,
                 supports_tensor=False,
+                tasks=[ModelTask.TextGeneration],
             ),
             device_rank=rank,
             world_size=world_size,
@@ -118,11 +119,12 @@ def run_gpt_oss_pipeline_device(
             max_tokens=max_tokens,
         )
 
+        prompt = apply_chat_template(tokenizer, task)
+
         generated_text = ""
+
         for response in mlx_generate(
-            model=model,
-            tokenizer=tokenizer,
-            task=task,
+            model=model, tokenizer=tokenizer, task=task, prompt=prompt
         ):
             generated_text += response.text
             if response.finish_reason is not None:
@@ -157,6 +159,7 @@ def run_gpt_oss_tensor_parallel_device(
                 n_layers=24,
                 hidden_size=2880,
                 supports_tensor=True,
+                tasks=[ModelTask.TextGeneration],
             ),
             device_rank=rank,
             world_size=world_size,
@@ -184,11 +187,14 @@ def run_gpt_oss_tensor_parallel_device(
             max_tokens=max_tokens,
         )
 
+        prompt = apply_chat_template(tokenizer, task)
+
         generated_text = ""
         for response in mlx_generate(
             model=model,
             tokenizer=tokenizer,
             task=task,
+            prompt=prompt,
         ):
             generated_text += response.text
             if response.finish_reason is not None:
