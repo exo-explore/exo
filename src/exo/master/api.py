@@ -17,7 +17,7 @@ from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from loguru import logger
 
-from exo.master.image_store import ImageId, ImageStore
+from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_IMAGE_CACHE_DIR, EXO_MAX_CHUNK_SIZE
@@ -70,7 +70,7 @@ from exo.shared.types.commands import (
     SendInputChunk,
     TaskFinished,
 )
-from exo.shared.types.common import CommandId, NodeId, SessionId
+from exo.shared.types.common import CommandId, Id, NodeId, SessionId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -88,13 +88,8 @@ from exo.utils.dashboard_path import find_dashboard
 from exo.utils.event_buffer import OrderedBuffer
 
 
-def _format_to_content_type(image_format: str | None) -> str:
-    content_types = {
-        "png": "image/png",
-        "jpeg": "image/jpeg",
-        "webp": "image/webp",
-    }
-    return content_types.get(image_format or "png", "image/png")
+def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
+    return f"image/{image_format or 'png'}"
 
 
 def chunk_to_response(
@@ -659,7 +654,7 @@ class API:
         return resolved_model
 
     async def get_image(self, image_id: str) -> FileResponse:
-        stored = self._image_store.get(ImageId(image_id))
+        stored = self._image_store.get(Id(image_id))
         if stored is None:
             raise HTTPException(status_code=404, detail="Image not found or expired")
         return FileResponse(path=stored.file_path, media_type=stored.content_type)
@@ -679,7 +674,7 @@ class API:
             ]
         )
 
-    def _build_image_url(self, request: Request, image_id: ImageId) -> str:
+    def _build_image_url(self, request: Request, image_id: Id) -> str:
         host = request.headers.get("host", f"localhost:{self.port}")
         scheme = "https" if request.url.scheme == "https" else "http"
         return f"{scheme}://{host}/v1/images/{image_id}"
@@ -764,7 +759,7 @@ class API:
                                 "type": "partial",
                                 "partial_index": partial_idx,
                                 "total_partials": total_partials,
-                                "format": chunk.format,
+                                "format": str(chunk.format),
                                 "data": {
                                     "b64_json": full_data
                                     if response_format == "b64_json"
@@ -784,14 +779,14 @@ class API:
                                 event_data = {
                                     "type": "final",
                                     "image_index": chunk.image_index,
-                                    "format": chunk.format,
+                                    "format": str(chunk.format),
                                     "data": {"url": url},
                                 }
                             else:
                                 event_data = {
                                     "type": "final",
                                     "image_index": chunk.image_index,
-                                    "format": chunk.format,
+                                    "format": str(chunk.format),
                                     "data": {"b64_json": full_data},
                                 }
                             yield f"data: {json.dumps(event_data)}\n\n"
@@ -826,7 +821,7 @@ class API:
         # Only track non-partial (final) images
         image_chunks: dict[int, dict[int, str]] = {}
         image_total_chunks: dict[int, int] = {}
-        image_formats: dict[int, str | None] = {}
+        image_formats: dict[int, Literal["png", "jpeg", "webp"] | None] = {}
         images_complete = 0
         stats: ImageGenerationStats | None = None
 

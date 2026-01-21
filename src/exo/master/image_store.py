@@ -1,15 +1,13 @@
 import time
-import uuid
 from pathlib import Path
-from typing import NewType
 
 from pydantic import BaseModel
 
-ImageId = NewType("ImageId", str)
+from exo.shared.types.common import Id
 
 
 class StoredImage(BaseModel, frozen=True):
-    image_id: ImageId
+    image_id: Id
     file_path: Path
     content_type: str
     expires_at: float
@@ -19,11 +17,11 @@ class ImageStore:
     def __init__(self, storage_dir: Path, default_expiry_seconds: int = 3600) -> None:
         self._storage_dir = storage_dir
         self._default_expiry_seconds = default_expiry_seconds
-        self._images: dict[ImageId, StoredImage] = {}
+        self._images: dict[Id, StoredImage] = {}
         self._storage_dir.mkdir(parents=True, exist_ok=True)
 
     def store(self, image_bytes: bytes, content_type: str) -> StoredImage:
-        image_id = ImageId(str(uuid.uuid4()))
+        image_id = Id()
         extension = _content_type_to_extension(content_type)
         file_path = self._storage_dir / f"{image_id}{extension}"
         file_path.write_bytes(image_bytes)
@@ -37,7 +35,7 @@ class ImageStore:
         self._images[image_id] = stored
         return stored
 
-    def get(self, image_id: ImageId) -> StoredImage | None:
+    def get(self, image_id: Id) -> StoredImage | None:
         stored = self._images.get(image_id)
         if stored is None:
             return None
@@ -65,16 +63,17 @@ class ImageStore:
 
         return len(expired_ids)
 
-    def _remove(self, image_id: ImageId) -> None:
+    def _remove(self, image_id: Id) -> None:
         stored = self._images.pop(image_id, None)
         if stored is not None and stored.file_path.exists():
             stored.file_path.unlink()
 
 
-def _content_type_to_extension(content_type: str) -> str:
-    extensions = {
-        "image/png": ".png",
-        "image/jpeg": ".jpg",
-        "image/webp": ".webp",
-    }
-    return extensions.get(content_type, ".png")
+def _content_type_to_extension(
+    content_type: str,
+) -> str:
+    ext = f"{content_type.split('/')[1]}"
+    if ext == "jpeg":
+        ext = "jpg"
+
+    return f".{ext}"

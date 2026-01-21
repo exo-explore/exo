@@ -2,6 +2,7 @@ import base64
 import time
 from collections.abc import Generator
 from functools import cache
+from typing import Literal
 
 import mlx.core as mx
 from mlx_lm.models.gpt_oss import Model as GptOssModel
@@ -464,7 +465,7 @@ def _send_image_chunk(
     partial_index: int | None = None,
     total_partials: int | None = None,
     stats: ImageGenerationStats | None = None,
-    image_format: str | None = None,
+    image_format: Literal["png", "jpeg", "webp"] | None = None,
 ) -> None:
     """Send base64-encoded image data as chunks via events."""
     data_chunks = [

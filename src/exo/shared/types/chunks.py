@@ -1,6 +1,6 @@
 from collections.abc import Generator
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.api import GenerationStats, ImageGenerationStats
@@ -37,7 +37,7 @@ class ImageChunk(BaseChunk):
     partial_index: int | None = None
     total_partials: int | None = None
     stats: ImageGenerationStats | None = None
-    format: str | None = None
+    format: Literal["png", "jpeg", "webp"] | None = None
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
         for name, value in super().__repr_args__():  # pyright: ignore[reportAny]
