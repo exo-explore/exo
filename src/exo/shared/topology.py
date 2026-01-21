@@ -7,6 +7,7 @@ import rustworkx as rx
 from pydantic import BaseModel, ConfigDict
 
 from exo.shared.types.common import NodeId
+from exo.shared.types.profiling import ThunderboltBridgeStatus
 from exo.shared.types.topology import (
     Connection,
     Cycle,
@@ -195,12 +196,14 @@ class Topology:
             if conn.is_thunderbolt()
         ]
 
-        tb_graph: rx.PyDiGraph[NodeId, SocketConnection] = rx.PyDiGraph()
+        tb_graph: rx.PyDiGraph[NodeId, SocketConnection | RDMAConnection] = (
+            rx.PyDiGraph()
+        )
         tb_graph.add_nodes_from(self._graph.nodes())
 
         for u, v, conn in tb_edges:
-            if isinstance(conn, SocketConnection):
-                tb_graph.add_edge(u, v, conn)
+            # All Thunderbolt edges are either SocketConnection or RDMAConnection
+            tb_graph.add_edge(u, v, conn)
 
         cycle_idxs = rx.simple_cycles(tb_graph)
         cycles: list[Cycle] = []
@@ -234,3 +237,49 @@ class Topology:
                 if not has_tb:
                     return False
         return True
+
+    def _build_thunderbolt_subgraph(
+        self, node_filter: set[NodeId]
+    ) -> rx.PyDiGraph[NodeId, SocketConnection | RDMAConnection]:
+        """Build a subgraph with only the specified nodes and Thunderbolt connections between them."""
+        graph: rx.PyDiGraph[NodeId, SocketConnection | RDMAConnection] = rx.PyDiGraph()
+        node_to_idx: dict[NodeId, int] = {}
+
+        # Add only nodes that exist in both the filter and our topology
+        for node_id in node_filter:
+            if node_id in self._vertex_indices:
+                node_to_idx[node_id] = graph.add_node(node_id)
+
+        # Add Thunderbolt edges between filtered nodes
+        for u, v, conn in self._graph.weighted_edge_list():
+            if not conn.is_thunderbolt():
+                continue
+            source_id, sink_id = self._graph[u], self._graph[v]
+            if source_id in node_to_idx and sink_id in node_to_idx:
+                graph.add_edge(node_to_idx[source_id], node_to_idx[sink_id], conn)
+
+        return graph
+
+    def get_thunderbolt_bridge_cycles(
+        self,
+        node_tb_bridge_status: Mapping[NodeId, ThunderboltBridgeStatus],
+    ) -> list[list[NodeId]]:
+        """
+        Find cycles in the Thunderbolt topology where all nodes have TB bridge enabled.
+        Only returns cycles with >2 nodes (3+ machines in a loop), as cycles with
+        2 or fewer nodes don't cause the broadcast storm problem.
+        """
+        enabled_nodes = {
+            node_id for node_id, status in node_tb_bridge_status.items() if status.enabled
+        }
+
+        if len(enabled_nodes) < 3:
+            return []
+
+        tb_graph = self._build_thunderbolt_subgraph(enabled_nodes)
+
+        return [
+            [tb_graph[idx] for idx in cycle]
+            for cycle in rx.simple_cycles(tb_graph)
+            if len(cycle) > 2
+        ]

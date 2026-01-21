@@ -71,3 +71,11 @@ class NodeThunderboltInfo(CamelCaseModel):
     """Thunderbolt interface identifiers for a node."""
 
     interfaces: Sequence[ThunderboltIdentifier] = []
+
+
+class ThunderboltBridgeStatus(CamelCaseModel):
+    """Whether the Thunderbolt Bridge network service is enabled on this node."""
+
+    enabled: bool
+    exists: bool
+    service_name: str | None = None

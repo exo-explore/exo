@@ -14,6 +14,7 @@ struct ContentView: View {
     @EnvironmentObject private var networkStatusService: NetworkStatusService
     @EnvironmentObject private var localNetworkChecker: LocalNetworkChecker
     @EnvironmentObject private var updater: SparkleUpdater
+    @EnvironmentObject private var thunderboltBridgeService: ThunderboltBridgeService
     @State private var focusedNode: NodeViewModel?
     @State private var deletingInstanceIDs: Set<String> = []
     @State private var showAllNodes = false
@@ -423,6 +424,43 @@ struct ContentView: View {
         }
     }
 
+    /// Shows TB bridge status for all nodes from exo cluster state
+    private var clusterThunderboltBridgeView: some View {
+        let bridgeStatuses = stateService.latestSnapshot?.nodeThunderboltBridge ?? [:]
+        let localNodeId = stateService.localNodeId
+        let nodeProfiles = stateService.latestSnapshot?.nodeProfiles ?? [:]
+
+        return VStack(alignment: .leading, spacing: 1) {
+            if bridgeStatuses.isEmpty {
+                Text("Cluster TB Bridge: No data")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            } else {
+                Text("Cluster TB Bridge Status:")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                ForEach(Array(bridgeStatuses.keys.sorted()), id: \.self) { nodeId in
+                    if let status = bridgeStatuses[nodeId] {
+                        let nodeName = nodeProfiles[nodeId]?.friendlyName ?? String(nodeId.prefix(8))
+                        let isLocal = nodeId == localNodeId
+                        let prefix = isLocal ? "  \(nodeName) (local):" : "  \(nodeName):"
+                        let statusText =
+                            !status.exists
+                            ? "N/A"
+                            : (status.enabled ? "Enabled" : "Disabled")
+                        let color: Color =
+                            !status.exists
+                            ? .secondary
+                            : (status.enabled ? .red : .green)
+                        Text("\(prefix) \(statusText)")
+                            .font(.caption2)
+                            .foregroundColor(color)
+                    }
+                }
+            }
+        }
+    }
+
     private var interfaceIpList: some View {
         let statuses = networkStatusService.status.interfaceStatuses
         return VStack(alignment: .leading, spacing: 1) {
@@ -465,6 +503,7 @@ struct ContentView: View {
                     Text(thunderboltStatusText)
                         .font(.caption2)
                         .foregroundColor(thunderboltStatusColor)
+                    clusterThunderboltBridgeView
                     interfaceIpList
                     rdmaStatusView
                     sendBugReportButton

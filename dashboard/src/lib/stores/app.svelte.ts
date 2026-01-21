@@ -190,6 +190,13 @@ interface RawStateResponse {
   nodeMemory?: Record<string, RawMemoryUsage>;
   nodeSystem?: Record<string, RawSystemPerformanceProfile>;
   nodeNetwork?: Record<string, RawNodeNetworkInfo>;
+  // Thunderbolt bridge status per node
+  nodeThunderboltBridge?: Record<
+    string,
+    { enabled: boolean; exists: boolean; serviceName?: string | null }
+  >;
+  // Thunderbolt bridge cycles (nodes with bridge enabled forming loops)
+  thunderboltBridgeCycles?: string[][];
 }
 
 export interface MessageAttachment {
@@ -420,6 +427,13 @@ class AppStore {
   selectedPreviewModelId = $state<string | null>(null);
   isLoadingPreviews = $state(false);
   lastUpdate = $state<number | null>(null);
+  thunderboltBridgeCycles = $state<string[][]>([]);
+  nodeThunderboltBridge = $state<
+    Record<
+      string,
+      { enabled: boolean; exists: boolean; serviceName?: string | null }
+    >
+  >({});
 
   // UI state
   isTopologyMinimized = $state(false);
@@ -1008,6 +1022,10 @@ class AppStore {
       if (data.downloads) {
         this.downloads = data.downloads;
       }
+      // Thunderbolt bridge cycles
+      this.thunderboltBridgeCycles = data.thunderboltBridgeCycles ?? [];
+      // Thunderbolt bridge status per node
+      this.nodeThunderboltBridge = data.nodeThunderboltBridge ?? {};
       this.lastUpdate = Date.now();
     } catch (error) {
       console.error("Error fetching state:", error);
@@ -2133,6 +2151,10 @@ export const toggleChatSidebarVisible = () =>
 export const setChatSidebarVisible = (visible: boolean) =>
   appStore.setChatSidebarVisible(visible);
 export const refreshState = () => appStore.fetchState();
+
+// Thunderbolt bridge status
+export const thunderboltBridgeCycles = () => appStore.thunderboltBridgeCycles;
+export const nodeThunderboltBridge = () => appStore.nodeThunderboltBridge;
 
 // Image generation params
 export const imageGenerationParams = () => appStore.getImageGenerationParams();
