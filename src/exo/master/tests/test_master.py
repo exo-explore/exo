@@ -7,7 +7,7 @@ from loguru import logger
 
 from exo.master.main import Master
 from exo.routing.router import get_node_id_keypair
-from exo.shared.models.model_cards import ModelCard, ModelId
+from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from exo.shared.types.commands import (
     ChatCompletion,
@@ -115,6 +115,7 @@ async def test_master():
                             storage_size=Memory.from_bytes(678948),
                             hidden_size=7168,
                             supports_tensor=True,
+                            tasks=[ModelTask.TextGeneration],
                         ),
                         sharding=Sharding.Pipeline,
                         instance_meta=InstanceMeta.MlxRing,
@@ -172,6 +173,7 @@ async def test_master():
                         storage_size=Memory.from_bytes(678948),
                         hidden_size=7168,
                         supports_tensor=True,
+                        tasks=[ModelTask.TextGeneration],
                     ),
                     device_rank=0,
                     world_size=1,

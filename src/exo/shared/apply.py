@@ -9,6 +9,7 @@ from exo.shared.types.events import (
     ChunkGenerated,
     Event,
     IndexedEvent,
+    InputChunkReceived,
     InstanceCreated,
     InstanceDeleted,
     NodeDownloadProgress,
@@ -52,8 +53,8 @@ def event_apply(event: Event, state: State) -> State:
     """Apply an event to state."""
     match event:
         case (
-            TestEvent() | ChunkGenerated() | TaskAcknowledged()
-        ):  # TaskAcknowledged should never be sent by a worker but i dont mind if it just gets ignored
+            TestEvent() | ChunkGenerated() | TaskAcknowledged() | InputChunkReceived()
+        ):  # Pass-through events that don't modify state
             return state
         case InstanceCreated():
             return apply_instance_created(event, state)

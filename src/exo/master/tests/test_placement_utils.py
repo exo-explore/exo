@@ -12,7 +12,7 @@ from exo.master.tests.conftest import (
     create_node_memory,
     create_socket_connection,
 )
-from exo.shared.models.model_cards import ModelCard, ModelId
+from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
@@ -238,6 +238,7 @@ def test_get_shard_assignments(
         storage_size=Memory.from_kb(1000),
         hidden_size=1000,
         supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
     )
 
     cycles = topology.get_cycles()
@@ -517,6 +518,7 @@ def test_get_shard_assignments_insufficient_memory_raises():
         storage_size=Memory.from_kb(1000),
         hidden_size=1000,
         supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
     )
     cycles = topology.get_cycles()
     selected_cycle = cycles[0]
