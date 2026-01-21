@@ -214,7 +214,7 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
     if cycle_digraph.is_thunderbolt_cycle(cycle):
         get_thunderbolt = True
 
-    logger.info(f"Using thunderbolt cycle: {get_thunderbolt}")
+    logger.debug(f"Using thunderbolt cycle: {get_thunderbolt}")
 
     hosts: list[Host] = []
     for i in range(len(cycle)):
@@ -406,7 +406,7 @@ def get_mlx_jaccl_coordinators(
     Select an IP address that each node can reach for the rank 0 node. Returns
     address in format "X.X.X.X:PORT" per node.
     """
-    logger.info(f"Selecting coordinator: {coordinator}")
+    logger.debug(f"Selecting coordinator: {coordinator}")
 
     def get_ip_for_node(n: NodeId) -> str:
         if n == coordinator:

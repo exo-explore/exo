@@ -126,7 +126,7 @@ def mlx_generate(
     is_bench: bool = isinstance(task, BenchChatCompletionTaskParams)
 
     # Currently we support chat-completion tasks only.
-    logger.info(f"task_params: {task}")
+    logger.debug(f"task_params: {task}")
 
     if task.seed is not None:
         mx.random.seed(task.seed)

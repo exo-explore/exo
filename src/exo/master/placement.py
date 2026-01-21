@@ -3,8 +3,6 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Sequence
 
-from loguru import logger
-
 from exo.master.placement_utils import (
     Cycle,
     filter_cycles_by_memory,
@@ -120,10 +118,6 @@ def place_instance(
     target_instances = dict(deepcopy(current_instances))
 
     if len(selected_cycle) == 1:
-        logger.warning(
-            "You have likely selected jaccl for a single node instance; falling back to MlxRing"
-        )
-
         command.instance_meta = InstanceMeta.MlxRing
 
     # TODO: Single node instances
