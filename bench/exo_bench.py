@@ -195,7 +195,7 @@ def resolve_model_short_id(client: ExoClient, model_arg: str) -> tuple[str, str]
     data = models.get("data") or []
 
     for m in data:
-        if m.get("name") == model_arg:
+        if m.get("name").lower() == model_arg.lower():
             short_id = str(m["name"])
             full_id = str(m.get("hugging_face_id") or m["name"])
             return short_id, full_id
