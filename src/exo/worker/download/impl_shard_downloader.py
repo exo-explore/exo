@@ -11,6 +11,7 @@ from exo.shared.types.worker.shards import (
 from exo.worker.download.download_utils import RepoDownloadProgress, download_shard
 from exo.worker.download.shard_downloader import ShardDownloader
 
+
 def exo_shard_downloader(max_parallel_downloads: int = 8) -> ShardDownloader:
     return SingletonShardDownloader(
         CachedShardDownloader(ResumableShardDownloader(max_parallel_downloads))
@@ -102,10 +103,10 @@ class CachedShardDownloader(ShardDownloader):
         target_dir = await self.shard_downloader.ensure_shard(
             shard, config_only=config_only
         )
-        
+
         if not config_only:
             self.cache[cache_key] = target_dir
-            
+
         return target_dir
 
     async def get_shard_download_status(
@@ -146,7 +147,7 @@ class ResumableShardDownloader(ShardDownloader):
 
         allow_patterns = ["config.json"] if config_only else None
 
-        target_dir, _= await download_shard(
+        target_dir, _ = await download_shard(
             shard,
             self.on_progress_wrapper,
             max_parallel_downloads=self.max_parallel_downloads,

@@ -344,9 +344,9 @@ class AppStore {
 	isLoading = $state(false);
 
 	// Performance metrics
-	ttftMs = $state<number | null>(null);  // Time to first token in ms
-	tps = $state<number | null>(null);     // Tokens per second
-	totalTokens = $state<number>(0);       // Total tokens in current response
+	ttftMs = $state<number | null>(null); // Time to first token in ms
+	tps = $state<number | null>(null); // Tokens per second
+	totalTokens = $state<number>(0); // Total tokens in current response
 
 	// Topology state
 	topologyData = $state<TopologyData | null>(null);
@@ -1568,47 +1568,47 @@ class AppStore {
 	/* Place an instance on the topology to run the model */
 	async placeInstance(modelId: string, downloadOnly: boolean = false) {
 		try {
-			const resp = await fetch('/place_instance', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+			const resp = await fetch("/place_instance", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					model_id: modelId,
-					sharding: 'Pipeline', // Default
-					instance_meta: 'MlxRing', // Default
-					download_only: downloadOnly
-				})
+					sharding: "Pipeline", // Default
+					instance_meta: "MlxRing", // Default
+					download_only: downloadOnly,
+				}),
 			});
 			if (!resp.ok) {
 				const error = await resp.json();
-				throw new Error(error.detail || 'Failed to place instance');
+				throw new Error(error.detail || "Failed to place instance");
 			}
 			return await resp.json();
 		} catch (err) {
-			console.error('Place instance error:', err);
+			console.error("Place instance error:", err);
 			throw err;
 		}
 	}
 	/* Register a custom model from huggingace via master API */
 	async registerCustomModel(repoId: string) {
 		try {
-			const resp = await fetch('/custom_models', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+			const resp = await fetch("/custom_models", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					repo_id: repoId,
-					sharding: 'Pipeline', // Default
-					instance_meta: 'MlxRing' // Default
-				})
+					sharding: "Pipeline", // Default
+					instance_meta: "MlxRing", // Default
+				}),
 			});
 			if (!resp.ok) {
 				const error = await resp.json();
-				if (resp.status === 400 && error.detail.includes('already exists'))
-					return;//Proceed if the model already exists
-				throw new Error(error.detail || 'Failed to register custom model');
+				if (resp.status === 400 && error.detail.includes("already exists"))
+					return; //Proceed if the model already exists
+				throw new Error(error.detail || "Failed to register custom model");
 			}
 			return await resp.json();
 		} catch (err) {
-			console.error('Register custom model error:', err);
+			console.error("Register custom model error:", err);
 			throw err;
 		}
 	}
@@ -1662,7 +1662,8 @@ export const editMessage = (messageId: string, newContent: string) =>
 export const editAndRegenerate = (messageId: string, newContent: string) =>
 	appStore.editAndRegenerate(messageId, newContent);
 export const regenerateLastResponse = () => appStore.regenerateLastResponse();
-export const registerCustomModel = (repoId: string) => appStore.registerCustomModel(repoId);
+export const registerCustomModel = (repoId: string) =>
+	appStore.registerCustomModel(repoId);
 
 // Conversation actions
 export const conversations = () => appStore.conversations;
@@ -1691,5 +1692,5 @@ export const toggleChatSidebarVisible = () =>
 export const setChatSidebarVisible = (visible: boolean) =>
 	appStore.setChatSidebarVisible(visible);
 export const refreshState = () => appStore.fetchState();
-export const placeInstance = (modelId: string, downloadOnly: boolean) => appStore.placeInstance(modelId, downloadOnly);
-
+export const placeInstance = (modelId: string, downloadOnly: boolean) =>
+	appStore.placeInstance(modelId, downloadOnly);

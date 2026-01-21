@@ -577,32 +577,34 @@ def get_pretty_name_from_model_id(model_id: str) -> str:
     def quant_replacer(match: re.Match[str]) -> str:
         bits = match.group(1)
         return f"({bits}-bit)"
-    
+
     name = re.sub(r"\b(\d+)\s*-?bit\b", quant_replacer, name, flags=re.IGNORECASE)
 
     # Remove extra spaces
     name = " ".join(name.split())
-
 
     # Capitalize words
     words = name.split()
     capitalized_words: list[str] = []
     for word in words:
         # If it's already mixed case or all caps (and not just one letter), keep it
-        if (any(c.isupper() for c in word) and len(word) > 1):
+        if any(c.isupper() for c in word) and len(word) > 1:
             capitalized_words.append(word)
         else:
             # Capitalize the first letter, keep the rest as is
             capitalized_words.append(word[0].upper() + word[1:] if word else "")
 
     name = " ".join(capitalized_words)
-    name = name.replace(" (", "(").replace("(", " (").strip() # Ensure single space before (
+    name = (
+        name.replace(" (", "(").replace("(", " (").strip()
+    )  # Ensure single space before (
 
     return name
 
 
 PERSISTENT_FILE_PATH = EXO_CONFIG_HOME / "custom_models.json"
 custom_models_loaded = False
+
 
 def load_custom_models_once() -> None:
     """Loads custom models from persistent storage (called once)"""
@@ -612,16 +614,16 @@ def load_custom_models_once() -> None:
     custom_models_loaded = True
 
     logger.debug(f"Attempting to load custom models from: {PERSISTENT_FILE_PATH}")
-    
+
     if not PERSISTENT_FILE_PATH.exists():
         logger.debug(f"Custom models file does not exist yet: {PERSISTENT_FILE_PATH}")
         return
-    
+
     try:
         with open(PERSISTENT_FILE_PATH, "r") as f:
             data = cast(dict[str, dict[str, Any]], json.load(f))
             logger.debug(f"Loaded {len(data)} entries from custom_models.json")
-            
+
             loaded_count = 0
             any_changes = False
             for key, card_data in data.items():
@@ -631,7 +633,7 @@ def load_custom_models_once() -> None:
                     if card.name == str(card.model_id) or card.name == key:
                         card.name = get_pretty_name_from_model_id(str(card.model_id))
                         if card.metadata.pretty_name == str(card.model_id):
-                             card.metadata.pretty_name = card.name
+                            card.metadata.pretty_name = card.name
                         any_changes = True
 
                     if key not in MODEL_CARDS:
@@ -642,63 +644,76 @@ def load_custom_models_once() -> None:
                         logger.debug(f"Skipping {key} - already in MODEL_CARDS")
                 except Exception as e:
                     logger.warning(f"Failed to load model card for {key}: {e}")
-            
+
             if any_changes:
                 logger.info("Custom model names were prettified. Saving changes.")
                 save_custom_models()
-            
-            logger.info(f"✓ Loaded {loaded_count} custom models from {PERSISTENT_FILE_PATH}")
+
+            logger.info(
+                f"✓ Loaded {loaded_count} custom models from {PERSISTENT_FILE_PATH}"
+            )
     except Exception as e:
         logger.error(f"Error loading custom models from {PERSISTENT_FILE_PATH}: {e}")
+
 
 def save_custom_models() -> None:
     """Saves custom models from MODEL_CARDS to persistent storage."""
     logger.debug(f"Attempting to save custom models to: {PERSISTENT_FILE_PATH}")
-    
+
     try:
         PERSISTENT_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        
+
         custom_models = {
-            key: card.model_dump(mode="json") 
-            for key, card in MODEL_CARDS.items() 
+            key: card.model_dump(mode="json")
+            for key, card in MODEL_CARDS.items()
             if "custom" in card.tags
         }
-        
+
         with open(PERSISTENT_FILE_PATH, "w") as f:
             json.dump(custom_models, f, indent=4)
-        
-        logger.info(f"✓ Saved {len(custom_models)} custom models to {PERSISTENT_FILE_PATH}")
+
+        logger.info(
+            f"✓ Saved {len(custom_models)} custom models to {PERSISTENT_FILE_PATH}"
+        )
     except Exception as e:
         logger.error(f"Failed to save custom models to {PERSISTENT_FILE_PATH}: {e}")
 
-def register_custom_model(model_id: ModelId, metadata: ModelMetadata, name: str | None = None, description: str | None = None) -> ModelCard:
+
+def register_custom_model(
+    model_id: ModelId,
+    metadata: ModelMetadata,
+    name: str | None = None,
+    description: str | None = None,
+) -> ModelCard:
     """Registers a custom model in MODEL_CARDS and persists it."""
     load_custom_models_once()
-    
+
     short_id = str(model_id)
     if "/" in short_id:
         short_id = short_id.split("/")[-1]
-    
+
     # Check if model is already registered
     if short_id in MODEL_CARDS:
         return MODEL_CARDS[short_id]
-    
+
     logger.debug(f"Registering new model with short_id: {short_id}")
-    
+
     card = ModelCard(
         short_id=short_id,
         model_id=model_id,
         name=name or get_pretty_name_from_model_id(str(model_id)),
-        description=description or f"Custom model from {str(model_id).split('/')[0] if '/' in str(model_id) else 'Hugging Face'}",
+        description=description
+        or f"Custom model from {str(model_id).split('/')[0] if '/' in str(model_id) else 'Hugging Face'}",
         tags=["custom"],
         metadata=metadata,
     )
     MODEL_CARDS[short_id] = card
     logger.info(f"✓ Registered custom model: {short_id} ({model_id})")
-    
+
     # Persist to storage
     save_custom_models()
     return card
+
 
 def get_model_cards() -> dict[str, ModelCard]:
     """Returns MODEL_CARDS, loading custom models on first access."""

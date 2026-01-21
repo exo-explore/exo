@@ -110,7 +110,9 @@ async def _get_model_meta(model_id: str) -> ModelMetadata:
         model_info(model_id)
     except Exception as e:
         logger.error(f"Model {model_id} does not exist or is inaccessible: {e}")
-        raise ValueError(f"Model {model_id} does not exist or is inaccessible: {e}") from e
+        raise ValueError(
+            f"Model {model_id} does not exist or is inaccessible: {e}"
+        ) from e
 
     config_data = await get_config_data(model_id)
     num_layers = config_data.layer_count
@@ -122,7 +124,9 @@ async def _get_model_meta(model_id: str) -> ModelMetadata:
 
     return ModelMetadata(
         model_id=ModelId(model_id),
-        pretty_name=model_card.name if model_card is not None else get_pretty_name_from_model_id(model_id),
+        pretty_name=model_card.name
+        if model_card is not None
+        else get_pretty_name_from_model_id(model_id),
         storage_size=mem_size_bytes,
         n_layers=num_layers,
         hidden_size=config_data.hidden_size or 0,

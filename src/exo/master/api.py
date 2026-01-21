@@ -93,20 +93,20 @@ def chunk_to_response(
 
 async def resolve_model_meta(model_id: str) -> ModelMetadata:
     from exo.shared.models.model_cards import get_model_cards
-    
+
     # Load custom models from persistent storage if not already loaded
     model_cards = get_model_cards()
-    
+
     # Check if model_id is a key (short_id) in MODEL_CARDS
     if model_id in model_cards:
         model_card = model_cards[model_id]
         return model_card.metadata
-    
+
     # Check if model_id matches any ModelCard's full model_id
     for card in model_cards.values():
         if str(card.model_id) == model_id:
             return card.metadata
-    
+
     # Not found in MODEL_CARDS, fetch from HuggingFace
     return await get_model_meta(model_id)
 
@@ -285,8 +285,9 @@ class API:
             return PlacementPreviewResponse(previews=[])
 
         from exo.shared.models.model_cards import get_model_cards
+
         model_cards = get_model_cards()
-        
+
         cards = [card for card in model_cards.values() if card.short_id == model_id]
         if not cards:
             raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
@@ -632,11 +633,10 @@ class API:
 
     async def get_models(self) -> ModelList:
         """Returns list of available models."""
-        
-        
+
         # Load custom models from persistent storage if not already loaded
         model_cards = get_model_cards()
-        
+
         return ModelList(
             data=[
                 ModelListModel(
@@ -654,25 +654,24 @@ class API:
     async def create_model(self, payload: CreateModelRequest):
         """Load custom models from persistent storage if not already loaded"""
         model_cards = get_model_cards()
-        
+
         if payload.repo_id in model_cards:
             raise HTTPException(status_code=400, detail="Model already exists")
-        
+
         try:
             model_meta = await get_model_meta(payload.repo_id)
         except Exception as e:
             msg = f"Failed to fetch metadata for {payload.repo_id}: {e}"
             logger.error(msg)
             raise HTTPException(status_code=400, detail=msg) from e
-        
-        
+
         model_card = register_custom_model(
             model_id=ModelId(payload.repo_id),
             metadata=model_meta,
             name=payload.name,
-            description=payload.description
+            description=payload.description,
         )
-        
+
         return CreateModelResponse(
             id=payload.repo_id,
             model_id=ModelListModel(
@@ -682,7 +681,7 @@ class API:
                 description=model_card.description,
                 tags=model_card.tags,
                 storage_size_megabytes=int(model_card.metadata.storage_size.in_mb),
-            )
+            ),
         )
 
     async def run(self):
