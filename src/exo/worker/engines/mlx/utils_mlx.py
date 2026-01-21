@@ -286,9 +286,6 @@ def shard_and_load(
     logger.debug("SHARDED")
     logger.debug(model)
 
-    # Synchronize processes before generation to avoid timeout
-    mx_barrier(group)
-
     return model, tokenizer
 
 
