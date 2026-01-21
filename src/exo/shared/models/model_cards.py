@@ -348,12 +348,6 @@ MODEL_CARDS: dict[str, ModelCard] = {
     ),
 }
 
-from exo.worker.download.download_utils import (  # noqa: E402
-    ModelSafetensorsIndex,
-    download_file_with_retry,
-    ensure_models_dir,
-)
-
 
 class ConfigData(BaseModel):
     model_config = {"extra": "ignore"}  # Allow unknown fields
@@ -404,6 +398,11 @@ class ConfigData(BaseModel):
 
 async def get_config_data(model_id: ModelId) -> ConfigData:
     """Downloads and parses config.json for a model."""
+    from exo.worker.download.download_utils import (
+        download_file_with_retry,
+        ensure_models_dir,
+    )
+
     target_dir = (await ensure_models_dir()) / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)
     config_path = await download_file_with_retry(
@@ -421,6 +420,12 @@ async def get_config_data(model_id: ModelId) -> ConfigData:
 
 async def get_safetensors_size(model_id: ModelId) -> Memory:
     """Gets model size from safetensors index or falls back to HF API."""
+    from exo.shared.types.worker.downloads import ModelSafetensorsIndex
+    from exo.worker.download.download_utils import (
+        download_file_with_retry,
+        ensure_models_dir,
+    )
+
     target_dir = (await ensure_models_dir()) / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)
     index_path = await download_file_with_retry(
