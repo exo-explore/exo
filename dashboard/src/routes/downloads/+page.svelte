@@ -172,6 +172,33 @@
   }
 
   let downloadOverview = $state<NodeEntry[]>([]);
+  let models = $state<Array<{ id: string; storage_size_megabytes?: number }>>(
+    [],
+  );
+
+  async function fetchModels() {
+    try {
+      const response = await fetch("/models");
+      if (response.ok) {
+        const data = await response.json();
+        models = data.data || [];
+      }
+    } catch (error) {
+      console.error("Failed to fetch models:", error);
+    }
+  }
+
+  function getModelTotalBytes(
+    modelId: string,
+    downloadTotalBytes: number,
+  ): number {
+    if (downloadTotalBytes > 0) return downloadTotalBytes;
+    const model = models.find((m) => m.id === modelId);
+    if (model?.storage_size_megabytes) {
+      return model.storage_size_megabytes * 1024 * 1024;
+    }
+    return 0;
+  }
 
   $effect(() => {
     try {
@@ -346,6 +373,7 @@
   onMount(() => {
     // Ensure we fetch at least once when visiting downloads directly
     refreshState();
+    fetchModels();
   });
 </script>
 
@@ -454,7 +482,7 @@
                     {#if model.status !== "completed"}
                       <div class="text-[11px] text-exo-light-gray font-mono">
                         {formatBytes(model.downloadedBytes)} / {formatBytes(
-                          model.totalBytes,
+                          getModelTotalBytes(model.modelId, model.totalBytes),
                         )}
                       </div>
                     {/if}
