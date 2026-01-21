@@ -58,6 +58,19 @@ class Topology:
 
         return topology
 
+    def filter_to_nodes(self, node_ids: set[NodeId]) -> "Topology":
+        """Create a new topology containing only the specified nodes and edges between them."""
+        filtered = Topology()
+        for node_id in self.list_nodes():
+            if node_id in node_ids:
+                filtered.add_node(node_id)
+        for node_id in node_ids:
+            if self.contains_node(node_id):
+                for conn in self.out_edges(node_id):
+                    if conn.sink in node_ids:
+                        filtered.add_connection(conn)
+        return filtered
+
     def add_node(self, node_id: NodeId) -> None:
         if node_id in self._vertex_indices:
             return

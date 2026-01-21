@@ -12,12 +12,20 @@
   interface Props {
     class?: string;
     highlightedNodes?: Set<string>;
+    filteredNodes?: Set<string>;
+    onNodeClick?: (nodeId: string) => void;
   }
 
-  let { class: className = "", highlightedNodes = new Set() }: Props = $props();
+  let {
+    class: className = "",
+    highlightedNodes = new Set(),
+    filteredNodes = new Set(),
+    onNodeClick,
+  }: Props = $props();
 
   let svgContainer: SVGSVGElement | undefined = $state();
   let resizeObserver: ResizeObserver | undefined;
+  let hoveredNodeId = $state<string | null>(null);
 
   const isMinimized = $derived(isTopologyMinimized());
   const data = $derived(topologyData());
@@ -524,10 +532,72 @@
         }
       }
 
+      let iconBaseWidth = nodeRadius * 1.2;
+      let iconBaseHeight = nodeRadius * 1.0;
+      const clipPathId = `clip-${nodeInfo.id.replace(/[^a-zA-Z0-9]/g, "-")}`;
+
+      const modelLower = modelId.toLowerCase();
+
+      // Check node states for styling
+      const isHighlighted = highlightedNodes.has(nodeInfo.id);
+      const isInFilter =
+        filteredNodes.size > 0 && filteredNodes.has(nodeInfo.id);
+      const isFilteredOut =
+        filteredNodes.size > 0 && !filteredNodes.has(nodeInfo.id);
+      const isHovered = hoveredNodeId === nodeInfo.id && !isInFilter;
+
+      // Holographic wireframe colors - bright yellow for filter, subtle yellow for hover, grey for filtered out
+      const wireColor = isInFilter
+        ? "rgba(255,215,0,1)" // Bright yellow for filter selection
+        : isHovered
+          ? "rgba(255,215,0,0.7)" // Subtle yellow for hover
+          : isHighlighted
+            ? "rgba(255,215,0,0.9)" // Yellow for instance highlight
+            : isFilteredOut
+              ? "rgba(140,140,140,0.6)" // Grey for filtered out
+              : "rgba(179,179,179,0.8)"; // Default
+      const wireColorBright = "rgba(255,255,255,0.9)";
+      const fillColor = isInFilter
+        ? "rgba(255,215,0,0.25)"
+        : isHovered
+          ? "rgba(255,215,0,0.12)"
+          : isHighlighted
+            ? "rgba(255,215,0,0.15)"
+            : "rgba(255,215,0,0.08)";
+      const strokeWidth = isInFilter
+        ? 3
+        : isHovered
+          ? 2
+          : isHighlighted
+            ? 2.5
+            : 1.5;
+      const screenFill = "rgba(0,20,40,0.9)";
+      const glowColor = "rgba(255,215,0,0.3)";
+
       const nodeG = nodesGroup
         .append("g")
         .attr("class", "graph-node")
-        .style("cursor", "pointer");
+        .style("cursor", onNodeClick ? "pointer" : "default")
+        .style("opacity", isFilteredOut ? 0.5 : 1);
+
+      // Add click and hover handlers - hover just updates state, styling is applied during render
+      nodeG
+        .on("click", (event: MouseEvent) => {
+          if (onNodeClick) {
+            event.stopPropagation();
+            onNodeClick(nodeInfo.id);
+          }
+        })
+        .on("mouseenter", () => {
+          if (onNodeClick) {
+            hoveredNodeId = nodeInfo.id;
+          }
+        })
+        .on("mouseleave", () => {
+          if (hoveredNodeId === nodeInfo.id) {
+            hoveredNodeId = null;
+          }
+        });
 
       // Add tooltip
       nodeG
@@ -535,27 +605,6 @@
         .text(
           `${friendlyName}\nID: ${nodeInfo.id.slice(-8)}\nMemory: ${formatBytes(ramUsed)}/${formatBytes(ramTotal)}`,
         );
-
-      let iconBaseWidth = nodeRadius * 1.2;
-      let iconBaseHeight = nodeRadius * 1.0;
-      const clipPathId = `clip-${nodeInfo.id.replace(/[^a-zA-Z0-9]/g, "-")}`;
-
-      const modelLower = modelId.toLowerCase();
-
-      // Check if this node should be highlighted (from hovered instance)
-      const isHighlighted = highlightedNodes.has(nodeInfo.id);
-
-      // Holographic wireframe colors - yellow border when highlighted
-      const wireColor = isHighlighted
-        ? "rgba(255,215,0,0.9)"
-        : "rgba(179,179,179,0.8)";
-      const wireColorBright = "rgba(255,255,255,0.9)";
-      const fillColor = isHighlighted
-        ? "rgba(255,215,0,0.15)"
-        : "rgba(255,215,0,0.08)";
-      const strokeWidth = isHighlighted ? 2.5 : 1.5;
-      const screenFill = "rgba(0,20,40,0.9)";
-      const glowColor = "rgba(255,215,0,0.3)";
 
       if (modelLower === "mac studio") {
         // Mac Studio - classic cube with memory fill
@@ -581,6 +630,7 @@
         // Main body (uniform color)
         nodeG
           .append("rect")
+          .attr("class", "node-outline")
           .attr("x", x)
           .attr("y", y)
           .attr("width", iconBaseWidth)
@@ -663,6 +713,7 @@
         // Main body (uniform color)
         nodeG
           .append("rect")
+          .attr("class", "node-outline")
           .attr("x", x)
           .attr("y", y)
           .attr("width", iconBaseWidth)
@@ -740,6 +791,7 @@
         // Screen outer frame
         nodeG
           .append("rect")
+          .attr("class", "node-outline")
           .attr("x", screenX)
           .attr("y", y)
           .attr("width", screenWidth)
@@ -848,6 +900,7 @@
         // Main shape
         nodeG
           .append("polygon")
+          .attr("class", "node-outline")
           .attr("points", hexPoints)
           .attr("fill", fillColor)
           .attr("stroke", wireColor)
@@ -1095,7 +1148,12 @@
   }
 
   $effect(() => {
-    if (data) {
+    // Track all reactive dependencies that affect rendering
+    const _data = data;
+    const _hoveredNodeId = hoveredNodeId;
+    const _filteredNodes = filteredNodes;
+    const _highlightedNodes = highlightedNodes;
+    if (_data) {
       renderGraph();
     }
   });
@@ -1118,12 +1176,8 @@
 
 <style>
   :global(.graph-node) {
-    transition:
-      transform 0.2s ease,
-      opacity 0.2s ease;
-  }
-  :global(.graph-node:hover) {
-    filter: brightness(1.1);
+    /* Only transition opacity for filtered-out nodes, no transition on hover stroke changes */
+    transition: opacity 0.2s ease;
   }
   :global(.graph-link) {
     stroke: var(--exo-light-gray, #b3b3b3);

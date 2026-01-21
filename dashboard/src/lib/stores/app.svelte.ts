@@ -426,6 +426,7 @@ class AppStore {
   placementPreviews = $state<PlacementPreview[]>([]);
   selectedPreviewModelId = $state<string | null>(null);
   isLoadingPreviews = $state(false);
+  previewNodeFilter = $state<Set<string>>(new Set());
   lastUpdate = $state<number | null>(null);
   thunderboltBridgeCycles = $state<string[][]>([]);
   nodeThunderboltBridge = $state<
@@ -453,6 +454,7 @@ class AppStore {
   private fetchInterval: ReturnType<typeof setInterval> | null = null;
   private previewsInterval: ReturnType<typeof setInterval> | null = null;
   private lastConversationPersistTs = 0;
+  private previousNodeIds: Set<string> = new Set();
 
   constructor() {
     if (browser) {
@@ -1011,6 +1013,8 @@ class AppStore {
           nodeSystem: data.nodeSystem,
           nodeNetwork: data.nodeNetwork,
         });
+        // Handle topology changes for preview filter
+        this.handleTopologyChange();
       }
       if (data.instances) {
         this.instances = data.instances;
@@ -1041,9 +1045,14 @@ class AppStore {
     this.selectedPreviewModelId = modelId;
 
     try {
-      const response = await fetch(
-        `/instance/previews?model_id=${encodeURIComponent(modelId)}`,
-      );
+      let url = `/instance/previews?model_id=${encodeURIComponent(modelId)}`;
+      // Add node filter if active
+      if (this.previewNodeFilter.size > 0) {
+        for (const nodeId of this.previewNodeFilter) {
+          url += `&node_ids=${encodeURIComponent(nodeId)}`;
+        }
+      }
+      const response = await fetch(url);
       if (!response.ok) {
         throw new Error(
           `Failed to fetch placement previews: ${response.status}`,
@@ -1091,6 +1100,71 @@ class AppStore {
       this.selectedPreviewModelId = null;
       this.placementPreviews = [];
     }
+  }
+
+  /**
+   * Toggle a node in the preview filter and re-fetch placements
+   */
+  togglePreviewNodeFilter(nodeId: string) {
+    const next = new Set(this.previewNodeFilter);
+    if (next.has(nodeId)) {
+      next.delete(nodeId);
+    } else {
+      next.add(nodeId);
+    }
+    this.previewNodeFilter = next;
+    // Re-fetch with new filter if we have a selected model
+    if (this.selectedPreviewModelId) {
+      this.fetchPlacementPreviews(this.selectedPreviewModelId, false);
+    }
+  }
+
+  /**
+   * Clear the preview node filter and re-fetch placements
+   */
+  clearPreviewNodeFilter() {
+    this.previewNodeFilter = new Set();
+    // Re-fetch with no filter if we have a selected model
+    if (this.selectedPreviewModelId) {
+      this.fetchPlacementPreviews(this.selectedPreviewModelId, false);
+    }
+  }
+
+  /**
+   * Handle topology changes - clean up filter and re-fetch if needed
+   */
+  private handleTopologyChange() {
+    if (!this.topologyData) return;
+
+    const currentNodeIds = new Set(Object.keys(this.topologyData.nodes));
+
+    // Check if nodes have changed
+    const nodesAdded = [...currentNodeIds].some(
+      (id) => !this.previousNodeIds.has(id),
+    );
+    const nodesRemoved = [...this.previousNodeIds].some(
+      (id) => !currentNodeIds.has(id),
+    );
+
+    if (nodesAdded || nodesRemoved) {
+      // Clean up filter - remove any nodes that no longer exist
+      if (this.previewNodeFilter.size > 0) {
+        const validFilterNodes = new Set(
+          [...this.previewNodeFilter].filter((id) => currentNodeIds.has(id)),
+        );
+        if (validFilterNodes.size !== this.previewNodeFilter.size) {
+          this.previewNodeFilter = validFilterNodes;
+        }
+      }
+
+      // Re-fetch previews if we have a selected model (topology changed)
+      if (this.selectedPreviewModelId) {
+        this.fetchPlacementPreviews(this.selectedPreviewModelId, false);
+      }
+    }
+
+    // Update tracked node IDs for next comparison
+    this.previousNodeIds = currentNodeIds;
   }
 
   /**
@@ -2116,6 +2190,10 @@ export const setSelectedChatModel = (modelId: string) =>
   appStore.setSelectedModel(modelId);
 export const selectPreviewModel = (modelId: string | null) =>
   appStore.selectPreviewModel(modelId);
+export const togglePreviewNodeFilter = (nodeId: string) =>
+  appStore.togglePreviewNodeFilter(nodeId);
+export const clearPreviewNodeFilter = () => appStore.clearPreviewNodeFilter();
+export const previewNodeFilter = () => appStore.previewNodeFilter;
 export const deleteMessage = (messageId: string) =>
   appStore.deleteMessage(messageId);
 export const editMessage = (messageId: string, newContent: string) =>
