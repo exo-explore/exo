@@ -105,7 +105,7 @@ def event_loop():
     TEST_MODELS,
 )
 @pytest.mark.asyncio
-async def test_tokenizer_encode_decode(short_id: str, model_card: ModelCard) -> None:
+async def test_tokenizer_encode_decode(model_card: ModelCard) -> None:
     """Test that tokenizer can encode and decode text correctly."""
     model_id = model_card.model_id
 
@@ -170,9 +170,7 @@ async def test_tokenizer_encode_decode(short_id: str, model_card: ModelCard) -> 
     TEST_MODELS,
 )
 @pytest.mark.asyncio
-async def test_tokenizer_has_required_attributes(
-    short_id: str, model_card: ModelCard
-) -> None:
+async def test_tokenizer_has_required_attributes(model_card: ModelCard) -> None:
     """Test that tokenizer has required attributes for inference."""
     model_id = model_card.model_id
 
