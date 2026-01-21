@@ -11,6 +11,7 @@ from exo.shared.types.api import (
     FinishReason,
     GenerationStats,
 )
+from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.worker.runner_response import (
@@ -52,7 +53,7 @@ def warmup_inference(
     warmup_prompt = apply_chat_template(
         tokenizer=tokenizer,
         task_params=ResponsesRequest(
-            model="",
+            model=ModelId(""),
             input=content,
         ),
     )
@@ -112,21 +113,14 @@ def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
     task: ResponsesRequest,
+    prompt: str,
     is_bench: bool = False,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
 
-    # Currently we support chat-completion tasks only.
-    logger.debug(f"task_params: {task}")
-
     if task.seed is not None:
         mx.random.seed(task.seed)
-
-    prompt = apply_chat_template(
-        tokenizer=tokenizer,
-        task_params=task,
-    )
 
     caches = make_kv_cache(model=model)
 

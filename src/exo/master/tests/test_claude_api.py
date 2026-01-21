@@ -10,6 +10,7 @@ from exo.master.adapters.claude import (
     claude_request_to_internal,
     finish_reason_to_claude_stop_reason,
 )
+from exo.shared.types.common import ModelId
 from exo.shared.types.claude_api import (
     ClaudeContentBlockDeltaEvent,
     ClaudeContentBlockStartEvent,
@@ -55,7 +56,7 @@ class TestClaudeRequestToInternal:
 
     def test_basic_request_conversion(self):
         request = ClaudeMessagesRequest(
-            model="claude-3-opus",
+            model=ModelId("claude-3-opus"),
             max_tokens=100,
             messages=[
                 ClaudeMessage(role="user", content="Hello"),
@@ -73,7 +74,7 @@ class TestClaudeRequestToInternal:
 
     def test_request_with_system_string(self):
         request = ClaudeMessagesRequest(
-            model="claude-3-opus",
+            model=ModelId("claude-3-opus"),
             max_tokens=100,
             system="You are a helpful assistant.",
             messages=[
@@ -90,7 +91,7 @@ class TestClaudeRequestToInternal:
 
     def test_request_with_system_text_blocks(self):
         request = ClaudeMessagesRequest(
-            model="claude-3-opus",
+            model=ModelId("claude-3-opus"),
             max_tokens=100,
             system=[
                 ClaudeTextBlock(text="You are helpful. "),
@@ -108,7 +109,7 @@ class TestClaudeRequestToInternal:
 
     def test_request_with_content_blocks(self):
         request = ClaudeMessagesRequest(
-            model="claude-3-opus",
+            model=ModelId("claude-3-opus"),
             max_tokens=100,
             messages=[
                 ClaudeMessage(
@@ -128,7 +129,7 @@ class TestClaudeRequestToInternal:
 
     def test_request_with_multi_turn_conversation(self):
         request = ClaudeMessagesRequest(
-            model="claude-3-opus",
+            model=ModelId("claude-3-opus"),
             max_tokens=100,
             messages=[
                 ClaudeMessage(role="user", content="Hello"),
@@ -146,7 +147,7 @@ class TestClaudeRequestToInternal:
 
     def test_request_with_optional_parameters(self):
         request = ClaudeMessagesRequest(
-            model="claude-3-opus",
+            model=ModelId("claude-3-opus"),
             max_tokens=100,
             messages=[ClaudeMessage(role="user", content="Hello")],
             temperature=0.7,

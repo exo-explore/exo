@@ -13,6 +13,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from exo.shared.types.common import ModelId
+
 # Type aliases
 ResponseStatus = Literal["completed", "failed", "in_progress", "incomplete"]
 ResponseRole = Literal["user", "assistant", "system", "developer"]
@@ -42,7 +44,7 @@ class ResponsesRequest(BaseModel):
     - max_output_tokens: Replaces 'max_tokens' from Chat Completions
     """
 
-    model: str
+    model: ModelId
     input: str | list[ResponseInputMessage]
     instructions: str | None = None
     max_output_tokens: int | None = None

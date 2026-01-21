@@ -10,6 +10,7 @@ from typing import Any, cast
 import pydantic
 import pytest
 
+from exo.shared.types.common import ModelId
 from exo.shared.types.openai_responses import (
     ResponseCompletedEvent,
     ResponseContentPartAddedEvent,
@@ -32,7 +33,7 @@ class TestResponsesRequestAsCanonicalType:
 
     def test_string_input(self):
         request = ResponsesRequest(
-            model="gpt-4o",
+            model=ModelId("gpt-4o"),
             input="Hello, how are you?",
         )
 
@@ -42,7 +43,7 @@ class TestResponsesRequestAsCanonicalType:
 
     def test_message_array_input(self):
         request = ResponsesRequest(
-            model="gpt-4o",
+            model=ModelId("gpt-4o"),
             input=[
                 ResponseInputMessage(role="user", content="Hello"),
                 ResponseInputMessage(role="assistant", content="Hi there!"),
@@ -61,7 +62,7 @@ class TestResponsesRequestAsCanonicalType:
 
     def test_request_with_instructions(self):
         request = ResponsesRequest(
-            model="gpt-4o",
+            model=ModelId("gpt-4o"),
             input="Hello",
             instructions="You are a helpful assistant. Be concise.",
         )
@@ -71,7 +72,7 @@ class TestResponsesRequestAsCanonicalType:
 
     def test_request_with_optional_parameters(self):
         request = ResponsesRequest(
-            model="gpt-4o",
+            model=ModelId("gpt-4o"),
             input="Hello",
             max_output_tokens=500,
             temperature=0.8,
@@ -87,7 +88,7 @@ class TestResponsesRequestAsCanonicalType:
     def test_request_with_new_fields(self):
         """Test the additional fields added for internal use."""
         request = ResponsesRequest(
-            model="gpt-4o",
+            model=ModelId("gpt-4o"),
             input="Hello",
             top_k=40,
             seed=42,
@@ -102,7 +103,7 @@ class TestResponsesRequestAsCanonicalType:
 
     def test_request_with_system_role_in_messages(self):
         request = ResponsesRequest(
-            model="gpt-4o",
+            model=ModelId("gpt-4o"),
             input=[
                 ResponseInputMessage(role="system", content="Be helpful"),
                 ResponseInputMessage(role="user", content="Hello"),
@@ -116,7 +117,7 @@ class TestResponsesRequestAsCanonicalType:
 
     def test_request_with_developer_role(self):
         request = ResponsesRequest(
-            model="gpt-4o",
+            model=ModelId("gpt-4o"),
             input=[
                 ResponseInputMessage(role="developer", content="Internal note"),
                 ResponseInputMessage(role="user", content="Hello"),
@@ -149,14 +150,14 @@ class TestResponsesRequestValidation:
 
     def test_request_accepts_string_input(self):
         request = ResponsesRequest(
-            model="gpt-4o",
+            model=ModelId("gpt-4o"),
             input="Hello",
         )
         assert request.input == "Hello"
 
     def test_request_accepts_message_array_input(self):
         request = ResponsesRequest(
-            model="gpt-4o",
+            model=ModelId("gpt-4o"),
             input=[ResponseInputMessage(role="user", content="Hello")],
         )
         assert len(request.input) == 1

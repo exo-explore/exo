@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from exo.shared.types.common import ModelId
+
 # Type aliases
 ClaudeRole = Literal["user", "assistant"]
 ClaudeStopReason = Literal["end_turn", "max_tokens", "stop_sequence", "tool_use"]
@@ -47,7 +49,7 @@ class ClaudeMessage(BaseModel, frozen=True):
 class ClaudeMessagesRequest(BaseModel):
     """Request body for Claude Messages API."""
 
-    model: str
+    model: ModelId
     max_tokens: int
     messages: list[ClaudeMessage]
     system: str | list[ClaudeTextBlock] | None = None

@@ -85,7 +85,7 @@ SHUTDOWN_TASK = Shutdown(
 )
 
 CHAT_PARAMS = ResponsesRequest(
-    model=str(MODEL_A_ID),
+    model=MODEL_A_ID,
     input="hello",
     stream=True,
     max_output_tokens=4,

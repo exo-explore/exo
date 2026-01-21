@@ -136,7 +136,7 @@ async def test_master():
                     ChatCompletion(
                         command_id=CommandId(),
                         request_params=ResponsesRequest(
-                            model="llama-3.2-1b",
+                            model=ModelId("llama-3.2-1b"),
                             input="Hello, how are you?",
                         ),
                     )
@@ -189,7 +189,7 @@ async def test_master():
         assert events[2].event.task.task_status == TaskStatus.Pending
         assert isinstance(events[2].event.task, ChatCompletionTask)
         assert events[2].event.task.task_params == ResponsesRequest(
-            model="llama-3.2-1b",
+            model=ModelId("llama-3.2-1b"),
             input="Hello, how are you?",
         )
 
