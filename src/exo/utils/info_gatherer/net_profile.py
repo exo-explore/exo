@@ -64,7 +64,7 @@ async def check_reachability(
         return
 
     if remote_node_id != expected_node_id:
-        logger.warning(
+        logger.debug(
             f"Discovered node with unexpected node_id; "
             f"ip={target_ip}, expected_node_id={expected_node_id}, "
             f"remote_node_id={remote_node_id}"

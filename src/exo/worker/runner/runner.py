@@ -207,7 +207,7 @@ def main(
                 case ChatCompletion(task_params=task_params, command_id=command_id) if (
                     isinstance(current_status, RunnerReady)
                 ):
-                    logger.info(f"received chat request: {str(task)[:500]}")
+                    logger.info(f"received chat request: {task}")
                     current_status = RunnerRunning()
                     logger.info("runner running")
                     event_sender.send(
