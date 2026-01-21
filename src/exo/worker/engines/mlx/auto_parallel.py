@@ -145,6 +145,10 @@ class PipelineLastLayer(CustomMlxLayer):
             if cache is not None:
                 cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
 
+        output = mx.distributed.all_gather(output, group=self.group)[
+            -output.shape[0]:
+        ]  # type :ignore
+
         return output
 
 
@@ -251,10 +255,6 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
         # Add dependency to last cache entry to ensure distributed ops are evaluated
         if cache is not None:
             cache[-1].state = mx.depends(cache[-1].state, logits)  # type: ignore
-
-        logits = mx.distributed.all_gather(logits, group=group)[
-            -logits.shape[0] :
-        ]  # type :ignore
 
         return logits
 
