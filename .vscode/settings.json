@@ -1,4 +1,0 @@
-{
-  "basedpyright.importStrategy": "fromEnvironment",
-  "python.analysis.typeCheckingMode": "off"
-}
