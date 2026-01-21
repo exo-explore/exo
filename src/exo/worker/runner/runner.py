@@ -251,6 +251,11 @@ def main(
                                 mlx_generator, tokenizer
                             )
 
+                        # Kimi-K2 has tool call sections - we don't care about them
+                        if "kimi" in shard_metadata.model_card.model_id.lower():
+                            mlx_generator = filter_kimi_tokens(mlx_generator)
+                            patch_kimi_tokenizer(tokenizer)
+
                         if tokenizer.has_tool_calling:
                             assert tokenizer.tool_call_start
                             assert tokenizer.tool_call_end
@@ -479,6 +484,18 @@ def get_gpt_oss_encoding():
     return encoding
 
 
+def filter_kimi_tokens(
+    responses: Generator[GenerationResponse],
+) -> Generator[GenerationResponse]:
+    for resp in responses:
+        if (
+            resp.text == "<|tool_calls_section_begin|>"
+            or resp.text == "<|tool_calls_section_end|>"
+        ):
+            continue
+        yield resp
+
+
 def parse_gpt_oss(
     responses: Generator[GenerationResponse],
 ) -> Generator[GenerationResponse]:
@@ -645,6 +662,55 @@ def parse_tool_calls(
             continue
         # fallthrough
         yield response
+
+
+def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
+    """
+    Version of to-be-upstreamed kimi-k2 tool parser
+    """
+    import ast
+    import json
+    from typing import Any
+
+    import regex as re
+
+    # kimi has a fixed function naming scheme, with a json formatted arg
+    #   functions.multiply:0 <|tool_call_argument_begin|> {"a": 2, "b": 3}
+    _func_name_regex = re.compile(
+        r"^\s*(.+):\d+\s*<\|tool_call_argument_begin\|>", re.DOTALL
+    )
+    _func_arg_regex = re.compile(r"<\|tool_call_argument_begin\|>\s*(.*)\s*", re.DOTALL)
+
+    # kimi has a tool_calls_section - we're leaving this up to the caller to handle
+    tool_call_start = "<|tool_call_begin|>"
+    tool_call_end = "<|tool_call_end|>"
+
+    def _deserialize(value: str) -> Any:  # pyright: ignore[reportAny]
+        try:
+            return json.loads(value)  # pyright: ignore[reportAny]
+        except Exception:
+            pass
+
+        try:
+            return ast.literal_eval(value)  # pyright: ignore[reportAny]
+        except Exception:
+            pass
+        return value
+
+    def parse_tool_call(text: str, tools: Any | None = None):
+        func_name = _func_name_regex.search(text).group(1)  # pyright: ignore[reportOptionalMemberAccess]
+        # strip off the `functions.` prefix, if it exists.
+        func_name = func_name[func_name.find(".") + 1 :]
+
+        func_args = _func_arg_regex.search(text).group(1)  # pyright: ignore[reportOptionalMemberAccess]
+        # the args should be valid json - no need to check against our tools to deserialize
+        arg_dct = _deserialize(func_args)  # pyright: ignore[reportAny]
+
+        return dict(name=func_name, arguments=arg_dct)  # pyright: ignore[reportAny]
+
+    tokenizer._tool_call_start = tool_call_start
+    tokenizer._tool_call_end = tool_call_end
+    tokenizer._tool_parser = parse_tool_call
 
 
 def _validate_single_tool(obj: dict[str, Any]) -> ToolCallItem:
