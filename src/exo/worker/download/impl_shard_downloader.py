@@ -19,7 +19,7 @@ def exo_shard_downloader(max_parallel_downloads: int = 8) -> ShardDownloader:
 
 
 async def build_base_shard(model_id: ModelId) -> ShardMetadata:
-    model_card = await ModelCard.from_hf(model_id)
+    model_card = await ModelCard.load(model_id)
     return PipelineShardMetadata(
         model_card=model_card,
         device_rank=0,

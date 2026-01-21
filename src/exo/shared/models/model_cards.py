@@ -61,6 +61,10 @@ class ModelCard(CamelCaseModel):
     async def load(model_id: ModelId) -> "ModelCard":
         if model_id in MODEL_CARDS:
             return MODEL_CARDS[model_id]
+        # Also check if model_id matches any ModelCard.model_id in the registry
+        for card in MODEL_CARDS.values():
+            if card.model_id == model_id:
+                return card
         return await ModelCard.from_hf(model_id)
 
     @staticmethod
