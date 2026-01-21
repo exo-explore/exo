@@ -54,6 +54,18 @@ class ChatCompletionMessageText(BaseModel):
     text: str
 
 
+class ToolCallItem(BaseModel):
+    name: str
+    arguments: str
+
+
+class ToolCall(BaseModel):
+    id: str
+    index: int | None = None
+    type: Literal["function"] = "function"
+    function: ToolCallItem
+
+
 class ChatCompletionMessage(BaseModel):
     role: Literal["system", "user", "assistant", "developer", "tool", "function"]
     content: (
@@ -61,7 +73,7 @@ class ChatCompletionMessage(BaseModel):
     ) = None
     thinking: str | None = None  # Added for GPT-OSS harmony format support
     name: str | None = None
-    tool_calls: list[dict[str, Any]] | None = None
+    tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
     function_call: dict[str, Any] | None = None
 

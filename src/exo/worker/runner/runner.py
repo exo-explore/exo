@@ -1,8 +1,9 @@
 import base64
+import json
 import time
 from collections.abc import Generator
 from functools import cache
-from typing import Literal
+from typing import Any, Callable, Literal
 
 import mlx.core as mx
 from mlx_lm.models.gpt_oss import Model as GptOssModel
@@ -13,11 +14,12 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     StreamableParser,
     load_harmony_encoding,
 )
+from pydantic import ValidationError
 
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE
 from exo.shared.models.model_cards import ModelId, ModelTask
 from exo.shared.types.api import ChatCompletionMessageText, ImageGenerationStats
-from exo.shared.types.chunks import ImageChunk, TokenChunk
+from exo.shared.types.chunks import ErrorChunk, ImageChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -42,6 +44,8 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
     ImageGenerationResponse,
     PartialImageResponse,
+    ToolCallItem,
+    ToolCallResponse,
 )
 from exo.shared.types.worker.runners import (
     RunnerConnected,
@@ -154,6 +158,9 @@ def main(
                         model, tokenizer = load_mlx_items(
                             bound_instance, group, on_timeout=on_model_load_timeout
                         )
+                        logger.info(
+                            f"model has_tool_calling={tokenizer.has_tool_calling}"
+                        )
                     elif (
                         ModelTask.TextToImage in shard_metadata.model_card.tasks
                         or ModelTask.ImageToImage in shard_metadata.model_card.tasks
@@ -244,22 +251,60 @@ def main(
                                 mlx_generator, tokenizer
                             )
 
-                        # TODO: Add tool call parser here
+                        if tokenizer.has_tool_calling:
+                            assert tokenizer.tool_call_start
+                            assert tokenizer.tool_call_end
+                            assert tokenizer.tool_parser  # pyright: ignore[reportAny]
+                            mlx_generator = parse_tool_calls(
+                                mlx_generator,
+                                tokenizer.tool_call_start,
+                                tokenizer.tool_call_end,
+                                tokenizer.tool_parser,  # pyright: ignore[reportAny]
+                            )
 
                         for response in mlx_generator:
                             match response:
                                 case GenerationResponse():
-                                    if device_rank == 0:
+                                    if (
+                                        device_rank == 0
+                                        and response.finish_reason == "error"
+                                    ):
+                                        event_sender.send(
+                                            ChunkGenerated(
+                                                command_id=command_id,
+                                                chunk=ErrorChunk(
+                                                    error_message=response.text,
+                                                    model=shard_metadata.model_card.model_id,
+                                                ),
+                                            )
+                                        )
+
+                                    elif device_rank == 0:
+                                        assert response.finish_reason not in (
+                                            "error",
+                                            "tool_calls",
+                                            "function_call",
+                                        )
                                         event_sender.send(
                                             ChunkGenerated(
                                                 command_id=command_id,
                                                 chunk=TokenChunk(
-                                                    idx=response.token,
                                                     model=shard_metadata.model_card.model_id,
                                                     text=response.text,
                                                     token_id=response.token,
                                                     finish_reason=response.finish_reason,
                                                     stats=response.stats,
+                                                ),
+                                            )
+                                        )
+                                case ToolCallResponse():
+                                    if device_rank == 0:
+                                        event_sender.send(
+                                            ChunkGenerated(
+                                                command_id=command_id,
+                                                chunk=ToolCallChunk(
+                                                    tool_calls=response.tool_calls,
+                                                    model=shard_metadata.model_card.model_id,
                                                 ),
                                             )
                                         )
@@ -270,11 +315,8 @@ def main(
                             event_sender.send(
                                 ChunkGenerated(
                                     command_id=command_id,
-                                    chunk=TokenChunk(
-                                        idx=0,
+                                    chunk=ErrorChunk(
                                         model=shard_metadata.model_card.model_id,
-                                        text="",
-                                        token_id=0,
                                         finish_reason="error",
                                         error_message=str(e),
                                     ),
@@ -328,18 +370,14 @@ def main(
                                             image_index,
                                         )
                                         image_index += 1
+                    # can we make this more explicit?
                     except Exception as e:
                         if shard_metadata.device_rank == shard_metadata.world_size - 1:
                             event_sender.send(
                                 ChunkGenerated(
                                     command_id=command_id,
-                                    chunk=ImageChunk(
-                                        idx=0,
+                                    chunk=ErrorChunk(
                                         model=shard_metadata.model_card.model_id,
-                                        data="",
-                                        chunk_index=0,
-                                        total_chunks=1,
-                                        image_index=0,
                                         finish_reason="error",
                                         error_message=str(e),
                                     ),
@@ -396,13 +434,8 @@ def main(
                             event_sender.send(
                                 ChunkGenerated(
                                     command_id=command_id,
-                                    chunk=ImageChunk(
-                                        idx=0,
+                                    chunk=ErrorChunk(
                                         model=shard_metadata.model_card.model_id,
-                                        data="",
-                                        chunk_index=0,
-                                        total_chunks=1,
-                                        image_index=0,
                                         finish_reason="error",
                                         error_message=str(e),
                                     ),
@@ -526,7 +559,6 @@ def _send_image_chunk(
             ChunkGenerated(
                 command_id=command_id,
                 chunk=ImageChunk(
-                    idx=chunk_index,
                     model=model_id,
                     data=chunk_data,
                     chunk_index=chunk_index,
@@ -566,6 +598,64 @@ def _process_image_response(
         stats=stats,
         image_format=response.format,
     )
+
+
+def parse_tool_calls(
+    responses: Generator[GenerationResponse],
+    tool_call_start: str,
+    tool_call_end: str,
+    tool_parser: Callable[[str], dict[str, Any] | list[dict[str, Any]]],
+) -> Generator[GenerationResponse | ToolCallResponse]:
+    in_tool_call = False
+    tool_call_text_parts: list[str] = []
+    for response in responses:
+        # assumption: the tool call start is one token
+        if response.text == tool_call_start:
+            in_tool_call = True
+            continue
+        # assumption: the tool call end is one token
+        if in_tool_call and response.text == tool_call_end:
+            try:
+                # tool_parser returns an arbitrarily nested python dictionary
+                # we actually don't want the python dictionary, we just want to
+                # parse the top level { function: ..., arguments: ... } structure
+                # as we're just gonna hand it back to the api anyway
+                parsed = tool_parser("".join(tool_call_text_parts).strip())
+                logger.info(f"parsed {tool_call_text_parts=} into {parsed=}")
+                if isinstance(parsed, list):
+                    tools = [_validate_single_tool(tool) for tool in parsed]
+                else:
+                    tools = [_validate_single_tool(parsed)]
+                yield ToolCallResponse(tool_calls=tools)
+
+            except (json.JSONDecodeError, ValidationError) as e:
+                logger.opt(exception=e).warning("tool call parsing failed")
+                # assumption: talking about tool calls, not making a tool call
+                response.text = (
+                    tool_call_start + "".join(tool_call_text_parts) + tool_call_end
+                )
+                yield response
+
+            in_tool_call = False
+            tool_call_text_parts = []
+            continue
+
+        if in_tool_call:
+            tool_call_text_parts.append(response.text)
+            continue
+        # fallthrough
+        yield response
+
+
+def _validate_single_tool(obj: dict[str, Any]) -> ToolCallItem:
+    if (
+        ((name := obj.get("name")) is not None)
+        and ((args := obj.get("arguments")) is not None)
+        and isinstance(name, str)
+    ):
+        return ToolCallItem(name=name, arguments=json.dumps(args))
+    else:
+        raise ValidationError
 
 
 EXO_RUNNER_MUST_FAIL = "EXO RUNNER MUST FAIL"

@@ -4,6 +4,7 @@ import time
 from collections.abc import AsyncGenerator
 from http import HTTPStatus
 from typing import Literal, cast
+from uuid import uuid4
 
 import anyio
 from anyio import BrokenResourceError, create_task_group
@@ -56,8 +57,15 @@ from exo.shared.types.api import (
     PlacementPreview,
     PlacementPreviewResponse,
     StreamingChoiceResponse,
+    ToolCall,
 )
-from exo.shared.types.chunks import ImageChunk, InputImageChunk, TokenChunk
+from exo.shared.types.chunks import (
+    ErrorChunk,
+    ImageChunk,
+    InputImageChunk,
+    TokenChunk,
+    ToolCallChunk,
+)
 from exo.shared.types.commands import (
     ChatCompletion,
     Command,
@@ -93,7 +101,7 @@ def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None)
 
 
 def chunk_to_response(
-    chunk: TokenChunk, command_id: CommandId
+    chunk: TokenChunk | ToolCallChunk, command_id: CommandId
 ) -> ChatCompletionResponse:
     return ChatCompletionResponse(
         id=command_id,
@@ -102,7 +110,19 @@ def chunk_to_response(
         choices=[
             StreamingChoiceResponse(
                 index=0,
-                delta=ChatCompletionMessage(role="assistant", content=chunk.text),
+                delta=ChatCompletionMessage(role="assistant", content=chunk.text)
+                if isinstance(chunk, TokenChunk)
+                else ChatCompletionMessage(
+                    role="assistant",
+                    tool_calls=[
+                        ToolCall(
+                            id=str(uuid4()),
+                            index=i,
+                            function=tool,
+                        )
+                        for i, tool in enumerate(chunk.tool_calls)
+                    ],
+                ),
                 finish_reason=chunk.finish_reason,
             )
         ],
@@ -162,8 +182,12 @@ class API:
             name="dashboard",
         )
 
-        self._chat_completion_queues: dict[CommandId, Sender[TokenChunk]] = {}
-        self._image_generation_queues: dict[CommandId, Sender[ImageChunk]] = {}
+        self._chat_completion_queues: dict[
+            CommandId, Sender[TokenChunk | ErrorChunk | ToolCallChunk]
+        ] = {}
+        self._image_generation_queues: dict[
+            CommandId, Sender[ImageChunk | ErrorChunk]
+        ] = {}
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup | None = None
 
@@ -439,11 +463,13 @@ class API:
 
     async def _chat_chunk_stream(
         self, command_id: CommandId
-    ) -> AsyncGenerator[TokenChunk, None]:
+    ) -> AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None]:
         """Yield `TokenChunk`s for a given command until completion."""
 
         try:
-            self._chat_completion_queues[command_id], recv = channel[TokenChunk]()
+            self._chat_completion_queues[command_id], recv = channel[
+                ErrorChunk | ToolCallChunk | TokenChunk
+            ]()
 
             with recv as token_chunks:
                 async for chunk in token_chunks:
@@ -462,7 +488,8 @@ class API:
         finally:
             command = TaskFinished(finished_command_id=command_id)
             await self._send(command)
-            del self._chat_completion_queues[command_id]
+            if command_id in self._chat_completion_queues:
+                del self._chat_completion_queues[command_id]
 
     async def _generate_chat_stream(
         self, command_id: CommandId
@@ -470,6 +497,7 @@ class API:
         """Generate chat completion stream as JSON strings."""
 
         async for chunk in self._chat_chunk_stream(command_id):
+            assert not isinstance(chunk, ImageChunk)
             if chunk.finish_reason == "error":
                 error_response = ErrorResponse(
                     error=ErrorInfo(
@@ -498,11 +526,12 @@ class API:
         """Collect all token chunks for a chat completion and return a single response."""
 
         text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
         model: str | None = None
         finish_reason: FinishReason | None = None
 
         async for chunk in self._chat_chunk_stream(command_id):
-            if chunk.finish_reason == "error":
+            if isinstance(chunk, ErrorChunk):
                 raise HTTPException(
                     status_code=500,
                     detail=chunk.error_message or "Internal server error",
@@ -511,7 +540,18 @@ class API:
             if model is None:
                 model = chunk.model
 
-            text_parts.append(chunk.text)
+            if isinstance(chunk, TokenChunk):
+                text_parts.append(chunk.text)
+
+            if isinstance(chunk, ToolCallChunk):
+                tool_calls.extend(
+                    ToolCall(
+                        id=str(uuid4()),
+                        index=i,
+                        function=tool,
+                    )
+                    for i, tool in enumerate(chunk.tool_calls)
+                )
 
             if chunk.finish_reason is not None:
                 finish_reason = chunk.finish_reason
@@ -529,6 +569,7 @@ class API:
                     message=ChatCompletionMessage(
                         role="assistant",
                         content=combined_text,
+                        tool_calls=tool_calls,
                     ),
                     finish_reason=finish_reason,
                 )
@@ -539,6 +580,7 @@ class API:
         self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
         text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
         model: str | None = None
         finish_reason: FinishReason | None = None
 
@@ -554,7 +596,19 @@ class API:
             if model is None:
                 model = chunk.model
 
-            text_parts.append(chunk.text)
+            if isinstance(chunk, TokenChunk):
+                text_parts.append(chunk.text)
+
+            if isinstance(chunk, ToolCallChunk):
+                tool_calls.extend(
+                    ToolCall(
+                        id=str(uuid4()),
+                        index=i,
+                        function=tool,
+                    )
+                    for i, tool in enumerate(chunk.tool_calls)
+                )
+
             stats = chunk.stats or stats
 
             if chunk.finish_reason is not None:
@@ -571,7 +625,7 @@ class API:
                 ChatCompletionChoice(
                     index=0,
                     message=ChatCompletionMessage(
-                        role="assistant", content=combined_text
+                        role="assistant", content=combined_text, tool_calls=tool_calls
                     ),
                     finish_reason=finish_reason,
                 )
@@ -729,7 +783,9 @@ class API:
         images_complete = 0
 
         try:
-            self._image_generation_queues[command_id], recv = channel[ImageChunk]()
+            self._image_generation_queues[command_id], recv = channel[
+                ImageChunk | ErrorChunk
+            ]()
 
             with recv as chunks:
                 async for chunk in chunks:
@@ -838,7 +894,9 @@ class API:
         stats: ImageGenerationStats | None = None
 
         try:
-            self._image_generation_queues[command_id], recv = channel[ImageChunk]()
+            self._image_generation_queues[command_id], recv = channel[
+                ImageChunk | ErrorChunk
+            ]()
 
             while images_complete < num_images:
                 with recv as chunks:
@@ -994,7 +1052,6 @@ class API:
             await self._send(
                 SendInputChunk(
                     chunk=InputImageChunk(
-                        idx=chunk_index,
                         model=resolved_model,
                         command_id=command.command_id,
                         data=chunk_data,
@@ -1148,27 +1205,26 @@ class API:
                 for idx, event in self.event_buffer.drain_indexed():
                     self._event_log.append(event)
                     self.state = apply(self.state, IndexedEvent(event=event, idx=idx))
+
                     if isinstance(event, ChunkGenerated):
-                        if event.command_id in self._chat_completion_queues:
-                            assert isinstance(event.chunk, TokenChunk)
-                            queue = self._chat_completion_queues.get(event.command_id)
-                            if queue is not None:
-                                try:
-                                    await queue.send(event.chunk)
-                                except BrokenResourceError:
-                                    self._chat_completion_queues.pop(
-                                        event.command_id, None
-                                    )
-                        elif event.command_id in self._image_generation_queues:
+                        if queue := self._image_generation_queues.get(
+                            event.command_id, None
+                        ):
                             assert isinstance(event.chunk, ImageChunk)
-                            queue = self._image_generation_queues.get(event.command_id)
-                            if queue is not None:
-                                try:
-                                    await queue.send(event.chunk)
-                                except BrokenResourceError:
-                                    self._image_generation_queues.pop(
-                                        event.command_id, None
-                                    )
+                            try:
+                                await queue.send(event.chunk)
+                            except BrokenResourceError:
+                                self._image_generation_queues.pop(
+                                    event.command_id, None
+                                )
+                        if queue := self._chat_completion_queues.get(
+                            event.command_id, None
+                        ):
+                            assert not isinstance(event.chunk, ImageChunk)
+                            try:
+                                await queue.send(event.chunk)
+                            except BrokenResourceError:
+                                self._chat_completion_queues.pop(event.command_id, None)
 
     async def _pause_on_new_election(self):
         with self.election_receiver as ems:
