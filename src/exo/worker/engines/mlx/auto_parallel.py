@@ -113,7 +113,9 @@ class PipelineFirstLayer(CustomMlxLayer):
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
+            logger.info(f"[PipelineFirstLayer] recv_like from rank {self.r - 1}, shape={x.shape}")
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
+            logger.info(f"[PipelineFirstLayer] recv_like done")
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -139,9 +141,11 @@ class PipelineLastLayer(CustomMlxLayer):
         output: mx.array = self.original_layer(x, *args, **kwargs)
 
         if self.r != self.s - 1:
+            logger.info(f"[PipelineLastLayer] send to rank {(self.r + 1) % self.s}, shape={output.shape}")
             output = mx.distributed.send(
                 output, (self.r + 1) % self.s, group=self.group
             )
+            logger.info(f"[PipelineLastLayer] send done")
             if cache is not None:
                 cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
 
@@ -259,9 +263,13 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
         # (JACCL recv picks up all_gather data instead of send data)
         if world_size > 1:
             if rank == world_size - 1:
+                logger.info(f"[patch_pipeline_model] send logits to rank 0, shape={logits.shape}")
                 sent = mx.distributed.send(logits, dst=0, group=group)
+                logger.info(f"[patch_pipeline_model] send done")
             elif rank == 0:
+                logger.info(f"[patch_pipeline_model] recv_like logits from rank {world_size - 1}, shape={logits.shape}")
                 logits = mx.distributed.recv_like(logits, src=world_size - 1, group=group)
+                logger.info(f"[patch_pipeline_model] recv_like done")
 
         return logits
 
