@@ -111,7 +111,7 @@ def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Even
 def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     # initialize_mlx returns a "group" equal to 1
     monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(1))
-    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, 1)))
+    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
     monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", nothin)
     # Mock apply_chat_template since we're using a fake tokenizer (integer 1).
@@ -138,6 +138,13 @@ class EventCollector:
 
     def join(self) -> None:
         pass
+
+
+class MockTokenizer:
+    tool_parser = None
+    tool_call_start = None
+    tool_call_end = None
+    has_tool_calling = False
 
 
 def _run(tasks: Iterable[Task]):
@@ -171,7 +178,6 @@ def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
     expected_chunk = ChunkGenerated(
         command_id=COMMAND_1_ID,
         chunk=TokenChunk(
-            idx=0,
             model=MODEL_A_ID,
             text="hi",
             token_id=0,
