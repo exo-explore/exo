@@ -1,5 +1,5 @@
-<script lang="ts">
-	import HeaderNav from "$lib/components/HeaderNav.svelte";
+<script lang='ts'>
+	import HeaderNav from '$lib/components/HeaderNav.svelte';
 	import {
 		downloads,
 		lastUpdate as lastUpdateStore,
@@ -8,8 +8,8 @@
 		topologyData,
 		type DownloadProgress,
 		placeInstance,
-	} from "$lib/stores/app.svelte";
-	import { onMount } from "svelte";
+	} from '$lib/stores/app.svelte';
+	import { onMount } from 'svelte';
 
 	type FileProgress = {
 		name: string;
@@ -28,7 +28,7 @@
 		totalBytes: number;
 		speed: number;
 		etaMs: number;
-		status: "completed" | "downloading";
+		status: 'completed' | 'downloading';
 		files: FileProgress[];
 	};
 
@@ -52,18 +52,18 @@
 	}
 
 	function getBytes(value: unknown): number {
-		if (typeof value === "number") return value;
-		if (value && typeof value === "object") {
+		if (typeof value === 'number') return value;
+		if (value && typeof value === 'object') {
 			const v = value as Record<string, unknown>;
-			if (typeof v.in_bytes === "number") return v.in_bytes;
-			if (typeof v.inBytes === "number") return v.inBytes;
+			if (typeof v.in_bytes === 'number') return v.in_bytes;
+			if (typeof v.inBytes === 'number') return v.inBytes;
 		}
 		return 0;
 	}
 
 	function formatBytes(bytes: number): string {
-		if (!bytes || bytes <= 0) return "0B";
-		const units = ["B", "KB", "MB", "GB", "TB"];
+		if (!bytes || bytes <= 0) return '0B';
+		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
 		const i = Math.min(
 			Math.floor(Math.log(bytes) / Math.log(1024)),
 			units.length - 1,
@@ -73,7 +73,7 @@
 	}
 
 	function formatEta(ms: number): string {
-		if (!ms || ms <= 0) return "--";
+		if (!ms || ms <= 0) return '--';
 		const totalSeconds = Math.round(ms / 1000);
 		const s = totalSeconds % 60;
 		const m = Math.floor(totalSeconds / 60) % 60;
@@ -84,8 +84,8 @@
 	}
 
 	function formatSpeed(bytesPerSecond: number): string {
-		if (!bytesPerSecond || bytesPerSecond <= 0) return "--";
-		const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+		if (!bytesPerSecond || bytesPerSecond <= 0) return '--';
+		const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
 		const i = Math.min(
 			Math.floor(Math.log(bytesPerSecond) / Math.log(1024)),
 			units.length - 1,
@@ -104,7 +104,7 @@
 	): string | null {
 		const shardMetadata =
 			downloadPayload.shard_metadata ?? downloadPayload.shardMetadata;
-		if (!shardMetadata || typeof shardMetadata !== "object") return null;
+		if (!shardMetadata || typeof shardMetadata !== 'object') return null;
 
 		const shardObj = shardMetadata as Record<string, unknown>;
 		const shardKeys = Object.keys(shardObj);
@@ -114,7 +114,7 @@
 		if (!shardData) return null;
 
 		const modelMeta = shardData.model_meta ?? shardData.modelMeta;
-		if (!modelMeta || typeof modelMeta !== "object") return null;
+		if (!modelMeta || typeof modelMeta !== 'object') return null;
 
 		const meta = modelMeta as Record<string, unknown>;
 		return (meta.model_id as string) ?? (meta.modelId as string) ?? null;
@@ -124,7 +124,7 @@
 		payload: Record<string, unknown>,
 	): DownloadProgress | null {
 		const progress = payload.download_progress ?? payload.downloadProgress;
-		if (!progress || typeof progress !== "object") return null;
+		if (!progress || typeof progress !== 'object') return null;
 
 		const prog = progress as Record<string, unknown>;
 		const totalBytes = getBytes(prog.total_bytes ?? prog.totalBytes);
@@ -140,10 +140,10 @@
 			(prog.total_files as number) ?? (prog.totalFiles as number) ?? 0;
 		const etaMs = (prog.eta_ms as number) ?? (prog.etaMs as number) ?? 0;
 
-		const files: DownloadProgress["files"] = [];
+		const files: DownloadProgress['files'] = [];
 		const filesObj = (prog.files ?? {}) as Record<string, unknown>;
 		for (const [fileName, fileData] of Object.entries(filesObj)) {
-			if (!fileData || typeof fileData !== "object") continue;
+			if (!fileData || typeof fileData !== 'object') continue;
 			const fd = fileData as Record<string, unknown>;
 			const fTotal = getBytes(fd.total_bytes ?? fd.totalBytes);
 			const fDownloaded = getBytes(
@@ -177,9 +177,9 @@
 	}
 
 	function getBarGradient(percentage: number): string {
-		if (percentage >= 100) return "from-green-500 to-green-400";
-		if (percentage <= 0) return "from-red-500 to-red-400";
-		return "from-exo-yellow to-exo-yellow/70";
+		if (percentage >= 100) return 'from-green-500 to-green-400';
+		if (percentage <= 0) return 'from-red-500 to-red-400';
+		return 'from-exo-yellow to-exo-yellow/70';
 	}
 
 	let downloadOverview = $state<NodeEntry[]>([]);
@@ -198,14 +198,14 @@
 				const modelMap = new Map<string, ModelEntry>();
 				const nodeEntries = Array.isArray(nodeDownloads)
 					? nodeDownloads
-					: nodeDownloads && typeof nodeDownloads === "object"
+					: nodeDownloads && typeof nodeDownloads === 'object'
 						? Object.values(
 								nodeDownloads as Record<string, unknown>,
 							)
 						: [];
 
 				for (const downloadWrapped of nodeEntries) {
-					if (!downloadWrapped || typeof downloadWrapped !== "object")
+					if (!downloadWrapped || typeof downloadWrapped !== 'object')
 						continue;
 
 					const keys = Object.keys(
@@ -221,12 +221,12 @@
 
 					const modelId =
 						extractModelIdFromDownload(downloadPayload) ??
-						"unknown-model";
+						'unknown-model';
 					const prettyName = (() => {
 						const shardMetadata =
 							downloadPayload.shard_metadata ??
 							downloadPayload.shardMetadata;
-						if (!shardMetadata || typeof shardMetadata !== "object")
+						if (!shardMetadata || typeof shardMetadata !== 'object')
 							return null;
 						const shardObj = shardMetadata as Record<
 							string,
@@ -240,7 +240,7 @@
 						>;
 						const modelMeta =
 							shardData?.model_meta ?? shardData?.modelMeta;
-						if (!modelMeta || typeof modelMeta !== "object")
+						if (!modelMeta || typeof modelMeta !== 'object')
 							return null;
 						const meta = modelMeta as Record<string, unknown>;
 						return (meta.prettyName as string) ?? null;
@@ -279,11 +279,11 @@
 					const files: FileProgress[] = [];
 					const filesObj = (rawProgress as Record<string, unknown>)
 						.files as Record<string, unknown> | undefined;
-					if (filesObj && typeof filesObj === "object") {
+					if (filesObj && typeof filesObj === 'object') {
 						for (const [fileName, fileData] of Object.entries(
 							filesObj,
 						)) {
-							if (!fileData || typeof fileData !== "object")
+							if (!fileData || typeof fileData !== 'object')
 								continue;
 							const fd = fileData as Record<string, unknown>;
 							const fTotal = getBytes(
@@ -314,7 +314,7 @@
 						modelId,
 						prettyName,
 						percentage:
-							downloadKind === "DownloadCompleted"
+							downloadKind === 'DownloadCompleted'
 								? 100
 								: clampPercent(percentage),
 						downloadedBytes,
@@ -322,9 +322,9 @@
 						speed,
 						etaMs,
 						status:
-							downloadKind === "DownloadCompleted"
-								? "completed"
-								: "downloading",
+							downloadKind === 'DownloadCompleted'
+								? 'completed'
+								: 'downloading',
 						files,
 					};
 
@@ -332,8 +332,8 @@
 					if (!existing) {
 						modelMap.set(modelId, entry);
 					} else if (
-						(entry.status === "completed" &&
-							existing.status !== "completed") ||
+						(entry.status === 'completed' &&
+							existing.status !== 'completed') ||
 						(entry.status === existing.status &&
 							entry.downloadedBytes > existing.downloadedBytes)
 					) {
@@ -347,13 +347,13 @@
 				if (models.length === 0 && nodeEntries.length > 0) {
 					models = [
 						{
-							modelId: "Unknown download",
+							modelId: 'Unknown download',
 							percentage: 0,
 							downloadedBytes: 0,
 							totalBytes: 0,
 							speed: 0,
 							etaMs: 0,
-							status: "downloading",
+							status: 'downloading',
 							files: [],
 						},
 					];
@@ -368,7 +368,7 @@
 
 			downloadOverview = built;
 		} catch (err) {
-			console.error("Parse downloads error", err);
+			console.error('Parse downloads error', err);
 			downloadOverview = [];
 		}
 	});
@@ -385,7 +385,7 @@
 		expanded = next;
 	}
 
-	let customModelId = $state("");
+	let customModelId = $state('');
 	let isPlacing = $state(false);
 
 	async function handleDownload() {
@@ -418,7 +418,7 @@
 				return;
 			}
 		} catch (err) {
-			console.error("Failed to check HF API:", err);
+			console.error('Failed to check HF API:', err);
 			alert(
 				`Failed to connect to Hugging Face to verify model. Please check your internet connection.`,
 			);
@@ -431,12 +431,12 @@
 			await registerCustomModel(customModelId);
 			// Try to download the model only
 			placeInstance(customModelId, true).catch((err) => {
-				alert(err instanceof Error ? err.message : "Download failed");
+				alert(err instanceof Error ? err.message : 'Download failed');
 			});
-			customModelId = "";
+			customModelId = '';
 			refreshState();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : "Registration failed");
+			alert(err instanceof Error ? err.message : 'Registration failed');
 		} finally {
 			isPlacing = false;
 		}
@@ -514,7 +514,7 @@
 						disabled={!customModelId.trim() || isPlacing}
 						class="px-6 py-2.5 bg-exo-yellow hover:bg-white text-exo-black font-mono text-xs font-bold uppercase tracking-wider rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
 					>
-						{isPlacing ? "Placing..." : "Download Model"}
+						{isPlacing ? 'Placing...' : 'Download Model'}
 					</button>
 				</div>
 				<div
@@ -660,7 +660,7 @@
 											? "Completed"
 											: `${formatSpeed(model.speed)} • ETA ${formatEta(model.etaMs)}`}</span
 									>
-									{#if model.status !== "completed"}
+									{#if model.status !== 'completed'}
 										<span
 											>{model.files.length} file{model
 												.files.length === 1
