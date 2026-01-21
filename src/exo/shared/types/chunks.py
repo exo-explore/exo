@@ -1,6 +1,6 @@
 from collections.abc import Generator
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.api import GenerationStats, ImageGenerationStats

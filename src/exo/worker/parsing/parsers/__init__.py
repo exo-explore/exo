@@ -92,7 +92,6 @@ class ParsersResult:
 
 
 class ParserManager:
-
     @staticmethod
     def create_parsers(
         reasoning_parser_name: str | None = None,
@@ -101,7 +100,9 @@ class ParserManager:
     ) -> ParsersResult:
         result = ParsersResult()
 
-        reasoning_name = reasoning_parser_name.lower() if reasoning_parser_name else None
+        reasoning_name = (
+            reasoning_parser_name.lower() if reasoning_parser_name else None
+        )
         tool_name = tool_parser_name.lower() if tool_parser_name else None
 
         unified_name = ParserManager._get_unified_parser_name(reasoning_name, tool_name)
@@ -129,7 +130,12 @@ class ParserManager:
         reasoning_name: str | None,
         tool_name: str | None,
     ) -> str | None:
-        if (reasoning_name and tool_name and reasoning_name == tool_name and reasoning_name in UNIFIED_PARSER_MAP):
+        if (
+            reasoning_name
+            and tool_name
+            and reasoning_name == tool_name
+            and reasoning_name in UNIFIED_PARSER_MAP
+        ):
             return reasoning_name
 
         if reasoning_name and reasoning_name in UNIFIED_PARSER_MAP:

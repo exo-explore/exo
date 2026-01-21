@@ -10,7 +10,9 @@ from exo.shared.types.chunks import TokenChunk
 from exo.worker.tests.constants import COMMAND_1_ID, MODEL_A_ID
 
 
-async def test_collect_chat_completion_populates_thinking_and_tool_calls_and_null_content() -> None:
+async def test_collect_chat_completion_populates_thinking_and_tool_calls_and_null_content() -> (
+    None
+):
     api = object.__new__(API)
 
     async def _fake_stream(_: API, __: str) -> AsyncGenerator[TokenChunk, None]:

@@ -9,9 +9,9 @@ from .abstract_parser import AbstractToolParser
 def _strip_wrapping_tags(text: str, open_tag: str, close_tag: str) -> str:
     stripped = text
     if stripped.startswith(open_tag):
-        stripped = stripped[len(open_tag):]
+        stripped = stripped[len(open_tag) :]
     if stripped.endswith(close_tag):
-        stripped = stripped[:-len(close_tag)]
+        stripped = stripped[: -len(close_tag)]
     return stripped.strip()
 
 

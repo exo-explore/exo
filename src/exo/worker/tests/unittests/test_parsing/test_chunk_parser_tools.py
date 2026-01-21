@@ -6,11 +6,11 @@ from exo.worker.parsing.stream import ChunkParser, ChunkParserConfig
 
 
 def test_chunkparser_json_tools_tool_call_emits_openai_style_delta() -> None:
-    parser = ChunkParser(ChunkParserConfig(reasoning_parser_name=None, tool_parser_name="json_tools"))
-
-    out = parser.feed(
-        '<tool_call>{"name":"do_thing","arguments":{"x":1}}</tool_call>'
+    parser = ChunkParser(
+        ChunkParserConfig(reasoning_parser_name=None, tool_parser_name="json_tools")
     )
+
+    out = parser.feed('<tool_call>{"name":"do_thing","arguments":{"x":1}}</tool_call>')
 
     assert len(out) == 1
     tool_delta = out[0]

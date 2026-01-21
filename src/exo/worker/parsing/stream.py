@@ -90,10 +90,12 @@ class ChunkParser:
             if tool_calls:
                 tool_calls_list = cast(list[dict[str, Any]], tool_calls)
                 for tc in tool_calls_list:
-                    out.append({
-                        "name": tc.get("name"),
-                        "arguments": tc.get("arguments"),
-                    })
+                    out.append(
+                        {
+                            "name": tc.get("name"),
+                            "arguments": tc.get("arguments"),
+                        }
+                    )
 
             content = parsed.get("content")
             if isinstance(content, str) and content:
@@ -104,24 +106,30 @@ class ChunkParser:
         tool_parser = self.parsers.tool_parser
 
         if self._is_first_chunk and reasoning_parser:
-            if hasattr(reasoning_parser, "needs_redacted_reasoning_prefix") and reasoning_parser.needs_redacted_reasoning_prefix():
+            if (
+                hasattr(reasoning_parser, "needs_redacted_reasoning_prefix")
+                and reasoning_parser.needs_redacted_reasoning_prefix()
+            ):
                 text = reasoning_parser.get_reasoning_open() + text
             self._is_first_chunk = False
 
         after_reasoning_close: Optional[str] = None
         if reasoning_parser:
-            parsed_content, is_complete = reasoning_parser.extract_reasoning_streaming(text)
+            parsed_content, is_complete = reasoning_parser.extract_reasoning_streaming(
+                text
+            )
             if isinstance(parsed_content, dict):
                 if parsed_content.get("reasoning_content"):
-                    out.append({
-                        "reasoning_content":
-                        parsed_content["reasoning_content"]
-                    })
+                    out.append(
+                        {"reasoning_content": parsed_content["reasoning_content"]}
+                    )
 
                 if parsed_content.get("content"):
                     text = parsed_content["content"]
 
-                after_reasoning_close = parsed_content.get("after_reasoning_close_content")
+                after_reasoning_close = parsed_content.get(
+                    "after_reasoning_close_content"
+                )
 
                 if is_complete:
                     self.parsers.reasoning_parser = None
@@ -130,7 +138,11 @@ class ChunkParser:
             elif isinstance(parsed_content, str):
                 text = parsed_content
 
-            if reasoning_parser and reasoning_parser.state != ReasoningParserState.NORMAL and not after_reasoning_close:
+            if (
+                reasoning_parser
+                and reasoning_parser.state != ReasoningParserState.NORMAL
+                and not after_reasoning_close
+            ):
                 return out
 
             if after_reasoning_close:
@@ -150,15 +162,17 @@ class ChunkParser:
                 if tool_calls:
                     tool_calls_list = cast(list[dict[str, Any]], tool_calls)
                     for tc in tool_calls_list:
-                        out.append({
-                            "index": self._tool_call_index,
-                            "id": f"call_{uuid.uuid4()}",
-                            "type": "function",
-                            "function": {
-                                "name": tc.get("name"),
-                                "arguments": tc.get("arguments"),
-                            },
-                        })
+                        out.append(
+                            {
+                                "index": self._tool_call_index,
+                                "id": f"call_{uuid.uuid4()}",
+                                "type": "function",
+                                "function": {
+                                    "name": tc.get("name"),
+                                    "arguments": tc.get("arguments"),
+                                },
+                            }
+                        )
                         self._tool_call_index += 1
 
                 return out
@@ -183,11 +197,15 @@ class ChunkParser:
         if self.parsers.is_unified:
             assert self.parsers.unified_parser is not None
             up = self.parsers.unified_parser
-            if getattr(up, "arguments_buffer", None) and getattr(up, "function_name_buffer", ""):
-                out.append({
-                    "name": up.function_name_buffer,
-                    "arguments": "".join(up.arguments_buffer),
-                })
+            if getattr(up, "arguments_buffer", None) and getattr(
+                up, "function_name_buffer", ""
+            ):
+                out.append(
+                    {
+                        "name": up.function_name_buffer,
+                        "arguments": "".join(up.arguments_buffer),
+                    }
+                )
                 up.arguments_buffer = []
                 up.function_name_buffer = ""
             return out

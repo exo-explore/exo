@@ -1,4 +1,5 @@
 import base64
+import dataclasses
 import time
 from collections.abc import Generator
 from functools import cache
@@ -74,103 +75,9 @@ from exo.worker.engines.mlx.utils_mlx import (
     load_mlx_items,
     mlx_force_oom,
 )
+from exo.worker.parsing.selection import select_chunk_parser_config
 from exo.worker.parsing.stream import ChunkParser, ChunkParserConfig
 from exo.worker.runner.bootstrap import logger
-
-
-def _get_parser_config(model_id: str) -> ChunkParserConfig:
-    """
-    Map model_id -> ChunkParserConfig, covering all supported parser types.
-
-    Key behavior:
-    - If we return (None, None), parsing is disabled and tool calls will remain as text.
-    - For families where the tool dialect differs from the reasoning dialect (e.g. Qwen3 Coder),
-      we choose separate parser names for reasoning vs tool parsing.
-    """
-    lower_id = (model_id or "").lower()
-
-    if "harmony" in lower_id or "gpt-oss" in lower_id:
-        return ChunkParserConfig(
-            reasoning_parser_name="harmony",
-            tool_parser_name="harmony",
-            enable_thinking=True,
-        )
-
-    if "solar" in lower_id and "open" in lower_id:
-        return ChunkParserConfig(
-            reasoning_parser_name="solar_open",
-            tool_parser_name=None,
-            enable_thinking=True,
-        )
-
-    if "minimax" in lower_id or "m2" in lower_id:
-        return ChunkParserConfig(
-            reasoning_parser_name="minimax_m2",
-            tool_parser_name="minimax_m2",
-            enable_thinking=True,
-        )
-
-    if "glm" in lower_id or "chatglm" in lower_id:
-        return ChunkParserConfig(
-            reasoning_parser_name="glm4_moe",
-            tool_parser_name="glm47",
-            enable_thinking=True,
-        )
-
-    if "nemotron" in lower_id and ("nano" in lower_id or "3" in lower_id):
-        return ChunkParserConfig(
-            reasoning_parser_name="nemotron3_nano",
-            tool_parser_name=None,
-            enable_thinking=True,
-        )
-
-    if "qwen3" in lower_id:
-        if "vl" in lower_id:
-            return ChunkParserConfig(
-                reasoning_parser_name="qwen3_vl",
-                tool_parser_name=None,
-                enable_thinking=True,
-            )
-
-        if "moe" in lower_id:
-            return ChunkParserConfig(
-                reasoning_parser_name="qwen3_moe",
-                tool_parser_name=None,
-                enable_thinking=True,
-            )
-
-        if "coder" in lower_id:
-            return ChunkParserConfig(
-                reasoning_parser_name="qwen3",
-                tool_parser_name="qwen3_coder",
-                enable_thinking=True,
-            )
-
-        return ChunkParserConfig(
-            reasoning_parser_name="qwen3",
-            tool_parser_name=None,
-            enable_thinking=True,
-        )
-
-    if "functiongemma" in lower_id or ("gemma" in lower_id and "function" in lower_id):
-        return ChunkParserConfig(
-            reasoning_parser_name=None,
-            tool_parser_name="function_gemma",
-            enable_thinking=True,
-        )
-
-    if "hermes" in lower_id or "tool-use" in lower_id:
-        return ChunkParserConfig(
-            reasoning_parser_name="hermes",
-            tool_parser_name="json_tools",
-            enable_thinking=True,
-        )
-
-    return ChunkParserConfig(
-        reasoning_parser_name=None,
-        tool_parser_name=None,
-        enable_thinking=True,
-    )
 
 
 def main(
@@ -195,6 +102,7 @@ def main(
     model: Model | DistributedImageModel | None = None
     tokenizer = None
     group = None
+    base_parser_cfg: ChunkParserConfig | None = None
 
     current_status: RunnerStatus = RunnerIdle()
     logger.info("runner created")
@@ -259,6 +167,10 @@ def main(
                         raise ValueError(
                             f"Unknown model task(s): {shard_metadata.model_card.tasks}"
                         )
+
+                    base_parser_cfg = select_chunk_parser_config(
+                        model_id=str(shard_metadata.model_meta.model_id), model=model
+                    )
 
                     current_status = RunnerLoaded()
                     logger.info("runner loaded")
@@ -333,65 +245,88 @@ def main(
                         if isinstance(model, GptOssModel):
                             mlx_generator = parse_gpt_oss(mlx_generator)
 
-                    parser_cfg = _get_parser_config(shard_metadata.model_meta.model_id)
-                    parser_cfg.tools = task_params.tools
-                    parser = ChunkParser(parser_cfg)
+                        # For other thinking models (GLM, etc.), check if we need to
+                        # prepend the thinking tag that was consumed by the chat template
+                        if detect_thinking_prompt_suffix(prompt, tokenizer):
+                            mlx_generator = parse_thinking_models(
+                                mlx_generator, tokenizer
+                            )
 
-                    has_generated_tool_calls = False
-                    for response in mlx_generator:
-                        match response:
-                            case GenerationResponse():
-                                if shard_metadata.device_rank == 0:
-                                    parsed_chunks = parser.feed(response.text)
+                        assert base_parser_cfg is not None
+                        parser_cfg = dataclasses.replace(
+                            base_parser_cfg, tools=task_params.tools
+                        )
+                        parser = ChunkParser(parser_cfg)
 
-                                    if response.finish_reason is not None:
-                                        parsed_chunks.extend(parser.flush())
+                        has_generated_tool_calls = False
+                        for response in mlx_generator:
+                            match response:
+                                case GenerationResponse():
+                                    if shard_metadata.device_rank == 0:
+                                        parsed_chunks = parser.feed(response.text)
 
-                                    if not parsed_chunks and response.finish_reason is not None:
-                                        parsed_chunks.append("")
+                                        if response.finish_reason is not None:
+                                            parsed_chunks.extend(parser.flush())
 
-                                    for i, p_chunk in enumerate(parsed_chunks):
-                                        is_last_chunk = (response.finish_reason is not None) and (i == len(parsed_chunks) - 1)
+                                        if (
+                                            not parsed_chunks
+                                            and response.finish_reason is not None
+                                        ):
+                                            parsed_chunks.append("")
 
-                                        text_payload = ""
-                                        reasoning_payload: str | None = None
-                                        tool_calls_payload: list[dict[str, Any]] | None = None
+                                        for i, p_chunk in enumerate(parsed_chunks):
+                                            is_last_chunk = (
+                                                response.finish_reason is not None
+                                            ) and (i == len(parsed_chunks) - 1)
 
-                                        if isinstance(p_chunk, str):
-                                            text_payload = p_chunk
-                                        else:
-                                            if "reasoning_content" in p_chunk:
-                                                reasoning_payload = cast(str, p_chunk["reasoning_content"])
-                                            elif (
-                                                ("type" in p_chunk and p_chunk["type"] == "function")
-                                                or ("name" in p_chunk)
-                                            ):
-                                                tool_calls_payload = [p_chunk]
-                                                has_generated_tool_calls = True
+                                            text_payload = ""
+                                            reasoning_payload: str | None = None
+                                            tool_calls_payload: (
+                                                list[dict[str, Any]] | None
+                                            ) = None
 
-                                        finish_reason = None
-                                        if is_last_chunk:
-                                            finish_reason = response.finish_reason
-                                            if has_generated_tool_calls:
-                                                finish_reason = "tool_calls"
+                                            if isinstance(p_chunk, str):
+                                                text_payload = p_chunk
+                                            else:
+                                                if "reasoning_content" in p_chunk:
+                                                    reasoning_payload = cast(
+                                                        str,
+                                                        p_chunk["reasoning_content"],
+                                                    )
+                                                elif (
+                                                    "type" in p_chunk
+                                                    and p_chunk["type"] == "function"
+                                                ) or ("name" in p_chunk):
+                                                    tool_calls_payload = [p_chunk]
+                                                    has_generated_tool_calls = True
 
-                                        event_sender.send(
-                                            ChunkGenerated(
-                                                command_id=command_id,
-                                                chunk=TokenChunk(
-                                                    idx=response.token,
-                                                    model=shard_metadata.model_meta.model_id,
-                                                    text=text_payload,
-                                                    token_id=response.token,
-                                                    finish_reason=finish_reason,
-                                                    stats=response.stats if is_last_chunk else None,
-                                                    reasoning_content=reasoning_payload,
-                                                    tool_calls=tool_calls_payload,
-                                                ),
+                                            finish_reason = None
+                                            if is_last_chunk:
+                                                finish_reason = response.finish_reason
+                                                if has_generated_tool_calls:
+                                                    finish_reason = "tool_calls"
+
+                                            stats_payload = (
+                                                response.stats
+                                                if is_last_chunk
+                                                else None
                                             )
-                                        )
-                                # case TokenizedResponse():
-                                # TODO: something here ig
+                                            token_chunk = TokenChunk(
+                                                idx=response.token,
+                                                model=shard_metadata.model_meta.model_id,
+                                                text=text_payload,
+                                                token_id=response.token,
+                                                finish_reason=finish_reason,
+                                                stats=stats_payload,
+                                                reasoning_content=reasoning_payload,
+                                                tool_calls=tool_calls_payload,
+                                            )
+                                            event = ChunkGenerated(
+                                                command_id=command_id, chunk=token_chunk
+                                            )
+                                            event_sender.send(event)
+                                    # case TokenizedResponse():
+                                    # TODO: something here ig
 
                     # can we make this more explicit?
                     except Exception as e:

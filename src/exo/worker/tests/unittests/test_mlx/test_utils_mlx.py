@@ -16,13 +16,15 @@ class TestToolCallNormalization:
         # Create a message with tool calls in OpenAI format
         message = ChatCompletionMessage(
             role="assistant",
-            tool_calls=[{
-                "type": "function",
-                "function": {
-                    "name": "get_weather",
-                    "arguments": '{"location": "Paris", "unit": "celsius"}'  # JSON string
+            tool_calls=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": '{"location": "Paris", "unit": "celsius"}',  # JSON string
+                    },
                 }
-            }]
+            ],
         )
 
         # Apply the normalization
@@ -31,20 +33,25 @@ class TestToolCallNormalization:
         # Verify the arguments are now a dict
         assert normalized["tool_calls"][0]["function"]["arguments"] == {
             "location": "Paris",
-            "unit": "celsius"
+            "unit": "celsius",
         }
 
     def test_normalize_already_dict_arguments(self):
         """Test that dictionary arguments remain unchanged (idempotent)."""
         message = ChatCompletionMessage(
             role="assistant",
-            tool_calls=[{
-                "type": "function",
-                "function": {
-                    "name": "get_weather",
-                    "arguments": {"location": "Paris", "unit": "celsius"}  # Already dict
+            tool_calls=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": {
+                            "location": "Paris",
+                            "unit": "celsius",
+                        },  # Already dict
+                    },
                 }
-            }]
+            ],
         )
 
         # Apply the normalization
@@ -53,20 +60,22 @@ class TestToolCallNormalization:
         # Verify the arguments remain a dict
         assert normalized["tool_calls"][0]["function"]["arguments"] == {
             "location": "Paris",
-            "unit": "celsius"
+            "unit": "celsius",
         }
 
     def test_normalize_invalid_json_string(self):
         """Test that invalid JSON strings are handled gracefully."""
         message = ChatCompletionMessage(
             role="assistant",
-            tool_calls=[{
-                "type": "function",
-                "function": {
-                    "name": "get_weather",
-                    "arguments": '{"location": "Paris", "unit": '  # Invalid JSON
+            tool_calls=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": '{"location": "Paris", "unit": ',  # Invalid JSON
+                    },
                 }
-            }]
+            ],
         )
 
         # Apply the normalization - should not crash
@@ -81,8 +90,8 @@ class TestToolCallNormalization:
             role="assistant",
             function_call={
                 "name": "get_weather",
-                "arguments": '{"location": "Paris", "unit": "celsius"}'  # JSON string
-            }
+                "arguments": '{"location": "Paris", "unit": "celsius"}',  # JSON string
+            },
         )
 
         # Apply the normalization
@@ -91,20 +100,22 @@ class TestToolCallNormalization:
         # Verify the arguments are now a dict
         assert normalized["function_call"]["arguments"] == {
             "location": "Paris",
-            "unit": "celsius"
+            "unit": "celsius",
         }
 
     def test_normalize_non_dict_non_string_arguments(self):
         """Test handling of non-dict, non-string arguments."""
         message = ChatCompletionMessage(
             role="assistant",
-            tool_calls=[{
-                "type": "function",
-                "function": {
-                    "name": "get_weather",
-                    "arguments": 42  # Integer, not string or dict
+            tool_calls=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": 42,  # Integer, not string or dict
+                    },
                 }
-            }]
+            ],
         )
 
         # Apply the normalization
@@ -115,10 +126,7 @@ class TestToolCallNormalization:
 
     def test_normalize_no_tool_calls(self):
         """Test that messages without tool_calls are left unchanged."""
-        message = ChatCompletionMessage(
-            role="user",
-            content="Hello, world!"
-        )
+        message = ChatCompletionMessage(role="user", content="Hello, world!")
 
         # Apply the normalization
         normalized = normalize_tool_call_arguments(message.model_dump())
@@ -132,13 +140,15 @@ class TestToolCallNormalization:
         message = ChatCompletionMessage(
             role="assistant",
             content="I need to check the weather",  # Add content so message isn't filtered out
-            tool_calls=[{
-                "type": "function",
-                "function": {
-                    "name": "get_weather",
-                    "arguments": '{"location": "Paris", "unit": "celsius"}'
+            tool_calls=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": '{"location": "Paris", "unit": "celsius"}',
+                    },
                 }
-            }]
+            ],
         )
 
         # Mock tokenizer
@@ -147,9 +157,7 @@ class TestToolCallNormalization:
 
         # Create task params
         task_params = ChatCompletionTaskParams(
-            model="test-model",
-            messages=[message],
-            tools=[]
+            model="test-model", messages=[message], tools=[]
         )
 
         # Apply chat template - should not raise Jinja2 error
@@ -165,5 +173,5 @@ class TestToolCallNormalization:
 
         assert messages[0]["tool_calls"][0]["function"]["arguments"] == {
             "location": "Paris",
-            "unit": "celsius"
+            "unit": "celsius",
         }

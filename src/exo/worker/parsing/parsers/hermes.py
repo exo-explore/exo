@@ -9,7 +9,6 @@ REASONING_CLOSE = "</think>"
 
 
 class HermesReasoningParser(AbstractReasoningParser):
-
     def __init__(
         self,
         reasoning_open: str = REASONING_OPEN,

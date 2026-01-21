@@ -7,7 +7,6 @@ REASONING_CLOSE = "</think>"
 
 
 class MiniMaxM2ReasoningParser(HermesReasoningParser):
-
     def __init__(self) -> None:
         super().__init__(reasoning_open=REASONING_OPEN, reasoning_close=REASONING_CLOSE)
 

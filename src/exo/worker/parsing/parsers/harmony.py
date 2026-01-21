@@ -48,8 +48,12 @@ class HarmonyParser:
                 "Install it (pip install openai-harmony) or avoid selecting the 'harmony' parser."
             ) from _harmony_import_error
 
-        self.encoding = harmony.load_harmony_encoding(harmony.HarmonyEncodingName.HARMONY_GPT_OSS)
-        self.parser = harmony.StreamableParser(self.encoding, role=harmony.Role.ASSISTANT)
+        self.encoding = harmony.load_harmony_encoding(
+            harmony.HarmonyEncodingName.HARMONY_GPT_OSS
+        )
+        self.parser = harmony.StreamableParser(
+            self.encoding, role=harmony.Role.ASSISTANT
+        )
 
         self.end_tool_chunk = "<|call|>"
         self.state = ToolParserState.NORMAL

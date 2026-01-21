@@ -37,7 +37,7 @@ def test_qwen3_coder_schema_coercion() -> None:
         "<function=myfunc>"
         "<parameter=x>1</parameter>"
         "<parameter=flag>true</parameter>"
-        "<parameter=obj>{\"a\": 1}</parameter>"
+        '<parameter=obj>{"a": 1}</parameter>'
         "<parameter=arr>[1, 2]</parameter>"
         "</function>"
         "</tool_call>"
@@ -81,11 +81,11 @@ def test_minimax_m2_schema_coercion() -> None:
 
     out = parser.feed(
         "<minimax:tool_call>"
-        "<invoke name=\"myfunc\">"
-        "<parameter name=\"x\">1</parameter>"
-        "<parameter name=\"flag\">true</parameter>"
-        "<parameter name=\"items\">[1, 2]</parameter>"
-        "<parameter name=\"maybe\">null</parameter>"
+        '<invoke name="myfunc">'
+        '<parameter name="x">1</parameter>'
+        '<parameter name="flag">true</parameter>'
+        '<parameter name="items">[1, 2]</parameter>'
+        '<parameter name="maybe">null</parameter>'
         "</invoke>"
         "</minimax:tool_call>"
     )
