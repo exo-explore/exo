@@ -146,7 +146,7 @@ class PipelineLastLayer(CustomMlxLayer):
                 cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
 
         output = mx.distributed.all_gather(output, group=self.group)[
-            -output.shape[0]:
+            -output.shape[0] :
         ]  # type :ignore
 
         return output
