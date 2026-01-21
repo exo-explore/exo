@@ -5,10 +5,11 @@ from typing import Any
 from fastapi import HTTPException
 
 from exo.plugins.context import PluginContext
-
-# Use core types for serialization compatibility
-from exo.shared.types.commands import LaunchFLASH, StopFLASH
-from exo.shared.types.worker.instances import FLASHInstance
+from exo.plugins.implementations.flash.types import (
+    FLASHInstance,
+    LaunchFLASH,
+    StopFLASH,
+)
 
 
 async def handle_launch_flash(

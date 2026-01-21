@@ -1,3 +1,4 @@
+# ruff: noqa: I001 - Import order intentional to avoid circular imports
 from enum import Enum
 
 from pydantic import model_validator
@@ -35,23 +36,8 @@ class MlxJacclInstance(BaseInstance):
     jaccl_coordinators: dict[NodeId, str]
 
 
-class FLASHInstance(BaseInstance):
-    """Instance for FLASH MPI simulation.
-
-    Unlike MLX instances which do tensor parallelism, FLASH instances
-    coordinate MPI processes across nodes. Each node runs one or more
-    MPI ranks of the FLASH simulation.
-    """
-
-    hosts_by_node: dict[NodeId, list[Host]]
-    flash_executable_path: str
-    parameter_file_path: str
-    working_directory: str
-    ranks_per_node: int = 1
-    total_ranks: int
-    simulation_name: str
-    coordinator_ip: str
-    network_interface: str = "en0"  # Network interface for MPI (e.g., en0, eth0)
+# Import FLASHInstance from plugin (for serialization compatibility)
+from exo.plugins.implementations.flash.types import FLASHInstance  # noqa: E402, I001
 
 
 # TODO: Single node instance

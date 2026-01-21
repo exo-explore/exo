@@ -7,6 +7,7 @@ Exo-native distributed MPI:
 - exo-rsh connects to each node's Exo API (/execute endpoint) for remote execution
 - Workers just report ready and wait
 """
+# ruff: noqa: I001 - Import order intentional (plugin types before shared types)
 
 import os
 import shutil
@@ -28,7 +29,8 @@ from exo.shared.types.tasks import (
     Task,
     TaskStatus,
 )
-from exo.shared.types.worker.instances import BoundInstance, FLASHInstance
+from exo.plugins.implementations.flash.types import FLASHInstance
+from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import (
     RunnerFailed,
     RunnerIdle,

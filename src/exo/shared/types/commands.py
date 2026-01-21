@@ -1,3 +1,4 @@
+# ruff: noqa: I001 - Import order intentional to avoid circular imports
 from pydantic import Field
 
 from exo.shared.types.api import ChatCompletionTaskParams
@@ -6,6 +7,9 @@ from exo.shared.types.models import ModelMetadata
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
+
+# Import FLASH commands from plugin (for serialization compatibility)
+from exo.plugins.implementations.flash.types import LaunchFLASH, StopFLASH  # noqa: E402, I001
 
 
 class BaseCommand(TaggedModel):
@@ -32,26 +36,6 @@ class CreateInstance(BaseCommand):
 
 
 class DeleteInstance(BaseCommand):
-    instance_id: InstanceId
-
-
-class LaunchFLASH(BaseCommand):
-    """Command to launch a FLASH MPI simulation."""
-
-    simulation_name: str
-    flash_executable_path: str
-    parameter_file_path: str
-    working_directory: str
-    ranks_per_node: int = 1
-    min_nodes: int = 1
-    # Optional: explicit hostnames for MPI (e.g., "s14,james21-1")
-    # Used when topology edges don't contain IP addresses
-    hosts: str = ""
-
-
-class StopFLASH(BaseCommand):
-    """Command to stop a running FLASH simulation."""
-
     instance_id: InstanceId
 
 

@@ -5,7 +5,7 @@ from typing import Any
 
 from loguru import logger
 
-from exo.plugins.base import ExoPlugin
+from exo.plugins.base import EXOPlugin
 
 
 class PluginRegistry:
@@ -14,9 +14,9 @@ class PluginRegistry:
     _instance: "PluginRegistry | None" = None
 
     def __init__(self) -> None:
-        self._plugins: dict[str, ExoPlugin] = {}
-        self._command_handlers: dict[type, ExoPlugin] = {}
-        self._instance_handlers: dict[type, ExoPlugin] = {}
+        self._plugins: dict[str, EXOPlugin] = {}
+        self._command_handlers: dict[type, EXOPlugin] = {}
+        self._instance_handlers: dict[type, EXOPlugin] = {}
 
     @classmethod
     def get(cls) -> "PluginRegistry":
@@ -30,7 +30,7 @@ class PluginRegistry:
         """Reset the singleton instance (useful for testing)."""
         cls._instance = None
 
-    def register(self, plugin: ExoPlugin) -> None:
+    def register(self, plugin: EXOPlugin) -> None:
         """Register a plugin and its types."""
         if plugin.name in self._plugins:
             raise ValueError(f"Plugin '{plugin.name}' already registered")
@@ -49,33 +49,33 @@ class PluginRegistry:
         self._instance_handlers[instance_type] = plugin
         logger.debug(f"  Registered instance: {instance_type.__name__}")
 
-    def get_plugin(self, name: str) -> ExoPlugin | None:
+    def get_plugin(self, name: str) -> EXOPlugin | None:
         """Get a plugin by name."""
         return self._plugins.get(name)
 
-    def get_plugin_for_command(self, command: object) -> ExoPlugin | None:
+    def get_plugin_for_command(self, command: object) -> EXOPlugin | None:
         """Get the plugin that handles a command."""
         for plugin in self._plugins.values():
             if plugin.handles_command(command):
                 return plugin
         return None
 
-    def get_plugin_for_instance(self, instance: object) -> ExoPlugin | None:
+    def get_plugin_for_instance(self, instance: object) -> EXOPlugin | None:
         """Get the plugin that manages an instance."""
         for plugin in self._plugins.values():
             if plugin.handles_instance(instance):
                 return plugin
         return None
 
-    def all_plugins(self) -> Sequence[ExoPlugin]:
+    def all_plugins(self) -> Sequence[EXOPlugin]:
         """Get all registered plugins."""
         return list(self._plugins.values())
 
     def get_all_api_routes(
         self,
-    ) -> Sequence[tuple[str, str, Callable[..., Any], ExoPlugin]]:
+    ) -> Sequence[tuple[str, str, Callable[..., Any], EXOPlugin]]:
         """Get all API routes from all plugins."""
-        routes: list[tuple[str, str, Callable[..., Any], ExoPlugin]] = []
+        routes: list[tuple[str, str, Callable[..., Any], EXOPlugin]] = []
         for plugin in self._plugins.values():
             for method, path, handler in plugin.get_api_routes():
                 routes.append((method, path, handler, plugin))
@@ -85,7 +85,7 @@ class PluginRegistry:
 def discover_plugins() -> None:
     """Auto-discover and register plugins from the implementations directory.
 
-    Plugins should have a register() function that returns an ExoPlugin instance.
+    Plugins should have a register() function that returns an EXOPlugin instance.
     """
     import importlib
     import pkgutil

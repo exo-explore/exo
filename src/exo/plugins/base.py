@@ -40,7 +40,7 @@ class PluginInstance(TaggedModel):
     instance_id: InstanceId
 
 
-class ExoPlugin(ABC):
+class EXOPlugin(ABC):
     """Protocol that all exo plugins must implement.
 
     A plugin provides:

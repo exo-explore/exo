@@ -2,8 +2,9 @@
 
 from collections.abc import Mapping
 
+from exo.plugins.implementations.flash.types import FLASHInstance
 from exo.shared.types.tasks import LoadModel, Task
-from exo.shared.types.worker.instances import FLASHInstance, Instance, InstanceId
+from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerIdle
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 

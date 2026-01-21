@@ -3,7 +3,7 @@
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from exo.plugins.base import ExoPlugin
+from exo.plugins.base import EXOPlugin
 from exo.plugins.implementations.flash.api_handlers import (
     handle_launch_flash,
     handle_list_flash_instances,
@@ -12,22 +12,22 @@ from exo.plugins.implementations.flash.api_handlers import (
 from exo.plugins.implementations.flash.placement import place_flash_instance
 from exo.plugins.implementations.flash.planning import plan_flash
 from exo.plugins.implementations.flash.runner import main as flash_runner_main
+from exo.plugins.implementations.flash.types import (
+    FLASHInstance,
+    LaunchFLASH,
+    StopFLASH,
+)
 from exo.shared.topology import Topology
-from exo.shared.types.commands import DeleteInstance, LaunchFLASH, StopFLASH
+from exo.shared.types.commands import DeleteInstance
 from exo.shared.types.events import Event
 from exo.shared.types.tasks import Task
-from exo.shared.types.worker.instances import (
-    BoundInstance,
-    FLASHInstance,
-    Instance,
-    InstanceId,
-)
+from exo.shared.types.worker.instances import BoundInstance, Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
 
-class FLASHPlugin(ExoPlugin):
+class FLASHPlugin(EXOPlugin):
     """Plugin for FLASH MPI simulations."""
 
     @property
