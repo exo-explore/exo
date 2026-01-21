@@ -733,6 +733,18 @@ class API:
 
             with recv as chunks:
                 async for chunk in chunks:
+                    if chunk.finish_reason == "error":
+                        error_response = ErrorResponse(
+                            error=ErrorInfo(
+                                message=chunk.error_message or "Internal server error",
+                                type="InternalServerError",
+                                code=500,
+                            )
+                        )
+                        yield f"data: {error_response.model_dump_json()}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
+
                     key = (chunk.image_index, chunk.is_partial)
 
                     if key not in image_chunks:
@@ -831,6 +843,12 @@ class API:
             while images_complete < num_images:
                 with recv as chunks:
                     async for chunk in chunks:
+                        if chunk.finish_reason == "error":
+                            raise HTTPException(
+                                status_code=500,
+                                detail=chunk.error_message or "Internal server error",
+                            )
+
                         if chunk.is_partial:
                             continue
 

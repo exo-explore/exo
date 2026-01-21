@@ -297,33 +297,55 @@ def main(
                         )
                     )
 
-                    # Generate images using the image generation backend
-                    # Track image_index for final images only
-                    image_index = 0
-                    for response in generate_image(model=model, task=task_params):
+                    try:
+                        # Generate images using the image generation backend
+                        # Track image_index for final images only
+                        image_index = 0
+                        for response in generate_image(model=model, task=task_params):
+                            if (
+                                shard_metadata.device_rank
+                                == shard_metadata.world_size - 1
+                            ):
+                                match response:
+                                    case PartialImageResponse():
+                                        logger.info(
+                                            f"sending partial ImageChunk {response.partial_index}/{response.total_partials}"
+                                        )
+                                        _process_image_response(
+                                            response,
+                                            command_id,
+                                            shard_metadata,
+                                            event_sender,
+                                            image_index,
+                                        )
+                                    case ImageGenerationResponse():
+                                        logger.info("sending final ImageChunk")
+                                        _process_image_response(
+                                            response,
+                                            command_id,
+                                            shard_metadata,
+                                            event_sender,
+                                            image_index,
+                                        )
+                                        image_index += 1
+                    except Exception as e:
                         if shard_metadata.device_rank == shard_metadata.world_size - 1:
-                            match response:
-                                case PartialImageResponse():
-                                    logger.info(
-                                        f"sending partial ImageChunk {response.partial_index}/{response.total_partials}"
-                                    )
-                                    _process_image_response(
-                                        response,
-                                        command_id,
-                                        shard_metadata,
-                                        event_sender,
-                                        image_index,
-                                    )
-                                case ImageGenerationResponse():
-                                    logger.info("sending final ImageChunk")
-                                    _process_image_response(
-                                        response,
-                                        command_id,
-                                        shard_metadata,
-                                        event_sender,
-                                        image_index,
-                                    )
-                                    image_index += 1
+                            event_sender.send(
+                                ChunkGenerated(
+                                    command_id=command_id,
+                                    chunk=ImageChunk(
+                                        idx=0,
+                                        model=shard_metadata.model_card.model_id,
+                                        data="",
+                                        chunk_index=0,
+                                        total_chunks=1,
+                                        image_index=0,
+                                        finish_reason="error",
+                                        error_message=str(e),
+                                    ),
+                                )
+                            )
+                        raise
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
@@ -340,31 +362,53 @@ def main(
                         )
                     )
 
-                    image_index = 0
-                    for response in generate_image(model=model, task=task_params):
+                    try:
+                        image_index = 0
+                        for response in generate_image(model=model, task=task_params):
+                            if (
+                                shard_metadata.device_rank
+                                == shard_metadata.world_size - 1
+                            ):
+                                match response:
+                                    case PartialImageResponse():
+                                        logger.info(
+                                            f"sending partial ImageChunk {response.partial_index}/{response.total_partials}"
+                                        )
+                                        _process_image_response(
+                                            response,
+                                            command_id,
+                                            shard_metadata,
+                                            event_sender,
+                                            image_index,
+                                        )
+                                    case ImageGenerationResponse():
+                                        logger.info("sending final ImageChunk")
+                                        _process_image_response(
+                                            response,
+                                            command_id,
+                                            shard_metadata,
+                                            event_sender,
+                                            image_index,
+                                        )
+                                        image_index += 1
+                    except Exception as e:
                         if shard_metadata.device_rank == shard_metadata.world_size - 1:
-                            match response:
-                                case PartialImageResponse():
-                                    logger.info(
-                                        f"sending partial ImageChunk {response.partial_index}/{response.total_partials}"
-                                    )
-                                    _process_image_response(
-                                        response,
-                                        command_id,
-                                        shard_metadata,
-                                        event_sender,
-                                        image_index,
-                                    )
-                                case ImageGenerationResponse():
-                                    logger.info("sending final ImageChunk")
-                                    _process_image_response(
-                                        response,
-                                        command_id,
-                                        shard_metadata,
-                                        event_sender,
-                                        image_index,
-                                    )
-                                    image_index += 1
+                            event_sender.send(
+                                ChunkGenerated(
+                                    command_id=command_id,
+                                    chunk=ImageChunk(
+                                        idx=0,
+                                        model=shard_metadata.model_card.model_id,
+                                        data="",
+                                        chunk_index=0,
+                                        total_chunks=1,
+                                        image_index=0,
+                                        finish_reason="error",
+                                        error_message=str(e),
+                                    ),
+                                )
+                            )
+                        raise
 
                     current_status = RunnerReady()
                     logger.info("runner ready")

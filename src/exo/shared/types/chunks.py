@@ -38,6 +38,8 @@ class ImageChunk(BaseChunk):
     total_partials: int | None = None
     stats: ImageGenerationStats | None = None
     format: Literal["png", "jpeg", "webp"] | None = None
+    finish_reason: FinishReason | None = None
+    error_message: str | None = None
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
         for name, value in super().__repr_args__():  # pyright: ignore[reportAny]
