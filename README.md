@@ -364,7 +364,7 @@ The `exo-bench` tool measures model prefill and token generation speed across di
 
 ```bash
 uv run bench/exo_bench.py \
-  --model llama-3.2-1b \
+  --model Llama-3.2-1B-Instruct-4bit \
   --pp 128,256,512 \
   --tg 128,256
 ```
@@ -385,7 +385,7 @@ uv run bench/exo_bench.py \
 
 ```bash
 uv run bench/exo_bench.py \
-  --model llama-3.2-1b \
+  --model Llama-3.2-1B-Instruct-4bit \
   --pp 128,512 \
   --tg 128 \
   --max-nodes 2 \
