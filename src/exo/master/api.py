@@ -22,7 +22,6 @@ from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
-    EXO_ENABLE_IMAGE_MODELS,
     EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
 )
@@ -32,7 +31,6 @@ from exo.shared.models.model_cards import (
     MODEL_CARDS,
     ModelCard,
     ModelId,
-    ModelTask,
 )
 from exo.shared.types.api import (
     BenchChatCompletionResponse,
@@ -1174,11 +1172,6 @@ class API:
                     tasks=[task.value for task in card.tasks],
                 )
                 for card in MODEL_CARDS.values()
-                if EXO_ENABLE_IMAGE_MODELS
-                or not any(
-                    task in (ModelTask.TextToImage, ModelTask.ImageToImage)
-                    for task in card.tasks
-                )
             ]
         )
 

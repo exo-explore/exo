@@ -9,6 +9,7 @@ from huggingface_hub import model_info
 from loguru import logger
 from pydantic import BaseModel, Field, PositiveInt, field_validator
 
+from exo.shared.constants import EXO_ENABLE_IMAGE_MODELS
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.utils.pydantic_ext import CamelCaseModel
@@ -410,6 +411,9 @@ MODEL_CARDS: dict[str, ModelCard] = {
         supports_tensor=True,
         tasks=[ModelTask.TextGeneration],
     ),
+}
+
+_IMAGE_MODEL_CARDS: dict[str, ModelCard] = {
     "flux1-schnell": ModelCard(
         model_id=ModelId("black-forest-labs/FLUX.1-schnell"),
         storage_size=Memory.from_bytes(23782357120 + 9524621312),
@@ -563,6 +567,9 @@ MODEL_CARDS: dict[str, ModelCard] = {
         ],
     ),
 }
+
+if EXO_ENABLE_IMAGE_MODELS:
+    MODEL_CARDS.update(_IMAGE_MODEL_CARDS)
 
 
 class ConfigData(BaseModel):
