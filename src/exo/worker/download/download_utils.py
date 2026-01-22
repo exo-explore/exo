@@ -463,7 +463,7 @@ async def download_shard(
     allow_patterns: list[str] | None = None,
 ) -> tuple[Path, RepoDownloadProgress]:
     if not skip_download:
-        logger.info(f"Downloading {shard.model_card.model_id=}")
+        logger.debug(f"Downloading {shard.model_card.model_id=}")
 
     revision = "main"
     target_dir = await ensure_models_dir() / str(shard.model_card.model_id).replace(
@@ -476,7 +476,7 @@ async def download_shard(
         allow_patterns = await resolve_allow_patterns(shard)
 
     if not skip_download:
-        logger.info(f"Downloading {shard.model_card.model_id=} with {allow_patterns=}")
+        logger.debug(f"Downloading {shard.model_card.model_id=} with {allow_patterns=}")
 
     all_start_time = time.time()
     file_list = await fetch_file_list_with_cache(
