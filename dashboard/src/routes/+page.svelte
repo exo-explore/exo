@@ -768,6 +768,8 @@
     instanceWrapped: unknown,
   ): {
     isDownloading: boolean;
+    isFailed: boolean;
+    errorMessage: string | null;
     progress: DownloadProgress | null;
     statusText: string;
     perNode: Array<{
@@ -779,6 +781,8 @@
     if (!downloadsData || Object.keys(downloadsData).length === 0) {
       return {
         isDownloading: false,
+        isFailed: false,
+        errorMessage: null,
         progress: null,
         statusText: "RUNNING",
         perNode: [],
@@ -790,6 +794,8 @@
     if (!instance || typeof instance !== "object") {
       return {
         isDownloading: false,
+        isFailed: false,
+        errorMessage: null,
         progress: null,
         statusText: "PREPARING",
         perNode: [],
@@ -845,6 +851,26 @@
           downloadKind
         ] as Record<string, unknown>;
 
+        // Handle DownloadFailed - return immediately with error info
+        if (downloadKind === "DownloadFailed") {
+          const downloadModelId = extractModelIdFromDownload(downloadPayload);
+          if (
+            instanceModelId &&
+            downloadModelId &&
+            downloadModelId === instanceModelId
+          ) {
+            return {
+              isDownloading: false,
+              isFailed: true,
+              errorMessage:
+                (downloadPayload.errorMessage as string) || "Download failed",
+              progress: null,
+              statusText: "FAILED",
+              perNode: [],
+            };
+          }
+        }
+
         if (downloadKind !== "DownloadOngoing") continue;
         if (!downloadPayload) continue;
 
@@ -880,6 +906,8 @@
       const statusInfo = deriveInstanceStatus(instanceWrapped);
       return {
         isDownloading: false,
+        isFailed: statusInfo.statusText === "FAILED",
+        errorMessage: null,
         progress: null,
         statusText: statusInfo.statusText,
         perNode: [],
@@ -892,6 +920,8 @@
 
     return {
       isDownloading: true,
+      isFailed: false,
+      errorMessage: null,
       progress: {
         totalBytes,
         downloadedBytes,
@@ -2250,6 +2280,13 @@
                           >
                             {downloadInfo.statusText}
                           </div>
+                          {#if downloadInfo.isFailed && downloadInfo.errorMessage}
+                            <div
+                              class="text-xs text-red-400/80 font-mono mt-1 break-words"
+                            >
+                              {downloadInfo.errorMessage}
+                            </div>
+                          {/if}
                         {/if}
                       </div>
                     </div>
@@ -3207,6 +3244,13 @@
                             >
                               {downloadInfo.statusText}
                             </div>
+                            {#if downloadInfo.isFailed && downloadInfo.errorMessage}
+                              <div
+                                class="text-xs text-red-400/80 font-mono mt-1 break-words"
+                              >
+                                {downloadInfo.errorMessage}
+                              </div>
+                            {/if}
                           {/if}
                         </div>
                       </div>

@@ -40,7 +40,29 @@ from exo.worker.download.huggingface_utils import (
     get_allow_patterns,
     get_auth_headers,
     get_hf_endpoint,
+    get_hf_token,
 )
+
+
+class HuggingFaceAuthenticationError(Exception):
+    """Raised when HuggingFace returns 401/403 for a model download."""
+
+
+async def _build_auth_error_message(status_code: int, model_id: ModelId) -> str:
+    token = await get_hf_token()
+    if status_code == 401 and token is None:
+        return (
+            f"Model '{model_id}' requires authentication. "
+            f"Set HF_TOKEN in the app's Advanced settings, set the HF_TOKEN environment variable, or run `hf auth login`. "
+            f"Get a token at https://huggingface.co/settings/tokens"
+        )
+    elif status_code == 403:
+        return (
+            f"Access denied to '{model_id}'. "
+            f"Please accept the model terms at https://huggingface.co/{model_id}"
+        )
+    else:
+        return f"Authentication failed for '{model_id}' (HTTP {status_code})"
 
 
 def trim_etag(etag: str) -> str:
@@ -147,6 +169,8 @@ async def fetch_file_list_with_retry(
     for attempt in range(n_attempts):
         try:
             return await _fetch_file_list(model_id, revision, path, recursive)
+        except HuggingFaceAuthenticationError:
+            raise
         except Exception as e:
             if attempt == n_attempts - 1:
                 raise e
@@ -167,6 +191,9 @@ async def _fetch_file_list(
         create_http_session(timeout_profile="short") as session,
         session.get(url, headers=headers) as response,
     ):
+        if response.status in [401, 403]:
+            msg = await _build_auth_error_message(response.status, model_id)
+            raise HuggingFaceAuthenticationError(msg)
         if response.status == 200:
             data_json = await response.text()
             data = TypeAdapter(list[FileListEntry]).validate_json(data_json)
@@ -256,6 +283,9 @@ async def file_meta(
             # Otherwise, follow the redirect to get authoritative size/hash
             redirected_location = r.headers.get("location")
             return await file_meta(model_id, revision, path, redirected_location)
+        if r.status in [401, 403]:
+            msg = await _build_auth_error_message(r.status, model_id)
+            raise HuggingFaceAuthenticationError(msg)
         content_length = int(
             r.headers.get("x-linked-size") or r.headers.get("content-length") or 0
         )
@@ -279,6 +309,8 @@ async def download_file_with_retry(
             return await _download_file(
                 model_id, revision, path, target_dir, on_progress
             )
+        except HuggingFaceAuthenticationError:
+            raise
         except Exception as e:
             if isinstance(e, FileNotFoundError) or attempt == n_attempts - 1:
                 raise e
@@ -322,6 +354,9 @@ async def _download_file(
         ):
             if r.status == 404:
                 raise FileNotFoundError(f"File not found: {url}")
+            if r.status in [401, 403]:
+                msg = await _build_auth_error_message(r.status, model_id)
+                raise HuggingFaceAuthenticationError(msg)
             assert r.status in [200, 206], (
                 f"Failed to download {path} from {url}: {r.status}"
             )
@@ -463,7 +498,7 @@ async def download_shard(
     allow_patterns: list[str] | None = None,
 ) -> tuple[Path, RepoDownloadProgress]:
     if not skip_download:
-        logger.info(f"Downloading {shard.model_card.model_id=}")
+        logger.debug(f"Downloading {shard.model_card.model_id=}")
 
     revision = "main"
     target_dir = await ensure_models_dir() / str(shard.model_card.model_id).replace(
@@ -476,7 +511,7 @@ async def download_shard(
         allow_patterns = await resolve_allow_patterns(shard)
 
     if not skip_download:
-        logger.info(f"Downloading {shard.model_card.model_id=} with {allow_patterns=}")
+        logger.debug(f"Downloading {shard.model_card.model_id=} with {allow_patterns=}")
 
     all_start_time = time.time()
     file_list = await fetch_file_list_with_cache(

@@ -1,7 +1,12 @@
 from collections.abc import Generator
 from typing import Any, Literal
 
-from exo.shared.types.api import FinishReason, GenerationStats, ImageGenerationStats
+from exo.shared.types.api import (
+    FinishReason,
+    GenerationStats,
+    ImageGenerationStats,
+    ToolCallItem,
+)
 from exo.utils.pydantic_ext import TaggedModel
 
 
@@ -46,6 +51,10 @@ class PartialImageResponse(BaseRunnerResponse):
                 yield name, f"<{len(self.image_data)} bytes>"
             elif name is not None:
                 yield name, value
+
+
+class ToolCallResponse(BaseRunnerResponse):
+    tool_calls: list[ToolCallItem]
 
 
 class FinishedResponse(BaseRunnerResponse):
