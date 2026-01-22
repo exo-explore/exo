@@ -110,6 +110,36 @@
     setImageGenerationParams({ negativePrompt: value || null });
   }
 
+  function handleNumImagesChange(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const value = input.value.trim();
+    if (value === "") {
+      setImageGenerationParams({ numImages: 1 });
+    } else {
+      const num = parseInt(value, 10);
+      if (!isNaN(num) && num >= 1) {
+        setImageGenerationParams({ numImages: num });
+      }
+    }
+  }
+
+  function handleStreamChange(enabled: boolean) {
+    setImageGenerationParams({ stream: enabled });
+  }
+
+  function handlePartialImagesChange(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const value = input.value.trim();
+    if (value === "") {
+      setImageGenerationParams({ partialImages: 0 });
+    } else {
+      const num = parseInt(value, 10);
+      if (!isNaN(num) && num >= 0) {
+        setImageGenerationParams({ partialImages: num });
+      }
+    }
+  }
+
   function clearSteps() {
     setImageGenerationParams({ numInferenceSteps: null });
   }
@@ -324,6 +354,59 @@
         {/each}
       </div>
     </div>
+
+    <!-- Number of Images (not in edit mode) -->
+    {#if !isEditMode}
+      <div class="flex items-center gap-1.5">
+        <span class="text-xs text-exo-light-gray uppercase tracking-wider"
+          >IMAGES:</span
+        >
+        <input
+          type="number"
+          min="1"
+          value={params.numImages}
+          oninput={handleNumImagesChange}
+          class="w-12 bg-exo-medium-gray/50 border border-exo-yellow/30 rounded px-2 py-1 text-xs font-mono text-exo-yellow text-center transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70"
+        />
+      </div>
+    {/if}
+
+    <!-- Stream toggle -->
+    <div class="flex items-center gap-1.5">
+      <span class="text-xs text-exo-light-gray uppercase tracking-wider"
+        >STREAM:</span
+      >
+      <button
+        type="button"
+        onclick={() => handleStreamChange(!params.stream)}
+        class="w-8 h-4 rounded-full transition-all duration-200 cursor-pointer relative {params.stream
+          ? 'bg-exo-yellow'
+          : 'bg-exo-medium-gray/50 border border-exo-yellow/30'}"
+        title={params.stream ? "Streaming enabled" : "Streaming disabled"}
+      >
+        <div
+          class="absolute top-0.5 w-3 h-3 rounded-full transition-all duration-200 {params.stream
+            ? 'right-0.5 bg-exo-black'
+            : 'left-0.5 bg-exo-light-gray'}"
+        ></div>
+      </button>
+    </div>
+
+    <!-- Partial Images (only when streaming) -->
+    {#if params.stream}
+      <div class="flex items-center gap-1.5">
+        <span class="text-xs text-exo-light-gray uppercase tracking-wider"
+          >PARTIALS:</span
+        >
+        <input
+          type="number"
+          min="0"
+          value={params.partialImages}
+          oninput={handlePartialImagesChange}
+          class="w-12 bg-exo-medium-gray/50 border border-exo-yellow/30 rounded px-2 py-1 text-xs font-mono text-exo-yellow text-center transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70"
+        />
+      </div>
+    {/if}
 
     <!-- Input Fidelity (edit mode only) -->
     {#if isEditMode}

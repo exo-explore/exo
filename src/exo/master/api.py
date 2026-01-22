@@ -835,6 +835,7 @@ class API:
                             # Yield partial image event (always use b64_json for partials)
                             event_data = {
                                 "type": "partial",
+                                "image_index": chunk.image_index,
                                 "partial_index": partial_idx,
                                 "total_partials": total_partials,
                                 "format": str(chunk.format),
