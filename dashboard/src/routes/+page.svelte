@@ -19,6 +19,9 @@
     selectedPreviewModelId,
     isLoadingPreviews,
     selectPreviewModel,
+    togglePreviewNodeFilter,
+    clearPreviewNodeFilter,
+    previewNodeFilter,
     createConversation,
     setSelectedChatModel,
     selectedChatModel,
@@ -53,6 +56,7 @@
   const sidebarVisible = $derived(chatSidebarVisible());
   const tbBridgeCycles = $derived(thunderboltBridgeCycles());
   const tbBridgeData = $derived(nodeThunderboltBridge());
+  const nodeFilter = $derived(previewNodeFilter());
 
   // Helper to get friendly node name from node ID
   function getNodeName(nodeId: string): string {
@@ -216,6 +220,9 @@
 
   // Preview card hover state for highlighting nodes in topology
   let hoveredPreviewNodes = $state<Set<string>>(new Set());
+
+  // Computed: Check if filter is active (from store)
+  const isFilterActive = $derived(() => nodeFilter.size > 0);
 
   // Helper to unwrap tagged instance for hover highlighting
   function unwrapInstanceNodes(instanceWrapped: unknown): Set<string> {
@@ -1517,7 +1524,7 @@
 
   // Get ALL filtered previews based on current settings (matching minimum nodes)
   // Note: previewsData already contains previews for the selected model (fetched via API)
-  // We filter by sharding/instance type and min nodes, returning ALL eligible previews
+  // Backend handles node_ids filtering, we filter by sharding/instance type and min nodes
   const filteredPreviews = $derived(() => {
     if (!selectedModelId || previewsData.length === 0) return [];
 
@@ -1650,6 +1657,8 @@
           <TopologyGraph
             class="w-full h-full"
             highlightedNodes={highlightedNodes()}
+            filteredNodes={nodeFilter}
+            onNodeClick={togglePreviewNodeFilter}
           />
 
           <!-- Thunderbolt Bridge Cycle Warning -->
@@ -1767,6 +1776,8 @@
             <TopologyGraph
               class="w-full h-full"
               highlightedNodes={highlightedNodes()}
+              filteredNodes={nodeFilter}
+              onNodeClick={togglePreviewNodeFilter}
             />
 
             <!-- Thunderbolt Bridge Cycle Warning -->
@@ -1843,6 +1854,32 @@
                   </button>
                 </div>
               </div>
+            {/if}
+
+            <!-- Node Filter Indicator (top-right corner) -->
+            {#if isFilterActive()}
+              <button
+                onclick={clearPreviewNodeFilter}
+                class="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 bg-exo-dark-gray/80 border border-exo-yellow/40 rounded text-exo-yellow hover:border-exo-yellow/60 transition-colors cursor-pointer backdrop-blur-sm"
+                title="Clear filter"
+              >
+                <span class="text-[10px] font-mono tracking-wider">
+                  FILTER: {nodeFilter.size}
+                </span>
+                <svg
+                  class="w-3 h-3"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
             {/if}
           </div>
 
@@ -2790,7 +2827,11 @@
               <div
                 class="relative aspect-square bg-exo-dark-gray rounded-lg overflow-hidden"
               >
-                <TopologyGraph highlightedNodes={highlightedNodes()} />
+                <TopologyGraph
+                  highlightedNodes={highlightedNodes()}
+                  filteredNodes={nodeFilter}
+                  onNodeClick={togglePreviewNodeFilter}
+                />
 
                 <!-- Thunderbolt Bridge Cycle Warning (compact) -->
                 {#if tbBridgeCycles.length > 0}

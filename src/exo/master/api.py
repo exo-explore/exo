@@ -3,13 +3,13 @@ import json
 import time
 from collections.abc import AsyncGenerator
 from http import HTTPStatus
-from typing import Literal, cast
+from typing import Annotated, Literal, cast
 from uuid import uuid4
 
 import anyio
 from anyio import BrokenResourceError, create_task_group
 from anyio.abc import TaskGroup
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -337,11 +337,20 @@ class API:
         return placements[new_ids[0]]
 
     async def get_placement_previews(
-        self, model_id: ModelId
+        self,
+        model_id: ModelId,
+        node_ids: Annotated[list[NodeId] | None, Query()] = None,
     ) -> PlacementPreviewResponse:
         seen: set[tuple[ModelId, Sharding, InstanceMeta, int]] = set()
         previews: list[PlacementPreview] = []
-        if len(list(self.state.topology.list_nodes())) == 0:
+
+        # Create filtered topology if node_ids specified
+        if node_ids and len(node_ids) > 0:
+            topology = self.state.topology.get_subgraph_from_nodes(node_ids)
+        else:
+            topology = self.state.topology
+
+        if len(list(topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
         cards = [card for card in MODEL_CARDS.values() if card.model_id == model_id]
@@ -354,9 +363,7 @@ class API:
                 instance_combinations.extend(
                     [
                         (sharding, instance_meta, i)
-                        for i in range(
-                            1, len(list(self.state.topology.list_nodes())) + 1
-                        )
+                        for i in range(1, len(list(topology.list_nodes())) + 1)
                     ]
                 )
         # TODO: PDD
@@ -374,7 +381,7 @@ class API:
                         ),
                         node_memory=self.state.node_memory,
                         node_network=self.state.node_network,
-                        topology=self.state.topology,
+                        topology=topology,
                         current_instances=self.state.instances,
                     )
                 except ValueError as exc:
