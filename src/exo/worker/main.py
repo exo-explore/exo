@@ -38,6 +38,7 @@ from exo.shared.types.tasks import (
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
+    DownloadFailed,
     DownloadOngoing,
     DownloadPending,
     DownloadProgress,
@@ -443,7 +444,33 @@ class Worker:
                 last_progress_time = current_time()
 
         self.shard_downloader.on_progress(download_progress_callback)
-        self._tg.start_soon(self.shard_downloader.ensure_shard, task.shard_metadata)
+
+        async def download_with_error_handling() -> None:
+            try:
+                await self.shard_downloader.ensure_shard(task.shard_metadata)
+            except Exception as e:
+                error_message = str(e)
+                logger.error(
+                    f"Download failed for {task.shard_metadata.model_card.model_id}: {error_message}"
+                )
+                failed_status = DownloadFailed(
+                    node_id=self.node_id,
+                    shard_metadata=task.shard_metadata,
+                    error_message=error_message,
+                )
+                self.download_status[task.shard_metadata.model_card.model_id] = (
+                    failed_status
+                )
+                await self.event_sender.send(
+                    NodeDownloadProgress(download_progress=failed_status)
+                )
+                await self.event_sender.send(
+                    TaskStatusUpdated(
+                        task_id=task.task_id, task_status=TaskStatus.Failed
+                    )
+                )
+
+        self._tg.start_soon(download_with_error_handling)
 
     async def _forward_events(self) -> None:
         with self.event_receiver as events:
