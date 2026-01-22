@@ -3,6 +3,8 @@ from collections.abc import Awaitable
 from pathlib import Path
 from typing import AsyncIterator, Callable
 
+from loguru import logger
+
 from exo.shared.models.model_cards import MODEL_CARDS, ModelCard, ModelId
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
@@ -166,7 +168,7 @@ class ResumableShardDownloader(ShardDownloader):
                 yield await task
             # TODO: except Exception
             except Exception as e:
-                print("Error downloading shard:", e)
+                logger.error("Error downloading shard:", e)
 
     async def get_shard_download_status_for_shard(
         self, shard: ShardMetadata

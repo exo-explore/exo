@@ -627,7 +627,7 @@ async def get_config_data(model_id: ModelId) -> ConfigData:
         "main",
         "config.json",
         target_dir,
-        lambda curr_bytes, total_bytes, is_renamed: logger.info(
+        lambda curr_bytes, total_bytes, is_renamed: logger.debug(
             f"Downloading config.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
         ),
     )
@@ -650,7 +650,7 @@ async def get_safetensors_size(model_id: ModelId) -> Memory:
         "main",
         "model.safetensors.index.json",
         target_dir,
-        lambda curr_bytes, total_bytes, is_renamed: logger.info(
+        lambda curr_bytes, total_bytes, is_renamed: logger.debug(
             f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
         ),
     )
