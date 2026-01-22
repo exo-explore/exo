@@ -251,18 +251,13 @@ def _find_ip_prioritised(
     Priority: ethernet > wifi > unknown > thunderbolt
     """
     ips = list(_find_connection_ip(node_id, other_node_id, cycle_digraph))
+    if not ips:
+        return None
     other_network = node_network.get(other_node_id, NodeNetworkInfo())
-
-    # Build IP -> interface type mapping
     ip_to_type = {
         iface.ip_address: iface.interface_type for iface in other_network.interfaces
     }
-
     priority = {"ethernet": 0, "wifi": 1, "unknown": 2, "thunderbolt": 3}
-
-    if not ips:
-        return None
-
     return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2))
 
 
