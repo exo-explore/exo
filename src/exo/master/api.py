@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import json
 import time
 from collections.abc import AsyncGenerator
@@ -33,6 +34,7 @@ from exo.shared.models.model_cards import (
     ModelId,
 )
 from exo.shared.types.api import (
+    AdvancedImageParams,
     BenchChatCompletionResponse,
     BenchChatCompletionTaskParams,
     BenchImageGenerationResponse,
@@ -1025,6 +1027,9 @@ class API:
         stream: bool,
         partial_images: int,
         bench: bool,
+        quality: Literal["high", "medium", "low"],
+        output_format: Literal["png", "jpeg", "webp"],
+        advanced_params: AdvancedImageParams | None,
     ) -> ImageEdits:
         """Prepare and send an image edits command with chunked image upload."""
         resolved_model = await self._validate_image_model(model)
@@ -1053,6 +1058,9 @@ class API:
                 stream=stream,
                 partial_images=partial_images,
                 bench=bench,
+                quality=quality,
+                output_format=output_format,
+                advanced_params=advanced_params,
             ),
         )
 
@@ -1087,11 +1095,21 @@ class API:
         input_fidelity: Literal["low", "high"] = Form("low"),
         stream: str = Form("false"),
         partial_images: str = Form("0"),
+        quality: Literal["high", "medium", "low"] = Form("medium"),
+        output_format: Literal["png", "jpeg", "webp"] = Form("png"),
+        advanced_params: str | None = Form(None),
     ) -> ImageGenerationResponse | StreamingResponse:
         """Handle image editing requests (img2img)."""
         # Parse string form values to proper types
         stream_bool = stream.lower() in ("true", "1", "yes")
         partial_images_int = int(partial_images) if partial_images.isdigit() else 0
+
+        parsed_advanced_params: AdvancedImageParams | None = None
+        if advanced_params:
+            with contextlib.suppress(Exception):
+                parsed_advanced_params = AdvancedImageParams.model_validate_json(
+                    advanced_params
+                )
 
         command = await self._send_image_edits_command(
             image=image,
@@ -1104,6 +1122,9 @@ class API:
             stream=stream_bool,
             partial_images=partial_images_int,
             bench=False,
+            quality=quality,
+            output_format=output_format,
+            advanced_params=parsed_advanced_params,
         )
 
         if stream_bool and partial_images_int > 0:
@@ -1134,8 +1155,18 @@ class API:
         size: str = Form("1024x1024"),
         response_format: Literal["url", "b64_json"] = Form("b64_json"),
         input_fidelity: Literal["low", "high"] = Form("low"),
+        quality: Literal["high", "medium", "low"] = Form("medium"),
+        output_format: Literal["png", "jpeg", "webp"] = Form("png"),
+        advanced_params: str | None = Form(None),
     ) -> BenchImageGenerationResponse:
         """Handle benchmark image editing requests with generation stats."""
+        parsed_advanced_params: AdvancedImageParams | None = None
+        if advanced_params:
+            with contextlib.suppress(Exception):
+                parsed_advanced_params = AdvancedImageParams.model_validate_json(
+                    advanced_params
+                )
+
         command = await self._send_image_edits_command(
             image=image,
             prompt=prompt,
@@ -1147,6 +1178,9 @@ class API:
             stream=False,
             partial_images=0,
             bench=True,
+            quality=quality,
+            output_format=output_format,
+            advanced_params=parsed_advanced_params,
         )
 
         return await self._collect_image_generation_with_stats(
