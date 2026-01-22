@@ -123,7 +123,8 @@ def _model_needs_download(
         if isinstance(runner.status, RunnerIdle) and (
             model_id not in download_status
             or not isinstance(
-                download_status[model_id], (DownloadOngoing, DownloadCompleted, DownloadFailed)
+                download_status[model_id],
+                (DownloadOngoing, DownloadCompleted, DownloadFailed),
             )
         ):
             # We don't invalidate download_status randomly in case a file gets deleted on disk
