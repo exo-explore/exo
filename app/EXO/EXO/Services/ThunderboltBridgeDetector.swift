@@ -33,11 +33,14 @@ enum ThunderboltBridgeDetector {
         // 3. Find a bridge that contains Thunderbolt interfaces
         for (bridgeDevice, serviceName) in bridgeServices {
             let members = getBridgeMembers(bridgeDevice: bridgeDevice)
-            logger.debug("Bridge \(bridgeDevice) (\(serviceName)) has members: \(members.joined(separator: ", "))")
+            logger.debug(
+                "Bridge \(bridgeDevice) (\(serviceName)) has members: \(members.joined(separator: ", "))"
+            )
 
             // Check if any Thunderbolt device is a member of this bridge
             if !members.isDisjoint(with: thunderboltDevices) {
-                logger.info("Found Thunderbolt Bridge service: '\(serviceName)' (device: \(bridgeDevice))")
+                logger.info(
+                    "Found Thunderbolt Bridge service: '\(serviceName)' (device: \(bridgeDevice))")
                 return serviceName
             }
         }

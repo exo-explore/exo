@@ -189,7 +189,8 @@ final class ThunderboltBridgeService: ObservableObject {
                     throw ThunderboltBridgeError.disableFailed
                 }
                 found = true
-                Self.logger.info("Found and disabled Thunderbolt Bridge service: '\(targetServiceName)'")
+                Self.logger.info(
+                    "Found and disabled Thunderbolt Bridge service: '\(targetServiceName)'")
                 break
             }
         }
