@@ -1042,8 +1042,8 @@ class API:
         self, payload: ClaudeMessagesRequest
     ) -> ClaudeMessagesResponse | StreamingResponse:
         """Claude Messages API - adapter."""
-        internal_params = claude_request_to_chat_params(payload)
-        model_card = await resolve_model_card(internal_params.model)
+        internal_params = claude_request_to_internal(payload)
+        model_card = await resolve_model_card(ModelId(internal_params.model))
         internal_params.model = model_card.model_id
 
         if not any(

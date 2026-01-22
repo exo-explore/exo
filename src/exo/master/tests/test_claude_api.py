@@ -10,7 +10,6 @@ from exo.master.adapters.claude import (
     claude_request_to_internal,
     finish_reason_to_claude_stop_reason,
 )
-from exo.shared.types.common import ModelId
 from exo.shared.types.claude_api import (
     ClaudeContentBlockDeltaEvent,
     ClaudeContentBlockStartEvent,
@@ -27,6 +26,7 @@ from exo.shared.types.claude_api import (
     ClaudeTextDelta,
     ClaudeUsage,
 )
+from exo.shared.types.common import ModelId
 
 
 class TestFinishReasonToClaudeStopReason:

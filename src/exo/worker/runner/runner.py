@@ -16,9 +16,9 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
 
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE
 from exo.shared.models.model_cards import ModelTask
-from exo.shared.types.api import ChatCompletionMessageText, ImageGenerationStats
+from exo.shared.types.api import ImageGenerationStats
 from exo.shared.types.chunks import ImageChunk, TokenChunk
-from exo.shared.types.common import CommandId
+from exo.shared.types.common import CommandId, ModelId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
