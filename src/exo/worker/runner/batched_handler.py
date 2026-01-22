@@ -59,6 +59,7 @@ class ActiveRequest:
     gpt_oss_parser: Any | None = None  # StreamableParser for GPT-OSS models
     gpt_oss_thinking: bool = False
     tokens_generated: int = 0
+    reasoning_tokens: int = 0
     prompt_tokens: int = 0
     start_time: float = field(default_factory=time.perf_counter)
 
@@ -290,6 +291,10 @@ class BatchedInferenceHandler:
                 delta: str | None = parser.last_content_delta  # pyright: ignore[reportAny]
                 channel: str = parser.current_channel  # pyright: ignore[reportAny]
 
+                # Track reasoning tokens (analysis channel = thinking)
+                if channel == "analysis":
+                    active_request.reasoning_tokens += 1
+
                 # Handle thinking tag transitions
                 prefix = ""
                 if channel == "analysis" and not active_request.gpt_oss_thinking:
@@ -339,6 +344,7 @@ class BatchedInferenceHandler:
                     generation_tps=generation_tps,
                     prompt_tokens=active_request.prompt_tokens,
                     generation_tokens=active_request.tokens_generated,
+                    reasoning_tokens=active_request.reasoning_tokens,
                     peak_memory_usage=Memory.from_bytes(peak_memory_bytes),
                 )
 

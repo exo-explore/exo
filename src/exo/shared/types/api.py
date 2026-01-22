@@ -151,6 +151,7 @@ class GenerationStats(BaseModel):
     generation_tps: float
     prompt_tokens: int
     generation_tokens: int
+    reasoning_tokens: int = 0
     peak_memory_usage: Memory
 
 
