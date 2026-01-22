@@ -3,6 +3,7 @@ from pydantic import Field
 from exo.shared.models.model_cards import ModelCard
 from exo.shared.types.api import (
     ChatCompletionTaskParams,
+    CompletionTaskParams,
     ImageEditsInternalParams,
     ImageGenerationTaskParams,
 )
@@ -23,6 +24,12 @@ class TestCommand(BaseCommand):
 
 class ChatCompletion(BaseCommand):
     request_params: ChatCompletionTaskParams
+
+
+class Completion(BaseCommand):
+    """Legacy completions API command for scoring/generation."""
+
+    request_params: CompletionTaskParams
 
 
 class ImageGeneration(BaseCommand):
@@ -66,6 +73,7 @@ Command = (
     TestCommand
     | RequestEventLog
     | ChatCompletion
+    | Completion
     | ImageGeneration
     | ImageEdits
     | PlaceInstance

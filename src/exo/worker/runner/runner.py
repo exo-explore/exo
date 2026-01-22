@@ -3,7 +3,7 @@ import json
 import time
 from collections.abc import Generator
 from functools import cache
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, cast
 
 import mlx.core as mx
 from mlx_lm.models.gpt_oss import Model as GptOssModel
@@ -30,6 +30,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.tasks import (
     ChatCompletion,
+    Completion,
     ConnectToGroup,
     ImageEdits,
     ImageGeneration,
@@ -70,7 +71,11 @@ from exo.worker.engines.image import (
     warmup_image_generator,
 )
 from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
+from exo.worker.engines.mlx.generator.generate import (
+    mlx_generate,
+    score_tokens,
+    warmup_inference,
+)
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     detect_thinking_prompt_suffix,
@@ -317,6 +322,120 @@ def main(
                                         )
 
                     # can we make this more explicit?
+                    except Exception as e:
+                        if device_rank == 0:
+                            event_sender.send(
+                                ChunkGenerated(
+                                    command_id=command_id,
+                                    chunk=ErrorChunk(
+                                        model=shard_metadata.model_card.model_id,
+                                        finish_reason="error",
+                                        error_message=str(e),
+                                    ),
+                                )
+                            )
+                        raise
+
+                    current_status = RunnerReady()
+                    logger.info("runner ready")
+                case Completion(task_params=task_params, command_id=command_id) if (
+                    isinstance(current_status, RunnerReady)
+                ):
+                    logger.info(f"received completion request: {task}")
+                    current_status = RunnerRunning()
+                    logger.info("runner running")
+                    event_sender.send(
+                        RunnerStatusUpdated(
+                            runner_id=runner_id, runner_status=current_status
+                        )
+                    )
+                    assert model and not isinstance(model, DistributedImageModel)
+                    assert tokenizer
+
+                    try:
+                        # Get the prompt - can be string, list of strings, or token IDs
+                        prompt = task_params.prompt
+                        prompt_text: str
+                        tokens: list[int]
+
+                        if isinstance(prompt, str):
+                            # String prompt - tokenize it
+                            prompt_text = prompt
+                            tokens = tokenizer.encode(prompt)
+                        elif len(prompt) == 0:
+                            prompt_text = ""
+                            tokens = []
+                        else:
+                            # prompt is list[str] | list[int] | list[list[int]]
+                            first_elem = prompt[0]
+                            if isinstance(first_elem, int):
+                                # List of token IDs - use cast for type checker
+                                tokens = cast(list[int], prompt)
+                                prompt_text = tokenizer.decode(tokens)
+                            elif isinstance(first_elem, str):
+                                # List of strings - use first one
+                                prompt_text = first_elem
+                                tokens = tokenizer.encode(prompt_text)
+                            else:
+                                # List of token ID lists - use first one
+                                tokens = first_elem
+                                prompt_text = tokenizer.decode(tokens)
+
+                        # Score all tokens to get logprobs
+                        logprob_results = score_tokens(
+                            model=model,
+                            tokenizer=tokenizer,
+                            tokens=tokens,
+                            top_k=task_params.logprobs,
+                        )
+
+                        # Build response in completions format
+                        token_strings: list[str] = []
+                        token_logprobs: list[float | None] = []
+                        top_logprobs: list[dict[str, float]] = []
+                        text_offset: list[int] = []
+
+                        offset = 0
+                        for i, token_id in enumerate(tokens):
+                            token_str = tokenizer.decode([token_id])
+                            token_strings.append(token_str)
+
+                            if i < len(logprob_results):
+                                logprob, top_items = logprob_results[i]
+                                # First token has no logprob (None in OpenAI format)
+                                token_logprobs.append(
+                                    logprob if i > 0 else None
+                                )
+                                top_lp_dict = {
+                                    item.token: item.logprob for item in top_items
+                                }
+                                top_logprobs.append(top_lp_dict)
+                            else:
+                                token_logprobs.append(None)
+                                top_logprobs.append({})
+
+                            text_offset.append(offset)
+                            offset += len(token_str)
+
+                        # Import CompletionChunk here to avoid circular imports
+                        from exo.shared.types.chunks import CompletionChunk
+
+                        if device_rank == 0:
+                            event_sender.send(
+                                ChunkGenerated(
+                                    command_id=command_id,
+                                    chunk=CompletionChunk(
+                                        model=shard_metadata.model_card.model_id,
+                                        text=prompt_text if task_params.echo else "",
+                                        tokens=token_strings,
+                                        token_logprobs=token_logprobs,
+                                        top_logprobs=top_logprobs,
+                                        text_offset=text_offset,
+                                        finish_reason="stop",
+                                    ),
+                                )
+                            )
+
                     except Exception as e:
                         if device_rank == 0:
                             event_sender.send(

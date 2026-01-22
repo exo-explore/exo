@@ -35,7 +35,7 @@ from huggingface_hub import get_token as get_hf_token
 from loguru import logger
 from tomlkit.exceptions import TOMLKitError
 
-from bench.completions_proxy import run_completions_proxy, tasks_require_completions
+from bench.completions_proxy import tasks_require_completions
 from bench.exo_bench import (
     ExoClient,
     ExoHttpError,
@@ -298,63 +298,27 @@ def run_lm_eval(
 
     if use_completions:
         logger.info(
-            "Tasks require completions API - starting proxy to convert "
-            "chat completions to completions format"
-        )
-        logger.warning(
-            "Note: Prompt token logprobs are not available through the proxy. "
-            "Loglikelihood-based task results may be affected."
+            "Tasks require completions API - using native /v1/completions endpoint"
         )
 
     exo_base_url = f"http://{host}:{port}"
 
+    # Build args - use native completions or chat completions endpoint directly
+    args = build_lm_eval_args(
+        config, exo_base_url, model, output_path, limit, use_completions=use_completions
+    )
+    logger.info(f"lm_eval command: {' '.join(args)}")
+
     if dry_run:
-        # Show what would be executed
-        if use_completions:
-            # Simulate proxy URL for display
-            args = build_lm_eval_args(
-                config,
-                "http://127.0.0.1:<proxy_port>",
-                model,
-                output_path,
-                limit,
-                use_completions=True,
-            )
-            logger.info("[dry-run] Would start completions proxy")
-        else:
-            args = build_lm_eval_args(
-                config, exo_base_url, model, output_path, limit, use_completions=False
-            )
-        logger.info(f"lm_eval command: {' '.join(args)}")
         logger.info("[dry-run] Would execute the above command")
         return 0
 
-    if use_completions:
-        # Start proxy and run lm_eval through it
-        with run_completions_proxy(host, port) as proxy:
-            args = build_lm_eval_args(
-                config, proxy.base_url, model, output_path, limit, use_completions=True
-            )
-            logger.info(f"lm_eval command: {' '.join(args)}")
-            try:
-                result = subprocess.run(args, check=False)
-                return result.returncode
-            except FileNotFoundError:
-                logger.error("lm_eval not found. Install with: uv sync --extra eval")
-                return 1
-    else:
-        # Run directly against exo (chat completions)
-        args = build_lm_eval_args(
-            config, exo_base_url, model, output_path, limit, use_completions=False
-        )
-        logger.info(f"lm_eval command: {' '.join(args)}")
-
-        try:
-            result = subprocess.run(args, check=False)
-            return result.returncode
-        except FileNotFoundError:
-            logger.error("lm_eval not found. Install with: uv sync --extra eval")
-            return 1
+    try:
+        result = subprocess.run(args, check=False)
+        return result.returncode
+    except FileNotFoundError:
+        logger.error("lm_eval not found. Install with: uv sync --extra eval")
+        return 1
 
 
 def run_swe_bench(

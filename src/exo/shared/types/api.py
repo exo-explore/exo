@@ -171,6 +171,52 @@ class BenchChatCompletionResponse(ChatCompletionResponse):
     generation_stats: GenerationStats | None = None
 
 
+# Legacy Completions API types (for lm_eval compatibility)
+class CompletionLogprobs(BaseModel):
+    """Logprobs in the legacy completions format."""
+
+    tokens: list[str]
+    token_logprobs: list[float | None]
+    top_logprobs: list[dict[str, float]]
+    text_offset: list[int]
+
+
+class CompletionChoice(BaseModel):
+    text: str
+    index: int
+    logprobs: CompletionLogprobs | None = None
+    finish_reason: FinishReason | None = None
+
+
+class CompletionResponse(BaseModel):
+    id: str
+    object: Literal["text_completion"] = "text_completion"
+    created: int
+    model: str
+    choices: list[CompletionChoice]
+    usage: Usage | None = None
+
+
+class CompletionTaskParams(BaseModel):
+    """Parameters for the legacy /v1/completions endpoint."""
+
+    model: str
+    # Prompt can be: string, list of strings, list of token IDs, or list of token ID lists
+    prompt: str | list[str] | list[int] | list[list[int]]
+    max_tokens: int | None = 16
+    temperature: float | None = 1.0
+    top_p: float | None = 1.0
+    n: int | None = 1
+    stream: bool = False
+    logprobs: int | None = None
+    echo: bool = False
+    stop: str | list[str] | None = None
+    presence_penalty: float | None = None
+    frequency_penalty: float | None = None
+    seed: int | None = None
+    user: str | None = None
+
+
 class ChatCompletionTaskParams(BaseModel):
     model: str
     frequency_penalty: float | None = None

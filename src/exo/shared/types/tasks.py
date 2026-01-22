@@ -4,6 +4,7 @@ from pydantic import Field
 
 from exo.shared.types.api import (
     ChatCompletionTaskParams,
+    CompletionTaskParams,
     ImageEditsInternalParams,
     ImageGenerationTaskParams,
 )
@@ -60,6 +61,16 @@ class ChatCompletion(BaseTask):  # emitted by Master
     error_message: str | None = Field(default=None)
 
 
+class Completion(BaseTask):
+    """Legacy completions task for scoring tokens with echo=True."""
+
+    command_id: CommandId
+    task_params: CompletionTaskParams
+
+    error_type: str | None = Field(default=None)
+    error_message: str | None = Field(default=None)
+
+
 class ImageGeneration(BaseTask):  # emitted by Master
     command_id: CommandId
     task_params: ImageGenerationTaskParams
@@ -87,6 +98,7 @@ Task = (
     | LoadModel
     | StartWarmup
     | ChatCompletion
+    | Completion
     | ImageGeneration
     | ImageEdits
     | Shutdown

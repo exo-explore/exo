@@ -160,6 +160,69 @@ def extract_top_logprobs(
     return selected_logprob, top_logprob_items
 
 
+def score_tokens(
+    model: Model,
+    tokenizer: TokenizerWrapper,
+    tokens: list[int],
+    top_k: int | None = None,
+) -> list[tuple[float, list[TopLogprobItem]]]:
+    """Score a sequence of tokens, returning logprobs for each token.
+
+    This is used for the completions API with echo=True, where we need
+    logprobs for the prompt tokens (not just generated tokens).
+
+    Args:
+        model: The MLX model.
+        tokenizer: The tokenizer.
+        tokens: List of token IDs to score.
+        top_k: Number of top logprobs to return per position.
+               If None, returns all logprobs.
+
+    Returns:
+        List of (token_logprob, top_logprobs) tuples for each token position.
+        The first position has no logprob (no previous context), so returns (0.0, []).
+    """
+    if len(tokens) == 0:
+        return []
+
+    # First token has no previous context to condition on
+    results: list[tuple[float, list[TopLogprobItem]]] = [(0.0, [])]
+
+    if len(tokens) == 1:
+        return results
+
+    # Create an empty KV cache for the forward pass
+    cache = make_kv_cache(model=model)
+
+    # Convert to MLX array and run forward pass
+    input_tokens = mx.array(tokens[:-1])[None]  # All tokens except last, batched
+
+    # Run the model to get logits for all positions
+    # The model returns logits with shape [1, seq_len, vocab_size]
+    logits: mx.array = model(input_tokens, cache=cast(list[KVCache], cache))
+    logits = logits.squeeze(0)  # Shape: [seq_len, vocab_size]
+
+    # Convert to log probabilities
+    logprobs_all: mx.array = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
+
+    mx.eval(logprobs_all)
+
+    # For each position, extract the logprob of the actual next token
+    for i in range(len(tokens) - 1):
+        next_token = tokens[i + 1]
+        logprobs_at_position: mx.array = logprobs_all[i]
+
+        logprob, top_logprobs_items = extract_top_logprobs(
+            logprobs_array=logprobs_at_position,
+            selected_token=next_token,
+            tokenizer=tokenizer,
+            top_k=top_k,
+        )
+        results.append((logprob, top_logprobs_items))
+
+    return results
+
+
 def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,

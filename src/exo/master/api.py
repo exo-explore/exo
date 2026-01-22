@@ -37,6 +37,10 @@ from exo.shared.types.api import (
     ChatCompletionChoice,
     ChatCompletionMessage,
     ChatCompletionResponse,
+    CompletionChoice,
+    CompletionLogprobs,
+    CompletionResponse,
+    CompletionTaskParams,
     CreateInstanceParams,
     CreateInstanceResponse,
     DeleteInstanceResponse,
@@ -62,6 +66,7 @@ from exo.shared.types.api import (
     ToolCall,
 )
 from exo.shared.types.chunks import (
+    CompletionChunk,
     ErrorChunk,
     ImageChunk,
     InputImageChunk,
@@ -71,6 +76,7 @@ from exo.shared.types.chunks import (
 from exo.shared.types.commands import (
     ChatCompletion,
     Command,
+    Completion,
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
@@ -204,7 +210,8 @@ class API:
         )
 
         self._chat_completion_queues: dict[
-            CommandId, Sender[TokenChunk | ErrorChunk | ToolCallChunk]
+            CommandId,
+            Sender[TokenChunk | ErrorChunk | ToolCallChunk | CompletionChunk],
         ] = {}
         self._image_generation_queues: dict[
             CommandId, Sender[ImageChunk | ErrorChunk]
@@ -265,6 +272,7 @@ class API:
         self.app.post("/v1/chat/completions", response_model=None)(
             self.chat_completions
         )
+        self.app.post("/v1/completions", response_model=None)(self.completions)
         self.app.post("/bench/chat/completions")(self.bench_chat_completions)
         self.app.post("/v1/images/generations", response_model=None)(
             self.image_generations
@@ -484,12 +492,12 @@ class API:
 
     async def _chat_chunk_stream(
         self, command_id: CommandId
-    ) -> AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None]:
+    ) -> AsyncGenerator[TokenChunk | ErrorChunk | ToolCallChunk | CompletionChunk, None]:
         """Yield `TokenChunk`s for a given command until completion."""
 
         try:
             self._chat_completion_queues[command_id], recv = channel[
-                ErrorChunk | ToolCallChunk | TokenChunk
+                TokenChunk | ErrorChunk | ToolCallChunk | CompletionChunk
             ]()
 
             with recv as token_chunks:
@@ -518,8 +526,12 @@ class API:
         """Generate chat completion stream as JSON strings."""
 
         async for chunk in self._chat_chunk_stream(command_id):
+            # Skip CompletionChunk - it's for the legacy completions API
+            if isinstance(chunk, CompletionChunk):
+                continue
+
             assert not isinstance(chunk, ImageChunk)
-            if chunk.finish_reason == "error":
+            if isinstance(chunk, ErrorChunk):
                 error_response = ErrorResponse(
                     error=ErrorInfo(
                         message=chunk.error_message or "Internal server error",
@@ -553,6 +565,10 @@ class API:
         finish_reason: FinishReason | None = None
 
         async for chunk in self._chat_chunk_stream(command_id):
+            # Skip CompletionChunk - it's for the legacy completions API
+            if isinstance(chunk, CompletionChunk):
+                continue
+
             if isinstance(chunk, ErrorChunk):
                 raise HTTPException(
                     status_code=500,
@@ -622,7 +638,11 @@ class API:
         stats: GenerationStats | None = None
 
         async for chunk in self._chat_chunk_stream(command_id):
-            if chunk.finish_reason == "error":
+            # Skip CompletionChunk - it's for the legacy completions API
+            if isinstance(chunk, CompletionChunk):
+                continue
+
+            if isinstance(chunk, ErrorChunk):
                 raise HTTPException(
                     status_code=500,
                     detail=chunk.error_message or "Internal server error",
@@ -633,6 +653,7 @@ class API:
 
             if isinstance(chunk, TokenChunk):
                 text_parts.append(chunk.text)
+                stats = chunk.stats or stats
 
             if isinstance(chunk, ToolCallChunk):
                 tool_calls.extend(
@@ -643,8 +664,7 @@ class API:
                     )
                     for i, tool in enumerate(chunk.tool_calls)
                 )
-
-            stats = chunk.stats or stats
+                stats = chunk.stats or stats
 
             if chunk.finish_reason is not None:
                 finish_reason = chunk.finish_reason
@@ -701,6 +721,88 @@ class API:
             )
 
         return await self._collect_chat_completion(command.command_id)
+
+    async def completions(
+        self, payload: CompletionTaskParams
+    ) -> CompletionResponse:
+        """Handle legacy completions API for lm_eval compatibility."""
+        model_card = await resolve_model_card(ModelId(payload.model))
+        payload.model = model_card.model_id
+
+        if not any(
+            instance.shard_assignments.model_id == payload.model
+            for instance in self.state.instances.values()
+        ):
+            await self._trigger_notify_user_to_download_model(payload.model)
+            raise HTTPException(
+                status_code=404, detail=f"No instance found for model {payload.model}"
+            )
+
+        command = Completion(request_params=payload)
+        await self._send(command)
+
+        return await self._collect_completion(command.command_id)
+
+    async def _collect_completion(self, command_id: CommandId) -> CompletionResponse:
+        """Collect completion response chunks into a single response."""
+        text = ""
+        tokens: list[str] = []
+        token_logprobs: list[float | None] = []
+        top_logprobs: list[dict[str, float]] = []
+        text_offset: list[int] = []
+        finish_reason: FinishReason | None = None
+        model = ""
+
+        try:
+            self._chat_completion_queues[command_id], recv = channel[
+                TokenChunk | ErrorChunk | ToolCallChunk | CompletionChunk
+            ]()
+
+            with recv as chunks:
+                async for chunk in chunks:
+                    if isinstance(chunk, CompletionChunk):
+                        text = chunk.text
+                        tokens = chunk.tokens
+                        token_logprobs = chunk.token_logprobs
+                        top_logprobs = chunk.top_logprobs
+                        text_offset = chunk.text_offset
+                        finish_reason = chunk.finish_reason
+                        model = chunk.model
+                    elif isinstance(chunk, ErrorChunk):
+                        raise HTTPException(
+                            status_code=500, detail=chunk.error_message
+                        )
+
+                    if chunk.finish_reason is not None:
+                        break
+        finally:
+            command = TaskFinished(finished_command_id=command_id)
+            await self._send(command)
+            if command_id in self._chat_completion_queues:
+                del self._chat_completion_queues[command_id]
+
+        logprobs_data: CompletionLogprobs | None = None
+        if tokens:
+            logprobs_data = CompletionLogprobs(
+                tokens=tokens,
+                token_logprobs=token_logprobs,
+                top_logprobs=top_logprobs,
+                text_offset=text_offset,
+            )
+
+        return CompletionResponse(
+            id=f"cmpl-{uuid4()}",
+            created=int(time.time()),
+            model=model,
+            choices=[
+                CompletionChoice(
+                    text=text,
+                    index=0,
+                    logprobs=logprobs_data,
+                    finish_reason=finish_reason,
+                )
+            ],
+        )
 
     async def bench_chat_completions(
         self, payload: BenchChatCompletionTaskParams

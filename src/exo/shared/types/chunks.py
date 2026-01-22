@@ -34,6 +34,17 @@ class ToolCallChunk(BaseChunk):
     stats: GenerationStats | None = None
 
 
+class CompletionChunk(BaseChunk):
+    """Chunk for legacy completions API with full logprobs for all tokens."""
+
+    text: str
+    tokens: list[str]
+    token_logprobs: list[float | None]
+    top_logprobs: list[dict[str, float]]
+    text_offset: list[int]
+    finish_reason: FinishReason | None = None
+
+
 class ImageChunk(BaseChunk):
     data: str
     chunk_index: int
@@ -69,4 +80,4 @@ class InputImageChunk(BaseChunk):
                 yield name, value
 
 
-GenerationChunk = TokenChunk | ImageChunk | ToolCallChunk | ErrorChunk
+GenerationChunk = TokenChunk | CompletionChunk | ImageChunk | ToolCallChunk | ErrorChunk

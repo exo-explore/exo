@@ -6,6 +6,7 @@ from exo.shared.models.model_cards import ModelId
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.tasks import (
     ChatCompletion,
+    Completion,
     ConnectToGroup,
     CreateRunner,
     DownloadModel,
@@ -269,9 +270,9 @@ def _pending_tasks(
     input_chunk_buffer: Mapping[CommandId, dict[int, str]] | None = None,
 ) -> Task | None:
     for task in tasks.values():
-        # for now, just forward chat completions
+        # for now, just forward chat completions and completions
         # TODO(ciaran): do this better!
-        if not isinstance(task, (ChatCompletion, ImageGeneration, ImageEdits)):
+        if not isinstance(task, (ChatCompletion, Completion, ImageGeneration, ImageEdits)):
             continue
         if task.task_status not in (TaskStatus.Pending, TaskStatus.Running):
             continue

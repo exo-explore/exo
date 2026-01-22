@@ -253,8 +253,9 @@ def create_proxy_app(upstream_url: str) -> FastAPI:
         stream = body.get("stream", False)
 
         chat_request = convert_completions_to_chat_request(body)
+        logger.debug(f"Proxying to {upstream_url}/v1/chat/completions")
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(timeout=300.0, http2=False) as client:
             if stream:
 
                 async def generate() -> AsyncGenerator[str, None]:
@@ -376,32 +377,64 @@ async def completions_proxy_context(
 def run_completions_proxy(
     upstream_host: str, upstream_port: int
 ) -> Generator[CompletionsProxy, None, None]:
-    """Synchronous context manager that runs proxy in a background thread."""
-    import threading
+    """Synchronous context manager that runs proxy in a subprocess."""
+    import subprocess
+    import sys
+    import time
 
-    proxy = CompletionsProxy(upstream_host, upstream_port)
-    loop = asyncio.new_event_loop()
-    started = threading.Event()
+    port = find_free_port()
+    upstream_url = f"http://{upstream_host}:{upstream_port}"
 
-    def run_loop() -> None:
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(proxy.start())
-        started.set()
-        loop.run_forever()
+    # Start proxy as subprocess
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            f"""
+import asyncio
+import sys
+from bench.completions_proxy import create_proxy_app
+from hypercorn.asyncio import serve
+from hypercorn.config import Config
 
-    thread = threading.Thread(target=run_loop, daemon=True)
-    thread.start()
+async def main():
+    print(f"Proxy starting: 127.0.0.1:{port} -> {upstream_url}", file=sys.stderr, flush=True)
+    app = create_proxy_app("{upstream_url}")
+    config = Config()
+    config.bind = ["127.0.0.1:{port}"]
+    config.accesslog = "-"  # Log to stderr
+    config.errorlog = "-"
+    await serve(app, config)
+
+asyncio.run(main())
+""",
+        ],
+        stdout=None,  # Inherit stdout
+        stderr=None,  # Inherit stderr
+    )
+
+    # Create a proxy object with the right base_url
+    class ProxyInfo:
+        def __init__(self, host: str, port: int):
+            self.host = host
+            self.port = port
+
+        @property
+        def base_url(self) -> str:
+            return f"http://{self.host}:{self.port}"
+
+    proxy = ProxyInfo("127.0.0.1", port)
 
     # Wait for server to start
-    started.wait(timeout=10.0)
+    time.sleep(1.0)
+    logger.info(f"Completions proxy started on {proxy.base_url} -> {upstream_url}")
 
     try:
-        yield proxy
+        yield proxy  # type: ignore[misc]
     finally:
-
-        async def stop_proxy() -> None:
-            await proxy.stop()
-
-        loop.call_soon_threadsafe(loop.create_task, stop_proxy())
-        loop.call_soon_threadsafe(loop.stop)
-        thread.join(timeout=5.0)
+        proc.terminate()
+        try:
+            proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        logger.info("Completions proxy stopped")
