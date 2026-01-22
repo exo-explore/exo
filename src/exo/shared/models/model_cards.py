@@ -410,159 +410,158 @@ MODEL_CARDS: dict[str, ModelCard] = {
         supports_tensor=True,
         tasks=[ModelTask.TextGeneration],
     ),
-    # Image models commented out - feature not stable (see https://github.com/exo-explore/exo/issues/1242)
-    # "flux1-schnell": ModelCard(
-    #     model_id=ModelId("black-forest-labs/FLUX.1-schnell"),
-    #     storage_size=Memory.from_bytes(23782357120 + 9524621312),
-    #     n_layers=57,
-    #     hidden_size=1,
-    #     supports_tensor=False,
-    #     tasks=[ModelTask.TextToImage],
-    #     components=[
-    #         ComponentInfo(
-    #             component_name="text_encoder",
-    #             component_path="text_encoder/",
-    #             storage_size=Memory.from_kb(0),
-    #             n_layers=12,
-    #             can_shard=False,
-    #             safetensors_index_filename=None,  # Single file
-    #         ),
-    #         ComponentInfo(
-    #             component_name="text_encoder_2",
-    #             component_path="text_encoder_2/",
-    #             storage_size=Memory.from_bytes(9524621312),
-    #             n_layers=24,
-    #             can_shard=False,
-    #             safetensors_index_filename="model.safetensors.index.json",
-    #         ),
-    #         ComponentInfo(
-    #             component_name="transformer",
-    #             component_path="transformer/",
-    #             storage_size=Memory.from_bytes(23782357120),
-    #             n_layers=57,  # 19 transformer_blocks + 38 single_transformer_blocks
-    #             can_shard=True,
-    #             safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
-    #         ),
-    #         ComponentInfo(
-    #             component_name="vae",
-    #             component_path="vae/",
-    #             storage_size=Memory.from_kb(0),
-    #             n_layers=None,
-    #             can_shard=False,
-    #             safetensors_index_filename=None,
-    #         ),
-    #     ],
-    # ),
-    # "flux1-dev": ModelCard(
-    #     model_id=ModelId("black-forest-labs/FLUX.1-dev"),
-    #     storage_size=Memory.from_bytes(23782357120 + 9524621312),
-    #     n_layers=57,
-    #     hidden_size=1,
-    #     supports_tensor=False,
-    #     tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
-    #     components=[
-    #         ComponentInfo(
-    #             component_name="text_encoder",
-    #             component_path="text_encoder/",
-    #             storage_size=Memory.from_kb(0),
-    #             n_layers=12,
-    #             can_shard=False,
-    #             safetensors_index_filename=None,  # Single file
-    #         ),
-    #         ComponentInfo(
-    #             component_name="text_encoder_2",
-    #             component_path="text_encoder_2/",
-    #             storage_size=Memory.from_bytes(9524621312),
-    #             n_layers=24,
-    #             can_shard=False,
-    #             safetensors_index_filename="model.safetensors.index.json",
-    #         ),
-    #         ComponentInfo(
-    #             component_name="transformer",
-    #             component_path="transformer/",
-    #             storage_size=Memory.from_bytes(23802816640),
-    #             n_layers=57,  # 19 transformer_blocks + 38 single_transformer_blocks
-    #             can_shard=True,
-    #             safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
-    #         ),
-    #         ComponentInfo(
-    #             component_name="vae",
-    #             component_path="vae/",
-    #             storage_size=Memory.from_kb(0),
-    #             n_layers=None,
-    #             can_shard=False,
-    #             safetensors_index_filename=None,
-    #         ),
-    #     ],
-    # ),
-    # "qwen-image": ModelCard(
-    #     model_id=ModelId("Qwen/Qwen-Image"),
-    #     storage_size=Memory.from_bytes(16584333312 + 40860802176),
-    #     n_layers=60,  # Qwen has 60 transformer blocks (all joint-style)
-    #     hidden_size=1,
-    #     supports_tensor=False,
-    #     tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
-    #     components=[
-    #         ComponentInfo(
-    #             component_name="text_encoder",
-    #             component_path="text_encoder/",
-    #             storage_size=Memory.from_kb(16584333312),
-    #             n_layers=12,
-    #             can_shard=False,
-    #             safetensors_index_filename=None,  # Single file
-    #         ),
-    #         ComponentInfo(
-    #             component_name="transformer",
-    #             component_path="transformer/",
-    #             storage_size=Memory.from_bytes(40860802176),
-    #             n_layers=60,
-    #             can_shard=True,
-    #             safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
-    #         ),
-    #         ComponentInfo(
-    #             component_name="vae",
-    #             component_path="vae/",
-    #             storage_size=Memory.from_kb(0),
-    #             n_layers=None,
-    #             can_shard=False,
-    #             safetensors_index_filename=None,
-    #         ),
-    #     ],
-    # ),
-    # "qwen-image-edit-2509": ModelCard(
-    #     model_id=ModelId("Qwen/Qwen-Image-Edit-2509"),
-    #     storage_size=Memory.from_bytes(16584333312 + 40860802176),
-    #     n_layers=60,  # Qwen has 60 transformer blocks (all joint-style)
-    #     hidden_size=1,
-    #     supports_tensor=False,
-    #     tasks=[ModelTask.ImageToImage],
-    #     components=[
-    #         ComponentInfo(
-    #             component_name="text_encoder",
-    #             component_path="text_encoder/",
-    #             storage_size=Memory.from_kb(16584333312),
-    #             n_layers=12,
-    #             can_shard=False,
-    #             safetensors_index_filename=None,  # Single file
-    #         ),
-    #         ComponentInfo(
-    #             component_name="transformer",
-    #             component_path="transformer/",
-    #             storage_size=Memory.from_bytes(40860802176),
-    #             n_layers=60,
-    #             can_shard=True,
-    #             safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
-    #         ),
-    #         ComponentInfo(
-    #             component_name="vae",
-    #             component_path="vae/",
-    #             storage_size=Memory.from_kb(0),
-    #             n_layers=None,
-    #             can_shard=False,
-    #             safetensors_index_filename=None,
-    #         ),
-    #     ],
-    # ),
+    "flux1-schnell": ModelCard(
+        model_id=ModelId("black-forest-labs/FLUX.1-schnell"),
+        storage_size=Memory.from_bytes(23782357120 + 9524621312),
+        n_layers=57,
+        hidden_size=1,
+        supports_tensor=False,
+        tasks=[ModelTask.TextToImage],
+        components=[
+            ComponentInfo(
+                component_name="text_encoder",
+                component_path="text_encoder/",
+                storage_size=Memory.from_kb(0),
+                n_layers=12,
+                can_shard=False,
+                safetensors_index_filename=None,  # Single file
+            ),
+            ComponentInfo(
+                component_name="text_encoder_2",
+                component_path="text_encoder_2/",
+                storage_size=Memory.from_bytes(9524621312),
+                n_layers=24,
+                can_shard=False,
+                safetensors_index_filename="model.safetensors.index.json",
+            ),
+            ComponentInfo(
+                component_name="transformer",
+                component_path="transformer/",
+                storage_size=Memory.from_bytes(23782357120),
+                n_layers=57,  # 19 transformer_blocks + 38 single_transformer_blocks
+                can_shard=True,
+                safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
+            ),
+            ComponentInfo(
+                component_name="vae",
+                component_path="vae/",
+                storage_size=Memory.from_kb(0),
+                n_layers=None,
+                can_shard=False,
+                safetensors_index_filename=None,
+            ),
+        ],
+    ),
+    "flux1-dev": ModelCard(
+        model_id=ModelId("black-forest-labs/FLUX.1-dev"),
+        storage_size=Memory.from_bytes(23782357120 + 9524621312),
+        n_layers=57,
+        hidden_size=1,
+        supports_tensor=False,
+        tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
+        components=[
+            ComponentInfo(
+                component_name="text_encoder",
+                component_path="text_encoder/",
+                storage_size=Memory.from_kb(0),
+                n_layers=12,
+                can_shard=False,
+                safetensors_index_filename=None,  # Single file
+            ),
+            ComponentInfo(
+                component_name="text_encoder_2",
+                component_path="text_encoder_2/",
+                storage_size=Memory.from_bytes(9524621312),
+                n_layers=24,
+                can_shard=False,
+                safetensors_index_filename="model.safetensors.index.json",
+            ),
+            ComponentInfo(
+                component_name="transformer",
+                component_path="transformer/",
+                storage_size=Memory.from_bytes(23802816640),
+                n_layers=57,  # 19 transformer_blocks + 38 single_transformer_blocks
+                can_shard=True,
+                safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
+            ),
+            ComponentInfo(
+                component_name="vae",
+                component_path="vae/",
+                storage_size=Memory.from_kb(0),
+                n_layers=None,
+                can_shard=False,
+                safetensors_index_filename=None,
+            ),
+        ],
+    ),
+    "qwen-image": ModelCard(
+        model_id=ModelId("Qwen/Qwen-Image"),
+        storage_size=Memory.from_bytes(16584333312 + 40860802176),
+        n_layers=60,  # Qwen has 60 transformer blocks (all joint-style)
+        hidden_size=1,
+        supports_tensor=False,
+        tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
+        components=[
+            ComponentInfo(
+                component_name="text_encoder",
+                component_path="text_encoder/",
+                storage_size=Memory.from_kb(16584333312),
+                n_layers=12,
+                can_shard=False,
+                safetensors_index_filename=None,  # Single file
+            ),
+            ComponentInfo(
+                component_name="transformer",
+                component_path="transformer/",
+                storage_size=Memory.from_bytes(40860802176),
+                n_layers=60,
+                can_shard=True,
+                safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
+            ),
+            ComponentInfo(
+                component_name="vae",
+                component_path="vae/",
+                storage_size=Memory.from_kb(0),
+                n_layers=None,
+                can_shard=False,
+                safetensors_index_filename=None,
+            ),
+        ],
+    ),
+    "qwen-image-edit-2509": ModelCard(
+        model_id=ModelId("Qwen/Qwen-Image-Edit-2509"),
+        storage_size=Memory.from_bytes(16584333312 + 40860802176),
+        n_layers=60,  # Qwen has 60 transformer blocks (all joint-style)
+        hidden_size=1,
+        supports_tensor=False,
+        tasks=[ModelTask.ImageToImage],
+        components=[
+            ComponentInfo(
+                component_name="text_encoder",
+                component_path="text_encoder/",
+                storage_size=Memory.from_kb(16584333312),
+                n_layers=12,
+                can_shard=False,
+                safetensors_index_filename=None,  # Single file
+            ),
+            ComponentInfo(
+                component_name="transformer",
+                component_path="transformer/",
+                storage_size=Memory.from_bytes(40860802176),
+                n_layers=60,
+                can_shard=True,
+                safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
+            ),
+            ComponentInfo(
+                component_name="vae",
+                component_path="vae/",
+                storage_size=Memory.from_kb(0),
+                n_layers=None,
+                can_shard=False,
+                safetensors_index_filename=None,
+            ),
+        ],
+    ),
 }
 
 
