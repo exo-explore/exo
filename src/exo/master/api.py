@@ -4,7 +4,7 @@ import re
 import time
 from collections.abc import AsyncGenerator
 from http import HTTPStatus
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 import anyio
@@ -233,11 +233,8 @@ class API:
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup | None = None
 
-        # Accumulated usage stats across all requests
-        self._total_prompt_tokens: int = 0
-        self._total_completion_tokens: int = 0
-        self._total_reasoning_tokens: int = 0
-        self._total_requests: int = 0
+        # Accumulated usage stats per instance (keyed by model id)
+        self._usage_by_model: dict[str, dict[str, int]] = {}
 
     def reset(self, new_session_id: SessionId, result_clock: int):
         logger.info("Resetting API State")
@@ -306,15 +303,40 @@ class API:
         self.app.get("/events")(lambda: self._event_log)
         self.app.get("/v1/usage")(self.get_usage)
 
-    def get_usage(self) -> dict[str, int]:
-        """Return accumulated token usage across all requests."""
+    def get_usage(self) -> dict[str, Any]:
+        """Return accumulated token usage per model instance."""
+        total_requests = 0
+        total_prompt = 0
+        total_completion = 0
+        total_reasoning = 0
+        for counters in self._usage_by_model.values():
+            total_requests += counters.get("requests", 0)
+            total_prompt += counters.get("prompt_tokens", 0)
+            total_completion += counters.get("completion_tokens", 0)
+            total_reasoning += counters.get("reasoning_tokens", 0)
         return {
-            "total_requests": self._total_requests,
-            "total_prompt_tokens": self._total_prompt_tokens,
-            "total_completion_tokens": self._total_completion_tokens,
-            "total_reasoning_tokens": self._total_reasoning_tokens,
-            "total_tokens": self._total_prompt_tokens + self._total_completion_tokens,
+            "total_requests": total_requests,
+            "total_prompt_tokens": total_prompt,
+            "total_completion_tokens": total_completion,
+            "total_reasoning_tokens": total_reasoning,
+            "total_tokens": total_prompt + total_completion,
+            "by_model": self._usage_by_model,
         }
+
+    def _accumulate_usage(self, model: str, prompt_tokens: int, completion_tokens: int, reasoning_tokens: int) -> None:
+        """Accumulate usage stats for a model instance."""
+        if model not in self._usage_by_model:
+            self._usage_by_model[model] = {
+                "requests": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "reasoning_tokens": 0,
+            }
+        counters = self._usage_by_model[model]
+        counters["requests"] += 1
+        counters["prompt_tokens"] += prompt_tokens
+        counters["completion_tokens"] += completion_tokens
+        counters["reasoning_tokens"] += reasoning_tokens
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -585,10 +607,12 @@ class API:
                 # Accumulate usage stats from the final chunk
                 if isinstance(chunk, TokenChunk) and chunk.stats is not None:
                     s = chunk.stats
-                    self._total_prompt_tokens += s.prompt_tokens
-                    self._total_completion_tokens += s.generation_tokens
-                    self._total_reasoning_tokens += s.reasoning_tokens
-                    self._total_requests += 1
+                    self._accumulate_usage(
+                        model=chunk.model,
+                        prompt_tokens=s.prompt_tokens,
+                        completion_tokens=s.generation_tokens,
+                        reasoning_tokens=s.reasoning_tokens,
+                    )
                 yield "data: [DONE]\n\n"
 
     async def _collect_chat_completion(
@@ -661,10 +685,12 @@ class API:
                     reasoning_tokens=stats.reasoning_tokens,
                 ) if stats.reasoning_tokens > 0 else None,
             )
-            self._total_prompt_tokens += stats.prompt_tokens
-            self._total_completion_tokens += completion_tokens
-            self._total_reasoning_tokens += stats.reasoning_tokens
-            self._total_requests += 1
+            self._accumulate_usage(
+                model=model or "unknown",
+                prompt_tokens=stats.prompt_tokens,
+                completion_tokens=completion_tokens,
+                reasoning_tokens=stats.reasoning_tokens,
+            )
 
         return ChatCompletionResponse(
             id=command_id,

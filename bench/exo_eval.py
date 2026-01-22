@@ -9,8 +9,8 @@ Supports multiple evaluation frameworks via TOML configuration:
 - custom: Custom evaluation scripts
 
 Usage:
-    uv run python -m bench.exo_eval --config bench/eval_config.toml --model llama-3.2-1b
-    uv run python -m bench.exo_eval --config bench/eval_config.toml --model llama-3.2-1b --dry-run
+    uv run python -m bench.exo_eval --config bench/eval_config.toml --model Llama-3.2-1b-Instruct-4bit
+    uv run python -m bench.exo_eval --config bench/eval_config.toml --model Llama-3.2-1b-Instruct-4bit --dry-run
 """
 
 from __future__ import annotations
@@ -238,6 +238,8 @@ def build_lm_eval_args(
         model_type,
         "--model_args",
         model_args,
+        "--verbosity",
+        "WARNING",
     ]
 
     # Tasks
@@ -317,6 +319,30 @@ def run_lm_eval(
 
     try:
         result = subprocess.run(args, check=False)
+
+        # Print token usage summary from exo
+        try:
+            import httpx
+            usage_resp = httpx.get(f"{exo_base_url}/v1/usage", timeout=5)
+            if usage_resp.status_code == 200:
+                usage = usage_resp.json()
+                logger.info("--- Token Usage (Total) ---")
+                logger.info(f"  Requests:          {usage.get('total_requests', 0)}")
+                logger.info(f"  Prompt tokens:     {usage.get('total_prompt_tokens', 0)}")
+                logger.info(f"  Completion tokens: {usage.get('total_completion_tokens', 0)}")
+                logger.info(f"  Reasoning tokens:  {usage.get('total_reasoning_tokens', 0)}")
+                logger.info(f"  Total tokens:      {usage.get('total_tokens', 0)}")
+                by_model = usage.get("by_model", {})
+                if by_model:
+                    for model_name, counters in by_model.items():
+                        logger.info(f"--- Token Usage ({model_name}) ---")
+                        logger.info(f"  Requests:          {counters.get('requests', 0)}")
+                        logger.info(f"  Prompt tokens:     {counters.get('prompt_tokens', 0)}")
+                        logger.info(f"  Completion tokens: {counters.get('completion_tokens', 0)}")
+                        logger.info(f"  Reasoning tokens:  {counters.get('reasoning_tokens', 0)}")
+        except Exception:
+            pass  # Usage endpoint not available
+
         return result.returncode
     except FileNotFoundError:
         logger.error("lm_eval not found. Install with: uv sync --extra eval")
