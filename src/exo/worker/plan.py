@@ -295,9 +295,14 @@ def _pending_tasks(
             if task.task_id in runner.completed:
                 continue
 
+            # Skip tasks already sent to runner (waiting for completion)
+            if task.task_id in runner.sent:
+                continue
+
             # TODO: Check ordering aligns with MLX distributeds expectations.
 
-            if isinstance(runner.status, RunnerReady) and all(
+            # Allow sending tasks when runner is Ready OR Running (for batching)
+            if isinstance(runner.status, (RunnerReady, RunnerRunning)) and all(
                 isinstance(all_runners[global_runner_id], (RunnerReady, RunnerRunning))
                 for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
             ):

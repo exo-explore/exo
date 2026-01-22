@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 import time
 from collections.abc import AsyncGenerator
 from http import HTTPStatus
@@ -102,6 +103,17 @@ from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.dashboard_path import find_dashboard
 from exo.utils.event_buffer import OrderedBuffer
+
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+def _strip_think_tags(text: str) -> str:
+    """Strip <think>...</think> blocks from response text.
+
+    These tags are an artifact of GPT-OSS channel parsing, not part of the
+    model's intended output. The OpenAI API content field should not contain them.
+    """
+    return _THINK_TAG_RE.sub("", text).lstrip()
 
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
@@ -602,7 +614,7 @@ class API:
             if chunk.finish_reason is not None:
                 finish_reason = chunk.finish_reason
 
-        combined_text = "".join(text_parts)
+        combined_text = _strip_think_tags("".join(text_parts))
         assert model is not None
 
         logprobs: Logprobs | None = None
@@ -669,7 +681,7 @@ class API:
             if chunk.finish_reason is not None:
                 finish_reason = chunk.finish_reason
 
-        combined_text = "".join(text_parts)
+        combined_text = _strip_think_tags("".join(text_parts))
         assert model is not None
 
         resp = BenchChatCompletionResponse(

@@ -194,6 +194,22 @@ class MpReceiver[T]:
                 raise EndOfStream from None
             return item
 
+    def receive_with_timeout(self, timeout: float) -> T | None:
+        """Receive with timeout, returns None if no message within timeout."""
+        if self._state.closed.is_set():
+            raise ClosedResourceError
+
+        try:
+            item = self._state.buffer.get(block=True, timeout=timeout)
+            if isinstance(item, _MpEndOfStream):
+                self.close()
+                raise EndOfStream
+            return item
+        except Empty:
+            return None
+        except ValueError as e:
+            raise ClosedResourceError from e
+
     # nb: this function will not cancel particularly well
     async def receive_async(self) -> T:
         return await to_thread.run_sync(self.receive, limiter=CapacityLimiter(1))

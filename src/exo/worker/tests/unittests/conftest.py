@@ -20,6 +20,7 @@ class FakeRunnerSupervisor:
     bound_instance: BoundInstance
     status: RunnerStatus
     completed: set[TaskId] = field(default_factory=set)
+    sent: set[TaskId] = field(default_factory=set)
 
 
 class OtherTask(BaseTask):

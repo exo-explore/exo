@@ -48,17 +48,28 @@ COMPLETIONS_REQUIRED_TASKS: set[str] = {
 
 # Task prefixes that indicate completions are required
 COMPLETIONS_REQUIRED_PREFIXES: tuple[str, ...] = (
-    "mmlu_",  # mmlu subtasks
+    "mmlu_",  # mmlu subtasks (but NOT mmlu_pro, mmlu_generative, etc.)
     "arc_",  # arc subtasks
     "hellaswag_",
     "winogrande_",
 )
+
+# Generation-based tasks that happen to match completions prefixes above.
+# These use generate_until (not loglikelihood) and must go through chat completions.
+GENERATION_BASED_EXCEPTIONS: set[str] = {
+    "mmlu_pro",
+    "mmlu_generative",
+    "mmlu_flan_cot_fewshot",
+    "mmlu_flan_cot_zeroshot",
+}
 
 
 def tasks_require_completions(tasks: list[str]) -> bool:
     """Check if any of the tasks require the completions API."""
     for task in tasks:
         task_lower = task.lower()
+        if task_lower in GENERATION_BASED_EXCEPTIONS:
+            continue
         if task_lower in COMPLETIONS_REQUIRED_TASKS:
             return True
         for prefix in COMPLETIONS_REQUIRED_PREFIXES:

@@ -26,23 +26,24 @@ max_nodes = 4
 # Loglikelihood tasks (mmlu, hellaswag, arc) require /v1/completions endpoint.
 #
 # Generation-based tasks (work with chat completions):
-#   - mmlu_generative, mmlu_flan_cot_fewshot, mmlu_flan_cot_zeroshot
+#   - mmlu_pro, mmlu_generative, mmlu_flan_cot_fewshot, mmlu_flan_cot_zeroshot
 #   - gsm8k, gsm8k_cot, gsm8k_cot_zeroshot
 #   - truthfulqa (uses generate_until for some subtasks)
 #   - humaneval, mbpp (code generation)
 #
 # Run `lm_eval --tasks list` to see all available tasks
-tasks = ["hellaswag"]
-# Number of few-shot examples (0 for zeroshot tasks)
-num_fewshot = 0
+tasks = ["mmlu_pro"]
+# Number of few-shot examples (5 is standard for mmlu_pro CoT)
+num_fewshot = 5
 # Batch size (use 1 for API models, "auto" doesn't work)
 batch_size = 1
 # Number of concurrent requests (set > 1 to enable parallelism)
-num_concurrent = 4
+# Higher values enable better batching throughput
+num_concurrent = 64
 # Apply chat template for instruct/chat models (default: true)
 apply_chat_template = true
-# Use fewshot examples as conversation turns (optional)
-fewshot_as_multiturn = false
+# Use fewshot examples as conversation turns (better for chat models)
+fewshot_as_multiturn = true
 # Optional: limit samples per task (omit or comment out for no limit)
 # limit = 100
 # Output path for results

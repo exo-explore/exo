@@ -223,6 +223,97 @@ def score_tokens(
     return results
 
 
+def score_tokens_batched(
+    model: Model,
+    tokenizer: TokenizerWrapper,
+    token_sequences: list[list[int]],
+    top_k: int | None = None,
+) -> list[list[tuple[float, list[TopLogprobItem]]]]:
+    """Score multiple token sequences in a single batched forward pass.
+
+    This is significantly faster than calling score_tokens() multiple times
+    because it batches the forward pass across all sequences.
+
+    Args:
+        model: The MLX model.
+        tokenizer: The tokenizer.
+        token_sequences: List of token ID sequences to score.
+        top_k: Number of top logprobs to return per position.
+
+    Returns:
+        List of results for each sequence. Each result is a list of
+        (token_logprob, top_logprobs) tuples for each token position.
+    """
+    if not token_sequences:
+        return []
+
+    # Handle empty sequences and single-token sequences
+    results: list[list[tuple[float, list[TopLogprobItem]]]] = []
+    non_empty_indices: list[int] = []
+    non_empty_sequences: list[list[int]] = []
+
+    for i, tokens in enumerate(token_sequences):
+        if len(tokens) == 0:
+            results.append([])
+        elif len(tokens) == 1:
+            results.append([(0.0, [])])
+        else:
+            results.append([])  # Placeholder, will be filled later
+            non_empty_indices.append(i)
+            non_empty_sequences.append(tokens)
+
+    if not non_empty_sequences:
+        return results
+
+    # Find max sequence length (excluding last token since we predict it)
+    max_len = max(len(seq) - 1 for seq in non_empty_sequences)
+
+    # Get pad token (use eos_token_id or 0)
+    pad_token_id = getattr(tokenizer, "pad_token_id", None)
+    if pad_token_id is None:
+        pad_token_id = getattr(tokenizer, "eos_token_id", 0)
+
+    # Pad sequences and create attention mask
+    batch_size = len(non_empty_sequences)
+    padded_inputs = mx.full((batch_size, max_len), pad_token_id, dtype=mx.int32)
+    seq_lengths: list[int] = []
+
+    for i, tokens in enumerate(non_empty_sequences):
+        input_len = len(tokens) - 1  # Exclude last token
+        padded_inputs[i, :input_len] = mx.array(tokens[:-1], dtype=mx.int32)
+        seq_lengths.append(input_len)
+
+    # Run batched forward pass (no KV cache for scoring)
+    # The model accepts [batch_size, seq_len] and returns [batch_size, seq_len, vocab_size]
+    logits = model(padded_inputs, cache=None)
+
+    # Convert to log probabilities - logits shape: [batch, seq_len, vocab]
+    logprobs_all = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
+    mx.eval(logprobs_all)
+
+    # Extract results for each sequence
+    for batch_idx, (orig_idx, tokens, seq_len) in enumerate(
+        zip(non_empty_indices, non_empty_sequences, seq_lengths, strict=True)
+    ):
+        seq_results: list[tuple[float, list[TopLogprobItem]]] = [(0.0, [])]
+
+        for pos in range(seq_len):
+            next_token = tokens[pos + 1]
+            logprobs_at_position: mx.array = logprobs_all[batch_idx, pos]
+
+            logprob, top_logprobs_items = extract_top_logprobs(
+                logprobs_array=logprobs_at_position,
+                selected_token=next_token,
+                tokenizer=tokenizer,
+                top_k=top_k,
+            )
+            seq_results.append((logprob, top_logprobs_items))
+
+        results[orig_idx] = seq_results
+
+    return results
+
+
 def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,

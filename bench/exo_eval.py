@@ -274,6 +274,8 @@ def build_lm_eval_args(
     effective_output = output_path or lm_eval_config.get("output_path")
     if effective_output:
         args.extend(["--output_path", effective_output])
+        # Log model responses for post-hoc analysis when output is saved
+        args.append("--log_samples")
 
     return args
 

@@ -28,6 +28,8 @@ from exo.shared.types.events import (
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
+    ChatCompletion,
+    Completion,
     CreateRunner,
     DownloadModel,
     ImageEdits,
@@ -177,7 +179,6 @@ class Worker:
 
     async def plan_step(self):
         while True:
-            await anyio.sleep(0.1)
             # 3. based on the updated state, we plan & execute an operation.
             task: Task | None = plan(
                 self.node_id,
@@ -191,8 +192,10 @@ class Worker:
                 self.input_chunk_counts,
             )
             if task is None:
+                # Only sleep when there's nothing to do - allows rapid task dispatch
+                await anyio.sleep(0.01)
                 continue
-            logger.info(f"Worker plan: {task.__class__.__name__}")
+            logger.debug(f"Worker plan: {task.__class__.__name__}")
             assert task.task_status
             await self.event_sender.send(TaskCreated(task_id=task.task_id, task=task))
 
@@ -291,6 +294,12 @@ class Worker:
                         del self.input_chunk_counts[cmd_id]
                     await self.runners[self._task_to_runner_id(task)].start_task(
                         modified_task
+                    )
+                case ChatCompletion() | Completion():
+                    # Don't wait for acknowledgment for batchable inference tasks
+                    # This allows multiple tasks to reach the runner for batching
+                    await self.runners[self._task_to_runner_id(task)].start_task(
+                        task, wait_for_ack=False
                     )
                 case task:
                     await self.runners[self._task_to_runner_id(task)].start_task(task)

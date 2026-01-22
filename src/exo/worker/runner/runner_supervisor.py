@@ -52,6 +52,7 @@ class RunnerSupervisor:
     _tg: TaskGroup | None = field(default=None, init=False)
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
+    sent: set[TaskId] = field(default_factory=set, init=False)  # Tasks sent to runner (not yet completed)
     completed: set[TaskId] = field(default_factory=set, init=False)
 
     @classmethod
@@ -126,21 +127,39 @@ class RunnerSupervisor:
         assert self._tg
         self._tg.cancel_scope.cancel()
 
-    async def start_task(self, task: Task):
+    async def start_task(self, task: Task, wait_for_ack: bool = True):
+        """
+        Send a task to the runner.
+
+        Args:
+            task: The task to send.
+            wait_for_ack: If True, wait for TaskAcknowledged before returning.
+                          If False, return immediately after sending (for batching).
+        """
         if task.task_id in self.completed:
-            logger.info(
-                f"Skipping invalid task {task} as it has already been completed"
+            logger.debug(
+                f"Skipping task {task.task_id} as it has already been completed"
             )
+            return
+        if task.task_id in self.sent:
+            logger.debug(f"Task {task.task_id} already sent, skipping duplicate")
+            return
+        if task.task_id in self.pending:
+            logger.debug(f"Task {task.task_id} already pending, skipping duplicate")
+            return
         logger.info(f"Starting task {task}")
         event = anyio.Event()
         self.pending[task.task_id] = event
+        self.sent.add(task.task_id)
         try:
             self._task_sender.send(task)
         except ClosedResourceError:
             logger.warning(f"Task {task} dropped, runner closed communication.")
+            self.sent.discard(task.task_id)
             return
-        await event.wait()
-        logger.info(f"Finished task {task}")
+        if wait_for_ack:
+            await event.wait()
+            logger.info(f"Finished task {task}")
 
     async def _forward_events(self):
         with self._ev_recv as events:
@@ -149,7 +168,11 @@ class RunnerSupervisor:
                     if isinstance(event, RunnerStatusUpdated):
                         self.status = event.runner_status
                     if isinstance(event, TaskAcknowledged):
-                        self.pending.pop(event.task_id).set()
+                        # Use pop with default to handle tasks sent with wait_for_ack=False
+                        # that may have already been removed or never added
+                        pending_event = self.pending.pop(event.task_id, None)
+                        if pending_event:
+                            pending_event.set()
                         continue
                     if (
                         isinstance(event, TaskStatusUpdated)
@@ -167,6 +190,7 @@ class RunnerSupervisor:
                             ),
                         )
                         self.completed.add(event.task_id)
+                        self.sent.discard(event.task_id)
                     await self._event_sender.send(event)
             except (ClosedResourceError, BrokenResourceError) as e:
                 await self._check_runner(e)
