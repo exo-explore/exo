@@ -5,7 +5,7 @@ from pydantic import Field, field_validator
 
 from exo.plugins.type_registry import event_registry, instance_registry, task_registry
 from exo.shared.topology import Connection
-from exo.shared.types.chunks import GenerationChunk
+from exo.shared.types.chunks import GenerationChunk, InputImageChunk
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
 from exo.shared.types.tasks import BaseTask, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
@@ -123,6 +123,12 @@ class ChunkGenerated(BaseEvent):
 
 
 @event_registry.register
+class InputChunkReceived(BaseEvent):
+    command_id: CommandId
+    chunk: InputImageChunk
+
+
+@event_registry.register
 class TopologyEdgeCreated(BaseEvent):
     conn: Connection
 
@@ -132,9 +138,26 @@ class TopologyEdgeDeleted(BaseEvent):
     conn: Connection
 
 
-# Type alias for backward compatibility - use BaseEvent for type hints
-# Actual deserialization uses event_registry
-Event = BaseEvent
+# Union type for Pydantic validation - tries each type in order
+Event = (
+    TestEvent
+    | TaskCreated
+    | TaskStatusUpdated
+    | TaskFailed
+    | TaskDeleted
+    | TaskAcknowledged
+    | InstanceCreated
+    | InstanceDeleted
+    | RunnerStatusUpdated
+    | RunnerDeleted
+    | NodeTimedOut
+    | NodeGatheredInfo
+    | NodeDownloadProgress
+    | ChunkGenerated
+    | InputChunkReceived
+    | TopologyEdgeCreated
+    | TopologyEdgeDeleted
+)
 
 
 class IndexedEvent(CamelCaseModel):

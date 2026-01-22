@@ -100,26 +100,68 @@ def get_allow_patterns(weight_map: dict[str, str], shard: ShardMetadata) -> list
             "*.py",
             "tokenizer.model",
             "tiktoken.model",
+            "*/spiece.model",
             "*.tiktoken",
             "*.txt",
             "*.jinja",
         ]
     )
     shard_specific_patterns: set[str] = set()
-    if weight_map:
-        for tensor_name, filename in weight_map.items():
-            layer_num = extract_layer_num(tensor_name)
-            if (
-                layer_num is not None
-                and shard.start_layer <= layer_num <= shard.end_layer
-            ):
-                shard_specific_patterns.add(filename)
-        layer_independent_files = set(
-            [v for k, v in weight_map.items() if extract_layer_num(k) is None]
+
+    if shard.model_card.components is not None:
+        shardable_component = next(
+            (c for c in shard.model_card.components if c.can_shard), None
         )
-        shard_specific_patterns.update(layer_independent_files)
-        logger.debug(f"get_allow_patterns {shard=} {layer_independent_files=}")
+
+        if weight_map and shardable_component:
+            for tensor_name, filename in weight_map.items():
+                # Strip component prefix from tensor name (added by weight map namespacing)
+                # E.g., "transformer/blocks.0.weight" -> "blocks.0.weight"
+                if "/" in tensor_name:
+                    _, tensor_name_no_prefix = tensor_name.split("/", 1)
+                else:
+                    tensor_name_no_prefix = tensor_name
+
+                # Determine which component this file belongs to from filename
+                component_path = Path(filename).parts[0] if "/" in filename else None
+
+                if component_path == shardable_component.component_path.rstrip("/"):
+                    layer_num = extract_layer_num(tensor_name_no_prefix)
+                    if (
+                        layer_num is not None
+                        and shard.start_layer <= layer_num < shard.end_layer
+                    ):
+                        shard_specific_patterns.add(filename)
+
+                    if shard.is_first_layer or shard.is_last_layer:
+                        shard_specific_patterns.add(filename)
+                else:
+                    shard_specific_patterns.add(filename)
+
+        else:
+            shard_specific_patterns = set(["*.safetensors"])
+
+        # TODO(ciaran): temporary - Include all files from non-shardable components that have no index file
+        for component in shard.model_card.components:
+            if not component.can_shard and component.safetensors_index_filename is None:
+                component_pattern = f"{component.component_path.rstrip('/')}/*"
+                shard_specific_patterns.add(component_pattern)
     else:
-        shard_specific_patterns = set(["*.safetensors"])
+        if weight_map:
+            for tensor_name, filename in weight_map.items():
+                layer_num = extract_layer_num(tensor_name)
+                if (
+                    layer_num is not None
+                    and shard.start_layer <= layer_num < shard.end_layer
+                ):
+                    shard_specific_patterns.add(filename)
+            layer_independent_files = set(
+                [v for k, v in weight_map.items() if extract_layer_num(k) is None]
+            )
+            shard_specific_patterns.update(layer_independent_files)
+            logger.debug(f"get_allow_patterns {shard=} {layer_independent_files=}")
+        else:
+            shard_specific_patterns = set(["*.safetensors"])
+
     logger.info(f"get_allow_patterns {shard=} {shard_specific_patterns=}")
     return list(default_patterns | shard_specific_patterns)

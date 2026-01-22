@@ -5,8 +5,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import AsyncIterator, Callable
 
+from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
     ShardMetadata,
@@ -86,13 +86,13 @@ NOOP_DOWNLOAD_PROGRESS = RepoDownloadProgress(
     repo_id="noop",
     repo_revision="noop",
     shard=PipelineShardMetadata(
-        model_meta=ModelMetadata(
+        model_card=ModelCard(
             model_id=ModelId("noop"),
-            pretty_name="noope",
             storage_size=Memory.from_bytes(0),
             n_layers=1,
             hidden_size=1,
             supports_tensor=False,
+            tasks=[ModelTask.TextGeneration],
         ),
         device_rank=0,
         world_size=1,

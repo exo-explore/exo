@@ -6,10 +6,10 @@ from copy import deepcopy
 from loguru import logger
 
 from exo.plugins.implementations.flash.types import FLASHInstance, LaunchFLASH
+from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Topology
-from exo.shared.types.common import Host, NodeId
+from exo.shared.types.common import Host, ModelId, NodeId
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.topology import SocketConnection
 from exo.shared.types.worker.instances import BaseInstance, InstanceId
 from exo.shared.types.worker.runners import (
@@ -51,14 +51,14 @@ def place_flash_instance(
     runner_to_shard: dict[RunnerId, PipelineShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
 
-    # Create a dummy ModelMetadata for FLASH (required by ShardMetadata interface)
-    flash_model_meta = ModelMetadata(
+    # Create a dummy ModelCard for FLASH (required by ShardMetadata interface)
+    flash_model_card = ModelCard(
         model_id=ModelId(command.simulation_name),
-        pretty_name=f"FLASH: {command.simulation_name}",
         storage_size=Memory(in_bytes=0),
         n_layers=1,
         hidden_size=1,
         supports_tensor=False,
+        tasks=[],
     )
 
     for i, node_id in enumerate(selected_nodes):
@@ -67,7 +67,7 @@ def place_flash_instance(
         runner_to_shard[runner_id] = PipelineShardMetadata(
             device_rank=i,
             world_size=len(selected_nodes),
-            model_meta=flash_model_meta,
+            model_card=flash_model_card,
             start_layer=0,
             end_layer=1,
             n_layers=1,

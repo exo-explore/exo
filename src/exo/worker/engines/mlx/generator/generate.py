@@ -1,7 +1,7 @@
 from typing import Any, Callable, Generator, cast, get_args
 
 import mlx.core as mx
-from mlx_lm import stream_generate
+from mlx_lm.generate import stream_generate
 from mlx_lm.models.cache import KVCache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
@@ -126,7 +126,7 @@ def mlx_generate(
     is_bench: bool = isinstance(task, BenchChatCompletionTaskParams)
 
     # Currently we support chat-completion tasks only.
-    logger.info(f"task_params: {task}")
+    logger.debug(f"task_params: {task}")
 
     if task.seed is not None:
         mx.random.seed(task.seed)

@@ -12,10 +12,10 @@ from exo.master.tests.conftest import (
     create_node_memory,
     create_socket_connection,
 )
+from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.profiling import (
     NetworkInterfaceInfo,
     NodeNetworkInfo,
@@ -232,13 +232,13 @@ def test_get_shard_assignments(
         node_c_id: node_c_mem,
     }
 
-    model_meta = ModelMetadata(
+    model_card = ModelCard(
         model_id=ModelId("test-model"),
-        pretty_name="Test Model",
         n_layers=total_layers,
         storage_size=Memory.from_kb(1000),
         hidden_size=1000,
         supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
     )
 
     cycles = topology.get_cycles()
@@ -248,7 +248,7 @@ def test_get_shard_assignments(
 
     # act
     shard_assignments = get_shard_assignments(
-        model_meta, selected_cycle, Sharding.Pipeline, node_memory=node_memory
+        model_card, selected_cycle, Sharding.Pipeline, node_memory=node_memory
     )
 
     # assert
@@ -512,18 +512,18 @@ def test_get_shard_assignments_insufficient_memory_raises():
         node_c_id: node_c_mem,
     }
 
-    model_meta = ModelMetadata(
+    model_card = ModelCard(
         model_id=ModelId("test-model"),
-        pretty_name="Test Model",
         n_layers=20,
         storage_size=Memory.from_kb(1000),
         hidden_size=1000,
         supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
     )
     cycles = topology.get_cycles()
     selected_cycle = cycles[0]
 
     with pytest.raises(ValueError, match="insufficient memory"):
         get_shard_assignments(
-            model_meta, selected_cycle, Sharding.Pipeline, node_memory
+            model_card, selected_cycle, Sharding.Pipeline, node_memory
         )

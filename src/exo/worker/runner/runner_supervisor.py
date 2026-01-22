@@ -20,7 +20,7 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
-from exo.shared.types.tasks import Task, TaskId, TaskStatus
+from exo.shared.types.tasks import BaseTask, TaskId, TaskStatus
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import (
     RunnerConnecting,
@@ -47,7 +47,7 @@ class RunnerSupervisor:
     runner_process: Process
     initialize_timeout: float
     _ev_recv: MpReceiver[Event]
-    _task_sender: MpSender[Task]
+    _task_sender: MpSender[BaseTask]
     _event_sender: Sender[Event]
     _tg: TaskGroup | None = field(default=None, init=False)
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
@@ -64,7 +64,7 @@ class RunnerSupervisor:
     ) -> Self:
         ev_send, ev_recv = mp_channel[Event]()
         # A task is kind of a runner command
-        task_sender, task_recv = mp_channel[Task]()
+        task_sender, task_recv = mp_channel[BaseTask]()
 
         runner_process = Process(
             target=entrypoint,
@@ -126,7 +126,7 @@ class RunnerSupervisor:
         assert self._tg
         self._tg.cancel_scope.cancel()
 
-    async def start_task(self, task: Task):
+    async def start_task(self, task: BaseTask):
         if task.task_id in self.completed:
             logger.info(
                 f"Skipping invalid task {task} as it has already been completed"

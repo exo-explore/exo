@@ -3,7 +3,11 @@ from enum import Enum
 from pydantic import Field
 
 from exo.plugins.type_registry import task_registry
-from exo.shared.types.api import ChatCompletionTaskParams
+from exo.shared.types.api import (
+    ChatCompletionTaskParams,
+    ImageEditsInternalParams,
+    ImageGenerationTaskParams,
+)
 from exo.shared.types.common import CommandId, Id
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerId
@@ -64,10 +68,37 @@ class ChatCompletion(BaseTask):  # emitted by Master
 
 
 @task_registry.register
+class ImageGeneration(BaseTask):  # emitted by Master
+    command_id: CommandId
+    task_params: ImageGenerationTaskParams
+
+    error_type: str | None = Field(default=None)
+    error_message: str | None = Field(default=None)
+
+
+@task_registry.register
+class ImageEdits(BaseTask):  # emitted by Master
+    command_id: CommandId
+    task_params: ImageEditsInternalParams
+
+    error_type: str | None = Field(default=None)
+    error_message: str | None = Field(default=None)
+
+
+@task_registry.register
 class Shutdown(BaseTask):  # emitted by Worker
     runner_id: RunnerId
 
 
-# Type alias for backward compatibility - use BaseTask for type hints
-# Actual deserialization uses task_registry
-Task = BaseTask
+# Union type for Pydantic validation - tries each type in order
+Task = (
+    CreateRunner
+    | DownloadModel
+    | ConnectToGroup
+    | LoadModel
+    | StartWarmup
+    | ChatCompletion
+    | ImageGeneration
+    | ImageEdits
+    | Shutdown
+)

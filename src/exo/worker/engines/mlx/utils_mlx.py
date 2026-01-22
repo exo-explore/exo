@@ -2,9 +2,7 @@ import json
 import os
 import resource
 import sys
-import threading
 import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -25,6 +23,7 @@ from mlx_lm.models.deepseek_v3 import DeepseekV3Model
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+from exo.shared.models.model_cards import ModelId
 from exo.worker.engines.mlx.constants import (
     CACHE_GROUP_SIZE,
     KV_CACHE_BITS,
@@ -59,6 +58,8 @@ from exo.shared.types.worker.shards import (
 from exo.worker.download.download_utils import build_model_path
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.auto_parallel import (
+    TimeoutCallback,
+    eval_with_timeout,
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
@@ -75,7 +76,7 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
     return Memory.from_float_kb(
         (model_shard_meta.end_layer - model_shard_meta.start_layer)
         / model_shard_meta.n_layers
-        * model_shard_meta.model_meta.storage_size.in_kb
+        * model_shard_meta.model_card.storage_size.in_kb
         / (
             1
             if isinstance(model_shard_meta, PipelineShardMetadata)
@@ -86,41 +87,6 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
 
 class ModelLoadingTimeoutError(Exception):
     pass
-
-
-TimeoutCallback = Callable[[], None]
-
-
-def eval_with_timeout(
-    mlx_item: Any,  # pyright: ignore[reportAny]
-    timeout_seconds: float = 60.0,
-    on_timeout: TimeoutCallback | None = None,
-) -> None:
-    """Evaluate MLX item with a hard timeout.
-
-    If on_timeout callback is provided, it will be called before terminating
-    the process. This allows the runner to send a failure event before exit.
-    """
-    completed = threading.Event()
-
-    def watchdog() -> None:
-        if not completed.wait(timeout=timeout_seconds):
-            logger.error(
-                f"mlx_item evaluation timed out after {timeout_seconds:.0f}s. "
-                "This may indicate an issue with FAST_SYNCH and tensor parallel sharding. "
-                "Terminating process."
-            )
-            if on_timeout is not None:
-                on_timeout()
-            os._exit(1)
-
-    watchdog_thread = threading.Thread(target=watchdog, daemon=True)
-    watchdog_thread.start()
-
-    try:
-        mx.eval(mlx_item)  # pyright: ignore[reportAny]
-    finally:
-        completed.set()
 
 
 def mx_barrier(group: Group | None = None):
@@ -204,10 +170,10 @@ def mlx_distributed_init(
 
                 # TODO: update once upstream fixes
                 logger.info(
-                    f"rank {rank} MLX_IBV_DEVICES: {coordination_file} with devices: {jaccl_devices_json}"
+                    f"rank {rank} MLX_JACCL_DEVICES: {coordination_file} with devices: {jaccl_devices_json}"
                 )
                 logger.info(f"rank {rank} MLX_JACCL_COORDINATOR: {jaccl_coordinator}")
-                os.environ["MLX_IBV_DEVICES"] = coordination_file
+                os.environ["MLX_JACCL_DEVICES"] = coordination_file
                 os.environ["MLX_RANK"] = str(rank)
                 os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
                 group = mx.distributed.init(backend="jaccl", strict=True)
@@ -246,7 +212,7 @@ def load_mlx_items(
 ) -> tuple[Model, TokenizerWrapper]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
-        model_path = build_model_path(bound_instance.bound_shard.model_meta.model_id)
+        model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
         start_time = time.perf_counter()
         model, _ = load_model(model_path, strict=True)
         end_time = time.perf_counter()
@@ -274,7 +240,7 @@ def shard_and_load(
     group: Group,
     on_timeout: TimeoutCallback | None = None,
 ) -> tuple[nn.Module, TokenizerWrapper]:
-    model_path = build_model_path(shard_metadata.model_meta.model_id)
+    model_path = build_model_path(shard_metadata.model_card.model_id)
 
     model, _ = load_model(model_path, lazy=True, strict=False)
     logger.debug(model)
@@ -301,14 +267,6 @@ def shard_and_load(
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 
-    match shard_metadata:
-        case TensorShardMetadata():
-            logger.info(f"loading model from {model_path} with tensor parallelism")
-            model = tensor_auto_parallel(model, group)
-        case PipelineShardMetadata():
-            logger.info(f"loading model from {model_path} with pipeline parallelism")
-            model = pipeline_auto_parallel(model, group, shard_metadata)
-
     # Estimate timeout based on model size
     base_timeout = float(os.environ.get("EXO_MODEL_LOAD_TIMEOUT", "60"))
     model_size_gb = get_weights_size(shard_metadata).in_bytes / (1024**3)
@@ -317,7 +275,15 @@ def shard_and_load(
         f"Evaluating model parameters with timeout of {timeout_seconds:.0f}s "
         f"(model size: {model_size_gb:.1f}GB)"
     )
-    eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
+
+    match shard_metadata:
+        case TensorShardMetadata():
+            logger.info(f"loading model from {model_path} with tensor parallelism")
+            model = tensor_auto_parallel(model, group, timeout_seconds, on_timeout)
+        case PipelineShardMetadata():
+            logger.info(f"loading model from {model_path} with pipeline parallelism")
+            model = pipeline_auto_parallel(model, group, shard_metadata)
+            eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
 
     # TODO: Do we need this?
     mx.eval(model)
@@ -333,10 +299,10 @@ def shard_and_load(
 
 def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerWrapper:
     """Load tokenizer for a model shard. Delegates to load_tokenizer_for_model_id."""
-    return load_tokenizer_for_model_id(shard_metadata.model_meta.model_id, model_path)
+    return load_tokenizer_for_model_id(shard_metadata.model_card.model_id, model_path)
 
 
-def get_eos_token_ids_for_model(model_id: str) -> list[int] | None:
+def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     """
     Get the EOS token IDs for a model based on its ID.
 
@@ -352,12 +318,17 @@ def get_eos_token_ids_for_model(model_id: str) -> list[int] | None:
     model_id_lower = model_id.lower()
     if "kimi-k2" in model_id_lower:
         return [163586]
+    elif "glm-4.7-flash" in model_id_lower:
+        # 154820: <|endoftext|>, 154827: <|user|>, 154829: <|observation|>
+        return [154820, 154827, 154829]
     elif "glm" in model_id_lower:
         return [151336, 151329, 151338]
     return None
 
 
-def load_tokenizer_for_model_id(model_id: str, model_path: Path) -> TokenizerWrapper:
+def load_tokenizer_for_model_id(
+    model_id: ModelId, model_path: Path
+) -> TokenizerWrapper:
     """
     Load tokenizer for a model given its ID and local path.
 

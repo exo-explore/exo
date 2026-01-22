@@ -6,9 +6,10 @@ from loguru import logger
 
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
+    BaseEvent,
     ChunkGenerated,
-    Event,
     IndexedEvent,
+    InputChunkReceived,
     InstanceCreated,
     InstanceDeleted,
     NodeDownloadProgress,
@@ -31,7 +32,7 @@ from exo.shared.types.profiling import (
     NodeThunderboltInfo,
 )
 from exo.shared.types.state import State
-from exo.shared.types.tasks import Task, TaskId, TaskStatus
+from exo.shared.types.tasks import BaseTask, TaskId, TaskStatus
 from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import BaseInstance, InstanceId
@@ -48,12 +49,12 @@ from exo.utils.info_gatherer.info_gatherer import (
 )
 
 
-def event_apply(event: Event, state: State) -> State:
+def event_apply(event: BaseEvent, state: State) -> State:
     """Apply an event to state."""
     match event:
         case (
-            TestEvent() | ChunkGenerated() | TaskAcknowledged()
-        ):  # TaskAcknowledged should never be sent by a worker but i dont mind if it just gets ignored
+            TestEvent() | ChunkGenerated() | TaskAcknowledged() | InputChunkReceived()
+        ):  # Pass-through events that don't modify state
             return state
         case InstanceCreated():
             return apply_instance_created(event, state)
@@ -125,12 +126,12 @@ def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> S
 
 
 def apply_task_created(event: TaskCreated, state: State) -> State:
-    new_tasks: Mapping[TaskId, Task] = {**state.tasks, event.task_id: event.task}
+    new_tasks: Mapping[TaskId, BaseTask] = {**state.tasks, event.task_id: event.task}
     return state.model_copy(update={"tasks": new_tasks})
 
 
 def apply_task_deleted(event: TaskDeleted, state: State) -> State:
-    new_tasks: Mapping[TaskId, Task] = {
+    new_tasks: Mapping[TaskId, BaseTask] = {
         tid: task for tid, task in state.tasks.items() if tid != event.task_id
     }
     return state.model_copy(update={"tasks": new_tasks})
@@ -149,7 +150,7 @@ def apply_task_status_updated(event: TaskStatusUpdated, state: State) -> State:
         update["error_message"] = None
 
     updated_task = state.tasks[event.task_id].model_copy(update=update)
-    new_tasks: Mapping[TaskId, Task] = {**state.tasks, event.task_id: updated_task}
+    new_tasks: Mapping[TaskId, BaseTask] = {**state.tasks, event.task_id: updated_task}
     return state.model_copy(update={"tasks": new_tasks})
 
 
@@ -161,7 +162,7 @@ def apply_task_failed(event: TaskFailed, state: State) -> State:
     updated_task = state.tasks[event.task_id].model_copy(
         update={"error_type": event.error_type, "error_message": event.error_message}
     )
-    new_tasks: Mapping[TaskId, Task] = {**state.tasks, event.task_id: updated_task}
+    new_tasks: Mapping[TaskId, BaseTask] = {**state.tasks, event.task_id: updated_task}
     return state.model_copy(update={"tasks": new_tasks})
 
 

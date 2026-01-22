@@ -16,11 +16,21 @@ class Id(str):
         cls, _source: type, handler: GetCoreSchemaHandler
     ) -> core_schema.CoreSchema:
         # Just use a plain string schema
-        return core_schema.str_schema()
+        return core_schema.no_info_after_validator_function(
+            cls, core_schema.str_schema()
+        )
 
 
 class NodeId(Id):
     pass
+
+
+class ModelId(Id):
+    def normalize(self) -> str:
+        return self.replace("/", "--")
+
+    def short(self) -> str:
+        return self.split("/")[-1]
 
 
 class SessionId(CamelCaseModel):

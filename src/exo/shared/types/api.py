@@ -1,13 +1,15 @@
 import time
-from typing import Any, Literal, cast
+from collections.abc import Generator
+from typing import Annotated, Any, Literal, cast
 
+from fastapi import UploadFile
 from pydantic import BaseModel, Field, field_validator
 from pydantic_core import PydanticUseDefault
 
 from exo.plugins.type_registry import instance_registry
+from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.common import CommandId
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.worker.instances import (
     BaseInstance,
     Instance,
@@ -45,6 +47,7 @@ class ModelListModel(BaseModel):
     tags: list[str] = Field(default=[])
     storage_size_megabytes: int = Field(default=0)
     supports_tensor: bool = Field(default=False)
+    tasks: list[str] = Field(default=[])
 
 
 class ModelList(BaseModel):
@@ -143,6 +146,19 @@ class GenerationStats(BaseModel):
     peak_memory_usage: Memory
 
 
+class ImageGenerationStats(BaseModel):
+    seconds_per_step: float
+    total_generation_time: float
+
+    num_inference_steps: int
+    num_images: int
+
+    image_width: int
+    image_height: int
+
+    peak_memory_usage: Memory
+
+
 class BenchChatCompletionResponse(ChatCompletionResponse):
     generation_stats: GenerationStats | None = None
 
@@ -174,7 +190,7 @@ class BenchChatCompletionTaskParams(ChatCompletionTaskParams):
 
 
 class PlaceInstanceParams(BaseModel):
-    model_id: str
+    model_id: ModelId
     sharding: Sharding = Sharding.Pipeline
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
     min_nodes: int = 1
@@ -218,10 +234,121 @@ class DeleteInstanceTaskParams(BaseModel):
 class CreateInstanceResponse(BaseModel):
     message: str
     command_id: CommandId
-    model_meta: ModelMetadata
+    model_card: ModelCard
 
 
 class DeleteInstanceResponse(BaseModel):
     message: str
     command_id: CommandId
     instance_id: InstanceId
+
+
+class AdvancedImageParams(BaseModel):
+    seed: Annotated[int, Field(ge=0)] | None = None
+    num_inference_steps: Annotated[int, Field(ge=1, le=100)] | None = None
+    guidance: Annotated[float, Field(ge=1.0, le=20.0)] | None = None
+    negative_prompt: str | None = None
+
+
+class ImageGenerationTaskParams(BaseModel):
+    prompt: str
+    background: str | None = None
+    model: str
+    moderation: str | None = None
+    n: int | None = 1
+    output_compression: int | None = None
+    output_format: Literal["png", "jpeg", "webp"] = "png"
+    partial_images: int | None = 0
+    quality: Literal["high", "medium", "low"] | None = "medium"
+    response_format: Literal["url", "b64_json"] | None = "b64_json"
+    size: str | None = "1024x1024"
+    stream: bool | None = False
+    style: str | None = "vivid"
+    user: str | None = None
+    advanced_params: AdvancedImageParams | None = None
+    # Internal flag for benchmark mode - set by API, preserved through serialization
+    bench: bool = False
+
+
+class BenchImageGenerationTaskParams(ImageGenerationTaskParams):
+    bench: bool = True
+
+
+class ImageEditsTaskParams(BaseModel):
+    image: UploadFile
+    prompt: str
+    background: str | None = None
+    input_fidelity: float | None = None
+    mask: UploadFile | None = None
+    model: str
+    n: int | None = 1
+    output_compression: int | None = None
+    output_format: Literal["png", "jpeg", "webp"] = "png"
+    partial_images: int | None = 0
+    quality: Literal["high", "medium", "low"] | None = "medium"
+    response_format: Literal["url", "b64_json"] | None = "b64_json"
+    size: str | None = "1024x1024"
+    stream: bool | None = False
+    user: str | None = None
+    advanced_params: AdvancedImageParams | None = None
+    # Internal flag for benchmark mode - set by API, preserved through serialization
+    bench: bool = False
+
+
+class ImageEditsInternalParams(BaseModel):
+    """Serializable version of ImageEditsTaskParams for distributed task execution."""
+
+    image_data: str = ""  # Base64-encoded image (empty when using chunked transfer)
+    total_input_chunks: int = 0
+    prompt: str
+    model: str
+    n: int | None = 1
+    quality: Literal["high", "medium", "low"] | None = "medium"
+    output_format: Literal["png", "jpeg", "webp"] = "png"
+    response_format: Literal["url", "b64_json"] | None = "b64_json"
+    size: str | None = "1024x1024"
+    image_strength: float | None = 0.7
+    stream: bool = False
+    partial_images: int | None = 0
+    advanced_params: AdvancedImageParams | None = None
+    bench: bool = False
+
+    def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
+        for name, value in super().__repr_args__():  # pyright: ignore[reportAny]
+            if name == "image_data":
+                yield name, f"<{len(self.image_data)} chars>"
+            elif name is not None:
+                yield name, value
+
+
+class ImageData(BaseModel):
+    b64_json: str | None = None
+    url: str | None = None
+    revised_prompt: str | None = None
+
+    def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
+        for name, value in super().__repr_args__():  # pyright: ignore[reportAny]
+            if name == "b64_json" and self.b64_json is not None:
+                yield name, f"<{len(self.b64_json)} chars>"
+            elif name is not None:
+                yield name, value
+
+
+class ImageGenerationResponse(BaseModel):
+    created: int = Field(default_factory=lambda: int(time.time()))
+    data: list[ImageData]
+
+
+class BenchImageGenerationResponse(ImageGenerationResponse):
+    generation_stats: ImageGenerationStats | None = None
+
+
+class ImageListItem(BaseModel, frozen=True):
+    image_id: str
+    url: str
+    content_type: str
+    expires_at: float
+
+
+class ImageListResponse(BaseModel, frozen=True):
+    data: list[ImageListItem]

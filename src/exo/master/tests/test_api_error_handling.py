@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from exo.shared.types.api import ErrorInfo, ErrorResponse, FinishReason
-from exo.shared.types.chunks import TokenChunk
+from exo.shared.types.chunks import ImageChunk, TokenChunk
 from exo.worker.tests.constants import MODEL_A_ID
 
 
@@ -105,3 +105,38 @@ def test_normal_finish_reasons_still_work() -> None:
             finish_reason=reason,  # type: ignore[arg-type]
         )
         assert chunk.finish_reason == reason
+
+
+def test_image_chunk_with_error_fields() -> None:
+    chunk = ImageChunk(
+        idx=0,
+        model=MODEL_A_ID,
+        data="",
+        chunk_index=0,
+        total_chunks=1,
+        image_index=0,
+        finish_reason="error",
+        error_message="Image generation failed",
+    )
+
+    assert chunk.finish_reason == "error"
+    assert chunk.error_message == "Image generation failed"
+    assert chunk.data == ""
+    assert chunk.chunk_index == 0
+    assert chunk.total_chunks == 1
+    assert chunk.image_index == 0
+
+
+def test_image_chunk_without_error() -> None:
+    chunk = ImageChunk(
+        idx=0,
+        model=MODEL_A_ID,
+        data="base64encodeddata",
+        chunk_index=0,
+        total_chunks=1,
+        image_index=0,
+    )
+
+    assert chunk.finish_reason is None
+    assert chunk.error_message is None
+    assert chunk.data == "base64encodeddata"

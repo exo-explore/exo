@@ -10,22 +10,28 @@ from exo.master.placement import (
     get_transition_events,
     place_instance,
 )
+from exo.plugins.registry import PluginRegistry
 from exo.shared.apply import apply
 from exo.shared.types.commands import (
     ChatCompletion,
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
+    ImageEdits,
+    ImageGeneration,
     PlaceInstance,
     RequestEventLog,
+    SendInputChunk,
     TaskFinished,
     TestCommand,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
 from exo.shared.types.events import (
+    BaseEvent,
     Event,
     ForwarderEvent,
     IndexedEvent,
+    InputChunkReceived,
     InstanceDeleted,
     NodeGatheredInfo,
     NodeTimedOut,
@@ -35,6 +41,12 @@ from exo.shared.types.events import (
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     ChatCompletion as ChatCompletionTask,
+)
+from exo.shared.types.tasks import (
+    ImageEdits as ImageEditsTask,
+)
+from exo.shared.types.tasks import (
+    ImageGeneration as ImageGenerationTask,
 )
 from exo.shared.types.tasks import (
     TaskId,
@@ -73,9 +85,9 @@ class Master:
         self._loopback_event_sender: Sender[ForwarderEvent] = (
             local_event_receiver.clone_sender()
         )
-        self._multi_buffer = MultiSourceBuffer[NodeId, Event]()
+        self._multi_buffer = MultiSourceBuffer[NodeId, BaseEvent]()
         # TODO: not have this
-        self._event_log: list[Event] = []
+        self._event_log: list[BaseEvent] = []
 
     async def run(self):
         logger.info("Starting Master")
@@ -96,129 +108,207 @@ class Master:
         self._tg.cancel_scope.cancel()
 
     async def _command_processor(self) -> None:
-        from exo.plugins.registry import PluginRegistry
-
-        registry = PluginRegistry.get()
-
         with self.command_receiver as commands:
             async for forwarder_command in commands:
                 try:
                     logger.info(f"Executing command: {forwarder_command.command}")
+
                     generated_events: list[Event] = []
                     command = forwarder_command.command
-
-                    # Check if a plugin handles this command
-                    plugin = registry.get_plugin_for_command(command)
-                    if plugin is not None:
-                        events = plugin.process_command(
-                            command,
-                            self.state.topology,
-                            self.state.instances,
-                        )
-                        generated_events.extend(events)
-                    else:
-                        # Core command handling
-                        match command:
-                            case TestCommand():
-                                pass
-                            case ChatCompletion():
-                                instance_task_counts: dict[InstanceId, int] = {}
-                                for instance in self.state.instances.values():
-                                    if (
-                                        instance.shard_assignments.model_id
-                                        == command.request_params.model
-                                    ):
-                                        task_count = sum(
-                                            1
-                                            for task in self.state.tasks.values()
-                                            if task.instance_id == instance.instance_id
-                                        )
-                                        instance_task_counts[instance.instance_id] = (
-                                            task_count
-                                        )
-
-                                if not instance_task_counts:
-                                    raise ValueError(
-                                        f"No instance found for model {command.request_params.model}"
-                                    )
-
-                                available_instance_ids = sorted(
-                                    instance_task_counts.keys(),
-                                    key=lambda instance_id: instance_task_counts[
-                                        instance_id
-                                    ],
-                                )
-
-                                task_id = TaskId()
-                                generated_events.append(
-                                    TaskCreated(
-                                        task_id=task_id,
-                                        task=ChatCompletionTask(
-                                            task_id=task_id,
-                                            command_id=command.command_id,
-                                            instance_id=available_instance_ids[0],
-                                            task_status=TaskStatus.Pending,
-                                            task_params=command.request_params,
-                                        ),
-                                    )
-                                )
-
-                                self.command_task_mapping[command.command_id] = task_id
-                            case DeleteInstance():
-                                placement = delete_instance(
-                                    command, self.state.instances
-                                )
-                                transition_events = get_transition_events(
-                                    self.state.instances, placement
-                                )
-                                generated_events.extend(transition_events)
-                            case PlaceInstance():
-                                placement = place_instance(
-                                    command,
-                                    self.state.topology,
-                                    self.state.instances,
-                                    self.state.node_memory,
-                                    self.state.node_network,
-                                )
-                                transition_events = get_transition_events(
-                                    self.state.instances, placement
-                                )
-                                generated_events.extend(transition_events)
-                            case CreateInstance():
-                                placement = add_instance_to_placements(
-                                    command,
-                                    self.state.topology,
-                                    self.state.instances,
-                                )
-                                transition_events = get_transition_events(
-                                    self.state.instances, placement
-                                )
-                                generated_events.extend(transition_events)
-                            case TaskFinished():
-                                generated_events.append(
-                                    TaskDeleted(
-                                        task_id=self.command_task_mapping[
-                                            command.finished_command_id
-                                        ]
-                                    )
-                                )
+                    instance_task_counts: dict[InstanceId, int] = {}
+                    match command:
+                        case TestCommand():
+                            pass
+                        case ChatCompletion():
+                            for instance in self.state.instances.values():
                                 if (
-                                    command.finished_command_id
-                                    in self.command_task_mapping
+                                    instance.shard_assignments.model_id
+                                    == command.request_params.model
                                 ):
-                                    del self.command_task_mapping[
+                                    task_count = sum(
+                                        1
+                                        for task in self.state.tasks.values()
+                                        if task.instance_id == instance.instance_id
+                                    )
+                                    instance_task_counts[instance.instance_id] = (
+                                        task_count
+                                    )
+
+                            if not instance_task_counts:
+                                raise ValueError(
+                                    f"No instance found for model {command.request_params.model}"
+                                )
+
+                            available_instance_ids = sorted(
+                                instance_task_counts.keys(),
+                                key=lambda instance_id: instance_task_counts[
+                                    instance_id
+                                ],
+                            )
+
+                            task_id = TaskId()
+                            generated_events.append(
+                                TaskCreated(
+                                    task_id=task_id,
+                                    task=ChatCompletionTask(
+                                        task_id=task_id,
+                                        command_id=command.command_id,
+                                        instance_id=available_instance_ids[0],
+                                        task_status=TaskStatus.Pending,
+                                        task_params=command.request_params,
+                                    ),
+                                )
+                            )
+
+                            self.command_task_mapping[command.command_id] = task_id
+                        case ImageGeneration():
+                            for instance in self.state.instances.values():
+                                if (
+                                    instance.shard_assignments.model_id
+                                    == command.request_params.model
+                                ):
+                                    task_count = sum(
+                                        1
+                                        for task in self.state.tasks.values()
+                                        if task.instance_id == instance.instance_id
+                                    )
+                                    instance_task_counts[instance.instance_id] = (
+                                        task_count
+                                    )
+
+                            if not instance_task_counts:
+                                raise ValueError(
+                                    f"No instance found for model {command.request_params.model}"
+                                )
+
+                            available_instance_ids = sorted(
+                                instance_task_counts.keys(),
+                                key=lambda instance_id: instance_task_counts[
+                                    instance_id
+                                ],
+                            )
+
+                            task_id = TaskId()
+                            generated_events.append(
+                                TaskCreated(
+                                    task_id=task_id,
+                                    task=ImageGenerationTask(
+                                        task_id=task_id,
+                                        command_id=command.command_id,
+                                        instance_id=available_instance_ids[0],
+                                        task_status=TaskStatus.Pending,
+                                        task_params=command.request_params,
+                                    ),
+                                )
+                            )
+
+                            self.command_task_mapping[command.command_id] = task_id
+                        case ImageEdits():
+                            for instance in self.state.instances.values():
+                                if (
+                                    instance.shard_assignments.model_id
+                                    == command.request_params.model
+                                ):
+                                    task_count = sum(
+                                        1
+                                        for task in self.state.tasks.values()
+                                        if task.instance_id == instance.instance_id
+                                    )
+                                    instance_task_counts[instance.instance_id] = (
+                                        task_count
+                                    )
+
+                            if not instance_task_counts:
+                                raise ValueError(
+                                    f"No instance found for model {command.request_params.model}"
+                                )
+
+                            available_instance_ids = sorted(
+                                instance_task_counts.keys(),
+                                key=lambda instance_id: instance_task_counts[
+                                    instance_id
+                                ],
+                            )
+
+                            task_id = TaskId()
+                            generated_events.append(
+                                TaskCreated(
+                                    task_id=task_id,
+                                    task=ImageEditsTask(
+                                        task_id=task_id,
+                                        command_id=command.command_id,
+                                        instance_id=available_instance_ids[0],
+                                        task_status=TaskStatus.Pending,
+                                        task_params=command.request_params,
+                                    ),
+                                )
+                            )
+
+                            self.command_task_mapping[command.command_id] = task_id
+                        case DeleteInstance():
+                            placement = delete_instance(command, self.state.instances)
+                            transition_events = get_transition_events(
+                                self.state.instances, placement
+                            )
+                            generated_events.extend(transition_events)
+                        case PlaceInstance():
+                            placement = place_instance(
+                                command,
+                                self.state.topology,
+                                self.state.instances,
+                                self.state.node_memory,
+                                self.state.node_network,
+                            )
+                            transition_events = get_transition_events(
+                                self.state.instances, placement
+                            )
+                            generated_events.extend(transition_events)
+                        case CreateInstance():
+                            placement = add_instance_to_placements(
+                                command,
+                                self.state.topology,
+                                self.state.instances,
+                            )
+                            transition_events = get_transition_events(
+                                self.state.instances, placement
+                            )
+                            generated_events.extend(transition_events)
+                        case SendInputChunk(chunk=chunk):
+                            generated_events.append(
+                                InputChunkReceived(
+                                    command_id=chunk.command_id,
+                                    chunk=chunk,
+                                )
+                            )
+                        case TaskFinished():
+                            generated_events.append(
+                                TaskDeleted(
+                                    task_id=self.command_task_mapping[
                                         command.finished_command_id
                                     ]
-                            case RequestEventLog():
-                                # We should just be able to send everything, since other buffers will ignore old messages
-                                for i in range(command.since_idx, len(self._event_log)):
-                                    await self._send_event(
-                                        IndexedEvent(idx=i, event=self._event_log[i])
-                                    )
-                            case _:
-                                # Plugin commands should be handled by registry above;
-                                # this is a safety fallback for unhandled commands
-                                pass
+                                )
+                            )
+                            if command.finished_command_id in self.command_task_mapping:
+                                del self.command_task_mapping[
+                                    command.finished_command_id
+                                ]
+                        case RequestEventLog():
+                            # We should just be able to send everything, since other buffers will ignore old messages
+                            for i in range(command.since_idx, len(self._event_log)):
+                                await self._send_event(
+                                    IndexedEvent(idx=i, event=self._event_log[i])
+                                )
+                        case _:
+                            # Check if a plugin handles this command
+                            registry = PluginRegistry.get()
+                            plugin = registry.get_plugin_for_command(command)
+                            if plugin is not None:
+                                events = plugin.process_command(
+                                    command,
+                                    self.state.topology,
+                                    self.state.instances,
+                                )
+                                generated_events.extend(events)
                     for event in generated_events:
                         await self.event_sender.send(event)
                 except ValueError as e:

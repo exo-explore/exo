@@ -7,6 +7,7 @@ from loguru import logger
 
 from exo.master.main import Master
 from exo.routing.router import get_node_id_keypair
+from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from exo.shared.types.commands import (
     ChatCompletion,
@@ -23,7 +24,6 @@ from exo.shared.types.events import (
     TaskCreated,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.profiling import (
     MemoryUsage,
 )
@@ -109,13 +109,13 @@ async def test_master():
                 command=(
                     PlaceInstance(
                         command_id=CommandId(),
-                        model_meta=ModelMetadata(
+                        model_card=ModelCard(
                             model_id=ModelId("llama-3.2-1b"),
-                            pretty_name="Llama 3.2 1B",
                             n_layers=16,
                             storage_size=Memory.from_bytes(678948),
                             hidden_size=7168,
                             supports_tensor=True,
+                            tasks=[ModelTask.TextGeneration],
                         ),
                         sharding=Sharding.Pipeline,
                         instance_meta=InstanceMeta.MlxRing,
@@ -167,13 +167,13 @@ async def test_master():
                     start_layer=0,
                     end_layer=16,
                     n_layers=16,
-                    model_meta=ModelMetadata(
+                    model_card=ModelCard(
                         model_id=ModelId("llama-3.2-1b"),
-                        pretty_name="Llama 3.2 1B",
                         n_layers=16,
                         storage_size=Memory.from_bytes(678948),
                         hidden_size=7168,
                         supports_tensor=True,
+                        tasks=[ModelTask.TextGeneration],
                     ),
                     device_rank=0,
                     world_size=1,

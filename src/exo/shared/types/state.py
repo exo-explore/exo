@@ -14,7 +14,7 @@ from exo.shared.types.profiling import (
     NodeThunderboltInfo,
     SystemPerformanceProfile,
 )
-from exo.shared.types.tasks import Task, TaskId
+from exo.shared.types.tasks import BaseTask, TaskId
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import BaseInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
@@ -40,7 +40,7 @@ class State(CamelCaseModel):
     instances: Mapping[InstanceId, BaseInstance] = {}
     runners: Mapping[RunnerId, RunnerStatus] = {}
     downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {}
-    tasks: Mapping[TaskId, Task] = {}
+    tasks: Mapping[TaskId, BaseTask] = {}
     last_seen: Mapping[NodeId, datetime] = {}
     topology: Topology = Field(default_factory=Topology)
     last_event_applied_idx: int = Field(default=-1, ge=-1)
