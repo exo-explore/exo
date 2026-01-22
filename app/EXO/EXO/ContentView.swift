@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var bugReportMessage: String?
     @State private var uninstallInProgress = false
     @State private var pendingNamespace: String = ""
+    @State private var pendingHFToken: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -302,6 +303,31 @@ struct ContentView: View {
                             .font(.caption2)
                             .disabled(pendingNamespace == controller.customNamespace)
                         }
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("HuggingFace Token")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        HStack {
+                            SecureField("optional", text: $pendingHFToken)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.caption2)
+                                .onAppear {
+                                    pendingHFToken = controller.hfToken
+                                }
+                            Button("Save & Restart") {
+                                controller.hfToken = pendingHFToken
+                                if controller.status == .running || controller.status == .starting {
+                                    controller.restart()
+                                }
+                            }
+                            .font(.caption2)
+                            .disabled(pendingHFToken == controller.hfToken)
+                        }
+                        Text("Required for gated models. Get token at huggingface.co/settings/tokens")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .opacity(0.7)
                     }
                     HoverButton(title: "Check for Updates", small: true) {
                         updater.checkForUpdates()

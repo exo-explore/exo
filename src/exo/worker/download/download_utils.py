@@ -53,7 +53,8 @@ async def _build_auth_error_message(status_code: int, model_id: ModelId) -> str:
     if status_code == 401 and token is None:
         return (
             f"Model '{model_id}' requires authentication. "
-            f"Set the HF_TOKEN environment variable or run `hf auth login`. You can generate a token at https://huggingface.co/settings/tokens"
+            f"Set HF_TOKEN in the app's Advanced settings, set the HF_TOKEN environment variable, or run `hf auth login`. "
+            f"Get a token at https://huggingface.co/settings/tokens"
         )
     elif status_code == 403:
         return (
