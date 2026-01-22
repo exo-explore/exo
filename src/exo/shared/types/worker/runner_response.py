@@ -6,6 +6,7 @@ from exo.shared.types.api import (
     GenerationStats,
     ImageGenerationStats,
     ToolCallItem,
+    TopLogprobItem,
 )
 from exo.utils.pydantic_ext import TaggedModel
 
@@ -14,14 +15,11 @@ class BaseRunnerResponse(TaggedModel):
     pass
 
 
-class TokenizedResponse(BaseRunnerResponse):
-    prompt_tokens: int
-
-
 class GenerationResponse(BaseRunnerResponse):
     text: str
     token: int
-    # logprobs: list[float] | None = None # too big. we can change to be top-k
+    logprob: float | None = None
+    top_logprobs: list[TopLogprobItem] | None = None
     finish_reason: FinishReason | None = None
     stats: GenerationStats | None = None
 

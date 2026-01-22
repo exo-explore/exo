@@ -51,6 +51,8 @@ from exo.shared.types.api import (
     ImageGenerationTaskParams,
     ImageListItem,
     ImageListResponse,
+    Logprobs,
+    LogprobsContentItem,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
@@ -100,9 +102,27 @@ def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None)
     return f"image/{image_format or 'png'}"
 
 
+def _build_logprobs(chunk: TokenChunk) -> Logprobs:
+    """Convert flat logprob fields to OpenAI Logprobs format."""
+    return Logprobs(
+        content=[
+            LogprobsContentItem(
+                token=chunk.text,
+                logprob=chunk.logprob if chunk.logprob is not None else 0.0,
+                bytes=list(chunk.text.encode("utf-8")),
+                top_logprobs=chunk.top_logprobs or [],
+            )
+        ]
+    )
+
+
 def chunk_to_response(
     chunk: TokenChunk | ToolCallChunk, command_id: CommandId
 ) -> ChatCompletionResponse:
+    logprobs: Logprobs | None = None
+    if isinstance(chunk, TokenChunk) and chunk.logprob is not None:
+        logprobs = _build_logprobs(chunk)
+
     return ChatCompletionResponse(
         id=command_id,
         created=int(time.time()),
@@ -123,6 +143,7 @@ def chunk_to_response(
                         for i, tool in enumerate(chunk.tool_calls)
                     ],
                 ),
+                logprobs=logprobs,
                 finish_reason=chunk.finish_reason,
             )
         ],
@@ -527,6 +548,7 @@ class API:
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
+        logprobs_items: list[LogprobsContentItem] = []
         model: str | None = None
         finish_reason: FinishReason | None = None
 
@@ -542,6 +564,14 @@ class API:
 
             if isinstance(chunk, TokenChunk):
                 text_parts.append(chunk.text)
+                if chunk.logprob is not None:
+                    lp = _build_logprobs(chunk)
+                    if lp.content:
+                        if len(lp.content) != 1:
+                            logger.warning(
+                                f"Expected 1 logprobs content item per chunk, got {len(lp.content)}"
+                            )
+                        logprobs_items.append(lp.content[0])
 
             if isinstance(chunk, ToolCallChunk):
                 tool_calls.extend(
@@ -559,6 +589,10 @@ class API:
         combined_text = "".join(text_parts)
         assert model is not None
 
+        logprobs: Logprobs | None = None
+        if logprobs_items:
+            logprobs = Logprobs(content=logprobs_items)
+
         return ChatCompletionResponse(
             id=command_id,
             created=int(time.time()),
@@ -571,6 +605,7 @@ class API:
                         content=combined_text,
                         tool_calls=tool_calls,
                     ),
+                    logprobs=logprobs,
                     finish_reason=finish_reason,
                 )
             ],

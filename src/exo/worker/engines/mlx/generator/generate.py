@@ -12,12 +12,11 @@ from exo.shared.types.api import (
     ChatCompletionMessage,
     FinishReason,
     GenerationStats,
+    TopLogprobItem,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import ChatCompletionTaskParams
-from exo.shared.types.worker.runner_response import (
-    GenerationResponse,
-)
+from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
 from exo.worker.engines.mlx.utils_mlx import (
@@ -115,6 +114,49 @@ def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
     return eos
 
 
+def extract_top_logprobs(
+    logprobs_array: mx.array,
+    selected_token: int,
+    tokenizer: TokenizerWrapper,
+    top_k: int,
+) -> tuple[float, list[TopLogprobItem]]:
+    """Extract the selected token's logprob and top-k alternatives.
+
+    Returns:
+        Tuple of (selected_token_logprob, list of TopLogprobItem)
+    """
+    selected_logprob = float(logprobs_array[selected_token].item())
+
+    if top_k == 0:
+        return selected_logprob, []
+
+    vocab_size = logprobs_array.shape[0]
+    k = min(top_k, vocab_size)
+    top_indices = mx.argpartition(-logprobs_array, kth=k - 1)[:k]
+
+    top_logprobs_values = logprobs_array[top_indices]
+    sorted_order = mx.argsort(-top_logprobs_values)
+    top_indices = top_indices[sorted_order]
+
+    mx.eval(top_indices)
+
+    top_logprob_items: list[TopLogprobItem] = []
+    indices_list: list[int] = cast(list[int], top_indices.tolist())
+    for token_id in indices_list:
+        logprob_value = float(logprobs_array[token_id].item())
+        token_str = tokenizer.decode([token_id])
+
+        top_logprob_items.append(
+            TopLogprobItem(
+                token=token_str,
+                logprob=logprob_value,
+                bytes=list(token_str.encode("utf-8")),
+            )
+        )
+
+    return selected_logprob, top_logprob_items
+
+
 def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
@@ -143,6 +185,10 @@ def mlx_generate(
         temp=task.temperature if task.temperature is not None else 0.7,
         top_p=task.top_p if task.top_p is not None else 1.0,
     )
+
+    # Determine if we need logprobs
+    should_extract_logprobs = task.logprobs is True
+    top_k = task.top_logprobs if task.top_logprobs is not None else 0
 
     max_tokens = task.max_tokens or MAX_TOKENS
     for out in stream_generate(
@@ -177,9 +223,22 @@ def mlx_generate(
                     f"Model generated unexpected finish_reason: {out.finish_reason}"
                 )
 
+        # Extract logprobs if requested
+        logprob: float | None = None
+        top_logprobs: list[TopLogprobItem] | None = None
+        if should_extract_logprobs:
+            logprob, top_logprobs = extract_top_logprobs(
+                logprobs_array=out.logprobs,
+                selected_token=out.token,
+                tokenizer=tokenizer,
+                top_k=top_k,
+            )
+
         yield GenerationResponse(
             text=out.text,
             token=out.token,
+            logprob=logprob,
+            top_logprobs=top_logprobs,
             finish_reason=cast(FinishReason | None, out.finish_reason),
             stats=stats,
         )

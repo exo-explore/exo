@@ -97,6 +97,8 @@ class LogprobsContentItem(BaseModel):
 
 class Logprobs(BaseModel):
     content: list[LogprobsContentItem] | None = None
+    # This will always be null for open source models, but exists for OpenAI API
+    refusal: list[LogprobsContentItem] | None = None
 
 
 class PromptTokensDetails(BaseModel):
