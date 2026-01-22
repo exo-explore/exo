@@ -66,3 +66,14 @@ class InputImageChunk(BaseChunk):
 
 
 GenerationChunk = TokenChunk | ImageChunk
+
+
+class PrefillProgressData(TaggedModel):
+    """Data class for prefill progress events during streaming."""
+
+    processed_tokens: int
+    total_tokens: int
+
+
+# Stream events can be either token chunks or prefill progress
+StreamEvent = TokenChunk | PrefillProgressData

@@ -8,7 +8,6 @@
     regenerateLastResponse,
     setEditingImage,
   } from "$lib/stores/app.svelte";
-  import type { Message } from "$lib/stores/app.svelte";
   import type { MessageAttachment } from "$lib/stores/app.svelte";
   import MarkdownContent from "./MarkdownContent.svelte";
 
