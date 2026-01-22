@@ -441,7 +441,8 @@ struct ContentView: View {
                     .foregroundColor(.secondary)
                 ForEach(Array(bridgeStatuses.keys.sorted()), id: \.self) { nodeId in
                     if let status = bridgeStatuses[nodeId] {
-                        let nodeName = nodeProfiles[nodeId]?.friendlyName ?? String(nodeId.prefix(8))
+                        let nodeName =
+                            nodeProfiles[nodeId]?.friendlyName ?? String(nodeId.prefix(8))
                         let isLocal = nodeId == localNodeId
                         let prefix = isLocal ? "  \(nodeName) (local):" : "  \(nodeName):"
                         let statusText =

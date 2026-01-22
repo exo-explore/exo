@@ -5,7 +5,8 @@ import os.log
 /// This mirrors the Python logic in info_gatherer.py - we never assume the service
 /// is named "Thunderbolt Bridge", instead we find bridges containing Thunderbolt interfaces.
 enum ThunderboltBridgeDetector {
-    private static let logger = Logger(subsystem: "io.exo.EXO", category: "ThunderboltBridgeDetector")
+    private static let logger = Logger(
+        subsystem: "io.exo.EXO", category: "ThunderboltBridgeDetector")
 
     struct CommandResult {
         let exitCode: Int32
