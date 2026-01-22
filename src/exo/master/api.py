@@ -339,15 +339,14 @@ class API:
     async def get_placement_previews(
         self,
         model_id: ModelId,
-        node_ids: Annotated[list[str] | None, Query()] = None,
+        node_ids: Annotated[list[NodeId] | None, Query()] = None,
     ) -> PlacementPreviewResponse:
         seen: set[tuple[ModelId, Sharding, InstanceMeta, int]] = set()
         previews: list[PlacementPreview] = []
 
         # Create filtered topology if node_ids specified
         if node_ids and len(node_ids) > 0:
-            filter_set = set(NodeId(n) for n in node_ids)
-            topology = self.state.topology.filter_to_nodes(filter_set)
+            topology = self.state.topology.get_subgraph_from_nodes(node_ids)
         else:
             topology = self.state.topology
 
