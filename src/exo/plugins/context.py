@@ -3,7 +3,7 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from exo.shared.types.commands import Command
+from exo.shared.types.commands import BaseCommand
 from exo.shared.types.common import NodeId
 from exo.shared.types.state import State
 
@@ -17,5 +17,5 @@ class PluginContext:
     """
 
     state: State
-    send_command: Callable[[Command], Awaitable[None]]
+    send_command: Callable[[BaseCommand], Awaitable[None]]
     node_id: NodeId

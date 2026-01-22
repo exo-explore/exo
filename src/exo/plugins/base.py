@@ -15,7 +15,7 @@ from exo.utils.pydantic_ext import TaggedModel
 
 if TYPE_CHECKING:
     from exo.shared.topology import Topology
-    from exo.shared.types.worker.instances import BoundInstance, Instance
+    from exo.shared.types.worker.instances import BaseInstance, BoundInstance
     from exo.utils.channels import MpReceiver, MpSender
     from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
@@ -113,7 +113,7 @@ class EXOPlugin(ABC):
         self,
         command: Any,  # pyright: ignore[reportAny]
         topology: "Topology",
-        current_instances: Mapping[InstanceId, "Instance"],
+        current_instances: Mapping[InstanceId, "BaseInstance"],
     ) -> Sequence[Event]:
         """Process a command and return events to emit.
 
@@ -140,7 +140,7 @@ class EXOPlugin(ABC):
     def plan_task(
         self,
         runners: Mapping[RunnerId, "RunnerSupervisor"],
-        instances: Mapping[InstanceId, "Instance"],
+        instances: Mapping[InstanceId, "BaseInstance"],
     ) -> Task | None:
         """Plan the next task for plugin instances.
 

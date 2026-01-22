@@ -26,7 +26,7 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
 from exo.shared.types.worker.instances import (
-    Instance,
+    BaseInstance,
     InstanceId,
     InstanceMeta,
     MlxJacclInstance,
@@ -43,8 +43,8 @@ def random_ephemeral_port() -> int:
 def add_instance_to_placements(
     command: CreateInstance,
     topology: Topology,
-    current_instances: Mapping[InstanceId, Instance],
-) -> Mapping[InstanceId, Instance]:
+    current_instances: Mapping[InstanceId, BaseInstance],
+) -> Mapping[InstanceId, BaseInstance]:
     # TODO: validate against topology
 
     return {**current_instances, command.instance.instance_id: command.instance}
@@ -53,10 +53,10 @@ def add_instance_to_placements(
 def place_instance(
     command: PlaceInstance,
     topology: Topology,
-    current_instances: Mapping[InstanceId, Instance],
+    current_instances: Mapping[InstanceId, BaseInstance],
     node_memory: Mapping[NodeId, MemoryUsage],
     node_network: Mapping[NodeId, NodeNetworkInfo],
-) -> dict[InstanceId, Instance]:
+) -> dict[InstanceId, BaseInstance]:
     cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
     cycles_with_sufficient_memory = filter_cycles_by_memory(
@@ -159,19 +159,14 @@ def place_instance(
                 hosts_by_node=hosts_by_node,
                 ephemeral_port=ephemeral_port,
             )
-        case _:
-            # Plugin-managed instance types have their own placement functions
-            raise ValueError(
-                f"Instance type {command.instance_meta} must use plugin placement"
-            )
 
     return target_instances
 
 
 def delete_instance(
     command: DeleteInstance,
-    current_instances: Mapping[InstanceId, Instance],
-) -> dict[InstanceId, Instance]:
+    current_instances: Mapping[InstanceId, BaseInstance],
+) -> dict[InstanceId, BaseInstance]:
     target_instances = dict(deepcopy(current_instances))
     if command.instance_id in target_instances:
         del target_instances[command.instance_id]
@@ -180,8 +175,8 @@ def delete_instance(
 
 
 def get_transition_events(
-    current_instances: Mapping[InstanceId, Instance],
-    target_instances: Mapping[InstanceId, Instance],
+    current_instances: Mapping[InstanceId, BaseInstance],
+    target_instances: Mapping[InstanceId, BaseInstance],
 ) -> Sequence[Event]:
     events: list[Event] = []
 

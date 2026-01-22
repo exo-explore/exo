@@ -21,7 +21,7 @@ from exo.shared.topology import Topology
 from exo.shared.types.commands import DeleteInstance
 from exo.shared.types.events import Event
 from exo.shared.types.tasks import Task
-from exo.shared.types.worker.instances import BoundInstance, Instance, InstanceId
+from exo.shared.types.worker.instances import BaseInstance, BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
@@ -60,7 +60,7 @@ class FLASHPlugin(EXOPlugin):
         self,
         command: Any,  # pyright: ignore[reportAny]
         topology: Topology,
-        current_instances: Mapping[InstanceId, Instance],
+        current_instances: Mapping[InstanceId, BaseInstance],
     ) -> Sequence[Event]:
         from exo.master.placement import delete_instance, get_transition_events
 
@@ -81,7 +81,7 @@ class FLASHPlugin(EXOPlugin):
     def plan_task(
         self,
         runners: Mapping[RunnerId, RunnerSupervisor],
-        instances: Mapping[InstanceId, Instance],
+        instances: Mapping[InstanceId, BaseInstance],
     ) -> Task | None:
         return plan_flash(runners, instances)
 

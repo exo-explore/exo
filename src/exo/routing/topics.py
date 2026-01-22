@@ -30,7 +30,7 @@ class TypedTopic[T: CamelCaseModel]:
 
     @staticmethod
     def serialize(t: T) -> bytes:
-        return t.model_dump_json().encode("utf-8")
+        return t.model_dump_json(by_alias=True, serialize_as_any=True).encode("utf-8")
 
     def deserialize(self, b: bytes) -> T:
         return self.model_type.model_validate_json(b.decode("utf-8"))

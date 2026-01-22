@@ -216,7 +216,8 @@ class Master:
                                         IndexedEvent(idx=i, event=self._event_log[i])
                                     )
                             case _:
-                                # Plugin-managed commands are handled above
+                                # Plugin commands should be handled by registry above;
+                                # this is a safety fallback for unhandled commands
                                 pass
                     for event in generated_events:
                         await self.event_sender.send(event)

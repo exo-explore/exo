@@ -11,7 +11,7 @@ from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.topology import SocketConnection
-from exo.shared.types.worker.instances import Instance, InstanceId
+from exo.shared.types.worker.instances import BaseInstance, InstanceId
 from exo.shared.types.worker.runners import (
     RunnerId,
     ShardAssignments,
@@ -22,8 +22,8 @@ from exo.shared.types.worker.shards import PipelineShardMetadata
 def place_flash_instance(
     command: LaunchFLASH,
     topology: Topology,
-    current_instances: Mapping[InstanceId, Instance],
-) -> dict[InstanceId, Instance]:
+    current_instances: Mapping[InstanceId, BaseInstance],
+) -> dict[InstanceId, BaseInstance]:
     """Place a FLASH simulation instance across available nodes.
 
     Unlike MLX instances which use ring/JACCL topology for tensor parallelism,
@@ -31,7 +31,7 @@ def place_flash_instance(
     node IPs so the runner can generate an MPI hostfile.
     """
     instance_id = InstanceId()
-    target_instances: dict[InstanceId, Instance] = dict(deepcopy(current_instances))
+    target_instances: dict[InstanceId, BaseInstance] = dict(deepcopy(current_instances))
 
     all_nodes = list(topology.list_nodes())
 

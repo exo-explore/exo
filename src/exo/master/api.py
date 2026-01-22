@@ -46,8 +46,8 @@ from exo.shared.types.api import (
 )
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.commands import (
+    BaseCommand,
     ChatCompletion,
-    Command,
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
@@ -66,6 +66,7 @@ from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.instances import (
+    BaseInstance,
     Instance,
     InstanceId,
     InstanceMeta,
@@ -317,7 +318,7 @@ class API:
         sharding: Sharding = Sharding.Pipeline,
         instance_meta: InstanceMeta = InstanceMeta.MlxRing,
         min_nodes: int = 1,
-    ) -> Instance:
+    ) -> BaseInstance:
         model_meta = await resolve_model_meta(model_id)
 
         try:
@@ -449,7 +450,7 @@ class API:
                             model_id=card.model_id,
                             sharding=sharding,
                             instance_meta=instance_meta,
-                            instance=instance,
+                            instance=cast(Instance, instance),
                             memory_delta_by_node=memory_delta_by_node or None,
                             error=None,
                         )
@@ -458,7 +459,7 @@ class API:
 
         return PlacementPreviewResponse(previews=previews)
 
-    def get_instance(self, instance_id: InstanceId) -> Instance:
+    def get_instance(self, instance_id: InstanceId) -> BaseInstance:
         if instance_id not in self.state.instances:
             raise HTTPException(status_code=404, detail="Instance not found")
         return self.state.instances[instance_id]
@@ -808,7 +809,7 @@ class API:
                 if message.clock > self.last_completed_election:
                     self.paused = True
 
-    async def _send(self, command: Command):
+    async def _send(self, command: BaseCommand):
         while self.paused:
             await self.paused_ev.wait()
         await self.command_sender.send(

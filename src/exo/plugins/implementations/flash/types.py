@@ -1,34 +1,21 @@
 """FLASH plugin types - commands and instances."""
-# ruff: noqa: I001 - Import order intentional for Pydantic model_rebuild
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-from pydantic import Field
-
-from exo.shared.types.common import CommandId, Host, NodeId
-from exo.shared.types.worker.runners import ShardAssignments
-from exo.utils.pydantic_ext import TaggedModel
-
-if TYPE_CHECKING:
-    from exo.shared.types.worker.instances import InstanceId
-    from exo.shared.types.worker.runners import RunnerId
-    from exo.shared.types.worker.shards import (
-        PipelineShardMetadata,
-        TensorShardMetadata,
-    )
-
+from exo.plugins.type_registry import command_registry, instance_registry
+from exo.shared.types.commands import BaseCommand
+from exo.shared.types.common import Host, NodeId
+from exo.shared.types.worker.instances import BaseInstance, InstanceId
+from exo.shared.types.worker.runners import RunnerId
+from exo.shared.types.worker.shards import ShardMetadata
 
 # ============================================================================
 # Commands
 # ============================================================================
 
 
-class LaunchFLASH(TaggedModel):
+@command_registry.register
+class LaunchFLASH(BaseCommand):
     """Command to launch a FLASH MPI simulation."""
 
-    command_id: CommandId = Field(default_factory=CommandId)
     simulation_name: str
     flash_executable_path: str
     parameter_file_path: str
@@ -40,11 +27,11 @@ class LaunchFLASH(TaggedModel):
     hosts: str = ""
 
 
-class StopFLASH(TaggedModel):
+@command_registry.register
+class StopFLASH(BaseCommand):
     """Command to stop a running FLASH simulation."""
 
-    command_id: CommandId = Field(default_factory=CommandId)
-    instance_id: "InstanceId"
+    instance_id: InstanceId
 
 
 # ============================================================================
@@ -52,7 +39,8 @@ class StopFLASH(TaggedModel):
 # ============================================================================
 
 
-class FLASHInstance(TaggedModel):
+@instance_registry.register
+class FLASHInstance(BaseInstance):
     """Instance for FLASH MPI simulation.
 
     Unlike MLX instances which do tensor parallelism, FLASH instances
@@ -60,8 +48,6 @@ class FLASHInstance(TaggedModel):
     MPI ranks of the FLASH simulation.
     """
 
-    instance_id: "InstanceId"
-    shard_assignments: ShardAssignments
     hosts_by_node: dict[NodeId, list[Host]]
     flash_executable_path: str
     parameter_file_path: str
@@ -72,20 +58,5 @@ class FLASHInstance(TaggedModel):
     coordinator_ip: str
     network_interface: str = "en0"  # Network interface for MPI (e.g., en0, eth0)
 
-    def shard(
-        self, runner_id: "RunnerId"
-    ) -> "PipelineShardMetadata | TensorShardMetadata | None":
+    def shard(self, runner_id: RunnerId) -> ShardMetadata | None:
         return self.shard_assignments.runner_to_shard.get(runner_id, None)
-
-
-# Import types into module namespace for Pydantic model_rebuild() to resolve forward refs
-from exo.shared.types.worker.instances import InstanceId as InstanceId  # noqa: E402, I001
-from exo.shared.types.worker.runners import RunnerId as RunnerId  # noqa: E402, I001
-from exo.shared.types.worker.shards import (  # noqa: E402, I001
-    PipelineShardMetadata as PipelineShardMetadata,
-    TensorShardMetadata as TensorShardMetadata,
-)
-
-# Rebuild models to resolve forward references
-StopFLASH.model_rebuild()
-FLASHInstance.model_rebuild()

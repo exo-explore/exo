@@ -22,8 +22,8 @@ from exo.shared.types.worker.downloads import (
     DownloadProgress,
 )
 from exo.shared.types.worker.instances import (
+    BaseInstance,
     BoundInstance,
-    Instance,
     InstanceId,
 )
 from exo.shared.types.worker.runners import (
@@ -50,7 +50,7 @@ def plan(
     download_status: Mapping[ModelId, DownloadProgress],
     # gdls is not expected to be fresh
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
-    instances: Mapping[InstanceId, Instance],
+    instances: Mapping[InstanceId, BaseInstance],
     all_runners: Mapping[RunnerId, RunnerStatus],  # all global
     tasks: Mapping[TaskId, Task],
 ) -> Task | None:
@@ -79,7 +79,7 @@ def plan(
 def _kill_runner(
     runners: Mapping[RunnerId, RunnerSupervisor],
     all_runners: Mapping[RunnerId, RunnerStatus],
-    instances: Mapping[InstanceId, Instance],
+    instances: Mapping[InstanceId, BaseInstance],
 ) -> Shutdown | None:
     for runner in runners.values():
         runner_id = runner.bound_instance.bound_runner_id
@@ -102,7 +102,7 @@ def _kill_runner(
 def _create_runner(
     node_id: NodeId,
     runners: Mapping[RunnerId, RunnerSupervisor],
-    instances: Mapping[InstanceId, Instance],
+    instances: Mapping[InstanceId, BaseInstance],
 ) -> CreateRunner | None:
     for instance in instances.values():
         runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)

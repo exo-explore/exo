@@ -1,8 +1,15 @@
-# ruff: noqa: I001 - Import order intentional to avoid circular imports
+"""Instance types for exo.
+
+Instances are registered dynamically via the instance_registry, allowing plugins
+to add their own instance types without modifying this file.
+"""
+
 from enum import Enum
+from typing import Any, cast
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 
+from exo.plugins.type_registry import instance_registry
 from exo.shared.types.common import Host, Id, NodeId
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments, ShardMetadata
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
@@ -15,10 +22,11 @@ class InstanceId(Id):
 class InstanceMeta(str, Enum):
     MlxRing = "MlxRing"
     MlxJaccl = "MlxJaccl"
-    FLASH = "FLASH"
 
 
 class BaseInstance(TaggedModel):
+    """Base class for all instance types."""
+
     instance_id: InstanceId
     shard_assignments: ShardAssignments
 
@@ -26,28 +34,35 @@ class BaseInstance(TaggedModel):
         return self.shard_assignments.runner_to_shard.get(runner_id, None)
 
 
+@instance_registry.register
 class MlxRingInstance(BaseInstance):
     hosts_by_node: dict[NodeId, list[Host]]
     ephemeral_port: int
 
 
+@instance_registry.register
 class MlxJacclInstance(BaseInstance):
     jaccl_devices: list[list[str | None]]
     jaccl_coordinators: dict[NodeId, str]
 
 
-# Import FLASHInstance from plugin (for serialization compatibility)
-from exo.plugins.implementations.flash.types import FLASHInstance  # noqa: E402, I001
-
-
-# TODO: Single node instance
-Instance = MlxRingInstance | MlxJacclInstance | FLASHInstance
+# Union type for Pydantic validation - tries each type in order
+# This is used by API endpoints (dashboard) which send flat format
+Instance = MlxRingInstance | MlxJacclInstance
 
 
 class BoundInstance(CamelCaseModel):
-    instance: Instance
+    """An instance bound to a specific runner on a specific node."""
+
+    instance: BaseInstance
     bound_runner_id: RunnerId
     bound_node_id: NodeId
+
+    @field_validator("instance", mode="before")
+    @classmethod
+    def validate_instance(cls, v: Any) -> BaseInstance:  # noqa: ANN401  # pyright: ignore[reportAny]
+        """Validate instance using registry to handle both tagged and flat formats."""
+        return cast(BaseInstance, instance_registry.deserialize(v))  # pyright: ignore[reportAny]
 
     @property
     def bound_shard(self) -> ShardMetadata:

@@ -4,14 +4,14 @@ from collections.abc import Mapping
 
 from exo.plugins.implementations.flash.types import FLASHInstance
 from exo.shared.types.tasks import LoadModel, Task
-from exo.shared.types.worker.instances import Instance, InstanceId
+from exo.shared.types.worker.instances import BaseInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerIdle
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
 
 def plan_flash(
     runners: Mapping[RunnerId, RunnerSupervisor],
-    instances: Mapping[InstanceId, Instance],
+    instances: Mapping[InstanceId, BaseInstance],
 ) -> Task | None:
     """Plan tasks specifically for FLASH instances.
 

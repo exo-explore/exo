@@ -1,13 +1,19 @@
 import time
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic_core import PydanticUseDefault
 
+from exo.plugins.type_registry import instance_registry
 from exo.shared.types.common import CommandId
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
-from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
+from exo.shared.types.worker.instances import (
+    BaseInstance,
+    Instance,
+    InstanceId,
+    InstanceMeta,
+)
 from exo.shared.types.worker.shards import Sharding
 
 FinishReason = Literal[
@@ -183,6 +189,12 @@ class PlaceInstanceParams(BaseModel):
 
 class CreateInstanceParams(BaseModel):
     instance: Instance
+
+    @field_validator("instance", mode="before")
+    @classmethod
+    def validate_instance(cls, v: Any) -> BaseInstance:  # noqa: ANN401  # pyright: ignore[reportAny]
+        """Validate instance using registry to handle both tagged and flat formats."""
+        return cast(BaseInstance, instance_registry.deserialize(v))  # pyright: ignore[reportAny]
 
 
 class PlacementPreview(BaseModel):
