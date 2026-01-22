@@ -195,6 +195,14 @@ class Node:
 
 
 def main():
+    # Check for SLURM-compatible subcommands first
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] in ("sbatch", "squeue", "scancel", "salloc"):
+        from exo.cli import run_subcommand
+
+        sys.exit(run_subcommand(sys.argv[1], sys.argv[2:]))
+
     args = Args.parse()
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, 65535), hard))
@@ -204,6 +212,11 @@ def main():
     logger_setup(EXO_LOG, args.verbosity)
     logger.info("Starting EXO")
     logger.info(f"EXO_LIBP2P_NAMESPACE: {os.getenv('EXO_LIBP2P_NAMESPACE')}")
+
+    # Discover and register plugins
+    from exo.plugins.registry import discover_plugins
+
+    discover_plugins()
 
     # Set FAST_SYNCH override env var for runner subprocesses
     if args.fast_synch is True:

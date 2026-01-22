@@ -13,6 +13,7 @@ from exo.shared.types.api import ImageEditsInternalParams
 from exo.shared.types.commands import ForwarderCommand, RequestEventLog
 from exo.shared.types.common import CommandId, NodeId, SessionId
 from exo.shared.types.events import (
+    BaseEvent,
     Event,
     EventId,
     ForwarderEvent,
@@ -28,11 +29,11 @@ from exo.shared.types.events import (
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
+    BaseTask,
     CreateRunner,
     DownloadModel,
     ImageEdits,
     Shutdown,
-    Task,
     TaskStatus,
 )
 from exo.shared.types.topology import Connection, SocketConnection
@@ -81,7 +82,7 @@ class Worker:
         self.local_event_index = 0
         self.command_sender = command_sender
         self.connection_message_receiver = connection_message_receiver
-        self.event_buffer = OrderedBuffer[Event]()
+        self.event_buffer = OrderedBuffer[BaseEvent]()
         self.out_for_delivery: dict[EventId, ForwarderEvent] = {}
 
         self.state: State = State()
@@ -179,7 +180,7 @@ class Worker:
         while True:
             await anyio.sleep(0.1)
             # 3. based on the updated state, we plan & execute an operation.
-            task: Task | None = plan(
+            task: BaseTask | None = plan(
                 self.node_id,
                 self.runners,
                 self.download_status,
@@ -298,7 +299,7 @@ class Worker:
     def shutdown(self):
         self._tg.cancel_scope.cancel()
 
-    def _task_to_runner_id(self, task: Task):
+    def _task_to_runner_id(self, task: BaseTask):
         instance = self.state.instances[task.instance_id]
         return instance.shard_assignments.node_to_runner[self.node_id]
 

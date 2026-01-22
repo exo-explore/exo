@@ -14,9 +14,9 @@ from exo.shared.types.profiling import (
     NodeThunderboltInfo,
     SystemPerformanceProfile,
 )
-from exo.shared.types.tasks import Task, TaskId
+from exo.shared.types.tasks import BaseTask, TaskId
 from exo.shared.types.worker.downloads import DownloadProgress
-from exo.shared.types.worker.instances import Instance, InstanceId
+from exo.shared.types.worker.instances import BaseInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.pydantic_ext import CamelCaseModel
 
@@ -37,10 +37,10 @@ class State(CamelCaseModel):
         strict=True,
         arbitrary_types_allowed=True,
     )
-    instances: Mapping[InstanceId, Instance] = {}
+    instances: Mapping[InstanceId, BaseInstance] = {}
     runners: Mapping[RunnerId, RunnerStatus] = {}
     downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {}
-    tasks: Mapping[TaskId, Task] = {}
+    tasks: Mapping[TaskId, BaseTask] = {}
     last_seen: Mapping[NodeId, datetime] = {}
     topology: Topology = Field(default_factory=Topology)
     last_event_applied_idx: int = Field(default=-1, ge=-1)
@@ -51,6 +51,16 @@ class State(CamelCaseModel):
     node_system: Mapping[NodeId, SystemPerformanceProfile] = {}
     node_network: Mapping[NodeId, NodeNetworkInfo] = {}
     node_thunderbolt: Mapping[NodeId, NodeThunderboltInfo] = {}
+
+    @field_serializer("instances", mode="plain")
+    def _encode_instances(
+        self, value: Mapping[InstanceId, BaseInstance]
+    ) -> dict[str, Any]:
+        """Serialize instances with full subclass fields."""
+        return {
+            str(k): v.model_dump(by_alias=True, serialize_as_any=True)
+            for k, v in value.items()
+        }
 
     @field_serializer("topology", mode="plain")
     def _encode_topology(self, value: Topology) -> TopologySnapshot:

@@ -1,9 +1,11 @@
+import asyncio
 import base64
 import json
+import os
 import time
 from collections.abc import AsyncGenerator
 from http import HTTPStatus
-from typing import Literal, cast
+from typing import Any, Callable, Literal, Optional, cast
 
 import anyio
 from anyio import BrokenResourceError, create_task_group
@@ -16,6 +18,7 @@ from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType
 from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from loguru import logger
+from pydantic import BaseModel
 
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
@@ -59,8 +62,8 @@ from exo.shared.types.api import (
 )
 from exo.shared.types.chunks import ImageChunk, InputImageChunk, TokenChunk
 from exo.shared.types.commands import (
+    BaseCommand,
     ChatCompletion,
-    Command,
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
@@ -72,15 +75,20 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
 from exo.shared.types.events import (
+    BaseEvent,
     ChunkGenerated,
-    Event,
     ForwarderEvent,
     IndexedEvent,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletionTaskParams
-from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
+from exo.shared.types.worker.instances import (
+    BaseInstance,
+    Instance,
+    InstanceId,
+    InstanceMeta,
+)
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
@@ -90,6 +98,22 @@ from exo.utils.event_buffer import OrderedBuffer
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
     return f"image/{image_format or 'png'}"
+
+
+class ExecuteRequest(BaseModel):
+    """Request to execute a command."""
+
+    command: list[str]
+    cwd: Optional[str] = None
+    env: Optional[dict[str, str]] = None
+
+
+class ExecuteResponse(BaseModel):
+    """Response from command execution."""
+
+    exit_code: int
+    stdout: str
+    stderr: str
 
 
 def chunk_to_response(
@@ -135,11 +159,11 @@ class API:
         election_receiver: Receiver[ElectionMessage],
     ) -> None:
         self.state = State()
-        self._event_log: list[Event] = []
+        self._event_log: list[BaseEvent] = []
         self.command_sender = command_sender
         self.global_event_receiver = global_event_receiver
         self.election_receiver = election_receiver
-        self.event_buffer: OrderedBuffer[Event] = OrderedBuffer[Event]()
+        self.event_buffer: OrderedBuffer[BaseEvent] = OrderedBuffer[BaseEvent]()
         self.node_id: NodeId = node_id
         self.session_id: SessionId = session_id
         self.last_completed_election: int = 0
@@ -171,7 +195,7 @@ class API:
         logger.info("Resetting API State")
         self.state = State()
         self.session_id = new_session_id
-        self.event_buffer = OrderedBuffer[Event]()
+        self.event_buffer = OrderedBuffer[BaseEvent]()
         self._chat_completion_queues = {}
         self._image_generation_queues = {}
         self.unpause(result_clock)
@@ -231,6 +255,115 @@ class API:
         self.app.get("/images/{image_id}")(self.get_image)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
+        self.app.post("/execute")(self.execute)
+
+        # Register plugin routes
+        self._setup_plugin_routes()
+
+    def _setup_plugin_routes(self) -> None:
+        """Register API routes from all plugins."""
+        from exo.plugins.registry import PluginRegistry
+
+        registry = PluginRegistry.get()
+
+        for plugin in registry.all_plugins():
+            for method, path, handler in plugin.get_api_routes():
+                # Create a wrapper that injects PluginContext
+                # We need to capture handler in closure properly
+                self._register_plugin_route(method, path, handler)
+
+    def _register_plugin_route(
+        self,
+        method: str,
+        path: str,
+        handler: Callable[..., Any],
+    ) -> None:
+        """Register a single plugin route with proper closure."""
+        import functools
+        import inspect
+
+        from exo.plugins.context import PluginContext
+
+        # Get the original handler's signature (excluding ctx)
+        sig = inspect.signature(handler)
+        params = [p for p in sig.parameters.values() if p.name != "ctx"]
+        new_sig = sig.replace(parameters=params)
+
+        @functools.wraps(handler)
+        async def route_wrapper(**kwargs: Any) -> Any:  # pyright: ignore[reportAny]
+            ctx = PluginContext(
+                state=self.state,
+                send_command=self._send,
+                node_id=self.node_id,
+            )
+            return await handler(ctx, **kwargs)  # pyright: ignore[reportAny]
+
+        # Override the signature for FastAPI
+        route_wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
+
+        # Register the route
+        if method == "get":
+            self.app.get(path)(route_wrapper)
+        elif method == "post":
+            self.app.post(path)(route_wrapper)
+        elif method == "delete":
+            self.app.delete(path)(route_wrapper)
+        elif method == "put":
+            self.app.put(path)(route_wrapper)
+
+        logger.info(f"Registered plugin route: {method.upper()} {path}")
+
+    async def execute(self, request: ExecuteRequest) -> ExecuteResponse:
+        """Execute a command locally. Used by exo-rsh for MPI remote execution."""
+        cmd_str = " ".join(request.command)
+        logger.info(f"Executing: {cmd_str}")
+
+        try:
+            # Build environment
+            env = os.environ.copy()
+            if request.env:
+                env.update(request.env)
+
+            # Check if command contains shell metacharacters
+            # If so, run through shell. mpirun sends complex commands like:
+            # "VAR=value;export VAR;/path/to/prted --args"
+            needs_shell = any(c in cmd_str for c in ";|&$`")
+
+            if needs_shell:
+                process = await asyncio.create_subprocess_shell(
+                    cmd_str,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=request.cwd,
+                    env=env,
+                )
+            else:
+                process = await asyncio.create_subprocess_exec(
+                    *request.command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=request.cwd,
+                    env=env,
+                )
+
+            stdout, stderr = await process.communicate()
+            exit_code = process.returncode or 0
+
+            logger.info(f"Command completed with exit code {exit_code}")
+
+            return ExecuteResponse(
+                exit_code=exit_code,
+                stdout=stdout.decode("utf-8", errors="replace"),
+                stderr=stderr.decode("utf-8", errors="replace"),
+            )
+
+        except FileNotFoundError:
+            logger.error(f"Command not found: {request.command[0]}")
+            return ExecuteResponse(
+                exit_code=127,
+                stdout="",
+                stderr=f"Command not found: {request.command[0]}",
+            )
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -278,7 +411,7 @@ class API:
         sharding: Sharding = Sharding.Pipeline,
         instance_meta: InstanceMeta = InstanceMeta.MlxRing,
         min_nodes: int = 1,
-    ) -> Instance:
+    ) -> BaseInstance:
         model_card = await resolve_model_card(model_id)
 
         try:
@@ -409,7 +542,7 @@ class API:
                             model_id=model_card.model_id,
                             sharding=sharding,
                             instance_meta=instance_meta,
-                            instance=instance,
+                            instance=cast(Instance, instance),
                             memory_delta_by_node=memory_delta_by_node or None,
                             error=None,
                         )
@@ -418,7 +551,7 @@ class API:
 
         return PlacementPreviewResponse(previews=previews)
 
-    def get_instance(self, instance_id: InstanceId) -> Instance:
+    def get_instance(self, instance_id: InstanceId) -> BaseInstance:
         if instance_id not in self.state.instances:
             raise HTTPException(status_code=404, detail="Instance not found")
         return self.state.instances[instance_id]
@@ -1185,7 +1318,7 @@ class API:
             if removed > 0:
                 logger.debug(f"Cleaned up {removed} expired images")
 
-    async def _send(self, command: Command):
+    async def _send(self, command: BaseCommand):
         while self.paused:
             await self.paused_ev.wait()
         await self.command_sender.send(

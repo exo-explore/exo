@@ -4,7 +4,10 @@ import loguru
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
 from exo.shared.types.tasks import Task
-from exo.shared.types.worker.instances import BoundInstance, MlxJacclInstance
+from exo.shared.types.worker.instances import (
+    BoundInstance,
+    MlxJacclInstance,
+)
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 
@@ -17,6 +20,7 @@ def entrypoint(
     task_receiver: MpReceiver[Task],
     _logger: "loguru.Logger",
 ) -> None:
+    # Set FAST_SYNCH based on env var or JACCL device count
     fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
     if fast_synch_override == "on" or (
         fast_synch_override != "off"
@@ -34,11 +38,26 @@ def entrypoint(
 
     logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
 
-    # Import main after setting global logger - this lets us just import logger from this module
+    # Route based on instance type (plugins or default MLX)
     try:
-        from exo.worker.runner.runner import main
+        from exo.plugins.registry import PluginRegistry, discover_plugins
 
-        main(bound_instance, event_sender, task_receiver)
+        # Discover plugins in subprocess (they aren't inherited from main process)
+        discover_plugins()
+
+        registry = PluginRegistry.get()
+        instance = bound_instance.instance
+
+        # Check if a plugin handles this instance type
+        plugin = registry.get_plugin_for_instance(instance)
+        if plugin is not None:
+            # Delegate to plugin runner
+            plugin.create_runner(bound_instance, event_sender, task_receiver)
+        else:
+            # MLX runner (default)
+            from exo.worker.runner.runner import main
+
+            main(bound_instance, event_sender, task_receiver)
     except ClosedResourceError:
         logger.warning("Runner communication closed unexpectedly")
     except Exception as e:

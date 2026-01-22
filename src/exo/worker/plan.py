@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.tasks import (
+    BaseTask,
     ChatCompletion,
     ConnectToGroup,
     CreateRunner,
@@ -14,7 +15,6 @@ from exo.shared.types.tasks import (
     LoadModel,
     Shutdown,
     StartWarmup,
-    Task,
     TaskId,
     TaskStatus,
 )
@@ -23,7 +23,11 @@ from exo.shared.types.worker.downloads import (
     DownloadOngoing,
     DownloadProgress,
 )
-from exo.shared.types.worker.instances import BoundInstance, Instance, InstanceId
+from exo.shared.types.worker.instances import (
+    BaseInstance,
+    BoundInstance,
+    InstanceId,
+)
 from exo.shared.types.worker.runners import (
     RunnerConnected,
     RunnerConnecting,
@@ -48,12 +52,22 @@ def plan(
     download_status: Mapping[ModelId, DownloadProgress],
     # gdls is not expected to be fresh
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
-    instances: Mapping[InstanceId, Instance],
+    instances: Mapping[InstanceId, BaseInstance],
     all_runners: Mapping[RunnerId, RunnerStatus],  # all global
-    tasks: Mapping[TaskId, Task],
+    tasks: Mapping[TaskId, BaseTask],
     input_chunk_buffer: Mapping[CommandId, dict[int, str]] | None = None,
     input_chunk_counts: Mapping[CommandId, int] | None = None,
-) -> Task | None:
+) -> BaseTask | None:
+    from exo.plugins.registry import PluginRegistry
+
+    registry = PluginRegistry.get()
+
+    # Check plugin tasks first
+    for plugin in registry.all_plugins():
+        task = plugin.plan_task(runners, instances)
+        if task is not None:
+            return task
+
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
         _kill_runner(runners, all_runners, instances)
@@ -69,7 +83,7 @@ def plan(
 def _kill_runner(
     runners: Mapping[RunnerId, RunnerSupervisor],
     all_runners: Mapping[RunnerId, RunnerStatus],
-    instances: Mapping[InstanceId, Instance],
+    instances: Mapping[InstanceId, BaseInstance],
 ) -> Shutdown | None:
     for runner in runners.values():
         runner_id = runner.bound_instance.bound_runner_id
@@ -92,7 +106,7 @@ def _kill_runner(
 def _create_runner(
     node_id: NodeId,
     runners: Mapping[RunnerId, RunnerSupervisor],
-    instances: Mapping[InstanceId, Instance],
+    instances: Mapping[InstanceId, BaseInstance],
 ) -> CreateRunner | None:
     for instance in instances.values():
         runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)
@@ -117,7 +131,18 @@ def _model_needs_download(
     runners: Mapping[RunnerId, RunnerSupervisor],
     download_status: Mapping[ModelId, DownloadProgress],
 ) -> DownloadModel | None:
+    from exo.plugins.registry import PluginRegistry
+
+    registry = PluginRegistry.get()
+
     for runner in runners.values():
+        instance = runner.bound_instance.instance
+
+        # Check if any plugin wants to skip download for this instance
+        plugin = registry.get_plugin_for_instance(instance)
+        if plugin is not None and plugin.should_skip_download(instance):
+            continue
+
         model_id = runner.bound_instance.bound_shard.model_card.model_id
         if isinstance(runner.status, RunnerIdle) and (
             model_id not in download_status
@@ -264,10 +289,10 @@ def _ready_to_warmup(
 
 def _pending_tasks(
     runners: Mapping[RunnerId, RunnerSupervisor],
-    tasks: Mapping[TaskId, Task],
+    tasks: Mapping[TaskId, BaseTask],
     all_runners: Mapping[RunnerId, RunnerStatus],
     input_chunk_buffer: Mapping[CommandId, dict[int, str]] | None = None,
-) -> Task | None:
+) -> BaseTask | None:
     for task in tasks.values():
         # for now, just forward chat completions
         # TODO(ciaran): do this better!

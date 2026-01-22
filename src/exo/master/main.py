@@ -10,6 +10,7 @@ from exo.master.placement import (
     get_transition_events,
     place_instance,
 )
+from exo.plugins.registry import PluginRegistry
 from exo.shared.apply import apply
 from exo.shared.types.commands import (
     ChatCompletion,
@@ -26,6 +27,7 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
 from exo.shared.types.events import (
+    BaseEvent,
     Event,
     ForwarderEvent,
     IndexedEvent,
@@ -83,9 +85,9 @@ class Master:
         self._loopback_event_sender: Sender[ForwarderEvent] = (
             local_event_receiver.clone_sender()
         )
-        self._multi_buffer = MultiSourceBuffer[NodeId, Event]()
+        self._multi_buffer = MultiSourceBuffer[NodeId, BaseEvent]()
         # TODO: not have this
-        self._event_log: list[Event] = []
+        self._event_log: list[BaseEvent] = []
 
     async def run(self):
         logger.info("Starting Master")
@@ -296,6 +298,17 @@ class Master:
                                 await self._send_event(
                                     IndexedEvent(idx=i, event=self._event_log[i])
                                 )
+                        case _:
+                            # Check if a plugin handles this command
+                            registry = PluginRegistry.get()
+                            plugin = registry.get_plugin_for_command(command)
+                            if plugin is not None:
+                                events = plugin.process_command(
+                                    command,
+                                    self.state.topology,
+                                    self.state.instances,
+                                )
+                                generated_events.extend(events)
                     for event in generated_events:
                         await self.event_sender.send(event)
                 except ValueError as e:
