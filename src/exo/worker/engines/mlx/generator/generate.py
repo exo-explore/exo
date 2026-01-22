@@ -118,12 +118,11 @@ def extract_top_logprobs(
     logprobs_array: mx.array,
     selected_token: int,
     tokenizer: TokenizerWrapper,
-    top_k: int,
+    top_k: int | None,
 ) -> tuple[float, list[TopLogprobItem]]:
     """Extract the selected token's logprob and top-k alternatives.
 
-    Returns:
-        Tuple of (selected_token_logprob, list of TopLogprobItem)
+    top k an be set to None to return all the logprobs
     """
     selected_logprob = float(logprobs_array[selected_token].item())
 
@@ -131,17 +130,21 @@ def extract_top_logprobs(
         return selected_logprob, []
 
     vocab_size = logprobs_array.shape[0]
-    k = min(top_k, vocab_size)
-    top_indices = mx.argpartition(-logprobs_array, kth=k - 1)[:k]
 
-    top_logprobs_values = logprobs_array[top_indices]
-    sorted_order = mx.argsort(-top_logprobs_values)
-    top_indices = top_indices[sorted_order]
-
-    mx.eval(top_indices)
+    if top_k is None:
+        sorted_indices = mx.argsort(-logprobs_array)
+        mx.eval(sorted_indices)
+        indices_list: list[int] = cast(list[int], sorted_indices.tolist())
+    else:
+        k = min(top_k, vocab_size)
+        top_indices = mx.argpartition(-logprobs_array, kth=k - 1)[:k]
+        top_logprobs_values = logprobs_array[top_indices]
+        sorted_order = mx.argsort(-top_logprobs_values)
+        top_indices = top_indices[sorted_order]
+        mx.eval(top_indices)
+        indices_list = cast(list[int], top_indices.tolist())
 
     top_logprob_items: list[TopLogprobItem] = []
-    indices_list: list[int] = cast(list[int], top_indices.tolist())
     for token_id in indices_list:
         logprob_value = float(logprobs_array[token_id].item())
         token_str = tokenizer.decode([token_id])
