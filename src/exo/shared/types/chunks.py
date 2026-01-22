@@ -2,8 +2,8 @@ from collections.abc import Generator
 from enum import Enum
 from typing import Any, Literal
 
-from exo.shared.models.model_cards import ModelId
-from exo.shared.types.api import GenerationStats, ImageGenerationStats
+from exo.shared.types.api import GenerationStats, ImageGenerationStats, TopLogprobItem
+from exo.shared.types.common import ModelId
 from exo.utils.pydantic_ext import TaggedModel
 
 from .api import FinishReason
@@ -23,6 +23,8 @@ class BaseChunk(TaggedModel):
 class TokenChunk(BaseChunk):
     text: str
     token_id: int
+    logprob: float | None = None  # Log probability of the selected token
+    top_logprobs: list[TopLogprobItem] | None = None  # Top-k alternative tokens
     finish_reason: FinishReason | None = None
     stats: GenerationStats | None = None
     error_message: str | None = None

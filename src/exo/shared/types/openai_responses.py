@@ -58,6 +58,8 @@ class ResponsesRequest(BaseModel):
     tools: list[dict[str, Any]] | None = None
     # previous_response_id not supported in MVP
     metadata: dict[str, str] | None = None
+    # When True, continue the last assistant message without EOS tokens
+    continue_from_prefix: bool = False
 
 
 # Response types

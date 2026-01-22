@@ -10,6 +10,7 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 from exo.shared.types.api import (
     FinishReason,
     GenerationStats,
+    TopLogprobItem,
 )
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
@@ -109,6 +110,60 @@ def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
     return eos
 
 
+def extract_top_logprobs(
+    logprobs: mx.array,
+    tokenizer: TokenizerWrapper,
+    top_k: int,
+    selected_token: int,
+) -> tuple[float, list[TopLogprobItem]]:
+    """Extract the selected token's logprob and top-k alternative tokens.
+
+    Args:
+        logprobs: Full vocabulary logprobs array from MLX
+        tokenizer: Tokenizer for decoding token IDs to strings
+        top_k: Number of top alternatives to return
+        selected_token: The token ID that was actually sampled
+
+    Returns:
+        Tuple of (selected_token_logprob, list of TopLogprobItem for top-k tokens)
+    """
+    # Get the logprob of the selected token
+    selected_logprob = float(logprobs[selected_token].item())
+
+    # Get top-k indices (most probable tokens)
+    # mx.argpartition gives indices that would partition the array
+    # We negate logprobs since argpartition finds smallest, and we want largest
+    top_k = min(top_k, logprobs.shape[0])  # Don't exceed vocab size
+    top_indices = mx.argpartition(-logprobs, top_k)[:top_k]
+
+    # Get the actual logprob values for these indices
+    top_values = logprobs[top_indices]
+
+    # Sort by logprob (descending) for consistent ordering
+    sort_order = mx.argsort(-top_values)
+    top_indices = top_indices[sort_order]
+    top_values = top_values[sort_order]
+
+    # Convert to list of TopLogprobItem
+    top_logprob_items: list[TopLogprobItem] = []
+    for i in range(top_k):
+        token_id = int(top_indices[i].item())
+        token_logprob = float(top_values[i].item())
+        # Decode token ID to string
+        token_str = tokenizer.decode([token_id])
+        # Get byte representation
+        token_bytes = list(token_str.encode("utf-8"))
+        top_logprob_items.append(
+            TopLogprobItem(
+                token=token_str,
+                logprob=token_logprob,
+                bytes=token_bytes,
+            )
+        )
+
+    return selected_logprob, top_logprob_items
+
+
 def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
@@ -155,7 +210,6 @@ def mlx_generate(
         sampler=sampler,
         logits_processors=logits_processors,
         prompt_cache=caches,
-        # TODO: Dynamically change prefill step size to be the maximum possible without timing out.
         prefill_step_size=2048,
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
@@ -197,9 +251,19 @@ def mlx_generate(
                     f"Model generated unexpected finish_reason: {out.finish_reason}"
                 )
 
+        # Extract logprobs from the full vocabulary logprobs array
+        logprob, top_logprobs = extract_top_logprobs(
+            logprobs=out.logprobs,
+            tokenizer=tokenizer,
+            top_k=5,
+            selected_token=out.token,
+        )
+
         yield GenerationResponse(
             text=text,
             token=out.token,
+            logprob=logprob,
+            top_logprobs=top_logprobs,
             finish_reason=finish_reason,
             stats=stats,
         )
