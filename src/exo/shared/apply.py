@@ -30,6 +30,7 @@ from exo.shared.types.profiling import (
     NodeIdentity,
     NodeNetworkInfo,
     NodeThunderboltInfo,
+    ThunderboltBridgeStatus,
 )
 from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
@@ -46,6 +47,7 @@ from exo.utils.info_gatherer.info_gatherer import (
     NodeConfig,
     NodeNetworkInterfaces,
     StaticNodeInformation,
+    ThunderboltBridgeInfo,
 )
 
 
@@ -225,6 +227,21 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
         for key, value in state.node_thunderbolt.items()
         if key != event.node_id
     }
+    node_thunderbolt_bridge = {
+        key: value
+        for key, value in state.node_thunderbolt_bridge.items()
+        if key != event.node_id
+    }
+    # Only recompute cycles if the leaving node had TB bridge enabled
+    leaving_node_status = state.node_thunderbolt_bridge.get(event.node_id)
+    leaving_node_had_tb_enabled = (
+        leaving_node_status is not None and leaving_node_status.enabled
+    )
+    thunderbolt_bridge_cycles = (
+        topology.get_thunderbolt_bridge_cycles(node_thunderbolt_bridge, node_network)
+        if leaving_node_had_tb_enabled
+        else [list(cycle) for cycle in state.thunderbolt_bridge_cycles]
+    )
     return state.model_copy(
         update={
             "downloads": downloads,
@@ -235,6 +252,8 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
             "node_system": node_system,
             "node_network": node_network,
             "node_thunderbolt": node_thunderbolt,
+            "node_thunderbolt_bridge": node_thunderbolt_bridge,
+            "thunderbolt_bridge_cycles": thunderbolt_bridge_cycles,
         }
     )
 
@@ -312,6 +331,22 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 if tb_conn.sink_uuid in conn_map
             ]
             topology.replace_all_out_rdma_connections(event.node_id, as_rdma_conns)
+        case ThunderboltBridgeInfo():
+            new_tb_bridge: dict[NodeId, ThunderboltBridgeStatus] = {
+                **state.node_thunderbolt_bridge,
+                event.node_id: info.status,
+            }
+            update["node_thunderbolt_bridge"] = new_tb_bridge
+            # Only recompute cycles if the enabled status changed
+            old_status = state.node_thunderbolt_bridge.get(event.node_id)
+            old_enabled = old_status.enabled if old_status else False
+            new_enabled = info.status.enabled
+            if old_enabled != new_enabled:
+                update["thunderbolt_bridge_cycles"] = (
+                    topology.get_thunderbolt_bridge_cycles(
+                        new_tb_bridge, state.node_network
+                    )
+                )
 
     return state.model_copy(update=update)
 

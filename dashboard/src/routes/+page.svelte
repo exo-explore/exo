@@ -28,6 +28,8 @@
     toggleTopologyOnlyMode,
     chatSidebarVisible,
     toggleChatSidebarVisible,
+    thunderboltBridgeCycles,
+    nodeThunderboltBridge,
     type DownloadProgress,
     type PlacementPreview,
   } from "$lib/stores/app.svelte";
@@ -49,6 +51,40 @@
   const debugEnabled = $derived(debugMode());
   const topologyOnlyEnabled = $derived(topologyOnlyMode());
   const sidebarVisible = $derived(chatSidebarVisible());
+  const tbBridgeCycles = $derived(thunderboltBridgeCycles());
+  const tbBridgeData = $derived(nodeThunderboltBridge());
+
+  // Helper to get friendly node name from node ID
+  function getNodeName(nodeId: string): string {
+    const node = data?.nodes?.[nodeId];
+    return node?.friendly_name || nodeId.slice(0, 8) + "...";
+  }
+
+  // Helper to get the thunderbolt bridge service name from a cycle
+  function getTbBridgeServiceName(cycle: string[]): string {
+    // Try to find service name from any node in the cycle
+    for (const nodeId of cycle) {
+      const nodeData = tbBridgeData?.[nodeId];
+      if (nodeData?.serviceName) {
+        return nodeData.serviceName;
+      }
+    }
+    return "Thunderbolt Bridge"; // Fallback if no service name found
+  }
+
+  // Copy to clipboard state and function
+  let copiedCommand = $state(false);
+  async function copyToClipboard(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      copiedCommand = true;
+      setTimeout(() => {
+        copiedCommand = false;
+      }, 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  }
 
   let mounted = $state(false);
 
@@ -1615,6 +1651,83 @@
             class="w-full h-full"
             highlightedNodes={highlightedNodes()}
           />
+
+          <!-- Thunderbolt Bridge Cycle Warning -->
+          {#if tbBridgeCycles.length > 0}
+            {@const cycle = tbBridgeCycles[0]}
+            {@const serviceName = getTbBridgeServiceName(cycle)}
+            {@const disableCmd = `sudo networksetup -setnetworkserviceenabled "${serviceName}" off`}
+            <div class="absolute top-4 left-4 group" role="alert">
+              <div
+                class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
+              >
+                <svg
+                  class="w-5 h-5 text-yellow-400 flex-shrink-0"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  />
+                </svg>
+                <span class="text-sm font-mono text-yellow-200">
+                  THUNDERBOLT BRIDGE CYCLE DETECTED
+                </span>
+              </div>
+
+              <!-- Tooltip on hover -->
+              <div
+                class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+              >
+                <p class="text-xs text-white/80 mb-2">
+                  A network routing cycle was detected between nodes connected
+                  via Thunderbolt Bridge. This can cause connectivity issues.
+                </p>
+                <p class="text-xs text-white/60 mb-2">
+                  <span class="text-yellow-300">Affected nodes:</span>
+                  {cycle.map(getNodeName).join(" → ")}
+                </p>
+                <p class="text-xs text-white/60 mb-1">
+                  <span class="text-yellow-300">To fix:</span> Disable the Thunderbolt
+                  Bridge on one of the affected nodes:
+                </p>
+                <button
+                  type="button"
+                  onclick={() => copyToClipboard(disableCmd)}
+                  class="w-full flex items-center gap-2 text-[10px] font-mono bg-exo-black/60 px-2 py-1.5 rounded text-exo-yellow break-all text-left hover:bg-exo-black/80 transition-colors cursor-pointer group/copy"
+                  title="Click to copy"
+                >
+                  <span class="flex-1">{disableCmd}</span>
+                  <svg
+                    class="w-3.5 h-3.5 flex-shrink-0 text-white/40 group-hover/copy:text-exo-yellow transition-colors"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    {#if copiedCommand}
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M5 13l4 4L19 7"
+                      />
+                    {:else}
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                      />
+                    {/if}
+                  </svg>
+                </button>
+              </div>
+            </div>
+          {/if}
+
           <!-- Exit topology-only mode button -->
           <button
             type="button"
@@ -1655,6 +1768,82 @@
               class="w-full h-full"
               highlightedNodes={highlightedNodes()}
             />
+
+            <!-- Thunderbolt Bridge Cycle Warning -->
+            {#if tbBridgeCycles.length > 0}
+              {@const cycle = tbBridgeCycles[0]}
+              {@const serviceName = getTbBridgeServiceName(cycle)}
+              {@const disableCmd = `sudo networksetup -setnetworkserviceenabled "${serviceName}" off`}
+              <div class="absolute top-4 left-4 group" role="alert">
+                <div
+                  class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
+                >
+                  <svg
+                    class="w-5 h-5 text-yellow-400 flex-shrink-0"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    />
+                  </svg>
+                  <span class="text-sm font-mono text-yellow-200">
+                    THUNDERBOLT BRIDGE CYCLE DETECTED
+                  </span>
+                </div>
+
+                <!-- Tooltip on hover -->
+                <div
+                  class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+                >
+                  <p class="text-xs text-white/80 mb-2">
+                    A network routing cycle was detected between nodes connected
+                    via Thunderbolt Bridge. This can cause connectivity issues.
+                  </p>
+                  <p class="text-xs text-white/60 mb-2">
+                    <span class="text-yellow-300">Affected nodes:</span>
+                    {cycle.map(getNodeName).join(" → ")}
+                  </p>
+                  <p class="text-xs text-white/60 mb-1">
+                    <span class="text-yellow-300">To fix:</span> Disable the Thunderbolt
+                    Bridge on one of the affected nodes:
+                  </p>
+                  <button
+                    type="button"
+                    onclick={() => copyToClipboard(disableCmd)}
+                    class="w-full flex items-center gap-2 text-[10px] font-mono bg-exo-black/60 px-2 py-1.5 rounded text-exo-yellow break-all text-left hover:bg-exo-black/80 transition-colors cursor-pointer group/copy"
+                    title="Click to copy"
+                  >
+                    <span class="flex-1">{disableCmd}</span>
+                    <svg
+                      class="w-3.5 h-3.5 flex-shrink-0 text-white/40 group-hover/copy:text-exo-yellow transition-colors"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      {#if copiedCommand}
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="M5 13l4 4L19 7"
+                        />
+                      {:else}
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                        />
+                      {/if}
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            {/if}
           </div>
 
           <!-- Chat Input - Below topology -->
@@ -2602,6 +2791,31 @@
                 class="relative aspect-square bg-exo-dark-gray rounded-lg overflow-hidden"
               >
                 <TopologyGraph highlightedNodes={highlightedNodes()} />
+
+                <!-- Thunderbolt Bridge Cycle Warning (compact) -->
+                {#if tbBridgeCycles.length > 0}
+                  <div
+                    class="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm"
+                    title="Thunderbolt Bridge cycle detected - click to view details"
+                  >
+                    <svg
+                      class="w-3.5 h-3.5 text-yellow-400"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                      />
+                    </svg>
+                    <span class="text-[10px] font-mono text-yellow-200"
+                      >TB CYCLE</span
+                    >
+                  </div>
+                {/if}
               </div>
             </button>
 

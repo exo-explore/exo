@@ -13,6 +13,7 @@ from exo.shared.types.profiling import (
     NodeNetworkInfo,
     NodeThunderboltInfo,
     SystemPerformanceProfile,
+    ThunderboltBridgeStatus,
 )
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.downloads import DownloadProgress
@@ -51,6 +52,10 @@ class State(CamelCaseModel):
     node_system: Mapping[NodeId, SystemPerformanceProfile] = {}
     node_network: Mapping[NodeId, NodeNetworkInfo] = {}
     node_thunderbolt: Mapping[NodeId, NodeThunderboltInfo] = {}
+    node_thunderbolt_bridge: Mapping[NodeId, ThunderboltBridgeStatus] = {}
+
+    # Detected cycles where all nodes have Thunderbolt bridge enabled (>2 nodes)
+    thunderbolt_bridge_cycles: Sequence[Sequence[NodeId]] = []
 
     @field_serializer("topology", mode="plain")
     def _encode_topology(self, value: Topology) -> TopologySnapshot:

@@ -5,17 +5,43 @@ import Foundation
 struct ClusterState: Decodable {
     let instances: [String: ClusterInstance]
     let runners: [String: RunnerStatusSummary]
-    let nodeProfiles: [String: NodeProfile]
     let tasks: [String: ClusterTask]
     let topology: Topology?
     let downloads: [String: [NodeDownloadStatus]]
+    let thunderboltBridgeCycles: [[String]]
+
+    // Granular node state (split from the old nodeProfiles)
+    let nodeIdentities: [String: NodeIdentity]
+    let nodeMemory: [String: MemoryInfo]
+    let nodeSystem: [String: SystemInfo]
+    let nodeThunderboltBridge: [String: ThunderboltBridgeStatus]
+
+    /// Computed property for backwards compatibility - merges granular state into NodeProfile
+    var nodeProfiles: [String: NodeProfile] {
+        var profiles: [String: NodeProfile] = [:]
+        let allNodeIds = Set(nodeIdentities.keys)
+            .union(nodeMemory.keys)
+            .union(nodeSystem.keys)
+        for nodeId in allNodeIds {
+            let identity = nodeIdentities[nodeId]
+            let memory = nodeMemory[nodeId]
+            let system = nodeSystem[nodeId]
+            profiles[nodeId] = NodeProfile(
+                modelId: identity?.modelId,
+                chipId: identity?.chipId,
+                friendlyName: identity?.friendlyName,
+                memory: memory,
+                system: system
+            )
+        }
+        return profiles
+    }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let rawInstances = try container.decode([String: TaggedInstance].self, forKey: .instances)
         self.instances = rawInstances.mapValues(\.instance)
         self.runners = try container.decode([String: RunnerStatusSummary].self, forKey: .runners)
-        self.nodeProfiles = try container.decode([String: NodeProfile].self, forKey: .nodeProfiles)
         let rawTasks =
             try container.decodeIfPresent([String: TaggedTask].self, forKey: .tasks) ?? [:]
         self.tasks = rawTasks.compactMapValues(\.task)
@@ -24,15 +50,34 @@ struct ClusterState: Decodable {
             try container.decodeIfPresent([String: [TaggedNodeDownload]].self, forKey: .downloads)
             ?? [:]
         self.downloads = rawDownloads.mapValues { $0.compactMap(\.status) }
+        self.thunderboltBridgeCycles =
+            try container.decodeIfPresent([[String]].self, forKey: .thunderboltBridgeCycles) ?? []
+
+        // Granular node state
+        self.nodeIdentities =
+            try container.decodeIfPresent([String: NodeIdentity].self, forKey: .nodeIdentities)
+            ?? [:]
+        self.nodeMemory =
+            try container.decodeIfPresent([String: MemoryInfo].self, forKey: .nodeMemory) ?? [:]
+        self.nodeSystem =
+            try container.decodeIfPresent([String: SystemInfo].self, forKey: .nodeSystem) ?? [:]
+        self.nodeThunderboltBridge =
+            try container.decodeIfPresent(
+                [String: ThunderboltBridgeStatus].self, forKey: .nodeThunderboltBridge
+            ) ?? [:]
     }
 
     private enum CodingKeys: String, CodingKey {
         case instances
         case runners
-        case nodeProfiles
         case topology
         case tasks
         case downloads
+        case thunderboltBridgeCycles
+        case nodeIdentities
+        case nodeMemory
+        case nodeSystem
+        case nodeThunderboltBridge
     }
 }
 
@@ -102,6 +147,18 @@ struct NodeProfile: Decodable {
     let system: SystemInfo?
 }
 
+struct NodeIdentity: Decodable {
+    let modelId: String?
+    let chipId: String?
+    let friendlyName: String?
+}
+
+struct ThunderboltBridgeStatus: Decodable {
+    let enabled: Bool
+    let exists: Bool
+    let serviceName: String?
+}
+
 struct MemoryInfo: Decodable {
     let ramTotal: MemoryValue?
     let ramAvailable: MemoryValue?
@@ -120,16 +177,51 @@ struct SystemInfo: Decodable {
 }
 
 struct Topology: Decodable {
-    let nodes: [TopologyNode]
-    let connections: [TopologyConnection]?
+    /// Node IDs in the topology
+    let nodes: [String]
+    /// Flattened list of connections (source -> sink pairs)
+    let connections: [TopologyConnection]
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.nodes = try container.decodeIfPresent([String].self, forKey: .nodes) ?? []
+
+        // Connections come as nested map: { source: { sink: [edges] } }
+        // We flatten to array of (source, sink) pairs
+        var flatConnections: [TopologyConnection] = []
+        if let nested = try container.decodeIfPresent(
+            [String: [String: [AnyCodable]]].self, forKey: .connections
+        ) {
+            for (source, sinks) in nested {
+                for sink in sinks.keys {
+                    flatConnections.append(
+                        TopologyConnection(localNodeId: source, sendBackNodeId: sink))
+                }
+            }
+        }
+        self.connections = flatConnections
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case nodes
+        case connections
+    }
 }
 
-struct TopologyNode: Decodable {
-    let nodeId: String
-    let nodeProfile: NodeProfile
+/// Placeholder for decoding arbitrary JSON values we don't need to inspect
+private struct AnyCodable: Decodable {
+    init(from decoder: Decoder) throws {
+        // Just consume the value without storing it
+        _ = try? decoder.singleValueContainer().decode(Bool.self)
+        _ = try? decoder.singleValueContainer().decode(Int.self)
+        _ = try? decoder.singleValueContainer().decode(Double.self)
+        _ = try? decoder.singleValueContainer().decode(String.self)
+        _ = try? decoder.singleValueContainer().decode([AnyCodable].self)
+        _ = try? decoder.singleValueContainer().decode([String: AnyCodable].self)
+    }
 }
 
-struct TopologyConnection: Decodable {
+struct TopologyConnection {
     let localNodeId: String
     let sendBackNodeId: String
 }

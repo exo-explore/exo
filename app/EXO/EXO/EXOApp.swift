@@ -21,6 +21,7 @@ struct EXOApp: App {
     @StateObject private var networkStatusService: NetworkStatusService
     @StateObject private var localNetworkChecker: LocalNetworkChecker
     @StateObject private var updater: SparkleUpdater
+    @StateObject private var thunderboltBridgeService: ThunderboltBridgeService
     private let terminationObserver: TerminationObserver
     private let ciContext = CIContext(options: nil)
 
@@ -41,10 +42,13 @@ struct EXOApp: App {
         let localNetwork = LocalNetworkChecker()
         _localNetworkChecker = StateObject(wrappedValue: localNetwork)
         _updater = StateObject(wrappedValue: updater)
+        let thunderboltBridge = ThunderboltBridgeService(clusterStateService: service)
+        _thunderboltBridgeService = StateObject(wrappedValue: thunderboltBridge)
         enableLaunchAtLoginIfNeeded()
-        NetworkSetupHelper.ensureLaunchDaemonInstalled()
-        // Check local network access BEFORE launching exo
-        localNetwork.check()
+        // Remove old LaunchDaemon components if they exist (from previous versions)
+        cleanupLegacyNetworkSetup()
+        // Check local network access periodically (warning disappears when user grants permission)
+        localNetwork.startPeriodicChecking(interval: 10)
         controller.scheduleLaunch(after: 15)
         service.startPolling()
         networkStatus.startPolling()
@@ -58,6 +62,7 @@ struct EXOApp: App {
                 .environmentObject(networkStatusService)
                 .environmentObject(localNetworkChecker)
                 .environmentObject(updater)
+                .environmentObject(thunderboltBridgeService)
         } label: {
             menuBarIcon
         }
@@ -128,6 +133,37 @@ struct EXOApp: App {
         } catch {
             Logger().error(
                 "Failed to register EXO for launch at login: \(error.localizedDescription)")
+        }
+    }
+
+    private func cleanupLegacyNetworkSetup() {
+        guard NetworkSetupHelper.hasInstalledComponents() else { return }
+        // Dispatch async to ensure app is ready before showing alert
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = "EXO Network Configuration"
+            alert.informativeText =
+                "EXO needs to configure local network discovery on your device. This requires granting permission once."
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "Continue")
+            alert.addButton(withTitle: "Later")
+
+            let response = alert.runModal()
+            guard response == .alertFirstButtonReturn else {
+                Logger().info("User deferred legacy network setup cleanup")
+                return
+            }
+
+            do {
+                try NetworkSetupHelper.uninstall()
+                Logger().info("Cleaned up legacy network setup components")
+            } catch {
+                // Non-fatal: user may have cancelled admin prompt or cleanup may have
+                // partially succeeded. The app will continue normally.
+                Logger().warning(
+                    "Could not clean up legacy network setup (non-fatal): \(error.localizedDescription)"
+                )
+            }
         }
     }
 }

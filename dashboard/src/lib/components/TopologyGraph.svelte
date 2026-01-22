@@ -5,6 +5,7 @@
     topologyData,
     isTopologyMinimized,
     debugMode,
+    nodeThunderboltBridge,
     type NodeInfo,
   } from "$lib/stores/app.svelte";
 
@@ -21,6 +22,7 @@
   const isMinimized = $derived(isTopologyMinimized());
   const data = $derived(topologyData());
   const debugEnabled = $derived(debugMode());
+  const tbBridgeData = $derived(nodeThunderboltBridge());
 
   function getNodeLabel(nodeId: string): string {
     const node = data?.nodes?.[nodeId];
@@ -1063,6 +1065,31 @@
           .append("tspan")
           .attr("fill", "rgba(179,179,179,0.7)")
           .text(` (${ramUsagePercent.toFixed(0)}%)`);
+      }
+
+      // Debug mode: Show TB bridge status
+      if (debugEnabled) {
+        const tbStatus = tbBridgeData[nodeInfo.id];
+        if (tbStatus) {
+          const tbY =
+            nodeInfo.y +
+            iconBaseHeight / 2 +
+            (showFullLabels ? 32 : showCompactLabels ? 26 : 22);
+          const tbFontSize = showFullLabels ? 9 : 7;
+          const tbColor = tbStatus.enabled
+            ? "rgba(234,179,8,0.9)"
+            : "rgba(100,100,100,0.7)";
+          const tbText = tbStatus.enabled ? "TB:ON" : "TB:OFF";
+          nodeG
+            .append("text")
+            .attr("x", nodeInfo.x)
+            .attr("y", tbY)
+            .attr("text-anchor", "middle")
+            .attr("fill", tbColor)
+            .attr("font-size", tbFontSize)
+            .attr("font-family", "SF Mono, Monaco, monospace")
+            .text(tbText);
+        }
       }
     });
   }
