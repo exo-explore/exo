@@ -15,10 +15,10 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
 )
 
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE
-from exo.shared.models.model_cards import ModelId, ModelTask
-from exo.shared.types.api import ChatCompletionMessageText, ImageGenerationStats
+from exo.shared.models.model_cards import ModelTask
+from exo.shared.types.api import ImageGenerationStats
 from exo.shared.types.chunks import ImageChunk, TokenChunk
-from exo.shared.types.common import CommandId
+from exo.shared.types.common import CommandId, ModelId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -26,6 +26,7 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
+from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.tasks import (
     ChatCompletion,
     ConnectToGroup,
@@ -217,10 +218,9 @@ def main(
                     )
                     assert model and not isinstance(model, DistributedImageModel)
                     assert tokenizer
-                    assert task_params.messages[0].content is not None
 
                     try:
-                        _check_for_debug_prompts(task_params.messages[0].content)
+                        _check_for_debug_prompts(task_params)
 
                         # Build prompt once - used for both generation and thinking detection
                         prompt = apply_chat_template(tokenizer, task_params)
@@ -573,17 +573,23 @@ EXO_RUNNER_MUST_OOM = "EXO RUNNER MUST OOM"
 EXO_RUNNER_MUST_TIMEOUT = "EXO RUNNER MUST TIMEOUT"
 
 
-def _check_for_debug_prompts(
-    prompt: str | ChatCompletionMessageText | list[ChatCompletionMessageText],
-):
-    if isinstance(prompt, list):
-        if len(prompt) == 0:
-            logger.debug("Empty message prompt received in debug prompt")
-            return
-        prompt = prompt[0]
+def _check_for_debug_prompts(task_params: ResponsesRequest) -> None:
+    """Check for debug prompt triggers in the input.
 
-    if isinstance(prompt, ChatCompletionMessageText):
-        prompt = prompt.text
+    Extracts the first user input text and checks for debug triggers.
+    """
+    prompt: str
+    if isinstance(task_params.input, str):
+        prompt = task_params.input
+    else:
+        # List of InputMessage - get first message content
+        if len(task_params.input) == 0:
+            logger.debug("Empty message list in debug prompt check")
+            return
+        prompt = task_params.input[0].content
+
+    if not prompt:
+        return
 
     if EXO_RUNNER_MUST_FAIL in prompt:
         logger.info("raising exception")

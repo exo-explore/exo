@@ -7,15 +7,14 @@ from loguru import logger
 
 from exo.master.main import Master
 from exo.routing.router import get_node_id_keypair
-from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
-from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
+from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.commands import (
     ChatCompletion,
     CommandId,
     ForwarderCommand,
     PlaceInstance,
 )
-from exo.shared.types.common import NodeId, SessionId
+from exo.shared.types.common import ModelId, NodeId, SessionId
 from exo.shared.types.events import (
     ForwarderEvent,
     IndexedEvent,
@@ -24,6 +23,7 @@ from exo.shared.types.events import (
     TaskCreated,
 )
 from exo.shared.types.memory import Memory
+from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.profiling import (
     MemoryUsage,
 )
@@ -134,13 +134,9 @@ async def test_master():
                 command=(
                     ChatCompletion(
                         command_id=CommandId(),
-                        request_params=ChatCompletionTaskParams(
-                            model="llama-3.2-1b",
-                            messages=[
-                                ChatCompletionMessage(
-                                    role="user", content="Hello, how are you?"
-                                )
-                            ],
+                        request_params=ResponsesRequest(
+                            model=ModelId("llama-3.2-1b"),
+                            input="Hello, how are you?",
                         ),
                     )
                 ),
@@ -191,11 +187,9 @@ async def test_master():
         assert isinstance(events[2].event, TaskCreated)
         assert events[2].event.task.task_status == TaskStatus.Pending
         assert isinstance(events[2].event.task, ChatCompletionTask)
-        assert events[2].event.task.task_params == ChatCompletionTaskParams(
-            model="llama-3.2-1b",
-            messages=[
-                ChatCompletionMessage(role="user", content="Hello, how are you?")
-            ],
+        assert events[2].event.task.task_params == ResponsesRequest(
+            model=ModelId("llama-3.2-1b"),
+            input="Hello, how are you?",
         )
 
         await master.shutdown()
