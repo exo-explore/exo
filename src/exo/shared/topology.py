@@ -252,13 +252,17 @@ class Topology:
         2 or fewer nodes don't cause the broadcast storm problem.
         """
         enabled_nodes = {
-            node_id for node_id, status in node_tb_bridge_status.items() if status.enabled
+            node_id
+            for node_id, status in node_tb_bridge_status.items()
+            if status.enabled
         }
 
         if len(enabled_nodes) < 3:
             return []
 
-        thunderbolt_ips = _get_ips_with_interface_type(enabled_nodes, node_network, "thunderbolt")
+        thunderbolt_ips = _get_ips_with_interface_type(
+            enabled_nodes, node_network, "thunderbolt"
+        )
 
         # Build subgraph with only TB bridge enabled nodes and thunderbolt connections
         graph: rx.PyDiGraph[NodeId, SocketConnection | RDMAConnection] = rx.PyDiGraph()
@@ -273,7 +277,10 @@ class Topology:
             if source_id not in node_to_idx or sink_id not in node_to_idx:
                 continue
             # Include connection if it's over a thunderbolt interface
-            if isinstance(conn, SocketConnection) and conn.sink_multiaddr.ip_address in thunderbolt_ips:
+            if (
+                isinstance(conn, SocketConnection)
+                and conn.sink_multiaddr.ip_address in thunderbolt_ips
+            ):
                 graph.add_edge(node_to_idx[source_id], node_to_idx[sink_id], conn)
             if isinstance(conn, RDMAConnection):
                 graph.add_edge(node_to_idx[source_id], node_to_idx[sink_id], conn)

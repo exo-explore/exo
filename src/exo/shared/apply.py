@@ -343,7 +343,9 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             new_enabled = info.status.enabled
             if old_enabled != new_enabled:
                 update["thunderbolt_bridge_cycles"] = (
-                    topology.get_thunderbolt_bridge_cycles(new_tb_bridge, state.node_network)
+                    topology.get_thunderbolt_bridge_cycles(
+                        new_tb_bridge, state.node_network
+                    )
                 )
 
     return state.model_copy(update=update)
