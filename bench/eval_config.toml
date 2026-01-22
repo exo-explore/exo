@@ -1,0 +1,65 @@
+# exo-eval configuration file
+# See bench/exo_eval.py for usage
+
+[eval]
+# Eval framework type: "lm_eval" | "swe_bench" | "custom"
+type = "lm_eval"
+# Require HuggingFace token (default: true)
+# Set to false if using only public datasets
+require_hf_token = true
+
+# Instance/placement configuration
+# Controls how exo sets up the model instance before running evals
+[instance]
+# Placement strategy: "ring" | "jaccl" | "both"
+instance_meta = "ring"
+# Sharding strategy: "pipeline" | "tensor" | "both"
+sharding = "pipeline"
+# Node constraints
+min_nodes = 1
+max_nodes = 4
+
+# lm_eval configuration (EleutherAI's lm-evaluation-harness)
+[lm_eval]
+# Tasks to run (list of task names)
+# NOTE: Chat completions API only supports generation-based tasks.
+# Loglikelihood tasks (mmlu, hellaswag, arc) require /v1/completions endpoint.
+#
+# Generation-based tasks (work with chat completions):
+#   - mmlu_generative, mmlu_flan_cot_fewshot, mmlu_flan_cot_zeroshot
+#   - gsm8k, gsm8k_cot, gsm8k_cot_zeroshot
+#   - truthfulqa (uses generate_until for some subtasks)
+#   - humaneval, mbpp (code generation)
+#
+# Run `lm_eval --tasks list` to see all available tasks
+tasks = ["hellaswag"]
+# Number of few-shot examples (0 for zeroshot tasks)
+num_fewshot = 0
+# Batch size (use 1 for API models, "auto" doesn't work)
+batch_size = 1
+# Number of concurrent requests (set > 1 to enable parallelism)
+num_concurrent = 4
+# Apply chat template for instruct/chat models (default: true)
+apply_chat_template = true
+# Use fewshot examples as conversation turns (optional)
+fewshot_as_multiturn = false
+# Optional: limit samples per task (omit or comment out for no limit)
+# limit = 100
+# Output path for results
+output_path = "bench/eval_results"
+
+# SWE-bench configuration (placeholder)
+[swe_bench]
+# SWE-bench dataset
+dataset = "princeton-nlp/SWE-bench_Lite"
+# Maximum workers for parallel execution
+max_workers = 8
+# Path for prediction outputs
+predictions_path = "bench/predictions"
+
+# Custom evaluation script configuration
+[custom]
+# Path to custom evaluation script
+script = "path/to/eval_script.py"
+# Arguments to pass to the script
+args = ["--arg1", "value1"]
