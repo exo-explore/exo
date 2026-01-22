@@ -197,49 +197,6 @@ def get_shard_assignments(
             )
 
 
-def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
-    cycles = cycle_digraph.get_cycles()
-    expected_length = len(list(cycle_digraph.list_nodes()))
-    cycles = [cycle for cycle in cycles if len(cycle) == expected_length]
-    if not cycles:
-        if expected_length > 1:
-            logger.warning(
-                f"No cycles of length {expected_length} found even though chosen subgraph contained {expected_length} nodes"
-            )
-        return []
-
-    cycle = cycles[0]
-
-    get_thunderbolt = False
-    if cycle_digraph.is_thunderbolt_cycle(cycle):
-        get_thunderbolt = True
-
-    logger.debug(f"Using thunderbolt cycle: {get_thunderbolt}")
-
-    hosts: list[Host] = []
-    for i in range(len(cycle)):
-        current_node = cycle.node_ids[i]
-        next_node = cycle.node_ids[(i + 1) % len(cycle)]
-
-        for connection in cycle_digraph.get_all_connections_between(
-            source=current_node, sink=next_node
-        ):
-            if not isinstance(connection, SocketConnection):
-                continue
-
-            if get_thunderbolt and not connection.is_thunderbolt():
-                continue
-
-            host = Host(
-                ip=connection.sink_multiaddr.ip_address,
-                port=connection.sink_multiaddr.port,
-            )
-            hosts.append(host)
-            break
-
-    return hosts
-
-
 def get_mlx_jaccl_devices_matrix(
     selected_cycle: list[NodeId],
     cycle_digraph: Topology,
@@ -265,9 +222,6 @@ def get_mlx_jaccl_devices_matrix(
                     matrix[i][j] = conn.source_rdma_iface
                     break
             else:
-                logger.warning(
-                    f"Failed to find interface name between {node_i} and {node_j}"
-                )
                 raise ValueError(
                     "Current jaccl backend requires all-to-all RDMA connections"
                 )
@@ -279,22 +233,11 @@ def _find_connection_ip(
     node_i: NodeId,
     node_j: NodeId,
     cycle_digraph: Topology,
-) -> Generator[tuple[str, bool]]:
+) -> Generator[str, None, None]:
     """Find all IP addresses that connect node i to node j."""
     for connection in cycle_digraph.get_all_connections_between(node_i, node_j):
         if isinstance(connection, SocketConnection):
-            yield connection.sink_multiaddr.ip_address, connection.is_thunderbolt()
-
-
-def _find_interface_name_for_ip(
-    ip_address: str, node_network: NodeNetworkInfo
-) -> str | None:
-    """Find the interface name for an IP address on a node (any interface)."""
-    for interface in node_network.interfaces:
-        if interface.ip_address == ip_address:
-            return interface.name
-
-    return None
+            yield connection.sink_multiaddr.ip_address
 
 
 def _find_ip_prioritised(
@@ -303,43 +246,24 @@ def _find_ip_prioritised(
     cycle_digraph: Topology,
     node_network: Mapping[NodeId, NodeNetworkInfo],
 ) -> str | None:
-    # TODO: Actually prioritize in the correct Ethernet > Wifi > Non-TB > TB order.
     """Find an IP address between nodes with prioritization.
 
-    Priority order:
-    1. en0 (Ethernet on Mac Studio, WiFi on MacBook)
-    2. en1 (WiFi on Mac Studio, Ethernet on MacBook)
-    3. Non-Thunderbolt connections
-    4. Any other IP address
+    Priority: ethernet > wifi > unknown > thunderbolt
     """
     ips = list(_find_connection_ip(node_id, other_node_id, cycle_digraph))
-    # We expect a unique iface -> ip mapping
-    iface_map = {
-        _find_interface_name_for_ip(
-            ip, node_network.get(other_node_id, NodeNetworkInfo())
-        ): ip
-        for ip, _ in ips
+    other_network = node_network.get(other_node_id, NodeNetworkInfo())
+
+    # Build IP -> interface type mapping
+    ip_to_type = {
+        iface.ip_address: iface.interface_type for iface in other_network.interfaces
     }
 
-    en0_ip = iface_map.get("en0")
-    if en0_ip:
-        return en0_ip
+    priority = {"ethernet": 0, "wifi": 1, "unknown": 2, "thunderbolt": 3}
 
-    en1_ip = iface_map.get("en1")
-    if en1_ip:
-        return en1_ip
+    if not ips:
+        return None
 
-    non_thunderbolt_ip = next(
-        (ip for (ip, is_thunderbolt) in ips if not is_thunderbolt), None
-    )
-
-    if non_thunderbolt_ip:
-        return non_thunderbolt_ip
-
-    if ips:
-        return ips[0][0]
-
-    return None
+    return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2))
 
 
 def get_mlx_ring_hosts_by_node(
@@ -381,9 +305,6 @@ def get_mlx_ring_hosts_by_node(
                 node_id, other_node_id, cycle_digraph, node_network
             )
             if connection_ip is None:
-                logger.warning(
-                    f"Failed to find prioritised connection IP between {node_id} and {other_node_id}"
-                )
                 raise ValueError(
                     "MLX ring backend requires connectivity between neighbouring nodes"
                 )
@@ -416,9 +337,6 @@ def get_mlx_jaccl_coordinators(
         if ip is not None:
             return ip
 
-        logger.warning(
-            f"Failed to find directly connected ip between {n} and {coordinator}"
-        )
         raise ValueError(
             "Current jaccl backend requires all participating devices to be able to communicate"
         )

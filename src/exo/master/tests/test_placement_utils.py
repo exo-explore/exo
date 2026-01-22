@@ -3,7 +3,6 @@ import pytest
 from exo.master.placement_utils import (
     allocate_layers_proportionally,
     filter_cycles_by_memory,
-    get_hosts_from_subgraph,
     get_mlx_jaccl_coordinators,
     get_shard_assignments,
     get_smallest_cycles,
@@ -22,6 +21,35 @@ from exo.shared.types.profiling import (
 )
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.shards import Sharding
+
+
+def _get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
+    """Test helper to get hosts from a subgraph. Used only for testing."""
+    cycles = cycle_digraph.get_cycles()
+    expected_length = len(list(cycle_digraph.list_nodes()))
+    cycles = [cycle for cycle in cycles if len(cycle) == expected_length]
+    if not cycles:
+        return []
+
+    cycle = cycles[0]
+
+    hosts: list[Host] = []
+    for i in range(len(cycle)):
+        current_node = cycle.node_ids[i]
+        next_node = cycle.node_ids[(i + 1) % len(cycle)]
+
+        for connection in cycle_digraph.get_all_connections_between(
+            source=current_node, sink=next_node
+        ):
+            if isinstance(connection, SocketConnection):
+                host = Host(
+                    ip=connection.sink_multiaddr.ip_address,
+                    port=connection.sink_multiaddr.port,
+                )
+                hosts.append(host)
+                break
+
+    return hosts
 
 
 def test_filter_cycles_by_memory():
@@ -299,7 +327,7 @@ def test_get_hosts_from_subgraph():
     topology.add_connection(connection3)
 
     # act
-    hosts = get_hosts_from_subgraph(topology)
+    hosts = _get_hosts_from_subgraph(topology)
 
     # assert
     assert len(hosts) == 3

@@ -87,12 +87,12 @@ def place_instance(
 
     smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
 
-    smallest_tb_cycles = [
-        cycle for cycle in smallest_cycles if topology.is_thunderbolt_cycle(cycle)
+    smallest_rdma_cycles = [
+        cycle for cycle in smallest_cycles if topology.is_rdma_cycle(cycle)
     ]
 
-    if smallest_tb_cycles != []:
-        smallest_cycles = smallest_tb_cycles
+    if command.instance_meta == InstanceMeta.MlxJaccl and smallest_rdma_cycles != []:
+        smallest_cycles = smallest_rdma_cycles
 
     cycles_with_leaf_nodes: list[Cycle] = [
         cycle

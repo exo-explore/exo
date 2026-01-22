@@ -238,7 +238,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
         leaving_node_status is not None and leaving_node_status.enabled
     )
     thunderbolt_bridge_cycles = (
-        topology.get_thunderbolt_bridge_cycles(node_thunderbolt_bridge)
+        topology.get_thunderbolt_bridge_cycles(node_thunderbolt_bridge, node_network)
         if leaving_node_had_tb_enabled
         else [list(cycle) for cycle in state.thunderbolt_bridge_cycles]
     )
@@ -343,7 +343,7 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             new_enabled = info.status.enabled
             if old_enabled != new_enabled:
                 update["thunderbolt_bridge_cycles"] = (
-                    topology.get_thunderbolt_bridge_cycles(new_tb_bridge)
+                    topology.get_thunderbolt_bridge_cycles(new_tb_bridge, state.node_network)
                 )
 
     return state.model_copy(update=update)

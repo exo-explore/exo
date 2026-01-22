@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from typing import Self
+from typing import Literal, Self
 
 import psutil
 
@@ -48,9 +48,13 @@ class SystemPerformanceProfile(CamelCaseModel):
     ecpu_usage: float = 0.0
 
 
+InterfaceType = Literal["wifi", "ethernet", "thunderbolt", "unknown"]
+
+
 class NetworkInterfaceInfo(CamelCaseModel):
     name: str
     ip_address: str
+    interface_type: InterfaceType = "unknown"
 
 
 class NodeIdentity(CamelCaseModel):
