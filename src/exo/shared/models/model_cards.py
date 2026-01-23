@@ -498,6 +498,48 @@ _IMAGE_MODEL_CARDS: dict[str, ModelCard] = {
             ),
         ],
     ),
+    "flux1-krea-dev": ModelCard(
+        model_id=ModelId("black-forest-labs/FLUX.1-Krea-dev"),
+        storage_size=Memory.from_bytes(23802816640 + 9524621312),  # Same as dev
+        n_layers=57,
+        hidden_size=1,
+        supports_tensor=False,
+        tasks=[ModelTask.TextToImage],
+        components=[
+            ComponentInfo(
+                component_name="text_encoder",
+                component_path="text_encoder/",
+                storage_size=Memory.from_kb(0),
+                n_layers=12,
+                can_shard=False,
+                safetensors_index_filename=None,
+            ),
+            ComponentInfo(
+                component_name="text_encoder_2",
+                component_path="text_encoder_2/",
+                storage_size=Memory.from_bytes(9524621312),
+                n_layers=24,
+                can_shard=False,
+                safetensors_index_filename="model.safetensors.index.json",
+            ),
+            ComponentInfo(
+                component_name="transformer",
+                component_path="transformer/",
+                storage_size=Memory.from_bytes(23802816640),
+                n_layers=57,
+                can_shard=True,
+                safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
+            ),
+            ComponentInfo(
+                component_name="vae",
+                component_path="vae/",
+                storage_size=Memory.from_kb(0),
+                n_layers=None,
+                can_shard=False,
+                safetensors_index_filename=None,
+            ),
+        ],
+    ),
     "qwen-image": ModelCard(
         model_id=ModelId("Qwen/Qwen-Image"),
         storage_size=Memory.from_bytes(16584333312 + 40860802176),

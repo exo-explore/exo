@@ -54,9 +54,18 @@ def place_instance(
     current_instances: Mapping[InstanceId, Instance],
     node_memory: Mapping[NodeId, MemoryUsage],
     node_network: Mapping[NodeId, NodeNetworkInfo],
+    required_nodes: set[NodeId] | None = None,
 ) -> dict[InstanceId, Instance]:
     cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
+
+    # Filter to cycles containing all required nodes (subset matching)
+    if required_nodes:
+        candidate_cycles = [
+            cycle
+            for cycle in candidate_cycles
+            if required_nodes.issubset(cycle.node_ids)
+        ]
     cycles_with_sufficient_memory = filter_cycles_by_memory(
         candidate_cycles, node_memory, command.model_card.storage_size
     )
