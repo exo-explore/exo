@@ -621,7 +621,7 @@ class ConfigData(BaseModel):
 
 async def get_config_data(model_id: ModelId) -> ConfigData:
     """Downloads and parses config.json for a model."""
-    from exo.worker.download.download_utils import (
+    from exo.download.download_utils import (
         download_file_with_retry,
         ensure_models_dir,
     )
@@ -643,11 +643,11 @@ async def get_config_data(model_id: ModelId) -> ConfigData:
 
 async def get_safetensors_size(model_id: ModelId) -> Memory:
     """Gets model size from safetensors index or falls back to HF API."""
-    from exo.shared.types.worker.downloads import ModelSafetensorsIndex
-    from exo.worker.download.download_utils import (
+    from exo.download.download_utils import (
         download_file_with_retry,
         ensure_models_dir,
     )
+    from exo.shared.types.worker.downloads import ModelSafetensorsIndex
 
     target_dir = (await ensure_models_dir()) / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)

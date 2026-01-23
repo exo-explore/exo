@@ -35,7 +35,7 @@ from exo.shared.types.worker.shards import Sharding
 
 def random_ephemeral_port() -> int:
     port = random.randint(49153, 65535)
-    return port - 1 if port <= 52415 else 52414
+    return port - 1 if port <= 52415 else port
 
 
 def add_instance_to_placements(
