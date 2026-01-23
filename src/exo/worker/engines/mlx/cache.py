@@ -1,4 +1,5 @@
 from copy import deepcopy
+from typing import Any, cast
 
 import mlx.core as mx
 from mlx_lm.models.cache import trim_prompt_cache
@@ -82,7 +83,7 @@ class KVPrefixCache:
                 cached_length = _cache_length(self.caches[i])
                 tokens_to_trim = cached_length - (max_length - 1)
                 if tokens_to_trim > 0:
-                    trim_prompt_cache(prompt_cache, tokens_to_trim)
+                    trim_prompt_cache(cast(list[Any], prompt_cache), tokens_to_trim)
                 self._access_counter += 1
                 self._last_used[i] = self._access_counter
                 logger.info(f"KV cache exact match: {max_length} tokens (instant)")
@@ -104,7 +105,7 @@ class KVPrefixCache:
             cached_length = _cache_length(self.caches[best_snapshot_index])
             tokens_to_trim = cached_length - best_snapshot_length
             if tokens_to_trim > 0:
-                trim_prompt_cache(prompt_cache, tokens_to_trim)
+                trim_prompt_cache(cast(list[Any], prompt_cache), tokens_to_trim)
 
             self._access_counter += 1
             self._last_used[best_snapshot_index] = self._access_counter
@@ -163,7 +164,7 @@ def encode_prompt(tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
 def _cache_length(cache: KVCacheType) -> int:
     """Get the number of tokens in a KV cache."""
     # Use .offset attribute which all cache types have (len() not implemented in older QuantizedKVCache)
-    return max(c.offset for c in cache)
+    return max(c.offset for c in cache)  # type: ignore
 
 
 def _get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:

@@ -1,5 +1,5 @@
 import time
-from typing import Callable, Generator, cast, get_args
+from typing import Any, Callable, Generator, cast, get_args
 
 import mlx.core as mx
 from mlx_lm.generate import stream_generate
@@ -78,7 +78,7 @@ def prefill(
         prompt_progress_callback=progress_callback,
     ):
         break  # Stop after first iteration - cache is now filled
-    trim_prompt_cache(cache, 1)
+    trim_prompt_cache(cast(list[Any], cache), 1)
 
     elapsed = time.perf_counter() - start_time
     tokens_per_sec = num_tokens / elapsed if elapsed > 0 else 0.0
