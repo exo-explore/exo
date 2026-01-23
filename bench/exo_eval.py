@@ -570,8 +570,8 @@ def main() -> int:
             # Limit concurrency for pipeline to avoid GPU timeouts
             if args.pipeline >= 2:
                 lm_eval_config = config.setdefault("lm_eval", {})
-                lm_eval_config["num_concurrent"] = 8
-                logger.info("CLI override: num_concurrent=8 (pipeline>=2)")
+                lm_eval_config["num_concurrent"] = 4
+                logger.info("CLI override: num_concurrent=4 (pipeline>=2)")
         if args.instance_meta is not None:
             instance_config["instance_meta"] = args.instance_meta
             logger.info(f"CLI override: instance_meta={args.instance_meta}")

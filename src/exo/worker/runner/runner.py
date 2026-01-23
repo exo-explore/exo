@@ -712,28 +712,31 @@ def main(
             if batch_handler is not None and (
                 batch_handler.is_active or batch_handler.has_pending
             ):
-                # Non-blocking check for new tasks
-                try:
-                    task = tasks.receive_nowait()
-                    # Process the task
-                    if isinstance(task, ChatCompletion) and isinstance(
-                        current_status, (RunnerReady, RunnerRunning)
-                    ):
-                        # For ChatCompletion, process_task returns True if added to batch
-                        was_batched = process_task(task)
-                        if was_batched:
-                            batched_task_ids.append((task, False))
-                    else:
-                        # Non-ChatCompletion tasks are processed synchronously
-                        should_continue = process_task(task)
-                        if not should_continue:
-                            break
-                except WouldBlock:
-                    pass  # No new task available
-                except EndOfStream:
+                # Drain all available tasks before stepping
+                should_break = False
+                while True:
+                    try:
+                        task = tasks.receive_nowait()
+                        if isinstance(task, ChatCompletion) and isinstance(
+                            current_status, (RunnerReady, RunnerRunning)
+                        ):
+                            was_batched = process_task(task)
+                            if was_batched:
+                                batched_task_ids.append((task, False))
+                        else:
+                            should_continue = process_task(task)
+                            if not should_continue:
+                                should_break = True
+                                break
+                    except WouldBlock:
+                        break  # No more tasks available
+                    except EndOfStream:
+                        should_break = True
+                        break
+                if should_break:
                     break
 
-                # Flush pending requests immediately (no timeout delay)
+                # Flush all pending requests before stepping
                 if batch_handler.has_pending:
                     logger.info(f"Flushing batch (pending={len(batch_handler.pending)}, active={batch_handler.current_batch_size})")
                     batch_handler.flush()
