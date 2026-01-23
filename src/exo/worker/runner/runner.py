@@ -240,10 +240,6 @@ def main(
                             prompt=prompt,
                         )
 
-                        # GPT-OSS specific parsing to match other model formats.
-                        if isinstance(model, GptOssModel):
-                            mlx_generator = parse_gpt_oss(mlx_generator)
-
                         # For other thinking models (GLM, etc.), check if we need to
                         # prepend the thinking tag that was consumed by the chat template
                         if detect_thinking_prompt_suffix(prompt, tokenizer):
@@ -257,10 +253,16 @@ def main(
                             patch_kimi_tokenizer(tokenizer)
 
                         # GLM models need patched parser (upstream has bug with None regex match)
-                        if "glm" in shard_metadata.model_card.model_id.lower():
+                        elif "glm" in shard_metadata.model_card.model_id.lower():
                             patch_glm_tokenizer(tokenizer)
 
-                        if tokenizer.has_tool_calling:
+                        # GPT-OSS specific parsing to match other model formats.
+                        elif isinstance(model, GptOssModel):
+                            mlx_generator = parse_gpt_oss(mlx_generator)
+
+                        if tokenizer.has_tool_calling and not isinstance(
+                            model, GptOssModel
+                        ):
                             assert tokenizer.tool_call_start
                             assert tokenizer.tool_call_end
                             assert tokenizer.tool_parser  # pyright: ignore[reportAny]
@@ -489,9 +491,10 @@ def get_gpt_oss_encoding():
 
 
 def filter_kimi_tokens(
-    responses: Generator[GenerationResponse],
+    responses: Generator[GenerationResponse | ToolCallResponse],
 ) -> Generator[GenerationResponse]:
     for resp in responses:
+        assert isinstance(resp, GenerationResponse)
         if (
             resp.text == "<|tool_calls_section_begin|>"
             or resp.text == "<|tool_calls_section_end|>"
@@ -501,17 +504,44 @@ def filter_kimi_tokens(
 
 
 def parse_gpt_oss(
-    responses: Generator[GenerationResponse],
-) -> Generator[GenerationResponse]:
+    responses: Generator[GenerationResponse | ToolCallResponse],
+) -> Generator[GenerationResponse | ToolCallResponse]:
     encoding = get_gpt_oss_encoding()
     stream = StreamableParser(encoding, role=Role.ASSISTANT)
     thinking = False
+    current_tool_name: str | None = None
+    tool_arg_parts: list[str] = []
 
     for response in responses:
+        assert isinstance(response, GenerationResponse)
         stream.process(response.token)
 
         delta = stream.last_content_delta
         ch = stream.current_channel
+        recipient = stream.current_recipient
+
+        if recipient != current_tool_name:
+            if current_tool_name is not None:
+                prefix = "functions."
+                if current_tool_name.startswith(prefix):
+                    current_tool_name = current_tool_name[len(prefix) :]
+                yield ToolCallResponse(
+                    tool_calls=[
+                        ToolCallItem(
+                            name=current_tool_name,
+                            arguments="".join(tool_arg_parts).strip(),
+                        )
+                    ]
+                )
+                tool_arg_parts = []
+                break
+            current_tool_name = recipient
+
+        # If inside a tool call, accumulate arguments
+        if current_tool_name is not None:
+            if delta:
+                tool_arg_parts.append(delta)
+            continue
 
         if ch == "analysis" and not thinking:
             thinking = True
@@ -528,13 +558,12 @@ def parse_gpt_oss(
             if thinking:
                 yield response.model_copy(update={"text": "</think>"})
             yield response
-            break
 
 
 def parse_thinking_models(
-    responses: Generator[GenerationResponse],
+    responses: Generator[GenerationResponse | ToolCallResponse],
     tokenizer: TokenizerWrapper,
-) -> Generator[GenerationResponse]:
+) -> Generator[GenerationResponse | ToolCallResponse]:
     """
     For models that inject thinking tags in the prompt (like GLM-4.7),
     prepend the thinking tag to the output stream so the frontend
@@ -542,6 +571,9 @@ def parse_thinking_models(
     """
     first = True
     for response in responses:
+        if isinstance(response, ToolCallResponse):
+            yield response
+            continue
         if first:
             first = False
             yield response.model_copy(
@@ -622,7 +654,7 @@ def _process_image_response(
 
 
 def parse_tool_calls(
-    responses: Generator[GenerationResponse],
+    responses: Generator[GenerationResponse | ToolCallResponse],
     tool_call_start: str,
     tool_call_end: str,
     tool_parser: Callable[[str], dict[str, Any] | list[dict[str, Any]]],
@@ -630,6 +662,7 @@ def parse_tool_calls(
     in_tool_call = False
     tool_call_text_parts: list[str] = []
     for response in responses:
+        assert isinstance(response, GenerationResponse)
         # assumption: the tool call start is one token
         if response.text == tool_call_start:
             in_tool_call = True

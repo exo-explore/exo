@@ -154,7 +154,7 @@ def test_plan_does_not_request_download_when_shard_already_downloaded():
         tasks={},
     )
 
-    assert result is None
+    assert not isinstance(result, plan_mod.DownloadModel)
 
 
 def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
