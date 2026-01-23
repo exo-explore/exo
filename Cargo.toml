@@ -4,6 +4,7 @@ members = [
     "rust/networking",
     "rust/exo_pyo3_bindings",
     "rust/util",
+    "rust/cluster_membership",
 ]
 
 [workspace.package]
@@ -25,6 +26,7 @@ opt-level = 3
 ## Crate members as common dependencies
 networking = { path = "rust/networking" }
 util = { path = "rust/util" }
+cluster_membership = { path = "rust/cluster_membership" }
 
 # Proc-macro authoring tools
 syn = "2.0"
@@ -62,6 +64,7 @@ frunk-enum-core = "0.3"
 # Async dependencies
 tokio = "1.46"
 futures = "0.3"
+futures-lite = "2.6.1"
 futures-util = "0.3"
 futures-timer = "3.0"
 

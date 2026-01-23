@@ -22,6 +22,7 @@ doc = false
 workspace = true
 
 [dependencies]
+cluster_membership.workspace = true
 networking = { workspace = true }
 
 # interop

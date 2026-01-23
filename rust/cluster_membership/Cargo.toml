@@ -1,0 +1,23 @@
+[package]
+name = "cluster_membership"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+# util
+anyhow.workspace = true
+log.workspace = true
+tracing-subscriber = { version = "0.3.19", features = ["default", "env-filter"] }
+
+# async
+tokio = { workspace = true, features = ["full"] }
+futures-timer = { workspace = true }
+futures-lite = "2.6.1"
+
+# networking
+libp2p = { workspace = true, features = ["full"] }
+async-trait = "0.1.89"
+
+[lints]
+workspace = true
