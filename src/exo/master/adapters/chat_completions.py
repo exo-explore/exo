@@ -184,7 +184,9 @@ async def generate_chat_stream(
 async def collect_chat_response(
     command_id: CommandId,
     chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
-) -> ChatCompletionResponse:
+) -> AsyncGenerator[str]:
+    # This is an AsyncGenerator[str] rather than returning a ChatCompletionReponse because
+    # FastAPI handles the cancellation better but wouldn't auto-serialize for some reason
     """Collect all token chunks and return a single ChatCompletionResponse."""
     text_parts: list[str] = []
     tool_calls: list[ToolCall] = []
@@ -234,7 +236,7 @@ async def collect_chat_response(
     combined_text = "".join(text_parts)
     assert model is not None
 
-    return ChatCompletionResponse(
+    yield ChatCompletionResponse(
         id=command_id,
         created=int(time.time()),
         model=model,
@@ -253,4 +255,5 @@ async def collect_chat_response(
             )
         ],
         usage=last_usage,
-    )
+    ).model_dump_json()
+    return

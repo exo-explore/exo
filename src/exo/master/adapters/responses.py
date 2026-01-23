@@ -122,7 +122,9 @@ async def collect_responses_response(
     command_id: CommandId,
     model: str,
     chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
-) -> ResponsesResponse:
+) -> AsyncGenerator[str]:
+    # This is an AsyncGenerator[str] rather than returning a ChatCompletionReponse because
+    # FastAPI handles the cancellation better but wouldn't auto-serialize for some reason
     """Collect all token chunks and return a single ResponsesResponse."""
     response_id = f"resp_{command_id}"
     item_id = f"item_{command_id}"
@@ -173,14 +175,15 @@ async def collect_responses_response(
     ]
     output.extend(function_call_items)
 
-    return ResponsesResponse(
+    yield ResponsesResponse(
         id=response_id,
         model=model,
         status="completed",
         output=output,
         output_text=accumulated_text,
         usage=usage,
-    )
+    ).model_dump_json()
+    return
 
 
 async def generate_responses_stream(
