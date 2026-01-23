@@ -1,9 +1,9 @@
 import time
-from typing import Any, Callable, Generator, cast, get_args
+from typing import Callable, Generator, cast, get_args
 
 import mlx.core as mx
 from mlx_lm.generate import stream_generate
-from mlx_lm.models.cache import KVCache, trim_prompt_cache
+from mlx_lm.models.cache import trim_prompt_cache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
@@ -32,56 +32,41 @@ from exo.worker.runner.bootstrap import logger
 generation_stream = mx.new_stream(mx.default_device())
 
 
-def maybe_quantize_kv_cache(
-    prompt_cache: list[KVCache | Any],
-    quantized_kv_start: int,
-    kv_group_size: int,
-    kv_bits: int | None,
-) -> None:
-    if kv_bits is None:
-        return
-    for e, c in enumerate(prompt_cache):
-        if hasattr(c, "to_quantized") and c.offset >= quantized_kv_start:
-            prompt_cache[e] = c.to_quantized(group_size=kv_group_size, bits=kv_bits)
-
-
 def prefill(
     model: Model,
     tokenizer: TokenizerWrapper,
     sampler: Callable[[mx.array], mx.array],
     prompt_tokens: mx.array,
     cache: KVCacheType,
-) -> tuple[int, float]:
+) -> float:
     """Prefill the KV cache with prompt tokens.
 
     This runs the model over the prompt tokens to populate the cache,
     then trims off the extra generated token.
 
     Returns:
-        tuple of (tokens_prefilled, tokens_per_sec)
+        tokens_per_sec
     """
     num_tokens = len(prompt_tokens)
-    if num_tokens <= 1:
-        # Nothing to prefill - stream_generate will handle single token
-        return (0, 0.0)
+    if num_tokens == 0:
+        return 0.0
 
-    tokens_to_prefill = num_tokens - 1
-    logger.info(f"Prefilling {tokens_to_prefill} tokens...")
-    start_time = time.time()
+    logger.debug(f"Prefilling {num_tokens} tokens...")
+    start_time = time.perf_counter()
 
     def progress_callback(processed: int, total: int) -> None:
         elapsed = time.time() - start_time
         tok_per_sec = processed / elapsed if elapsed > 0 else 0
-        logger.info(
+        logger.debug(
             f"Prefill progress: {processed}/{total} tokens ({tok_per_sec:.1f} tok/s)"
         )
 
-    # Use max_tokens=1 because max_tokens=0 is buggy in some mlx_lm versions
+    # Use max_tokens=1 because max_tokens=0 does not work.
     # We just throw away the generated token - we only care about filling the cache
     for _ in stream_generate(
         model=model,
         tokenizer=tokenizer,
-        prompt=prompt_tokens[:-1],  # Prefill all but last token
+        prompt=prompt_tokens,
         max_tokens=1,
         sampler=sampler,
         prompt_cache=cache,
@@ -91,16 +76,15 @@ def prefill(
         prompt_progress_callback=progress_callback,
     ):
         break  # Stop after first iteration - cache is now filled
-    # Trim the extra token we generated (max_tokens=1 workaround)
     trim_prompt_cache(cache, 1)
 
-    elapsed = time.time() - start_time
-    tokens_per_sec = tokens_to_prefill / elapsed if elapsed > 0 else 0.0
-    logger.info(
-        f"Prefill complete: {tokens_to_prefill} tokens in {elapsed:.2f}s "
+    elapsed = time.perf_counter() - start_time
+    tokens_per_sec = num_tokens / elapsed if elapsed > 0 else 0.0
+    logger.debug(
+        f"Prefill complete: {num_tokens} tokens in {elapsed:.2f}s "
         f"({tokens_per_sec:.1f} tok/s)"
     )
-    return (tokens_to_prefill, tokens_per_sec)
+    return tokens_per_sec
 
 
 def warmup_inference(
@@ -190,12 +174,16 @@ def mlx_generate(
     if task.seed is not None:
         mx.random.seed(task.seed)
 
+    # Do not use the prefix cache if we are trying to do benchmarks.
+    if is_bench:
+        kv_prefix_cache = None
+
     # Use prefix cache if available, otherwise create fresh cache
-    if kv_prefix_cache is not None:
-        caches, prompt_tokens = kv_prefix_cache.get_kv_cache(model, tokenizer, prompt)
-    else:
+    if kv_prefix_cache is None:
         caches = make_kv_cache(model=model)
         prompt_tokens = encode_prompt(tokenizer, prompt)
+    else:
+        caches, prompt_tokens = kv_prefix_cache.get_kv_cache(model, tokenizer, prompt)
 
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = []
     if is_bench:
@@ -209,17 +197,14 @@ def mlx_generate(
     )
 
     # Prefill cache with all tokens except the last one
-    prefill_tokens, prefill_tps = prefill(
-        model, tokenizer, sampler, prompt_tokens, caches
-    )
+    prefill_tps = prefill(model, tokenizer, sampler, prompt_tokens[-1:], caches)
 
     # stream_generate starts from the last token
     last_token = prompt_tokens[-1:]
 
-
     max_tokens = task.max_tokens or MAX_TOKENS
     generated_text_parts: list[str] = []
-    generation_start_time = time.time()
+    generation_start_time = time.perf_counter()
     for out in stream_generate(
         model=model,
         tokenizer=tokenizer,
@@ -239,7 +224,7 @@ def mlx_generate(
         stats: GenerationStats | None = None
         if out.finish_reason is not None:
             stats = GenerationStats(
-                prompt_tps=float(out.prompt_tps),
+                prompt_tps=float(prefill_tps or out.prompt_tps),
                 generation_tps=float(out.generation_tps),
                 prompt_tokens=int(out.prompt_tokens),
                 generation_tokens=int(out.generation_tokens),
@@ -262,13 +247,13 @@ def mlx_generate(
 
         if out.finish_reason is not None:
             # Log generation stats
-            generation_elapsed = time.time() - generation_start_time
+            generation_elapsed = time.perf_counter() - generation_start_time
             generated_tokens = len(generated_text_parts)
             generation_tps = (
                 generated_tokens / generation_elapsed if generation_elapsed > 0 else 0.0
             )
-            logger.info(
-                f"Generation complete: prefill {prefill_tokens} tokens @ "
+            logger.debug(
+                f"Generation complete: prefill {prompt_tokens} tokens @ "
                 f"{prefill_tps:.1f} tok/s, generated {generated_tokens} tokens @ "
                 f"{generation_tps:.1f} tok/s"
             )

@@ -24,7 +24,7 @@ class KVPrefixCache:
     def add_kv_cache(
         self, tokenizer: TokenizerWrapper, prompt: str, cache: KVCacheType
     ):
-        tokenized_prompt = self.encode_prompt(tokenizer, prompt)
+        tokenized_prompt = encode_prompt(tokenizer, prompt)
         self.prompts.append(tokenized_prompt)
         self.caches.append(deepcopy(cache))
         logger.info(f"KV cache saved: {len(tokenized_prompt)} tokens")
@@ -47,7 +47,7 @@ class KVPrefixCache:
             Tuple of (cache, remaining_tokens) where remaining_tokens are the
             tokens that still need to be prefilled/processed.
         """
-        tokenized_prompt = self.encode_prompt(tokenizer, prompt)
+        tokenized_prompt = encode_prompt(tokenizer, prompt)
         max_length = len(tokenized_prompt)
 
         best_snapshot_index, best_snapshot_length = None, 0
@@ -99,9 +99,6 @@ class KVPrefixCache:
 
             # Return all tokens for caller to prefill
             return prompt_cache, tokenized_prompt
-
-    def encode_prompt(self, tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
-        return encode_prompt(tokenizer, prompt)
 
 
 def encode_prompt(tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
