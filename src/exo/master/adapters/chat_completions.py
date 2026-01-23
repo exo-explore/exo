@@ -158,7 +158,7 @@ async def generate_chat_stream(
 async def collect_chat_response(
     command_id: CommandId,
     chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
-) -> ChatCompletionResponse:
+) -> AsyncGenerator[str]:
     """Collect all token chunks and return a single ChatCompletionResponse."""
     text_parts: list[str] = []
     tool_calls: list[ToolCall] = []
@@ -196,7 +196,7 @@ async def collect_chat_response(
     combined_text = "".join(text_parts)
     assert model is not None
 
-    return ChatCompletionResponse(
+    yield ChatCompletionResponse(
         id=command_id,
         created=int(time.time()),
         model=model,
@@ -211,4 +211,5 @@ async def collect_chat_response(
                 finish_reason=finish_reason,
             )
         ],
-    )
+    ).model_dump_json()
+    return

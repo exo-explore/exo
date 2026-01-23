@@ -20,9 +20,15 @@ from exo.shared.types.commands import (
     PlaceInstance,
 )
 from exo.shared.types.common import NodeId
-from exo.shared.types.events import Event, InstanceCreated, InstanceDeleted
+from exo.shared.types.events import (
+    Event,
+    InstanceCreated,
+    InstanceDeleted,
+    TaskStatusUpdated,
+)
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
+from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.instances import (
     Instance,
     InstanceId,
@@ -180,6 +186,7 @@ def delete_instance(
 def get_transition_events(
     current_instances: Mapping[InstanceId, Instance],
     target_instances: Mapping[InstanceId, Instance],
+    tasks: Mapping[TaskId, Task],
 ) -> Sequence[Event]:
     events: list[Event] = []
 
@@ -195,6 +202,18 @@ def get_transition_events(
     # find instances to delete
     for instance_id in current_instances:
         if instance_id not in target_instances:
+            for task in tasks.values():
+                if task.instance_id == instance_id and task.task_status in [
+                    TaskStatus.Pending,
+                    TaskStatus.Running,
+                ]:
+                    events.append(
+                        TaskStatusUpdated(
+                            task_status=TaskStatus.Cancelled,
+                            task_id=task.task_id,
+                        )
+                    )
+
             events.append(
                 InstanceDeleted(
                     instance_id=instance_id,
