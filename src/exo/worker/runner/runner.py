@@ -649,7 +649,12 @@ def parse_tool_calls(
                     tools = [_validate_single_tool(parsed)]
                 yield ToolCallResponse(tool_calls=tools)
 
-            except (json.JSONDecodeError, ValidationError, ValueError, AttributeError) as e:
+            except (
+                json.JSONDecodeError,
+                ValidationError,
+                ValueError,
+                AttributeError,
+            ) as e:
                 # ValueError: our parsers raise this for malformed tool calls
                 # AttributeError: upstream parsers (e.g. glm47) may raise this when regex doesn't match
                 logger.opt(exception=e).warning("tool call parsing failed")
@@ -757,7 +762,9 @@ def patch_glm_tokenizer(tokenizer: TokenizerWrapper):
                 params = func["parameters"]  # pyright: ignore[reportAny]
                 if params is None:
                     return False
-                arg_type = params.get("properties", {}).get(arg_name, {}).get("type", None)  # pyright: ignore[reportAny]
+                props = params.get("properties", {})  # pyright: ignore[reportAny]
+                arg_props = props.get(arg_name, {})  # pyright: ignore[reportAny]
+                arg_type = arg_props.get("type", None)  # pyright: ignore[reportAny]
                 return arg_type == "string"  # pyright: ignore[reportAny]
         return False
 

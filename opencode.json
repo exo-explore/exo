@@ -1,0 +1,20 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "exo": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "EXO (local)",
+      "options": {
+        "baseURL": "http://127.0.0.1:52415/v1"
+      },
+      "models": {
+        "mlx-community/GLM-4.7-Flash-4bit": {
+          "name": "mlx-community/GLM-4.7-Flash-4bit"
+        },
+        "mlx-community/Qwen3-30B-A3B-4bit": {
+          "name": "mlx-community/Qwen3-30B-A3B-4bit"
+        }
+      }
+    }
+  }
+}
