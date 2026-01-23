@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import json
 import time
 from collections.abc import AsyncGenerator
@@ -33,6 +34,7 @@ from exo.shared.models.model_cards import (
     ModelId,
 )
 from exo.shared.types.api import (
+    AdvancedImageParams,
     BenchChatCompletionResponse,
     BenchChatCompletionTaskParams,
     BenchImageGenerationResponse,
@@ -42,6 +44,7 @@ from exo.shared.types.api import (
     ChatCompletionResponse,
     CreateInstanceParams,
     CreateInstanceResponse,
+    DeleteDownloadResponse,
     DeleteInstanceResponse,
     ErrorInfo,
     ErrorResponse,
@@ -59,6 +62,8 @@ from exo.shared.types.api import (
     PlaceInstanceParams,
     PlacementPreview,
     PlacementPreviewResponse,
+    StartDownloadParams,
+    StartDownloadResponse,
     StreamingChoiceResponse,
     ToolCall,
 )
@@ -73,12 +78,16 @@ from exo.shared.types.commands import (
     ChatCompletion,
     Command,
     CreateInstance,
+    DeleteDownload,
     DeleteInstance,
+    DownloadCommand,
     ForwarderCommand,
+    ForwarderDownloadCommand,
     ImageEdits,
     ImageGeneration,
     PlaceInstance,
     SendInputChunk,
+    StartDownload,
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
@@ -154,14 +163,18 @@ class API:
         # Ideally this would be a MasterForwarderEvent but type system says no :(
         global_event_receiver: Receiver[ForwarderEvent],
         command_sender: Sender[ForwarderCommand],
+        download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
+        state_catchup_receiver: Receiver[State],
     ) -> None:
         self.state = State()
         self._event_log: list[Event] = []
         self.command_sender = command_sender
+        self.download_command_sender = download_command_sender
         self.global_event_receiver = global_event_receiver
         self.election_receiver = election_receiver
+        self.state_catchup_receiver = state_catchup_receiver
         self.event_buffer: OrderedBuffer[Event] = OrderedBuffer[Event]()
         self.node_id: NodeId = node_id
         self.session_id: SessionId = session_id
@@ -258,6 +271,8 @@ class API:
         self.app.get("/images/{image_id}")(self.get_image)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
+        self.app.post("/download/start")(self.start_download)
+        self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -343,14 +358,9 @@ class API:
     ) -> PlacementPreviewResponse:
         seen: set[tuple[ModelId, Sharding, InstanceMeta, int]] = set()
         previews: list[PlacementPreview] = []
+        required_nodes = set(node_ids) if node_ids else None
 
-        # Create filtered topology if node_ids specified
-        if node_ids and len(node_ids) > 0:
-            topology = self.state.topology.get_subgraph_from_nodes(node_ids)
-        else:
-            topology = self.state.topology
-
-        if len(list(topology.list_nodes())) == 0:
+        if len(list(self.state.topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
         cards = [card for card in MODEL_CARDS.values() if card.model_id == model_id]
@@ -363,7 +373,9 @@ class API:
                 instance_combinations.extend(
                     [
                         (sharding, instance_meta, i)
-                        for i in range(1, len(list(topology.list_nodes())) + 1)
+                        for i in range(
+                            1, len(list(self.state.topology.list_nodes())) + 1
+                        )
                     ]
                 )
         # TODO: PDD
@@ -381,8 +393,9 @@ class API:
                         ),
                         node_memory=self.state.node_memory,
                         node_network=self.state.node_network,
-                        topology=topology,
+                        topology=self.state.topology,
                         current_instances=self.state.instances,
+                        required_nodes=required_nodes,
                     )
                 except ValueError as exc:
                     if (model_card.model_id, sharding, instance_meta, 0) not in seen:
@@ -421,14 +434,16 @@ class API:
 
                 instance = new_instances[0]
                 shard_assignments = instance.shard_assignments
-                node_ids = list(shard_assignments.node_to_runner.keys())
+                placement_node_ids = list(shard_assignments.node_to_runner.keys())
 
                 memory_delta_by_node: dict[str, int] = {}
-                if node_ids:
+                if placement_node_ids:
                     total_bytes = model_card.storage_size.in_bytes
-                    per_node = total_bytes // len(node_ids)
-                    remainder = total_bytes % len(node_ids)
-                    for index, node_id in enumerate(sorted(node_ids, key=str)):
+                    per_node = total_bytes // len(placement_node_ids)
+                    remainder = total_bytes % len(placement_node_ids)
+                    for index, node_id in enumerate(
+                        sorted(placement_node_ids, key=str)
+                    ):
                         extra = 1 if index < remainder else 0
                         memory_delta_by_node[str(node_id)] = per_node + extra
 
@@ -436,7 +451,7 @@ class API:
                     model_card.model_id,
                     sharding,
                     instance_meta,
-                    len(node_ids),
+                    len(placement_node_ids),
                 ) not in seen:
                     previews.append(
                         PlacementPreview(
@@ -448,7 +463,14 @@ class API:
                             error=None,
                         )
                     )
-                seen.add((model_card.model_id, sharding, instance_meta, len(node_ids)))
+                seen.add(
+                    (
+                        model_card.model_id,
+                        sharding,
+                        instance_meta,
+                        len(placement_node_ids),
+                    )
+                )
 
         return PlacementPreviewResponse(previews=previews)
 
@@ -835,6 +857,7 @@ class API:
                             # Yield partial image event (always use b64_json for partials)
                             event_data = {
                                 "type": "partial",
+                                "image_index": chunk.image_index,
                                 "partial_index": partial_idx,
                                 "total_partials": total_partials,
                                 "format": str(chunk.format),
@@ -1024,6 +1047,9 @@ class API:
         stream: bool,
         partial_images: int,
         bench: bool,
+        quality: Literal["high", "medium", "low"],
+        output_format: Literal["png", "jpeg", "webp"],
+        advanced_params: AdvancedImageParams | None,
     ) -> ImageEdits:
         """Prepare and send an image edits command with chunked image upload."""
         resolved_model = await self._validate_image_model(model)
@@ -1052,6 +1078,9 @@ class API:
                 stream=stream,
                 partial_images=partial_images,
                 bench=bench,
+                quality=quality,
+                output_format=output_format,
+                advanced_params=advanced_params,
             ),
         )
 
@@ -1086,11 +1115,21 @@ class API:
         input_fidelity: Literal["low", "high"] = Form("low"),
         stream: str = Form("false"),
         partial_images: str = Form("0"),
+        quality: Literal["high", "medium", "low"] = Form("medium"),
+        output_format: Literal["png", "jpeg", "webp"] = Form("png"),
+        advanced_params: str | None = Form(None),
     ) -> ImageGenerationResponse | StreamingResponse:
         """Handle image editing requests (img2img)."""
         # Parse string form values to proper types
         stream_bool = stream.lower() in ("true", "1", "yes")
         partial_images_int = int(partial_images) if partial_images.isdigit() else 0
+
+        parsed_advanced_params: AdvancedImageParams | None = None
+        if advanced_params:
+            with contextlib.suppress(Exception):
+                parsed_advanced_params = AdvancedImageParams.model_validate_json(
+                    advanced_params
+                )
 
         command = await self._send_image_edits_command(
             image=image,
@@ -1103,6 +1142,9 @@ class API:
             stream=stream_bool,
             partial_images=partial_images_int,
             bench=False,
+            quality=quality,
+            output_format=output_format,
+            advanced_params=parsed_advanced_params,
         )
 
         if stream_bool and partial_images_int > 0:
@@ -1133,8 +1175,18 @@ class API:
         size: str = Form("1024x1024"),
         response_format: Literal["url", "b64_json"] = Form("b64_json"),
         input_fidelity: Literal["low", "high"] = Form("low"),
+        quality: Literal["high", "medium", "low"] = Form("medium"),
+        output_format: Literal["png", "jpeg", "webp"] = Form("png"),
+        advanced_params: str | None = Form(None),
     ) -> BenchImageGenerationResponse:
         """Handle benchmark image editing requests with generation stats."""
+        parsed_advanced_params: AdvancedImageParams | None = None
+        if advanced_params:
+            with contextlib.suppress(Exception):
+                parsed_advanced_params = AdvancedImageParams.model_validate_json(
+                    advanced_params
+                )
+
         command = await self._send_image_edits_command(
             image=image,
             prompt=prompt,
@@ -1146,6 +1198,9 @@ class API:
             stream=False,
             partial_images=0,
             bench=True,
+            quality=quality,
+            output_format=output_format,
+            advanced_params=parsed_advanced_params,
         )
 
         return await self._collect_image_generation_with_stats(
@@ -1196,6 +1251,7 @@ class API:
             tg.start_soon(self._apply_state)
             tg.start_soon(self._pause_on_new_election)
             tg.start_soon(self._cleanup_expired_images)
+            tg.start_soon(self._state_catchup)
             print_startup_banner(self.port)
             await serve(
                 cast(ASGIFramework, self.app),
@@ -1205,6 +1261,22 @@ class API:
 
         self.command_sender.close()
         self.global_event_receiver.close()
+
+    async def _state_catchup(self):
+        with self.state_catchup_receiver as states:
+            async for state in states:
+                if (
+                    self.state.last_event_applied_idx == -1
+                    and state.last_event_applied_idx > self.state.last_event_applied_idx
+                ):
+                    logger.info(
+                        f"API catching up state to idx {state.last_event_applied_idx}"
+                    )
+                    self.event_buffer.store = {}
+                    self.event_buffer.next_idx_to_release = (
+                        state.last_event_applied_idx + 1
+                    )
+                    self.state = state
 
     async def _apply_state(self):
         with self.global_event_receiver as events:
@@ -1257,3 +1329,28 @@ class API:
         await self.command_sender.send(
             ForwarderCommand(origin=self.node_id, command=command)
         )
+
+    async def _send_download(self, command: DownloadCommand):
+        await self.download_command_sender.send(
+            ForwarderDownloadCommand(origin=self.node_id, command=command)
+        )
+
+    async def start_download(
+        self, payload: StartDownloadParams
+    ) -> StartDownloadResponse:
+        command = StartDownload(
+            target_node_id=payload.target_node_id,
+            shard_metadata=payload.shard_metadata,
+        )
+        await self._send_download(command)
+        return StartDownloadResponse(command_id=command.command_id)
+
+    async def delete_download(
+        self, node_id: NodeId, model_id: ModelId
+    ) -> DeleteDownloadResponse:
+        command = DeleteDownload(
+            target_node_id=node_id,
+            model_id=ModelId(model_id),
+        )
+        await self._send_download(command)
+        return DeleteDownloadResponse(command_id=command.command_id)

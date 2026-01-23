@@ -27,6 +27,7 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     MemoryUsage,
 )
+from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletion as ChatCompletionTask
 from exo.shared.types.tasks import TaskStatus
 from exo.shared.types.worker.instances import (
@@ -47,6 +48,7 @@ async def test_master():
     ge_sender, global_event_receiver = channel[ForwarderEvent]()
     command_sender, co_receiver = channel[ForwarderCommand]()
     local_event_sender, le_receiver = channel[ForwarderEvent]()
+    st_s, _st_r = channel[State]()
 
     all_events: list[IndexedEvent] = []
 
@@ -67,6 +69,7 @@ async def test_master():
         global_event_sender=ge_sender,
         local_event_receiver=le_receiver,
         command_receiver=co_receiver,
+        state_catchup_sender=st_s,
     )
     logger.info("run the master")
     async with anyio.create_task_group() as tg:

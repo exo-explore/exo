@@ -3,10 +3,11 @@ from enum import Enum
 
 from exo.routing.connection_message import ConnectionMessage
 from exo.shared.election import ElectionMessage
-from exo.shared.types.commands import ForwarderCommand
+from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
 from exo.shared.types.events import (
     ForwarderEvent,
 )
+from exo.shared.types.state import State
 from exo.utils.pydantic_ext import CamelCaseModel
 
 
@@ -44,4 +45,8 @@ ELECTION_MESSAGES = TypedTopic(
 )
 CONNECTION_MESSAGES = TypedTopic(
     "connection_messages", PublishPolicy.Never, ConnectionMessage
+)
+STATE_CATCHUP = TypedTopic("state_catchup", PublishPolicy.Always, State)
+DOWNLOAD_COMMANDS = TypedTopic(
+    "download_commands", PublishPolicy.Always, ForwarderDownloadCommand
 )

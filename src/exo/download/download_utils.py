@@ -24,7 +24,15 @@ from pydantic import (
     TypeAdapter,
 )
 
+from exo.download.huggingface_utils import (
+    filter_repo_objects,
+    get_allow_patterns,
+    get_auth_headers,
+    get_hf_endpoint,
+    get_hf_token,
+)
 from exo.shared.constants import EXO_MODELS_DIR
+from exo.shared.models.model_cards import ModelTask
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import (
@@ -35,13 +43,6 @@ from exo.shared.types.worker.downloads import (
     RepoFileDownloadProgress,
 )
 from exo.shared.types.worker.shards import ShardMetadata
-from exo.worker.download.huggingface_utils import (
-    filter_repo_objects,
-    get_allow_patterns,
-    get_auth_headers,
-    get_hf_endpoint,
-    get_hf_token,
-)
 
 
 class HuggingFaceAuthenticationError(Exception):
@@ -481,6 +482,11 @@ async def resolve_allow_patterns(shard: ShardMetadata) -> list[str]:
         return ["*"]
 
 
+def is_image_model(shard: ShardMetadata) -> bool:
+    tasks = shard.model_card.tasks
+    return ModelTask.TextToImage in tasks or ModelTask.ImageToImage in tasks
+
+
 async def get_downloaded_size(path: Path) -> int:
     partial_path = path.with_suffix(path.suffix + ".partial")
     if await aios.path.exists(path):
@@ -522,6 +528,15 @@ async def download_shard(
             file_list, allow_patterns=allow_patterns, key=lambda x: x.path
         )
     )
+
+    # For image models, skip root-level safetensors files since weights
+    # are stored in component subdirectories (e.g., transformer/, vae/)
+    if is_image_model(shard):
+        filtered_file_list = [
+            f
+            for f in filtered_file_list
+            if "/" in f.path or not f.path.endswith(".safetensors")
+        ]
     file_progress: dict[str, RepoFileDownloadProgress] = {}
 
     async def on_progress_wrapper(

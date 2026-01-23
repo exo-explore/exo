@@ -110,6 +110,36 @@
     setImageGenerationParams({ negativePrompt: value || null });
   }
 
+  function handleNumImagesChange(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const value = input.value.trim();
+    if (value === "") {
+      setImageGenerationParams({ numImages: 1 });
+    } else {
+      const num = parseInt(value, 10);
+      if (!isNaN(num) && num >= 1) {
+        setImageGenerationParams({ numImages: num });
+      }
+    }
+  }
+
+  function handleStreamChange(enabled: boolean) {
+    setImageGenerationParams({ stream: enabled });
+  }
+
+  function handlePartialImagesChange(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const value = input.value.trim();
+    if (value === "") {
+      setImageGenerationParams({ partialImages: 0 });
+    } else {
+      const num = parseInt(value, 10);
+      if (!isNaN(num) && num >= 0) {
+        setImageGenerationParams({ partialImages: num });
+      }
+    }
+  }
+
   function clearSteps() {
     setImageGenerationParams({ numInferenceSteps: null });
   }
@@ -134,90 +164,92 @@
 <div class="border-b border-exo-medium-gray/30 px-3 py-2">
   <!-- Basic params row -->
   <div class="flex items-center gap-3 flex-wrap">
-    <!-- Size -->
-    <div class="flex items-center gap-1.5">
-      <span class="text-xs text-exo-light-gray uppercase tracking-wider"
-        >SIZE:</span
-      >
-      <div class="relative">
-        <button
-          bind:this={sizeButtonRef}
-          type="button"
-          onclick={() => (isSizeDropdownOpen = !isSizeDropdownOpen)}
-          class="bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-2 pr-6 py-1 text-xs font-mono text-exo-yellow cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 {isSizeDropdownOpen
-            ? 'border-exo-yellow/70'
-            : ''}"
+    <!-- Size (hidden in edit mode - output size comes from input image) -->
+    {#if !isEditMode}
+      <div class="flex items-center gap-1.5">
+        <span class="text-xs text-exo-light-gray uppercase tracking-wider"
+          >SIZE:</span
         >
-          {params.size}
-        </button>
-        <div
-          class="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-200 {isSizeDropdownOpen
-            ? 'rotate-180'
-            : ''}"
-        >
-          <svg
-            class="w-3 h-3 text-exo-yellow/60"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
+        <div class="relative">
+          <button
+            bind:this={sizeButtonRef}
+            type="button"
+            onclick={() => (isSizeDropdownOpen = !isSizeDropdownOpen)}
+            class="bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-2 pr-6 py-1 text-xs font-mono text-exo-yellow cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 {isSizeDropdownOpen
+              ? 'border-exo-yellow/70'
+              : ''}"
           >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M19 9l-7 7-7-7"
-            />
-          </svg>
-        </div>
-      </div>
-
-      {#if isSizeDropdownOpen}
-        <!-- Backdrop to close dropdown -->
-        <button
-          type="button"
-          class="fixed inset-0 z-[9998] cursor-default"
-          onclick={() => (isSizeDropdownOpen = false)}
-          aria-label="Close dropdown"
-        ></button>
-
-        <!-- Dropdown Panel - fixed positioning to escape overflow:hidden -->
-        <div
-          class="fixed bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto min-w-max"
-          style="bottom: calc(100vh - {sizeDropdownPosition()
-            .top}px + 4px); left: {sizeDropdownPosition().left}px;"
-        >
-          <div class="py-1">
-            {#each sizeOptions as size}
-              <button
-                type="button"
-                onclick={() => selectSize(size)}
-                class="w-full px-3 py-1.5 text-left text-xs font-mono tracking-wide transition-colors duration-100 flex items-center gap-2 {params.size ===
-                size
-                  ? 'bg-transparent text-exo-yellow'
-                  : 'text-exo-light-gray hover:text-exo-yellow'}"
-              >
-                {#if params.size === size}
-                  <svg
-                    class="w-3 h-3 flex-shrink-0"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fill-rule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clip-rule="evenodd"
-                    />
-                  </svg>
-                {:else}
-                  <span class="w-3"></span>
-                {/if}
-                <span>{size}</span>
-              </button>
-            {/each}
+            {params.size}
+          </button>
+          <div
+            class="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-200 {isSizeDropdownOpen
+              ? 'rotate-180'
+              : ''}"
+          >
+            <svg
+              class="w-3 h-3 text-exo-yellow/60"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M19 9l-7 7-7-7"
+              />
+            </svg>
           </div>
         </div>
-      {/if}
-    </div>
+
+        {#if isSizeDropdownOpen}
+          <!-- Backdrop to close dropdown -->
+          <button
+            type="button"
+            class="fixed inset-0 z-[9998] cursor-default"
+            onclick={() => (isSizeDropdownOpen = false)}
+            aria-label="Close dropdown"
+          ></button>
+
+          <!-- Dropdown Panel - fixed positioning to escape overflow:hidden -->
+          <div
+            class="fixed bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto min-w-max"
+            style="bottom: calc(100vh - {sizeDropdownPosition()
+              .top}px + 4px); left: {sizeDropdownPosition().left}px;"
+          >
+            <div class="py-1">
+              {#each sizeOptions as size}
+                <button
+                  type="button"
+                  onclick={() => selectSize(size)}
+                  class="w-full px-3 py-1.5 text-left text-xs font-mono tracking-wide transition-colors duration-100 flex items-center gap-2 {params.size ===
+                  size
+                    ? 'bg-transparent text-exo-yellow'
+                    : 'text-exo-light-gray hover:text-exo-yellow'}"
+                >
+                  {#if params.size === size}
+                    <svg
+                      class="w-3 h-3 flex-shrink-0"
+                      fill="currentColor"
+                      viewBox="0 0 20 20"
+                    >
+                      <path
+                        fill-rule="evenodd"
+                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                        clip-rule="evenodd"
+                      />
+                    </svg>
+                  {:else}
+                    <span class="w-3"></span>
+                  {/if}
+                  <span>{size}</span>
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </div>
+    {/if}
 
     <!-- Quality -->
     <div class="flex items-center gap-1.5">
@@ -324,6 +356,59 @@
         {/each}
       </div>
     </div>
+
+    <!-- Number of Images (not in edit mode) -->
+    {#if !isEditMode}
+      <div class="flex items-center gap-1.5">
+        <span class="text-xs text-exo-light-gray uppercase tracking-wider"
+          >IMAGES:</span
+        >
+        <input
+          type="number"
+          min="1"
+          value={params.numImages}
+          oninput={handleNumImagesChange}
+          class="w-12 bg-exo-medium-gray/50 border border-exo-yellow/30 rounded px-2 py-1 text-xs font-mono text-exo-yellow text-center transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70"
+        />
+      </div>
+    {/if}
+
+    <!-- Stream toggle -->
+    <div class="flex items-center gap-1.5">
+      <span class="text-xs text-exo-light-gray uppercase tracking-wider"
+        >STREAM:</span
+      >
+      <button
+        type="button"
+        onclick={() => handleStreamChange(!params.stream)}
+        class="w-8 h-4 rounded-full transition-all duration-200 cursor-pointer relative {params.stream
+          ? 'bg-exo-yellow'
+          : 'bg-exo-medium-gray/50 border border-exo-yellow/30'}"
+        title={params.stream ? "Streaming enabled" : "Streaming disabled"}
+      >
+        <div
+          class="absolute top-0.5 w-3 h-3 rounded-full transition-all duration-200 {params.stream
+            ? 'right-0.5 bg-exo-black'
+            : 'left-0.5 bg-exo-light-gray'}"
+        ></div>
+      </button>
+    </div>
+
+    <!-- Partial Images (only when streaming) -->
+    {#if params.stream}
+      <div class="flex items-center gap-1.5">
+        <span class="text-xs text-exo-light-gray uppercase tracking-wider"
+          >PARTIALS:</span
+        >
+        <input
+          type="number"
+          min="0"
+          value={params.partialImages}
+          oninput={handlePartialImagesChange}
+          class="w-12 bg-exo-medium-gray/50 border border-exo-yellow/30 rounded px-2 py-1 text-xs font-mono text-exo-yellow text-center transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70"
+        />
+      </div>
+    {/if}
 
     <!-- Input Fidelity (edit mode only) -->
     {#if isEditMode}

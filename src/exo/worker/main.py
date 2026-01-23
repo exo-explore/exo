@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
 from random import random
+from typing import Iterator
 
 import anyio
-from anyio import CancelScope, create_task_group, current_time, fail_after
+from anyio import CancelScope, create_task_group, fail_after
 from anyio.abc import TaskGroup
 from loguru import logger
 
@@ -10,7 +11,12 @@ from exo.routing.connection_message import ConnectionMessage, ConnectionMessageT
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.api import ImageEditsInternalParams
-from exo.shared.types.commands import ForwarderCommand, RequestEventLog
+from exo.shared.types.commands import (
+    ForwarderCommand,
+    ForwarderDownloadCommand,
+    RequestEventLog,
+    StartDownload,
+)
 from exo.shared.types.common import CommandId, NodeId, SessionId
 from exo.shared.types.events import (
     Event,
@@ -18,7 +24,6 @@ from exo.shared.types.events import (
     ForwarderEvent,
     IndexedEvent,
     InputChunkReceived,
-    NodeDownloadProgress,
     NodeGatheredInfo,
     TaskCreated,
     TaskStatusUpdated,
@@ -36,23 +41,12 @@ from exo.shared.types.tasks import (
     TaskStatus,
 )
 from exo.shared.types.topology import Connection, SocketConnection
-from exo.shared.types.worker.downloads import (
-    DownloadCompleted,
-    DownloadFailed,
-    DownloadOngoing,
-    DownloadPending,
-    DownloadProgress,
-)
 from exo.shared.types.worker.runners import RunnerId
-from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
 from exo.utils.info_gatherer.net_profile import check_reachable
-from exo.worker.download.download_utils import (
-    map_repo_download_progress_to_download_progress_data,
-)
-from exo.worker.download.shard_downloader import RepoDownloadProgress, ShardDownloader
+from exo.utils.keyed_backoff import KeyedBackoff
 from exo.worker.plan import plan
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
@@ -62,31 +56,30 @@ class Worker:
         self,
         node_id: NodeId,
         session_id: SessionId,
-        shard_downloader: ShardDownloader,
         *,
         connection_message_receiver: Receiver[ConnectionMessage],
         global_event_receiver: Receiver[ForwarderEvent],
         local_event_sender: Sender[ForwarderEvent],
-        # This is for requesting updates. It doesn't need to be a general command sender right now,
-        # but I think it's the correct way to be thinking about commands
         command_sender: Sender[ForwarderCommand],
+        state_catchup_receiver: Receiver[State],
+        download_command_sender: Sender[ForwarderDownloadCommand],
+        event_index_counter: Iterator[int],
     ):
         self.node_id: NodeId = node_id
         self.session_id: SessionId = session_id
 
-        self.shard_downloader: ShardDownloader = shard_downloader
-        self._pending_downloads: dict[RunnerId, ShardMetadata] = {}
-
         self.global_event_receiver = global_event_receiver
         self.local_event_sender = local_event_sender
+        self.state_catchup_receiver = state_catchup_receiver
         self.local_event_index = 0
+        self.event_index_counter = event_index_counter
         self.command_sender = command_sender
+        self.download_command_sender = download_command_sender
         self.connection_message_receiver = connection_message_receiver
         self.event_buffer = OrderedBuffer[Event]()
         self.out_for_delivery: dict[EventId, ForwarderEvent] = {}
 
         self.state: State = State()
-        self.download_status: dict[ModelId, DownloadProgress] = {}
         self.runners: dict[RunnerId, RunnerSupervisor] = {}
         self._tg: TaskGroup = create_task_group()
 
@@ -101,6 +94,8 @@ class Worker:
         self.input_chunk_buffer: dict[CommandId, dict[int, str]] = {}
         self.input_chunk_counts: dict[CommandId, int] = {}
 
+        self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
+
     async def run(self):
         logger.info("Starting Worker")
 
@@ -111,16 +106,17 @@ class Worker:
             tg.start_soon(info_gatherer.run)
             tg.start_soon(self._forward_info, info_recv)
             tg.start_soon(self.plan_step)
-            tg.start_soon(self._emit_existing_download_progress)
             tg.start_soon(self._connection_message_event_writer)
             tg.start_soon(self._resend_out_for_delivery)
             tg.start_soon(self._event_applier)
             tg.start_soon(self._forward_events)
             tg.start_soon(self._poll_connection_updates)
+            tg.start_soon(self._check_catchup_state)
 
         # Actual shutdown code - waits for all tasks to complete before executing.
         self.local_event_sender.close()
         self.command_sender.close()
+        self.download_command_sender.close()
         for runner in self.runners.values():
             runner.shutdown()
 
@@ -134,6 +130,22 @@ class Worker:
                         info=info,
                     )
                 )
+
+    async def _check_catchup_state(self):
+        with self.state_catchup_receiver as states:
+            async for state in states:
+                if (
+                    self.state.last_event_applied_idx == -1
+                    and state.last_event_applied_idx > self.state.last_event_applied_idx
+                ):
+                    logger.info(
+                        f"Worker catching up state to idx {state.last_event_applied_idx}"
+                    )
+                    self.event_buffer.store = {}
+                    self.event_buffer.next_idx_to_release = (
+                        state.last_event_applied_idx + 1
+                    )
+                    self.state = state
 
     async def _event_applier(self):
         with self.global_event_receiver as events:
@@ -179,11 +191,9 @@ class Worker:
     async def plan_step(self):
         while True:
             await anyio.sleep(0.1)
-            # 3. based on the updated state, we plan & execute an operation.
             task: Task | None = plan(
                 self.node_id,
                 self.runners,
-                self.download_status,
                 self.state.downloads,
                 self.state.instances,
                 self.state.runners,
@@ -207,42 +217,26 @@ class Worker:
                         )
                     )
                 case DownloadModel(shard_metadata=shard):
-                    if shard.model_card.model_id not in self.download_status:
-                        progress = DownloadPending(
-                            shard_metadata=shard, node_id=self.node_id
-                        )
-                        self.download_status[shard.model_card.model_id] = progress
-                        await self.event_sender.send(
-                            NodeDownloadProgress(download_progress=progress)
-                        )
-                    initial_progress = (
-                        await self.shard_downloader.get_shard_download_status_for_shard(
-                            shard
+                    model_id = shard.model_card.model_id
+                    if not self._download_backoff.should_proceed(model_id):
+                        continue
+
+                    self._download_backoff.record_attempt(model_id)
+
+                    await self.download_command_sender.send(
+                        ForwarderDownloadCommand(
+                            origin=self.node_id,
+                            command=StartDownload(
+                                target_node_id=self.node_id,
+                                shard_metadata=shard,
+                            ),
                         )
                     )
-                    if initial_progress.status == "complete":
-                        progress = DownloadCompleted(
-                            shard_metadata=shard,
-                            node_id=self.node_id,
-                            total_bytes=initial_progress.total_bytes,
+                    await self.event_sender.send(
+                        TaskStatusUpdated(
+                            task_id=task.task_id, task_status=TaskStatus.Running
                         )
-                        self.download_status[shard.model_card.model_id] = progress
-                        await self.event_sender.send(
-                            NodeDownloadProgress(download_progress=progress)
-                        )
-                        await self.event_sender.send(
-                            TaskStatusUpdated(
-                                task_id=task.task_id,
-                                task_status=TaskStatus.Complete,
-                            )
-                        )
-                    else:
-                        await self.event_sender.send(
-                            TaskStatusUpdated(
-                                task_id=task.task_id, task_status=TaskStatus.Running
-                            )
-                        )
-                        self._handle_shard_download_process(task, initial_progress)
+                    )
                 case Shutdown(runner_id=runner_id):
                     try:
                         with fail_after(3):
@@ -342,10 +336,7 @@ class Worker:
         # We request all events after (and including) the missing index.
         # This function is started whenever we receive an event that is out of sequence.
         # It is cancelled as soon as we receiver an event that is in sequence.
-
-        if since_idx < 0:
-            logger.warning(f"Negative value encountered for nack request {since_idx=}")
-            since_idx = 0
+        assert since_idx >= 0
 
         with CancelScope() as scope:
             self._nack_cancel_scope = scope
@@ -387,104 +378,17 @@ class Worker:
         self._tg.start_soon(runner.run)
         return runner
 
-    def _handle_shard_download_process(
-        self,
-        task: DownloadModel,
-        initial_progress: RepoDownloadProgress,
-    ):
-        """Manages the shard download process with progress tracking."""
-        status = DownloadOngoing(
-            node_id=self.node_id,
-            shard_metadata=task.shard_metadata,
-            download_progress=map_repo_download_progress_to_download_progress_data(
-                initial_progress
-            ),
-        )
-        self.download_status[task.shard_metadata.model_card.model_id] = status
-        self.event_sender.send_nowait(NodeDownloadProgress(download_progress=status))
-
-        last_progress_time = 0.0
-        throttle_interval_secs = 1.0
-
-        async def download_progress_callback(
-            shard: ShardMetadata, progress: RepoDownloadProgress
-        ) -> None:
-            nonlocal self
-            nonlocal last_progress_time
-            if progress.status == "complete":
-                status = DownloadCompleted(
-                    shard_metadata=shard,
-                    node_id=self.node_id,
-                    total_bytes=progress.total_bytes,
-                )
-                self.download_status[shard.model_card.model_id] = status
-                await self.event_sender.send(
-                    NodeDownloadProgress(download_progress=status)
-                )
-                await self.event_sender.send(
-                    TaskStatusUpdated(
-                        task_id=task.task_id, task_status=TaskStatus.Complete
-                    )
-                )
-            elif (
-                progress.status == "in_progress"
-                and current_time() - last_progress_time > throttle_interval_secs
-            ):
-                status = DownloadOngoing(
-                    node_id=self.node_id,
-                    shard_metadata=shard,
-                    download_progress=map_repo_download_progress_to_download_progress_data(
-                        progress
-                    ),
-                )
-                self.download_status[shard.model_card.model_id] = status
-                await self.event_sender.send(
-                    NodeDownloadProgress(download_progress=status)
-                )
-                last_progress_time = current_time()
-
-        self.shard_downloader.on_progress(download_progress_callback)
-
-        async def download_with_error_handling() -> None:
-            try:
-                await self.shard_downloader.ensure_shard(task.shard_metadata)
-            except Exception as e:
-                error_message = str(e)
-                logger.error(
-                    f"Download failed for {task.shard_metadata.model_card.model_id}: {error_message}"
-                )
-                failed_status = DownloadFailed(
-                    node_id=self.node_id,
-                    shard_metadata=task.shard_metadata,
-                    error_message=error_message,
-                )
-                self.download_status[task.shard_metadata.model_card.model_id] = (
-                    failed_status
-                )
-                await self.event_sender.send(
-                    NodeDownloadProgress(download_progress=failed_status)
-                )
-                await self.event_sender.send(
-                    TaskStatusUpdated(
-                        task_id=task.task_id, task_status=TaskStatus.Failed
-                    )
-                )
-
-        self._tg.start_soon(download_with_error_handling)
-
     async def _forward_events(self) -> None:
         with self.event_receiver as events:
             async for event in events:
+                idx = next(self.event_index_counter)
                 fe = ForwarderEvent(
-                    origin_idx=self.local_event_index,
+                    origin_idx=idx,
                     origin=self.node_id,
                     session=self.session_id,
                     event=event,
                 )
-                logger.debug(
-                    f"Worker published event {self.local_event_index}: {str(event)[:100]}"
-                )
-                self.local_event_index += 1
+                logger.debug(f"Worker published event {idx}: {str(event)[:100]}")
                 await self.local_event_sender.send(fe)
                 self.out_for_delivery[event.event_id] = fe
 
@@ -532,42 +436,3 @@ class Worker:
                     await self.event_sender.send(TopologyEdgeDeleted(conn=conn))
 
             await anyio.sleep(10)
-
-    async def _emit_existing_download_progress(self) -> None:
-        try:
-            while True:
-                logger.debug("Fetching and emitting existing download progress...")
-                async for (
-                    _,
-                    progress,
-                ) in self.shard_downloader.get_shard_download_status():
-                    if progress.status == "complete":
-                        status = DownloadCompleted(
-                            node_id=self.node_id,
-                            shard_metadata=progress.shard,
-                            total_bytes=progress.total_bytes,
-                        )
-                    elif progress.status in ["in_progress", "not_started"]:
-                        if progress.downloaded_bytes_this_session.in_bytes == 0:
-                            status = DownloadPending(
-                                node_id=self.node_id, shard_metadata=progress.shard
-                            )
-                        else:
-                            status = DownloadOngoing(
-                                node_id=self.node_id,
-                                shard_metadata=progress.shard,
-                                download_progress=map_repo_download_progress_to_download_progress_data(
-                                    progress
-                                ),
-                            )
-                    else:
-                        continue
-
-                    self.download_status[progress.shard.model_card.model_id] = status
-                    await self.event_sender.send(
-                        NodeDownloadProgress(download_progress=status)
-                    )
-                logger.debug("Done emitting existing download progress.")
-                await anyio.sleep(5 * 60)  # 5 minutes
-        except Exception as e:
-            logger.error(f"Error emitting existing download progress: {e}")

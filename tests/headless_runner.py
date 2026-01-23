@@ -11,6 +11,10 @@ from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType
 from loguru import logger
 from pydantic import BaseModel
 
+from exo.download.impl_shard_downloader import (
+    build_full_shard,
+    exo_shard_downloader,
+)
 from exo.shared.logging import InterceptLogger, logger_setup
 from exo.shared.models.model_cards import MODEL_CARDS, ModelId
 from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
@@ -36,10 +40,6 @@ from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import PipelineShardMetadata, TensorShardMetadata
 from exo.utils.channels import MpReceiver, MpSender, channel, mp_channel
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
-from exo.worker.download.impl_shard_downloader import (
-    build_full_shard,
-    exo_shard_downloader,
-)
 from exo.worker.runner.bootstrap import entrypoint
 
 

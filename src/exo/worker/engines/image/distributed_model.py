@@ -6,10 +6,10 @@ import mlx.core as mx
 from mflux.models.common.config.config import Config
 from PIL import Image
 
+from exo.download.download_utils import build_model_path
 from exo.shared.types.api import AdvancedImageParams
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.shards import PipelineShardMetadata
-from exo.worker.download.download_utils import build_model_path
 from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.models import (
     create_adapter_for_model,
@@ -140,6 +140,7 @@ class DistributedImageModel:
             width=width,
             image_path=image_path,
             model_config=self._adapter.model.model_config,  # pyright: ignore[reportAny]
+            guidance=guidance_override if guidance_override is not None else 4.0,
         )
 
         num_sync_steps = self._config.get_num_sync_steps(steps)
