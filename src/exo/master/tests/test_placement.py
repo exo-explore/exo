@@ -239,7 +239,7 @@ def test_get_transition_events_no_change(instance: Instance):
     target_instances = {instance_id: instance}
 
     # act
-    events = get_transition_events(current_instances, target_instances)
+    events = get_transition_events(current_instances, target_instances, {})
 
     # assert
     assert len(events) == 0
@@ -252,7 +252,7 @@ def test_get_transition_events_create_instance(instance: Instance):
     target_instances: dict[InstanceId, Instance] = {instance_id: instance}
 
     # act
-    events = get_transition_events(current_instances, target_instances)
+    events = get_transition_events(current_instances, target_instances, {})
 
     # assert
     assert len(events) == 1
@@ -266,7 +266,7 @@ def test_get_transition_events_delete_instance(instance: Instance):
     target_instances: dict[InstanceId, Instance] = {}
 
     # act
-    events = get_transition_events(current_instances, target_instances)
+    events = get_transition_events(current_instances, target_instances, {})
 
     # assert
     assert len(events) == 1

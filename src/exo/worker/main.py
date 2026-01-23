@@ -33,6 +33,7 @@ from exo.shared.types.events import (
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
+    CancelTask,
     CreateRunner,
     DownloadModel,
     ImageEdits,
@@ -115,8 +116,9 @@ class Worker:
         self.local_event_sender.close()
         self.command_sender.close()
         self.download_command_sender.close()
-        for runner in self.runners.values():
-            runner.shutdown()
+        async with create_task_group() as tg:
+            for runner in self.runners.values():
+                tg.start_soon(runner.shutdown)
 
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
@@ -220,15 +222,22 @@ class Worker:
                         )
                     )
                 case Shutdown(runner_id=runner_id):
+                    runner = self.runners.pop(runner_id)
                     try:
                         with fail_after(3):
-                            await self.runners.pop(runner_id).start_task(task)
+                            await runner.start_task(task)
                     except TimeoutError:
                         await self.event_sender.send(
                             TaskStatusUpdated(
                                 task_id=task.task_id, task_status=TaskStatus.TimedOut
                             )
                         )
+                    finally:
+                        await runner.shutdown()
+                case CancelTask(cancelled_task_id=cancelled_task_id):
+                    await self.runners[self._task_to_runner_id(task)].cancel_task(
+                        cancelled_task_id
+                    )
                 case ImageEdits() if task.task_params.total_input_chunks > 0:
                     # Assemble image from chunks and inject into task
                     cmd_id = task.command_id
@@ -350,8 +359,6 @@ class Worker:
             await anyio.sleep(1 + random())
             for event in self.out_for_delivery.copy().values():
                 await self.local_event_sender.send(event)
-
-    ## Op Executors
 
     def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
         """Creates and stores a new AssignedRunner with initial downloading status."""

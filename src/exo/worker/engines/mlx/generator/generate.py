@@ -27,7 +27,6 @@ from exo.worker.engines.mlx.cache import KVPrefixCache, encode_prompt, make_kv_c
 from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
-    mx_barrier,
 )
 from exo.worker.runner.bootstrap import logger
 
@@ -135,10 +134,6 @@ def warmup_inference(
         tokens_generated += 1
 
     logger.info("Generated ALL warmup tokens")
-
-    # TODO: Do we want an mx_barrier?
-    #  At least this version is actively incorrect, as it should use mx_barrier(group)
-    mx_barrier()
 
     return tokens_generated
 
@@ -309,5 +304,3 @@ def mlx_generate(
                 else:
                     kv_prefix_cache.add_kv_cache(full_prompt, caches)
             break
-
-        # TODO: Do we want an mx_barrier?

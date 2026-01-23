@@ -49,6 +49,10 @@ class DeleteInstance(BaseCommand):
     instance_id: InstanceId
 
 
+class TaskCancelled(BaseCommand):
+    cancelled_command_id: CommandId
+
+
 class TaskFinished(BaseCommand):
     finished_command_id: CommandId
 
@@ -85,6 +89,7 @@ Command = (
     | PlaceInstance
     | CreateInstance
     | DeleteInstance
+    | TaskCancelled
     | TaskFinished
     | SendInputChunk
 )
