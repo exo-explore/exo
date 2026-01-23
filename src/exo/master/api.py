@@ -345,14 +345,9 @@ class API:
     ) -> PlacementPreviewResponse:
         seen: set[tuple[ModelId, Sharding, InstanceMeta, int]] = set()
         previews: list[PlacementPreview] = []
+        required_nodes = set(node_ids) if node_ids else None
 
-        # Create filtered topology if node_ids specified
-        if node_ids and len(node_ids) > 0:
-            topology = self.state.topology.get_subgraph_from_nodes(node_ids)
-        else:
-            topology = self.state.topology
-
-        if len(list(topology.list_nodes())) == 0:
+        if len(list(self.state.topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
         cards = [card for card in MODEL_CARDS.values() if card.model_id == model_id]
@@ -365,7 +360,9 @@ class API:
                 instance_combinations.extend(
                     [
                         (sharding, instance_meta, i)
-                        for i in range(1, len(list(topology.list_nodes())) + 1)
+                        for i in range(
+                            1, len(list(self.state.topology.list_nodes())) + 1
+                        )
                     ]
                 )
         # TODO: PDD
@@ -383,8 +380,9 @@ class API:
                         ),
                         node_memory=self.state.node_memory,
                         node_network=self.state.node_network,
-                        topology=topology,
+                        topology=self.state.topology,
                         current_instances=self.state.instances,
+                        required_nodes=required_nodes,
                     )
                 except ValueError as exc:
                     if (model_card.model_id, sharding, instance_meta, 0) not in seen:
@@ -423,14 +421,16 @@ class API:
 
                 instance = new_instances[0]
                 shard_assignments = instance.shard_assignments
-                node_ids = list(shard_assignments.node_to_runner.keys())
+                placement_node_ids = list(shard_assignments.node_to_runner.keys())
 
                 memory_delta_by_node: dict[str, int] = {}
-                if node_ids:
+                if placement_node_ids:
                     total_bytes = model_card.storage_size.in_bytes
-                    per_node = total_bytes // len(node_ids)
-                    remainder = total_bytes % len(node_ids)
-                    for index, node_id in enumerate(sorted(node_ids, key=str)):
+                    per_node = total_bytes // len(placement_node_ids)
+                    remainder = total_bytes % len(placement_node_ids)
+                    for index, node_id in enumerate(
+                        sorted(placement_node_ids, key=str)
+                    ):
                         extra = 1 if index < remainder else 0
                         memory_delta_by_node[str(node_id)] = per_node + extra
 
@@ -438,7 +438,7 @@ class API:
                     model_card.model_id,
                     sharding,
                     instance_meta,
-                    len(node_ids),
+                    len(placement_node_ids),
                 ) not in seen:
                     previews.append(
                         PlacementPreview(
@@ -450,7 +450,14 @@ class API:
                             error=None,
                         )
                     )
-                seen.add((model_card.model_id, sharding, instance_meta, len(node_ids)))
+                seen.add(
+                    (
+                        model_card.model_id,
+                        sharding,
+                        instance_meta,
+                        len(placement_node_ids),
+                    )
+                )
 
         return PlacementPreviewResponse(previews=previews)
 
