@@ -138,14 +138,29 @@ class Worker:
                     self.state.last_event_applied_idx == -1
                     and state.last_event_applied_idx > self.state.last_event_applied_idx
                 ):
-                    logger.info(
-                        f"Worker catching up state to idx {state.last_event_applied_idx}"
+                    # DEBUG: Log buffer state BEFORE clearing
+                    logger.warning(
+                        f"STATE_CATCHUP: About to catch up. "
+                        f"Current buffer indices: {sorted(self.event_buffer.store.keys())}, "
+                        f"next_idx_to_release: {self.event_buffer.next_idx_to_release}, "
+                        f"catching up to idx: {state.last_event_applied_idx}"
                     )
-                    self.event_buffer.store = {}
-                    self.event_buffer.next_idx_to_release = (
-                        state.last_event_applied_idx + 1
-                    )
+
+                    new_idx = state.last_event_applied_idx + 1
+                    self.event_buffer.next_idx_to_release = new_idx
+                    # Preserve events that arrived early but are still valid (idx >= new_idx)
+                    # Remove stale events (idx < new_idx) to prevent memory growth
+                    self.event_buffer.store = {
+                        k: v for k, v in self.event_buffer.store.items() if k >= new_idx
+                    }
                     self.state = state
+
+                    # DEBUG: Log buffer state AFTER clearing
+                    logger.warning(
+                        f"STATE_CATCHUP: Catchup complete. "
+                        f"Buffer preserved indices: {sorted(self.event_buffer.store.keys())}, "
+                        f"new next_idx_to_release: {self.event_buffer.next_idx_to_release}"
+                    )
 
     async def _event_applier(self):
         with self.global_event_receiver as events:
@@ -157,8 +172,20 @@ class Worker:
                 if event_id in self.out_for_delivery:
                     del self.out_for_delivery[event_id]
 
+                # DEBUG: Log what was ingested
+                logger.warning(
+                    f"EVENT_APPLIER: Ingested event idx={f_event.origin_idx}, "
+                    f"buffer keys now: {sorted(self.event_buffer.store.keys())}"
+                )
+
                 # 2. for each event, apply it to the state
                 indexed_events = self.event_buffer.drain_indexed()
+
+                # DEBUG: Log drain results
+                logger.warning(
+                    f"EVENT_APPLIER: Drained {len(indexed_events)} events, "
+                    f"next_idx_to_release now: {self.event_buffer.next_idx_to_release}"
+                )
                 if indexed_events:
                     self._nack_attempts = 0
 

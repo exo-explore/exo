@@ -1269,14 +1269,29 @@ class API:
                     self.state.last_event_applied_idx == -1
                     and state.last_event_applied_idx > self.state.last_event_applied_idx
                 ):
-                    logger.info(
-                        f"API catching up state to idx {state.last_event_applied_idx}"
+                    # DEBUG: Log buffer state BEFORE clearing
+                    logger.warning(
+                        f"STATE_CATCHUP: About to catch up. "
+                        f"Current buffer indices: {sorted(self.event_buffer.store.keys())}, "
+                        f"next_idx_to_release: {self.event_buffer.next_idx_to_release}, "
+                        f"catching up to idx: {state.last_event_applied_idx}"
                     )
-                    self.event_buffer.store = {}
-                    self.event_buffer.next_idx_to_release = (
-                        state.last_event_applied_idx + 1
-                    )
+
+                    new_idx = state.last_event_applied_idx + 1
+                    self.event_buffer.next_idx_to_release = new_idx
+                    # Preserve events that arrived early but are still valid (idx >= new_idx)
+                    # Remove stale events (idx < new_idx) to prevent memory growth
+                    self.event_buffer.store = {
+                        k: v for k, v in self.event_buffer.store.items() if k >= new_idx
+                    }
                     self.state = state
+
+                    # DEBUG: Log buffer state AFTER clearing
+                    logger.warning(
+                        f"STATE_CATCHUP: Catchup complete. "
+                        f"Buffer preserved indices: {sorted(self.event_buffer.store.keys())}, "
+                        f"new next_idx_to_release: {self.event_buffer.next_idx_to_release}"
+                    )
 
     async def _apply_state(self):
         with self.global_event_receiver as events:
