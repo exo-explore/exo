@@ -9,43 +9,63 @@ from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.utils_mlx import make_kv_cache
 from exo.worker.runner.bootstrap import logger
 
+# Fraction of device memory above which LRU eviction kicks in
+_MEMORY_PRESSURE_THRESHOLD = 0.85
+
 
 class KVPrefixCache:
     def __init__(self):
-        # Only one prefix cache per runner.
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
         self.caches: list[KVCacheType] = []
+        self._last_used: list[int] = []  # monotonic counter of last access per entry
+        self._access_counter: int = 0
 
     def clear(self):
         """Clear all cached prompts and caches."""
         self.prompts.clear()
         self.caches.clear()
+        self._last_used.clear()
 
     def add_kv_cache(
         self, tokenizer: TokenizerWrapper, prompt: str, cache: KVCacheType
     ):
+        """Add a new cache entry. Evicts LRU entries if memory is high."""
+        self._evict_if_needed()
         tokenized_prompt = encode_prompt(tokenizer, prompt)
         self.prompts.append(tokenized_prompt)
         self.caches.append(deepcopy(cache))
-        logger.info(f"KV cache saved: {len(tokenized_prompt)} tokens")
+        self._access_counter += 1
+        self._last_used.append(self._access_counter)
+        logger.info(f"KV cache added: {len(tokenized_prompt)} tokens")
+
+    def update_kv_cache(
+        self,
+        index: int,
+        tokenizer: TokenizerWrapper,
+        prompt: str,
+        cache: KVCacheType,
+    ):
+        """Update an existing cache entry in-place."""
+        tokenized_prompt = encode_prompt(tokenizer, prompt)
+        self.prompts[index] = tokenized_prompt
+        self.caches[index] = deepcopy(cache)
+        self._access_counter += 1
+        self._last_used[index] = self._access_counter
+        logger.info(f"KV cache updated (index {index}): {len(tokenized_prompt)} tokens")
 
     def get_kv_cache(
         self,
         model: Model,
         tokenizer: TokenizerWrapper,
         prompt: str,
-    ) -> tuple[KVCacheType, mx.array]:
+    ) -> tuple[KVCacheType, mx.array, int | None]:
         """Get KV cache for prompt, returning remaining tokens to prefill.
 
-        This method finds the best matching cached prefix and returns:
-        - A copy of the cache trimmed to the prefix length
-        - The remaining tokens that need to be prefilled before generation
-
-        The caller is responsible for prefilling the remaining tokens.
-
         Returns:
-            Tuple of (cache, remaining_tokens) where remaining_tokens are the
-            tokens that still need to be prefilled/processed.
+            Tuple of (cache, remaining_tokens, matched_index) where:
+            - cache: KV cache to use for generation
+            - remaining_tokens: tokens that still need prefilling
+            - matched_index: index of the matched entry (None if no match)
         """
         tokenized_prompt = encode_prompt(tokenizer, prompt)
         max_length = len(tokenized_prompt)
@@ -63,8 +83,10 @@ class KVPrefixCache:
                 tokens_to_trim = cached_length - (max_length - 1)
                 if tokens_to_trim > 0:
                     trim_prompt_cache(prompt_cache, tokens_to_trim)
+                self._access_counter += 1
+                self._last_used[i] = self._access_counter
                 logger.info(f"KV cache exact match: {max_length} tokens (instant)")
-                return prompt_cache, tokenized_prompt[-1:]
+                return prompt_cache, tokenized_prompt[-1:], i
 
             if length > best_snapshot_length:
                 best_snapshot_index, best_snapshot_length = i, length
@@ -84,9 +106,10 @@ class KVPrefixCache:
             if tokens_to_trim > 0:
                 trim_prompt_cache(prompt_cache, tokens_to_trim)
 
-            # Return remaining tokens for caller to prefill
+            self._access_counter += 1
+            self._last_used[best_snapshot_index] = self._access_counter
             remaining_tokens = tokenized_prompt[best_snapshot_length:]
-            return prompt_cache, remaining_tokens
+            return prompt_cache, remaining_tokens, best_snapshot_index
 
         else:
             prompt_cache = make_kv_cache(model)
@@ -97,8 +120,32 @@ class KVPrefixCache:
                     f"KV cache no prefix match, need to prefill {max_length} tokens"
                 )
 
-            # Return all tokens for caller to prefill
-            return prompt_cache, tokenized_prompt
+            return prompt_cache, tokenized_prompt, None
+
+    def _evict_if_needed(self):
+        """Evict least recently used entries while memory pressure is high."""
+        if len(self.caches) == 0:
+            return
+
+        active: int = mx.metal.get_active_memory()
+        limit = int(mx.metal.device_info()["max_recommended_working_set_size"])
+        if active < limit * _MEMORY_PRESSURE_THRESHOLD:
+            return
+
+        # Evict LRU entries until below threshold or only one entry left
+        while len(self.caches) > 0:
+            lru_index = self._last_used.index(min(self._last_used))
+            evicted_tokens = len(self.prompts[lru_index])
+            self.prompts.pop(lru_index)
+            self.caches.pop(lru_index)
+            self._last_used.pop(lru_index)
+            logger.info(
+                f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory pressure"
+            )
+
+            active = mx.metal.get_active_memory()
+            if active < limit * _MEMORY_PRESSURE_THRESHOLD:
+                break
 
 
 def encode_prompt(tokenizer: TokenizerWrapper, prompt: str) -> mx.array:

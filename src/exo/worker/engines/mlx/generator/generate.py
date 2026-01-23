@@ -31,6 +31,8 @@ from exo.worker.runner.bootstrap import logger
 
 generation_stream = mx.new_stream(mx.default_device())
 
+_MIN_PREFIX_HIT_TO_UPDATE = 1000
+
 
 def prefill(
     model: Model,
@@ -179,11 +181,17 @@ def mlx_generate(
         kv_prefix_cache = None
 
     # Use prefix cache if available, otherwise create fresh cache
+    prefix_hit_length = 0
+    matched_index: int | None = None
     if kv_prefix_cache is None:
         caches = make_kv_cache(model=model)
         prompt_tokens = encode_prompt(tokenizer, prompt)
     else:
-        caches, prompt_tokens = kv_prefix_cache.get_kv_cache(model, tokenizer, prompt)
+        caches, prompt_tokens, matched_index = kv_prefix_cache.get_kv_cache(
+            model, tokenizer, prompt
+        )
+        all_prompt_tokens = encode_prompt(tokenizer, prompt)
+        prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
 
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = []
     if is_bench:
@@ -197,7 +205,7 @@ def mlx_generate(
     )
 
     # Prefill cache with all tokens except the last one
-    prefill_tps = prefill(model, tokenizer, sampler, prompt_tokens[-1:], caches)
+    prefill_tps = prefill(model, tokenizer, sampler, prompt_tokens[:-1], caches)
 
     # stream_generate starts from the last token
     last_token = prompt_tokens[-1:]
@@ -257,11 +265,17 @@ def mlx_generate(
                 f"{prefill_tps:.1f} tok/s, generated {generated_tokens} tokens @ "
                 f"{generation_tps:.1f} tok/s"
             )
-            # Save cache for future prefix matching (clear first to keep only the last one)
             if kv_prefix_cache is not None:
-                kv_prefix_cache.clear()
                 full_prompt = prompt + "".join(generated_text_parts)
-                kv_prefix_cache.add_kv_cache(tokenizer, full_prompt, caches)
+                if (
+                    matched_index is not None
+                    and prefix_hit_length >= _MIN_PREFIX_HIT_TO_UPDATE
+                ):
+                    kv_prefix_cache.update_kv_cache(
+                        matched_index, tokenizer, full_prompt, caches
+                    )
+                else:
+                    kv_prefix_cache.add_kv_cache(tokenizer, full_prompt, caches)
             break
 
         # TODO: Do we want an mx_barrier?
