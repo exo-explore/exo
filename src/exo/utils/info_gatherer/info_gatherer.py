@@ -400,7 +400,7 @@ class InfoGatherer:
             return
         old_nics = []
         while True:
-            nics = get_network_interfaces()
+            nics = await get_network_interfaces()
             if nics != old_nics:
                 old_nics = nics
                 await self.info_sender.send(NodeNetworkInterfaces(ifaces=nics))
