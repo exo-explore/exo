@@ -32,7 +32,6 @@ from exo.worker.engines.mlx.constants import (
 )
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
-    mx_barrier,
 )
 from exo.worker.runner.bootstrap import logger
 
@@ -135,10 +134,6 @@ def warmup_inference(
         tokens_generated += 1
 
     logger.info("Generated ALL warmup tokens")
-
-    # TODO: Do we want an mx_barrier?
-    #  At least this version is actively incorrect, as it should use mx_barrier(group)
-    mx_barrier()
 
     return tokens_generated
 
@@ -403,5 +398,3 @@ def mlx_generate(
         # Limit accumulated_text to what's needed for stop sequence detection
         if max_stop_len > 0 and len(accumulated_text) > max_stop_len:
             accumulated_text = accumulated_text[-max_stop_len:]
-
-        # TODO: Do we want an mx_barrier?
