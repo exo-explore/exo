@@ -60,9 +60,8 @@ class Worker:
         connection_message_receiver: Receiver[ConnectionMessage],
         global_event_receiver: Receiver[ForwarderEvent],
         local_event_sender: Sender[ForwarderEvent],
-        # This is for requesting updates. It doesn't need to be a general command sender right now,
-        # but I think it's the correct way to be thinking about commands
         command_sender: Sender[ForwarderCommand],
+        state_catchup_receiver: Receiver[State],
         download_command_sender: Sender[ForwarderDownloadCommand],
         event_index_counter: Iterator[int],
     ):
@@ -71,6 +70,8 @@ class Worker:
 
         self.global_event_receiver = global_event_receiver
         self.local_event_sender = local_event_sender
+        self.state_catchup_receiver = state_catchup_receiver
+        self.local_event_index = 0
         self.event_index_counter = event_index_counter
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
@@ -110,6 +111,7 @@ class Worker:
             tg.start_soon(self._event_applier)
             tg.start_soon(self._forward_events)
             tg.start_soon(self._poll_connection_updates)
+            tg.start_soon(self._check_catchup_state)
 
         # Actual shutdown code - waits for all tasks to complete before executing.
         self.local_event_sender.close()
@@ -128,6 +130,22 @@ class Worker:
                         info=info,
                     )
                 )
+
+    async def _check_catchup_state(self):
+        with self.state_catchup_receiver as states:
+            async for state in states:
+                if (
+                    self.state.last_event_applied_idx == -1
+                    and state.last_event_applied_idx > self.state.last_event_applied_idx
+                ):
+                    logger.info(
+                        f"Worker catching up state to idx {state.last_event_applied_idx}"
+                    )
+                    self.event_buffer.store = {}
+                    self.event_buffer.next_idx_to_release = (
+                        state.last_event_applied_idx + 1
+                    )
+                    self.state = state
 
     async def _event_applier(self):
         with self.global_event_receiver as events:
@@ -318,10 +336,7 @@ class Worker:
         # We request all events after (and including) the missing index.
         # This function is started whenever we receive an event that is out of sequence.
         # It is cancelled as soon as we receiver an event that is in sequence.
-
-        if since_idx < 0:
-            logger.warning(f"Negative value encountered for nack request {since_idx=}")
-            since_idx = 0
+        assert since_idx >= 0
 
         with CancelScope() as scope:
             self._nack_cancel_scope = scope
