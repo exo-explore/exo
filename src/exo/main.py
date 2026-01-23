@@ -1,10 +1,11 @@
 import argparse
+import itertools
 import multiprocessing as mp
 import os
 import resource
 import signal
 from dataclasses import dataclass, field
-from typing import Self
+from typing import Iterator, Self
 
 import anyio
 from anyio.abc import TaskGroup
@@ -12,6 +13,8 @@ from loguru import logger
 from pydantic import PositiveInt
 
 import exo.routing.topics as topics
+from exo.download.coordinator import DownloadCoordinator
+from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.api import API  # TODO: should API be in master?
 from exo.master.main import Master
 from exo.routing.router import Router, get_node_id_keypair
@@ -21,7 +24,6 @@ from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import CamelCaseModel
-from exo.worker.download.impl_shard_downloader import exo_shard_downloader
 from exo.worker.main import Worker
 
 
@@ -29,6 +31,7 @@ from exo.worker.main import Worker
 @dataclass
 class Node:
     router: Router
+    download_coordinator: DownloadCoordinator | None
     worker: Worker | None
     election: Election  # Every node participates in election, as we do want a node to become master even if it isn't a master candidate if no master candidates are present.
     election_result_receiver: Receiver[ElectionResult]
@@ -36,6 +39,7 @@ class Node:
     api: API | None
 
     node_id: NodeId
+    event_index_counter: Iterator[int]
     _tg: TaskGroup = field(init=False, default_factory=anyio.create_task_group)
 
     @classmethod
@@ -50,8 +54,26 @@ class Node:
         await router.register_topic(topics.ELECTION_MESSAGES)
         await router.register_topic(topics.CONNECTION_MESSAGES)
         await router.register_topic(topics.STATE_CATCHUP)
+        await router.register_topic(topics.DOWNLOAD_COMMANDS)
 
         logger.info(f"Starting node {node_id}")
+
+        # Create shared event index counter for Worker and DownloadCoordinator
+        event_index_counter = itertools.count()
+
+        # Create DownloadCoordinator (unless --no-downloads)
+        if not args.no_downloads:
+            download_coordinator = DownloadCoordinator(
+                node_id,
+                session_id,
+                exo_shard_downloader(),
+                download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
+                local_event_sender=router.sender(topics.LOCAL_EVENTS),
+                event_index_counter=event_index_counter,
+            )
+        else:
+            download_coordinator = None
+
         if args.spawn_api:
             api = API(
                 node_id,
@@ -59,6 +81,7 @@ class Node:
                 port=args.api_port,
                 global_event_receiver=router.receiver(topics.GLOBAL_EVENTS),
                 command_sender=router.sender(topics.COMMANDS),
+                download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 election_receiver=router.receiver(topics.ELECTION_MESSAGES),
                 state_catchup_receiver=router.receiver(topics.STATE_CATCHUP),
             )
@@ -69,12 +92,13 @@ class Node:
             worker = Worker(
                 node_id,
                 session_id,
-                exo_shard_downloader(),
                 connection_message_receiver=router.receiver(topics.CONNECTION_MESSAGES),
                 global_event_receiver=router.receiver(topics.GLOBAL_EVENTS),
                 local_event_sender=router.sender(topics.LOCAL_EVENTS),
                 command_sender=router.sender(topics.COMMANDS),
                 state_catchup_receiver=router.receiver(topics.STATE_CATCHUP),
+                download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
+                event_index_counter=event_index_counter,
             )
         else:
             worker = None
@@ -103,13 +127,25 @@ class Node:
             election_result_sender=er_send,
         )
 
-        return cls(router, worker, election, er_recv, master, api, node_id)
+        return cls(
+            router,
+            download_coordinator,
+            worker,
+            election,
+            er_recv,
+            master,
+            api,
+            node_id,
+            event_index_counter,
+        )
 
     async def run(self):
         async with self._tg as tg:
             signal.signal(signal.SIGINT, lambda _, __: self.shutdown())
             tg.start_soon(self.router.run)
             tg.start_soon(self.election.run)
+            if self.download_coordinator:
+                tg.start_soon(self.download_coordinator.run)
             if self.worker:
                 tg.start_soon(self.worker.run)
             if self.master:
@@ -175,13 +211,27 @@ class Node:
                     )
                 if result.is_new_master:
                     await anyio.sleep(0)
+                    # Fresh counter for new session (buffer expects indices from 0)
+                    self.event_index_counter = itertools.count()
+                    if self.download_coordinator:
+                        self.download_coordinator.shutdown()
+                        self.download_coordinator = DownloadCoordinator(
+                            self.node_id,
+                            result.session_id,
+                            exo_shard_downloader(),
+                            download_command_receiver=self.router.receiver(
+                                topics.DOWNLOAD_COMMANDS
+                            ),
+                            local_event_sender=self.router.sender(topics.LOCAL_EVENTS),
+                            event_index_counter=self.event_index_counter,
+                        )
+                        self._tg.start_soon(self.download_coordinator.run)
                     if self.worker:
                         self.worker.shutdown()
                         # TODO: add profiling etc to resource monitor
                         self.worker = Worker(
                             self.node_id,
                             result.session_id,
-                            exo_shard_downloader(),
                             connection_message_receiver=self.router.receiver(
                                 topics.CONNECTION_MESSAGES
                             ),
@@ -193,6 +243,10 @@ class Node:
                             state_catchup_receiver=self.router.receiver(
                                 topics.STATE_CATCHUP
                             ),
+                            download_command_sender=self.router.sender(
+                                topics.DOWNLOAD_COMMANDS
+                            ),
+                            event_index_counter=self.event_index_counter,
                         )
                         self._tg.start_soon(self.worker.run)
                     if self.api:
@@ -234,6 +288,7 @@ class Args(CamelCaseModel):
     api_port: PositiveInt = 52415
     tb_only: bool = False
     no_worker: bool = False
+    no_downloads: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
 
     @classmethod
@@ -275,6 +330,11 @@ class Args(CamelCaseModel):
         parser.add_argument(
             "--no-worker",
             action="store_true",
+        )
+        parser.add_argument(
+            "--no-downloads",
+            action="store_true",
+            help="Disable the download coordinator (node won't download models)",
         )
         fast_synch_group = parser.add_mutually_exclusive_group()
         fast_synch_group.add_argument(
