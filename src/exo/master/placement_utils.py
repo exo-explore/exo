@@ -257,7 +257,13 @@ def _find_ip_prioritised(
     ip_to_type = {
         iface.ip_address: iface.interface_type for iface in other_network.interfaces
     }
-    priority = {"ethernet": 0, "wifi": 1, "unknown": 2, "thunderbolt": 3}
+    priority = {
+        "ethernet": 0,
+        "wifi": 1,
+        "unknown": 2,
+        "maybe_ethernet": 3,
+        "thunderbolt": 4,
+    }
     return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2))
 
 
