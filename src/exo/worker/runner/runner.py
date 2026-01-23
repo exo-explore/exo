@@ -260,7 +260,9 @@ def main(
                         elif isinstance(model, GptOssModel):
                             mlx_generator = parse_gpt_oss(mlx_generator)
 
-                        if tokenizer.has_tool_calling and not isinstance(model, GptOssModel):
+                        if tokenizer.has_tool_calling and not isinstance(
+                            model, GptOssModel
+                        ):
                             assert tokenizer.tool_call_start
                             assert tokenizer.tool_call_end
                             assert tokenizer.tool_parser  # pyright: ignore[reportAny]
@@ -520,7 +522,7 @@ def parse_gpt_oss(
             if current_tool_name is not None:
                 prefix = "functions."
                 if current_tool_name.startswith(prefix):
-                    current_tool_name = current_tool_name[len(prefix):]
+                    current_tool_name = current_tool_name[len(prefix) :]
                 yield ToolCallResponse(
                     tool_calls=[
                         ToolCallItem(
