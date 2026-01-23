@@ -197,58 +197,63 @@ class PipelinedGenerator:
         This is where pipeline overlap happens: each group's model forward pass
         runs on its own stream, and mx.eval() allows the GPU to overlap network
         ops (send/recv/all_gather) from one stream with compute from another.
+
+        Each sequence is processed individually with its own KV cache, but all
+        lazy graphs across streams are evaluated together for GPU overlap.
         """
         # Build computation graphs on each stream (lazy, no evaluation yet)
-        new_y_list: list[mx.array] = []
-        new_logprobs_list: list[list[mx.array]] = []
-        active_indices: list[int] = []
+        # Each micro-batch group processes its sequences on its own stream.
+        all_sampled: list[mx.array] = []
+        all_logprobs: list[mx.array] = []
+        # Track which (group_idx, seq_idx) each result corresponds to
+        result_map: list[tuple[int, int]] = []
 
         for i, mb in enumerate(self.micro_batches):
             if mb is None or len(mb) == 0:
                 continue
-            active_indices.append(i)
 
             with mx.stream(self.streams[i]):
-                # Prepare input: last sampled tokens
-                input_tokens = mb.y[:, None]  # [batch, 1]
+                for e in range(len(mb)):
+                    # Process each sequence individually with its own cache
+                    input_token = mb.y[e: e + 1][None, :]  # [1, 1]
 
-                # Forward pass (lazy graph construction)
-                # For pipeline models, this includes send/recv/all_gather ops
-                logits = self.model(input_tokens, cache=mb.cache)
-                logits = logits[:, -1, :]  # [batch, vocab]
+                    # Forward pass (lazy graph construction)
+                    # For pipeline models, this includes send/recv/all_gather ops
+                    logits = self.model(input_token, cache=mb.cache[e])
+                    logits = logits[:, -1, :]  # [1, vocab]
 
-                # Compute logprobs
-                logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
+                    # Compute logprobs
+                    logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
 
-                # Sample per-sequence
-                batch_size = len(mb)
-                if batch_size == 1:
-                    sampled = mb.samplers[0](logprobs)
-                else:
-                    samples = []
-                    for e in range(batch_size):
-                        samples.append(mb.samplers[e](logprobs[e: e + 1]))
-                    sampled = mx.concatenate(samples, axis=0)
+                    # Sample
+                    sampled = mb.samplers[e](logprobs)
 
-                new_y_list.append(sampled)
-                new_logprobs_list.append([logprobs[e] for e in range(batch_size)])
+                    all_sampled.append(sampled.squeeze(0))
+                    all_logprobs.append(logprobs.squeeze(0))
+                    result_map.append((i, e))
 
-        if not active_indices:
+        if not result_map:
             return
 
         # Evaluate ALL streams together - this is where overlap happens!
         # The GPU can execute stream0's all_gather while computing stream1's layers.
-        mx.eval(*new_y_list, *[lp for lps in new_logprobs_list for lp in lps])
+        mx.eval(*all_sampled, *all_logprobs)
 
         # Update micro-batch states with results
-        for list_idx, group_idx in enumerate(active_indices):
+        # Group results by micro-batch for efficient update
+        group_results: dict[int, list[int]] = {}
+        for idx, (group_idx, _seq_idx) in enumerate(result_map):
+            group_results.setdefault(group_idx, []).append(idx)
+
+        for group_idx, result_indices in group_results.items():
             mb = self.micro_batches[group_idx]
             assert mb is not None
-            mb.y = new_y_list[list_idx]
-            mb.logprobs = new_logprobs_list[list_idx]
-            # Append sampled tokens to history
-            for e in range(len(mb)):
-                mb.tokens[e] = mx.concatenate([mb.tokens[e], mb.y[e: e + 1]])
+            group_sampled = [all_sampled[idx] for idx in result_indices]
+            group_logprobs = [all_logprobs[idx] for idx in result_indices]
+            mb.y = mx.stack(group_sampled)
+            mb.logprobs = group_logprobs
+            for e, idx in enumerate(result_indices):
+                mb.tokens[e] = mx.concatenate([mb.tokens[e], all_sampled[idx][None]])
 
     def next(self) -> list[PipelinedResponse]:
         """

@@ -100,6 +100,16 @@ class CustomMlxLayer(nn.Module):
                 return getattr(original_layer, name)
 
 
+class EvalCheckpointLayer(CustomMlxLayer):
+    """Wraps a layer to force evaluation of its output, breaking up the computation graph
+    to prevent Metal command buffer timeouts with large batches in pipeline parallel."""
+
+    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
+        output = self.original_layer(x, *args, **kwargs)
+        mx.eval(output)
+        return output
+
+
 class PipelineFirstLayer(CustomMlxLayer):
     def __init__(
         self,
@@ -115,7 +125,9 @@ class PipelineFirstLayer(CustomMlxLayer):
         if self.r != 0:
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
             mx.eval(x)
-        return self.original_layer(x, *args, **kwargs)
+        output = self.original_layer(x, *args, **kwargs)
+        mx.eval(output)
+        return output
 
 
 class PipelineLastLayer(CustomMlxLayer):
@@ -138,6 +150,7 @@ class PipelineLastLayer(CustomMlxLayer):
         ).arguments.get("cache", None)
 
         output: mx.array = self.original_layer(x, *args, **kwargs)
+        mx.eval(output)
 
         if self.r != self.s - 1:
             output = mx.distributed.send(
@@ -197,6 +210,9 @@ def pipeline_auto_parallel(
 
     layers = layers[start_layer:end_layer]
     layers[0] = PipelineFirstLayer(layers[0], device_rank, group=group)
+    # Wrap intermediate layers with eval checkpoints to prevent GPU timeout
+    for i in range(1, len(layers) - 1):
+        layers[i] = EvalCheckpointLayer(layers[i])
     layers[-1] = PipelineLastLayer(
         layers[-1],
         device_rank,
