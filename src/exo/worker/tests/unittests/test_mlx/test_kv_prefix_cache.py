@@ -1,6 +1,7 @@
 # type: ignore
 import time
 from typing import cast
+from unittest.mock import patch
 
 import mlx.core as mx
 import pytest
@@ -470,3 +471,67 @@ class TestKVPrefixCacheWithModel:
 
         # The first stored cache must not have been mutated by the second generation
         assert _cache_length(kv_prefix_cache.caches[0]) == first_cache_length
+
+    def test_evicts_lru_entry_under_memory_pressure(self, model_and_tokenizer):
+        """Under memory pressure, adding a new cache entry evicts the least recently used one."""
+        model, tokenizer = model_and_tokenizer
+
+        kv_prefix_cache = KVPrefixCache()
+
+        # Add three cache entries with different prompts
+        prompts = ["First entry", "Second entry", "Third entry"]
+        for i, content in enumerate(prompts):
+            task = ChatCompletionTaskParams(
+                model=DEFAULT_GPT_OSS_MODEL_ID,
+                messages=[ChatCompletionMessage(role="user", content=content)],
+                max_tokens=1,
+            )
+            prompt = apply_chat_template(tokenizer, task)
+            tokens = encode_prompt(tokenizer, prompt)
+            cache = make_kv_cache(model)
+            prefill(model, tokenizer, make_sampler(0.0), tokens, cache)
+            kv_prefix_cache.add_kv_cache(tokenizer, prompt, cache)
+            # Stagger _last_used so LRU order is deterministic
+            kv_prefix_cache._last_used[i] = float(i)
+
+        assert len(kv_prefix_cache.prompts) == 3
+
+        # Access the third entry to make it most recently used
+        kv_prefix_cache._last_used[2] = 100.0
+        # Entry 0 (_last_used=0.0) is LRU, entry 1 (_last_used=1.0) is next
+
+        # Simulate memory pressure: active memory exceeds threshold
+        fake_limit = 1000
+        fake_active = int(fake_limit * 0.90)  # Above _MEMORY_PRESSURE_THRESHOLD (0.85)
+
+        with (
+            patch(
+                "exo.worker.engines.mlx.cache.mx.metal.get_active_memory",
+                return_value=fake_active,
+            ),
+            patch(
+                "exo.worker.engines.mlx.cache.mx.metal.device_info",
+                return_value={"max_recommended_working_set_size": fake_limit},
+            ),
+        ):
+            # Trigger eviction by adding a new entry
+            task = ChatCompletionTaskParams(
+                model=DEFAULT_GPT_OSS_MODEL_ID,
+                messages=[ChatCompletionMessage(role="user", content="New entry")],
+                max_tokens=1,
+            )
+            prompt = apply_chat_template(tokenizer, task)
+            tokens = encode_prompt(tokenizer, prompt)
+            cache = make_kv_cache(model)
+            prefill(model, tokenizer, make_sampler(0.0), tokens, cache)
+            kv_prefix_cache.add_kv_cache(tokenizer, prompt, cache)
+
+        # LRU entries should have been evicted (entries 0, 1, 2 in order of _last_used)
+        # Since fake_active stays above threshold after each eviction (we don't change it),
+        # all old entries get evicted, leaving only the newly added one
+        assert len(kv_prefix_cache.prompts) == 1
+        # The surviving entry should be the newly added one
+        new_tokens = encode_prompt(tokenizer, prompt)
+        assert _get_prefix_length(kv_prefix_cache.prompts[0], new_tokens) == len(
+            new_tokens
+        )
