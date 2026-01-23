@@ -18,6 +18,9 @@ enum NetworkSetupHelper {
 
         set -euo pipefail
 
+        # Wait for macOS to finish network setup after boot
+        sleep 30
+
         PREFS="/Library/Preferences/SystemConfiguration/preferences.plist"
 
         # Remove bridge0 interface
