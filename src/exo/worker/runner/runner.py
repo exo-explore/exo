@@ -491,9 +491,10 @@ def get_gpt_oss_encoding():
 
 
 def filter_kimi_tokens(
-    responses: Generator[GenerationResponse],
+    responses: Generator[GenerationResponse | ToolCallResponse],
 ) -> Generator[GenerationResponse]:
     for resp in responses:
+        assert isinstance(resp, GenerationResponse)
         if (
             resp.text == "<|tool_calls_section_begin|>"
             or resp.text == "<|tool_calls_section_end|>"
@@ -503,7 +504,7 @@ def filter_kimi_tokens(
 
 
 def parse_gpt_oss(
-    responses: Generator[GenerationResponse],
+    responses: Generator[GenerationResponse | ToolCallResponse],
 ) -> Generator[GenerationResponse | ToolCallResponse]:
     encoding = get_gpt_oss_encoding()
     stream = StreamableParser(encoding, role=Role.ASSISTANT)
@@ -512,6 +513,7 @@ def parse_gpt_oss(
     tool_arg_parts: list[str] = []
 
     for response in responses:
+        assert isinstance(response, GenerationResponse)
         stream.process(response.token)
 
         delta = stream.last_content_delta
@@ -660,9 +662,7 @@ def parse_tool_calls(
     in_tool_call = False
     tool_call_text_parts: list[str] = []
     for response in responses:
-        if isinstance(response, ToolCallResponse):
-            yield response
-            continue
+        assert isinstance(response, GenerationResponse)
         # assumption: the tool call start is one token
         if response.text == tool_call_start:
             in_tool_call = True
