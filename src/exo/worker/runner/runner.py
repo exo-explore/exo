@@ -90,7 +90,6 @@ from exo.worker.runner.bootstrap import logger
 # Batching configuration
 BATCH_ENABLED = True
 BATCH_MAX_SIZE = 128
-BATCH_TIMEOUT_MS = 20  # Short timeout - flush quickly to avoid request timeouts
 
 
 def _should_use_serial_processing(
@@ -305,7 +304,6 @@ def main(
                             model_id=shard_metadata.model_card.model_id,
                             device_rank=device_rank,
                             max_batch_size=BATCH_MAX_SIZE,
-                            batch_timeout_ms=BATCH_TIMEOUT_MS,
                         )
                         logger.info(
                             f"Batch handler initialized (max_batch_size={BATCH_MAX_SIZE})"
@@ -735,8 +733,8 @@ def main(
                 except EndOfStream:
                     break
 
-                # Flush batch if ready
-                if batch_handler.should_flush():
+                # Flush pending requests immediately (no timeout delay)
+                if batch_handler.has_pending:
                     logger.info(f"Flushing batch (pending={len(batch_handler.pending)}, active={batch_handler.current_batch_size})")
                     batch_handler.flush()
 

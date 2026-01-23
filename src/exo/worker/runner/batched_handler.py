@@ -79,14 +79,12 @@ class BatchedInferenceHandler:
         model_id: ModelId,
         device_rank: int,
         max_batch_size: int = 8,
-        batch_timeout_ms: int = 50,
     ):
         self.model = model
         self.tokenizer = tokenizer
         self.model_id = model_id
         self.device_rank = device_rank
         self.max_batch_size = max_batch_size
-        self.batch_timeout_ms = batch_timeout_ms
 
         # GPT-OSS model detection
         self.is_gpt_oss = isinstance(model, GptOssModel)
@@ -97,7 +95,6 @@ class BatchedInferenceHandler:
 
         # Pending requests waiting to be batched
         self.pending: list[PendingRequest] = []
-        self.pending_start_time: float | None = None
 
         # Active batch generator and request tracking
         self.batch_generator: BatchGenerator | None = None
@@ -154,35 +151,10 @@ class BatchedInferenceHandler:
         )
 
         self.pending.append(pending_request)
-        if self.pending_start_time is None:
-            self.pending_start_time = time.perf_counter()
 
         logger.info(
             f"Added request to batch queue (pending={len(self.pending)}, active={self.current_batch_size})"
         )
-
-    def should_flush(self) -> bool:
-        """
-        Determine if the pending batch should be flushed.
-
-        Returns True if:
-        - We have pending requests AND (batch is full OR timeout reached)
-        """
-        if not self.has_pending:
-            return False
-
-        # Check if batch is full
-        available_slots = self.max_batch_size - self.current_batch_size
-        if len(self.pending) >= available_slots:
-            return True
-
-        # Check timeout
-        if self.pending_start_time is not None:
-            elapsed_ms = (time.perf_counter() - self.pending_start_time) * 1000
-            if elapsed_ms >= self.batch_timeout_ms:
-                return True
-
-        return False
 
     def flush(self) -> None:
         """Start processing pending requests by adding them to the BatchGenerator."""
@@ -194,9 +166,6 @@ class BatchedInferenceHandler:
         requests_to_flush = self.pending[:available_slots]
         self.pending = self.pending[available_slots:]
 
-        if len(self.pending) == 0:
-            self.pending_start_time = None
-
         # Create batch generator if not exists
         if self.batch_generator is None:
             logger.info(f"Creating new BatchGenerator for {len(requests_to_flush)} requests")
@@ -205,7 +174,7 @@ class BatchedInferenceHandler:
                 model=self.model,
                 max_tokens=MAX_TOKENS,
                 stop_tokens=self.stop_tokens if self.stop_tokens else None,
-                prefill_batch_size=min(len(requests_to_flush), 8),
+                prefill_batch_size=1,
             )
         else:
             logger.info(f"Adding {len(requests_to_flush)} requests to existing BatchGenerator")
@@ -379,10 +348,6 @@ class BatchedInferenceHandler:
         for uid in completed_uids:
             del self.uid_to_request[uid]
 
-        # Close batch generator if no more active requests
-        if not self.uid_to_request and not self.pending:
-            self._close_generator()
-
     def emit_error(self, command_id: CommandId, error_message: str) -> Event:
         """Create an error event for a failed request."""
         return ChunkGenerated(
@@ -406,4 +371,3 @@ class BatchedInferenceHandler:
         """Close the handler and clean up resources."""
         self._close_generator()
         self.pending.clear()
-        self.pending_start_time = None

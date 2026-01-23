@@ -202,7 +202,14 @@ def teardown_instance(client: ExoClient, instance_id: str) -> None:
     except ExoHttpError as e:
         if e.status != 404:
             raise
-    wait_for_instance_gone(client, instance_id)
+    except (ConnectionRefusedError, OSError):
+        logger.warning(f"Could not connect to exo to delete instance {instance_id} (server may be down)")
+        return
+    try:
+        wait_for_instance_gone(client, instance_id)
+    except (ConnectionRefusedError, OSError, TimeoutError):
+        logger.warning("Could not verify instance deletion (server may be down)")
+        return
     logger.info(f"Instance {instance_id} deleted")
 
 
@@ -517,6 +524,19 @@ def main() -> int:
         help="Skip instance creation (assume instance already running)",
     )
     ap.add_argument(
+        "--pipeline",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Use pipeline sharding with exactly N nodes (overrides config)",
+    )
+    ap.add_argument(
+        "--instance-meta",
+        choices=["ring", "jaccl", "both"],
+        default=None,
+        help="Instance meta preference (overrides config)",
+    )
+    ap.add_argument(
         "--dry-run",
         action="store_true",
         help="Print commands without executing",
@@ -538,6 +558,23 @@ def main() -> int:
     logger.info(f"Evaluation type: {eval_type}")
     logger.info(f"Model: {args.model}")
     logger.info(f"API endpoint: http://{args.host}:{args.port}/v1")
+
+    # Apply CLI overrides to instance config
+    if args.pipeline is not None or args.instance_meta is not None:
+        instance_config = config.setdefault("instance", {})
+        if args.pipeline is not None:
+            instance_config["sharding"] = "pipeline"
+            instance_config["min_nodes"] = args.pipeline
+            instance_config["max_nodes"] = args.pipeline
+            logger.info(f"CLI override: pipeline={args.pipeline} nodes")
+            # Limit concurrency for pipeline to avoid GPU timeouts
+            if args.pipeline >= 2:
+                lm_eval_config = config.setdefault("lm_eval", {})
+                lm_eval_config["num_concurrent"] = 8
+                logger.info("CLI override: num_concurrent=8 (pipeline>=2)")
+        if args.instance_meta is not None:
+            instance_config["instance_meta"] = args.instance_meta
+            logger.info(f"CLI override: instance_meta={args.instance_meta}")
 
     # Check HuggingFace token if required
     if not check_hf_token(config):

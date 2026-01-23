@@ -25,12 +25,11 @@ def _patch_amodel_call() -> None:
     async def patched_amodel_call(self: Any, *args: Any, **kwargs: Any) -> Any:
         try:
             return await original(self, *args, **kwargs)
-        except UnboundLocalError:
-            # `outputs` referenced before assignment when response.raise_for_status() throws
-            return []
-        except Exception:
-            # After all retries fail, don't crash the entire eval
-            return []
+        except (UnboundLocalError, Exception):
+            # Return one empty-string result per request in the batch so the
+            # reorderer doesn't assert on missing coverage.
+            messages = kwargs.get("messages") or (args[2] if len(args) > 2 else [])
+            return [""] * max(len(messages), 1)
 
     TemplateAPI.amodel_call = patched_amodel_call
 
