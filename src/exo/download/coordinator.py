@@ -12,7 +12,10 @@ from exo.download.download_utils import (
     delete_model,
     map_repo_download_progress_to_download_progress_data,
 )
+from exo.download.model_store_server import ModelStoreServer
+from exo.download.node_address_book import NodeAddressBook
 from exo.download.shard_downloader import ShardDownloader
+from exo.routing.connection_message import ConnectionMessage, ConnectionMessageType
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
     DeleteDownload,
@@ -41,6 +44,9 @@ class DownloadCoordinator:
     node_id: NodeId
     session_id: SessionId
     shard_downloader: ShardDownloader
+    connection_message_receiver: Receiver[ConnectionMessage]
+    node_address_book: NodeAddressBook
+    model_store_port: int
     download_command_receiver: Receiver[ForwarderDownloadCommand]
     local_event_sender: Sender[ForwarderEvent]
     event_index_counter: Iterator[int]
@@ -64,6 +70,10 @@ class DownloadCoordinator:
             tg.start_soon(self._command_processor)
             tg.start_soon(self._forward_events)
             tg.start_soon(self._emit_existing_download_progress)
+            tg.start_soon(self._track_node_addresses)
+
+            if self.node_id == self.session_id.master_node_id:
+                tg.start_soon(ModelStoreServer(port=self.model_store_port).run)
 
     def shutdown(self) -> None:
         self._tg.cancel_scope.cancel()
@@ -222,6 +232,15 @@ class DownloadCoordinator:
                 NodeDownloadProgress(download_progress=pending)
             )
             del self.download_status[model_id]
+
+    async def _track_node_addresses(self) -> None:
+        with self.connection_message_receiver as messages:
+            async for msg in messages:
+                match msg.connection_type:
+                    case ConnectionMessageType.Connected:
+                        self.node_address_book.set_ipv4(msg.node_id, msg.remote_ipv4)
+                    case ConnectionMessageType.Disconnected:
+                        self.node_address_book.remove(msg.node_id)
 
     async def _forward_events(self) -> None:
         with self.event_receiver as events:

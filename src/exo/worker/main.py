@@ -223,6 +223,20 @@ class Worker:
 
                     self._download_backoff.record_attempt(model_id)
 
+                    # Ensure the elected master starts the Hugging Face download so
+                    # other nodes can fetch the model over the local network.
+                    master_node_id = self.session_id.master_node_id
+                    if master_node_id != self.node_id:
+                        await self.download_command_sender.send(
+                            ForwarderDownloadCommand(
+                                origin=self.node_id,
+                                command=StartDownload(
+                                    target_node_id=master_node_id,
+                                    shard_metadata=shard,
+                                ),
+                            )
+                        )
+
                     await self.download_command_sender.send(
                         ForwarderDownloadCommand(
                             origin=self.node_id,

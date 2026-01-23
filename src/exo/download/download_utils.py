@@ -20,6 +20,8 @@ from huggingface_hub import (
 )
 from loguru import logger
 from pydantic import (
+    BaseModel,
+    ConfigDict,
     DirectoryPath,
     TypeAdapter,
 )
@@ -47,6 +49,42 @@ from exo.shared.types.worker.shards import ShardMetadata
 
 class HuggingFaceAuthenticationError(Exception):
     """Raised when HuggingFace returns 401/403 for a model download."""
+
+
+class ModelStoreFileMetadata(BaseModel):
+    etag: str
+    size: int
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+
+def _model_store_metadata_path(model_dir: Path, rel_path: str) -> Path:
+    safe_rel = Path(rel_path)
+    if safe_rel.is_absolute() or ".." in safe_rel.parts:
+        raise ValueError(f"Invalid relative path: {rel_path}")
+    return model_dir / ".exo" / "download_metadata" / f"{safe_rel}.json"
+
+
+async def _write_model_store_metadata(
+    model_dir: Path,
+    rel_path: str,
+    *,
+    etag: str,
+    size: int,
+) -> None:
+    """
+    Write per-file metadata used by the cluster model-store server.
+
+    Rationale for error handling:
+    - This metadata is an optimization for local-network distribution (it avoids
+      expensive per-request hashing on the master).
+    - A failure to write metadata must not fail the primary download path, so
+      callers are expected to treat failures as best-effort and continue.
+    """
+    meta_path = _model_store_metadata_path(model_dir, rel_path)
+    await aios.makedirs(meta_path.parent, exist_ok=True)
+    async with aiofiles.open(meta_path, "w") as f:
+        await f.write(ModelStoreFileMetadata(etag=etag, size=size).model_dump_json())
 
 
 async def _build_auth_error_message(status_code: int, model_id: ModelId) -> str:
@@ -146,7 +184,11 @@ async def seed_models(seed_dir: str | Path):
 
 
 async def fetch_file_list_with_cache(
-    model_id: ModelId, revision: str = "main", recursive: bool = False
+    model_id: ModelId,
+    revision: str = "main",
+    recursive: bool = False,
+    *,
+    endpoint: str | None = None,
 ) -> list[FileListEntry]:
     target_dir = (await ensure_models_dir()) / "caches" / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)
@@ -155,7 +197,7 @@ async def fetch_file_list_with_cache(
         async with aiofiles.open(cache_file, "r") as f:
             return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
     file_list = await fetch_file_list_with_retry(
-        model_id, revision, recursive=recursive
+        model_id, revision, recursive=recursive, endpoint=endpoint
     )
     await aios.makedirs(cache_file.parent, exist_ok=True)
     async with aiofiles.open(cache_file, "w") as f:
@@ -164,12 +206,19 @@ async def fetch_file_list_with_cache(
 
 
 async def fetch_file_list_with_retry(
-    model_id: ModelId, revision: str = "main", path: str = "", recursive: bool = False
+    model_id: ModelId,
+    revision: str = "main",
+    path: str = "",
+    recursive: bool = False,
+    *,
+    endpoint: str | None = None,
 ) -> list[FileListEntry]:
     n_attempts = 30
     for attempt in range(n_attempts):
         try:
-            return await _fetch_file_list(model_id, revision, path, recursive)
+            return await _fetch_file_list(
+                model_id, revision, path, recursive, endpoint=endpoint
+            )
         except HuggingFaceAuthenticationError:
             raise
         except Exception as e:
@@ -182,9 +231,15 @@ async def fetch_file_list_with_retry(
 
 
 async def _fetch_file_list(
-    model_id: ModelId, revision: str = "main", path: str = "", recursive: bool = False
+    model_id: ModelId,
+    revision: str = "main",
+    path: str = "",
+    recursive: bool = False,
+    *,
+    endpoint: str | None = None,
 ) -> list[FileListEntry]:
-    api_url = f"{get_hf_endpoint()}/api/models/{model_id}/tree/{revision}"
+    resolved_endpoint = endpoint or get_hf_endpoint()
+    api_url = f"{resolved_endpoint}/api/models/{model_id}/tree/{revision}"
     url = f"{api_url}/{path}" if path else api_url
 
     headers = await get_download_headers()
@@ -261,18 +316,26 @@ async def calc_hash(path: Path, hash_type: Literal["sha1", "sha256"] = "sha1") -
 
 
 async def file_meta(
-    model_id: ModelId, revision: str, path: str, redirected_location: str | None = None
+    model_id: ModelId,
+    revision: str,
+    path: str,
+    redirected_location: str | None = None,
+    *,
+    endpoint: str | None = None,
 ) -> tuple[int, str]:
+    resolved_endpoint = endpoint or get_hf_endpoint()
     url = (
-        urljoin(f"{get_hf_endpoint()}/{model_id}/resolve/{revision}/", path)
+        urljoin(f"{resolved_endpoint}/{model_id}/resolve/{revision}/", path)
         if redirected_location is None
-        else f"{get_hf_endpoint()}{redirected_location}"
+        else f"{resolved_endpoint}{redirected_location}"
     )
     headers = await get_download_headers()
     async with (
         create_http_session(timeout_profile="short") as session,
         session.head(url, headers=headers) as r,
     ):
+        if r.status == 404:
+            raise FileNotFoundError(f"File not found: {url}")
         if r.status == 307:
             # On redirect, only trust Hugging Face's x-linked-* headers.
             x_linked_size = r.headers.get("x-linked-size")
@@ -283,7 +346,13 @@ async def file_meta(
                 return content_length, etag
             # Otherwise, follow the redirect to get authoritative size/hash
             redirected_location = r.headers.get("location")
-            return await file_meta(model_id, revision, path, redirected_location)
+            return await file_meta(
+                model_id,
+                revision,
+                path,
+                redirected_location,
+                endpoint=endpoint,
+            )
         if r.status in [401, 403]:
             msg = await _build_auth_error_message(r.status, model_id)
             raise HuggingFaceAuthenticationError(msg)
@@ -303,17 +372,27 @@ async def download_file_with_retry(
     path: str,
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
+    *,
+    endpoint: str | None = None,
+    retry_on_not_found: bool = False,
 ) -> Path:
     n_attempts = 30
     for attempt in range(n_attempts):
         try:
             return await _download_file(
-                model_id, revision, path, target_dir, on_progress
+                model_id,
+                revision,
+                path,
+                target_dir,
+                on_progress,
+                endpoint=endpoint,
             )
         except HuggingFaceAuthenticationError:
             raise
         except Exception as e:
-            if isinstance(e, FileNotFoundError) or attempt == n_attempts - 1:
+            if isinstance(e, FileNotFoundError) and not retry_on_not_found:
+                raise e
+            if attempt == n_attempts - 1:
                 raise e
             logger.error(
                 f"Download error on attempt {attempt}/{n_attempts} for {model_id=} {revision=} {path=} {target_dir=}"
@@ -331,11 +410,13 @@ async def _download_file(
     path: str,
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
+    *,
+    endpoint: str | None = None,
 ) -> Path:
     if await aios.path.exists(target_dir / path):
         return target_dir / path
     await aios.makedirs((target_dir / path).parent, exist_ok=True)
-    length, etag = await file_meta(model_id, revision, path)
+    length, etag = await file_meta(model_id, revision, path, endpoint=endpoint)
     remote_hash = etag[:-5] if etag.endswith("-gzip") else etag
     partial_path = target_dir / f"{path}.partial"
     resume_byte_pos = (
@@ -344,7 +425,8 @@ async def _download_file(
         else None
     )
     if resume_byte_pos != length:
-        url = urljoin(f"{get_hf_endpoint()}/{model_id}/resolve/{revision}/", path)
+        resolved_endpoint = endpoint or get_hf_endpoint()
+        url = urljoin(f"{resolved_endpoint}/{model_id}/resolve/{revision}/", path)
         headers = await get_download_headers()
         if resume_byte_pos:
             headers["Range"] = f"bytes={resume_byte_pos}-"
@@ -381,6 +463,12 @@ async def _download_file(
             f"Downloaded file {target_dir / path} has hash {final_hash} but remote hash is {remote_hash}"
         )
     await aios.rename(partial_path, target_dir / path)
+    try:
+        await _write_model_store_metadata(
+            target_dir, path, etag=remote_hash, size=length
+        )
+    except Exception as e:
+        logger.warning(f"Failed to write model store metadata for {path}: {e}")
     on_progress(length, length, True)
     return target_dir / path
 
@@ -502,6 +590,9 @@ async def download_shard(
     max_parallel_downloads: int = 8,
     skip_download: bool = False,
     allow_patterns: list[str] | None = None,
+    *,
+    endpoint: str | None = None,
+    retry_on_not_found: bool = False,
 ) -> tuple[Path, RepoDownloadProgress]:
     if not skip_download:
         logger.debug(f"Downloading {shard.model_card.model_id=}")
@@ -521,7 +612,7 @@ async def download_shard(
 
     all_start_time = time.time()
     file_list = await fetch_file_list_with_cache(
-        shard.model_card.model_id, revision, recursive=True
+        shard.model_card.model_id, revision, recursive=True, endpoint=endpoint
     )
     filtered_file_list = list(
         filter_repo_objects(
@@ -622,6 +713,8 @@ async def download_shard(
                 lambda curr_bytes, total_bytes, is_renamed: schedule_progress(
                     file, curr_bytes, total_bytes, is_renamed
                 ),
+                endpoint=endpoint,
+                retry_on_not_found=retry_on_not_found,
             )
 
     if not skip_download:
