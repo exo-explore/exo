@@ -248,8 +248,8 @@ class Topology:
     ) -> list[list[NodeId]]:
         """
         Find cycles in the Thunderbolt topology where all nodes have TB bridge enabled.
-        Only returns cycles with >2 nodes (3+ machines in a loop), as cycles with
-        2 or fewer nodes don't cause the broadcast storm problem.
+        Only returns cycles with >=2 nodes (2+ machines in a loop), as
+        1 node doesn't cause the broadcast storm problem.
         """
         enabled_nodes = {
             node_id
@@ -257,7 +257,7 @@ class Topology:
             if status.enabled
         }
 
-        if len(enabled_nodes) < 3:
+        if len(enabled_nodes) < 2:
             return []
 
         thunderbolt_ips = _get_ips_with_interface_type(
@@ -288,7 +288,7 @@ class Topology:
         return [
             [graph[idx] for idx in cycle]
             for cycle in rx.simple_cycles(graph)
-            if len(cycle) > 2
+            if len(cycle) >= 2
         ]
 
 
