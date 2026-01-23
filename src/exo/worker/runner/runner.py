@@ -89,7 +89,7 @@ from exo.worker.runner.bootstrap import logger
 
 # Batching configuration
 BATCH_ENABLED = True
-BATCH_MAX_SIZE = 128
+BATCH_MAX_SIZE = 32
 
 
 def _should_use_serial_processing(

@@ -80,7 +80,7 @@ class BatchedInferenceHandler:
         model_id: ModelId,
         device_rank: int,
         world_size: int = 1,
-        max_batch_size: int = 8,
+        max_batch_size: int = 32,
     ):
         self.model = model
         self.tokenizer = tokenizer
