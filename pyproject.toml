@@ -26,7 +26,7 @@ dependencies = [
     "httpx>=0.28.1",
     "tomlkit>=0.14.0",
     "pillow>=11.0,<12.0", # compatibility with mflux
-    "mflux>=0.14.2",
+    "mflux==0.15.4",
     "python-multipart>=0.0.21",
 ]
 
