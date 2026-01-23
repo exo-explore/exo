@@ -45,8 +45,8 @@ struct EXOApp: App {
         let thunderboltBridge = ThunderboltBridgeService(clusterStateService: service)
         _thunderboltBridgeService = StateObject(wrappedValue: thunderboltBridge)
         enableLaunchAtLoginIfNeeded()
-        // Remove old LaunchDaemon components if they exist (from previous versions)
-        cleanupLegacyNetworkSetup()
+        // Install LaunchDaemon to disable Thunderbolt Bridge on startup (prevents network loops)
+        NetworkSetupHelper.promptAndInstallIfNeeded()
         // Check local network access periodically (warning disappears when user grants permission)
         localNetwork.startPeriodicChecking(interval: 10)
         controller.scheduleLaunch(after: 15)
@@ -136,36 +136,6 @@ struct EXOApp: App {
         }
     }
 
-    private func cleanupLegacyNetworkSetup() {
-        guard NetworkSetupHelper.hasInstalledComponents() else { return }
-        // Dispatch async to ensure app is ready before showing alert
-        DispatchQueue.main.async {
-            let alert = NSAlert()
-            alert.messageText = "EXO Network Configuration"
-            alert.informativeText =
-                "EXO needs to configure local network discovery on your device. This requires granting permission once."
-            alert.alertStyle = .informational
-            alert.addButton(withTitle: "Continue")
-            alert.addButton(withTitle: "Later")
-
-            let response = alert.runModal()
-            guard response == .alertFirstButtonReturn else {
-                Logger().info("User deferred legacy network setup cleanup")
-                return
-            }
-
-            do {
-                try NetworkSetupHelper.uninstall()
-                Logger().info("Cleaned up legacy network setup components")
-            } catch {
-                // Non-fatal: user may have cancelled admin prompt or cleanup may have
-                // partially succeeded. The app will continue normally.
-                Logger().warning(
-                    "Could not clean up legacy network setup (non-fatal): \(error.localizedDescription)"
-                )
-            }
-        }
-    }
 }
 
 /// Helper for managing EXO's launch-at-login registration
