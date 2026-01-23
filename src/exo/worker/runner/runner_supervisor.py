@@ -49,10 +49,12 @@ class RunnerSupervisor:
     _ev_recv: MpReceiver[Event]
     _task_sender: MpSender[Task]
     _event_sender: Sender[Event]
-    _tg: TaskGroup | None = field(default=None, init=False)
+    _cancel_sender: MpSender[TaskId]
+    _tg: TaskGroup = field(default_factory=create_task_group, init=False)
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
     completed: set[TaskId] = field(default_factory=set, init=False)
+    cancelled: set[TaskId] = field(default_factory=set, init=False)
 
     @classmethod
     def create(
@@ -63,8 +65,8 @@ class RunnerSupervisor:
         initialize_timeout: float = 400,
     ) -> Self:
         ev_send, ev_recv = mp_channel[Event]()
-        # A task is kind of a runner command
         task_sender, task_recv = mp_channel[Task]()
+        cancel_sender, cancel_recv = mp_channel[TaskId]()
 
         runner_process = Process(
             target=entrypoint,
@@ -72,6 +74,7 @@ class RunnerSupervisor:
                 bound_instance,
                 ev_send,
                 task_recv,
+                cancel_recv,
                 logger,
             ),
             daemon=True,
@@ -86,6 +89,7 @@ class RunnerSupervisor:
             initialize_timeout=initialize_timeout,
             _ev_recv=ev_recv,
             _task_sender=task_sender,
+            _cancel_sender=cancel_sender,
             _event_sender=event_sender,
         )
 
@@ -93,37 +97,41 @@ class RunnerSupervisor:
 
     async def run(self):
         self.runner_process.start()
-        async with create_task_group() as tg:
-            self._tg = tg
+        async with self._tg as tg:
             tg.start_soon(self._forward_events)
 
-        self._ev_recv.close()
-        self._task_sender.close()
-        self._event_sender.close()
-        await to_thread.run_sync(self.runner_process.join, 30)
-        if not self.runner_process.is_alive():
-            return
+        with anyio.CancelScope(shield=True), contextlib.suppress(ClosedResourceError):
+            await self._cancel_sender.send_async(TaskId("CANCEL_CURRENT_TASK"))
 
-        # This is overkill but it's not technically bad, just unnecessary.
-        logger.warning("Runner process didn't shutdown succesfully, terminating")
-        self.runner_process.terminate()
-        await to_thread.run_sync(self.runner_process.join, 5)
-        if not self.runner_process.is_alive():
-            return
+            self._ev_recv.close()
+            self._task_sender.close()
+            self._event_sender.close()
+            self._cancel_sender.close()
 
-        logger.critical("Runner process didn't respond to SIGTERM, killing")
-        self.runner_process.kill()
+            await to_thread.run_sync(self.runner_process.join, 10)
+            if not self.runner_process.is_alive():
+                return
 
-        await to_thread.run_sync(self.runner_process.join, 5)
-        if not self.runner_process.is_alive():
-            return
+            # This is overkill but it's not technically bad, just unnecessary.
+            logger.warning("Runner process didn't shutdown succesfully, terminating")
+            self.runner_process.terminate()
+            await to_thread.run_sync(self.runner_process.join, 5)
+            if not self.runner_process.is_alive():
+                return
 
-        logger.critical(
-            "Runner process didn't respond to SIGKILL. System resources may have leaked"
-        )
+            logger.critical("Runner process didn't respond to SIGTERM, killing")
+            self.runner_process.kill()
 
-    def shutdown(self):
-        assert self._tg
+            await to_thread.run_sync(self.runner_process.join, 5)
+            if not self.runner_process.is_alive():
+                return
+
+            logger.critical(
+                "Runner process didn't respond to SIGKILL. System resources may have leaked"
+            )
+
+    async def shutdown(self):
+        await self._cancel_sender.send_async(TaskId("CANCEL_CURRENT_TASK"))
         self._tg.cancel_scope.cancel()
 
     async def start_task(self, task: Task):
@@ -131,6 +139,7 @@ class RunnerSupervisor:
             logger.info(
                 f"Skipping invalid task {task} as it has already been completed"
             )
+            return
         logger.info(f"Starting task {task}")
         event = anyio.Event()
         self.pending[task.task_id] = event
@@ -140,7 +149,13 @@ class RunnerSupervisor:
             logger.warning(f"Task {task} dropped, runner closed communication.")
             return
         await event.wait()
-        logger.info(f"Finished task {task}")
+
+    async def cancel_task(self, task_id: TaskId):
+        if task_id in self.completed:
+            logger.info(f"Unable to cancel {task_id} as it has been completed")
+            return
+        self.cancelled.add(task_id)
+        await self._cancel_sender.send_async(task_id)
 
     async def _forward_events(self):
         with self._ev_recv as events:
@@ -206,4 +221,4 @@ class RunnerSupervisor:
                 runner_status=RunnerFailed(error_message=f"Terminated ({cause})"),
             )
         )
-        self.shutdown()
+        await self.shutdown()

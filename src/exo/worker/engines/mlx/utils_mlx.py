@@ -70,8 +70,6 @@ Group = mx.distributed.Group
 resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 4096))
 
 
-# TODO: Test this
-#  ALSO https://github.com/exo-explore/exo/pull/233#discussion_r2549683673
 def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
     return Memory.from_float_kb(
         (model_shard_meta.end_layer - model_shard_meta.start_layer)
@@ -87,30 +85,6 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
 
 class ModelLoadingTimeoutError(Exception):
     pass
-
-
-def mx_barrier(group: Group | None = None):
-    mx.eval(
-        mx.distributed.all_sum(
-            mx.array(1.0),
-            stream=mx.default_stream(mx.Device(mx.cpu)),
-            group=group,
-        )
-    )
-
-
-def broadcast_from_zero(value: int, group: Group | None = None):
-    if group is None:
-        return value
-
-    if group.rank() == 0:
-        a = mx.array([value], dtype=mx.int32)
-    else:
-        a = mx.array([0], dtype=mx.int32)
-
-    m = mx.distributed.all_sum(a, stream=mx.Device(mx.DeviceType.cpu), group=group)
-    mx.eval(m)
-    return int(m.item())
 
 
 class HostList(RootModel[list[str]]):
@@ -536,3 +510,23 @@ def mlx_cleanup(
     import gc
 
     gc.collect()
+
+
+def mx_any(bool_: bool, group: Group | None) -> bool:
+    if group is None:
+        return bool_
+    num_true = mx.distributed.all_sum(
+        mx.array(bool_), group=group, stream=mx.default_stream(mx.Device(mx.cpu))
+    )
+    mx.eval(num_true)
+    return num_true.item() > 0
+
+
+def mx_barrier(group: Group | None):
+    if group is None:
+        return
+    mx.eval(
+        mx.distributed.all_sum(
+            mx.array(1.0), group=group, stream=mx.default_stream(mx.Device(mx.cpu))
+        )
+    )
