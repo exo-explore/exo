@@ -158,12 +158,14 @@ class API:
         command_sender: Sender[ForwarderCommand],
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
+        state_catchup_receiver: Receiver[State],
     ) -> None:
         self.state = State()
         self._event_log: list[Event] = []
         self.command_sender = command_sender
         self.global_event_receiver = global_event_receiver
         self.election_receiver = election_receiver
+        self.state_catchup_receiver = state_catchup_receiver
         self.event_buffer: OrderedBuffer[Event] = OrderedBuffer[Event]()
         self.node_id: NodeId = node_id
         self.session_id: SessionId = session_id
@@ -1231,6 +1233,7 @@ class API:
             tg.start_soon(self._apply_state)
             tg.start_soon(self._pause_on_new_election)
             tg.start_soon(self._cleanup_expired_images)
+            tg.start_soon(self._state_catchup)
             print_startup_banner(self.port)
             await serve(
                 cast(ASGIFramework, self.app),
@@ -1240,6 +1243,22 @@ class API:
 
         self.command_sender.close()
         self.global_event_receiver.close()
+
+    async def _state_catchup(self):
+        with self.state_catchup_receiver as states:
+            async for state in states:
+                if (
+                    self.state.last_event_applied_idx == -1
+                    and state.last_event_applied_idx > self.state.last_event_applied_idx
+                ):
+                    logger.info(
+                        f"API catching up state to idx {state.last_event_applied_idx}"
+                    )
+                    self.event_buffer.store = {}
+                    self.event_buffer.next_idx_to_release = (
+                        state.last_event_applied_idx + 1
+                    )
+                    self.state = state
 
     async def _apply_state(self):
         with self.global_event_receiver as events:

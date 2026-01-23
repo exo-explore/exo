@@ -49,6 +49,7 @@ class Node:
         await router.register_topic(topics.COMMANDS)
         await router.register_topic(topics.ELECTION_MESSAGES)
         await router.register_topic(topics.CONNECTION_MESSAGES)
+        await router.register_topic(topics.STATE_CATCHUP)
 
         logger.info(f"Starting node {node_id}")
         if args.spawn_api:
@@ -59,6 +60,7 @@ class Node:
                 global_event_receiver=router.receiver(topics.GLOBAL_EVENTS),
                 command_sender=router.sender(topics.COMMANDS),
                 election_receiver=router.receiver(topics.ELECTION_MESSAGES),
+                state_catchup_receiver=router.receiver(topics.STATE_CATCHUP),
             )
         else:
             api = None
@@ -72,6 +74,7 @@ class Node:
                 global_event_receiver=router.receiver(topics.GLOBAL_EVENTS),
                 local_event_sender=router.sender(topics.LOCAL_EVENTS),
                 command_sender=router.sender(topics.COMMANDS),
+                state_catchup_receiver=router.receiver(topics.STATE_CATCHUP),
             )
         else:
             worker = None
@@ -83,6 +86,7 @@ class Node:
             global_event_sender=router.sender(topics.GLOBAL_EVENTS),
             local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
             command_receiver=router.receiver(topics.COMMANDS),
+            state_catchup_sender=router.sender(topics.STATE_CATCHUP),
         )
 
         er_send, er_recv = channel[ElectionResult]()
@@ -153,6 +157,7 @@ class Node:
                         global_event_sender=self.router.sender(topics.GLOBAL_EVENTS),
                         local_event_receiver=self.router.receiver(topics.LOCAL_EVENTS),
                         command_receiver=self.router.receiver(topics.COMMANDS),
+                        state_catchup_sender=self.router.sender(topics.STATE_CATCHUP),
                     )
                     self._tg.start_soon(self.master.run)
                 elif (
@@ -185,6 +190,9 @@ class Node:
                             ),
                             local_event_sender=self.router.sender(topics.LOCAL_EVENTS),
                             command_sender=self.router.sender(topics.COMMANDS),
+                            state_catchup_receiver=self.router.receiver(
+                                topics.STATE_CATCHUP
+                            ),
                         )
                         self._tg.start_soon(self.worker.run)
                     if self.api:
