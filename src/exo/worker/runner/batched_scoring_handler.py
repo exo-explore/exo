@@ -39,8 +39,8 @@ class BatchedScoringHandler:
     tokenizer: TokenizerWrapper
     model_id: ModelId
     device_rank: int
-    max_batch_size: int = 32
-    batch_timeout_ms: int = 10
+    max_batch_size: int = 128
+    batch_timeout_ms: int = 20
 
     pending: list[PendingScoringRequest] = field(default_factory=list)
     pending_start_time: float | None = None
