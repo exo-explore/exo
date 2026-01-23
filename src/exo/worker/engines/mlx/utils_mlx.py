@@ -365,12 +365,35 @@ def load_tokenizer_for_model_id(
     return tokenizer
 
 
+def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
+    """
+    Normalize tool_calls in a message dict.
+
+    OpenAI format has tool_calls[].function.arguments as a JSON string,
+    but some chat templates (e.g., GLM) expect it as a dict.
+    """
+    tool_calls = msg_dict.get("tool_calls")
+    if not tool_calls or not isinstance(tool_calls, list):
+        return
+
+    for tc in tool_calls:  # pyright: ignore[reportUnknownVariableType]
+        if not isinstance(tc, dict):
+            continue
+        func = tc.get("function")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        if not isinstance(func, dict):
+            continue
+        args = func.get("arguments")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        if isinstance(args, str):
+            with contextlib.suppress(json.JSONDecodeError):
+                func["arguments"] = json.loads(args)
+
+
 def apply_chat_template(
     tokenizer: TokenizerWrapper,
     chat_task_data: ChatCompletionTaskParams,
 ) -> str:
-    # Now we can properly access the messages
     messages = chat_task_data.messages
+    tools = chat_task_data.tools
 
     formatted_messages: list[dict[str, Any]] = []
     for message in messages:
@@ -386,15 +409,19 @@ def apply_chat_template(
             continue
 
         # Null values are not valid when applying templates in tokenizer
-        formatted_messages.append(
-            {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
-        )
+        dumped: dict[str, Any] = message.model_dump()
+        msg_dict: dict[str, Any] = {k: v for k, v in dumped.items() if v is not None}  # pyright: ignore[reportAny]
+
+        # Parse tool_calls arguments from JSON string to dict for templates that expect dicts
+        _normalize_tool_calls(msg_dict)
+
+        formatted_messages.append(msg_dict)
 
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
-        tools=chat_task_data.tools,
+        tools=tools,
     )
 
     logger.info(prompt)

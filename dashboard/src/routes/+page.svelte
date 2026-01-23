@@ -130,6 +130,15 @@
       model.tasks.includes("ImageToImage")
     );
   }
+
+  // Helper to check if a model supports image editing
+  function modelSupportsImageEditing(modelId: string): boolean {
+    const model = models.find(
+      (m) => m.id === modelId || m.hugging_face_id === modelId,
+    );
+    if (!model?.tasks) return false;
+    return model.tasks.includes("ImageToImage");
+  }
   let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
   type InstanceMeta = "MlxRing" | "MlxIbv" | "MlxJaccl";
 
@@ -2369,6 +2378,9 @@
                     {@const isImageModel = modelSupportsImageGeneration(
                       foundModel.id,
                     )}
+                    {@const isImageEditModel = modelSupportsImageEditing(
+                      foundModel.id,
+                    )}
                     <span
                       class="flex items-center justify-between gap-2 w-full pr-4"
                     >
@@ -2393,6 +2405,22 @@
                             />
                             <circle cx="8.5" cy="8.5" r="1.5" />
                             <polyline points="21 15 16 10 5 21" />
+                          </svg>
+                        {/if}
+                        {#if isImageEditModel}
+                          <svg
+                            class="w-4 h-4 flex-shrink-0 text-exo-yellow"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
+                            <path
+                              d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
+                            />
+                            <path
+                              d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
+                            />
                           </svg>
                         {/if}
                         <span class="truncate"
@@ -2467,6 +2495,9 @@
                       {@const isImageModel = modelSupportsImageGeneration(
                         model.id,
                       )}
+                      {@const isImageEditModel = modelSupportsImageEditing(
+                        model.id,
+                      )}
                       <button
                         type="button"
                         onclick={() => {
@@ -2505,6 +2536,23 @@
                               />
                               <circle cx="8.5" cy="8.5" r="1.5" />
                               <polyline points="21 15 16 10 5 21" />
+                            </svg>
+                          {/if}
+                          {#if isImageEditModel}
+                            <svg
+                              class="w-4 h-4 flex-shrink-0 text-exo-yellow"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              aria-label="Image editing model"
+                            >
+                              <path
+                                d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
+                              />
+                              <path
+                                d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
+                              />
                             </svg>
                           {/if}
                           <span class="truncate">{model.name || model.id}</span>

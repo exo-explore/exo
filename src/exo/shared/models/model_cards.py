@@ -462,7 +462,7 @@ _IMAGE_MODEL_CARDS: dict[str, ModelCard] = {
         n_layers=57,
         hidden_size=1,
         supports_tensor=False,
-        tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
+        tasks=[ModelTask.TextToImage],
         components=[
             ComponentInfo(
                 component_name="text_encoder",
@@ -504,7 +504,7 @@ _IMAGE_MODEL_CARDS: dict[str, ModelCard] = {
         n_layers=60,  # Qwen has 60 transformer blocks (all joint-style)
         hidden_size=1,
         supports_tensor=False,
-        tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
+        tasks=[ModelTask.TextToImage],
         components=[
             ComponentInfo(
                 component_name="text_encoder",
