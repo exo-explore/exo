@@ -32,6 +32,7 @@ from exo.shared.types.events import (
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
+    CancelTask,
     CreateRunner,
     DownloadModel,
     ImageEdits,
@@ -218,15 +219,22 @@ class Worker:
                         )
                     )
                 case Shutdown(runner_id=runner_id):
+                    runner = self.runners.pop(runner_id)
                     try:
                         with fail_after(3):
-                            await self.runners.pop(runner_id).start_task(task)
+                            await runner.start_task(task)
                     except TimeoutError:
                         await self.event_sender.send(
                             TaskStatusUpdated(
                                 task_id=task.task_id, task_status=TaskStatus.TimedOut
                             )
                         )
+                    finally:
+                        runner.shutdown()
+                case CancelTask(
+                    cancelled_task_id=cancelled_task_id, runner_id=runner_id
+                ):
+                    await self.runners[runner_id].cancel_task(cancelled_task_id)
                 case ImageEdits() if task.task_params.total_input_chunks > 0:
                     # Assemble image from chunks and inject into task
                     cmd_id = task.command_id
@@ -264,18 +272,18 @@ class Worker:
                         del self.input_chunk_buffer[cmd_id]
                     if cmd_id in self.input_chunk_counts:
                         del self.input_chunk_counts[cmd_id]
-                    await self.runners[self._task_to_runner_id(task)].start_task(
-                        modified_task
-                    )
+                    await self._start_runner_task(modified_task)
                 case task:
-                    await self.runners[self._task_to_runner_id(task)].start_task(task)
+                    await self._start_runner_task(task)
 
     def shutdown(self):
         self._tg.cancel_scope.cancel()
 
-    def _task_to_runner_id(self, task: Task):
-        instance = self.state.instances[task.instance_id]
-        return instance.shard_assignments.node_to_runner[self.node_id]
+    async def _start_runner_task(self, task: Task):
+        if (instance := self.state.instances.get(task.instance_id)) is not None:
+            await self.runners[
+                instance.shard_assignments.node_to_runner[self.node_id]
+            ].start_task(task)
 
     async def _nack_request(self, since_idx: int) -> None:
         # We request all events after (and including) the missing index.
@@ -313,8 +321,6 @@ class Worker:
             await anyio.sleep(1 + random())
             for event in self.out_for_delivery.copy().values():
                 await self.local_event_sender.send(event)
-
-    ## Op Executors
 
     def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
         """Creates and stores a new AssignedRunner with initial downloading status."""
