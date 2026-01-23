@@ -6,6 +6,8 @@
     type DownloadProgress,
     refreshState,
     lastUpdate as lastUpdateStore,
+    startDownload,
+    deleteDownload,
   } from "$lib/stores/app.svelte";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
 
@@ -28,6 +30,7 @@
     etaMs: number;
     status: "completed" | "downloading";
     files: FileProgress[];
+    shardMetadata?: Record<string, unknown>;
   };
 
   type NodeEntry = {
@@ -269,6 +272,12 @@
             }
           }
 
+          // Extract shard_metadata for use with download actions
+          const shardMetadata = (downloadPayload.shard_metadata ??
+            downloadPayload.shardMetadata) as
+            | Record<string, unknown>
+            | undefined;
+
           const entry: ModelEntry = {
             modelId,
             prettyName,
@@ -285,6 +294,7 @@
                 ? "completed"
                 : "downloading",
             files,
+            shardMetadata,
           };
 
           const existing = modelMap.get(modelId);
@@ -469,6 +479,52 @@
                     >
                       {pct.toFixed(1)}%
                     </span>
+                    {#if model.status !== "completed" && model.shardMetadata}
+                      <button
+                        type="button"
+                        class="text-exo-light-gray hover:text-exo-yellow transition-colors"
+                        onclick={() =>
+                          startDownload(node.nodeId, model.shardMetadata!)}
+                        title="Start download"
+                      >
+                        <svg
+                          class="w-4 h-4"
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                        >
+                          <path
+                            d="M10 3v10m0 0l-3-3m3 3l3-3M3 17h14"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          ></path>
+                        </svg>
+                      </button>
+                    {/if}
+                    {#if model.status === "completed"}
+                      <button
+                        type="button"
+                        class="text-exo-light-gray hover:text-red-400 transition-colors"
+                        onclick={() =>
+                          deleteDownload(node.nodeId, model.modelId)}
+                        title="Delete download"
+                      >
+                        <svg
+                          class="w-4 h-4"
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                        >
+                          <path
+                            d="M4 6h12M8 6V4h4v2m1 0v10a1 1 0 01-1 1H8a1 1 0 01-1-1V6h6"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          ></path>
+                        </svg>
+                      </button>
+                    {/if}
                     <button
                       type="button"
                       class="text-exo-light-gray hover:text-exo-yellow transition-colors"
