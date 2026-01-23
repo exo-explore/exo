@@ -238,6 +238,10 @@ export interface ImageGenerationParams {
   size: "512x512" | "768x768" | "1024x1024" | "1024x768" | "768x1024";
   quality: "low" | "medium" | "high";
   outputFormat: "png" | "jpeg";
+  numImages: number;
+  // Streaming params
+  stream: boolean;
+  partialImages: number;
   // Advanced params
   seed: number | null;
   numInferenceSteps: number | null;
@@ -257,6 +261,9 @@ const DEFAULT_IMAGE_PARAMS: ImageGenerationParams = {
   size: "1024x1024",
   quality: "medium",
   outputFormat: "png",
+  numImages: 1,
+  stream: true,
+  partialImages: 3,
   seed: null,
   numInferenceSteps: null,
   guidance: null,
@@ -1809,12 +1816,13 @@ class AppStore {
       const requestBody: Record<string, unknown> = {
         model,
         prompt,
+        n: params.numImages,
         quality: params.quality,
         size: params.size,
         output_format: params.outputFormat,
         response_format: "b64_json",
-        stream: true,
-        partial_images: 3,
+        stream: params.stream,
+        partial_images: params.partialImages,
       };
 
       if (hasAdvancedParams) {
@@ -1878,31 +1886,74 @@ class AppStore {
               if (imageData && idx !== -1) {
                 const format = parsed.format || "png";
                 const mimeType = `image/${format}`;
+                const imageIndex = parsed.image_index ?? 0;
+                const numImages = params.numImages;
+
                 if (parsed.type === "partial") {
                   // Update with partial image and progress
                   const partialNum = (parsed.partial_index ?? 0) + 1;
                   const totalPartials = parsed.total_partials ?? 3;
-                  this.messages[idx].content =
-                    `Generating... ${partialNum}/${totalPartials}`;
-                  this.messages[idx].attachments = [
-                    {
-                      type: "generated-image",
-                      name: `generated-image.${format}`,
-                      preview: `data:${mimeType};base64,${imageData}`,
-                      mimeType,
-                    },
-                  ];
+                  const progressText =
+                    numImages > 1
+                      ? `Generating image ${imageIndex + 1}/${numImages}... ${partialNum}/${totalPartials}`
+                      : `Generating... ${partialNum}/${totalPartials}`;
+                  this.messages[idx].content = progressText;
+
+                  const partialAttachment: MessageAttachment = {
+                    type: "generated-image",
+                    name: `generated-image.${format}`,
+                    preview: `data:${mimeType};base64,${imageData}`,
+                    mimeType,
+                  };
+
+                  if (imageIndex === 0) {
+                    // First image - safe to replace attachments with partial preview
+                    this.messages[idx].attachments = [partialAttachment];
+                  } else {
+                    // Subsequent images - keep existing finals, show partial at current position
+                    const existingAttachments =
+                      this.messages[idx].attachments || [];
+                    // Keep only the completed final images (up to current imageIndex)
+                    const finals = existingAttachments.slice(0, imageIndex);
+                    this.messages[idx].attachments = [
+                      ...finals,
+                      partialAttachment,
+                    ];
+                  }
                 } else if (parsed.type === "final") {
-                  // Final image
-                  this.messages[idx].content = "";
-                  this.messages[idx].attachments = [
-                    {
-                      type: "generated-image",
-                      name: `generated-image.${format}`,
-                      preview: `data:${mimeType};base64,${imageData}`,
-                      mimeType,
-                    },
-                  ];
+                  // Final image - replace partial at this position
+                  const newAttachment: MessageAttachment = {
+                    type: "generated-image",
+                    name: `generated-image-${imageIndex + 1}.${format}`,
+                    preview: `data:${mimeType};base64,${imageData}`,
+                    mimeType,
+                  };
+
+                  if (imageIndex === 0) {
+                    // First final image - replace any partial preview
+                    this.messages[idx].attachments = [newAttachment];
+                  } else {
+                    // Subsequent images - keep previous finals, replace partial at current position
+                    const existingAttachments =
+                      this.messages[idx].attachments || [];
+                    // Slice keeps indices 0 to imageIndex-1 (the previous final images)
+                    const previousFinals = existingAttachments.slice(
+                      0,
+                      imageIndex,
+                    );
+                    this.messages[idx].attachments = [
+                      ...previousFinals,
+                      newAttachment,
+                    ];
+                  }
+
+                  // Update progress message for multiple images
+                  if (numImages > 1 && imageIndex < numImages - 1) {
+                    this.messages[idx].content =
+                      `Generating image ${imageIndex + 2}/${numImages}...`;
+                  } else {
+                    this.messages[idx].content = "";
+                  }
                 }
               }
             } catch {
@@ -1983,8 +2034,8 @@ class AppStore {
       formData.append("size", params.size);
       formData.append("output_format", params.outputFormat);
       formData.append("response_format", "b64_json");
-      formData.append("stream", "1"); // Use "1" instead of "true" for reliable FastAPI boolean parsing
-      formData.append("partial_images", "3");
+      formData.append("stream", params.stream ? "1" : "0");
+      formData.append("partial_images", params.partialImages.toString());
       formData.append("input_fidelity", params.inputFidelity);
 
       // Advanced params

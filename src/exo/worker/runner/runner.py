@@ -612,7 +612,7 @@ def _process_image_response(
         command_id=command_id,
         model_id=shard_metadata.model_card.model_id,
         event_sender=event_sender,
-        image_index=response.partial_index if is_partial else image_index,
+        image_index=response.image_index,
         is_partial=is_partial,
         partial_index=response.partial_index if is_partial else None,
         total_partials=response.total_partials if is_partial else None,
