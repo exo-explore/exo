@@ -140,6 +140,7 @@ class DistributedImageModel:
             width=width,
             image_path=image_path,
             model_config=self._adapter.model.model_config,  # pyright: ignore[reportAny]
+            guidance=guidance_override if guidance_override is not None else 4.0,
         )
 
         num_sync_steps = self._config.get_num_sync_steps(steps)
