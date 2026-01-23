@@ -325,17 +325,15 @@ class Master:
                                 )
                             )
                         case TaskFinished():
-                            generated_events.append(
-                                TaskDeleted(
-                                    task_id=self.command_task_mapping[
-                                        command.finished_command_id
-                                    ]
-                                )
+                            task_id = self.command_task_mapping.pop(
+                                command.finished_command_id, None
                             )
-                            if command.finished_command_id in self.command_task_mapping:
-                                del self.command_task_mapping[
-                                    command.finished_command_id
-                                ]
+                            if task_id is not None:
+                                generated_events.append(TaskDeleted(task_id=task_id))
+                            else:
+                                logger.debug(
+                                    f"TaskFinished for unknown command_id={command.finished_command_id} (already cleaned up)"
+                                )
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages
                             for i in range(command.since_idx, len(self._event_log)):

@@ -233,7 +233,7 @@ def build_lm_eval_args(
     model_args = ",".join(model_args_parts)
 
     args = [
-        "lm_eval",
+        sys.executable, "-m", "bench.lm_eval_patched",
         "--model",
         model_type,
         "--model_args",

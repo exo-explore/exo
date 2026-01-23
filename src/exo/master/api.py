@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import json
 import re
 import time
@@ -544,9 +545,13 @@ class API:
         )
 
     async def _chat_chunk_stream(
-        self, command_id: CommandId
+        self, command_id: CommandId, timeout: float = 600.0
     ) -> AsyncGenerator[TokenChunk | ErrorChunk | ToolCallChunk | CompletionChunk, None]:
-        """Yield `TokenChunk`s for a given command until completion."""
+        """Yield `TokenChunk`s for a given command until completion.
+
+        Args:
+            timeout: Max seconds to wait for the next chunk before aborting.
+        """
 
         try:
             self._chat_completion_queues[command_id], recv = channel[
@@ -554,19 +559,21 @@ class API:
             ]()
 
             with recv as token_chunks:
-                async for chunk in token_chunks:
-                    yield chunk
-                    if chunk.finish_reason is not None:
-                        break
+                with anyio.fail_after(timeout):
+                    async for chunk in token_chunks:
+                        yield chunk
+                        if chunk.finish_reason is not None:
+                            break
 
         except anyio.get_cancelled_exc_class():
-            # TODO: TaskCancelled
-            """
-            self.command_sender.send_nowait(
-                ForwarderCommand(origin=self.node_id, command=command)
-            )
-            """
             raise
+        except TimeoutError:
+            logger.warning(f"Chat completion timed out after {timeout}s (command_id={command_id})")
+            yield ErrorChunk(
+                model=ModelId("unknown"),
+                finish_reason="error",
+                error_message=f"Request timed out after {timeout}s",
+            )
         finally:
             command = TaskFinished(finished_command_id=command_id)
             await self._send(command)
@@ -804,7 +811,14 @@ class API:
                 media_type="text/event-stream",
             )
 
-        return await self._collect_chat_completion(command.command_id)
+        try:
+            return await self._collect_chat_completion(command.command_id)
+        except BaseException:
+            # Ensure task cleanup if handler is cancelled before _chat_chunk_stream's finally runs
+            with contextlib.suppress(Exception):
+                await self._send(TaskFinished(finished_command_id=command.command_id))
+            self._chat_completion_queues.pop(command.command_id, None)
+            raise
 
     async def completions(
         self, payload: CompletionTaskParams
@@ -825,7 +839,13 @@ class API:
         command = Completion(request_params=payload)
         await self._send(command)
 
-        return await self._collect_completion(command.command_id)
+        try:
+            return await self._collect_completion(command.command_id)
+        except BaseException:
+            with contextlib.suppress(Exception):
+                await self._send(TaskFinished(finished_command_id=command.command_id))
+            self._chat_completion_queues.pop(command.command_id, None)
+            raise
 
     async def _collect_completion(self, command_id: CommandId) -> CompletionResponse:
         """Collect completion response chunks into a single response."""

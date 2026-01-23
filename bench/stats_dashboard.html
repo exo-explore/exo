@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>exo Usage Stats</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Mono', 'Menlo', monospace;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    padding: 24px;
+    min-height: 100vh;
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #333;
+  }
+  .header h1 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #fff;
+  }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #888;
+  }
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #666;
+  }
+  .status-dot.connected { background: #4caf50; }
+  .status-dot.error { background: #f44336; }
+  .config {
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .config label {
+    font-size: 12px;
+    color: #888;
+  }
+  .config input {
+    background: #252540;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #e0e0e0;
+    padding: 4px 8px;
+    font-size: 13px;
+    font-family: inherit;
+    width: 280px;
+  }
+  .section {
+    background: #252540;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .section h2 {
+    font-size: 14px;
+    font-weight: 600;
+    color: #aaa;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 16px;
+  }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+  }
+  .stat-card {
+    background: #1a1a2e;
+    border-radius: 6px;
+    padding: 16px;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+  .stat-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: #fff;
+  }
+  .stat-rate {
+    font-size: 12px;
+    color: #4caf50;
+    margin-top: 4px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  th {
+    text-align: left;
+    padding: 8px 12px;
+    color: #888;
+    font-weight: 500;
+    border-bottom: 1px solid #333;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #2a2a45;
+  }
+  td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .model-name {
+    color: #7c9eff;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .empty-state {
+    color: #666;
+    font-style: italic;
+    padding: 16px 0;
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>exo Usage Stats</h1>
+    <div class="status">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">connecting...</span>
+    </div>
+  </div>
+
+  <div class="config">
+    <label for="baseUrl">Base URL:</label>
+    <input type="text" id="baseUrl" value="http://mac8-1:52415">
+  </div>
+
+  <div class="section">
+    <h2>Totals</h2>
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-label">Requests</div>
+        <div class="stat-value" id="totalRequests">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Prompt Tokens</div>
+        <div class="stat-value" id="totalPrompt">0</div>
+        <div class="stat-rate" id="promptRate"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Completion Tokens</div>
+        <div class="stat-value" id="totalCompletion">0</div>
+        <div class="stat-rate" id="completionRate"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Reasoning Tokens</div>
+        <div class="stat-value" id="totalReasoning">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total Tokens</div>
+        <div class="stat-value" id="totalTokens">0</div>
+        <div class="stat-rate" id="totalRate"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Per-Model Breakdown</h2>
+    <div id="modelTable">
+      <div class="empty-state">No data yet</div>
+    </div>
+  </div>
+
+<script>
+
+  function fmt(n) {
+    return n.toLocaleString();
+  }
+
+  // Track first non-zero timestamp for overall average rate
+  let firstSeenTime = null;
+  let firstSeenTokens = { prompt: 0, completion: 0, total: 0 };
+
+  function setRate(id, currentTokens, tokenType) {
+    const el = document.getElementById(id);
+    if (firstSeenTime === null || currentTokens <= firstSeenTokens[tokenType]) {
+      el.textContent = '';
+      return;
+    }
+    const elapsed = (performance.now() / 1000) - firstSeenTime;
+    if (elapsed <= 0) { el.textContent = ''; return; }
+    const delta = currentTokens - firstSeenTokens[tokenType];
+    const avg = delta / elapsed;
+    el.textContent = fmt(Math.round(avg)) + ' tok/s avg';
+  }
+
+  function renderModelTable(byModel) {
+    const container = document.getElementById('modelTable');
+    const models = Object.entries(byModel);
+    if (models.length === 0) {
+      container.innerHTML = '<div class="empty-state">No data yet</div>';
+      return;
+    }
+    let html = '<table><thead><tr>';
+    html += '<th>Model</th><th style="text-align:right">Requests</th>';
+    html += '<th style="text-align:right">Prompt</th>';
+    html += '<th style="text-align:right">Completion</th>';
+    html += '<th style="text-align:right">Reasoning</th>';
+    html += '<th style="text-align:right">Total</th>';
+    html += '</tr></thead><tbody>';
+    for (const [name, counters] of models) {
+      const total = (counters.prompt_tokens || 0) + (counters.completion_tokens || 0);
+      html += '<tr>';
+      html += `<td class="model-name" title="${name}">${name}</td>`;
+      html += `<td class="num">${fmt(counters.requests || 0)}</td>`;
+      html += `<td class="num">${fmt(counters.prompt_tokens || 0)}</td>`;
+      html += `<td class="num">${fmt(counters.completion_tokens || 0)}</td>`;
+      html += `<td class="num">${fmt(counters.reasoning_tokens || 0)}</td>`;
+      html += `<td class="num">${fmt(total)}</td>`;
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  }
+
+  async function poll() {
+    const baseUrl = document.getElementById('baseUrl').value.replace(/\/+$/, '');
+    const dot = document.getElementById('statusDot');
+    const text = document.getElementById('statusText');
+
+    try {
+      const resp = await fetch(baseUrl + '/v1/usage');
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+
+      dot.className = 'status-dot connected';
+      text.textContent = 'connected';
+
+
+      document.getElementById('totalRequests').textContent = fmt(data.total_requests || 0);
+      document.getElementById('totalPrompt').textContent = fmt(data.total_prompt_tokens || 0);
+      document.getElementById('totalCompletion').textContent = fmt(data.total_completion_tokens || 0);
+      document.getElementById('totalReasoning').textContent = fmt(data.total_reasoning_tokens || 0);
+      document.getElementById('totalTokens').textContent = fmt(data.total_tokens || 0);
+
+      // Record first non-zero reading as baseline
+      if (firstSeenTime === null && (data.total_tokens || 0) > 0) {
+        firstSeenTime = performance.now() / 1000;
+        firstSeenTokens = {
+          prompt: data.total_prompt_tokens || 0,
+          completion: data.total_completion_tokens || 0,
+          total: data.total_tokens || 0,
+        };
+      }
+
+      setRate('promptRate', data.total_prompt_tokens || 0, 'prompt');
+      setRate('completionRate', data.total_completion_tokens || 0, 'completion');
+      setRate('totalRate', data.total_tokens || 0, 'total');
+
+      renderModelTable(data.by_model || {});
+
+    } catch (e) {
+      dot.className = 'status-dot error';
+      text.textContent = e.message || 'error';
+    }
+  }
+
+  poll();
+  setInterval(poll, 1000);
+</script>
+</body>
+</html>
