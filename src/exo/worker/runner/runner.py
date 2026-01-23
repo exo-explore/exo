@@ -89,7 +89,7 @@ from exo.worker.runner.bootstrap import logger
 
 # Batching configuration
 BATCH_ENABLED = True
-BATCH_MAX_SIZE = 128
+BATCH_MAX_SIZE = 64
 
 
 def _should_use_serial_processing(
@@ -303,10 +303,11 @@ def main(
                             tokenizer=tokenizer,
                             model_id=shard_metadata.model_card.model_id,
                             device_rank=device_rank,
+                            world_size=shard_metadata.world_size,
                             max_batch_size=BATCH_MAX_SIZE,
                         )
                         logger.info(
-                            f"Batch handler initialized (max_batch_size={BATCH_MAX_SIZE})"
+                            f"Batch handler initialized (max_batch_size={BATCH_MAX_SIZE}, world_size={shard_metadata.world_size})"
                         )
                 elif (
                     ModelTask.TextToImage in shard_metadata.model_card.tasks

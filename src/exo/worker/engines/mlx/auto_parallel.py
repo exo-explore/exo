@@ -114,6 +114,7 @@ class PipelineFirstLayer(CustomMlxLayer):
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
+            mx.eval(x)
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -142,6 +143,7 @@ class PipelineLastLayer(CustomMlxLayer):
             output = mx.distributed.send(
                 output, (self.r + 1) % self.s, group=self.group
             )
+            mx.async_eval(output)
             if cache is not None:
                 cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
 
@@ -247,6 +249,10 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
         cache = call_signature.bind_partial(self, *args, **kwargs).arguments.get(
             "cache", None
         )
+
+        # Evaluate logits before all_gather to break the computation graph
+        # and prevent Metal command buffer timeouts with large batches
+        mx.eval(logits)
 
         # Add dependency to last cache entry to ensure distributed ops are evaluated
         if cache is not None:
