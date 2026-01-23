@@ -100,7 +100,7 @@ class PipelinedGenerator:
 
     @property
     def has_active(self) -> bool:
-        return self.active_count > 0
+        return self.active_count > 0 or len(self.pending_prompts) > 0
 
     def insert(
         self,
