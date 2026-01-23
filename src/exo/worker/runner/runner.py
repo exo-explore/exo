@@ -256,6 +256,10 @@ def main(
                             mlx_generator = filter_kimi_tokens(mlx_generator)
                             patch_kimi_tokenizer(tokenizer)
 
+                        # GLM models need patched parser (upstream has bug with None regex match)
+                        if "glm" in shard_metadata.model_card.model_id.lower():
+                            patch_glm_tokenizer(tokenizer)
+
                         if tokenizer.has_tool_calling:
                             assert tokenizer.tool_call_start
                             assert tokenizer.tool_call_end
@@ -645,7 +649,14 @@ def parse_tool_calls(
                     tools = [_validate_single_tool(parsed)]
                 yield ToolCallResponse(tool_calls=tools)
 
-            except (json.JSONDecodeError, ValidationError) as e:
+            except (
+                json.JSONDecodeError,
+                ValidationError,
+                ValueError,
+                AttributeError,
+            ) as e:
+                # ValueError: our parsers raise this for malformed tool calls
+                # AttributeError: upstream parsers (e.g. glm47) may raise this when regex doesn't match
                 logger.opt(exception=e).warning("tool call parsing failed")
                 # assumption: talking about tool calls, not making a tool call
                 response.text = (
@@ -698,15 +709,91 @@ def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
         return value
 
     def parse_tool_call(text: str, tools: Any | None = None):
-        func_name = _func_name_regex.search(text).group(1)  # pyright: ignore[reportOptionalMemberAccess]
+        func_name_match = _func_name_regex.search(text)
+        if func_name_match is None:
+            raise ValueError(f"Could not parse function name from tool call: {text!r}")
+        func_name = func_name_match.group(1)
         # strip off the `functions.` prefix, if it exists.
         func_name = func_name[func_name.find(".") + 1 :]
 
-        func_args = _func_arg_regex.search(text).group(1)  # pyright: ignore[reportOptionalMemberAccess]
+        func_args_match = _func_arg_regex.search(text)
+        if func_args_match is None:
+            raise ValueError(f"Could not parse function args from tool call: {text!r}")
+        func_args = func_args_match.group(1)
         # the args should be valid json - no need to check against our tools to deserialize
         arg_dct = _deserialize(func_args)  # pyright: ignore[reportAny]
 
         return dict(name=func_name, arguments=arg_dct)  # pyright: ignore[reportAny]
+
+    tokenizer._tool_call_start = tool_call_start
+    tokenizer._tool_call_end = tool_call_end
+    tokenizer._tool_parser = parse_tool_call
+
+
+def patch_glm_tokenizer(tokenizer: TokenizerWrapper):
+    """
+    Fixed version of mlx_lm's glm47 tool parser that handles regex match failures.
+    """
+    import ast
+    import json
+    from typing import Any
+
+    import regex as re
+
+    _func_name_regex = re.compile(r"^(.*?)<arg_key>", re.DOTALL)
+    _func_arg_regex = re.compile(
+        r"<arg_key>(.*?)</arg_key>(?:\\n|\s)*<arg_value>(.*?)</arg_value>",
+        re.DOTALL,
+    )
+
+    tool_call_start = "<tool_call>"
+    tool_call_end = "</tool_call>"
+
+    def _is_string_type(
+        tool_name: str,
+        arg_name: str,
+        tools: list[Any] | None,
+    ) -> bool:
+        if tools is None:
+            return False
+        for tool in tools:  # pyright: ignore[reportAny]
+            func = tool["function"]  # pyright: ignore[reportAny]
+            if func["name"] == tool_name:
+                params = func["parameters"]  # pyright: ignore[reportAny]
+                if params is None:
+                    return False
+                props = params.get("properties", {})  # pyright: ignore[reportAny]
+                arg_props = props.get(arg_name, {})  # pyright: ignore[reportAny]
+                arg_type = arg_props.get("type", None)  # pyright: ignore[reportAny]
+                return arg_type == "string"  # pyright: ignore[reportAny]
+        return False
+
+    def _deserialize(value: str) -> Any:  # pyright: ignore[reportAny]
+        try:
+            return json.loads(value)  # pyright: ignore[reportAny]
+        except Exception:
+            pass
+        try:
+            return ast.literal_eval(value)  # pyright: ignore[reportAny]
+        except Exception:
+            pass
+        return value
+
+    def parse_tool_call(text: str, tools: list[Any] | None = None):
+        func_name_match = _func_name_regex.search(text)
+        if func_name_match is None:
+            raise ValueError(f"Could not parse function name from tool call: {text!r}")
+        func_name = func_name_match.group(1)
+
+        pairs = _func_arg_regex.findall(text)
+        arg_dct: dict[str, Any] = {}
+        for key, value in pairs:  # pyright: ignore[reportAny]
+            arg_key = key.strip()  # pyright: ignore[reportAny]
+            arg_val = value.strip()  # pyright: ignore[reportAny]
+            if not _is_string_type(func_name, arg_key, tools):  # pyright: ignore[reportAny]
+                arg_val = _deserialize(arg_val)  # pyright: ignore[reportAny]
+            arg_dct[arg_key] = arg_val
+        return dict(name=func_name, arguments=arg_dct)
 
     tokenizer._tool_call_start = tool_call_start
     tokenizer._tool_call_end = tool_call_end
