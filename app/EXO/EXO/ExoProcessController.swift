@@ -3,6 +3,8 @@ import Combine
 import Foundation
 
 private let customNamespaceKey = "EXOCustomNamespace"
+private let hfTokenKey = "EXOHFToken"
+private let enableImageModelsKey = "EXOEnableImageModels"
 
 @MainActor
 final class ExoProcessController: ObservableObject {
@@ -31,9 +33,26 @@ final class ExoProcessController: ObservableObject {
     @Published private(set) var launchCountdownSeconds: Int?
     @Published var customNamespace: String = {
         return UserDefaults.standard.string(forKey: customNamespaceKey) ?? ""
-    }() {
+    }()
+    {
         didSet {
             UserDefaults.standard.set(customNamespace, forKey: customNamespaceKey)
+        }
+    }
+    @Published var hfToken: String = {
+        return UserDefaults.standard.string(forKey: hfTokenKey) ?? ""
+    }()
+    {
+        didSet {
+            UserDefaults.standard.set(hfToken, forKey: hfTokenKey)
+        }
+    }
+    @Published var enableImageModels: Bool = {
+        return UserDefaults.standard.bool(forKey: enableImageModelsKey)
+    }()
+    {
+        didSet {
+            UserDefaults.standard.set(enableImageModels, forKey: enableImageModelsKey)
         }
     }
 
@@ -190,6 +209,12 @@ final class ExoProcessController: ObservableObject {
         var environment = ProcessInfo.processInfo.environment
         environment["EXO_RUNTIME_DIR"] = runtimeURL.path
         environment["EXO_LIBP2P_NAMESPACE"] = computeNamespace()
+        if !hfToken.isEmpty {
+            environment["HF_TOKEN"] = hfToken
+        }
+        if enableImageModels {
+            environment["EXO_ENABLE_IMAGE_MODELS"] = "true"
+        }
 
         var paths: [String] = []
         if let existing = environment["PATH"], !existing.isEmpty {
@@ -221,7 +246,9 @@ final class ExoProcessController: ObservableObject {
         if let tag = Bundle.main.infoDictionary?["EXOBuildTag"] as? String, !tag.isEmpty {
             return tag
         }
-        if let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String, !short.isEmpty {
+        if let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+            !short.isEmpty
+        {
             return short
         }
         return "dev"

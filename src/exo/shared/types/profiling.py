@@ -1,12 +1,14 @@
-from typing import Self
+from collections.abc import Sequence
+from typing import Literal, Self
 
 import psutil
 
 from exo.shared.types.memory import Memory
+from exo.shared.types.thunderbolt import ThunderboltIdentifier
 from exo.utils.pydantic_ext import CamelCaseModel
 
 
-class MemoryPerformanceProfile(CamelCaseModel):
+class MemoryUsage(CamelCaseModel):
     ram_total: Memory
     ram_available: Memory
     swap_total: Memory
@@ -44,24 +46,40 @@ class SystemPerformanceProfile(CamelCaseModel):
     sys_power: float = 0.0
     pcpu_usage: float = 0.0
     ecpu_usage: float = 0.0
-    ane_power: float = 0.0
+
+
+InterfaceType = Literal["wifi", "ethernet", "thunderbolt", "unknown"]
 
 
 class NetworkInterfaceInfo(CamelCaseModel):
     name: str
     ip_address: str
+    interface_type: InterfaceType = "unknown"
 
 
-class NodePerformanceProfile(CamelCaseModel):
-    model_id: str
-    chip_id: str
-    friendly_name: str
-    memory: MemoryPerformanceProfile
-    network_interfaces: list[NetworkInterfaceInfo] = []
-    system: SystemPerformanceProfile
+class NodeIdentity(CamelCaseModel):
+    """Static and slow-changing node identification data."""
+
+    model_id: str = "Unknown"
+    chip_id: str = "Unknown"
+    friendly_name: str = "Unknown"
 
 
-class ConnectionProfile(CamelCaseModel):
-    throughput: float
-    latency: float
-    jitter: float
+class NodeNetworkInfo(CamelCaseModel):
+    """Network interface information for a node."""
+
+    interfaces: Sequence[NetworkInterfaceInfo] = []
+
+
+class NodeThunderboltInfo(CamelCaseModel):
+    """Thunderbolt interface identifiers for a node."""
+
+    interfaces: Sequence[ThunderboltIdentifier] = []
+
+
+class ThunderboltBridgeStatus(CamelCaseModel):
+    """Whether the Thunderbolt Bridge network service is enabled on this node."""
+
+    enabled: bool
+    exists: bool
+    service_name: str | None = None

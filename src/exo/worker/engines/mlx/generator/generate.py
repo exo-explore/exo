@@ -2,8 +2,9 @@ import time
 from typing import Any, Callable, Generator, cast, get_args
 
 import mlx.core as mx
-from mlx_lm import stream_generate
+from mlx_lm.generate import stream_generate
 from mlx_lm.models.cache import KVCache, trim_prompt_cache
+from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.api import (
@@ -105,7 +106,6 @@ def prefill(
 def warmup_inference(
     model: Model,
     tokenizer: TokenizerWrapper,
-    sampler: Callable[[mx.array], mx.array],
 ) -> int:
     content = "Prompt to warm up the inference engine. Repeat this."
 
@@ -127,6 +127,9 @@ def warmup_inference(
     cache = make_kv_cache(
         model=model,
     )
+
+    # Use a default sampler for warmup
+    sampler = make_sampler(temp=0.7)
 
     logger.info("Generating warmup tokens")
     for _r in stream_generate(
@@ -173,8 +176,8 @@ def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
 def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
-    sampler: Callable[[mx.array], mx.array],
     task: ChatCompletionTaskParams,
+    prompt: str,
     kv_prefix_cache: KVPrefixCache | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
@@ -182,12 +185,10 @@ def mlx_generate(
     is_bench: bool = isinstance(task, BenchChatCompletionTaskParams)
 
     # Currently we support chat-completion tasks only.
-    logger.info(f"task_params: {task}")
+    logger.debug(f"task_params: {task}")
 
-    prompt = apply_chat_template(
-        tokenizer=tokenizer,
-        chat_task_data=task,
-    )
+    if task.seed is not None:
+        mx.random.seed(task.seed)
 
     # Use prefix cache if available, otherwise create fresh cache
     if kv_prefix_cache is not None:
@@ -202,6 +203,11 @@ def mlx_generate(
         eos_ids = eos_ids_from_tokenizer(tokenizer)
         logits_processors = [ban_token_ids(eos_ids)]
 
+    sampler = make_sampler(
+        temp=task.temperature if task.temperature is not None else 0.7,
+        top_p=task.top_p if task.top_p is not None else 1.0,
+    )
+
     # Prefill cache with all tokens except the last one
     prefill_tokens, prefill_tps = prefill(
         model, tokenizer, sampler, prompt_tokens, caches
@@ -209,6 +215,7 @@ def mlx_generate(
 
     # stream_generate starts from the last token
     last_token = prompt_tokens[-1:]
+
 
     max_tokens = task.max_tokens or MAX_TOKENS
     generated_text_parts: list[str] = []

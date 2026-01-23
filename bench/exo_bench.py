@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import http.client
 import json
 import os
@@ -15,9 +16,6 @@ from urllib.parse import urlencode
 from loguru import logger
 from transformers import AutoTokenizer
 
-from exo.shared.models.model_cards import MODEL_CARDS
-from exo.shared.types.memory import Memory
-
 
 class ExoHttpError(RuntimeError):
     def __init__(self, status: int, reason: str, body_preview: str):
@@ -26,7 +24,7 @@ class ExoHttpError(RuntimeError):
 
 
 class ExoClient:
-    def __init__(self, host: str, port: int, timeout_s: float = 2400.0):
+    def __init__(self, host: str, port: int, timeout_s: float = 600.0):
         self.host = host
         self.port = port
         self.timeout_s = timeout_s
@@ -104,21 +102,45 @@ def runner_ready(runner: dict[str, Any]) -> bool:
     return "RunnerReady" in runner
 
 
+def runner_failed(runner: dict[str, Any]) -> bool:
+    return "RunnerFailed" in runner
+
+
+def get_runner_failed_message(runner: dict[str, Any]) -> str | None:
+    if "RunnerFailed" in runner:
+        return runner["RunnerFailed"].get("errorMessage")
+    return None
+
+
 def wait_for_instance_ready(
     client: ExoClient, instance_id: str, timeout: float = 24000.0
 ) -> None:
     start_time = time.time()
+    instance_existed = False
     while time.time() - start_time < timeout:
         state = client.request_json("GET", "/state")
         instances = state.get("instances", {})
 
         if instance_id not in instances:
+            if instance_existed:
+                # Instance was deleted after being created - likely due to runner failure
+                raise RuntimeError(
+                    f"Instance {instance_id} was deleted (runner may have failed)"
+                )
             time.sleep(0.1)
             continue
 
+        instance_existed = True
         instance = instances[instance_id]
         runner_ids = runner_ids_from_instance(instance)
         runners = state.get("runners", {})
+
+        # Check for failed runners first
+        for rid in runner_ids:
+            runner = runners.get(rid, {})
+            if runner_failed(runner):
+                error_msg = get_runner_failed_message(runner) or "Unknown error"
+                raise RuntimeError(f"Runner {rid} failed: {error_msg}")
 
         if all(runner_ready(runners.get(rid, {})) for rid in runner_ids):
             return
@@ -173,14 +195,14 @@ def resolve_model_short_id(client: ExoClient, model_arg: str) -> tuple[str, str]
     data = models.get("data") or []
 
     for m in data:
-        if m.get("id") == model_arg:
-            short_id = str(m["id"])
-            full_id = str(m.get("hugging_face_id") or m["id"])
+        if m.get("name").lower() == model_arg.lower():
+            short_id = str(m["name"])
+            full_id = str(m.get("hugging_face_id") or m["name"])
             return short_id, full_id
 
     for m in data:
         if m.get("hugging_face_id") == model_arg:
-            short_id = str(m["id"])
+            short_id = str(m["name"])
             full_id = str(m["hugging_face_id"])
             return short_id, full_id
 
@@ -241,6 +263,9 @@ class PromptSizer:
             ids = tokenizer.apply_chat_template(
                 messages, tokenize=True, add_generation_prompt=True
             )
+            # Fix for transformers 5.x
+            if hasattr(ids, "input_ids"):
+                ids = ids.input_ids
             return int(len(ids))
 
         return count_fn
@@ -297,6 +322,12 @@ def main() -> int:
         help="Only consider placements using <= this many nodes.",
     )
     ap.add_argument(
+        "--min-nodes",
+        type=int,
+        default=1,
+        help="Only consider placements using >= this many nodes.",
+    )
+    ap.add_argument(
         "--instance-meta", choices=["ring", "jaccl", "both"], default="both"
     )
     ap.add_argument(
@@ -317,7 +348,7 @@ def main() -> int:
         help="Warmup runs per placement (uses first pp/tg).",
     )
     ap.add_argument(
-        "--timeout", type=float, default=2400.0, help="HTTP timeout (seconds)."
+        "--timeout", type=float, default=600.0, help="HTTP timeout (seconds)."
     )
     ap.add_argument(
         "--json-out",
@@ -342,7 +373,7 @@ def main() -> int:
     short_id, full_model_id = resolve_model_short_id(client, args.model)
 
     previews_resp = client.request_json(
-        "GET", "/instance/previews", params={"model_id": short_id}
+        "GET", "/instance/previews", params={"model_id": full_model_id}
     )
     previews = previews_resp.get("previews") or []
 
@@ -396,7 +427,7 @@ def main() -> int:
         ):
             continue
 
-        if 0 < n <= args.max_nodes:
+        if args.min_nodes <= n <= args.max_nodes:
             selected.append(p)
 
     if not selected:
@@ -438,7 +469,13 @@ def main() -> int:
         )
 
         client.request_json("POST", "/instance", body={"instance": instance})
-        wait_for_instance_ready(client, instance_id)
+        try:
+            wait_for_instance_ready(client, instance_id)
+        except (RuntimeError, TimeoutError) as e:
+            logger.error(f"Failed to initialize placement: {e}")
+            with contextlib.suppress(ExoHttpError):
+                client.request_json("DELETE", f"/instance/{instance_id}")
+            continue
 
         time.sleep(1)
 
@@ -450,17 +487,17 @@ def main() -> int:
                 logger.debug(f"  warmup {i + 1}/{args.warmup} done")
 
             for pp in pp_list:
-                if (
-                    pp * n_nodes > 2048
-                    and "ring" in instance_meta.lower()
-                    and "tensor" in sharding.lower()
-                ):
-                    model_card = MODEL_CARDS[short_id]
-                    if model_card.metadata.storage_size > Memory.from_gb(10):
-                        logger.info(
-                            f"Skipping tensor ring as this is too slow for model of size {model_card.metadata.storage_size} on {n_nodes=}"
-                        )
-                        continue
+                # if (
+                #     pp * n_nodes > 2048
+                #     and "ring" in instance_meta.lower()
+                #     and "tensor" in sharding.lower()
+                # ):
+                #     model_card = MODEL_CARDS[short_id]
+                #     if model_card.metadata.storage_size > Memory.from_gb(10):
+                #         logger.info(
+                #             f"Skipping tensor ring as this is too slow for model of size {model_card.metadata.storage_size} on {n_nodes=}"
+                #         )
+                #         continue
                 for tg in tg_list:
                     runs: list[dict[str, Any]] = []
                     for r in range(args.repeat):

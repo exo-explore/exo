@@ -1,9 +1,11 @@
 import asyncio
+from collections.abc import Awaitable
 from pathlib import Path
 from typing import AsyncIterator, Callable
 
-from exo.shared.models.model_cards import MODEL_CARDS
-from exo.shared.models.model_meta import get_model_meta
+from loguru import logger
+
+from exo.shared.models.model_cards import MODEL_CARDS, ModelCard, ModelId
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
     ShardMetadata,
@@ -18,22 +20,22 @@ def exo_shard_downloader(max_parallel_downloads: int = 8) -> ShardDownloader:
     )
 
 
-async def build_base_shard(model_id: str) -> ShardMetadata:
-    model_meta = await get_model_meta(model_id)
+async def build_base_shard(model_id: ModelId) -> ShardMetadata:
+    model_card = await ModelCard.from_hf(model_id)
     return PipelineShardMetadata(
-        model_meta=model_meta,
+        model_card=model_card,
         device_rank=0,
         world_size=1,
         start_layer=0,
-        end_layer=model_meta.n_layers,
-        n_layers=model_meta.n_layers,
+        end_layer=model_card.n_layers,
+        n_layers=model_card.n_layers,
     )
 
 
-async def build_full_shard(model_id: str) -> PipelineShardMetadata:
+async def build_full_shard(model_id: ModelId) -> PipelineShardMetadata:
     base_shard = await build_base_shard(model_id)
     return PipelineShardMetadata(
-        model_meta=base_shard.model_meta,
+        model_card=base_shard.model_card,
         device_rank=base_shard.device_rank,
         world_size=base_shard.world_size,
         start_layer=base_shard.start_layer,
@@ -48,7 +50,8 @@ class SingletonShardDownloader(ShardDownloader):
         self.active_downloads: dict[ShardMetadata, asyncio.Task[Path]] = {}
 
     def on_progress(
-        self, callback: Callable[[ShardMetadata, RepoDownloadProgress], None]
+        self,
+        callback: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
     ) -> None:
         self.shard_downloader.on_progress(callback)
 
@@ -83,18 +86,19 @@ class CachedShardDownloader(ShardDownloader):
         self.cache: dict[tuple[str, ShardMetadata], Path] = {}
 
     def on_progress(
-        self, callback: Callable[[ShardMetadata, RepoDownloadProgress], None]
+        self,
+        callback: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
     ) -> None:
         self.shard_downloader.on_progress(callback)
 
     async def ensure_shard(
         self, shard: ShardMetadata, config_only: bool = False
     ) -> Path:
-        if (shard.model_meta.model_id, shard) in self.cache:
-            return self.cache[(shard.model_meta.model_id, shard)]
+        if (shard.model_card.model_id, shard) in self.cache:
+            return self.cache[(shard.model_card.model_id, shard)]
 
         target_dir = await self.shard_downloader.ensure_shard(shard, config_only)
-        self.cache[(shard.model_meta.model_id, shard)] = target_dir
+        self.cache[(shard.model_card.model_id, shard)] = target_dir
         return target_dir
 
     async def get_shard_download_status(
@@ -113,17 +117,18 @@ class ResumableShardDownloader(ShardDownloader):
     def __init__(self, max_parallel_downloads: int = 8):
         self.max_parallel_downloads = max_parallel_downloads
         self.on_progress_callbacks: list[
-            Callable[[ShardMetadata, RepoDownloadProgress], None]
+            Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]]
         ] = []
 
-    def on_progress_wrapper(
+    async def on_progress_wrapper(
         self, shard: ShardMetadata, progress: RepoDownloadProgress
     ) -> None:
         for callback in self.on_progress_callbacks:
-            callback(shard, progress)
+            await callback(shard, progress)
 
     def on_progress(
-        self, callback: Callable[[ShardMetadata, RepoDownloadProgress], None]
+        self,
+        callback: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
     ) -> None:
         self.on_progress_callbacks.append(callback)
 
@@ -144,7 +149,7 @@ class ResumableShardDownloader(ShardDownloader):
         self,
     ) -> AsyncIterator[tuple[Path, RepoDownloadProgress]]:
         async def _status_for_model(
-            model_id: str,
+            model_id: ModelId,
         ) -> tuple[Path, RepoDownloadProgress]:
             """Helper coroutine that builds the shard for a model and gets its download status."""
             shard = await build_full_shard(model_id)
@@ -163,7 +168,7 @@ class ResumableShardDownloader(ShardDownloader):
                 yield await task
             # TODO: except Exception
             except Exception as e:
-                print("Error downloading shard:", e)
+                logger.error("Error downloading shard:", e)
 
     async def get_shard_download_status_for_shard(
         self, shard: ShardMetadata

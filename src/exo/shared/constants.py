@@ -38,9 +38,18 @@ EXO_TEST_LOG = EXO_CACHE_HOME / "exo_test.log"
 
 # Identity (config)
 EXO_NODE_ID_KEYPAIR = EXO_CONFIG_HOME / "node_id.keypair"
+EXO_CONFIG_FILE = EXO_CONFIG_HOME / "config.toml"
 
 # libp2p topics for event forwarding
 LIBP2P_LOCAL_EVENTS_TOPIC = "worker_events"
 LIBP2P_GLOBAL_EVENTS_TOPIC = "global_events"
 LIBP2P_ELECTION_MESSAGES_TOPIC = "election_message"
 LIBP2P_COMMANDS_TOPIC = "commands"
+
+EXO_MAX_CHUNK_SIZE = 512 * 1024
+
+EXO_IMAGE_CACHE_DIR = EXO_CACHE_HOME / "images"
+
+EXO_ENABLE_IMAGE_MODELS = (
+    os.getenv("EXO_ENABLE_IMAGE_MODELS", "false").lower() == "true"
+)

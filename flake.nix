@@ -3,118 +3,135 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
-    # Provides Rust dev-env integration:
+
+    flake-parts = {
+      url = "github:hercules-ci/flake-parts";
+      inputs.nixpkgs-lib.follows = "nixpkgs";
+    };
+
+    crane.url = "github:ipetkov/crane";
+
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # Provides formatting infrastructure:
+
     treefmt-nix = {
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    dream2nix = {
+      url = "github:nix-community/dream2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    # Pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
+    nixpkgs-swift.url = "github:NixOS/nixpkgs/08dacfca559e1d7da38f3cf05f1f45ee9bfd213c";
   };
 
-  # TODO: figure out caching story
-  # nixConfig = {
-  #   # nix community cachix
-  #   extra-trusted-public-keys = "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=";
-  #   extra-substituters = "https://nix-community.cachix.org";
-  # };
+  nixConfig = {
+    extra-trusted-public-keys = "exo.cachix.org-1:okq7hl624TBeAR3kV+g39dUFSiaZgLRkLsFBCuJ2NZI=";
+    extra-substituters = "https://exo.cachix.org";
+  };
 
   outputs =
     inputs:
-    let
+    inputs.flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [
         "x86_64-linux"
         "aarch64-darwin"
         "aarch64-linux"
       ];
-      fenixToolchain = system: inputs.fenix.packages.${system}.complete;
-    in
-    inputs.flake-utils.lib.eachSystem systems (
-      system:
-      let
-        pkgs = import inputs.nixpkgs {
-          inherit system;
-          overlays = [ inputs.fenix.overlays.default ];
-        };
-        treefmtEval = inputs.treefmt-nix.lib.evalModule pkgs {
-          projectRootFile = "flake.nix";
-          programs.ruff-format.enable = true;
-          programs.ruff-format.excludes = [ "rust/exo_pyo3_bindings/exo_pyo3_bindings.pyi" ];
-          programs.rustfmt.enable = true;
-          programs.rustfmt.package = (fenixToolchain system).rustfmt;
-          programs.nixpkgs-fmt.enable = true;
-        };
-      in
-      {
-        formatter = treefmtEval.config.build.wrapper;
-        checks.formatting = treefmtEval.config.build.check inputs.self;
-        checks.lint = pkgs.runCommand "lint-check" { } ''
-          export RUFF_CACHE_DIR="$TMPDIR/ruff-cache"
-          ${pkgs.ruff}/bin/ruff check ${inputs.self}/
-          touch $out
-        '';
 
-        devShells.default = pkgs.mkShell {
-          packages =
-            with pkgs;
-            [
-              # PYTHON
-              python313
-              uv
-              ruff
-              basedpyright
+      imports = [
+        inputs.treefmt-nix.flakeModule
+        ./dashboard/parts.nix
+        ./rust/parts.nix
+      ];
 
-              # RUST
-              ((fenixToolchain system).withComponents [
-                "cargo"
-                "rustc"
-                "clippy"
-                "rustfmt"
-                "rust-src"
-              ])
-              rustup # Just here to make RustRover happy
+      perSystem =
+        { config, self', inputs', pkgs, lib, system, ... }:
+        let
+          fenixToolchain = inputs'.fenix.packages.complete;
+          # Use pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
+          pkgsSwift = import inputs.nixpkgs-swift { inherit system; };
+        in
+        {
+          treefmt = {
+            projectRootFile = "flake.nix";
+            programs = {
+              nixpkgs-fmt.enable = true;
+              ruff-format = {
+                enable = true;
+                excludes = [ "rust/exo_pyo3_bindings/exo_pyo3_bindings.pyi" ];
+              };
+              rustfmt = {
+                enable = true;
+                package = config.rust.toolchain;
+              };
+              prettier = {
+                enable = true;
+                package = self'.packages.prettier-svelte;
+                includes = [ "*.ts" "*.svelte" ];
+              };
+              swift-format = {
+                enable = true;
+                package = pkgsSwift.swiftPackages.swift-format;
+              };
+            };
+          };
 
-              # NIX
-              nixpkgs-fmt
-
-              # SVELTE
-              nodejs
-
-              # MISC
-              just
-              jq
-            ]
-            ++ (pkgs.lib.optionals pkgs.stdenv.isLinux [
-              # IFCONFIG
-              unixtools.ifconfig
-
-              # Build dependencies for Linux
-              pkg-config
-              openssl
-            ])
-            ++ (pkgs.lib.optionals pkgs.stdenv.isDarwin [
-              # MACMON
-              macmon
-            ]);
-
-          shellHook = ''
-            # PYTHON
-            export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.python313}/lib"
-            ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
-              # Build environment for Linux
-              export PKG_CONFIG_PATH="${pkgs.openssl.dev}/lib/pkgconfig:$PKG_CONFIG_PATH"
-              export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:$LD_LIBRARY_PATH"
-            ''}
-            echo
-            echo "🍎🍎 Run 'just <recipe>' to get started"
-            just --list
+          checks.lint = pkgs.runCommand "lint-check" { } ''
+            export RUFF_CACHE_DIR="$TMPDIR/ruff-cache"
+            ${pkgs.ruff}/bin/ruff check ${inputs.self}/
+            touch $out
           '';
 
+          devShells.default = with pkgs; pkgs.mkShell {
+            inputsFrom = [ self'.checks.cargo-build ];
+
+            packages =
+              [
+                # FORMATTING
+                config.treefmt.build.wrapper
+
+                # PYTHON
+                python313
+                uv
+                ruff
+                basedpyright
+
+                # RUST
+                config.rust.toolchain
+                maturin
+
+                # NIX
+                nixpkgs-fmt
+
+                # SVELTE
+                nodejs
+
+                # MISC
+                just
+                jq
+              ]
+              ++ lib.optionals stdenv.isLinux [
+                unixtools.ifconfig
+              ]
+              ++ lib.optionals stdenv.isDarwin [
+                macmon
+              ];
+
+            OPENSSL_NO_VENDOR = "1";
+
+            shellHook = ''
+              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${python313}/lib"
+              ${lib.optionalString stdenv.isLinux ''
+                export LD_LIBRARY_PATH="${openssl.out}/lib:$LD_LIBRARY_PATH"
+              ''}
+            '';
+          };
         };
-      }
-    );
+    };
 }

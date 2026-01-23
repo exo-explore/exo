@@ -8,9 +8,9 @@
 import AppKit
 import CoreImage
 import CoreImage.CIFilterBuiltins
+import ServiceManagement
 import Sparkle
 import SwiftUI
-import ServiceManagement
 import UserNotifications
 import os.log
 
@@ -19,7 +19,9 @@ struct EXOApp: App {
     @StateObject private var controller: ExoProcessController
     @StateObject private var stateService: ClusterStateService
     @StateObject private var networkStatusService: NetworkStatusService
+    @StateObject private var localNetworkChecker: LocalNetworkChecker
     @StateObject private var updater: SparkleUpdater
+    @StateObject private var thunderboltBridgeService: ThunderboltBridgeService
     private let terminationObserver: TerminationObserver
     private let ciContext = CIContext(options: nil)
 
@@ -37,9 +39,16 @@ struct EXOApp: App {
         _stateService = StateObject(wrappedValue: service)
         let networkStatus = NetworkStatusService()
         _networkStatusService = StateObject(wrappedValue: networkStatus)
+        let localNetwork = LocalNetworkChecker()
+        _localNetworkChecker = StateObject(wrappedValue: localNetwork)
         _updater = StateObject(wrappedValue: updater)
+        let thunderboltBridge = ThunderboltBridgeService(clusterStateService: service)
+        _thunderboltBridgeService = StateObject(wrappedValue: thunderboltBridge)
         enableLaunchAtLoginIfNeeded()
-        NetworkSetupHelper.ensureLaunchDaemonInstalled()
+        // Remove old LaunchDaemon components if they exist (from previous versions)
+        cleanupLegacyNetworkSetup()
+        // Check local network access periodically (warning disappears when user grants permission)
+        localNetwork.startPeriodicChecking(interval: 10)
         controller.scheduleLaunch(after: 15)
         service.startPolling()
         networkStatus.startPolling()
@@ -51,7 +60,9 @@ struct EXOApp: App {
                 .environmentObject(controller)
                 .environmentObject(stateService)
                 .environmentObject(networkStatusService)
+                .environmentObject(localNetworkChecker)
                 .environmentObject(updater)
+                .environmentObject(thunderboltBridgeService)
         } label: {
             menuBarIcon
         }
@@ -107,7 +118,7 @@ struct EXOApp: App {
         filter.contrast = 0.9
 
         guard let output = filter.outputImage,
-              let rendered = ciContext.createCGImage(output, from: output.extent)
+            let rendered = ciContext.createCGImage(output, from: output.extent)
         else {
             return nil
         }
@@ -120,7 +131,57 @@ struct EXOApp: App {
         do {
             try SMAppService.mainApp.register()
         } catch {
-            Logger().error("Failed to register EXO for launch at login: \(error.localizedDescription)")
+            Logger().error(
+                "Failed to register EXO for launch at login: \(error.localizedDescription)")
+        }
+    }
+
+    private func cleanupLegacyNetworkSetup() {
+        guard NetworkSetupHelper.hasInstalledComponents() else { return }
+        // Dispatch async to ensure app is ready before showing alert
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = "EXO Network Configuration"
+            alert.informativeText =
+                "EXO needs to configure local network discovery on your device. This requires granting permission once."
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "Continue")
+            alert.addButton(withTitle: "Later")
+
+            let response = alert.runModal()
+            guard response == .alertFirstButtonReturn else {
+                Logger().info("User deferred legacy network setup cleanup")
+                return
+            }
+
+            do {
+                try NetworkSetupHelper.uninstall()
+                Logger().info("Cleaned up legacy network setup components")
+            } catch {
+                // Non-fatal: user may have cancelled admin prompt or cleanup may have
+                // partially succeeded. The app will continue normally.
+                Logger().warning(
+                    "Could not clean up legacy network setup (non-fatal): \(error.localizedDescription)"
+                )
+            }
+        }
+    }
+}
+
+/// Helper for managing EXO's launch-at-login registration
+enum LaunchAtLoginHelper {
+    private static let logger = Logger(subsystem: "io.exo.EXO", category: "LaunchAtLogin")
+
+    /// Unregisters EXO from launching at login
+    static func disable() {
+        guard SMAppService.mainApp.status == .enabled else { return }
+        do {
+            try SMAppService.mainApp.unregister()
+            logger.info("Unregistered EXO from launch at login")
+        } catch {
+            logger.error(
+                "Failed to unregister EXO from launch at login: \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 }
@@ -145,7 +206,7 @@ final class SparkleUpdater: NSObject, ObservableObject {
         center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
         controller.updater.automaticallyChecksForUpdates = true
         controller.updater.automaticallyDownloadsUpdates = false
-        controller.updater.updateCheckInterval = 900 // 15 minutes
+        controller.updater.updateCheckInterval = 900  // 15 minutes
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak controller] in
             controller?.updater.checkForUpdatesInBackground()
         }
@@ -212,7 +273,8 @@ private final class ExoNotificationDelegate: NSObject, UNUserNotificationCenterD
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
-        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) ->
+            Void
     ) {
         completionHandler([.banner, .list, .sound])
     }

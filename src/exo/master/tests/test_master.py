@@ -7,6 +7,7 @@ from loguru import logger
 
 from exo.master.main import Master
 from exo.routing.router import get_node_id_keypair
+from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from exo.shared.types.commands import (
     ChatCompletion,
@@ -19,15 +20,12 @@ from exo.shared.types.events import (
     ForwarderEvent,
     IndexedEvent,
     InstanceCreated,
-    NodePerformanceMeasured,
+    NodeGatheredInfo,
     TaskCreated,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.profiling import (
-    MemoryPerformanceProfile,
-    NodePerformanceProfile,
-    SystemPerformanceProfile,
+    MemoryUsage,
 )
 from exo.shared.types.tasks import ChatCompletion as ChatCompletionTask
 from exo.shared.types.tasks import TaskStatus
@@ -75,29 +73,22 @@ async def test_master():
         tg.start_soon(master.run)
 
         sender_node_id = NodeId(f"{keypair.to_peer_id().to_base58()}_sender")
-        # inject a NodePerformanceProfile event
-        logger.info("inject a NodePerformanceProfile event")
+        # inject a NodeGatheredInfo event
+        logger.info("inject a NodeGatheredInfo event")
         await local_event_sender.send(
             ForwarderEvent(
                 origin_idx=0,
                 origin=sender_node_id,
                 session=session_id,
                 event=(
-                    NodePerformanceMeasured(
+                    NodeGatheredInfo(
                         when=str(datetime.now(tz=timezone.utc)),
                         node_id=node_id,
-                        node_profile=NodePerformanceProfile(
-                            model_id="maccy",
-                            chip_id="arm",
-                            friendly_name="test",
-                            memory=MemoryPerformanceProfile(
-                                ram_total=Memory.from_bytes(678948 * 1024),
-                                ram_available=Memory.from_bytes(678948 * 1024),
-                                swap_total=Memory.from_bytes(0),
-                                swap_available=Memory.from_bytes(0),
-                            ),
-                            network_interfaces=[],
-                            system=SystemPerformanceProfile(),
+                        info=MemoryUsage(
+                            ram_total=Memory.from_bytes(678948 * 1024),
+                            ram_available=Memory.from_bytes(678948 * 1024),
+                            swap_total=Memory.from_bytes(0),
+                            swap_available=Memory.from_bytes(0),
                         ),
                     )
                 ),
@@ -108,7 +99,7 @@ async def test_master():
         logger.info("wait for initial topology event")
         while len(list(master.state.topology.list_nodes())) == 0:
             await anyio.sleep(0.001)
-        while len(master.state.node_profiles) == 0:
+        while len(master.state.node_memory) == 0:
             await anyio.sleep(0.001)
 
         logger.info("inject a CreateInstance Command")
@@ -118,13 +109,13 @@ async def test_master():
                 command=(
                     PlaceInstance(
                         command_id=CommandId(),
-                        model_meta=ModelMetadata(
+                        model_card=ModelCard(
                             model_id=ModelId("llama-3.2-1b"),
-                            pretty_name="Llama 3.2 1B",
                             n_layers=16,
                             storage_size=Memory.from_bytes(678948),
                             hidden_size=7168,
                             supports_tensor=True,
+                            tasks=[ModelTask.TextGeneration],
                         ),
                         sharding=Sharding.Pipeline,
                         instance_meta=InstanceMeta.MlxRing,
@@ -163,7 +154,7 @@ async def test_master():
         assert events[0].idx == 0
         assert events[1].idx == 1
         assert events[2].idx == 2
-        assert isinstance(events[0].event, NodePerformanceMeasured)
+        assert isinstance(events[0].event, NodeGatheredInfo)
         assert isinstance(events[1].event, InstanceCreated)
         created_instance = events[1].event.instance
         assert isinstance(created_instance, MlxRingInstance)
@@ -176,13 +167,13 @@ async def test_master():
                     start_layer=0,
                     end_layer=16,
                     n_layers=16,
-                    model_meta=ModelMetadata(
+                    model_card=ModelCard(
                         model_id=ModelId("llama-3.2-1b"),
-                        pretty_name="Llama 3.2 1B",
                         n_layers=16,
                         storage_size=Memory.from_bytes(678948),
                         hidden_size=7168,
                         supports_tensor=True,
+                        tasks=[ModelTask.TextGeneration],
                     ),
                     device_rank=0,
                     world_size=1,

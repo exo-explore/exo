@@ -2,13 +2,15 @@
 
 from collections.abc import Mapping, Sequence
 
-from exo.shared.types.common import NodeId
-from exo.shared.types.models import ModelId
+from exo.shared.models.model_cards import ModelId
+from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.tasks import (
     ChatCompletion,
     ConnectToGroup,
     CreateRunner,
     DownloadModel,
+    ImageEdits,
+    ImageGeneration,
     LoadModel,
     Shutdown,
     StartWarmup,
@@ -18,6 +20,7 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
+    DownloadFailed,
     DownloadOngoing,
     DownloadProgress,
 )
@@ -49,6 +52,8 @@ def plan(
     instances: Mapping[InstanceId, Instance],
     all_runners: Mapping[RunnerId, RunnerStatus],  # all global
     tasks: Mapping[TaskId, Task],
+    input_chunk_buffer: Mapping[CommandId, dict[int, str]] | None = None,
+    input_chunk_counts: Mapping[CommandId, int] | None = None,
 ) -> Task | None:
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
@@ -58,7 +63,7 @@ def plan(
         or _init_distributed_backend(runners, all_runners)
         or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
-        or _pending_tasks(runners, tasks, all_runners)
+        or _pending_tasks(runners, tasks, all_runners, input_chunk_buffer)
     )
 
 
@@ -114,11 +119,12 @@ def _model_needs_download(
     download_status: Mapping[ModelId, DownloadProgress],
 ) -> DownloadModel | None:
     for runner in runners.values():
-        model_id = runner.bound_instance.bound_shard.model_meta.model_id
+        model_id = runner.bound_instance.bound_shard.model_card.model_id
         if isinstance(runner.status, RunnerIdle) and (
             model_id not in download_status
             or not isinstance(
-                download_status[model_id], (DownloadOngoing, DownloadCompleted)
+                download_status[model_id],
+                (DownloadOngoing, DownloadCompleted, DownloadFailed),
             )
         ):
             # We don't invalidate download_status randomly in case a file gets deleted on disk
@@ -191,7 +197,7 @@ def _load_model(
             nid in global_download_status
             and any(
                 isinstance(dp, DownloadCompleted)
-                and dp.shard_metadata.model_meta.model_id == shard_assignments.model_id
+                and dp.shard_metadata.model_card.model_id == shard_assignments.model_id
                 for dp in global_download_status[nid]
             )
             for nid in shard_assignments.node_to_runner
@@ -262,13 +268,23 @@ def _pending_tasks(
     runners: Mapping[RunnerId, RunnerSupervisor],
     tasks: Mapping[TaskId, Task],
     all_runners: Mapping[RunnerId, RunnerStatus],
+    input_chunk_buffer: Mapping[CommandId, dict[int, str]] | None = None,
 ) -> Task | None:
     for task in tasks.values():
         # for now, just forward chat completions
-        if not isinstance(task, ChatCompletion):
+        # TODO(ciaran): do this better!
+        if not isinstance(task, (ChatCompletion, ImageGeneration, ImageEdits)):
             continue
         if task.task_status not in (TaskStatus.Pending, TaskStatus.Running):
             continue
+
+        # For ImageEdits tasks, verify all input chunks have been received
+        if isinstance(task, ImageEdits) and task.task_params.total_input_chunks > 0:
+            cmd_id = task.command_id
+            expected = task.task_params.total_input_chunks
+            received = len((input_chunk_buffer or {}).get(cmd_id, {}))
+            if received < expected:
+                continue  # Wait for all chunks to arrive
 
         for runner in runners.values():
             if task.instance_id != runner.bound_instance.instance.instance_id:

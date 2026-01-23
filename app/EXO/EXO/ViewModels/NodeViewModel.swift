@@ -86,15 +86,17 @@ struct TopologyViewModel {
 
 extension ClusterState {
     func topologyViewModel(localNodeId: String?) -> TopologyViewModel? {
-        let topologyNodeIds = Set(topology?.nodes.map(\.nodeId) ?? [])
-        let allNodes = nodeViewModels().filter { topologyNodeIds.isEmpty || topologyNodeIds.contains($0.id) }
+        let topologyNodeIds = Set(topology?.nodes ?? [])
+        let allNodes = nodeViewModels().filter {
+            topologyNodeIds.isEmpty || topologyNodeIds.contains($0.id)
+        }
         guard !allNodes.isEmpty else { return nil }
 
         let nodesById = Dictionary(uniqueKeysWithValues: allNodes.map { ($0.id, $0) })
         var orderedNodes: [NodeViewModel] = []
         if let topologyNodes = topology?.nodes {
-            for topoNode in topologyNodes {
-                if let viewModel = nodesById[topoNode.nodeId] {
+            for nodeId in topologyNodes {
+                if let viewModel = nodesById[nodeId] {
                     orderedNodes.append(viewModel)
                 }
             }
@@ -106,18 +108,24 @@ extension ClusterState {
         }
 
         // Rotate so the local node (from /node_id API) is first
-        if let localId = localNodeId, let index = orderedNodes.firstIndex(where: { $0.id == localId }) {
+        if let localId = localNodeId,
+            let index = orderedNodes.firstIndex(where: { $0.id == localId })
+        {
             orderedNodes = Array(orderedNodes[index...]) + Array(orderedNodes[..<index])
         }
 
         let nodeIds = Set(orderedNodes.map(\.id))
-        let edgesArray: [TopologyEdgeViewModel] = topology?.connections?.compactMap { connection in
-            guard nodeIds.contains(connection.localNodeId), nodeIds.contains(connection.sendBackNodeId) else { return nil }
-            return TopologyEdgeViewModel(sourceId: connection.localNodeId, targetId: connection.sendBackNodeId)
-        } ?? []
+        let edgesArray: [TopologyEdgeViewModel] =
+            topology?.connections.compactMap { connection in
+                guard nodeIds.contains(connection.localNodeId),
+                    nodeIds.contains(connection.sendBackNodeId)
+                else { return nil }
+                return TopologyEdgeViewModel(
+                    sourceId: connection.localNodeId, targetId: connection.sendBackNodeId)
+            } ?? []
         let edges = Set(edgesArray)
 
-        return TopologyViewModel(nodes: orderedNodes, edges: Array(edges), currentNodeId: localNodeId)
+        return TopologyViewModel(
+            nodes: orderedNodes, edges: Array(edges), currentNodeId: localNodeId)
     }
 }
-

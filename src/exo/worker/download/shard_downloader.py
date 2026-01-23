@@ -1,11 +1,12 @@
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable
 from copy import copy
 from datetime import timedelta
 from pathlib import Path
 from typing import AsyncIterator, Callable
 
+from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
     ShardMetadata,
@@ -31,7 +32,8 @@ class ShardDownloader(ABC):
 
     @abstractmethod
     def on_progress(
-        self, callback: Callable[[ShardMetadata, RepoDownloadProgress], None]
+        self,
+        callback: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
     ) -> None:
         pass
 
@@ -59,7 +61,8 @@ class NoopShardDownloader(ShardDownloader):
         return Path("/tmp/noop_shard")
 
     def on_progress(
-        self, callback: Callable[[ShardMetadata, RepoDownloadProgress], None]
+        self,
+        callback: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
     ) -> None:
         pass
 
@@ -83,13 +86,13 @@ NOOP_DOWNLOAD_PROGRESS = RepoDownloadProgress(
     repo_id="noop",
     repo_revision="noop",
     shard=PipelineShardMetadata(
-        model_meta=ModelMetadata(
+        model_card=ModelCard(
             model_id=ModelId("noop"),
-            pretty_name="noope",
             storage_size=Memory.from_bytes(0),
             n_layers=1,
             hidden_size=1,
             supports_tensor=False,
+            tasks=[ModelTask.TextGeneration],
         ),
         device_rank=0,
         world_size=1,

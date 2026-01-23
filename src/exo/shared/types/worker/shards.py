@@ -2,7 +2,7 @@ from enum import Enum
 
 from pydantic import Field
 
-from exo.shared.types.models import ModelMetadata
+from exo.shared.models.model_cards import ModelCard
 from exo.utils.pydantic_ext import TaggedModel
 
 
@@ -17,7 +17,7 @@ class BaseShardMetadata(TaggedModel):
     Replaces previous `Shard` object.
     """
 
-    model_meta: ModelMetadata
+    model_card: ModelCard
     device_rank: int
     world_size: int
 
@@ -41,7 +41,7 @@ class BaseShardMetadata(TaggedModel):
     def __hash__(self) -> int:
         return hash(
             (
-                self.model_meta.model_id,
+                self.model_card.model_id,
                 self.start_layer,
                 self.end_layer,
                 self.n_layers,
