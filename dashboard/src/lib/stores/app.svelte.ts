@@ -216,6 +216,8 @@ export interface Message {
   attachments?: MessageAttachment[];
   ttftMs?: number; // Time to first token in ms (for assistant messages)
   tps?: number; // Tokens per second (for assistant messages)
+  requestType?: "chat" | "image-generation" | "image-editing";
+  sourceImageDataUrl?: string; // For image editing regeneration
 }
 
 export interface Conversation {
@@ -1270,10 +1272,46 @@ class AppStore {
 
     if (lastUserIndex === -1) return;
 
-    // Remove any messages after the user message
-    this.messages = this.messages.slice(0, lastUserIndex + 1);
+    const lastUserMessage = this.messages[lastUserIndex];
+    const requestType = lastUserMessage.requestType || "chat";
+    const prompt = lastUserMessage.content;
 
-    // Resend the message to get a new response
+    // Remove messages after user message (including the user message for image requests
+    // since generateImage/editImage will re-add it)
+    this.messages = this.messages.slice(0, lastUserIndex);
+
+    switch (requestType) {
+      case "image-generation":
+        await this.generateImage(prompt);
+        break;
+      case "image-editing":
+        if (lastUserMessage.sourceImageDataUrl) {
+          await this.editImage(prompt, lastUserMessage.sourceImageDataUrl);
+        } else {
+          // Can't regenerate edit without source image - restore user message and show error
+          this.messages.push(lastUserMessage);
+          const errorMessage = this.addMessage("assistant", "");
+          const idx = this.messages.findIndex((m) => m.id === errorMessage.id);
+          if (idx !== -1) {
+            this.messages[idx].content =
+              "Error: Cannot regenerate image edit - source image not found";
+          }
+          this.updateActiveConversation();
+        }
+        break;
+      case "chat":
+      default:
+        // Restore the user message for chat regeneration
+        this.messages.push(lastUserMessage);
+        await this.regenerateChatCompletion();
+        break;
+    }
+  }
+
+  /**
+   * Helper method to regenerate a chat completion response
+   */
+  private async regenerateChatCompletion(): Promise<void> {
     this.isLoading = true;
     this.currentResponse = "";
 
@@ -1788,6 +1826,7 @@ class AppStore {
       role: "user",
       content: prompt,
       timestamp: Date.now(),
+      requestType: "image-generation",
     };
     this.messages.push(userMessage);
 
@@ -1998,6 +2037,8 @@ class AppStore {
       role: "user",
       content: prompt,
       timestamp: Date.now(),
+      requestType: "image-editing",
+      sourceImageDataUrl: imageDataUrl,
     };
     this.messages.push(userMessage);
 
