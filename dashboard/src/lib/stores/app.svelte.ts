@@ -1980,7 +1980,7 @@ class AppStore {
         this.persistConversation(targetConversationId);
       }
     } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
+      if (signal.aborted) {
         return;
       }
       console.error("Error sending message:", error);
@@ -2210,7 +2210,17 @@ class AppStore {
         },
       );
     } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
+      if (signal.aborted) {
+        // Clean up the "Generating image..." message on cancellation
+        this.updateConversationMessage(
+          targetConversationId,
+          assistantMessage.id,
+          (msg) => {
+            msg.content = "Cancelled";
+            msg.attachments = [];
+          },
+        );
+        this.syncActiveMessagesIfNeeded(targetConversationId);
         return;
       }
       console.error("Error generating image:", error);
@@ -2428,7 +2438,17 @@ class AppStore {
         },
       );
     } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
+      if (signal.aborted) {
+        // Clean up the "Editing image..." message on cancellation
+        this.updateConversationMessage(
+          targetConversationId,
+          assistantMessage.id,
+          (msg) => {
+            msg.content = "cancelled";
+            msg.attachments = [];
+          },
+        );
+        this.syncActiveMessagesIfNeeded(targetConversationId);
         return;
       }
       console.error("Error editing image:", error);
