@@ -123,13 +123,16 @@ class Worker:
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
             async for info in info_stream:
-                await self.event_sender.send(
-                    NodeGatheredInfo(
-                        node_id=self.node_id,
-                        when=str(datetime.now(tz=timezone.utc)),
-                        info=info,
-                    )
+                event = NodeGatheredInfo(
+                    node_id=self.node_id,
+                    when=str(datetime.now(tz=timezone.utc)),
+                    info=info,
                 )
+                logger.warning(
+                    f"NODE_GATHERED_INFO: Sending event for node {self.node_id}, "
+                    f"event_id={event.event_id}"
+                )
+                await self.event_sender.send(event)
 
     async def _check_catchup_state(self):
         with self.state_catchup_receiver as states:
@@ -202,6 +205,12 @@ class Worker:
                     self._nack_cancel_scope.cancel()
 
                 for idx, event in indexed_events:
+                    # DEBUG: Log NodeGatheredInfo events
+                    if isinstance(event, NodeGatheredInfo):
+                        logger.warning(
+                            f"NODE_GATHERED_INFO: Applying event idx={idx} for node {event.node_id}, "
+                            f"event_id={event.event_id}"
+                        )
                     self.state = apply(self.state, IndexedEvent(idx=idx, event=event))
 
                     # Buffer input image chunks for image editing
