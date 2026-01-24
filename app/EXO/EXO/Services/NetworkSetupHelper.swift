@@ -83,7 +83,7 @@ enum NetworkSetupHelper {
                 let alert = NSAlert()
                 alert.messageText = "EXO Network Configuration"
                 alert.informativeText =
-                    "EXO needs to install a system service to automatically disable Thunderbolt Bridge on startup. This prevents network loops when connecting multiple Macs via Thunderbolt.\n\nYou will be prompted for your administrator password."
+                    "EXO needs to install a system service to configure local networking. This will disable Thunderbolt Bridge (preventing packet storms) and install a Network Location.\n\nYou will be prompted for your password."
                 alert.alertStyle = .informational
                 alert.addButton(withTitle: "Install")
                 alert.addButton(withTitle: "Not Now")
