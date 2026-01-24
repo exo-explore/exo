@@ -12,6 +12,7 @@
     ttftMs,
     tps,
     totalTokens,
+    cancelRequest,
   } from "$lib/stores/app.svelte";
   import ChatAttachments from "./ChatAttachments.svelte";
   import ImageParamsPanel from "./ImageParamsPanel.svelte";
@@ -605,37 +606,15 @@
         style="min-height: 28px; max-height: 150px;"
       ></textarea>
 
-      <button
-        type="submit"
-        disabled={!canSend || loading || isEditOnlyWithoutImage}
-        class="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-xs tracking-[0.1em] sm:tracking-[0.15em] uppercase font-medium transition-all duration-200 whitespace-nowrap
-					{!canSend || loading || isEditOnlyWithoutImage
-          ? 'bg-exo-medium-gray/50 text-exo-light-gray cursor-not-allowed'
-          : 'bg-exo-yellow text-exo-black hover:bg-exo-yellow-darker hover:shadow-[0_0_20px_rgba(255,215,0,0.3)]'}"
-        aria-label={shouldShowEditMode
-          ? "Edit image"
-          : isImageModel()
-            ? "Generate image"
-            : "Send message"}
-      >
-        {#if loading}
+      {#if loading}
+        <button
+          type="button"
+          onclick={() => cancelRequest()}
+          class="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-xs tracking-[0.1em] sm:tracking-[0.15em] uppercase font-medium transition-all duration-200 whitespace-nowrap bg-exo-medium-gray/50 text-exo-light-gray border border-exo-medium-gray/50 hover:border-red-500/50 hover:text-red-400 cursor-pointer"
+        >
           <span class="inline-flex items-center gap-1 sm:gap-2">
-            <span
-              class="w-2.5 h-2.5 sm:w-3 sm:h-3 border-2 border-current border-t-transparent rounded-full animate-spin"
-            ></span>
-            <span class="hidden sm:inline"
-              >{shouldShowEditMode
-                ? "EDITING"
-                : isImageModel()
-                  ? "GENERATING"
-                  : "PROCESSING"}</span
-            >
-            <span class="sm:hidden">...</span>
-          </span>
-        {:else if shouldShowEditMode}
-          <span class="inline-flex items-center gap-1.5">
             <svg
-              class="w-3.5 h-3.5"
+              class="w-3 h-3"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -644,47 +623,81 @@
               <path
                 stroke-linecap="round"
                 stroke-linejoin="round"
-                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                d="M6 18L18 6M6 6l12 12"
               />
             </svg>
-            <span>EDIT</span>
+            <span class="hidden sm:inline">CANCEL</span>
+            <span class="sm:hidden">X</span>
           </span>
-        {:else if isEditOnlyWithoutImage}
-          <span class="inline-flex items-center gap-1.5">
-            <svg
-              class="w-3.5 h-3.5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-              />
-            </svg>
-            <span>EDIT</span>
-          </span>
-        {:else if isImageModel()}
-          <span class="inline-flex items-center gap-1.5">
-            <svg
-              class="w-3.5 h-3.5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-              <circle cx="8.5" cy="8.5" r="1.5" />
-              <polyline points="21 15 16 10 5 21" />
-            </svg>
-            <span>GENERATE</span>
-          </span>
-        {:else}
-          SEND
-        {/if}
-      </button>
+        </button>
+      {:else}
+        <button
+          type="submit"
+          disabled={!canSend || isEditOnlyWithoutImage}
+          class="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-xs tracking-[0.1em] sm:tracking-[0.15em] uppercase font-medium transition-all duration-200 whitespace-nowrap
+            {!canSend || isEditOnlyWithoutImage
+            ? 'bg-exo-medium-gray/50 text-exo-light-gray cursor-not-allowed'
+            : 'bg-exo-yellow text-exo-black hover:bg-exo-yellow-darker hover:shadow-[0_0_20px_rgba(255,215,0,0.3)]'}"
+          aria-label={shouldShowEditMode
+            ? "Edit image"
+            : isImageModel()
+              ? "Generate image"
+              : "Send message"}
+        >
+          {#if shouldShowEditMode}
+            <span class="inline-flex items-center gap-1.5">
+              <svg
+                class="w-3.5 h-3.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                />
+              </svg>
+              <span>EDIT</span>
+            </span>
+          {:else if isEditOnlyWithoutImage}
+            <span class="inline-flex items-center gap-1.5">
+              <svg
+                class="w-3.5 h-3.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                />
+              </svg>
+              <span>EDIT</span>
+            </span>
+          {:else if isImageModel()}
+            <span class="inline-flex items-center gap-1.5">
+              <svg
+                class="w-3.5 h-3.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <polyline points="21 15 16 10 5 21" />
+              </svg>
+              <span>GENERATE</span>
+            </span>
+          {:else}
+            SEND
+          {/if}
+        </button>
+      {/if}
     </div>
 
     <!-- Bottom accent line -->

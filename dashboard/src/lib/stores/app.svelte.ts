@@ -464,6 +464,7 @@ class AppStore {
   private previewsInterval: ReturnType<typeof setInterval> | null = null;
   private lastConversationPersistTs = 0;
   private previousNodeIds: Set<string> = new Set();
+  private activeAbortController: AbortController | null = null;
 
   constructor() {
     if (browser) {
@@ -1746,6 +1747,9 @@ class AppStore {
     const targetConversationId = this.activeConversationId;
     if (!targetConversationId) return;
 
+    this.activeAbortController = new AbortController();
+    const signal = this.activeAbortController.signal;
+
     this.isLoading = true;
     this.currentResponse = "";
     this.ttftMs = null;
@@ -1880,6 +1884,7 @@ class AppStore {
           temperature: 0.7,
           stream: true,
         }),
+        signal,
       });
 
       if (!response.ok) {
@@ -1975,6 +1980,9 @@ class AppStore {
         this.persistConversation(targetConversationId);
       }
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return;
+      }
       console.error("Error sending message:", error);
       this.handleStreamingError(
         error,
@@ -1983,6 +1991,7 @@ class AppStore {
         "Failed to get response",
       );
     } finally {
+      this.activeAbortController = null;
       this.isLoading = false;
       this.currentResponse = "";
       this.saveConversationsToStorage();
@@ -2002,6 +2011,9 @@ class AppStore {
     // Capture the target conversation ID at the start of the request
     const targetConversationId = this.activeConversationId;
     if (!targetConversationId) return;
+
+    this.activeAbortController = new AbortController();
+    const signal = this.activeAbortController.signal;
 
     this.isLoading = true;
     this.currentResponse = "";
@@ -2088,6 +2100,7 @@ class AppStore {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(requestBody),
+        signal,
       });
 
       if (!response.ok) {
@@ -2197,6 +2210,9 @@ class AppStore {
         },
       );
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return;
+      }
       console.error("Error generating image:", error);
       this.handleStreamingError(
         error,
@@ -2205,6 +2221,7 @@ class AppStore {
         "Failed to generate image",
       );
     } finally {
+      this.activeAbortController = null;
       this.isLoading = false;
       this.saveConversationsToStorage();
     }
@@ -2227,6 +2244,9 @@ class AppStore {
     // Capture the target conversation ID at the start of the request
     const targetConversationId = this.activeConversationId;
     if (!targetConversationId) return;
+
+    this.activeAbortController = new AbortController();
+    const signal = this.activeAbortController.signal;
 
     this.isLoading = true;
     this.currentResponse = "";
@@ -2336,6 +2356,7 @@ class AppStore {
       const apiResponse = await fetch("/v1/images/edits", {
         method: "POST",
         body: formData,
+        signal,
       });
 
       if (!apiResponse.ok) {
@@ -2407,6 +2428,9 @@ class AppStore {
         },
       );
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return;
+      }
       console.error("Error editing image:", error);
       this.handleStreamingError(
         error,
@@ -2415,9 +2439,22 @@ class AppStore {
         "Failed to edit image",
       );
     } finally {
+      this.activeAbortController = null;
       this.isLoading = false;
       this.saveConversationsToStorage();
     }
+  }
+
+  /**
+   * Cancel an in-flight request by aborting the active fetch
+   */
+  cancelRequest(): void {
+    if (this.activeAbortController) {
+      this.activeAbortController.abort();
+      this.activeAbortController = null;
+    }
+    this.isLoading = false;
+    this.currentResponse = "";
   }
 
   /**
@@ -2556,6 +2593,7 @@ export const editMessage = (messageId: string, newContent: string) =>
 export const editAndRegenerate = (messageId: string, newContent: string) =>
   appStore.editAndRegenerate(messageId, newContent);
 export const regenerateLastResponse = () => appStore.regenerateLastResponse();
+export const cancelRequest = () => appStore.cancelRequest();
 
 // Conversation actions
 export const conversations = () => appStore.conversations;
