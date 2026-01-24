@@ -68,8 +68,6 @@ class Master:
         # Send events to the forwarder to be indexed (usually from command processing)
         # Ideally these would be MasterForwarderEvents but type system says no :(
         global_event_sender: Sender[ForwarderEvent],
-        # not a fan but - send the entire state to a node so it can catchup without the whole event log.
-        state_catchup_sender: Sender[State],
     ):
         self.state = State()
         self._tg: TaskGroup = anyio.create_task_group()
@@ -79,7 +77,6 @@ class Master:
         self.command_receiver = command_receiver
         self.local_event_receiver = local_event_receiver
         self.global_event_sender = global_event_sender
-        self.state_catchup_sender = state_catchup_sender
         send, recv = channel[Event]()
         self.event_sender: Sender[Event] = send
         self._loopback_event_receiver: Receiver[Event] = recv
@@ -87,6 +84,7 @@ class Master:
             local_event_receiver.clone_sender()
         )
         self._multi_buffer = MultiSourceBuffer[NodeId, Event]()
+        # TODO: not have this
         self._event_log: list[Event] = []
 
     async def run(self):
@@ -293,17 +291,11 @@ class Master:
                                     command.finished_command_id
                                 ]
                         case RequestEventLog():
-                            if command.since_idx == 0:
-                                # This is an optimization, and should not be relied upon in theory.
-                                logger.info(
-                                    f"Master sending catchup state for index {self.state.last_event_applied_idx}"
+                            # We should just be able to send everything, since other buffers will ignore old messages
+                            for i in range(command.since_idx, len(self._event_log)):
+                                await self._send_event(
+                                    IndexedEvent(idx=i, event=self._event_log[i])
                                 )
-                                await self.state_catchup_sender.send(self.state)
-                            else:
-                                for i in range(command.since_idx, len(self._event_log)):
-                                    await self._send_event(
-                                        IndexedEvent(idx=i, event=self._event_log[i])
-                                    )
                     for event in generated_events:
                         await self.event_sender.send(event)
                 except ValueError as e:
