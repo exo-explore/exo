@@ -19,7 +19,13 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
 from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
+from exo.worker.engines.mlx.constants import (
+    KV_BITS,
+    KV_GROUP_SIZE,
+    MAX_TOKENS,
+    MTP_ENABLED,
+    MTP_NUM_DRAFT_TOKENS,
+)
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     make_kv_cache,
@@ -115,6 +121,11 @@ def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
     return eos
 
 
+def _has_mtp_module(model: Model) -> bool:
+    """Check if the model has an attached MTP module."""
+    return hasattr(model, "mtp_module") and model.mtp_module is not None  # type: ignore[attr-defined]
+
+
 def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
@@ -145,6 +156,43 @@ def mlx_generate(
     )
 
     max_tokens = task.max_tokens or MAX_TOKENS
+
+    # Check if we should use MTP speculative decoding
+    use_mtp = MTP_ENABLED and _has_mtp_module(model)
+
+    if use_mtp:
+        logger.info("Using MTP speculative decoding")
+        yield from _mlx_generate_with_mtp(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            sampler=sampler,
+            logits_processors=logits_processors,
+            prompt_cache=caches,
+        )
+    else:
+        yield from _mlx_generate_standard(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            sampler=sampler,
+            logits_processors=logits_processors,
+            prompt_cache=caches,
+        )
+
+
+def _mlx_generate_standard(
+    model: Model,
+    tokenizer: TokenizerWrapper,
+    prompt: str,
+    max_tokens: int,
+    sampler: Callable[[mx.array], mx.array],
+    logits_processors: list[Callable[[mx.array, mx.array], mx.array]],
+    prompt_cache: list[KVCache | Any],
+) -> Generator[GenerationResponse]:
+    """Standard generation path using mlx_lm stream_generate."""
     for out in stream_generate(
         model=model,
         tokenizer=tokenizer,
@@ -152,7 +200,7 @@ def mlx_generate(
         max_tokens=max_tokens,
         sampler=sampler,
         logits_processors=logits_processors,
-        prompt_cache=caches,
+        prompt_cache=prompt_cache,
         # TODO: Dynamically change prefill step size to be the maximum possible without timing out.
         prefill_step_size=2048,
         kv_group_size=KV_GROUP_SIZE,
@@ -173,6 +221,66 @@ def mlx_generate(
             if out.finish_reason not in get_args(FinishReason):
                 # We don't throw here as this failure case is really not all that bad
                 # Just log the error and move on
+                logger.warning(
+                    f"Model generated unexpected finish_reason: {out.finish_reason}"
+                )
+
+        yield GenerationResponse(
+            text=out.text,
+            token=out.token,
+            finish_reason=cast(FinishReason | None, out.finish_reason),
+            stats=stats,
+        )
+
+        if out.finish_reason is not None:
+            break
+
+
+def _mlx_generate_with_mtp(
+    model: Model,
+    tokenizer: TokenizerWrapper,
+    prompt: str,
+    max_tokens: int,
+    sampler: Callable[[mx.array], mx.array],
+    logits_processors: list[Callable[[mx.array, mx.array], mx.array]],
+    prompt_cache: list[KVCache | Any],
+) -> Generator[GenerationResponse]:
+    """MTP speculative decoding generation path.
+
+    Uses the model's attached MTP module for speculative decoding,
+    which can provide 1.5-2x speedup with ~81% acceptance rate.
+    """
+    from exo.worker.engines.mlx.mtp.speculative_decode import mtp_speculative_generate
+
+    mtp_module = model.mtp_module  # type: ignore[attr-defined]
+
+    for out in mtp_speculative_generate(
+        model=model,
+        mtp_module=mtp_module,
+        tokenizer=tokenizer,
+        prompt=prompt,
+        max_tokens=max_tokens,
+        sampler=sampler,
+        logits_processors=logits_processors,
+        prompt_cache=prompt_cache,
+        num_draft_tokens=MTP_NUM_DRAFT_TOKENS,
+        prefill_step_size=2048,
+        kv_group_size=KV_GROUP_SIZE if KV_GROUP_SIZE is not None else 64,
+        kv_bits=KV_BITS,
+    ):
+        logger.info(f"{out.text} (from_draft={out.from_draft})")
+
+        stats: GenerationStats | None = None
+        if out.finish_reason is not None:
+            stats = GenerationStats(
+                prompt_tps=float(out.prompt_tps),
+                generation_tps=float(out.generation_tps),
+                prompt_tokens=int(out.prompt_tokens),
+                generation_tokens=int(out.generation_tokens),
+                peak_memory_usage=Memory.from_gb(out.peak_memory),
+            )
+
+            if out.finish_reason not in get_args(FinishReason):
                 logger.warning(
                     f"Model generated unexpected finish_reason: {out.finish_reason}"
                 )
