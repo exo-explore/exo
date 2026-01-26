@@ -40,7 +40,6 @@ class ModelCard(CamelCaseModel):
     supports_tensor: bool
     tasks: list[ModelTask]
     components: list[ComponentInfo] | None = None
-    quantization: int | None = None
 
     @field_validator("tasks", mode="before")
     @classmethod
@@ -416,7 +415,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
 
 _IMAGE_BASE_MODEL_CARDS: dict[str, ModelCard] = {
     "flux1-schnell": ModelCard(
-        model_id=ModelId("black-forest-labs/FLUX.1-schnell"),
+        model_id=ModelId("exolabs/FLUX.1-schnell"),
         storage_size=Memory.from_bytes(23782357120 + 9524621312),
         n_layers=57,
         hidden_size=1,
@@ -458,7 +457,7 @@ _IMAGE_BASE_MODEL_CARDS: dict[str, ModelCard] = {
         ],
     ),
     "flux1-dev": ModelCard(
-        model_id=ModelId("black-forest-labs/FLUX.1-dev"),
+        model_id=ModelId("exolabs/FLUX.1-dev"),
         storage_size=Memory.from_bytes(23782357120 + 9524621312),
         n_layers=57,
         hidden_size=1,
@@ -500,7 +499,7 @@ _IMAGE_BASE_MODEL_CARDS: dict[str, ModelCard] = {
         ],
     ),
     "flux1-krea-dev": ModelCard(
-        model_id=ModelId("black-forest-labs/FLUX.1-Krea-dev"),
+        model_id=ModelId("exolabs/FLUX.1-Krea-dev"),
         storage_size=Memory.from_bytes(23802816640 + 9524621312),  # Same as dev
         n_layers=57,
         hidden_size=1,
@@ -542,7 +541,7 @@ _IMAGE_BASE_MODEL_CARDS: dict[str, ModelCard] = {
         ],
     ),
     "qwen-image": ModelCard(
-        model_id=ModelId("Qwen/Qwen-Image"),
+        model_id=ModelId("exolabs/Qwen-Image"),
         storage_size=Memory.from_bytes(16584333312 + 40860802176),
         n_layers=60,
         hidden_size=1,
@@ -576,7 +575,7 @@ _IMAGE_BASE_MODEL_CARDS: dict[str, ModelCard] = {
         ],
     ),
     "qwen-image-edit-2509": ModelCard(
-        model_id=ModelId("Qwen/Qwen-Image-Edit-2509"),
+        model_id=ModelId("exolabs/Qwen-Image-Edit-2509"),
         storage_size=Memory.from_bytes(16584333312 + 40860802176),
         n_layers=60,
         hidden_size=1,
@@ -612,7 +611,7 @@ _IMAGE_BASE_MODEL_CARDS: dict[str, ModelCard] = {
 }
 
 
-def _create_image_model_quant_variants(
+def _generate_image_model_quant_variants(
     base_name: str,
     base_card: ModelCard,
 ) -> dict[str, ModelCard]:
@@ -668,7 +667,6 @@ def _create_image_model_quant_variants(
             supports_tensor=base_card.supports_tensor,
             tasks=base_card.tasks,
             components=with_transformer_size(transformer_bytes),
-            quantization=None,
         )
     }
 
@@ -678,15 +676,16 @@ def _create_image_model_quant_variants(
         )
         total_bytes = remaining_bytes + quant_transformer_bytes
 
+        model_id = ModelId(base_card.model_id + f"-{quant}bit")
+
         variants[f"{base_name}-{quant}bit"] = ModelCard(
-            model_id=base_card.model_id,
+            model_id=model_id,
             storage_size=total_bytes,
             n_layers=base_card.n_layers,
             hidden_size=base_card.hidden_size,
             supports_tensor=base_card.supports_tensor,
             tasks=base_card.tasks,
             components=with_transformer_size(quant_transformer_bytes),
-            quantization=quant,
         )
 
     return variants
@@ -694,7 +693,7 @@ def _create_image_model_quant_variants(
 
 _image_model_cards: dict[str, ModelCard] = {}
 for _base_name, _base_card in _IMAGE_BASE_MODEL_CARDS.items():
-    _image_model_cards |= _create_image_model_quant_variants(_base_name, _base_card)
+    _image_model_cards |= _generate_image_model_quant_variants(_base_name, _base_card)
 _IMAGE_MODEL_CARDS = _image_model_cards
 
 if EXO_ENABLE_IMAGE_MODELS:
