@@ -3,6 +3,7 @@ import io
 import random
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Generator, Literal
 
@@ -68,11 +69,17 @@ def warmup_image_generator(model: DistributedImageModel) -> Image.Image | None:
 def generate_image(
     model: DistributedImageModel,
     task: ImageGenerationTaskParams | ImageEditsInternalParams,
+    cancel_checker: Callable[[], bool] | None = None,
 ) -> Generator[ImageGenerationResponse | PartialImageResponse, None, None]:
     """Generate image(s), optionally yielding partial results.
 
     When partial_images > 0 or stream=True, yields PartialImageResponse for
     intermediate images, then ImageGenerationResponse for the final image.
+
+    Args:
+        model: The distributed image model to use for generation.
+        task: The task parameters for image generation or editing.
+        cancel_checker: Optional callback to check if generation should be cancelled.
 
     Yields:
         PartialImageResponse for intermediate images (if partial_images > 0, first image only)
@@ -123,6 +130,7 @@ def generate_image(
                 image_path=image_path,
                 partial_images=partial_images,
                 advanced_params=advanced_params,
+                cancel_checker=cancel_checker,
             ):
                 if isinstance(result, tuple):
                     # Partial image: (Image, partial_index, total_partials)
