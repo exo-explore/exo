@@ -517,6 +517,8 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
                 layer.mlp = ShardedDeepseekV3MoE(layer.mlp)  # type: ignore
                 layer.mlp.sharding_group = self.group
 
+            mx.eval(layer)
+
         return model
 
 
