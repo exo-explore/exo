@@ -20,11 +20,10 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
 from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.cache import KVPrefixCache, encode_prompt
+from exo.worker.engines.mlx.cache import KVPrefixCache, encode_prompt, make_kv_cache
 from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
-    make_kv_cache,
     mx_barrier,
 )
 from exo.worker.runner.bootstrap import logger
@@ -188,7 +187,7 @@ def mlx_generate(
         prompt_tokens = encode_prompt(tokenizer, prompt)
     else:
         caches, prompt_tokens, matched_index = kv_prefix_cache.get_kv_cache(
-            model, tokenizer, prompt
+            model, prompt
         )
         all_prompt_tokens = encode_prompt(tokenizer, prompt)
         prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
@@ -271,11 +270,9 @@ def mlx_generate(
                     matched_index is not None
                     and prefix_hit_length >= _MIN_PREFIX_HIT_TO_UPDATE
                 ):
-                    kv_prefix_cache.update_kv_cache(
-                        matched_index, tokenizer, full_prompt, caches
-                    )
+                    kv_prefix_cache.update_kv_cache(matched_index, full_prompt, caches)
                 else:
-                    kv_prefix_cache.add_kv_cache(tokenizer, full_prompt, caches)
+                    kv_prefix_cache.add_kv_cache(full_prompt, caches)
             break
 
         # TODO: Do we want an mx_barrier?

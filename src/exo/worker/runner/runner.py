@@ -163,6 +163,8 @@ def main(
                         logger.info(
                             f"model has_tool_calling={tokenizer.has_tool_calling}"
                         )
+                        kv_prefix_cache = KVPrefixCache(tokenizer)
+
                     elif (
                         ModelTask.TextToImage in shard_metadata.model_card.tasks
                         or ModelTask.ImageToImage in shard_metadata.model_card.tasks
@@ -172,10 +174,6 @@ def main(
                         raise ValueError(
                             f"Unknown model task(s): {shard_metadata.model_card.tasks}"
                         )
-
-                    if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
-                        kv_prefix_cache = KVPrefixCache()
-
                     current_status = RunnerLoaded()
                     logger.info("runner loaded")
                 case StartWarmup() if isinstance(current_status, RunnerLoaded):

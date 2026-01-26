@@ -1,25 +1,36 @@
+import os
 from copy import deepcopy
 from typing import Any, cast
 
 import mlx.core as mx
-from mlx_lm.models.cache import trim_prompt_cache
+from mlx_lm.models.cache import (
+    KVCache,
+    QuantizedKVCache,
+    RotatingKVCache,
+    trim_prompt_cache,
+)
+from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.mlx import KVCacheType
 from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.utils_mlx import make_kv_cache
+from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
 from exo.worker.runner.bootstrap import logger
 
 # Fraction of device memory above which LRU eviction kicks in
-_MEMORY_PRESSURE_THRESHOLD = 0.85
+_DEFAULT_MEMORY_THRESHOLD = 0.85
+_MEMORY_THRESHOLD = float(
+    os.environ.get("EXO_MEMORY_THRESHOLD", _DEFAULT_MEMORY_THRESHOLD)
+)
 
 
 class KVPrefixCache:
-    def __init__(self):
+    def __init__(self, tokenizer: TokenizerWrapper):
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
         self.caches: list[KVCacheType] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
         self._access_counter: int = 0
+        self._tokenizer: TokenizerWrapper = tokenizer
 
     def clear(self):
         """Clear all cached prompts and caches."""
@@ -27,12 +38,10 @@ class KVPrefixCache:
         self.caches.clear()
         self._last_used.clear()
 
-    def add_kv_cache(
-        self, tokenizer: TokenizerWrapper, prompt: str, cache: KVCacheType
-    ):
+    def add_kv_cache(self, prompt: str, cache: KVCacheType):
         """Add a new cache entry. Evicts LRU entries if memory is high."""
         self._evict_if_needed()
-        tokenized_prompt = encode_prompt(tokenizer, prompt)
+        tokenized_prompt = encode_prompt(self._tokenizer, prompt)
         self.prompts.append(tokenized_prompt)
         self.caches.append(deepcopy(cache))
         self._access_counter += 1
@@ -42,12 +51,11 @@ class KVPrefixCache:
     def update_kv_cache(
         self,
         index: int,
-        tokenizer: TokenizerWrapper,
         prompt: str,
         cache: KVCacheType,
     ):
         """Update an existing cache entry in-place."""
-        tokenized_prompt = encode_prompt(tokenizer, prompt)
+        tokenized_prompt = encode_prompt(self._tokenizer, prompt)
         self.prompts[index] = tokenized_prompt
         self.caches[index] = deepcopy(cache)
         self._access_counter += 1
@@ -57,7 +65,6 @@ class KVPrefixCache:
     def get_kv_cache(
         self,
         model: Model,
-        tokenizer: TokenizerWrapper,
         prompt: str,
     ) -> tuple[KVCacheType, mx.array, int | None]:
         """Get KV cache for prompt, returning remaining tokens to prefill.
@@ -68,7 +75,7 @@ class KVPrefixCache:
             - remaining_tokens: tokens that still need prefilling
             - matched_index: index of the matched entry (None if no match)
         """
-        tokenized_prompt = encode_prompt(tokenizer, prompt)
+        tokenized_prompt = encode_prompt(self._tokenizer, prompt)
         max_length = len(tokenized_prompt)
 
         best_snapshot_index, best_snapshot_length = None, 0
@@ -130,7 +137,7 @@ class KVPrefixCache:
 
         active: int = mx.metal.get_active_memory()
         limit = int(mx.metal.device_info()["max_recommended_working_set_size"])
-        if active < limit * _MEMORY_PRESSURE_THRESHOLD:
+        if active < limit * _MEMORY_THRESHOLD:
             return
 
         # Evict LRU entries until below threshold or only one entry left
@@ -145,7 +152,7 @@ class KVPrefixCache:
             )
 
             active = mx.metal.get_active_memory()
-            if active < limit * _MEMORY_PRESSURE_THRESHOLD:
+            if active < limit * _MEMORY_THRESHOLD:
                 break
 
 
@@ -176,3 +183,28 @@ def _get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
     equal = mx.equal(prompt[:n], cached_prompt[:n]).astype(mx.int32)
     prefix_mask = mx.cumprod(equal)  # stays 1 until first mismatch, then 0 forever
     return int(mx.sum(prefix_mask).item())
+
+
+def make_kv_cache(
+    model: Model, max_kv_size: int | None = None, keep: int = 0
+) -> KVCacheType:
+    assert hasattr(model, "layers")
+
+    # TODO: Do this for all models
+    if hasattr(model, "make_cache") and isinstance(model, GptOssModel):
+        logger.info("Using MLX LM's make cache")
+        return model.make_cache()  # type: ignore
+
+    if max_kv_size is None:
+        if KV_CACHE_BITS is None:
+            logger.info("Using default KV cache")
+            return [KVCache() for _ in model.layers]
+        else:
+            logger.info("Using quantized KV cache")
+            return [
+                QuantizedKVCache(group_size=CACHE_GROUP_SIZE, bits=KV_CACHE_BITS)
+                for _ in model.layers
+            ]
+    else:
+        logger.info(f"Using rotating KV cache with {max_kv_size=} with {keep=}")
+        return [RotatingKVCache(max_size=max_kv_size, keep=keep) for _ in model.layers]
