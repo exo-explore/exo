@@ -583,17 +583,26 @@ async def download_shard(
     async def on_progress_wrapper(
         file: FileListEntry, curr_bytes: int, total_bytes: int, is_renamed: bool
     ) -> None:
-        start_time = (
-            file_progress[file.path].start_time
-            if file.path in file_progress
-            else time.time()
+        previous_progress = file_progress.get(file.path)
+
+        # Detect re-download: curr_bytes < previous downloaded means file was deleted and restarted
+        is_redownload = (
+            previous_progress is not None
+            and curr_bytes < previous_progress.downloaded.in_bytes
         )
-        downloaded_this_session = (
-            file_progress[file.path].downloaded_this_session.in_bytes
-            + (curr_bytes - file_progress[file.path].downloaded.in_bytes)
-            if file.path in file_progress
-            else curr_bytes
-        )
+
+        if is_redownload or previous_progress is None:
+            # Fresh download or re-download: reset tracking
+            start_time = time.time()
+            downloaded_this_session = curr_bytes
+        else:
+            # Continuing download: accumulate
+            start_time = previous_progress.start_time
+            downloaded_this_session = (
+                previous_progress.downloaded_this_session.in_bytes
+                + (curr_bytes - previous_progress.downloaded.in_bytes)
+            )
+
         speed = (
             downloaded_this_session / (time.time() - start_time)
             if time.time() - start_time > 0
