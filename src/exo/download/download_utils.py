@@ -121,11 +121,20 @@ async def ensure_models_dir() -> Path:
 
 
 async def delete_model(model_id: ModelId) -> bool:
-    model_dir = await ensure_models_dir() / model_id.normalize()
-    if not await aios.path.exists(model_dir):
-        return False
-    await asyncio.to_thread(shutil.rmtree, model_dir, ignore_errors=False)
-    return True
+    models_dir = await ensure_models_dir()
+    model_dir = models_dir / model_id.normalize()
+    cache_dir = models_dir / "caches" / model_id.normalize()
+
+    deleted = False
+    if await aios.path.exists(model_dir):
+        await asyncio.to_thread(shutil.rmtree, model_dir, ignore_errors=False)
+        deleted = True
+
+    # Also clear cache
+    if await aios.path.exists(cache_dir):
+        await asyncio.to_thread(shutil.rmtree, cache_dir, ignore_errors=False)
+
+    return deleted
 
 
 async def seed_models(seed_dir: str | Path):
@@ -151,16 +160,28 @@ async def fetch_file_list_with_cache(
     target_dir = (await ensure_models_dir()) / "caches" / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)
     cache_file = target_dir / f"{model_id.normalize()}--{revision}--file_list.json"
-    if await aios.path.exists(cache_file):
-        async with aiofiles.open(cache_file, "r") as f:
-            return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
-    file_list = await fetch_file_list_with_retry(
-        model_id, revision, recursive=recursive
-    )
-    await aios.makedirs(cache_file.parent, exist_ok=True)
-    async with aiofiles.open(cache_file, "w") as f:
-        await f.write(TypeAdapter(list[FileListEntry]).dump_json(file_list).decode())
-    return file_list
+
+    # Always try fresh first
+    try:
+        file_list = await fetch_file_list_with_retry(
+            model_id, revision, recursive=recursive
+        )
+        # Update cache with fresh data
+        async with aiofiles.open(cache_file, "w") as f:
+            await f.write(
+                TypeAdapter(list[FileListEntry]).dump_json(file_list).decode()
+            )
+        return file_list
+    except Exception as e:
+        # Fetch failed - try cache fallback
+        if await aios.path.exists(cache_file):
+            logger.warning(
+                f"Failed to fetch file list for {model_id}, using cached data: {e}"
+            )
+            async with aiofiles.open(cache_file, "r") as f:
+                return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
+        # No cache available, propagate the error
+        raise
 
 
 async def fetch_file_list_with_retry(
@@ -332,8 +353,28 @@ async def _download_file(
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
 ) -> Path:
-    if await aios.path.exists(target_dir / path):
-        return target_dir / path
+    target_path = target_dir / path
+
+    if await aios.path.exists(target_path):
+        local_size = (await aios.stat(target_path)).st_size
+
+        # Try to verify against remote, but allow offline operation
+        try:
+            remote_size, _ = await file_meta(model_id, revision, path)
+            if local_size != remote_size:
+                logger.info(
+                    f"File {path} size mismatch (local={local_size}, remote={remote_size}), re-downloading"
+                )
+                await aios.remove(target_path)
+            else:
+                return target_path
+        except Exception as e:
+            # Offline or network error - trust local file
+            logger.debug(
+                f"Could not verify {path} against remote (offline?): {e}, using local file"
+            )
+            return target_path
+
     await aios.makedirs((target_dir / path).parent, exist_ok=True)
     length, etag = await file_meta(model_id, revision, path)
     remote_hash = etag[:-5] if etag.endswith("-gzip") else etag
