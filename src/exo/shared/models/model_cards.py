@@ -624,7 +624,8 @@ def _create_image_model_quant_variants(
     if base_card.components is None:
         raise ValueError(f"Image model {base_name} must have components defined")
 
-    quantizations = [8, 6, 5, 4, 3]
+    # quantizations = [8, 6, 5, 4, 3]
+    quantizations = [8, 4]
 
     num_transformer_bytes = next(
         c.storage_size.in_bytes
