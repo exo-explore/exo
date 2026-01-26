@@ -354,7 +354,7 @@ def main(
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
-case ImageGeneration() | ImageEdits() if isinstance(
+                case ImageGeneration() | ImageEdits() if isinstance(
                     current_status, RunnerReady
                 ):
                     assert image_model

@@ -408,6 +408,7 @@ class DiffusionRunner:
                 ctx.in_loop(  # pyright: ignore[reportAny]
                     t=t,
                     latents=latents,
+                    time_steps=time_steps,
                 )
 
                 mx.eval(latents)
@@ -416,7 +417,7 @@ class DiffusionRunner:
                     yield (latents, t)
 
             except KeyboardInterrupt:  # noqa: PERF203
-                ctx.interruption(t=t, latents=latents)  # pyright: ignore[reportAny]
+                ctx.interruption(t=t, latents=latents, time_steps=time_steps)  # pyright: ignore[reportAny]
                 raise StopImageGenerationException(
                     f"Stopping image generation at step {t + 1}/{len(time_steps)}"
                 ) from None
@@ -881,8 +882,11 @@ class DiffusionRunner:
                     latents=prev_patch_latents[patch_idx],
                 )
 
-                # Ring send back to first stage (except on last timestep)
-                if not self.is_first_stage and t != config.num_inference_steps - 1:
+                if (
+                    not self.is_first_stage
+                    and t != config.num_inference_steps - 1
+                    and not self._cancelling
+                ):
                     patch_latents[patch_idx] = self._send(
                         patch_latents[patch_idx], self.next_rank
                     )
