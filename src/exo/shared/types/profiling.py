@@ -48,7 +48,7 @@ class SystemPerformanceProfile(CamelCaseModel):
     ecpu_usage: float = 0.0
 
 
-InterfaceType = Literal["wifi", "ethernet", "thunderbolt", "unknown"]
+InterfaceType = Literal["wifi", "ethernet", "maybe_ethernet", "thunderbolt", "unknown"]
 
 
 class NetworkInterfaceInfo(CamelCaseModel):

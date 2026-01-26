@@ -216,6 +216,8 @@ export interface Message {
   attachments?: MessageAttachment[];
   ttftMs?: number; // Time to first token in ms (for assistant messages)
   tps?: number; // Tokens per second (for assistant messages)
+  requestType?: "chat" | "image-generation" | "image-editing";
+  sourceImageDataUrl?: string; // For image editing regeneration
 }
 
 export interface Conversation {
@@ -948,6 +950,108 @@ class AppStore {
   }
 
   /**
+   * Update a message in a specific conversation by ID.
+   * Returns false if conversation or message not found.
+   */
+  private updateConversationMessage(
+    conversationId: string,
+    messageId: string,
+    updater: (message: Message) => void,
+  ): boolean {
+    const conversation = this.conversations.find(
+      (c) => c.id === conversationId,
+    );
+    if (!conversation) return false;
+
+    const message = conversation.messages.find((m) => m.id === messageId);
+    if (!message) return false;
+
+    updater(message);
+    return true;
+  }
+
+  /**
+   * Sync this.messages from the target conversation if it matches the active conversation.
+   */
+  private syncActiveMessagesIfNeeded(conversationId: string): void {
+    if (this.activeConversationId === conversationId) {
+      const conversation = this.conversations.find(
+        (c) => c.id === conversationId,
+      );
+      if (conversation) {
+        this.messages = [...conversation.messages];
+      }
+    }
+  }
+
+  /**
+   * Check if a conversation still exists.
+   */
+  private conversationExists(conversationId: string): boolean {
+    return this.conversations.some((c) => c.id === conversationId);
+  }
+
+  /**
+   * Persist a specific conversation to storage.
+   */
+  private persistConversation(conversationId: string, throttleMs = 400): void {
+    const now = Date.now();
+    if (now - this.lastConversationPersistTs < throttleMs) return;
+    this.lastConversationPersistTs = now;
+
+    const conversation = this.conversations.find(
+      (c) => c.id === conversationId,
+    );
+    if (conversation) {
+      conversation.updatedAt = Date.now();
+
+      // Auto-generate name from first user message if still has default name
+      if (conversation.name.startsWith("Chat ")) {
+        const firstUserMsg = conversation.messages.find(
+          (m) => m.role === "user" && m.content.trim(),
+        );
+        if (firstUserMsg) {
+          let content = firstUserMsg.content
+            .replace(/\[File:.*?\][\s\S]*?```[\s\S]*?```/g, "")
+            .trim();
+
+          if (content) {
+            const preview = content.slice(0, 50);
+            conversation.name =
+              preview.length < content.length ? preview + "..." : preview;
+          }
+        }
+      }
+
+      this.saveConversationsToStorage();
+    }
+  }
+
+  /**
+   * Add a message directly to a specific conversation.
+   * Returns the message if added, null if conversation not found.
+   */
+  private addMessageToConversation(
+    conversationId: string,
+    role: "user" | "assistant",
+    content: string,
+  ): Message | null {
+    const conversation = this.conversations.find(
+      (c) => c.id === conversationId,
+    );
+    if (!conversation) return null;
+
+    const message: Message = {
+      id: generateUUID(),
+      role,
+      content,
+      timestamp: Date.now(),
+    };
+    conversation.messages.push(message);
+    return message;
+  }
+
+  /**
    * Toggle sidebar visibility
    */
   toggleSidebar() {
@@ -1270,15 +1374,71 @@ class AppStore {
 
     if (lastUserIndex === -1) return;
 
-    // Remove any messages after the user message
-    this.messages = this.messages.slice(0, lastUserIndex + 1);
+    const lastUserMessage = this.messages[lastUserIndex];
+    const requestType = lastUserMessage.requestType || "chat";
+    const prompt = lastUserMessage.content;
 
-    // Resend the message to get a new response
+    // Remove messages after user message (including the user message for image requests
+    // since generateImage/editImage will re-add it)
+    this.messages = this.messages.slice(0, lastUserIndex);
+
+    switch (requestType) {
+      case "image-generation":
+        await this.generateImage(prompt);
+        break;
+      case "image-editing":
+        if (lastUserMessage.sourceImageDataUrl) {
+          await this.editImage(prompt, lastUserMessage.sourceImageDataUrl);
+        } else {
+          // Can't regenerate edit without source image - restore user message and show error
+          this.messages.push(lastUserMessage);
+          const errorMessage = this.addMessage("assistant", "");
+          const idx = this.messages.findIndex((m) => m.id === errorMessage.id);
+          if (idx !== -1) {
+            this.messages[idx].content =
+              "Error: Cannot regenerate image edit - source image not found";
+          }
+          this.updateActiveConversation();
+        }
+        break;
+      case "chat":
+      default:
+        // Restore the user message for chat regeneration
+        this.messages.push(lastUserMessage);
+        await this.regenerateChatCompletion();
+        break;
+    }
+  }
+
+  /**
+   * Helper method to regenerate a chat completion response
+   */
+  private async regenerateChatCompletion(): Promise<void> {
+    // Capture the target conversation ID at the start of the request
+    const targetConversationId = this.activeConversationId;
+    if (!targetConversationId) return;
+
+    const targetConversation = this.conversations.find(
+      (c) => c.id === targetConversationId,
+    );
+    if (!targetConversation) return;
+
     this.isLoading = true;
     this.currentResponse = "";
 
-    // Create placeholder for assistant message
-    const assistantMessage = this.addMessage("assistant", "");
+    // Create placeholder for assistant message directly in target conversation
+    const assistantMessage = this.addMessageToConversation(
+      targetConversationId,
+      "assistant",
+      "",
+    );
+    if (!assistantMessage) {
+      this.isLoading = false;
+      return;
+    }
+
+    // Sync to this.messages if viewing the target conversation
+    this.syncActiveMessagesIfNeeded(targetConversationId);
 
     try {
       const systemPrompt = {
@@ -1289,41 +1449,25 @@ class AppStore {
 
       const apiMessages = [
         systemPrompt,
-        ...this.messages.slice(0, -1).map((m) => {
+        ...targetConversation.messages.slice(0, -1).map((m) => {
           return { role: m.role, content: m.content };
         }),
       ];
 
       // Determine which model to use
-      let modelToUse = this.selectedChatModel;
+      const modelToUse = this.getModelForRequest();
       if (!modelToUse) {
-        const firstInstanceKey = Object.keys(this.instances)[0];
-        if (firstInstanceKey) {
-          const instance = this.instances[firstInstanceKey] as
-            | Record<string, unknown>
-            | undefined;
-          if (instance) {
-            const keys = Object.keys(instance);
-            if (keys.length === 1) {
-              const inst = instance[keys[0]] as
-                | { shardAssignments?: { modelId?: string } }
-                | undefined;
-              modelToUse = inst?.shardAssignments?.modelId || "";
-            }
-          }
-        }
-      }
-
-      if (!modelToUse) {
-        const idx = this.messages.findIndex(
-          (m) => m.id === assistantMessage.id,
+        this.updateConversationMessage(
+          targetConversationId,
+          assistantMessage.id,
+          (msg) => {
+            msg.content =
+              "Error: No model available. Please launch an instance first.";
+          },
         );
-        if (idx !== -1) {
-          this.messages[idx].content =
-            "Error: No model available. Please launch an instance first.";
-        }
+        this.syncActiveMessagesIfNeeded(targetConversationId);
         this.isLoading = false;
-        this.updateActiveConversation();
+        this.saveConversationsToStorage();
         return;
       }
 
@@ -1339,94 +1483,76 @@ class AppStore {
 
       if (!response.ok) {
         const errorText = await response.text();
-        const idx = this.messages.findIndex(
-          (m) => m.id === assistantMessage.id,
-        );
-        if (idx !== -1) {
-          this.messages[idx].content =
-            `Error: ${response.status} - ${errorText}`;
-        }
-        this.isLoading = false;
-        this.updateActiveConversation();
-        return;
+        throw new Error(`${response.status} - ${errorText}`);
       }
 
       const reader = response.body?.getReader();
       if (!reader) {
-        const idx = this.messages.findIndex(
-          (m) => m.id === assistantMessage.id,
-        );
-        if (idx !== -1) {
-          this.messages[idx].content = "Error: No response stream available";
-        }
-        this.isLoading = false;
-        this.updateActiveConversation();
-        return;
+        throw new Error("No response stream available");
       }
 
-      const decoder = new TextDecoder();
-      let fullContent = "";
-      let partialLine = "";
+      let streamedContent = "";
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      interface ChatCompletionChunk {
+        choices?: Array<{ delta?: { content?: string } }>;
+      }
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = (partialLine + chunk).split("\n");
-        partialLine = lines.pop() || "";
+      await this.parseSSEStream<ChatCompletionChunk>(
+        reader,
+        targetConversationId,
+        (parsed) => {
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (delta) {
+            streamedContent += delta;
+            const { displayContent, thinkingContent } =
+              this.stripThinkingTags(streamedContent);
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed === "data: [DONE]") continue;
-
-          if (trimmed.startsWith("data: ")) {
-            try {
-              const json = JSON.parse(trimmed.slice(6));
-              const delta = json.choices?.[0]?.delta?.content;
-              if (delta) {
-                fullContent += delta;
-                const { displayContent, thinkingContent } =
-                  this.stripThinkingTags(fullContent);
-                this.currentResponse = displayContent;
-
-                // Update the assistant message in place (triggers Svelte reactivity)
-                const idx = this.messages.findIndex(
-                  (m) => m.id === assistantMessage.id,
-                );
-                if (idx !== -1) {
-                  this.messages[idx].content = displayContent;
-                  this.messages[idx].thinking = thinkingContent || undefined;
-                }
-                this.persistActiveConversation();
-              }
-            } catch {
-              // Skip malformed JSON
+            // Only update currentResponse if target conversation is active
+            if (this.activeConversationId === targetConversationId) {
+              this.currentResponse = displayContent;
             }
-          }
-        }
-      }
 
-      // Final cleanup of the message
-      const { displayContent, thinkingContent } =
-        this.stripThinkingTags(fullContent);
-      const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
-      if (idx !== -1) {
-        this.messages[idx].content = displayContent;
-        this.messages[idx].thinking = thinkingContent || undefined;
+            // Update the assistant message in the target conversation
+            this.updateConversationMessage(
+              targetConversationId,
+              assistantMessage.id,
+              (msg) => {
+                msg.content = displayContent;
+                msg.thinking = thinkingContent || undefined;
+              },
+            );
+            this.syncActiveMessagesIfNeeded(targetConversationId);
+            this.persistConversation(targetConversationId);
+          }
+        },
+      );
+
+      // Final cleanup of the message (if conversation still exists)
+      if (this.conversationExists(targetConversationId)) {
+        const { displayContent, thinkingContent } =
+          this.stripThinkingTags(streamedContent);
+        this.updateConversationMessage(
+          targetConversationId,
+          assistantMessage.id,
+          (msg) => {
+            msg.content = displayContent;
+            msg.thinking = thinkingContent || undefined;
+          },
+        );
+        this.syncActiveMessagesIfNeeded(targetConversationId);
+        this.persistConversation(targetConversationId);
       }
-      this.persistActiveConversation();
     } catch (error) {
-      const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
-      if (idx !== -1) {
-        this.messages[idx].content =
-          `Error: ${error instanceof Error ? error.message : "Unknown error"}`;
-      }
-      this.persistActiveConversation();
+      this.handleStreamingError(
+        error,
+        targetConversationId,
+        assistantMessage.id,
+        "Unknown error",
+      );
     } finally {
       this.isLoading = false;
       this.currentResponse = "";
-      this.updateActiveConversation();
+      this.saveConversationsToStorage();
     }
   }
 
@@ -1482,6 +1608,121 @@ class AppStore {
   }
 
   /**
+   * Parse an SSE stream and invoke a callback for each parsed JSON chunk.
+   * Handles buffering, line splitting, and conversation deletion checks.
+   *
+   * @param reader - The stream reader from fetch response.body.getReader()
+   * @param targetConversationId - The conversation ID to check for deletion
+   * @param onChunk - Callback invoked with each parsed JSON object from the stream
+   */
+  private async parseSSEStream<T>(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    targetConversationId: string,
+    onChunk: (parsed: T) => void,
+  ): Promise<void> {
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      if (!this.conversationExists(targetConversationId)) {
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        if (trimmed.startsWith("data: ")) {
+          const data = trimmed.slice(6);
+          if (data === "[DONE]") continue;
+
+          try {
+            const parsed = JSON.parse(data) as T;
+            onChunk(parsed);
+          } catch {
+            // Skip malformed JSON
+          }
+        }
+      }
+    }
+
+    // Process any remaining data in the buffer
+    if (buffer.trim() && this.conversationExists(targetConversationId)) {
+      const trimmed = buffer.trim();
+      if (trimmed.startsWith("data: ") && trimmed.slice(6) !== "[DONE]") {
+        try {
+          const parsed = JSON.parse(trimmed.slice(6)) as T;
+          onChunk(parsed);
+        } catch {
+          // Skip malformed JSON
+        }
+      }
+    }
+  }
+
+  /**
+   * Handle streaming errors by updating the assistant message with an error.
+   *
+   * @param error - The caught error
+   * @param targetConversationId - The conversation ID
+   * @param assistantMessageId - The assistant message ID to update
+   * @param errorPrefix - Optional prefix for the error message (e.g., "Failed to generate image")
+   */
+  private handleStreamingError(
+    error: unknown,
+    targetConversationId: string,
+    assistantMessageId: string,
+    errorPrefix = "Failed to get response",
+  ): void {
+    if (this.conversationExists(targetConversationId)) {
+      this.updateConversationMessage(
+        targetConversationId,
+        assistantMessageId,
+        (msg) => {
+          msg.content = `Error: ${error instanceof Error ? error.message : errorPrefix}`;
+        },
+      );
+      this.syncActiveMessagesIfNeeded(targetConversationId);
+      this.persistConversation(targetConversationId);
+    }
+  }
+
+  /**
+   * Get the model to use for a request.
+   * Prefers the provided modelId, then selectedChatModel, then falls back to the first running instance.
+   *
+   * @param modelId - Optional explicit model ID
+   * @returns The model ID to use, or null if none available
+   */
+  private getModelForRequest(modelId?: string): string | null {
+    if (modelId) return modelId;
+    if (this.selectedChatModel) return this.selectedChatModel;
+
+    // Try to get model from first running instance
+    for (const [, instanceWrapper] of Object.entries(this.instances)) {
+      if (instanceWrapper && typeof instanceWrapper === "object") {
+        const keys = Object.keys(instanceWrapper as Record<string, unknown>);
+        if (keys.length === 1) {
+          const instance = (instanceWrapper as Record<string, unknown>)[
+            keys[0]
+          ] as { shardAssignments?: { modelId?: string } };
+          if (instance?.shardAssignments?.modelId) {
+            return instance.shardAssignments.modelId;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
    * Send a message to the LLM and stream the response
    */
   async sendMessage(
@@ -1500,6 +1741,10 @@ class AppStore {
     if (!this.hasStartedChat) {
       this.startChat();
     }
+
+    // Capture the target conversation ID at the start of the request
+    const targetConversationId = this.activeConversationId;
+    if (!targetConversationId) return;
 
     this.isLoading = true;
     this.currentResponse = "";
@@ -1544,7 +1789,7 @@ class AppStore {
     // Combine content with file context
     const fullContent = content + fileContext;
 
-    // Add user message with attachments
+    // Add user message directly to the target conversation
     const userMessage: Message = {
       id: generateUUID(),
       role: "user",
@@ -1552,11 +1797,30 @@ class AppStore {
       timestamp: Date.now(),
       attachments: attachments.length > 0 ? attachments : undefined,
     };
-    this.messages.push(userMessage);
 
-    // Create placeholder for assistant message
-    const assistantMessage = this.addMessage("assistant", "");
-    this.updateActiveConversation();
+    const targetConversation = this.conversations.find(
+      (c) => c.id === targetConversationId,
+    );
+    if (!targetConversation) {
+      this.isLoading = false;
+      return;
+    }
+    targetConversation.messages.push(userMessage);
+
+    // Create placeholder for assistant message directly in target conversation
+    const assistantMessage = this.addMessageToConversation(
+      targetConversationId,
+      "assistant",
+      "",
+    );
+    if (!assistantMessage) {
+      this.isLoading = false;
+      return;
+    }
+
+    // Sync to this.messages if viewing the target conversation
+    this.syncActiveMessagesIfNeeded(targetConversationId);
+    this.saveConversationsToStorage();
 
     try {
       // Build the messages array for the API with system prompt
@@ -1566,10 +1830,10 @@ class AppStore {
           "You are a helpful AI assistant. Respond directly and concisely. Do not show your reasoning or thought process. When files are shared with you, analyze them and respond helpfully.",
       };
 
-      // Build API messages - include file content for text files
+      // Build API messages from the target conversation - include file content for text files
       const apiMessages = [
         systemPrompt,
-        ...this.messages.slice(0, -1).map((m) => {
+        ...targetConversation.messages.slice(0, -1).map((m) => {
           // Build content including any text file attachments
           let msgContent = m.content;
 
@@ -1589,28 +1853,8 @@ class AppStore {
         }),
       ];
 
-      // Determine the model to use - prefer selectedChatModel, otherwise try to get from instances
-      let modelToUse = this.selectedChatModel;
-      if (!modelToUse) {
-        // Try to get model from first running instance
-        for (const [, instanceWrapper] of Object.entries(this.instances)) {
-          if (instanceWrapper && typeof instanceWrapper === "object") {
-            const keys = Object.keys(
-              instanceWrapper as Record<string, unknown>,
-            );
-            if (keys.length === 1) {
-              const instance = (instanceWrapper as Record<string, unknown>)[
-                keys[0]
-              ] as { shardAssignments?: { modelId?: string } };
-              if (instance?.shardAssignments?.modelId) {
-                modelToUse = instance.shardAssignments.modelId;
-                break;
-              }
-            }
-          }
-        }
-      }
-
+      // Determine the model to use
+      const modelToUse = this.getModelForRequest();
       if (!modelToUse) {
         throw new Error(
           "No model selected and no running instances available. Please launch an instance first.",
@@ -1648,88 +1892,59 @@ class AppStore {
         throw new Error("No response body");
       }
 
-      const decoder = new TextDecoder();
-      let fullContent = "";
-      let buffer = "";
+      let streamedContent = "";
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        // Process complete lines
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || ""; // Keep incomplete line in buffer
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-
-          if (trimmed.startsWith("data: ")) {
-            const data = trimmed.slice(6);
-            if (data === "[DONE]") continue;
-
-            try {
-              const parsed = JSON.parse(data);
-              const tokenContent = parsed.choices?.[0]?.delta?.content;
-              if (tokenContent) {
-                // Track first token for TTFT
-                if (firstTokenTime === null) {
-                  firstTokenTime = performance.now();
-                  this.ttftMs = firstTokenTime - requestStartTime;
-                }
-
-                // Count tokens (each SSE chunk is typically one token)
-                tokenCount += 1;
-                this.totalTokens = tokenCount;
-
-                // Update real-time TPS during streaming
-                if (firstTokenTime !== null && tokenCount > 1) {
-                  const elapsed = performance.now() - firstTokenTime;
-                  this.tps = (tokenCount / elapsed) * 1000;
-                }
-
-                fullContent += tokenContent;
-
-                // Strip thinking tags for display and extract thinking content
-                const { displayContent, thinkingContent } =
-                  this.stripThinkingTags(fullContent);
-                this.currentResponse = displayContent;
-
-                // Update the assistant message in place
-                const idx = this.messages.findIndex(
-                  (m) => m.id === assistantMessage.id,
-                );
-                if (idx !== -1) {
-                  this.messages[idx].content = displayContent;
-                  this.messages[idx].thinking = thinkingContent || undefined;
-                }
-                this.persistActiveConversation();
-              }
-            } catch {
-              // Skip invalid JSON lines
-            }
-          }
-        }
+      interface ChatCompletionChunk {
+        choices?: Array<{ delta?: { content?: string } }>;
       }
 
-      // Process any remaining buffer
-      if (buffer.trim()) {
-        const trimmed = buffer.trim();
-        if (trimmed.startsWith("data: ") && trimmed.slice(6) !== "[DONE]") {
-          try {
-            const parsed = JSON.parse(trimmed.slice(6));
-            const tokenContent = parsed.choices?.[0]?.delta?.content;
-            if (tokenContent) {
-              fullContent += tokenContent;
-              this.persistActiveConversation();
+      await this.parseSSEStream<ChatCompletionChunk>(
+        reader,
+        targetConversationId,
+        (parsed) => {
+          const tokenContent = parsed.choices?.[0]?.delta?.content;
+          if (tokenContent) {
+            // Track first token for TTFT
+            if (firstTokenTime === null) {
+              firstTokenTime = performance.now();
+              this.ttftMs = firstTokenTime - requestStartTime;
             }
-          } catch {
-            // Skip
+
+            // Count tokens (each SSE chunk is typically one token)
+            tokenCount += 1;
+            this.totalTokens = tokenCount;
+
+            // Update real-time TPS during streaming
+            if (firstTokenTime !== null && tokenCount > 1) {
+              const elapsed = performance.now() - firstTokenTime;
+              this.tps = (tokenCount / elapsed) * 1000;
+            }
+
+            streamedContent += tokenContent;
+
+            // Strip thinking tags for display and extract thinking content
+            const { displayContent, thinkingContent } =
+              this.stripThinkingTags(streamedContent);
+
+            // Only update currentResponse if target conversation is active
+            if (this.activeConversationId === targetConversationId) {
+              this.currentResponse = displayContent;
+            }
+
+            // Update the assistant message in the target conversation
+            this.updateConversationMessage(
+              targetConversationId,
+              assistantMessage.id,
+              (msg) => {
+                msg.content = displayContent;
+                msg.thinking = thinkingContent || undefined;
+              },
+            );
+            this.syncActiveMessagesIfNeeded(targetConversationId);
+            this.persistConversation(targetConversationId);
           }
-        }
-      }
+        },
+      );
 
       // Calculate final TPS
       if (firstTokenTime !== null && tokenCount > 1) {
@@ -1737,35 +1952,40 @@ class AppStore {
         this.tps = (tokenCount / totalGenerationTime) * 1000; // tokens per second
       }
 
-      // Final cleanup of the message
-      const { displayContent, thinkingContent } =
-        this.stripThinkingTags(fullContent);
-      const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
-      if (idx !== -1) {
-        this.messages[idx].content = displayContent;
-        this.messages[idx].thinking = thinkingContent || undefined;
-        // Store performance metrics on the message
-        if (this.ttftMs !== null) {
-          this.messages[idx].ttftMs = this.ttftMs;
-        }
-        if (this.tps !== null) {
-          this.messages[idx].tps = this.tps;
-        }
+      // Final cleanup of the message (if conversation still exists)
+      if (this.conversationExists(targetConversationId)) {
+        const { displayContent, thinkingContent } =
+          this.stripThinkingTags(streamedContent);
+        this.updateConversationMessage(
+          targetConversationId,
+          assistantMessage.id,
+          (msg) => {
+            msg.content = displayContent;
+            msg.thinking = thinkingContent || undefined;
+            // Store performance metrics on the message
+            if (this.ttftMs !== null) {
+              msg.ttftMs = this.ttftMs;
+            }
+            if (this.tps !== null) {
+              msg.tps = this.tps;
+            }
+          },
+        );
+        this.syncActiveMessagesIfNeeded(targetConversationId);
+        this.persistConversation(targetConversationId);
       }
-      this.persistActiveConversation();
     } catch (error) {
       console.error("Error sending message:", error);
-      // Update the assistant message with error
-      const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
-      if (idx !== -1) {
-        this.messages[idx].content =
-          `Error: ${error instanceof Error ? error.message : "Failed to get response"}`;
-      }
-      this.persistActiveConversation();
+      this.handleStreamingError(
+        error,
+        targetConversationId,
+        assistantMessage.id,
+        "Failed to get response",
+      );
     } finally {
       this.isLoading = false;
       this.currentResponse = "";
-      this.updateActiveConversation();
+      this.saveConversationsToStorage();
     }
   }
 
@@ -1779,26 +1999,49 @@ class AppStore {
       this.startChat();
     }
 
+    // Capture the target conversation ID at the start of the request
+    const targetConversationId = this.activeConversationId;
+    if (!targetConversationId) return;
+
     this.isLoading = true;
     this.currentResponse = "";
 
-    // Add user message
+    // Add user message directly to the target conversation
     const userMessage: Message = {
       id: generateUUID(),
       role: "user",
       content: prompt,
       timestamp: Date.now(),
+      requestType: "image-generation",
     };
-    this.messages.push(userMessage);
 
-    // Create placeholder for assistant message with generating state
-    const assistantMessage = this.addMessage("assistant", "");
-    this.messages[this.messages.length - 1].content = "Generating image...";
-    this.updateActiveConversation();
+    const targetConversation = this.conversations.find(
+      (c) => c.id === targetConversationId,
+    );
+    if (!targetConversation) {
+      this.isLoading = false;
+      return;
+    }
+    targetConversation.messages.push(userMessage);
+
+    // Create placeholder for assistant message directly in target conversation
+    const assistantMessage = this.addMessageToConversation(
+      targetConversationId,
+      "assistant",
+      "Generating image...",
+    );
+    if (!assistantMessage) {
+      this.isLoading = false;
+      return;
+    }
+
+    // Sync to this.messages if viewing the target conversation
+    this.syncActiveMessagesIfNeeded(targetConversationId);
+    this.saveConversationsToStorage();
 
     try {
       // Determine the model to use
-      let model = modelId || this.selectedChatModel;
+      const model = this.getModelForRequest(modelId);
       if (!model) {
         throw new Error(
           "No model selected. Please select an image generation model.",
@@ -1857,121 +2100,113 @@ class AppStore {
         throw new Error("No response body");
       }
 
-      const decoder = new TextDecoder();
-      let buffer = "";
-      const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
+      interface ImageGenerationChunk {
+        data?: { b64_json?: string };
+        format?: string;
+        type?: "partial" | "final";
+        image_index?: number;
+        partial_index?: number;
+        total_partials?: number;
+      }
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      const numImages = params.numImages;
 
-        buffer += decoder.decode(value, { stream: true });
+      await this.parseSSEStream<ImageGenerationChunk>(
+        reader,
+        targetConversationId,
+        (parsed) => {
+          const imageData = parsed.data?.b64_json;
 
-        // Process complete lines
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || ""; // Keep incomplete line in buffer
+          if (imageData) {
+            const format = parsed.format || "png";
+            const mimeType = `image/${format}`;
+            const imageIndex = parsed.image_index ?? 0;
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
+            if (parsed.type === "partial") {
+              // Update with partial image and progress
+              const partialNum = (parsed.partial_index ?? 0) + 1;
+              const totalPartials = parsed.total_partials ?? 3;
+              const progressText =
+                numImages > 1
+                  ? `Generating image ${imageIndex + 1}/${numImages}... ${partialNum}/${totalPartials}`
+                  : `Generating... ${partialNum}/${totalPartials}`;
 
-          if (trimmed.startsWith("data: ")) {
-            const data = trimmed.slice(6);
-            if (data === "[DONE]") continue;
+              const partialAttachment: MessageAttachment = {
+                type: "generated-image",
+                name: `generated-image.${format}`,
+                preview: `data:${mimeType};base64,${imageData}`,
+                mimeType,
+              };
 
-            try {
-              const parsed = JSON.parse(data);
-              const imageData = parsed.data?.b64_json;
-
-              if (imageData && idx !== -1) {
-                const format = parsed.format || "png";
-                const mimeType = `image/${format}`;
-                const imageIndex = parsed.image_index ?? 0;
-                const numImages = params.numImages;
-
-                if (parsed.type === "partial") {
-                  // Update with partial image and progress
-                  const partialNum = (parsed.partial_index ?? 0) + 1;
-                  const totalPartials = parsed.total_partials ?? 3;
-                  const progressText =
-                    numImages > 1
-                      ? `Generating image ${imageIndex + 1}/${numImages}... ${partialNum}/${totalPartials}`
-                      : `Generating... ${partialNum}/${totalPartials}`;
-                  this.messages[idx].content = progressText;
-
-                  const partialAttachment: MessageAttachment = {
-                    type: "generated-image",
-                    name: `generated-image.${format}`,
-                    preview: `data:${mimeType};base64,${imageData}`,
-                    mimeType,
-                  };
-
+              this.updateConversationMessage(
+                targetConversationId,
+                assistantMessage.id,
+                (msg) => {
+                  msg.content = progressText;
                   if (imageIndex === 0) {
                     // First image - safe to replace attachments with partial preview
-                    this.messages[idx].attachments = [partialAttachment];
+                    msg.attachments = [partialAttachment];
                   } else {
                     // Subsequent images - keep existing finals, show partial at current position
-                    const existingAttachments =
-                      this.messages[idx].attachments || [];
+                    const existingAttachments = msg.attachments || [];
                     // Keep only the completed final images (up to current imageIndex)
                     const finals = existingAttachments.slice(0, imageIndex);
-                    this.messages[idx].attachments = [
-                      ...finals,
-                      partialAttachment,
-                    ];
+                    msg.attachments = [...finals, partialAttachment];
                   }
-                } else if (parsed.type === "final") {
-                  // Final image - replace partial at this position
-                  const newAttachment: MessageAttachment = {
-                    type: "generated-image",
-                    name: `generated-image-${imageIndex + 1}.${format}`,
-                    preview: `data:${mimeType};base64,${imageData}`,
-                    mimeType,
-                  };
+                },
+              );
+            } else if (parsed.type === "final") {
+              // Final image - replace partial at this position
+              const newAttachment: MessageAttachment = {
+                type: "generated-image",
+                name: `generated-image-${imageIndex + 1}.${format}`,
+                preview: `data:${mimeType};base64,${imageData}`,
+                mimeType,
+              };
 
+              this.updateConversationMessage(
+                targetConversationId,
+                assistantMessage.id,
+                (msg) => {
                   if (imageIndex === 0) {
                     // First final image - replace any partial preview
-                    this.messages[idx].attachments = [newAttachment];
+                    msg.attachments = [newAttachment];
                   } else {
                     // Subsequent images - keep previous finals, replace partial at current position
-                    const existingAttachments =
-                      this.messages[idx].attachments || [];
+                    const existingAttachments = msg.attachments || [];
                     // Slice keeps indices 0 to imageIndex-1 (the previous final images)
                     const previousFinals = existingAttachments.slice(
                       0,
                       imageIndex,
                     );
-                    this.messages[idx].attachments = [
-                      ...previousFinals,
-                      newAttachment,
-                    ];
+                    msg.attachments = [...previousFinals, newAttachment];
                   }
 
                   // Update progress message for multiple images
                   if (numImages > 1 && imageIndex < numImages - 1) {
-                    this.messages[idx].content =
-                      `Generating image ${imageIndex + 2}/${numImages}...`;
+                    msg.content = `Generating image ${imageIndex + 2}/${numImages}...`;
                   } else {
-                    this.messages[idx].content = "";
+                    msg.content = "";
                   }
-                }
-              }
-            } catch {
-              // Ignore parse errors for incomplete JSON
+                },
+              );
             }
+
+            this.syncActiveMessagesIfNeeded(targetConversationId);
           }
-        }
-      }
+        },
+      );
     } catch (error) {
       console.error("Error generating image:", error);
-      const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
-      if (idx !== -1) {
-        this.messages[idx].content =
-          `Error: ${error instanceof Error ? error.message : "Failed to generate image"}`;
-      }
+      this.handleStreamingError(
+        error,
+        targetConversationId,
+        assistantMessage.id,
+        "Failed to generate image",
+      );
     } finally {
       this.isLoading = false;
-      this.updateActiveConversation();
+      this.saveConversationsToStorage();
     }
   }
 
@@ -1989,29 +2224,53 @@ class AppStore {
       this.startChat();
     }
 
+    // Capture the target conversation ID at the start of the request
+    const targetConversationId = this.activeConversationId;
+    if (!targetConversationId) return;
+
     this.isLoading = true;
     this.currentResponse = "";
 
-    // Add user message with the edit prompt
+    // Add user message directly to the target conversation
     const userMessage: Message = {
       id: generateUUID(),
       role: "user",
       content: prompt,
       timestamp: Date.now(),
+      requestType: "image-editing",
+      sourceImageDataUrl: imageDataUrl,
     };
-    this.messages.push(userMessage);
 
-    // Create placeholder for assistant message with generating state
-    const assistantMessage = this.addMessage("assistant", "");
-    this.messages[this.messages.length - 1].content = "Editing image...";
-    this.updateActiveConversation();
+    const targetConversation = this.conversations.find(
+      (c) => c.id === targetConversationId,
+    );
+    if (!targetConversation) {
+      this.isLoading = false;
+      return;
+    }
+    targetConversation.messages.push(userMessage);
+
+    // Create placeholder for assistant message directly in target conversation
+    const assistantMessage = this.addMessageToConversation(
+      targetConversationId,
+      "assistant",
+      "Editing image...",
+    );
+    if (!assistantMessage) {
+      this.isLoading = false;
+      return;
+    }
+
+    // Sync to this.messages if viewing the target conversation
+    this.syncActiveMessagesIfNeeded(targetConversationId);
+    this.saveConversationsToStorage();
 
     // Clear editing state
     this.editingImage = null;
 
     try {
       // Determine the model to use
-      let model = modelId || this.selectedChatModel;
+      const model = this.getModelForRequest(modelId);
       if (!model) {
         throw new Error(
           "No model selected. Please select an image generation model.",
@@ -2089,78 +2348,75 @@ class AppStore {
         throw new Error("No response body");
       }
 
-      const decoder = new TextDecoder();
-      let buffer = "";
-      const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        // Process complete lines
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || ""; // Keep incomplete line in buffer
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-
-          if (trimmed.startsWith("data: ")) {
-            const data = trimmed.slice(6);
-            if (data === "[DONE]") continue;
-
-            try {
-              const parsed = JSON.parse(data);
-              const imageData = parsed.data?.b64_json;
-
-              if (imageData && idx !== -1) {
-                const format = parsed.format || "png";
-                const mimeType = `image/${format}`;
-                if (parsed.type === "partial") {
-                  // Update with partial image and progress
-                  const partialNum = (parsed.partial_index ?? 0) + 1;
-                  const totalPartials = parsed.total_partials ?? 3;
-                  this.messages[idx].content =
-                    `Editing... ${partialNum}/${totalPartials}`;
-                  this.messages[idx].attachments = [
-                    {
-                      type: "generated-image",
-                      name: `edited-image.${format}`,
-                      preview: `data:${mimeType};base64,${imageData}`,
-                      mimeType,
-                    },
-                  ];
-                } else if (parsed.type === "final") {
-                  // Final image
-                  this.messages[idx].content = "";
-                  this.messages[idx].attachments = [
-                    {
-                      type: "generated-image",
-                      name: `edited-image.${format}`,
-                      preview: `data:${mimeType};base64,${imageData}`,
-                      mimeType,
-                    },
-                  ];
-                }
-              }
-            } catch {
-              // Ignore parse errors for incomplete JSON
-            }
-          }
-        }
+      interface ImageEditChunk {
+        data?: { b64_json?: string };
+        format?: string;
+        type?: "partial" | "final";
+        partial_index?: number;
+        total_partials?: number;
       }
+
+      await this.parseSSEStream<ImageEditChunk>(
+        reader,
+        targetConversationId,
+        (parsed) => {
+          const imageData = parsed.data?.b64_json;
+
+          if (imageData) {
+            const format = parsed.format || "png";
+            const mimeType = `image/${format}`;
+            if (parsed.type === "partial") {
+              // Update with partial image and progress
+              const partialNum = (parsed.partial_index ?? 0) + 1;
+              const totalPartials = parsed.total_partials ?? 3;
+              this.updateConversationMessage(
+                targetConversationId,
+                assistantMessage.id,
+                (msg) => {
+                  msg.content = `Editing... ${partialNum}/${totalPartials}`;
+                  msg.attachments = [
+                    {
+                      type: "generated-image",
+                      name: `edited-image.${format}`,
+                      preview: `data:${mimeType};base64,${imageData}`,
+                      mimeType,
+                    },
+                  ];
+                },
+              );
+            } else if (parsed.type === "final") {
+              // Final image
+              this.updateConversationMessage(
+                targetConversationId,
+                assistantMessage.id,
+                (msg) => {
+                  msg.content = "";
+                  msg.attachments = [
+                    {
+                      type: "generated-image",
+                      name: `edited-image.${format}`,
+                      preview: `data:${mimeType};base64,${imageData}`,
+                      mimeType,
+                    },
+                  ];
+                },
+              );
+            }
+            this.syncActiveMessagesIfNeeded(targetConversationId);
+          }
+        },
+      );
     } catch (error) {
       console.error("Error editing image:", error);
-      const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
-      if (idx !== -1) {
-        this.messages[idx].content =
-          `Error: ${error instanceof Error ? error.message : "Failed to edit image"}`;
-      }
+      this.handleStreamingError(
+        error,
+        targetConversationId,
+        assistantMessage.id,
+        "Failed to edit image",
+      );
     } finally {
       this.isLoading = false;
-      this.updateActiveConversation();
+      this.saveConversationsToStorage();
     }
   }
 
@@ -2186,6 +2442,54 @@ class AppStore {
     return (
       this.conversations.find((c) => c.id === this.activeConversationId) || null
     );
+  }
+
+  /**
+   * Start a download on a specific node
+   */
+  async startDownload(nodeId: string, shardMetadata: object): Promise<void> {
+    try {
+      const response = await fetch("/download/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetNodeId: nodeId,
+          shardMetadata: shardMetadata,
+        }),
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to start download: ${response.status} - ${errorText}`,
+        );
+      }
+    } catch (error) {
+      console.error("Error starting download:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a downloaded model from a specific node
+   */
+  async deleteDownload(nodeId: string, modelId: string): Promise<void> {
+    try {
+      const response = await fetch(
+        `/download/${encodeURIComponent(nodeId)}/${encodeURIComponent(modelId)}`,
+        {
+          method: "DELETE",
+        },
+      );
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to delete download: ${response.status} - ${errorText}`,
+        );
+      }
+    } catch (error) {
+      console.error("Error deleting download:", error);
+      throw error;
+    }
   }
 }
 
@@ -2292,3 +2596,9 @@ export const setImageGenerationParams = (
 ) => appStore.setImageGenerationParams(params);
 export const resetImageGenerationParams = () =>
   appStore.resetImageGenerationParams();
+
+// Download actions
+export const startDownload = (nodeId: string, shardMetadata: object) =>
+  appStore.startDownload(nodeId, shardMetadata);
+export const deleteDownload = (nodeId: string, modelId: string) =>
+  appStore.deleteDownload(nodeId, modelId);

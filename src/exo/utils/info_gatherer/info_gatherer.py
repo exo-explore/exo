@@ -349,13 +349,8 @@ class InfoGatherer:
     async def _monitor_misc(self):
         if self.misc_poll_interval is None:
             return
-        prev = await MiscData.gather()
-        await self.info_sender.send(prev)
         while True:
-            curr = await MiscData.gather()
-            if prev != curr:
-                prev = curr
-                await self.info_sender.send(curr)
+            await self.info_sender.send(await MiscData.gather())
             await anyio.sleep(self.misc_poll_interval)
 
     async def _monitor_system_profiler_thunderbolt_data(self):
@@ -365,15 +360,12 @@ class InfoGatherer:
         if iface_map is None:
             return
 
-        old_idents = []
         while True:
             data = await ThunderboltConnectivity.gather()
             assert data is not None
 
             idents = [it for i in data if (it := i.ident(iface_map)) is not None]
-            if idents != old_idents:
-                await self.info_sender.send(MacThunderboltIdentifiers(idents=idents))
-            old_idents = idents
+            await self.info_sender.send(MacThunderboltIdentifiers(idents=idents))
 
             conns = [it for i in data if (it := i.conn()) is not None]
             await self.info_sender.send(MacThunderboltConnections(conns=conns))
@@ -398,22 +390,17 @@ class InfoGatherer:
     async def _watch_system_info(self):
         if self.interface_watcher_interval is None:
             return
-        old_nics = []
         while True:
-            nics = get_network_interfaces()
-            if nics != old_nics:
-                old_nics = nics
-                await self.info_sender.send(NodeNetworkInterfaces(ifaces=nics))
+            nics = await get_network_interfaces()
+            await self.info_sender.send(NodeNetworkInterfaces(ifaces=nics))
             await anyio.sleep(self.interface_watcher_interval)
 
     async def _monitor_thunderbolt_bridge_status(self):
         if self.thunderbolt_bridge_poll_interval is None:
             return
-        prev: ThunderboltBridgeInfo | None = None
         while True:
             curr = await ThunderboltBridgeInfo.gather()
-            if curr is not None and prev != curr:
-                prev = curr
+            if curr is not None:
                 await self.info_sender.send(curr)
             await anyio.sleep(self.thunderbolt_bridge_poll_interval)
 

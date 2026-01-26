@@ -44,6 +44,7 @@ from exo.shared.types.api import (
     ChatCompletionResponse,
     CreateInstanceParams,
     CreateInstanceResponse,
+    DeleteDownloadResponse,
     DeleteInstanceResponse,
     ErrorInfo,
     ErrorResponse,
@@ -61,6 +62,8 @@ from exo.shared.types.api import (
     PlaceInstanceParams,
     PlacementPreview,
     PlacementPreviewResponse,
+    StartDownloadParams,
+    StartDownloadResponse,
     StreamingChoiceResponse,
     ToolCall,
 )
@@ -75,12 +78,16 @@ from exo.shared.types.commands import (
     ChatCompletion,
     Command,
     CreateInstance,
+    DeleteDownload,
     DeleteInstance,
+    DownloadCommand,
     ForwarderCommand,
+    ForwarderDownloadCommand,
     ImageEdits,
     ImageGeneration,
     PlaceInstance,
     SendInputChunk,
+    StartDownload,
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
@@ -156,12 +163,14 @@ class API:
         # Ideally this would be a MasterForwarderEvent but type system says no :(
         global_event_receiver: Receiver[ForwarderEvent],
         command_sender: Sender[ForwarderCommand],
+        download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
     ) -> None:
         self.state = State()
         self._event_log: list[Event] = []
         self.command_sender = command_sender
+        self.download_command_sender = download_command_sender
         self.global_event_receiver = global_event_receiver
         self.election_receiver = election_receiver
         self.event_buffer: OrderedBuffer[Event] = OrderedBuffer[Event]()
@@ -260,6 +269,8 @@ class API:
         self.app.get("/images/{image_id}")(self.get_image)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
+        self.app.post("/download/start")(self.start_download)
+        self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -345,14 +356,9 @@ class API:
     ) -> PlacementPreviewResponse:
         seen: set[tuple[ModelId, Sharding, InstanceMeta, int]] = set()
         previews: list[PlacementPreview] = []
+        required_nodes = set(node_ids) if node_ids else None
 
-        # Create filtered topology if node_ids specified
-        if node_ids and len(node_ids) > 0:
-            topology = self.state.topology.get_subgraph_from_nodes(node_ids)
-        else:
-            topology = self.state.topology
-
-        if len(list(topology.list_nodes())) == 0:
+        if len(list(self.state.topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
         cards = [card for card in MODEL_CARDS.values() if card.model_id == model_id]
@@ -365,7 +371,9 @@ class API:
                 instance_combinations.extend(
                     [
                         (sharding, instance_meta, i)
-                        for i in range(1, len(list(topology.list_nodes())) + 1)
+                        for i in range(
+                            1, len(list(self.state.topology.list_nodes())) + 1
+                        )
                     ]
                 )
         # TODO: PDD
@@ -383,8 +391,9 @@ class API:
                         ),
                         node_memory=self.state.node_memory,
                         node_network=self.state.node_network,
-                        topology=topology,
+                        topology=self.state.topology,
                         current_instances=self.state.instances,
+                        required_nodes=required_nodes,
                     )
                 except ValueError as exc:
                     if (model_card.model_id, sharding, instance_meta, 0) not in seen:
@@ -423,14 +432,16 @@ class API:
 
                 instance = new_instances[0]
                 shard_assignments = instance.shard_assignments
-                node_ids = list(shard_assignments.node_to_runner.keys())
+                placement_node_ids = list(shard_assignments.node_to_runner.keys())
 
                 memory_delta_by_node: dict[str, int] = {}
-                if node_ids:
+                if placement_node_ids:
                     total_bytes = model_card.storage_size.in_bytes
-                    per_node = total_bytes // len(node_ids)
-                    remainder = total_bytes % len(node_ids)
-                    for index, node_id in enumerate(sorted(node_ids, key=str)):
+                    per_node = total_bytes // len(placement_node_ids)
+                    remainder = total_bytes % len(placement_node_ids)
+                    for index, node_id in enumerate(
+                        sorted(placement_node_ids, key=str)
+                    ):
                         extra = 1 if index < remainder else 0
                         memory_delta_by_node[str(node_id)] = per_node + extra
 
@@ -438,7 +449,7 @@ class API:
                     model_card.model_id,
                     sharding,
                     instance_meta,
-                    len(node_ids),
+                    len(placement_node_ids),
                 ) not in seen:
                     previews.append(
                         PlacementPreview(
@@ -450,7 +461,14 @@ class API:
                             error=None,
                         )
                     )
-                seen.add((model_card.model_id, sharding, instance_meta, len(node_ids)))
+                seen.add(
+                    (
+                        model_card.model_id,
+                        sharding,
+                        instance_meta,
+                        len(placement_node_ids),
+                    )
+                )
 
         return PlacementPreviewResponse(previews=previews)
 
@@ -1292,3 +1310,28 @@ class API:
         await self.command_sender.send(
             ForwarderCommand(origin=self.node_id, command=command)
         )
+
+    async def _send_download(self, command: DownloadCommand):
+        await self.download_command_sender.send(
+            ForwarderDownloadCommand(origin=self.node_id, command=command)
+        )
+
+    async def start_download(
+        self, payload: StartDownloadParams
+    ) -> StartDownloadResponse:
+        command = StartDownload(
+            target_node_id=payload.target_node_id,
+            shard_metadata=payload.shard_metadata,
+        )
+        await self._send_download(command)
+        return StartDownloadResponse(command_id=command.command_id)
+
+    async def delete_download(
+        self, node_id: NodeId, model_id: ModelId
+    ) -> DeleteDownloadResponse:
+        command = DeleteDownload(
+            target_node_id=node_id,
+            model_id=ModelId(model_id),
+        )
+        await self._send_download(command)
+        return DeleteDownloadResponse(command_id=command.command_id)
