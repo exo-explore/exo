@@ -163,7 +163,7 @@ class DiffusionRunner:
         return self._cancelling
 
     def _is_sentinel(self, tensor: mx.array) -> bool:
-        return bool(mx.any(mx.isnan(tensor)).item())
+        return bool(mx.all(mx.isnan(tensor)).item())
 
     def _make_sentinel_like(self, tensor: mx.array) -> mx.array:
         return mx.full(tensor.shape, float("nan"), dtype=tensor.dtype)
@@ -882,14 +882,20 @@ class DiffusionRunner:
                     latents=prev_patch_latents[patch_idx],
                 )
 
-                if (
-                    not self.is_first_stage
-                    and t != config.num_inference_steps - 1
-                    and not self._cancelling
-                ):
+                if not self.is_first_stage and t != config.num_inference_steps - 1:
                     patch_latents[patch_idx] = self._send(
                         patch_latents[patch_idx], self.next_rank
                     )
+
+        # Drain final rank patch sends if cancelling
+        if (
+            self._cancelling
+            and self.is_first_stage
+            and not self.is_last_stage
+            and t != config.num_inference_steps - 1
+        ):
+            for patch_idx in range(len(patch_latents)):
+                _ = self._recv_like(patch_latents[patch_idx], src=self.prev_rank)
 
         return mx.concatenate(patch_latents, axis=1)
 
