@@ -111,6 +111,38 @@ def build_model_path(model_id: ModelId) -> DirectoryPath:
     return EXO_MODELS_DIR / model_id.normalize()
 
 
+def parse_remote_gguf_spec(
+    model_id: ModelId,
+) -> tuple[ModelId, str, str] | None:
+    raw = str(model_id)
+    if not raw.lower().endswith(".gguf"):
+        return None
+    parts = raw.split("/")
+    if len(parts) < 3:
+        return None
+    repo_part = f"{parts[0]}/{parts[1]}"
+    file_path = "/".join(parts[2:])
+    if "@" in repo_part:
+        repo_id_str, revision = repo_part.split("@", 1)
+    else:
+        repo_id_str, revision = repo_part, "main"
+    return ModelId(repo_id_str), revision, file_path
+
+
+def resolve_local_gguf_path(model_id: ModelId) -> Path | None:
+    raw = str(model_id)
+    if not raw.lower().endswith(".gguf"):
+        return None
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        return candidate if candidate.exists() else None
+    if spec := parse_remote_gguf_spec(model_id):
+        repo_id, _revision, file_path = spec
+        remote_path = EXO_MODELS_DIR / repo_id.normalize() / file_path
+        return remote_path if remote_path.exists() else None
+    return EXO_MODELS_DIR / raw
+
+
 async def resolve_model_path_for_repo(model_id: ModelId) -> Path:
     return (await ensure_models_dir()) / model_id.normalize()
 
@@ -118,6 +150,25 @@ async def resolve_model_path_for_repo(model_id: ModelId) -> Path:
 async def ensure_models_dir() -> Path:
     await aios.makedirs(EXO_MODELS_DIR, exist_ok=True)
     return EXO_MODELS_DIR
+
+
+async def ensure_remote_gguf(model_id: ModelId) -> Path | None:
+    spec = parse_remote_gguf_spec(model_id)
+    if spec is None:
+        return None
+    repo_id, revision, file_path = spec
+    target_dir = await ensure_models_dir() / repo_id.normalize()
+    target_path = target_dir / file_path
+    if await aios.path.exists(target_path):
+        return target_path
+    await aios.makedirs(target_dir, exist_ok=True)
+    return await download_file_with_retry(
+        repo_id,
+        revision,
+        file_path,
+        target_dir,
+        lambda _curr, _total, _is_renamed: None,
+    )
 
 
 async def delete_model(model_id: ModelId) -> bool:
@@ -503,6 +554,110 @@ async def download_shard(
     skip_download: bool = False,
     allow_patterns: list[str] | None = None,
 ) -> tuple[Path, RepoDownloadProgress]:
+    if gguf_path := resolve_local_gguf_path(shard.model_card.model_id):
+        if gguf_path.exists():
+            size = gguf_path.stat().st_size
+            progress = RepoDownloadProgress(
+                repo_id=shard.model_card.model_id,
+                repo_revision="local",
+                shard=shard,
+                completed_files=1,
+                total_files=1,
+                downloaded_bytes=Memory.from_bytes(size),
+                downloaded_bytes_this_session=Memory.from_bytes(0),
+                total_bytes=Memory.from_bytes(size),
+                overall_speed=0,
+                overall_eta=timedelta(seconds=0),
+                status="complete",
+                file_progress={
+                    gguf_path.name: RepoFileDownloadProgress(
+                        repo_id=shard.model_card.model_id,
+                        repo_revision="local",
+                        file_path=gguf_path.name,
+                        downloaded=Memory.from_bytes(size),
+                        downloaded_this_session=Memory.from_bytes(0),
+                        total=Memory.from_bytes(size),
+                        speed=0,
+                        eta=timedelta(seconds=0),
+                        status="complete",
+                        start_time=time.time(),
+                    )
+                },
+            )
+            await on_progress(shard, progress)
+            return gguf_path, progress
+
+    if spec := parse_remote_gguf_spec(shard.model_card.model_id):
+        repo_id, revision, file_path = spec
+        target_dir = await ensure_models_dir() / repo_id.normalize()
+        target_path = target_dir / file_path
+
+        def _build_progress(
+            *,
+            downloaded_bytes: int,
+            total_bytes: int,
+            status: Literal["complete", "in_progress", "not_started"],
+        ) -> RepoDownloadProgress:
+            return RepoDownloadProgress(
+                repo_id=repo_id,
+                repo_revision=revision,
+                shard=shard,
+                completed_files=1 if status == "complete" else 0,
+                total_files=1,
+                downloaded_bytes=Memory.from_bytes(downloaded_bytes),
+                downloaded_bytes_this_session=Memory.from_bytes(0),
+                total_bytes=Memory.from_bytes(total_bytes),
+                overall_speed=0,
+                overall_eta=timedelta(seconds=0),
+                status=status,
+                file_progress={
+                    file_path: RepoFileDownloadProgress(
+                        repo_id=repo_id,
+                        repo_revision=revision,
+                        file_path=file_path,
+                        downloaded=Memory.from_bytes(downloaded_bytes),
+                        downloaded_this_session=Memory.from_bytes(0),
+                        total=Memory.from_bytes(total_bytes),
+                        speed=0,
+                        eta=timedelta(seconds=0),
+                        status=status,
+                        start_time=time.time(),
+                    )
+                },
+            )
+
+        if await aios.path.exists(target_path):
+            size = (await aios.stat(target_path)).st_size
+            progress = _build_progress(
+                downloaded_bytes=size, total_bytes=size, status="complete"
+            )
+            await on_progress(shard, progress)
+            return target_path, progress
+
+        if skip_download:
+            size, _etag = await file_meta(repo_id, revision, file_path)
+            progress = _build_progress(
+                downloaded_bytes=0, total_bytes=size, status="not_started"
+            )
+            await on_progress(shard, progress)
+            return target_path, progress
+
+        await aios.makedirs(target_dir, exist_ok=True)
+
+        downloaded_path = await download_file_with_retry(
+            repo_id,
+            revision,
+            file_path,
+            target_dir,
+            lambda _curr, _total, _is_renamed: None,
+        )
+        size = (await aios.stat(downloaded_path)).st_size
+        progress = _build_progress(
+            downloaded_bytes=size, total_bytes=size, status="complete"
+        )
+        await on_progress(shard, progress)
+        return downloaded_path, progress
+
     if not skip_download:
         logger.debug(f"Downloading {shard.model_card.model_id=}")
 

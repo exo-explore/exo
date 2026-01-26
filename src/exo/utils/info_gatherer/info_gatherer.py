@@ -19,6 +19,7 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     MemoryUsage,
     NetworkInterfaceInfo,
+    NodeGpuInfo,
     ThunderboltBridgeStatus,
 )
 from exo.shared.types.thunderbolt import (
@@ -30,7 +31,12 @@ from exo.utils.channels import Sender
 from exo.utils.pydantic_ext import TaggedModel
 
 from .macmon import MacmonMetrics
-from .system_info import get_friendly_name, get_model_and_chip, get_network_interfaces
+from .system_info import (
+    get_friendly_name,
+    get_gpu_info,
+    get_model_and_chip,
+    get_network_interfaces,
+)
 
 IS_DARWIN = sys.platform == "darwin"
 
@@ -187,6 +193,14 @@ class NodeNetworkInterfaces(TaggedModel):
     ifaces: Sequence[NetworkInterfaceInfo]
 
 
+class NodeGpuDevices(TaggedModel):
+    info: NodeGpuInfo
+
+    @classmethod
+    async def gather(cls) -> Self:
+        return cls(info=await get_gpu_info())
+
+
 class MacThunderboltIdentifiers(TaggedModel):
     idents: Sequence[ThunderboltIdentifier]
 
@@ -306,6 +320,7 @@ GatheredInfo = (
     MacmonMetrics
     | MemoryUsage
     | NodeNetworkInterfaces
+    | NodeGpuDevices
     | MacThunderboltIdentifiers
     | MacThunderboltConnections
     | ThunderboltBridgeInfo
@@ -324,6 +339,7 @@ class InfoGatherer:
     memory_poll_rate: float | None = None if IS_DARWIN else 1
     macmon_interval: float | None = 1 if IS_DARWIN else None
     thunderbolt_bridge_poll_interval: float | None = 10 if IS_DARWIN else None
+    gpu_poll_interval: float | None = 10
     _tg: TaskGroup = field(init=False, default_factory=create_task_group)
 
     async def run(self):
@@ -335,6 +351,7 @@ class InfoGatherer:
                 tg.start_soon(self._monitor_thunderbolt_bridge_status)
             tg.start_soon(self._watch_system_info)
             tg.start_soon(self._monitor_memory_usage)
+            tg.start_soon(self._monitor_gpu_info)
             tg.start_soon(self._monitor_misc)
 
             nc = await NodeConfig.gather()
@@ -394,6 +411,18 @@ class InfoGatherer:
                 MemoryUsage.from_psutil(override_memory=override_memory)
             )
             await anyio.sleep(self.memory_poll_rate)
+
+    async def _monitor_gpu_info(self):
+        if self.gpu_poll_interval is None:
+            return
+        prev = await NodeGpuDevices.gather()
+        await self.info_sender.send(prev)
+        while True:
+            curr = await NodeGpuDevices.gather()
+            if prev != curr:
+                prev = curr
+                await self.info_sender.send(curr)
+            await anyio.sleep(self.gpu_poll_interval)
 
     async def _watch_system_info(self):
         if self.interface_watcher_interval is None:

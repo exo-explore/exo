@@ -1,16 +1,19 @@
 import random
 from collections.abc import Mapping
 from copy import deepcopy
+import os
 from typing import Sequence
 
 from exo.master.placement_utils import (
     Cycle,
     filter_cycles_by_memory,
+    get_available_memory,
     get_mlx_jaccl_coordinators,
     get_mlx_jaccl_devices_matrix,
     get_mlx_ring_hosts_by_node,
     get_shard_assignments,
     get_smallest_cycles,
+    select_preferred_ip,
 )
 from exo.shared.models.model_cards import ModelId
 from exo.shared.topology import Topology
@@ -19,14 +22,16 @@ from exo.shared.types.commands import (
     DeleteInstance,
     PlaceInstance,
 )
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import Host, NodeId
 from exo.shared.types.events import Event, InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
+from exo.shared.types.profiling import MemoryUsage, NodeGpuInfo, NodeNetworkInfo
 from exo.shared.types.worker.instances import (
+    CudaSingleInstance,
     Instance,
     InstanceId,
     InstanceMeta,
+    LlamaRpcInstance,
     MlxJacclInstance,
     MlxRingInstance,
 )
@@ -53,11 +58,15 @@ def place_instance(
     topology: Topology,
     current_instances: Mapping[InstanceId, Instance],
     node_memory: Mapping[NodeId, MemoryUsage],
+    node_gpus: Mapping[NodeId, NodeGpuInfo],
     node_network: Mapping[NodeId, NodeNetworkInfo],
     required_nodes: set[NodeId] | None = None,
 ) -> dict[InstanceId, Instance]:
     cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
+
+    if command.instance_meta == InstanceMeta.CudaSingle and command.min_nodes != 1:
+        raise ValueError("CudaSingle requires min_nodes=1.")
 
     # Filter to cycles containing all required nodes (subset matching)
     if required_nodes:
@@ -66,8 +75,11 @@ def place_instance(
             for cycle in candidate_cycles
             if required_nodes.issubset(cycle.node_ids)
         ]
+    if command.instance_meta == InstanceMeta.CudaSingle:
+        candidate_cycles = [cycle for cycle in candidate_cycles if len(cycle) == 1]
+
     cycles_with_sufficient_memory = filter_cycles_by_memory(
-        candidate_cycles, node_memory, command.model_card.storage_size
+        candidate_cycles, node_memory, node_gpus, command.model_card.storage_size
     )
     if len(cycles_with_sufficient_memory) == 0:
         raise ValueError("No cycles found with sufficient memory")
@@ -112,13 +124,13 @@ def place_instance(
     selected_cycle = max(
         cycles_with_leaf_nodes if cycles_with_leaf_nodes != [] else smallest_cycles,
         key=lambda cycle: sum(
-            (node_memory[node_id].ram_available for node_id in cycle),
+            (get_available_memory(node_id, node_memory, node_gpus) for node_id in cycle),
             start=Memory(),
         ),
     )
 
     shard_assignments = get_shard_assignments(
-        command.model_card, selected_cycle, command.sharding, node_memory
+        command.model_card, selected_cycle, command.sharding, node_memory, node_gpus
     )
 
     cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle.node_ids)
@@ -126,7 +138,10 @@ def place_instance(
     instance_id = InstanceId()
     target_instances = dict(deepcopy(current_instances))
 
-    if len(selected_cycle) == 1:
+    if (
+        len(selected_cycle) == 1
+        and command.instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl)
+    ):
         command.instance_meta = InstanceMeta.MlxRing
 
     # TODO: Single node instances
@@ -161,6 +176,41 @@ def place_instance(
                 shard_assignments=shard_assignments,
                 hosts_by_node=hosts_by_node,
                 ephemeral_port=ephemeral_port,
+            )
+        case InstanceMeta.LlamaRpc:
+            rpc_port = int(os.getenv("EXO_LLAMA_RPC_PORT", "50052"))
+            http_port = int(os.getenv("EXO_LLAMA_SERVER_PORT", "8081"))
+            rpc_hosts_by_node: dict[NodeId, Host] = {}
+            for node_id in selected_cycle:
+                node_iface = node_network.get(node_id, NodeNetworkInfo())
+                ip = select_preferred_ip(node_iface)
+                if ip is None:
+                    raise ValueError(
+                        f"No IP found for node {node_id} to configure llama.cpp RPC"
+                    )
+                rpc_hosts_by_node[node_id] = Host(ip=ip, port=rpc_port)
+
+            primary_node_id = max(
+                selected_cycle,
+                key=lambda node_id: get_available_memory(
+                    node_id, node_memory, node_gpus
+                ).in_bytes,
+            )
+
+            target_instances[instance_id] = LlamaRpcInstance(
+                instance_id=instance_id,
+                shard_assignments=shard_assignments,
+                primary_node_id=primary_node_id,
+                rpc_hosts_by_node=rpc_hosts_by_node,
+                http_port=http_port,
+                rpc_port=rpc_port,
+            )
+        case InstanceMeta.CudaSingle:
+            if len(selected_cycle) != 1:
+                raise ValueError("CudaSingle placement requires a single node.")
+            target_instances[instance_id] = CudaSingleInstance(
+                instance_id=instance_id,
+                shard_assignments=shard_assignments,
             )
 
     return target_instances

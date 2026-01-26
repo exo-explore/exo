@@ -7,6 +7,7 @@
     refreshState,
     lastUpdate as lastUpdateStore,
     startDownload,
+    startModelDownload,
     deleteDownload,
   } from "$lib/stores/app.svelte";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
@@ -39,8 +40,21 @@
     models: ModelEntry[];
   };
 
+  type ModelListModel = {
+    id: string;
+    name: string;
+    tags?: string[];
+    storage_size_megabytes?: number;
+    storageSizeMegabytes?: number;
+  };
+
+  type ModelListResponse = {
+    data: ModelListModel[];
+  };
+
   const data = $derived(topologyData());
   const downloadsData = $derived(downloads());
+  const nodeIds = $derived(Object.keys(data?.nodes ?? {}));
 
   function getNodeLabel(nodeId: string): string {
     const node = data?.nodes?.[nodeId];
@@ -175,15 +189,12 @@
   }
 
   let downloadOverview = $state<NodeEntry[]>([]);
+  let localModels = $state<ModelListModel[]>([]);
+  let localNodeId = $state<string | null>(null);
 
   $effect(() => {
     try {
-      if (!downloadsData || Object.keys(downloadsData).length === 0) {
-        downloadOverview = [];
-        return;
-      }
-
-      const entries = Object.entries(downloadsData);
+      const entries = Object.entries(downloadsData ?? {});
       const built: NodeEntry[] = [];
 
       for (const [nodeId, nodeDownloads] of entries) {
@@ -309,6 +320,28 @@
           }
         }
 
+        if (nodeId === localNodeId) {
+          for (const localModel of localModels) {
+            if (modelMap.has(localModel.id)) continue;
+            const sizeMb =
+              localModel.storage_size_megabytes ??
+              localModel.storageSizeMegabytes ??
+              0;
+            const totalBytes = Math.max(0, sizeMb) * 1024 * 1024;
+            modelMap.set(localModel.id, {
+              modelId: localModel.id,
+              prettyName: localModel.name,
+              percentage: 100,
+              downloadedBytes: totalBytes,
+              totalBytes,
+              speed: 0,
+              etaMs: 0,
+              status: "completed",
+              files: [],
+            });
+          }
+        }
+
         let models = Array.from(modelMap.values()).sort(
           (a, b) => b.percentage - a.percentage,
         );
@@ -334,6 +367,35 @@
         });
       }
 
+      if (localNodeId && localModels.length > 0) {
+        const existing = built.find((entry) => entry.nodeId === localNodeId);
+        if (!existing) {
+          const localEntries = localModels.map((model) => {
+            const sizeMb =
+              model.storage_size_megabytes ??
+              model.storageSizeMegabytes ??
+              0;
+            const totalBytes = Math.max(0, sizeMb) * 1024 * 1024;
+            return {
+              modelId: model.id,
+              prettyName: model.name,
+              percentage: 100,
+              downloadedBytes: totalBytes,
+              totalBytes,
+              speed: 0,
+              etaMs: 0,
+              status: "completed" as const,
+              files: [],
+            };
+          });
+          built.push({
+            nodeId: localNodeId,
+            nodeName: getNodeLabel(localNodeId),
+            models: localEntries,
+          });
+        }
+      }
+
       downloadOverview = built;
     } catch (err) {
       console.error("Parse downloads error", err);
@@ -356,7 +418,96 @@
   onMount(() => {
     // Ensure we fetch at least once when visiting downloads directly
     refreshState();
+    void loadLocalModels();
   });
+
+  let ggufInput = $state("");
+  let targetNodeId = $state<string | null>(null);
+  let ggufError = $state<string | null>(null);
+  let ggufStatus = $state<string | null>(null);
+  let ggufSubmitting = $state(false);
+
+  $effect(() => {
+    if (!targetNodeId && nodeIds.length > 0) {
+      targetNodeId = nodeIds[0];
+    }
+  });
+
+  function normalizeGgufInput(raw: string): string | null {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+      try {
+        const url = new URL(trimmed);
+        if (!url.hostname.includes("huggingface.co")) {
+          return null;
+        }
+        const parts = url.pathname.split("/").filter(Boolean);
+        if (parts.length < 3) return null;
+        const namespace = parts[0];
+        const repo = parts[1];
+        const action = parts[2];
+        if (!["resolve", "blob", "raw"].includes(action)) {
+          return null;
+        }
+        const revision = parts[3] ?? "main";
+        const filePath = parts.slice(4).join("/");
+        if (!filePath) return null;
+        const repoRef = `${namespace}/${repo}@${revision}`;
+        return `${repoRef}/${filePath}`;
+      } catch {
+        return null;
+      }
+    }
+    return trimmed;
+  }
+
+  async function submitGgufDownload(): Promise<void> {
+    ggufError = null;
+    ggufStatus = null;
+    if (!targetNodeId) {
+      ggufError = "Select a target node first.";
+      return;
+    }
+    const normalized = normalizeGgufInput(ggufInput);
+    if (!normalized || !normalized.toLowerCase().endsWith(".gguf")) {
+      ggufError =
+        "Enter a Hugging Face GGUF URL or model id ending in .gguf.";
+      return;
+    }
+    ggufSubmitting = true;
+    try {
+      await startModelDownload(targetNodeId, normalized);
+      ggufStatus = "Download started.";
+      ggufInput = "";
+      refreshState();
+    } catch (err) {
+      ggufError = err instanceof Error ? err.message : "Failed to start download.";
+    } finally {
+      ggufSubmitting = false;
+    }
+  }
+
+  async function loadLocalModels(): Promise<void> {
+    try {
+      const [nodeResponse, modelsResponse] = await Promise.all([
+        fetch("/node_id"),
+        fetch("/models"),
+      ]);
+      if (nodeResponse.ok) {
+        localNodeId = (await nodeResponse.text()).trim();
+      }
+      if (modelsResponse.ok) {
+        const payload = (await modelsResponse.json()) as ModelListResponse;
+        const models = Array.isArray(payload.data) ? payload.data : [];
+        localModels = models.filter((model) =>
+          Array.isArray(model.tags) ? model.tags.includes("local") : false,
+        );
+      }
+    } catch (err) {
+      console.error("Failed to load local models:", err);
+    }
+  }
 </script>
 
 <div class="min-h-screen bg-exo-dark-gray text-white">
@@ -388,6 +539,49 @@
             : "n/a"}
         </div>
       </div>
+    </div>
+
+    <div class="rounded border border-exo-medium-gray/30 bg-exo-black/30 p-4 space-y-3">
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="text-xs font-mono uppercase text-exo-light-gray">
+          Add GGUF Download
+        </div>
+        <div class="text-[11px] text-exo-light-gray/70">
+          Paste a Hugging Face link or model id ending in .gguf
+        </div>
+      </div>
+      <div class="grid gap-3 md:grid-cols-[1.5fr_auto_auto]">
+        <input
+          class="w-full rounded border border-exo-medium-gray/40 bg-exo-dark-gray/60 px-3 py-2 text-sm text-white placeholder:text-exo-light-gray/50 focus:outline-none focus:ring-1 focus:ring-exo-yellow/60"
+          placeholder="https://huggingface.co/namespace/repo/resolve/main/model.gguf"
+          bind:value={ggufInput}
+        />
+        <select
+          class="rounded border border-exo-medium-gray/40 bg-exo-dark-gray/60 px-3 py-2 text-sm text-white"
+          bind:value={targetNodeId}
+        >
+          {#if nodeIds.length === 0}
+            <option value={null}>No nodes</option>
+          {:else}
+            {#each nodeIds as nodeId}
+              <option value={nodeId}>{getNodeLabel(nodeId)}</option>
+            {/each}
+          {/if}
+        </select>
+        <button
+          type="button"
+          class="rounded border border-exo-yellow/60 px-4 py-2 text-xs font-mono uppercase tracking-wider text-exo-yellow hover:bg-exo-yellow/10 disabled:opacity-50"
+          onclick={submitGgufDownload}
+          disabled={ggufSubmitting || nodeIds.length === 0}
+        >
+          {ggufSubmitting ? "Starting..." : "Start Download"}
+        </button>
+      </div>
+      {#if ggufError}
+        <div class="text-xs font-mono text-red-400">{ggufError}</div>
+      {:else if ggufStatus}
+        <div class="text-xs font-mono text-green-400">{ggufStatus}</div>
+      {/if}
     </div>
 
     {#if !hasDownloads}

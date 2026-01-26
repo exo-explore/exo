@@ -152,7 +152,7 @@ def _init_distributed_backend(
         all_runners_connecting = all(
             isinstance(
                 all_runners.get(global_runner_id),
-                (RunnerConnecting, RunnerIdle),
+                (RunnerConnecting, RunnerConnected, RunnerIdle),
             )
             for global_runner_id in shard_assignments.runner_to_shard
         )
@@ -173,7 +173,10 @@ def _init_distributed_backend(
 
         # Rank = n-1
         connecting_rank_ready = device_rank == world_size - 1 and all(
-            isinstance(all_runners.get(global_runner_id, None), RunnerConnecting)
+            isinstance(
+                all_runners.get(global_runner_id, None),
+                (RunnerConnecting, RunnerConnected),
+            )
             for global_runner_id in shard_assignments.runner_to_shard
             if global_runner_id != runner_id
         )
@@ -255,7 +258,10 @@ def _ready_to_warmup(
 
         # Rank = 0
         connecting_rank_ready = device_rank == 0 and all(
-            isinstance(all_runners.get(global_runner_id, None), RunnerWarmingUp)
+            isinstance(
+                all_runners.get(global_runner_id, None),
+                (RunnerWarmingUp, RunnerReady),
+            )
             for global_runner_id in shard_assignments.runner_to_shard
             if global_runner_id != runner_id
         )

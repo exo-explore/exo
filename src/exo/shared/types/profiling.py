@@ -71,6 +71,18 @@ class NodeNetworkInfo(CamelCaseModel):
     interfaces: Sequence[NetworkInterfaceInfo] = []
 
 
+class GpuDeviceInfo(CamelCaseModel):
+    name: str
+    uuid: str | None = None
+    memory_total: Memory
+    memory_free: Memory
+    memory_used: Memory
+
+
+class NodeGpuInfo(CamelCaseModel):
+    devices: Sequence[GpuDeviceInfo] = []
+
+
 class NodeThunderboltInfo(CamelCaseModel):
     """Thunderbolt interface identifiers for a node."""
 

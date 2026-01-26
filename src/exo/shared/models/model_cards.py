@@ -1,5 +1,8 @@
 from enum import Enum
 from typing import Annotated
+from pathlib import Path as FsPath
+import struct
+import os
 
 import aiofiles
 import aiofiles.os as aios
@@ -8,6 +11,7 @@ from anyio import Path, open_file
 from huggingface_hub import model_info
 from loguru import logger
 from pydantic import BaseModel, Field, PositiveInt, field_validator
+from enum import Enum
 
 from exo.shared.constants import EXO_ENABLE_IMAGE_MODELS
 from exo.shared.types.common import ModelId
@@ -15,6 +19,18 @@ from exo.shared.types.memory import Memory
 from exo.utils.pydantic_ext import CamelCaseModel
 
 _card_cache: dict[str, "ModelCard"] = {}
+
+
+def _parse_env_gguf_models() -> list[ModelId]:
+    raw = os.getenv("EXO_GGUF_MODELS", "")
+    if not raw:
+        return []
+    parts = [item.strip() for item in raw.replace("\n", ",").split(",")]
+    return [ModelId(part) for part in parts if part]
+
+
+def get_env_gguf_model_ids() -> list[ModelId]:
+    return _parse_env_gguf_models()
 
 
 class ModelTask(str, Enum):
@@ -84,6 +100,269 @@ class ModelCard(CamelCaseModel):
         )
         _card_cache[model_id] = mc
         return mc
+
+    @staticmethod
+    async def from_gguf(model_id: ModelId, gguf_path: FsPath) -> "ModelCard":
+        if (mc := _card_cache.get(str(model_id))) is not None:
+            return mc
+        n_layers, hidden_size = _parse_gguf_header(gguf_path)
+        storage_size = Memory.from_bytes(gguf_path.stat().st_size)
+        mc = ModelCard(
+            model_id=ModelId(model_id),
+            storage_size=storage_size,
+            n_layers=n_layers,
+            hidden_size=hidden_size,
+            supports_tensor=False,
+            tasks=[ModelTask.TextGeneration],
+        )
+        _card_cache[str(model_id)] = mc
+        return mc
+
+
+async def resolve_model_card(model_id: ModelId) -> "ModelCard":
+    if (mc := _card_cache.get(str(model_id))) is not None:
+        return mc
+    raw_model_id = str(model_id)
+    from exo.download.download_utils import (
+        ensure_remote_gguf,
+        parse_remote_gguf_spec,
+        resolve_local_gguf_path,
+    )
+
+    if raw_model_id.lower().endswith(".gguf"):
+        candidate = FsPath(raw_model_id)
+        if candidate.is_absolute():
+            if not candidate.exists():
+                raise ValueError(f"GGUF file not found: {candidate}")
+            try:
+                return await ModelCard.from_gguf(model_id, candidate)
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to parse GGUF metadata for {model_id}: {exc}; using fallback."
+                )
+                size_bytes = candidate.stat().st_size
+                return _build_gguf_fallback_card(model_id, size_bytes)
+
+    local_path = resolve_local_gguf_path(model_id)
+    if local_path is not None and local_path.exists():
+        try:
+            return await ModelCard.from_gguf(model_id, local_path)
+        except Exception as exc:
+            logger.warning(
+                f"Failed to parse GGUF metadata for {model_id}: {exc}; using fallback."
+            )
+            size_bytes = local_path.stat().st_size
+            return _build_gguf_fallback_card(model_id, size_bytes)
+
+    if parse_remote_gguf_spec(model_id):
+        gguf_path = await ensure_remote_gguf(model_id)
+        if gguf_path is None:
+            raise ValueError(f"Invalid GGUF model id: {model_id}")
+        try:
+            return await ModelCard.from_gguf(model_id, gguf_path)
+        except Exception as exc:
+            logger.warning(
+                f"Failed to parse GGUF metadata for {model_id}: {exc}; using fallback."
+            )
+            size_bytes = gguf_path.stat().st_size
+            return _build_gguf_fallback_card(model_id, size_bytes)
+    if raw_model_id.lower().endswith(".gguf"):
+        raise ValueError(f"GGUF file not found: {raw_model_id}")
+    return await ModelCard.from_hf(model_id)
+
+
+async def get_env_gguf_model_cards() -> list["ModelCard"]:
+    cards: list[ModelCard] = []
+    for model_id in get_env_gguf_model_ids():
+        try:
+            cards.append(await resolve_model_card(model_id))
+        except Exception as exc:
+            logger.warning(f"Failed to load GGUF model {model_id}: {exc}")
+    return cards
+
+
+async def resolve_model_card_for_download(model_id: ModelId) -> "ModelCard":
+    from exo.download.download_utils import (
+        file_meta,
+        parse_remote_gguf_spec,
+        resolve_local_gguf_path,
+    )
+
+    if spec := parse_remote_gguf_spec(model_id):
+        local_path = resolve_local_gguf_path(model_id)
+        if local_path is not None and local_path.exists():
+            try:
+                return await ModelCard.from_gguf(model_id, local_path)
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to parse local GGUF metadata for {model_id}: {exc}; using fallback."
+                )
+                size_bytes = local_path.stat().st_size
+                return _build_gguf_fallback_card(model_id, size_bytes)
+        repo_id, revision, file_path = spec
+        size_bytes, _etag = await file_meta(repo_id, revision, file_path)
+        return _build_gguf_fallback_card(model_id, size_bytes)
+
+    return await resolve_model_card(model_id)
+
+
+async def get_local_gguf_model_cards() -> list["ModelCard"]:
+    from exo.shared.constants import EXO_MODELS_DIR
+
+    if not EXO_MODELS_DIR.exists():
+        return []
+
+    cards: list[ModelCard] = []
+    for gguf_path in EXO_MODELS_DIR.rglob("*.gguf"):
+        if not gguf_path.is_file():
+            continue
+        model_id = ModelId(str(gguf_path))
+        try:
+            cards.append(await ModelCard.from_gguf(model_id, gguf_path))
+        except Exception as exc:
+            logger.warning(
+                f"Failed to parse GGUF metadata for {gguf_path}: {exc}; using fallback."
+            )
+            cards.append(_build_gguf_fallback_card(model_id, gguf_path.stat().st_size))
+    return cards
+
+
+def _build_gguf_fallback_card(model_id: ModelId, size_bytes: int) -> "ModelCard":
+    return ModelCard(
+        model_id=ModelId(model_id),
+        storage_size=Memory.from_bytes(size_bytes),
+        n_layers=1,
+        hidden_size=1,
+        supports_tensor=False,
+        tasks=[ModelTask.TextGeneration],
+    )
+
+
+def _parse_gguf_header(path: FsPath) -> tuple[int, int]:
+    with path.open("rb") as f:
+        magic = f.read(4)
+        if magic != b"GGUF":
+            raise ValueError(f"Invalid GGUF header in {path}")
+
+        _version = _read_u32(f)
+        _tensor_count = _read_u64(f)
+        kv_count = _read_u64(f)
+
+        n_layers: int | None = None
+        hidden_size: int | None = None
+
+        for _ in range(kv_count):
+            key = _read_string(f)
+            value_type = _read_u32(f)
+            value = _read_gguf_value(f, value_type)
+            if key in ("llama.block_count", "llama.n_layer", "llama.n_layers") or key.endswith(
+                (".block_count", ".n_layer", ".n_layers")
+            ):
+                if isinstance(value, int):
+                    n_layers = value
+            elif key == "llama.embedding_length" or key.endswith(".embedding_length"):
+                if isinstance(value, int):
+                    hidden_size = value
+
+        if n_layers is None or hidden_size is None:
+            raise ValueError(
+                f"Missing GGUF metadata in {path} (n_layers={n_layers}, hidden_size={hidden_size})"
+            )
+        return n_layers, hidden_size
+
+
+def _read_exact(handle, size: int) -> bytes:
+    data = handle.read(size)
+    if len(data) != size:
+        raise ValueError("Unexpected end of GGUF file")
+    return data
+
+
+def _read_u32(handle) -> int:
+    return struct.unpack("<I", _read_exact(handle, 4))[0]
+
+
+def _read_u64(handle) -> int:
+    return struct.unpack("<Q", _read_exact(handle, 8))[0]
+
+
+def _read_i32(handle) -> int:
+    return struct.unpack("<i", _read_exact(handle, 4))[0]
+
+
+def _read_i64(handle) -> int:
+    return struct.unpack("<q", _read_exact(handle, 8))[0]
+
+
+def _read_string(handle) -> str:
+    raw = _read_exact(handle, 8)
+    length_u64 = struct.unpack("<Q", raw)[0]
+    pos = handle.tell()
+    end = handle.seek(0, 2)
+    handle.seek(pos)
+    remaining = end - pos
+    if length_u64 > remaining:
+        length_u32 = struct.unpack("<I", raw[:4])[0]
+        handle.seek(-4, 1)
+        length = length_u32
+    else:
+        length = length_u64
+    return _read_exact(handle, length).decode("utf-8", errors="replace")
+
+
+def _read_gguf_value(handle, value_type: int):
+    if value_type == 0:
+        return _read_exact(handle, 1)[0]
+    if value_type == 1:
+        return struct.unpack("<b", _read_exact(handle, 1))[0]
+    if value_type == 2:
+        return struct.unpack("<H", _read_exact(handle, 2))[0]
+    if value_type == 3:
+        return struct.unpack("<h", _read_exact(handle, 2))[0]
+    if value_type == 4:
+        return _read_u32(handle)
+    if value_type == 5:
+        return _read_i32(handle)
+    if value_type == 6:
+        return struct.unpack("<f", _read_exact(handle, 4))[0]
+    if value_type == 7:
+        return bool(_read_exact(handle, 1)[0])
+    if value_type == 8:
+        return _read_string(handle)
+    if value_type == 9:
+        elem_type = _read_u32(handle)
+        count = _read_u64(handle)
+        _skip_gguf_array(handle, elem_type, count)
+        return None
+    if value_type == 10:
+        return _read_u64(handle)
+    if value_type == 11:
+        return _read_i64(handle)
+    if value_type == 12:
+        return struct.unpack("<d", _read_exact(handle, 8))[0]
+    raise ValueError(f"Unsupported GGUF value type: {value_type}")
+
+
+def _skip_gguf_array(handle, elem_type: int, count: int) -> None:
+    if count == 0:
+        return
+    if elem_type in (0, 1, 7):
+        handle.seek(count, 1)
+        return
+    if elem_type in (2, 3):
+        handle.seek(count * 2, 1)
+        return
+    if elem_type in (4, 5, 6):
+        handle.seek(count * 4, 1)
+        return
+    if elem_type in (10, 11, 12):
+        handle.seek(count * 8, 1)
+        return
+    if elem_type == 8:
+        for _ in range(count):
+            _ = _read_string(handle)
+        return
+    raise ValueError(f"Unsupported GGUF array element type: {elem_type}")
 
 
 MODEL_CARDS: dict[str, ModelCard] = {

@@ -148,6 +148,7 @@
   const isDownloading = $derived(downloadStatus?.isDownloading ?? false);
   const progress = $derived(downloadStatus?.progress);
   const percentage = $derived(progress?.percentage ?? 0);
+  const hfUrl = $derived(buildHuggingFaceUrl(huggingFaceModelId));
   let expandedNodes = $state<Set<string>>(new Set());
 
   function toggleNodeDetails(nodeId: string): void {
@@ -180,6 +181,24 @@
   const clampPercent = (value: number): number =>
     Math.min(100, Math.max(0, value));
   const huggingFaceModelId = $derived(modelIdOverride ?? model.id);
+  const isGgufModel = $derived(
+    huggingFaceModelId?.toLowerCase().includes(".gguf") ?? false,
+  );
+
+  function buildHuggingFaceUrl(modelId: string | null): string | null {
+    if (!modelId) return null;
+    if (modelId.includes(".gguf") && modelId.includes("@")) {
+      const parts = modelId.split("/");
+      if (parts.length < 3) return null;
+      const namespace = parts[0];
+      const repoWithRev = parts[1];
+      const filePath = parts.slice(2).join("/");
+      const [repo, rev] = repoWithRev.split("@");
+      if (!repo || !rev || !filePath) return null;
+      return `https://huggingface.co/${namespace}/${repo}/resolve/${rev}/${filePath}`;
+    }
+    return `https://huggingface.co/${modelId}`;
+  }
 
   // Get node list in the same order as the topology graph (insertion order of
   // topology nodes), while still ensuring preview nodes render even if the
@@ -496,10 +515,10 @@
           >
             {model.name || model.id}
           </div>
-          {#if huggingFaceModelId}
+          {#if hfUrl}
             <a
               class="shrink-0 text-white/60 hover:text-exo-yellow transition-colors"
-              href={`https://huggingface.co/${huggingFaceModelId}`}
+              href={hfUrl}
               target="_blank"
               rel="noreferrer noopener"
               aria-label="View model on Hugging Face"
@@ -534,6 +553,13 @@
                 </span>
               {/each}
             </div>
+          {/if}
+          {#if isGgufModel}
+            <span
+              class="px-1.5 py-0.5 text-xs font-mono tracking-wider uppercase rounded bg-sky-500/15 text-sky-300 border border-sky-500/30"
+            >
+              GGUF
+            </span>
           {/if}
         </div>
         {#if model.name && model.name !== model.id}
@@ -573,6 +599,30 @@
             : runtime}
       </span>
     </div>
+
+    {#if isDownloading && progress}
+      <div class="mb-3 space-y-1">
+        <div class="flex justify-between text-[11px] font-mono">
+          <span class="text-blue-400">{progress.percentage.toFixed(1)}%</span>
+          <span class="text-exo-light-gray"
+            >{formatBytes(progress.downloadedBytes)}/{formatBytes(
+              progress.totalBytes,
+            )}</span
+          >
+        </div>
+        <div class="relative h-1.5 bg-exo-black/60 rounded-sm overflow-hidden">
+          <div
+            class="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300"
+            style="width: {progress.percentage}%"
+          ></div>
+        </div>
+        <div class="flex justify-between text-[10px] font-mono text-exo-light-gray">
+          <span>{formatSpeed(progress.speed)}</span>
+          <span>ETA {formatEta(progress.etaMs)}</span>
+          <span>{progress.completedFiles}/{progress.totalFiles} files</span>
+        </div>
+      </div>
+    {/if}
 
     <!-- Mini Topology Preview -->
     {#if placementPreview().nodes.length > 0}

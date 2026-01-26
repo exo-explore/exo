@@ -1,6 +1,12 @@
 # gitingest
 digest.txt
 
+# local binaries (llama.cpp Windows release artifacts)
+# Download separately (do NOT commit these) from:
+# https://github.com/ggml-org/llama.cpp/releases/tag/b7836
+/*.dll
+/*.exe
+
 # python
 **/__pycache__
 
