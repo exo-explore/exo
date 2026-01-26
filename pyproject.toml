@@ -3,7 +3,7 @@ name = "exo"
 version = "0.3.0"
 description = "Exo"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "aiofiles>=24.1.0",
     "aiohttp>=3.12.14",
@@ -19,14 +19,17 @@ dependencies = [
     "anyio==4.11.0",
     "mlx==0.30.3; sys_platform == 'darwin'",
     "mlx[cpu]==0.30.3; sys_platform == 'linux'",
-    "mlx-lm @ git+https://github.com/AlexCheema/mlx-lm.git@fix-transformers-5.0.0rc2",
+    "mlx-lm @ git+https://github.com/AlexCheema/mlx-lm.git@fix-transformers-5.0.0rc2; sys_platform != 'win32'",
+    "torch>=2.2.0; sys_platform == 'win32'",
+    "transformers>=4.45.0; sys_platform == 'win32'",
     "tiktoken>=0.12.0", # required for kimi k2 tokenizer
     "hypercorn>=0.18.0",
     "openai-harmony>=0.0.8",
     "httpx>=0.28.1",
     "tomlkit>=0.14.0",
-    "pillow>=11.0,<12.0", # compatibility with mflux
-    "mflux==0.15.4",
+    "pillow>=11.0,<12.0; sys_platform == 'win32' or python_full_version >= '3.13'", # compatibility with mflux
+    "pillow>=10.4.0,<11.0; sys_platform != 'win32' and python_full_version < '3.13'", # compatibility with mflux
+    "mflux==0.15.4; sys_platform != 'win32'",
     "python-multipart>=0.0.21",
 ]
 
@@ -89,8 +92,8 @@ reportInvalidCast = "error"
 reportUnnecessaryCast = "error"
 reportUnnecessaryTypeIgnoreComment = "error"
 
-pythonVersion = "3.13"
-pythonPlatform = "Darwin"
+pythonVersion = "3.12"
+pythonPlatform = "All"
 
 exclude = ["**/.venv", "**/venv", "**/__pycache__", "**/exo_scripts", "**/.direnv", "**/rust", "**/.github"]
 stubPath = ".mlx_typings"
@@ -108,6 +111,7 @@ prerelease = "allow"
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
+    "sys_platform == 'win32'",
 ]
 
 ###

@@ -163,6 +163,32 @@ This starts the exo dashboard and API at http://localhost:52415/
 
 **Important note for Linux users:** Currently, exo runs on CPU on Linux. GPU support for Linux platforms is under development. If you'd like to see support for your specific Linux hardware, please [search for existing feature requests](https://github.com/exo-explore/exo/issues) or create a new one.
 
+### Run from Source (Windows + NVIDIA)
+
+**Prerequisites:**
+
+- [uv](https://github.com/astral-sh/uv) (for Python dependency management)
+- [node](https://github.com/nodejs/node) (for building the dashboard) - version 18 or higher
+- [rust](https://github.com/rust-lang/rustup) (to build Rust bindings, nightly for now)
+- NVIDIA driver + CUDA-enabled PyTorch
+
+Install a CUDA build of PyTorch into the uv environment (example for CUDA 12.1):
+
+```bash
+uv pip install torch --index-url https://download.pytorch.org/whl/cu121
+```
+
+Then build the dashboard and run:
+
+```bash
+cd exo/dashboard && npm install && npm run build && cd ..
+uv run exo
+```
+
+**Notes:**
+- The Windows CUDA runner currently supports text generation only (no image tasks).
+- Use standard Hugging Face model IDs; MLX-specific repos may not be compatible with CUDA runners.
+
 **Configuration Options:**
 
 - `--no-worker`: Run exo without the worker component. Useful for coordinator-only nodes that handle networking and orchestration but don't execute inference tasks. This is helpful for machines without sufficient GPU resources but with good network connectivity.
@@ -170,6 +196,17 @@ This starts the exo dashboard and API at http://localhost:52415/
   ```bash
   uv run exo --no-worker
   ```
+
+- `EXO_GGUF_MODELS`: Comma-separated list of GGUF files hosted on Hugging Face to expose in the model list. Each entry uses the format `namespace/repo[/subdir]/file.gguf` and can optionally include a revision with `@rev` after the repo name.
+
+  Example:
+  ```bash
+  set EXO_GGUF_MODELS=TheBloke/Mistral-7B-Instruct-v0.2-GGUF/mistral-7b-instruct-v0.2.Q4_K_M.gguf
+  # or with revision
+  set EXO_GGUF_MODELS=TheBloke/Mistral-7B-Instruct-v0.2-GGUF@main/mistral-7b-instruct-v0.2.Q4_K_M.gguf
+  ```
+
+  When `/models` is queried, exo will download the GGUF file (if needed) to read metadata.
 
 **File Locations (Linux):**
 
@@ -400,7 +437,7 @@ The tool outputs performance metrics including prompt tokens per second (prompt_
 
 ## Hardware Accelerator Support
 
-On macOS, exo uses the GPU. On Linux, exo currently runs on CPU. We are working on extending hardware accelerator support. If you'd like support for a new hardware platform, please [search for an existing feature request](https://github.com/exo-explore/exo/issues) and add a thumbs up so we know what hardware is important to the community.
+On macOS, exo uses the GPU. On Windows, exo supports NVIDIA GPUs with CUDA for text generation. On Linux, exo currently runs on CPU. We are working on extending hardware accelerator support. If you'd like support for a new hardware platform, please [search for an existing feature request](https://github.com/exo-explore/exo/issues) and add a thumbs up so we know what hardware is important to the community.
 
 ---
 

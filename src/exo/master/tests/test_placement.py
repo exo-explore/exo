@@ -131,7 +131,7 @@ def test_get_instance_placements_create_instance(
     topology.add_connection(conn_b_a)
 
     # act
-    placements = place_instance(cic, topology, {}, node_memory, node_network)
+    placements = place_instance(cic, topology, {}, node_memory, {}, node_network)
 
     # assert
     assert len(placements) == 1
@@ -173,7 +173,7 @@ def test_get_instance_placements_one_node_exact_fit() -> None:
             tasks=[ModelTask.TextGeneration],
         ),
     )
-    placements = place_instance(cic, topology, {}, node_memory, node_network)
+    placements = place_instance(cic, topology, {}, node_memory, {}, node_network)
 
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
@@ -200,7 +200,7 @@ def test_get_instance_placements_one_node_fits_with_extra_memory() -> None:
             tasks=[ModelTask.TextGeneration],
         ),
     )
-    placements = place_instance(cic, topology, {}, node_memory, node_network)
+    placements = place_instance(cic, topology, {}, node_memory, {}, node_network)
 
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
@@ -229,7 +229,7 @@ def test_get_instance_placements_one_node_not_fit() -> None:
     )
 
     with pytest.raises(ValueError, match="No cycles found with sufficient memory"):
-        place_instance(cic, topology, {}, node_memory, node_network)
+        place_instance(cic, topology, {}, node_memory, {}, node_network)
 
 
 def test_get_transition_events_no_change(instance: Instance):
@@ -328,7 +328,7 @@ def test_placement_selects_leaf_nodes(
     cic = place_instance_command(model_card=model_card)
 
     # act
-    placements = place_instance(cic, topology, {}, node_memory, node_network)
+    placements = place_instance(cic, topology, {}, node_memory, {}, node_network)
 
     # assert
     assert len(placements) == 1
@@ -416,7 +416,7 @@ def test_tensor_rdma_backend_connectivity_matrix(
     )
 
     # act
-    placements = place_instance(cic, topology, {}, node_memory, node_network)
+    placements = place_instance(cic, topology, {}, node_memory, {}, node_network)
 
     # assert
     assert len(placements) == 1

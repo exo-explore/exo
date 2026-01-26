@@ -164,6 +164,7 @@ class RunnerSupervisor:
                                 RunnerLoading,
                                 RunnerConnecting,
                                 RunnerShuttingDown,
+                                RunnerFailed,
                             ),
                         )
                         self.completed.add(event.task_id)

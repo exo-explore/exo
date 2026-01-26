@@ -14,6 +14,8 @@ class InstanceId(Id):
 class InstanceMeta(str, Enum):
     MlxRing = "MlxRing"
     MlxJaccl = "MlxJaccl"
+    LlamaRpc = "LlamaRpc"
+    CudaSingle = "CudaSingle"
 
 
 class BaseInstance(TaggedModel):
@@ -34,8 +36,19 @@ class MlxJacclInstance(BaseInstance):
     jaccl_coordinators: dict[NodeId, str]
 
 
+class LlamaRpcInstance(BaseInstance):
+    primary_node_id: NodeId
+    rpc_hosts_by_node: dict[NodeId, Host]
+    http_port: int
+    rpc_port: int
+
+
+class CudaSingleInstance(BaseInstance):
+    pass
+
+
 # TODO: Single node instance
-Instance = MlxRingInstance | MlxJacclInstance
+Instance = MlxRingInstance | MlxJacclInstance | LlamaRpcInstance | CudaSingleInstance
 
 
 class BoundInstance(CamelCaseModel):

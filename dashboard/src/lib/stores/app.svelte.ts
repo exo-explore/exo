@@ -31,6 +31,14 @@ export interface NodeInfo {
     chip?: string;
     memory?: number;
   };
+  gpu_info?: {
+    devices: Array<{
+      name?: string;
+      memory_total?: number;
+      memory_used?: number;
+      memory_free?: number;
+    }>;
+  };
   network_interfaces?: Array<{
     name?: string;
     addresses?: string[];
@@ -91,6 +99,18 @@ interface RawSystemPerformanceProfile {
   sysPower?: number;
   pcpuUsage?: number;
   ecpuUsage?: number;
+}
+
+interface RawGpuDeviceInfo {
+  name?: string;
+  uuid?: string;
+  memoryTotal?: { inBytes: number };
+  memoryFree?: { inBytes: number };
+  memoryUsed?: { inBytes: number };
+}
+
+interface RawNodeGpuInfo {
+  devices?: RawGpuDeviceInfo[];
 }
 
 interface RawNetworkInterfaceInfo {
@@ -188,6 +208,7 @@ interface RawStateResponse {
   // New granular node state fields
   nodeIdentities?: Record<string, RawNodeIdentity>;
   nodeMemory?: Record<string, RawMemoryUsage>;
+  nodeGpus?: Record<string, RawNodeGpuInfo>;
   nodeSystem?: Record<string, RawSystemPerformanceProfile>;
   nodeNetwork?: Record<string, RawNodeNetworkInfo>;
   // Thunderbolt bridge status per node
@@ -276,6 +297,7 @@ const DEFAULT_IMAGE_PARAMS: ImageGenerationParams = {
 interface GranularNodeState {
   nodeIdentities?: Record<string, RawNodeIdentity>;
   nodeMemory?: Record<string, RawMemoryUsage>;
+  nodeGpus?: Record<string, RawNodeGpuInfo>;
   nodeSystem?: Record<string, RawSystemPerformanceProfile>;
   nodeNetwork?: Record<string, RawNodeNetworkInfo>;
 }
@@ -327,6 +349,7 @@ function transformTopology(
     // Get data from granular state mappings
     const identity = granularState.nodeIdentities?.[nodeId];
     const memory = granularState.nodeMemory?.[nodeId];
+    const gpus = granularState.nodeGpus?.[nodeId];
     const system = granularState.nodeSystem?.[nodeId];
     const network = granularState.nodeNetwork?.[nodeId];
 
@@ -344,12 +367,21 @@ function transformTopology(
       }
     }
 
+    const gpuDevices =
+      gpus?.devices?.map((device) => ({
+        name: device.name,
+        memory_total: device.memoryTotal?.inBytes,
+        memory_used: device.memoryUsed?.inBytes,
+        memory_free: device.memoryFree?.inBytes,
+      })) ?? [];
+
     nodes[nodeId] = {
       system_info: {
         model_id: identity?.modelId ?? "Unknown",
         chip: identity?.chipId,
         memory: ramTotal,
       },
+      gpu_info: gpuDevices.length ? { devices: gpuDevices } : undefined,
       network_interfaces: networkInterfaces,
       ip_to_interface: ipToInterface,
       macmon_info: {
@@ -773,6 +805,8 @@ class AppStore {
       instanceTag === "MlxJacclInstance"
     )
       instanceType = "MLX RDMA";
+    else if (instanceTag === "LlamaRpcInstance")
+      instanceType = "Llama RPC";
 
     let sharding: string | null = null;
     const inst = instance as {
@@ -1121,6 +1155,7 @@ class AppStore {
         this.topologyData = transformTopology(data.topology, {
           nodeIdentities: data.nodeIdentities,
           nodeMemory: data.nodeMemory,
+          nodeGpus: data.nodeGpus,
           nodeSystem: data.nodeSystem,
           nodeNetwork: data.nodeNetwork,
         });
@@ -1470,6 +1505,20 @@ class AppStore {
         this.saveConversationsToStorage();
         return;
       }
+      if (!(await this.ensureInstanceForModel(modelToUse))) {
+        this.updateConversationMessage(
+          targetConversationId,
+          assistantMessage.id,
+          (msg) => {
+            msg.content =
+              "Error: No running instance for the selected model. Launch an instance from the home page first.";
+          },
+        );
+        this.syncActiveMessagesIfNeeded(targetConversationId);
+        this.isLoading = false;
+        this.saveConversationsToStorage();
+        return;
+      }
 
       const response = await fetch("/v1/chat/completions", {
         method: "POST",
@@ -1704,6 +1753,12 @@ class AppStore {
   private getModelForRequest(modelId?: string): string | null {
     if (modelId) return modelId;
     if (this.selectedChatModel) return this.selectedChatModel;
+    if (this.activeConversationId) {
+      const conversation = this.conversations.find(
+        (c) => c.id === this.activeConversationId,
+      );
+      if (conversation?.modelId) return conversation.modelId;
+    }
 
     // Try to get model from first running instance
     for (const [, instanceWrapper] of Object.entries(this.instances)) {
@@ -1720,6 +1775,64 @@ class AppStore {
       }
     }
     return null;
+  }
+
+  private isGgufModelId(modelId: string): boolean {
+    return modelId.toLowerCase().endsWith(".gguf");
+  }
+
+  private hasInstanceForModel(modelId: string): boolean {
+    for (const [, instanceWrapper] of Object.entries(this.instances)) {
+      const candidate = this.extractInstanceModelId(instanceWrapper);
+      if (candidate === modelId) return true;
+    }
+    return false;
+  }
+
+  private async waitForInstance(
+    modelId: string,
+    timeoutMs = 15000,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (this.hasInstanceForModel(modelId)) return true;
+      await this.fetchState();
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    }
+    return this.hasInstanceForModel(modelId);
+  }
+
+  private async launchGgufInstance(modelId: string): Promise<boolean> {
+    const placementResponse = await fetch(
+      `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=Pipeline&instance_meta=LlamaRpc&min_nodes=1`,
+    );
+    if (!placementResponse.ok) {
+      const errorText = await placementResponse.text();
+      console.error("Failed to get GGUF placement:", errorText);
+      return false;
+    }
+
+    const instanceData = await placementResponse.json();
+    const response = await fetch("/instance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instance: instanceData }),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Failed to launch GGUF instance:", errorText);
+      return false;
+    }
+    this.setSelectedModel(modelId);
+    return true;
+  }
+
+  private async ensureInstanceForModel(modelId: string): Promise<boolean> {
+    if (this.hasInstanceForModel(modelId)) return true;
+    if (!this.isGgufModelId(modelId)) return false;
+    const launched = await this.launchGgufInstance(modelId);
+    if (!launched) return false;
+    return await this.waitForInstance(modelId);
   }
 
   /**
@@ -1858,6 +1971,11 @@ class AppStore {
       if (!modelToUse) {
         throw new Error(
           "No model selected and no running instances available. Please launch an instance first.",
+        );
+      }
+      if (!(await this.ensureInstanceForModel(modelToUse))) {
+        throw new Error(
+          "No running instance for the selected model. Launch an instance from the home page first.",
         );
       }
 
@@ -2470,6 +2588,31 @@ class AppStore {
   }
 
   /**
+   * Start a download on a specific node for a model id.
+   */
+  async startModelDownload(nodeId: string, modelId: string): Promise<void> {
+    try {
+      const response = await fetch("/download/start_model", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetNodeId: nodeId,
+          modelId,
+        }),
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to start model download: ${response.status} - ${errorText}`,
+        );
+      }
+    } catch (error) {
+      console.error("Error starting model download:", error);
+      throw error;
+    }
+  }
+
+  /**
    * Delete a downloaded model from a specific node
    */
   async deleteDownload(nodeId: string, modelId: string): Promise<void> {
@@ -2600,5 +2743,7 @@ export const resetImageGenerationParams = () =>
 // Download actions
 export const startDownload = (nodeId: string, shardMetadata: object) =>
   appStore.startDownload(nodeId, shardMetadata);
+export const startModelDownload = (nodeId: string, modelId: string) =>
+  appStore.startModelDownload(nodeId, modelId);
 export const deleteDownload = (nodeId: string, modelId: string) =>
   appStore.deleteDownload(nodeId, modelId);

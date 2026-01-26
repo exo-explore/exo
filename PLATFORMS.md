@@ -9,6 +9,8 @@ Apple Silicon MacOS
 
 ## Tier 2 support - checked occasionally, should run without crashing
 
+Windows 11 (control plane + networking)
+
 
 ## Tier 3 support - minimal support and testing, but no theoretical reason it shouldnt work
 

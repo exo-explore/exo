@@ -513,6 +513,24 @@
       let ramUsed = 0;
       let gpuUsagePercent = 0;
       let sysPower: number | null = null;
+      const gpuDevices = node.gpu_info?.devices ?? [];
+      const gpuCount = gpuDevices.length;
+      const gpuMemoryTotal = gpuDevices.reduce(
+        (sum, device) => sum + (device.memory_total ?? 0),
+        0,
+      );
+      const gpuMemoryUsed = gpuDevices.reduce((sum, device) => {
+        const used =
+          device.memory_used ??
+          (device.memory_total ?? 0) - (device.memory_free ?? 0);
+        return sum + Math.max(used, 0);
+      }, 0);
+      const gpuName = gpuDevices[0]?.name;
+      const gpuLabel =
+        gpuCount > 1
+          ? `${gpuName ?? "GPU"} x${gpuCount}`
+          : gpuName ?? "GPU";
+      const hasGpuInfo = gpuCount > 0 || gpuMemoryTotal > 0;
 
       if (macmon) {
         if (macmon.memory && macmon.memory.ram_total > 0) {
@@ -1043,6 +1061,38 @@
           .append("tspan")
           .attr("fill", "rgba(179,179,179,0.7)")
           .text(` (${ramUsagePercent.toFixed(0)}%)`);
+
+        if (hasGpuInfo) {
+          const gpuInfoY = infoY + fontSize * 1.25;
+          nodeG
+            .append("text")
+            .attr("x", nodeInfo.x)
+            .attr("y", gpuInfoY)
+            .attr("text-anchor", "middle")
+            .attr("fill", "rgba(255,215,0,0.8)")
+            .attr("font-size", fontSize * 0.8)
+            .attr("font-family", "SF Mono, Monaco, monospace")
+            .text(gpuLabel);
+
+          if (gpuMemoryTotal > 0) {
+            const vramY = gpuInfoY + fontSize * 1.1;
+            const vramText = nodeG
+              .append("text")
+              .attr("x", nodeInfo.x)
+              .attr("y", vramY)
+              .attr("text-anchor", "middle")
+              .attr("font-size", fontSize * 0.75)
+              .attr("font-family", "SF Mono, Monaco, monospace");
+            vramText
+              .append("tspan")
+              .attr("fill", "rgba(255,215,0,0.9)")
+              .text(`${formatBytes(gpuMemoryUsed)}`);
+            vramText
+              .append("tspan")
+              .attr("fill", "rgba(179,179,179,0.9)")
+              .text(`/${formatBytes(gpuMemoryTotal)}`);
+          }
+        }
       } else if (showCompactLabels) {
         // COMPACT MODE: Just name and basic info (4+ nodes)
         const fontSize = Math.max(7, nodeRadius * 0.11);
@@ -1065,6 +1115,15 @@
 
         // Single line of key stats
         const statsY = nameY + 9;
+        const statsParts = [`${ramUsagePercent.toFixed(0)}%`];
+        if (!isNaN(gpuTemp)) {
+          statsParts.push(`${gpuTemp.toFixed(0)}°C`);
+        }
+        if (gpuMemoryTotal > 0) {
+          statsParts.push(
+            `VRAM ${formatBytes(gpuMemoryUsed, 0)}/${formatBytes(gpuMemoryTotal, 0)}`,
+          );
+        }
         nodeG
           .append("text")
           .attr("x", nodeInfo.x)
@@ -1073,9 +1132,7 @@
           .attr("fill", "rgba(255,215,0,0.7)")
           .attr("font-size", fontSize * 0.85)
           .attr("font-family", "SF Mono, Monaco, monospace")
-          .text(
-            `${ramUsagePercent.toFixed(0)}%${!isNaN(gpuTemp) ? " " + gpuTemp.toFixed(0) + "°C" : ""}`,
-          );
+          .text(statsParts.join(" "));
       } else {
         // MINIMIZED MODE: Show name above and memory info below (like main topology)
         const fontSize = 8;
@@ -1118,16 +1175,52 @@
           .append("tspan")
           .attr("fill", "rgba(179,179,179,0.7)")
           .text(` (${ramUsagePercent.toFixed(0)}%)`);
+
+        if (gpuMemoryTotal > 0) {
+          const vramY = infoY + 10;
+          const vramLabel = `VRAM${gpuCount > 1 ? ` x${gpuCount}` : ""} ${formatBytes(gpuMemoryUsed, 0)}/${formatBytes(gpuMemoryTotal, 0)}`;
+          nodeG
+            .append("text")
+            .attr("x", nodeInfo.x)
+            .attr("y", vramY)
+            .attr("text-anchor", "middle")
+            .attr("fill", "rgba(255,215,0,0.75)")
+            .attr("font-size", fontSize * 0.75)
+            .attr("font-family", "SF Mono, Monaco, monospace")
+            .text(vramLabel);
+        } else if (hasGpuInfo) {
+          const gpuY = infoY + 10;
+          nodeG
+            .append("text")
+            .attr("x", nodeInfo.x)
+            .attr("y", gpuY)
+            .attr("text-anchor", "middle")
+            .attr("fill", "rgba(255,215,0,0.75)")
+            .attr("font-size", fontSize * 0.75)
+            .attr("font-family", "SF Mono, Monaco, monospace")
+            .text(gpuLabel);
+        }
       }
 
       // Debug mode: Show TB bridge status
       if (debugEnabled) {
         const tbStatus = tbBridgeData[nodeInfo.id];
         if (tbStatus) {
+          const gpuOffset =
+            showFullLabels && hasGpuInfo
+              ? gpuMemoryTotal > 0
+                ? 22
+                : 12
+              : !showCompactLabels && hasGpuInfo
+                ? gpuMemoryTotal > 0
+                  ? 18
+                  : 10
+                : 0;
           const tbY =
             nodeInfo.y +
             iconBaseHeight / 2 +
-            (showFullLabels ? 32 : showCompactLabels ? 26 : 22);
+            (showFullLabels ? 32 : showCompactLabels ? 26 : 22) +
+            gpuOffset;
           const tbFontSize = showFullLabels ? 9 : 7;
           const tbColor = tbStatus.enabled
             ? "rgba(234,179,8,0.9)"

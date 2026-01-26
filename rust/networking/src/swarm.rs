@@ -2,6 +2,8 @@ use crate::alias;
 use crate::swarm::transport::tcp_transport;
 pub use behaviour::{Behaviour, BehaviourEvent};
 use libp2p::{SwarmBuilder, identity};
+use std::env;
+use std::net::IpAddr;
 
 pub type Swarm = libp2p::Swarm<Behaviour>;
 
@@ -23,8 +25,24 @@ pub fn create_swarm(keypair: identity::Keypair) -> alias::AnyResult<Swarm> {
         .with_behaviour(Behaviour::new)?
         .build();
 
-    // Listen on all interfaces and whatever port the OS assigns
-    swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+    let listen_addr = if let Ok(multiaddr) = env::var("EXO_LIBP2P_LISTEN_MULTIADDR")
+    {
+        multiaddr
+    } else {
+        let listen_ip = env::var("EXO_LIBP2P_LISTEN_ADDR")
+            .unwrap_or_else(|_| "0.0.0.0".to_string());
+        let listen_port = env::var("EXO_LIBP2P_LISTEN_PORT")
+            .unwrap_or_else(|_| "0".to_string());
+        let ip_addr: IpAddr = listen_ip.parse()?;
+        let port: u16 = listen_port.parse()?;
+        match ip_addr {
+            IpAddr::V4(_) => format!("/ip4/{listen_ip}/tcp/{port}"),
+            IpAddr::V6(_) => format!("/ip6/{listen_ip}/tcp/{port}"),
+        }
+    };
+
+    // Listen on configured interface and port (or any port if 0)
+    swarm.listen_on(listen_addr.parse()?)?;
     Ok(swarm)
 }
 

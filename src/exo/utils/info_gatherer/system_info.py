@@ -5,6 +5,8 @@ from subprocess import CalledProcessError
 import psutil
 from anyio import run_process
 
+from exo.shared.types.memory import Memory
+from exo.shared.types.profiling import GpuDeviceInfo, NodeGpuInfo
 from exo.shared.types.profiling import InterfaceType, NetworkInterfaceInfo
 
 
@@ -119,3 +121,84 @@ async def get_model_and_chip() -> tuple[str, str]:
     chip = chip_line.split(": ")[1] if chip_line else "Unknown Chip"
 
     return (model, chip)
+
+
+async def _get_gpu_devices_from_pynvml() -> list[GpuDeviceInfo] | None:
+    try:
+        import pynvml  # type: ignore[import-not-found]
+    except Exception:
+        return None
+
+    try:
+        pynvml.nvmlInit()
+    except Exception:
+        return None
+
+    devices: list[GpuDeviceInfo] = []
+    try:
+        device_count = pynvml.nvmlDeviceGetCount()
+        for index in range(device_count):
+            handle = pynvml.nvmlDeviceGetHandleByIndex(index)
+            name = pynvml.nvmlDeviceGetName(handle)
+            if isinstance(name, bytes):
+                name = name.decode("utf-8", errors="replace")
+            uuid = pynvml.nvmlDeviceGetUUID(handle)
+            mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            devices.append(
+                GpuDeviceInfo(
+                    name=str(name),
+                    uuid=str(uuid),
+                    memory_total=Memory.from_bytes(int(mem.total)),
+                    memory_free=Memory.from_bytes(int(mem.free)),
+                    memory_used=Memory.from_bytes(int(mem.used)),
+                )
+            )
+    finally:
+        try:
+            pynvml.nvmlShutdown()
+        except Exception:
+            pass
+
+    return devices
+
+
+async def _get_gpu_devices_from_nvidia_smi() -> list[GpuDeviceInfo]:
+    result = await run_process(
+        [
+            "nvidia-smi",
+            "--query-gpu=name,uuid,memory.total,memory.free,memory.used",
+            "--format=csv,noheader,nounits",
+        ],
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+
+    devices: list[GpuDeviceInfo] = []
+    for line in result.stdout.decode("utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) < 5:
+            continue
+        name, uuid, total_mb, free_mb, used_mb = parts[:5]
+        try:
+            devices.append(
+                GpuDeviceInfo(
+                    name=name,
+                    uuid=uuid or None,
+                    memory_total=Memory.from_mb(float(total_mb)),
+                    memory_free=Memory.from_mb(float(free_mb)),
+                    memory_used=Memory.from_mb(float(used_mb)),
+                )
+            )
+        except ValueError:
+            continue
+    return devices
+
+
+async def get_gpu_info() -> NodeGpuInfo:
+    devices = await _get_gpu_devices_from_pynvml()
+    if devices is None:
+        devices = await _get_gpu_devices_from_nvidia_smi()
+    return NodeGpuInfo(devices=devices)

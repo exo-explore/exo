@@ -1,7 +1,9 @@
 import base64
 import contextlib
 import json
+import sys
 import time
+from pathlib import Path
 from collections.abc import AsyncGenerator
 from http import HTTPStatus
 from typing import Annotated, Literal, cast
@@ -21,6 +23,7 @@ from loguru import logger
 
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
+from exo.master.placement_utils import get_available_memory
 from exo.shared.apply import apply
 from exo.shared.constants import (
     EXO_IMAGE_CACHE_DIR,
@@ -32,6 +35,11 @@ from exo.shared.models.model_cards import (
     MODEL_CARDS,
     ModelCard,
     ModelId,
+    get_env_gguf_model_cards,
+    get_env_gguf_model_ids,
+    get_local_gguf_model_cards,
+    resolve_model_card,
+    resolve_model_card_for_download,
 )
 from exo.shared.types.api import (
     AdvancedImageParams,
@@ -64,6 +72,7 @@ from exo.shared.types.api import (
     PlacementPreviewResponse,
     StartDownloadParams,
     StartDownloadResponse,
+    StartModelDownloadParams,
     StreamingChoiceResponse,
     ToolCall,
 )
@@ -101,7 +110,7 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
-from exo.shared.types.worker.shards import Sharding
+from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.dashboard_path import find_dashboard
@@ -139,18 +148,6 @@ def chunk_to_response(
             )
         ],
     )
-
-
-async def resolve_model_card(model_id: ModelId) -> ModelCard:
-    if model_id in MODEL_CARDS:
-        model_card = MODEL_CARDS[model_id]
-        return model_card
-
-    for card in MODEL_CARDS.values():
-        if card.model_id == ModelId(model_id):
-            return card
-
-    return await ModelCard.from_hf(model_id)
 
 
 class API:
@@ -270,13 +267,30 @@ class API:
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
         self.app.post("/download/start")(self.start_download)
+        self.app.post("/download/start_model")(self.start_model_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
 
+    def _normalize_instance_meta(self, instance_meta: InstanceMeta) -> InstanceMeta:
+        if sys.platform == "win32":
+            if instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
+                logger.warning(
+                    "MLX backends are not supported on Windows; using CudaSingle."
+                )
+                return InstanceMeta.CudaSingle
+            return instance_meta
+        if instance_meta == InstanceMeta.CudaSingle:
+            raise HTTPException(
+                status_code=400,
+                detail="CudaSingle is only supported on Windows for now.",
+            )
+        return instance_meta
+
     async def place_instance(self, payload: PlaceInstanceParams):
+        instance_meta = self._normalize_instance_meta(payload.instance_meta)
         command = PlaceInstance(
             model_card=await resolve_model_card(payload.model_id),
             sharding=payload.sharding,
-            instance_meta=payload.instance_meta,
+            instance_meta=instance_meta,
             min_nodes=payload.min_nodes,
         )
         await self._send(command)
@@ -318,8 +332,11 @@ class API:
         sharding: Sharding = Sharding.Pipeline,
         instance_meta: InstanceMeta = InstanceMeta.MlxRing,
         min_nodes: int = 1,
+        node_ids: Annotated[list[NodeId] | None, Query()] = None,
     ) -> Instance:
         model_card = await resolve_model_card(model_id)
+        instance_meta = self._normalize_instance_meta(instance_meta)
+        required_nodes = set(node_ids) if node_ids else None
 
         try:
             placements = get_instance_placements(
@@ -330,9 +347,11 @@ class API:
                     min_nodes=min_nodes,
                 ),
                 node_memory=self.state.node_memory,
+                node_gpus=self.state.node_gpus,
                 node_network=self.state.node_network,
                 topology=self.state.topology,
                 current_instances=self.state.instances,
+                required_nodes=required_nodes,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -363,19 +382,37 @@ class API:
 
         cards = [card for card in MODEL_CARDS.values() if card.model_id == model_id]
         if not cards:
-            raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
+            if model_id in get_env_gguf_model_ids():
+                cards = [await resolve_model_card(model_id)]
+            else:
+                raise HTTPException(
+                    status_code=404, detail=f"Model {model_id} not found"
+                )
 
         instance_combinations: list[tuple[Sharding, InstanceMeta, int]] = []
-        for sharding in (Sharding.Pipeline, Sharding.Tensor):
-            for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
-                instance_combinations.extend(
-                    [
-                        (sharding, instance_meta, i)
-                        for i in range(
-                            1, len(list(self.state.topology.list_nodes())) + 1
-                        )
-                    ]
-                )
+        if sys.platform == "win32":
+            instance_combinations.append(
+                (Sharding.Pipeline, InstanceMeta.CudaSingle, 1)
+            )
+            instance_combinations.extend(
+                [
+                    (Sharding.Pipeline, InstanceMeta.LlamaRpc, i)
+                    for i in range(
+                        1, len(list(self.state.topology.list_nodes())) + 1
+                    )
+                ]
+            )
+        else:
+            for sharding in (Sharding.Pipeline, Sharding.Tensor):
+                for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
+                    instance_combinations.extend(
+                        [
+                            (sharding, instance_meta, i)
+                            for i in range(
+                                1, len(list(self.state.topology.list_nodes())) + 1
+                            )
+                        ]
+                    )
         # TODO: PDD
         # instance_combinations.append((Sharding.PrefillDecodeDisaggregation, InstanceMeta.MlxRing, 1))
 
@@ -383,18 +420,19 @@ class API:
             for sharding, instance_meta, min_nodes in instance_combinations:
                 try:
                     placements = get_instance_placements(
-                        PlaceInstance(
-                            model_card=model_card,
-                            sharding=sharding,
-                            instance_meta=instance_meta,
-                            min_nodes=min_nodes,
-                        ),
-                        node_memory=self.state.node_memory,
-                        node_network=self.state.node_network,
-                        topology=self.state.topology,
-                        current_instances=self.state.instances,
-                        required_nodes=required_nodes,
-                    )
+                    PlaceInstance(
+                        model_card=model_card,
+                        sharding=sharding,
+                        instance_meta=instance_meta,
+                        min_nodes=min_nodes,
+                    ),
+                    node_memory=self.state.node_memory,
+                    node_gpus=self.state.node_gpus,
+                    node_network=self.state.node_network,
+                    topology=self.state.topology,
+                    current_instances=self.state.instances,
+                    required_nodes=required_nodes,
+                )
                 except ValueError as exc:
                     if (model_card.model_id, sharding, instance_meta, 0) not in seen:
                         previews.append(
@@ -1212,28 +1250,40 @@ class API:
         """Calculate total available memory across all nodes in bytes."""
         total_available = Memory()
 
-        for memory in self.state.node_memory.values():
-            total_available += memory.ram_available
+        for node_id in self.state.node_memory:
+            total_available += get_available_memory(
+                node_id, self.state.node_memory, self.state.node_gpus
+            )
 
         return total_available
 
     async def get_models(self) -> ModelList:
         """Returns list of available models."""
-        return ModelList(
-            data=[
+        cards = list(MODEL_CARDS.values())
+        cards.extend(await get_env_gguf_model_cards())
+        cards.extend(await get_local_gguf_model_cards())
+        seen: set[ModelId] = set()
+        data: list[ModelListModel] = []
+        for card in cards:
+            if card.model_id in seen:
+                continue
+            seen.add(card.model_id)
+            model_id_value = str(card.model_id)
+            is_local = Path(model_id_value).is_absolute()
+            tags = ["local"] if is_local else []
+            data.append(
                 ModelListModel(
                     id=card.model_id,
                     hugging_face_id=card.model_id,
-                    name=card.model_id.short(),
+                    name=Path(model_id_value).name if is_local else card.model_id.short(),
                     description="",
-                    tags=[],
+                    tags=tags,
                     storage_size_megabytes=int(card.storage_size.in_mb),
                     supports_tensor=card.supports_tensor,
                     tasks=[task.value for task in card.tasks],
                 )
-                for card in MODEL_CARDS.values()
-            ]
-        )
+            )
+        return ModelList(data=data)
 
     async def run(self):
         cfg = Config()
@@ -1322,6 +1372,30 @@ class API:
         command = StartDownload(
             target_node_id=payload.target_node_id,
             shard_metadata=payload.shard_metadata,
+        )
+        await self._send_download(command)
+        return StartDownloadResponse(command_id=command.command_id)
+
+    async def start_model_download(
+        self, payload: StartModelDownloadParams
+    ) -> StartDownloadResponse:
+        try:
+            model_card = await resolve_model_card_for_download(payload.model_id)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Failed to resolve model: {exc}"
+            ) from exc
+        shard_metadata = PipelineShardMetadata(
+            model_card=model_card,
+            device_rank=0,
+            world_size=1,
+            start_layer=0,
+            end_layer=model_card.n_layers,
+            n_layers=model_card.n_layers,
+        )
+        command = StartDownload(
+            target_node_id=payload.target_node_id,
+            shard_metadata=shard_metadata,
         )
         await self._send_download(command)
         return StartDownloadResponse(command_id=command.command_id)
