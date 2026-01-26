@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.tasks import (
+    CancelTask,
     ChatCompletion,
     ConnectToGroup,
     CreateRunner,
@@ -59,7 +60,8 @@ def plan(
         or _init_distributed_backend(runners, all_runners)
         or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
-        or _pending_tasks(runners, tasks, all_runners, input_chunk_buffer)
+        or _cancel_tasks(runners, tasks)
+        or _pending_tasks(runners, tasks, all_runners, input_chunk_buffer or {})
     )
 
 
@@ -270,7 +272,7 @@ def _pending_tasks(
     runners: Mapping[RunnerId, RunnerSupervisor],
     tasks: Mapping[TaskId, Task],
     all_runners: Mapping[RunnerId, RunnerStatus],
-    input_chunk_buffer: Mapping[CommandId, dict[int, str]] | None = None,
+    input_chunk_buffer: Mapping[CommandId, dict[int, str]],
 ) -> Task | None:
     for task in tasks.values():
         # for now, just forward chat completions
@@ -284,7 +286,7 @@ def _pending_tasks(
         if isinstance(task, ImageEdits) and task.task_params.total_input_chunks > 0:
             cmd_id = task.command_id
             expected = task.task_params.total_input_chunks
-            received = len((input_chunk_buffer or {}).get(cmd_id, {}))
+            received = len(input_chunk_buffer.get(cmd_id, {}))
             if received < expected:
                 continue  # Wait for all chunks to arrive
 
@@ -292,16 +294,31 @@ def _pending_tasks(
             if task.instance_id != runner.bound_instance.instance.instance_id:
                 continue
 
-            # I have a design point here; this is a state race in disguise as the task status doesn't get updated to completed fast enough
-            # however, realistically the task status should be set to completed by the LAST runner, so this is a true race
-            # the actual solution is somewhat deeper than this bypass - TODO!
+            # the task status _should_ be set to completed by the LAST runner
+            # it is currently set by the first
+            # this is definitely a hack
             if task.task_id in runner.completed:
                 continue
-
-            # TODO: Check ordering aligns with MLX distributeds expectations.
 
             if isinstance(runner.status, RunnerReady) and all(
                 isinstance(all_runners[global_runner_id], (RunnerReady, RunnerRunning))
                 for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
             ):
                 return task
+
+
+def _cancel_tasks(
+    runners: Mapping[RunnerId, RunnerSupervisor],
+    tasks: Mapping[TaskId, Task],
+) -> Task | None:
+    for task in tasks.values():
+        if task.task_status != TaskStatus.Cancelled:
+            continue
+        for runner in runners.values():
+            if task.instance_id != runner.bound_instance.instance.instance_id:
+                continue
+            if task.task_id in runner.cancelled:
+                continue
+            return CancelTask(
+                instance_id=task.instance_id, cancelled_task_id=task.task_id
+            )
