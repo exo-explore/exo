@@ -405,7 +405,11 @@ def apply_chat_template(
                 continue
 
             message.content = "\n".join(c.text for c in message.content).strip()
-        if message.content is None and message.thinking is None:
+        if (
+            message.content is None
+            and message.thinking is None
+            and message.tool_calls is None
+        ):
             continue
 
         # Null values are not valid when applying templates in tokenizer
