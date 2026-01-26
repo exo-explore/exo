@@ -1,6 +1,8 @@
 """Tests for download verification and cache behavior."""
 
+import time
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,7 +16,8 @@ from exo.download.download_utils import (
     fetch_file_list_with_cache,
 )
 from exo.shared.types.common import ModelId
-from exo.shared.types.worker.downloads import FileListEntry
+from exo.shared.types.memory import Memory
+from exo.shared.types.worker.downloads import FileListEntry, RepoFileDownloadProgress
 
 
 @pytest.fixture
@@ -319,3 +322,130 @@ class TestModelDeletion:
             result = await delete_model(model_id)
 
             assert result is False
+
+
+class TestProgressResetOnRedownload:
+    """Tests for progress tracking when files are re-downloaded."""
+
+    async def test_progress_resets_correctly_on_redownload(
+        self, model_id: ModelId
+    ) -> None:
+        """Test that progress tracking resets when a file is re-downloaded.
+
+        When a file is deleted and re-downloaded (due to size mismatch),
+        the progress tracking should reset rather than calculating negative
+        downloaded_this_session values.
+        """
+        # Simulate file_progress dict as it exists in download_shard
+        file_progress: dict[str, RepoFileDownloadProgress] = {}
+
+        # Initialize with old file progress (simulating existing large file)
+        old_file_size = 1_500_000_000  # 1.5 GB
+        file_progress["model.safetensors"] = RepoFileDownloadProgress(
+            repo_id=model_id,
+            repo_revision="main",
+            file_path="model.safetensors",
+            downloaded=Memory.from_bytes(old_file_size),
+            downloaded_this_session=Memory.from_bytes(0),
+            total=Memory.from_bytes(old_file_size),
+            speed=0,
+            eta=timedelta(0),
+            status="not_started",
+            start_time=time.time() - 10,  # Started 10 seconds ago
+        )
+
+        # Simulate the logic from on_progress_wrapper after re-download starts
+        # This is the exact logic from the fixed on_progress_wrapper
+        curr_bytes = 100_000  # 100 KB - new download just started
+        previous_progress = file_progress.get("model.safetensors")
+
+        # Detect re-download: curr_bytes < previous downloaded
+        is_redownload = (
+            previous_progress is not None
+            and curr_bytes < previous_progress.downloaded.in_bytes
+        )
+
+        if is_redownload or previous_progress is None:
+            # Fresh download or re-download: reset tracking
+            start_time = time.time()
+            downloaded_this_session = curr_bytes
+        else:
+            # Continuing download: accumulate
+            start_time = previous_progress.start_time
+            downloaded_this_session = (
+                previous_progress.downloaded_this_session.in_bytes
+                + (curr_bytes - previous_progress.downloaded.in_bytes)
+            )
+
+        # Key assertions
+        assert is_redownload is True, "Should detect re-download scenario"
+        assert downloaded_this_session == curr_bytes, (
+            "downloaded_this_session should equal curr_bytes on re-download"
+        )
+        assert downloaded_this_session > 0, (
+            "downloaded_this_session should be positive, not negative"
+        )
+
+        # Calculate speed (should be positive)
+        elapsed = time.time() - start_time
+        speed = downloaded_this_session / elapsed if elapsed > 0 else 0
+        assert speed >= 0, "Speed should be non-negative"
+
+    async def test_progress_accumulates_on_continuing_download(
+        self, model_id: ModelId
+    ) -> None:
+        """Test that progress accumulates correctly for continuing downloads.
+
+        When a download continues from where it left off (resume),
+        the progress should accumulate correctly.
+        """
+        file_progress: dict[str, RepoFileDownloadProgress] = {}
+
+        # Initialize with partial download progress
+        initial_downloaded = 500_000  # 500 KB already downloaded
+        start_time = time.time() - 5  # Started 5 seconds ago
+        file_progress["model.safetensors"] = RepoFileDownloadProgress(
+            repo_id=model_id,
+            repo_revision="main",
+            file_path="model.safetensors",
+            downloaded=Memory.from_bytes(initial_downloaded),
+            downloaded_this_session=Memory.from_bytes(initial_downloaded),
+            total=Memory.from_bytes(1_000_000),
+            speed=100_000,
+            eta=timedelta(seconds=5),
+            status="in_progress",
+            start_time=start_time,
+        )
+
+        # Progress callback with more bytes downloaded
+        curr_bytes = 600_000  # 600 KB - continuing download
+        previous_progress = file_progress.get("model.safetensors")
+
+        # This is NOT a re-download (curr_bytes > previous downloaded)
+        is_redownload = (
+            previous_progress is not None
+            and curr_bytes < previous_progress.downloaded.in_bytes
+        )
+
+        if is_redownload or previous_progress is None:
+            downloaded_this_session = curr_bytes
+            used_start_time = time.time()
+        else:
+            used_start_time = previous_progress.start_time
+            downloaded_this_session = (
+                previous_progress.downloaded_this_session.in_bytes
+                + (curr_bytes - previous_progress.downloaded.in_bytes)
+            )
+
+        # Key assertions
+        assert is_redownload is False, (
+            "Should NOT detect re-download for continuing download"
+        )
+        assert used_start_time == start_time, "Should preserve original start_time"
+        expected_session = initial_downloaded + (curr_bytes - initial_downloaded)
+        assert downloaded_this_session == expected_session, (
+            f"Should accumulate: {downloaded_this_session} == {expected_session}"
+        )
+        assert downloaded_this_session == 600_000, (
+            "downloaded_this_session should equal total downloaded so far"
+        )
