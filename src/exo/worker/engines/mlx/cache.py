@@ -1,81 +1,39 @@
-import os
+# type: ignore
+# TODO: Fix this file, including types!
 from copy import deepcopy
-from typing import Any, cast
+from typing import Callable
 
 import mlx.core as mx
-from mlx_lm.models.cache import (
-    KVCache,
-    QuantizedKVCache,
-    RotatingKVCache,
-    trim_prompt_cache,
-)
-from mlx_lm.models.gpt_oss import Model as GptOssModel
+from mlx_lm import stream_generate
+from mlx_lm.models.cache import _BaseCache, trim_prompt_cache
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.types.mlx import KVCacheType
 from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
-from exo.worker.runner.bootstrap import logger
-
-# Fraction of device memory above which LRU eviction kicks in
-_DEFAULT_MEMORY_THRESHOLD = 0.85
-_MEMORY_THRESHOLD = float(
-    os.environ.get("EXO_MEMORY_THRESHOLD", _DEFAULT_MEMORY_THRESHOLD)
-)
+from exo.worker.engines.mlx.constants import KEEP_KV_SIZE, KV_BITS, KV_GROUP_SIZE
+from exo.worker.engines.mlx.utils_mlx import make_kv_cache
 
 
 class KVPrefixCache:
-    def __init__(self, tokenizer: TokenizerWrapper):
+    def __init__(self):
+        # Only one prefix cache per runner.
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
-        self.caches: list[KVCacheType] = []
-        self._last_used: list[int] = []  # monotonic counter of last access per entry
-        self._access_counter: int = 0
-        self._tokenizer: TokenizerWrapper = tokenizer
+        self.caches: list[list[_BaseCache]] = []
 
-    def clear(self):
-        """Clear all cached prompts and caches."""
-        self.prompts.clear()
-        self.caches.clear()
-        self._last_used.clear()
-
-    def add_kv_cache(self, prompt: str, cache: KVCacheType):
-        """Add a new cache entry. Evicts LRU entries if memory is high."""
-        self._evict_if_needed()
-        tokenized_prompt = encode_prompt(self._tokenizer, prompt)
+    def add_kv_cache(
+        self, tokenizer: TokenizerWrapper, prompt: str, cache: list[_BaseCache]
+    ):
+        tokenized_prompt = self.encode_prompt(tokenizer, prompt)
         self.prompts.append(tokenized_prompt)
         self.caches.append(deepcopy(cache))
-        self._access_counter += 1
-        self._last_used.append(self._access_counter)
-        logger.info(f"KV cache added: {len(tokenized_prompt)} tokens")
-
-    def update_kv_cache(
-        self,
-        index: int,
-        prompt: str,
-        cache: KVCacheType,
-    ):
-        """Update an existing cache entry in-place."""
-        tokenized_prompt = encode_prompt(self._tokenizer, prompt)
-        self.prompts[index] = tokenized_prompt
-        self.caches[index] = deepcopy(cache)
-        self._access_counter += 1
-        self._last_used[index] = self._access_counter
-        logger.info(f"KV cache updated (index {index}): {len(tokenized_prompt)} tokens")
 
     def get_kv_cache(
         self,
         model: Model,
+        tokenizer: TokenizerWrapper,
+        sampler: Callable[[mx.array], mx.array],
         prompt: str,
-    ) -> tuple[KVCacheType, mx.array, int | None]:
-        """Get KV cache for prompt, returning remaining tokens to prefill.
-
-        Returns:
-            Tuple of (cache, remaining_tokens, matched_index) where:
-            - cache: KV cache to use for generation
-            - remaining_tokens: tokens that still need prefilling
-            - matched_index: index of the matched entry (None if no match)
-        """
-        tokenized_prompt = encode_prompt(self._tokenizer, prompt)
+    ) -> list[_BaseCache]:
+        tokenized_prompt = self.encode_prompt(tokenizer, prompt)
         max_length = len(tokenized_prompt)
 
         best_snapshot_index, best_snapshot_length = None, 0
@@ -84,127 +42,63 @@ class KVPrefixCache:
             length = _get_prefix_length(tokenized_prompt, cached_prompt)
 
             if length == max_length:
-                # Exact match - cached prompt starts with our entire prompt
-                # Trim cache to prompt length - 1, return last token for stream_generate
-                prompt_cache = deepcopy(self.caches[i])
-                cached_length = _cache_length(self.caches[i])
-                tokens_to_trim = cached_length - (max_length - 1)
-                if tokens_to_trim > 0:
-                    trim_prompt_cache(cast(list[Any], prompt_cache), tokens_to_trim)
-                self._access_counter += 1
-                self._last_used[i] = self._access_counter
-                logger.info(f"KV cache exact match: {max_length} tokens (instant)")
-                return prompt_cache, tokenized_prompt[-1:], i
+                return self.caches[i]
 
             if length > best_snapshot_length:
                 best_snapshot_index, best_snapshot_length = i, length
 
         if best_snapshot_index is not None:
-            new_tokens = max_length - best_snapshot_length
-            logger.info(
-                f"KV cache prefix match: {best_snapshot_length}/{max_length} tokens "
-                f"(reusing {best_snapshot_length}, need to prefill {new_tokens})"
-            )
-
             prompt_cache = deepcopy(self.caches[best_snapshot_index])
-
-            # Trim removes tokens from the end, so we trim (cached_length - prefix_length) to keep the prefix
-            cached_length = _cache_length(self.caches[best_snapshot_index])
-            tokens_to_trim = cached_length - best_snapshot_length
-            if tokens_to_trim > 0:
-                trim_prompt_cache(cast(list[Any], prompt_cache), tokens_to_trim)
-
-            self._access_counter += 1
-            self._last_used[best_snapshot_index] = self._access_counter
-            remaining_tokens = tokenized_prompt[best_snapshot_length:]
-            return prompt_cache, remaining_tokens, best_snapshot_index
+            trim_prompt_cache(prompt_cache, max_length - best_snapshot_length)
+            tokenized_prompt = tokenized_prompt[best_snapshot_index:]
 
         else:
-            prompt_cache = make_kv_cache(model)
-            if len(self.prompts) == 0:
-                logger.info(f"KV cache empty, need to prefill {max_length} tokens")
-            else:
-                logger.info(
-                    f"KV cache no prefix match, need to prefill {max_length} tokens"
-                )
-
-            return prompt_cache, tokenized_prompt, None
-
-    def _evict_if_needed(self):
-        """Evict least recently used entries while memory pressure is high."""
-        if len(self.caches) == 0:
-            return
-
-        active: int = mx.metal.get_active_memory()
-        limit = int(mx.metal.device_info()["max_recommended_working_set_size"])
-        if active < limit * _MEMORY_THRESHOLD:
-            return
-
-        # Evict LRU entries until below threshold or only one entry left
-        while len(self.caches) > 0:
-            lru_index = self._last_used.index(min(self._last_used))
-            evicted_tokens = len(self.prompts[lru_index])
-            self.prompts.pop(lru_index)
-            self.caches.pop(lru_index)
-            self._last_used.pop(lru_index)
-            logger.info(
-                f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory pressure"
+            prompt_cache = make_kv_cache(
+                model,
+                # max_kv_size=MAX_KV_SIZE,
+                # keep=KEEP_KV_SIZE
             )
 
-            active = mx.metal.get_active_memory()
-            if active < limit * _MEMORY_THRESHOLD:
-                break
+        prefill(model, tokenizer, sampler, tokenized_prompt, prompt_cache)
 
+        return prompt_cache
 
-def encode_prompt(tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
-    """Encode a prompt string to token array.
-
-    For chat-templated prompts (which have their own structure markers like
-    <|im_user|>, <|im_middle|>, etc.), we should NOT add BOS/EOS tokens as
-    that would corrupt the prompt structure.
-    """
-    # Chat templates define their own structure - don't add BOS/EOS
-    tokenized_prompt = tokenizer.encode(prompt, add_special_tokens=False)
-    return mx.array(tokenized_prompt)
-
-
-def _cache_length(cache: KVCacheType) -> int:
-    """Get the number of tokens in a KV cache."""
-    # Use .offset attribute which all cache types have (len() not implemented in older QuantizedKVCache)
-    return max(c.offset for c in cache)  # type: ignore
+    def encode_prompt(self, tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
+        add_special_tokens = tokenizer.bos_token is None or not prompt.startswith(
+            tokenizer.bos_token
+        )
+        tokenized_prompt = tokenizer.encode(
+            prompt, add_special_tokens=add_special_tokens
+        )
+        return mx.array(tokenized_prompt)
 
 
 def _get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
-    """Find the length of the common prefix between two token arrays."""
-    n = min(int(prompt.shape[0]), int(cached_prompt.shape[0]))
+    n = min(int(prompt.shape[0]), int(cached_prompt.shape[0]), KEEP_KV_SIZE)
     if n == 0:
         return 0
 
-    equal = mx.equal(prompt[:n], cached_prompt[:n]).astype(mx.int32)
+    equal = (prompt[:n] == cached_prompt[:n]).astype(mx.int32)
     prefix_mask = mx.cumprod(equal)  # stays 1 until first mismatch, then 0 forever
     return int(mx.sum(prefix_mask).item())
 
 
-def make_kv_cache(
-    model: Model, max_kv_size: int | None = None, keep: int = 0
-) -> KVCacheType:
-    assert hasattr(model, "layers")
-
-    # TODO: Do this for all models
-    if hasattr(model, "make_cache") and isinstance(model, GptOssModel):
-        logger.info("Using MLX LM's make cache")
-        return model.make_cache()  # type: ignore
-
-    if max_kv_size is None:
-        if KV_CACHE_BITS is None:
-            logger.info("Using default KV cache")
-            return [KVCache() for _ in model.layers]
-        else:
-            logger.info("Using quantized KV cache")
-            return [
-                QuantizedKVCache(group_size=CACHE_GROUP_SIZE, bits=KV_CACHE_BITS)
-                for _ in model.layers
-            ]
-    else:
-        logger.info(f"Using rotating KV cache with {max_kv_size=} with {keep=}")
-        return [RotatingKVCache(max_size=max_kv_size, keep=keep) for _ in model.layers]
+def prefill(
+    model: Model,
+    tokenizer: TokenizerWrapper,
+    sampler: Callable[[mx.array], mx.array],
+    prompt: mx.array,
+    cache: list[_BaseCache],
+) -> None:
+    for _ in stream_generate(
+        model=model,
+        tokenizer=tokenizer,
+        prompt=prompt,
+        max_tokens=0,
+        sampler=sampler,
+        prompt_cache=cache,
+        prefill_step_size=2048,
+        kv_group_size=KV_GROUP_SIZE,
+        kv_bits=KV_BITS,
+    ):
+        pass

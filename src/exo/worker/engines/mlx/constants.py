@@ -4,7 +4,7 @@
 KV_GROUP_SIZE: int | None = 32
 KV_BITS: int | None = None
 ATTENTION_KV_BITS: int | None = 4
-MAX_TOKENS: int = 32168
+MAX_TOKENS: int = 8192
 MAX_KV_SIZE: int | None = 3200
 KEEP_KV_SIZE: int | None = 1600
 QUANTIZE_MODEL_MODE: str | None = "affine"

@@ -70,7 +70,6 @@ from exo.worker.engines.image import (
     warmup_image_generator,
 )
 from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
@@ -104,7 +103,6 @@ def main(
     model: Model | DistributedImageModel | None = None
     tokenizer = None
     group = None
-    kv_prefix_cache: KVPrefixCache | None = None
 
     current_status: RunnerStatus = RunnerIdle()
     logger.info("runner created")
@@ -163,8 +161,6 @@ def main(
                         logger.info(
                             f"model has_tool_calling={tokenizer.has_tool_calling}"
                         )
-                        kv_prefix_cache = KVPrefixCache(tokenizer)
-
                     elif (
                         ModelTask.TextToImage in shard_metadata.model_card.tasks
                         or ModelTask.ImageToImage in shard_metadata.model_card.tasks
@@ -174,6 +170,7 @@ def main(
                         raise ValueError(
                             f"Unknown model task(s): {shard_metadata.model_card.tasks}"
                         )
+
                     current_status = RunnerLoaded()
                     logger.info("runner loaded")
                 case StartWarmup() if isinstance(current_status, RunnerLoaded):
@@ -241,7 +238,6 @@ def main(
                             tokenizer=tokenizer,
                             task=task_params,
                             prompt=prompt,
-                            kv_prefix_cache=kv_prefix_cache,
                         )
 
                         # For other thinking models (GLM, etc.), check if we need to
