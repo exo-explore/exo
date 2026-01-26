@@ -17,10 +17,10 @@ from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
 from mlx_lm.models.deepseek_v32 import DeepseekV32MLP
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
-from mlx_lm.models.glm4_moe_lite import Glm4MoeLiteMLP, Glm4MoeLiteMoE
-from mlx_lm.models.glm4_moe_lite import Model as GLM4MoeLiteModel
 from mlx_lm.models.glm4_moe import Model as Glm4MoeModel
 from mlx_lm.models.glm4_moe import MoE
+from mlx_lm.models.glm4_moe_lite import Glm4MoeLiteMLP, Glm4MoeLiteDecoderLayer
+from mlx_lm.models.glm4_moe_lite import Model as GLM4MoeLiteModel
 from mlx_lm.models.gpt_oss import GptOssMoeModel
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.models.llama import Model as LlamaModel
@@ -542,11 +542,12 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
         on_timeout: TimeoutCallback | None,
     ) -> nn.Module:
         model = cast(GLM4MoeLiteModel, model)
-        for layer in model.layers:
+        for layer in model.layers:  # type: ignore
+            layer = cast(Glm4MoeLiteDecoderLayer, layer)
             eval_with_timeout(
-                layer.parameters(), timeout_seconds / len(model.layers), on_timeout
+                layer.parameters(), timeout_seconds / len(model.layers), on_timeout  # type: ignore
             )
-            if layer.self_attn.q_lora_rank is None:
+            if layer.self_attn.q_lora_rank is None:  # type: ignore
                 layer.self_attn.q_proj = self.all_to_sharded_linear(
                     layer.self_attn.q_proj
                 )
@@ -554,11 +555,18 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
                 layer.self_attn.q_b_proj = self.all_to_sharded_linear(
                     layer.self_attn.q_b_proj
                 )
-            layer.self_attn.kv_b_proj = self.all_to_sharded_linear(
-                layer.self_attn.kv_b_proj
-            )
+
             layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
             layer.self_attn.num_heads //= self.N
+
+            # Logic from upstream mlx
+            num_heads = layer.self_attn.num_heads
+            sh = self.group.rank() * num_heads
+            eh = sh + num_heads
+            def shard_heads(w: mx.array, sh: int = sh, eh: int = eh) -> mx.array:
+                return w[sh:eh]
+            layer.self_attn.embed_q.apply(shard_heads)  # type: ignore
+            layer.self_attn.unembed_out.apply(shard_heads)  # type: ignore
 
             if isinstance(layer.mlp, Glm4MoeLiteMLP):
                 layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
@@ -567,14 +575,20 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
 
             else:
                 if getattr(layer.mlp, "shared_experts", None) is not None:
-                    self.all_to_sharded_linear_in_place(layer.mlp.shared_experts.gate_proj)
-                    self.sharded_to_all_linear_in_place(layer.mlp.shared_experts.down_proj)
-                    self.all_to_sharded_linear_in_place(layer.mlp.shared_experts.up_proj)
+                    self.all_to_sharded_linear_in_place(
+                        layer.mlp.shared_experts.gate_proj
+                    )
+                    self.sharded_to_all_linear_in_place(
+                        layer.mlp.shared_experts.down_proj
+                    )
+                    self.all_to_sharded_linear_in_place(
+                        layer.mlp.shared_experts.up_proj
+                    )
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
                 self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
                 layer.mlp = ShardedGLM4MoeLiteMoE(layer.mlp)  # type: ignore
-                layer.mlp.sharding_group = self.group
+                layer.mlp.sharding_group = self.group  # type: ignore
 
         return model
 
