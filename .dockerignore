@@ -1,0 +1,6 @@
+.vscode/
+.githooks/
+.github/
+.idea/
+.zed/
+target/
