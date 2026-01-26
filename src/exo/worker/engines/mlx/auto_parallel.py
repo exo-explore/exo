@@ -337,6 +337,7 @@ def tensor_auto_parallel(
     if hasattr(model, "shard") and not isinstance(model, GptOssModel):
         try:
             model.shard(group)  # type: ignore
+            mx.eval(model.parameters())
             return patch_tensor_model(model)
         except (AttributeError, TypeError, NameError):
             pass
