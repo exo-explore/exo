@@ -231,16 +231,19 @@ class BatchedInferenceHandler:
             samplers=samplers,
         )
 
-        for uid, req, prompt_tokens in zip(uids, requests_to_flush, prompt_token_counts, strict=True):
+        for uid, req, prompt_tokens, tokens in zip(uids, requests_to_flush, prompt_token_counts, tokenized_prompts, strict=True):
             parser = None
             if self.is_gpt_oss and self._harmony_encoding is not None:
                 parser = StreamableParser(self._harmony_encoding, role=Role.ASSISTANT)  # pyright: ignore[reportAny]
+            # Check if prompt contains <think> token - if so, model is already in thinking mode
+            starts_in_thinking = self._think_start_token is not None and self._think_start_token in tokens
             self.uid_to_request[uid] = ActiveRequest(
                 command_id=req.task.command_id,
                 should_extract_logprobs=req.should_extract_logprobs,
                 top_k=req.top_k,
                 prompt_tokens=prompt_tokens,
                 harmony_parser=parser,
+                in_thinking=starts_in_thinking,
             )
 
         logger.info(f"Flushed {len(requests_to_flush)} requests into pipelined generator (active={self.pipelined_generator.active_count}, uids={list(self.uid_to_request.keys())})")
@@ -273,16 +276,19 @@ class BatchedInferenceHandler:
             samplers=samplers,  # pyright: ignore[reportCallIssue]
         )
 
-        for uid, req, prompt_tokens in zip(uids, requests_to_flush, prompt_token_counts, strict=True):  # pyright: ignore[reportUnknownArgumentType]
+        for uid, req, prompt_tokens, tokens in zip(uids, requests_to_flush, prompt_token_counts, tokenized_prompts, strict=True):  # pyright: ignore[reportUnknownArgumentType]
             parser = None
             if self.is_gpt_oss and self._harmony_encoding is not None:
                 parser = StreamableParser(self._harmony_encoding, role=Role.ASSISTANT)  # pyright: ignore[reportAny]
+            # Check if prompt contains <think> token - if so, model is already in thinking mode
+            starts_in_thinking = self._think_start_token is not None and self._think_start_token in tokens
             self.uid_to_request[uid] = ActiveRequest(
                 command_id=req.task.command_id,
                 should_extract_logprobs=req.should_extract_logprobs,
                 top_k=req.top_k,
                 prompt_tokens=prompt_tokens,
                 harmony_parser=parser,
+                in_thinking=starts_in_thinking,
             )
 
         logger.info(f"Flushed {len(requests_to_flush)} requests into batch (active={self.current_batch_size}, uids={list(self.uid_to_request.keys())})")
