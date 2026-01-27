@@ -19,7 +19,7 @@ dependencies = [
     "anyio==4.11.0",
     "mlx==0.30.3; sys_platform == 'darwin'",
     "mlx[cpu]==0.30.3; sys_platform == 'linux'",
-    "mlx-lm==0.30.5",
+    "mlx-lm",
     "tiktoken>=0.12.0", # required for kimi k2 tokenizer
     "hypercorn>=0.18.0",
     "openai-harmony>=0.0.8",
@@ -63,6 +63,7 @@ members = [
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
+mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", branch = "main" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }
 # mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }
