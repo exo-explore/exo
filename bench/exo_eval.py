@@ -35,7 +35,6 @@ from huggingface_hub import get_token as get_hf_token
 from loguru import logger
 from tomlkit.exceptions import TOMLKitError
 
-from bench.completions_proxy import tasks_require_completions
 from bench.exo_bench import (
     ExoClient,
     ExoHttpError,
@@ -307,19 +306,11 @@ def run_lm_eval(
     if isinstance(tasks, str):
         tasks = [tasks]
 
-    # Check if tasks require the completions API
-    use_completions = tasks_require_completions(tasks)
-
-    if use_completions:
-        logger.info(
-            "Tasks require completions API - using native /v1/completions endpoint"
-        )
-
     exo_base_url = f"http://{host}:{port}"
 
     # Build args - use native completions or chat completions endpoint directly
     args = build_lm_eval_args(
-        config, exo_base_url, model, output_path, limit, use_completions=use_completions
+        config, exo_base_url, model, output_path, limit, use_completions=False
     )
     logger.info(f"lm_eval command: {' '.join(args)}")
 
