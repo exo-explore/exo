@@ -16,7 +16,7 @@ from exo.download.impl_shard_downloader import (
     exo_shard_downloader,
 )
 from exo.shared.logging import InterceptLogger, logger_setup
-from exo.shared.models.model_cards import MODEL_CARDS, ModelId
+from exo.shared.models.model_cards import ModelId
 from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from exo.shared.types.commands import CommandId
 from exo.shared.types.common import Host, NodeId
@@ -89,22 +89,26 @@ async def tb_detection():
 
 async def assert_downloads():
     sd = exo_shard_downloader()
-    # await sd.ensure_shard(await build_full_shard(MODEL_CARDS["qwen3-0.6b"].model_id))
     await sd.ensure_shard(
-        await build_full_shard(MODEL_CARDS["llama-3.1-8b-bf16"].model_id)
-    )
-    await sd.ensure_shard(await build_full_shard(MODEL_CARDS["qwen3-30b"].model_id))
-    await sd.ensure_shard(
-        await build_full_shard(MODEL_CARDS["gpt-oss-120b-MXFP4-Q8"].model_id)
+        await build_full_shard(ModelId("mlx-community/Qwen3-0.6B-4bit"))
     )
     await sd.ensure_shard(
-        await build_full_shard(MODEL_CARDS["gpt-oss-20b-4bit"].model_id)
+        await build_full_shard(ModelId("mlx-community/Meta-Llama-3.1-8B-Instruct-bf16"))
     )
     await sd.ensure_shard(
-        await build_full_shard(MODEL_CARDS["glm-4.7-8bit-gs32"].model_id)
+        await build_full_shard(ModelId("mlx-community/Meta-Llama-3.1-8B-Instruct-bf16"))
     )
     await sd.ensure_shard(
-        await build_full_shard(MODEL_CARDS["minimax-m2.1-8bit"].model_id)
+        await build_full_shard(ModelId("mlx-community/gpt-oss-120b-MXFP4-Q8"))
+    )
+    await sd.ensure_shard(
+        await build_full_shard(ModelId("mlx-community/gpt-oss-20b-MXFP4-Q8"))
+    )
+    await sd.ensure_shard(
+        await build_full_shard(ModelId("mlx-community/GLM-4.7-8bit-gs32"))
+    )
+    await sd.ensure_shard(
+        await build_full_shard(ModelId("mlx-community/MiniMax-M2.1-8bit"))
     )
 
 

@@ -1,0 +1,8 @@
+model_id = "mlx-community/Qwen3-0.6B-4bit"
+n_layers = 28
+hidden_size = 1024
+supports_tensor = false
+tasks = ["TextGeneration"]
+
+[storage_size]
+in_bytes = 342884352
