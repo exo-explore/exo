@@ -644,6 +644,7 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
         on_timeout: TimeoutCallback | None,
     ) -> nn.Module:
         model = cast(MiniMaxModel, model)
+        rank = self.group.rank()
         for layer in model.layers:
             eval_with_timeout(
                 layer.parameters(), timeout_seconds / len(model.layers), on_timeout
@@ -653,6 +654,16 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
             layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
+
+            # Shard qk_norm weights if present (must match sharded head count)
+            if getattr(layer.self_attn, "use_qk_norm", False):
+                layer.self_attn.q_norm.weight = layer.self_attn.q_norm.weight.split(
+                    self.N, axis=-1
+                )[rank]
+                layer.self_attn.k_norm.weight = layer.self_attn.k_norm.weight.split(
+                    self.N, axis=-1
+                )[rank]
+
             layer.self_attn.num_attention_heads //= self.N
             layer.self_attn.num_key_value_heads //= self.N
 
