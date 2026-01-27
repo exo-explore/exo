@@ -515,8 +515,8 @@ def main() -> int:
     ap.add_argument(
         "--timeout",
         type=float,
-        default=600.0,
-        help="HTTP timeout in seconds (default: 600)",
+        default=1200.0,
+        help="HTTP timeout in seconds (default: 1200)",
     )
     ap.add_argument(
         "--skip-instance-setup",
