@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from typing import Self
+from typing import Literal, Self
 
 import psutil
 
@@ -48,9 +48,13 @@ class SystemPerformanceProfile(CamelCaseModel):
     ecpu_usage: float = 0.0
 
 
+InterfaceType = Literal["wifi", "ethernet", "maybe_ethernet", "thunderbolt", "unknown"]
+
+
 class NetworkInterfaceInfo(CamelCaseModel):
     name: str
     ip_address: str
+    interface_type: InterfaceType = "unknown"
 
 
 class NodeIdentity(CamelCaseModel):
@@ -71,3 +75,11 @@ class NodeThunderboltInfo(CamelCaseModel):
     """Thunderbolt interface identifiers for a node."""
 
     interfaces: Sequence[ThunderboltIdentifier] = []
+
+
+class ThunderboltBridgeStatus(CamelCaseModel):
+    """Whether the Thunderbolt Bridge network service is enabled on this node."""
+
+    enabled: bool
+    exists: bool
+    service_name: str | None = None

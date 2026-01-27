@@ -1,6 +1,6 @@
 from pydantic import Field
 
-from exo.shared.models.model_cards import ModelCard
+from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.api import (
     ChatCompletionTaskParams,
     CompletionTaskParams,
@@ -10,7 +10,7 @@ from exo.shared.types.api import (
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
-from exo.shared.types.worker.shards import Sharding
+from exo.shared.types.worker.shards import Sharding, ShardMetadata
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
@@ -69,6 +69,19 @@ class RequestEventLog(BaseCommand):
     since_idx: int
 
 
+class StartDownload(BaseCommand):
+    target_node_id: NodeId
+    shard_metadata: ShardMetadata
+
+
+class DeleteDownload(BaseCommand):
+    target_node_id: NodeId
+    model_id: ModelId
+
+
+DownloadCommand = StartDownload | DeleteDownload
+
+
 Command = (
     TestCommand
     | RequestEventLog
@@ -87,3 +100,8 @@ Command = (
 class ForwarderCommand(CamelCaseModel):
     origin: NodeId
     command: Command
+
+
+class ForwarderDownloadCommand(CamelCaseModel):
+    origin: NodeId
+    command: DownloadCommand

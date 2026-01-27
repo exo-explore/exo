@@ -41,6 +41,7 @@ final class LocalNetworkChecker: ObservableObject {
 
     private var connection: NWConnection?
     private var checkTask: Task<Void, Never>?
+    private var periodicTask: Task<Void, Never>?
 
     /// Whether we've completed at least one check (stored in UserDefaults)
     private var hasCompletedInitialCheck: Bool {
@@ -48,10 +49,39 @@ final class LocalNetworkChecker: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: Self.hasCompletedInitialCheckKey) }
     }
 
-    /// Checks if local network access is working.
+    /// Checks if local network access is working (one-time check).
     func check() {
+        performCheck()
+    }
+
+    /// Starts periodic checking of local network access.
+    /// Re-checks every `interval` seconds so the warning disappears when user grants permission.
+    func startPeriodicChecking(interval: TimeInterval = 10) {
+        stopPeriodicChecking()
+        // Do an immediate check first
+        performCheck()
+        // Then schedule periodic checks
+        periodicTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                guard !Task.isCancelled else { break }
+                self?.performCheck()
+            }
+        }
+    }
+
+    /// Stops periodic checking.
+    func stopPeriodicChecking() {
+        periodicTask?.cancel()
+        periodicTask = nil
+    }
+
+    private func performCheck() {
         checkTask?.cancel()
-        status = .checking
+        // Only show "checking" status on first check to avoid UI flicker
+        if status == .unknown {
+            status = .checking
+        }
 
         // Use longer timeout on first launch to allow time for permission prompt
         let isFirstCheck = !hasCompletedInitialCheck
@@ -60,12 +90,15 @@ final class LocalNetworkChecker: ObservableObject {
         checkTask = Task { [weak self] in
             guard let self else { return }
 
-            Self.logger.info("Checking local network connectivity (first check: \(isFirstCheck))")
+            Self.logger.debug("Checking local network connectivity (first check: \(isFirstCheck))")
             let result = await self.checkConnectivity(timeout: timeout)
             self.status = result
             self.hasCompletedInitialCheck = true
 
-            Self.logger.info("Local network check complete: \(result.displayText)")
+            // Only log on state changes or first check to reduce noise
+            if isFirstCheck || result != self.status {
+                Self.logger.info("Local network check: \(result.displayText)")
+            }
         }
     }
 
@@ -141,6 +174,7 @@ final class LocalNetworkChecker: ObservableObject {
     }
 
     func stop() {
+        stopPeriodicChecking()
         checkTask?.cancel()
         checkTask = nil
         connection?.cancel()

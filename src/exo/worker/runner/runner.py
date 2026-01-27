@@ -31,7 +31,6 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.tasks import (
     ChatCompletion,
-    Completion,
     ConnectToGroup,
     ImageEdits,
     ImageGeneration,
@@ -72,6 +71,7 @@ from exo.worker.engines.image import (
     warmup_image_generator,
 )
 from exo.worker.engines.mlx import Model
+from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import (
     mlx_generate,
     score_tokens,
@@ -229,6 +229,7 @@ def main(
     model: Model | DistributedImageModel | None = None
     tokenizer: TokenizerWrapper | None = None
     group = None
+    kv_prefix_cache: KVPrefixCache | None = None
     batch_handler: BatchedInferenceHandler | None = None
 
     current_status: RunnerStatus = RunnerIdle()
@@ -309,6 +310,21 @@ def main(
                         logger.info(
                             f"Batch handler initialized (max_batch_size={BATCH_MAX_SIZE}, world_size={shard_metadata.world_size})"
                         )
+                        kv_prefix_cache = KVPrefixCache(tokenizer)
+
+                    elif (
+                        ModelTask.TextToImage in shard_metadata.model_card.tasks
+                        or ModelTask.ImageToImage in shard_metadata.model_card.tasks
+                    ):
+                        model = initialize_image_model(bound_instance)
+                    else:
+                        raise ValueError(
+                            f"Unknown model task(s): {shard_metadata.model_card.tasks}"
+                        )
+                    current_status = RunnerLoaded()
+                    logger.info("runner loaded")
+                case StartWarmup() if isinstance(current_status, RunnerLoaded):
+                    assert model
                 elif (
                     ModelTask.TextToImage in shard_metadata.model_card.tasks
                     or ModelTask.ImageToImage in shard_metadata.model_card.tasks
@@ -394,6 +410,18 @@ def main(
                     try:
                         _process_serial_chat_completion(
                             task, model, tokenizer, shard_metadata, event_sender
+                        _check_for_debug_prompts(task_params.messages[0].content)
+
+                        # Build prompt once - used for both generation and thinking detection
+                        prompt = apply_chat_template(tokenizer, task_params)
+
+                        # Generate responses using the actual MLX generation
+                        mlx_generator = mlx_generate(
+                            model=model,
+                            tokenizer=tokenizer,
+                            task=task_params,
+                            prompt=prompt,
+                            kv_prefix_cache=kv_prefix_cache,
                         )
                     except Exception as e:
                         if device_rank == 0:
@@ -408,6 +436,56 @@ def main(
                                 )
                             )
                         raise
+
+                        # For other thinking models (GLM, etc.), check if we need to
+                        # prepend the thinking tag that was consumed by the chat template
+                        if detect_thinking_prompt_suffix(prompt, tokenizer):
+                            mlx_generator = parse_thinking_models(
+                                mlx_generator, tokenizer
+                            )
+
+                        # Kimi-K2 has tool call sections - we don't care about them
+                        if "kimi" in shard_metadata.model_card.model_id.lower():
+                            mlx_generator = filter_kimi_tokens(mlx_generator)
+                            patch_kimi_tokenizer(tokenizer)
+
+                        # GLM models need patched parser (upstream has bug with None regex match)
+                        elif "glm" in shard_metadata.model_card.model_id.lower():
+                            patch_glm_tokenizer(tokenizer)
+
+                        # GPT-OSS specific parsing to match other model formats.
+                        elif isinstance(model, GptOssModel):
+                            mlx_generator = parse_gpt_oss(mlx_generator)
+
+                        if tokenizer.has_tool_calling and not isinstance(
+                            model, GptOssModel
+                        ):
+                            assert tokenizer.tool_call_start
+                            assert tokenizer.tool_call_end
+                            assert tokenizer.tool_parser  # pyright: ignore[reportAny]
+                            mlx_generator = parse_tool_calls(
+                                mlx_generator,
+                                tokenizer.tool_call_start,
+                                tokenizer.tool_call_end,
+                                tokenizer.tool_parser,  # pyright: ignore[reportAny]
+                            )
+
+                        for response in mlx_generator:
+                            match response:
+                                case GenerationResponse():
+                                    if (
+                                        device_rank == 0
+                                        and response.finish_reason == "error"
+                                    ):
+                                        event_sender.send(
+                                            ChunkGenerated(
+                                                command_id=command_id,
+                                                chunk=ErrorChunk(
+                                                    error_message=response.text,
+                                                    model=shard_metadata.model_card.model_id,
+                                                ),
+                                            )
+                                        )
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
@@ -800,9 +878,10 @@ def get_gpt_oss_encoding():
 
 
 def filter_kimi_tokens(
-    responses: Generator[GenerationResponse],
+    responses: Generator[GenerationResponse | ToolCallResponse],
 ) -> Generator[GenerationResponse]:
     for resp in responses:
+        assert isinstance(resp, GenerationResponse)
         if (
             resp.text == "<|tool_calls_section_begin|>"
             or resp.text == "<|tool_calls_section_end|>"
@@ -812,17 +891,44 @@ def filter_kimi_tokens(
 
 
 def parse_gpt_oss(
-    responses: Generator[GenerationResponse],
-) -> Generator[GenerationResponse]:
+    responses: Generator[GenerationResponse | ToolCallResponse],
+) -> Generator[GenerationResponse | ToolCallResponse]:
     encoding = get_gpt_oss_encoding()
     stream = StreamableParser(encoding, role=Role.ASSISTANT)
     thinking = False
+    current_tool_name: str | None = None
+    tool_arg_parts: list[str] = []
 
     for response in responses:
+        assert isinstance(response, GenerationResponse)
         stream.process(response.token)
 
         delta = stream.last_content_delta
         ch = stream.current_channel
+        recipient = stream.current_recipient
+
+        if recipient != current_tool_name:
+            if current_tool_name is not None:
+                prefix = "functions."
+                if current_tool_name.startswith(prefix):
+                    current_tool_name = current_tool_name[len(prefix) :]
+                yield ToolCallResponse(
+                    tool_calls=[
+                        ToolCallItem(
+                            name=current_tool_name,
+                            arguments="".join(tool_arg_parts).strip(),
+                        )
+                    ]
+                )
+                tool_arg_parts = []
+                break
+            current_tool_name = recipient
+
+        # If inside a tool call, accumulate arguments
+        if current_tool_name is not None:
+            if delta:
+                tool_arg_parts.append(delta)
+            continue
 
         if ch == "analysis" and not thinking:
             thinking = True
@@ -839,13 +945,12 @@ def parse_gpt_oss(
             if thinking:
                 yield response.model_copy(update={"text": "</think>"})
             yield response
-            break
 
 
 def parse_thinking_models(
-    responses: Generator[GenerationResponse],
+    responses: Generator[GenerationResponse | ToolCallResponse],
     tokenizer: TokenizerWrapper,
-) -> Generator[GenerationResponse]:
+) -> Generator[GenerationResponse | ToolCallResponse]:
     """
     For models that inject thinking tags in the prompt (like GLM-4.7),
     prepend the thinking tag to the output stream so the frontend
@@ -853,6 +958,9 @@ def parse_thinking_models(
     """
     first = True
     for response in responses:
+        if isinstance(response, ToolCallResponse):
+            yield response
+            continue
         if first:
             first = False
             yield response.model_copy(
@@ -923,7 +1031,7 @@ def _process_image_response(
         command_id=command_id,
         model_id=shard_metadata.model_card.model_id,
         event_sender=event_sender,
-        image_index=response.partial_index if is_partial else image_index,
+        image_index=response.image_index,
         is_partial=is_partial,
         partial_index=response.partial_index if is_partial else None,
         total_partials=response.total_partials if is_partial else None,
@@ -933,7 +1041,7 @@ def _process_image_response(
 
 
 def parse_tool_calls(
-    responses: Generator[GenerationResponse],
+    responses: Generator[GenerationResponse | ToolCallResponse],
     tool_call_start: str,
     tool_call_end: str,
     tool_parser: Callable[[str], dict[str, Any] | list[dict[str, Any]]],
@@ -941,6 +1049,7 @@ def parse_tool_calls(
     in_tool_call = False
     tool_call_text_parts: list[str] = []
     for response in responses:
+        assert isinstance(response, GenerationResponse)
         # assumption: the tool call start is one token
         if response.text == tool_call_start:
             in_tool_call = True
@@ -960,7 +1069,14 @@ def parse_tool_calls(
                     tools = [_validate_single_tool(parsed)]
                 yield ToolCallResponse(tool_calls=tools)
 
-            except (json.JSONDecodeError, ValidationError) as e:
+            except (
+                json.JSONDecodeError,
+                ValidationError,
+                ValueError,
+                AttributeError,
+            ) as e:
+                # ValueError: our parsers raise this for malformed tool calls
+                # AttributeError: upstream parsers (e.g. glm47) may raise this when regex doesn't match
                 logger.opt(exception=e).warning("tool call parsing failed")
                 # assumption: talking about tool calls, not making a tool call
                 response.text = (
@@ -1013,15 +1129,91 @@ def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
         return value
 
     def parse_tool_call(text: str, tools: Any | None = None):
-        func_name = _func_name_regex.search(text).group(1)  # pyright: ignore[reportOptionalMemberAccess]
+        func_name_match = _func_name_regex.search(text)
+        if func_name_match is None:
+            raise ValueError(f"Could not parse function name from tool call: {text!r}")
+        func_name = func_name_match.group(1)
         # strip off the `functions.` prefix, if it exists.
         func_name = func_name[func_name.find(".") + 1 :]
 
-        func_args = _func_arg_regex.search(text).group(1)  # pyright: ignore[reportOptionalMemberAccess]
+        func_args_match = _func_arg_regex.search(text)
+        if func_args_match is None:
+            raise ValueError(f"Could not parse function args from tool call: {text!r}")
+        func_args = func_args_match.group(1)
         # the args should be valid json - no need to check against our tools to deserialize
         arg_dct = _deserialize(func_args)  # pyright: ignore[reportAny]
 
         return dict(name=func_name, arguments=arg_dct)  # pyright: ignore[reportAny]
+
+    tokenizer._tool_call_start = tool_call_start
+    tokenizer._tool_call_end = tool_call_end
+    tokenizer._tool_parser = parse_tool_call
+
+
+def patch_glm_tokenizer(tokenizer: TokenizerWrapper):
+    """
+    Fixed version of mlx_lm's glm47 tool parser that handles regex match failures.
+    """
+    import ast
+    import json
+    from typing import Any
+
+    import regex as re
+
+    _func_name_regex = re.compile(r"^(.*?)<arg_key>", re.DOTALL)
+    _func_arg_regex = re.compile(
+        r"<arg_key>(.*?)</arg_key>(?:\\n|\s)*<arg_value>(.*?)</arg_value>",
+        re.DOTALL,
+    )
+
+    tool_call_start = "<tool_call>"
+    tool_call_end = "</tool_call>"
+
+    def _is_string_type(
+        tool_name: str,
+        arg_name: str,
+        tools: list[Any] | None,
+    ) -> bool:
+        if tools is None:
+            return False
+        for tool in tools:  # pyright: ignore[reportAny]
+            func = tool["function"]  # pyright: ignore[reportAny]
+            if func["name"] == tool_name:
+                params = func["parameters"]  # pyright: ignore[reportAny]
+                if params is None:
+                    return False
+                props = params.get("properties", {})  # pyright: ignore[reportAny]
+                arg_props = props.get(arg_name, {})  # pyright: ignore[reportAny]
+                arg_type = arg_props.get("type", None)  # pyright: ignore[reportAny]
+                return arg_type == "string"  # pyright: ignore[reportAny]
+        return False
+
+    def _deserialize(value: str) -> Any:  # pyright: ignore[reportAny]
+        try:
+            return json.loads(value)  # pyright: ignore[reportAny]
+        except Exception:
+            pass
+        try:
+            return ast.literal_eval(value)  # pyright: ignore[reportAny]
+        except Exception:
+            pass
+        return value
+
+    def parse_tool_call(text: str, tools: list[Any] | None = None):
+        func_name_match = _func_name_regex.search(text)
+        if func_name_match is None:
+            raise ValueError(f"Could not parse function name from tool call: {text!r}")
+        func_name = func_name_match.group(1)
+
+        pairs = _func_arg_regex.findall(text)
+        arg_dct: dict[str, Any] = {}
+        for key, value in pairs:  # pyright: ignore[reportAny]
+            arg_key = key.strip()  # pyright: ignore[reportAny]
+            arg_val = value.strip()  # pyright: ignore[reportAny]
+            if not _is_string_type(func_name, arg_key, tools):  # pyright: ignore[reportAny]
+                arg_val = _deserialize(arg_val)  # pyright: ignore[reportAny]
+            arg_dct[arg_key] = arg_val
+        return dict(name=func_name, arguments=arg_dct)
 
     tokenizer._tool_call_start = tool_call_start
     tokenizer._tool_call_end = tool_call_end

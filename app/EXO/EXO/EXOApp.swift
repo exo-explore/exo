@@ -21,6 +21,7 @@ struct EXOApp: App {
     @StateObject private var networkStatusService: NetworkStatusService
     @StateObject private var localNetworkChecker: LocalNetworkChecker
     @StateObject private var updater: SparkleUpdater
+    @StateObject private var thunderboltBridgeService: ThunderboltBridgeService
     private let terminationObserver: TerminationObserver
     private let ciContext = CIContext(options: nil)
 
@@ -41,10 +42,13 @@ struct EXOApp: App {
         let localNetwork = LocalNetworkChecker()
         _localNetworkChecker = StateObject(wrappedValue: localNetwork)
         _updater = StateObject(wrappedValue: updater)
+        let thunderboltBridge = ThunderboltBridgeService(clusterStateService: service)
+        _thunderboltBridgeService = StateObject(wrappedValue: thunderboltBridge)
         enableLaunchAtLoginIfNeeded()
-        NetworkSetupHelper.ensureLaunchDaemonInstalled()
-        // Check local network access BEFORE launching exo
-        localNetwork.check()
+        // Install LaunchDaemon to disable Thunderbolt Bridge on startup (prevents network loops)
+        NetworkSetupHelper.promptAndInstallIfNeeded()
+        // Check local network access periodically (warning disappears when user grants permission)
+        localNetwork.startPeriodicChecking(interval: 10)
         controller.scheduleLaunch(after: 15)
         service.startPolling()
         networkStatus.startPolling()
@@ -58,6 +62,7 @@ struct EXOApp: App {
                 .environmentObject(networkStatusService)
                 .environmentObject(localNetworkChecker)
                 .environmentObject(updater)
+                .environmentObject(thunderboltBridgeService)
         } label: {
             menuBarIcon
         }
@@ -130,6 +135,7 @@ struct EXOApp: App {
                 "Failed to register EXO for launch at login: \(error.localizedDescription)")
         }
     }
+
 }
 
 /// Helper for managing EXO's launch-at-login registration

@@ -2,7 +2,6 @@
 
 from collections.abc import Mapping, Sequence
 
-from exo.shared.models.model_cards import ModelId
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.tasks import (
     ChatCompletion,
@@ -21,6 +20,7 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
+    DownloadFailed,
     DownloadOngoing,
     DownloadProgress,
 )
@@ -45,9 +45,6 @@ def plan(
     node_id: NodeId,
     # Runners is expected to be FRESH and so should not come from state
     runners: Mapping[RunnerId, RunnerSupervisor],
-    # DL_status is expected to be FRESH and so should not come from state
-    download_status: Mapping[ModelId, DownloadProgress],
-    # gdls is not expected to be fresh
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
     instances: Mapping[InstanceId, Instance],
     all_runners: Mapping[RunnerId, RunnerStatus],  # all global
@@ -59,7 +56,7 @@ def plan(
     return (
         _kill_runner(runners, all_runners, instances)
         or _create_runner(node_id, runners, instances)
-        or _model_needs_download(runners, download_status)
+        or _model_needs_download(node_id, runners, global_download_status)
         or _init_distributed_backend(runners, all_runners)
         or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
@@ -115,15 +112,22 @@ def _create_runner(
 
 
 def _model_needs_download(
+    node_id: NodeId,
     runners: Mapping[RunnerId, RunnerSupervisor],
-    download_status: Mapping[ModelId, DownloadProgress],
+    global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
 ) -> DownloadModel | None:
+    local_downloads = global_download_status.get(node_id, [])
+    download_status = {
+        dp.shard_metadata.model_card.model_id: dp for dp in local_downloads
+    }
+
     for runner in runners.values():
         model_id = runner.bound_instance.bound_shard.model_card.model_id
         if isinstance(runner.status, RunnerIdle) and (
             model_id not in download_status
             or not isinstance(
-                download_status[model_id], (DownloadOngoing, DownloadCompleted)
+                download_status[model_id],
+                (DownloadOngoing, DownloadCompleted, DownloadFailed),
             )
         ):
             # We don't invalidate download_status randomly in case a file gets deleted on disk

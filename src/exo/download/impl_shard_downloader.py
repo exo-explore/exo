@@ -5,13 +5,13 @@ from typing import AsyncIterator, Callable
 
 from loguru import logger
 
+from exo.download.download_utils import RepoDownloadProgress, download_shard
+from exo.download.shard_downloader import ShardDownloader
 from exo.shared.models.model_cards import MODEL_CARDS, ModelCard, ModelId
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
     ShardMetadata,
 )
-from exo.worker.download.download_utils import RepoDownloadProgress, download_shard
-from exo.worker.download.shard_downloader import ShardDownloader
 
 
 def exo_shard_downloader(max_parallel_downloads: int = 8) -> ShardDownloader:
@@ -21,7 +21,7 @@ def exo_shard_downloader(max_parallel_downloads: int = 8) -> ShardDownloader:
 
 
 async def build_base_shard(model_id: ModelId) -> ShardMetadata:
-    model_card = await ModelCard.load(model_id)
+    model_card = await ModelCard.from_hf(model_id)
     return PipelineShardMetadata(
         model_card=model_card,
         device_rank=0,

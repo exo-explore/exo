@@ -18,15 +18,12 @@ try:
 except ImportError:
     pass  # transformers < 5.0 or bytes_to_unicode not available
 
-from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache
+from mlx_lm.models.cache import KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3Model
-from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelId
 from exo.worker.engines.mlx.constants import (
-    CACHE_GROUP_SIZE,
-    KV_CACHE_BITS,
     TRUST_REMOTE_CODE,
 )
 
@@ -41,6 +38,7 @@ import mlx.nn as nn
 from mlx_lm.utils import load_model
 from pydantic import RootModel
 
+from exo.download.download_utils import build_model_path
 from exo.shared.types.api import ChatCompletionMessageText
 from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
@@ -55,7 +53,6 @@ from exo.shared.types.worker.shards import (
     ShardMetadata,
     TensorShardMetadata,
 )
-from exo.worker.download.download_utils import build_model_path
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.auto_parallel import (
     TimeoutCallback,
@@ -365,12 +362,35 @@ def load_tokenizer_for_model_id(
     return tokenizer
 
 
+def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
+    """
+    Normalize tool_calls in a message dict.
+
+    OpenAI format has tool_calls[].function.arguments as a JSON string,
+    but some chat templates (e.g., GLM) expect it as a dict.
+    """
+    tool_calls = msg_dict.get("tool_calls")
+    if not tool_calls or not isinstance(tool_calls, list):
+        return
+
+    for tc in tool_calls:  # pyright: ignore[reportUnknownVariableType]
+        if not isinstance(tc, dict):
+            continue
+        func = tc.get("function")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        if not isinstance(func, dict):
+            continue
+        args = func.get("arguments")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        if isinstance(args, str):
+            with contextlib.suppress(json.JSONDecodeError):
+                func["arguments"] = json.loads(args)
+
+
 def apply_chat_template(
     tokenizer: TokenizerWrapper,
     chat_task_data: ChatCompletionTaskParams,
 ) -> str:
-    # Now we can properly access the messages
     messages = chat_task_data.messages
+    tools = chat_task_data.tools
 
     formatted_messages: list[dict[str, Any]] = []
     for message in messages:
@@ -382,19 +402,27 @@ def apply_chat_template(
                 continue
 
             message.content = "\n".join(c.text for c in message.content).strip()
-        if message.content is None and message.thinking is None:
+        if (
+            message.content is None
+            and message.thinking is None
+            and message.tool_calls is None
+        ):
             continue
 
         # Null values are not valid when applying templates in tokenizer
-        formatted_messages.append(
-            {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
-        )
+        dumped: dict[str, Any] = message.model_dump()
+        msg_dict: dict[str, Any] = {k: v for k, v in dumped.items() if v is not None}  # pyright: ignore[reportAny]
+
+        # Parse tool_calls arguments from JSON string to dict for templates that expect dicts
+        _normalize_tool_calls(msg_dict)
+
+        formatted_messages.append(msg_dict)
 
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
-        tools=chat_task_data.tools,
+        tools=tools,
     )
 
     logger.info(prompt)
@@ -433,31 +461,6 @@ class NullKVCache(KVCache):
     @state.setter
     def state(self, v: tuple[mx.array, mx.array]) -> None:
         raise NotImplementedError("We should not be setting a NullKVCache.")
-
-
-def make_kv_cache(
-    model: Model, max_kv_size: int | None = None, keep: int = 0
-) -> list[KVCache | RotatingKVCache | QuantizedKVCache]:
-    assert hasattr(model, "layers")
-
-    # TODO: Do this for all models
-    if hasattr(model, "make_cache") and isinstance(model, GptOssModel):
-        logger.info("Using MLX LM's make cache")
-        return model.make_cache()  # type: ignore
-
-    if max_kv_size is None:
-        if KV_CACHE_BITS is None:
-            logger.info("Using default KV cache")
-            return [KVCache() for _ in model.layers]
-        else:
-            logger.info("Using quantized KV cache")
-            return [
-                QuantizedKVCache(group_size=CACHE_GROUP_SIZE, bits=KV_CACHE_BITS)
-                for _ in model.layers
-            ]
-    else:
-        logger.info(f"Using rotating KV cache with {max_kv_size=} with {keep=}")
-        return [RotatingKVCache(max_size=max_kv_size, keep=keep) for _ in model.layers]
 
 
 def mlx_force_oom(size: int = 40000) -> None:

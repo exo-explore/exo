@@ -19,6 +19,9 @@
     selectedPreviewModelId,
     isLoadingPreviews,
     selectPreviewModel,
+    togglePreviewNodeFilter,
+    clearPreviewNodeFilter,
+    previewNodeFilter,
     createConversation,
     setSelectedChatModel,
     selectedChatModel,
@@ -28,6 +31,8 @@
     toggleTopologyOnlyMode,
     chatSidebarVisible,
     toggleChatSidebarVisible,
+    thunderboltBridgeCycles,
+    nodeThunderboltBridge,
     type DownloadProgress,
     type PlacementPreview,
   } from "$lib/stores/app.svelte";
@@ -49,6 +54,41 @@
   const debugEnabled = $derived(debugMode());
   const topologyOnlyEnabled = $derived(topologyOnlyMode());
   const sidebarVisible = $derived(chatSidebarVisible());
+  const tbBridgeCycles = $derived(thunderboltBridgeCycles());
+  const tbBridgeData = $derived(nodeThunderboltBridge());
+  const nodeFilter = $derived(previewNodeFilter());
+
+  // Helper to get friendly node name from node ID
+  function getNodeName(nodeId: string): string {
+    const node = data?.nodes?.[nodeId];
+    return node?.friendly_name || nodeId.slice(0, 8) + "...";
+  }
+
+  // Helper to get the thunderbolt bridge service name from a cycle
+  function getTbBridgeServiceName(cycle: string[]): string {
+    // Try to find service name from any node in the cycle
+    for (const nodeId of cycle) {
+      const nodeData = tbBridgeData?.[nodeId];
+      if (nodeData?.serviceName) {
+        return nodeData.serviceName;
+      }
+    }
+    return "Thunderbolt Bridge"; // Fallback if no service name found
+  }
+
+  // Copy to clipboard state and function
+  let copiedCommand = $state(false);
+  async function copyToClipboard(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      copiedCommand = true;
+      setTimeout(() => {
+        copiedCommand = false;
+      }, 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  }
 
   let mounted = $state(false);
 
@@ -89,6 +129,15 @@
       model.tasks.includes("TextToImage") ||
       model.tasks.includes("ImageToImage")
     );
+  }
+
+  // Helper to check if a model supports image editing
+  function modelSupportsImageEditing(modelId: string): boolean {
+    const model = models.find(
+      (m) => m.id === modelId || m.hugging_face_id === modelId,
+    );
+    if (!model?.tasks) return false;
+    return model.tasks.includes("ImageToImage");
   }
   let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
   type InstanceMeta = "MlxRing" | "MlxIbv" | "MlxJaccl";
@@ -180,6 +229,9 @@
 
   // Preview card hover state for highlighting nodes in topology
   let hoveredPreviewNodes = $state<Set<string>>(new Set());
+
+  // Computed: Check if filter is active (from store)
+  const isFilterActive = $derived(() => nodeFilter.size > 0);
 
   // Helper to unwrap tagged instance for hover highlighting
   function unwrapInstanceNodes(instanceWrapped: unknown): Set<string> {
@@ -732,6 +784,8 @@
     instanceWrapped: unknown,
   ): {
     isDownloading: boolean;
+    isFailed: boolean;
+    errorMessage: string | null;
     progress: DownloadProgress | null;
     statusText: string;
     perNode: Array<{
@@ -743,6 +797,8 @@
     if (!downloadsData || Object.keys(downloadsData).length === 0) {
       return {
         isDownloading: false,
+        isFailed: false,
+        errorMessage: null,
         progress: null,
         statusText: "RUNNING",
         perNode: [],
@@ -754,6 +810,8 @@
     if (!instance || typeof instance !== "object") {
       return {
         isDownloading: false,
+        isFailed: false,
+        errorMessage: null,
         progress: null,
         statusText: "PREPARING",
         perNode: [],
@@ -809,6 +867,26 @@
           downloadKind
         ] as Record<string, unknown>;
 
+        // Handle DownloadFailed - return immediately with error info
+        if (downloadKind === "DownloadFailed") {
+          const downloadModelId = extractModelIdFromDownload(downloadPayload);
+          if (
+            instanceModelId &&
+            downloadModelId &&
+            downloadModelId === instanceModelId
+          ) {
+            return {
+              isDownloading: false,
+              isFailed: true,
+              errorMessage:
+                (downloadPayload.errorMessage as string) || "Download failed",
+              progress: null,
+              statusText: "FAILED",
+              perNode: [],
+            };
+          }
+        }
+
         if (downloadKind !== "DownloadOngoing") continue;
         if (!downloadPayload) continue;
 
@@ -844,6 +922,8 @@
       const statusInfo = deriveInstanceStatus(instanceWrapped);
       return {
         isDownloading: false,
+        isFailed: statusInfo.statusText === "FAILED",
+        errorMessage: null,
         progress: null,
         statusText: statusInfo.statusText,
         perNode: [],
@@ -856,6 +936,8 @@
 
     return {
       isDownloading: true,
+      isFailed: false,
+      errorMessage: null,
       progress: {
         totalBytes,
         downloadedBytes,
@@ -1451,7 +1533,7 @@
 
   // Get ALL filtered previews based on current settings (matching minimum nodes)
   // Note: previewsData already contains previews for the selected model (fetched via API)
-  // We filter by sharding/instance type and min nodes, returning ALL eligible previews
+  // Backend handles node_ids filtering, we filter by sharding/instance type and min nodes
   const filteredPreviews = $derived(() => {
     if (!selectedModelId || previewsData.length === 0) return [];
 
@@ -1584,7 +1666,86 @@
           <TopologyGraph
             class="w-full h-full"
             highlightedNodes={highlightedNodes()}
+            filteredNodes={nodeFilter}
+            onNodeClick={togglePreviewNodeFilter}
           />
+
+          <!-- Thunderbolt Bridge Cycle Warning -->
+          {#if tbBridgeCycles.length > 0}
+            {@const cycle = tbBridgeCycles[0]}
+            {@const serviceName = getTbBridgeServiceName(cycle)}
+            {@const disableCmd = `sudo networksetup -setnetworkserviceenabled "${serviceName}" off`}
+            <div class="absolute top-4 left-4 group" role="alert">
+              <div
+                class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
+              >
+                <svg
+                  class="w-5 h-5 text-yellow-400 flex-shrink-0"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  />
+                </svg>
+                <span class="text-sm font-mono text-yellow-200">
+                  THUNDERBOLT BRIDGE CYCLE DETECTED
+                </span>
+              </div>
+
+              <!-- Tooltip on hover -->
+              <div
+                class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+              >
+                <p class="text-xs text-white/80 mb-2">
+                  A network routing cycle was detected between nodes connected
+                  via Thunderbolt Bridge. This can cause connectivity issues.
+                </p>
+                <p class="text-xs text-white/60 mb-2">
+                  <span class="text-yellow-300">Affected nodes:</span>
+                  {cycle.map(getNodeName).join(" → ")}
+                </p>
+                <p class="text-xs text-white/60 mb-1">
+                  <span class="text-yellow-300">To fix:</span> Disable the Thunderbolt
+                  Bridge on one of the affected nodes:
+                </p>
+                <button
+                  type="button"
+                  onclick={() => copyToClipboard(disableCmd)}
+                  class="w-full flex items-center gap-2 text-[10px] font-mono bg-exo-black/60 px-2 py-1.5 rounded text-exo-yellow break-all text-left hover:bg-exo-black/80 transition-colors cursor-pointer group/copy"
+                  title="Click to copy"
+                >
+                  <span class="flex-1">{disableCmd}</span>
+                  <svg
+                    class="w-3.5 h-3.5 flex-shrink-0 text-white/40 group-hover/copy:text-exo-yellow transition-colors"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    {#if copiedCommand}
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M5 13l4 4L19 7"
+                      />
+                    {:else}
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                      />
+                    {/if}
+                  </svg>
+                </button>
+              </div>
+            </div>
+          {/if}
+
           <!-- Exit topology-only mode button -->
           <button
             type="button"
@@ -1624,7 +1785,111 @@
             <TopologyGraph
               class="w-full h-full"
               highlightedNodes={highlightedNodes()}
+              filteredNodes={nodeFilter}
+              onNodeClick={togglePreviewNodeFilter}
             />
+
+            <!-- Thunderbolt Bridge Cycle Warning -->
+            {#if tbBridgeCycles.length > 0}
+              {@const cycle = tbBridgeCycles[0]}
+              {@const serviceName = getTbBridgeServiceName(cycle)}
+              {@const disableCmd = `sudo networksetup -setnetworkserviceenabled "${serviceName}" off`}
+              <div class="absolute top-4 left-4 group" role="alert">
+                <div
+                  class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
+                >
+                  <svg
+                    class="w-5 h-5 text-yellow-400 flex-shrink-0"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    />
+                  </svg>
+                  <span class="text-sm font-mono text-yellow-200">
+                    THUNDERBOLT BRIDGE CYCLE DETECTED
+                  </span>
+                </div>
+
+                <!-- Tooltip on hover -->
+                <div
+                  class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+                >
+                  <p class="text-xs text-white/80 mb-2">
+                    A network routing cycle was detected between nodes connected
+                    via Thunderbolt Bridge. This can cause connectivity issues.
+                  </p>
+                  <p class="text-xs text-white/60 mb-2">
+                    <span class="text-yellow-300">Affected nodes:</span>
+                    {cycle.map(getNodeName).join(" → ")}
+                  </p>
+                  <p class="text-xs text-white/60 mb-1">
+                    <span class="text-yellow-300">To fix:</span> Disable the Thunderbolt
+                    Bridge on one of the affected nodes:
+                  </p>
+                  <button
+                    type="button"
+                    onclick={() => copyToClipboard(disableCmd)}
+                    class="w-full flex items-center gap-2 text-[10px] font-mono bg-exo-black/60 px-2 py-1.5 rounded text-exo-yellow break-all text-left hover:bg-exo-black/80 transition-colors cursor-pointer group/copy"
+                    title="Click to copy"
+                  >
+                    <span class="flex-1">{disableCmd}</span>
+                    <svg
+                      class="w-3.5 h-3.5 flex-shrink-0 text-white/40 group-hover/copy:text-exo-yellow transition-colors"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      {#if copiedCommand}
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="M5 13l4 4L19 7"
+                        />
+                      {:else}
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                        />
+                      {/if}
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            {/if}
+
+            <!-- Node Filter Indicator (top-right corner) -->
+            {#if isFilterActive()}
+              <button
+                onclick={clearPreviewNodeFilter}
+                class="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 bg-exo-dark-gray/80 border border-exo-yellow/40 rounded text-exo-yellow hover:border-exo-yellow/60 transition-colors cursor-pointer backdrop-blur-sm"
+                title="Clear filter"
+              >
+                <span class="text-[10px] font-mono tracking-wider">
+                  FILTER: {nodeFilter.size}
+                </span>
+                <svg
+                  class="w-3 h-3"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            {/if}
           </div>
 
           <!-- Chat Input - Below topology -->
@@ -2061,6 +2326,13 @@
                           >
                             {downloadInfo.statusText}
                           </div>
+                          {#if downloadInfo.isFailed && downloadInfo.errorMessage}
+                            <div
+                              class="text-xs text-red-400/80 font-mono mt-1 break-words"
+                            >
+                              {downloadInfo.errorMessage}
+                            </div>
+                          {/if}
                         {/if}
                       </div>
                     </div>
@@ -2106,6 +2378,9 @@
                     {@const isImageModel = modelSupportsImageGeneration(
                       foundModel.id,
                     )}
+                    {@const isImageEditModel = modelSupportsImageEditing(
+                      foundModel.id,
+                    )}
                     <span
                       class="flex items-center justify-between gap-2 w-full pr-4"
                     >
@@ -2130,6 +2405,22 @@
                             />
                             <circle cx="8.5" cy="8.5" r="1.5" />
                             <polyline points="21 15 16 10 5 21" />
+                          </svg>
+                        {/if}
+                        {#if isImageEditModel}
+                          <svg
+                            class="w-4 h-4 flex-shrink-0 text-exo-yellow"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
+                            <path
+                              d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
+                            />
+                            <path
+                              d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
+                            />
                           </svg>
                         {/if}
                         <span class="truncate"
@@ -2204,6 +2495,9 @@
                       {@const isImageModel = modelSupportsImageGeneration(
                         model.id,
                       )}
+                      {@const isImageEditModel = modelSupportsImageEditing(
+                        model.id,
+                      )}
                       <button
                         type="button"
                         onclick={() => {
@@ -2242,6 +2536,23 @@
                               />
                               <circle cx="8.5" cy="8.5" r="1.5" />
                               <polyline points="21 15 16 10 5 21" />
+                            </svg>
+                          {/if}
+                          {#if isImageEditModel}
+                            <svg
+                              class="w-4 h-4 flex-shrink-0 text-exo-yellow"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              aria-label="Image editing model"
+                            >
+                              <path
+                                d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
+                              />
+                              <path
+                                d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
+                              />
                             </svg>
                           {/if}
                           <span class="truncate">{model.name || model.id}</span>
@@ -2564,7 +2875,36 @@
               <div
                 class="relative aspect-square bg-exo-dark-gray rounded-lg overflow-hidden"
               >
-                <TopologyGraph highlightedNodes={highlightedNodes()} />
+                <TopologyGraph
+                  highlightedNodes={highlightedNodes()}
+                  filteredNodes={nodeFilter}
+                  onNodeClick={togglePreviewNodeFilter}
+                />
+
+                <!-- Thunderbolt Bridge Cycle Warning (compact) -->
+                {#if tbBridgeCycles.length > 0}
+                  <div
+                    class="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm"
+                    title="Thunderbolt Bridge cycle detected - click to view details"
+                  >
+                    <svg
+                      class="w-3.5 h-3.5 text-yellow-400"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                      />
+                    </svg>
+                    <span class="text-[10px] font-mono text-yellow-200"
+                      >TB CYCLE</span
+                    >
+                  </div>
+                {/if}
               </div>
             </button>
 
@@ -2993,6 +3333,13 @@
                             >
                               {downloadInfo.statusText}
                             </div>
+                            {#if downloadInfo.isFailed && downloadInfo.errorMessage}
+                              <div
+                                class="text-xs text-red-400/80 font-mono mt-1 break-words"
+                              >
+                                {downloadInfo.errorMessage}
+                              </div>
+                            {/if}
                           {/if}
                         </div>
                       </div>

@@ -5,13 +5,13 @@ import re
 import time
 from collections.abc import AsyncGenerator
 from http import HTTPStatus
-from typing import Any, Literal, cast
+from typing import Annotated, Literal, cast, Any
 from uuid import uuid4
 
 import anyio
 from anyio import BrokenResourceError, create_task_group
 from anyio.abc import TaskGroup
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -23,7 +23,10 @@ from loguru import logger
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
-from exo.shared.constants import EXO_IMAGE_CACHE_DIR, EXO_MAX_CHUNK_SIZE
+from exo.shared.constants import (
+    EXO_IMAGE_CACHE_DIR,
+    EXO_MAX_CHUNK_SIZE,
+)
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import (
@@ -32,6 +35,7 @@ from exo.shared.models.model_cards import (
     ModelId,
 )
 from exo.shared.types.api import (
+    AdvancedImageParams,
     BenchChatCompletionResponse,
     BenchChatCompletionTaskParams,
     BenchImageGenerationResponse,
@@ -46,6 +50,7 @@ from exo.shared.types.api import (
     CompletionTokensDetails,
     CreateInstanceParams,
     CreateInstanceResponse,
+    DeleteDownloadResponse,
     DeleteInstanceResponse,
     ErrorInfo,
     ErrorResponse,
@@ -65,6 +70,8 @@ from exo.shared.types.api import (
     PlaceInstanceParams,
     PlacementPreview,
     PlacementPreviewResponse,
+    StartDownloadParams,
+    StartDownloadResponse,
     StreamingChoiceResponse,
     ToolCall,
     Usage,
@@ -80,14 +87,17 @@ from exo.shared.types.chunks import (
 from exo.shared.types.commands import (
     ChatCompletion,
     Command,
-    Completion,
     CreateInstance,
+    DeleteDownload,
     DeleteInstance,
+    DownloadCommand,
     ForwarderCommand,
+    ForwarderDownloadCommand,
     ImageEdits,
     ImageGeneration,
     PlaceInstance,
     SendInputChunk,
+    StartDownload,
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
@@ -193,12 +203,14 @@ class API:
         # Ideally this would be a MasterForwarderEvent but type system says no :(
         global_event_receiver: Receiver[ForwarderEvent],
         command_sender: Sender[ForwarderCommand],
+        download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
     ) -> None:
         self.state = State()
         self._event_log: list[Event] = []
         self.command_sender = command_sender
+        self.download_command_sender = download_command_sender
         self.global_event_receiver = global_event_receiver
         self.election_receiver = election_receiver
         self.event_buffer: OrderedBuffer[Event] = OrderedBuffer[Event]()
@@ -290,7 +302,6 @@ class API:
         self.app.post("/v1/chat/completions", response_model=None)(
             self.chat_completions
         )
-        self.app.post("/v1/completions", response_model=None)(self.completions)
         self.app.post("/bench/chat/completions")(self.bench_chat_completions)
         self.app.post("/v1/images/generations", response_model=None)(
             self.image_generations
@@ -302,6 +313,8 @@ class API:
         self.app.get("/images/{image_id}")(self.get_image)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
+        self.app.post("/download/start")(self.start_download)
+        self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
         self.app.get("/v1/usage")(self.get_usage)
 
     def get_usage(self) -> dict[str, Any]:
@@ -417,10 +430,14 @@ class API:
         return placements[new_ids[0]]
 
     async def get_placement_previews(
-        self, model_id: ModelId
+        self,
+        model_id: ModelId,
+        node_ids: Annotated[list[NodeId] | None, Query()] = None,
     ) -> PlacementPreviewResponse:
         seen: set[tuple[ModelId, Sharding, InstanceMeta, int]] = set()
         previews: list[PlacementPreview] = []
+        required_nodes = set(node_ids) if node_ids else None
+
         if len(list(self.state.topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
@@ -456,6 +473,7 @@ class API:
                         node_network=self.state.node_network,
                         topology=self.state.topology,
                         current_instances=self.state.instances,
+                        required_nodes=required_nodes,
                     )
                 except ValueError as exc:
                     if (model_card.model_id, sharding, instance_meta, 0) not in seen:
@@ -494,14 +512,16 @@ class API:
 
                 instance = new_instances[0]
                 shard_assignments = instance.shard_assignments
-                node_ids = list(shard_assignments.node_to_runner.keys())
+                placement_node_ids = list(shard_assignments.node_to_runner.keys())
 
                 memory_delta_by_node: dict[str, int] = {}
-                if node_ids:
+                if placement_node_ids:
                     total_bytes = model_card.storage_size.in_bytes
-                    per_node = total_bytes // len(node_ids)
-                    remainder = total_bytes % len(node_ids)
-                    for index, node_id in enumerate(sorted(node_ids, key=str)):
+                    per_node = total_bytes // len(placement_node_ids)
+                    remainder = total_bytes % len(placement_node_ids)
+                    for index, node_id in enumerate(
+                        sorted(placement_node_ids, key=str)
+                    ):
                         extra = 1 if index < remainder else 0
                         memory_delta_by_node[str(node_id)] = per_node + extra
 
@@ -509,7 +529,7 @@ class API:
                     model_card.model_id,
                     sharding,
                     instance_meta,
-                    len(node_ids),
+                    len(placement_node_ids),
                 ) not in seen:
                     previews.append(
                         PlacementPreview(
@@ -521,7 +541,14 @@ class API:
                             error=None,
                         )
                     )
-                seen.add((model_card.model_id, sharding, instance_meta, len(node_ids)))
+                seen.add(
+                    (
+                        model_card.model_id,
+                        sharding,
+                        instance_meta,
+                        len(placement_node_ids),
+                    )
+                )
 
         return PlacementPreviewResponse(previews=previews)
 
@@ -546,7 +573,7 @@ class API:
 
     async def _chat_chunk_stream(
         self, command_id: CommandId, timeout: float = 600.0
-    ) -> AsyncGenerator[TokenChunk | ErrorChunk | ToolCallChunk | CompletionChunk, None]:
+    ) -> AsyncGenerator[TokenChunk | ErrorChunk | ToolCallChunk, None]:
         """Yield `TokenChunk`s for a given command until completion.
 
         Args:
@@ -555,7 +582,7 @@ class API:
 
         try:
             self._chat_completion_queues[command_id], recv = channel[
-                TokenChunk | ErrorChunk | ToolCallChunk | CompletionChunk
+                TokenChunk | ErrorChunk | ToolCallChunk
             ]()
 
             with recv as token_chunks:
@@ -586,10 +613,6 @@ class API:
         """Generate chat completion stream as JSON strings."""
 
         async for chunk in self._chat_chunk_stream(command_id):
-            # Skip CompletionChunk - it's for the legacy completions API
-            if isinstance(chunk, CompletionChunk):
-                continue
-
             assert not isinstance(chunk, ImageChunk)
             if isinstance(chunk, ErrorChunk):
                 error_response = ErrorResponse(
@@ -636,8 +659,6 @@ class API:
 
         async for chunk in self._chat_chunk_stream(command_id):
             # Skip CompletionChunk - it's for the legacy completions API
-            if isinstance(chunk, CompletionChunk):
-                continue
 
             if isinstance(chunk, ErrorChunk):
                 raise HTTPException(
@@ -729,9 +750,6 @@ class API:
         stats: GenerationStats | None = None
 
         async for chunk in self._chat_chunk_stream(command_id):
-            # Skip CompletionChunk - it's for the legacy completions API
-            if isinstance(chunk, CompletionChunk):
-                continue
 
             if isinstance(chunk, ErrorChunk):
                 raise HTTPException(
@@ -819,94 +837,6 @@ class API:
                 await self._send(TaskFinished(finished_command_id=command.command_id))
             self._chat_completion_queues.pop(command.command_id, None)
             raise
-
-    async def completions(
-        self, payload: CompletionTaskParams
-    ) -> CompletionResponse:
-        """Handle legacy completions API for lm_eval compatibility."""
-        model_card = await resolve_model_card(ModelId(payload.model))
-        payload.model = model_card.model_id
-
-        if not any(
-            instance.shard_assignments.model_id == payload.model
-            for instance in self.state.instances.values()
-        ):
-            await self._trigger_notify_user_to_download_model(payload.model)
-            raise HTTPException(
-                status_code=404, detail=f"No instance found for model {payload.model}"
-            )
-
-        command = Completion(request_params=payload)
-        await self._send(command)
-
-        try:
-            return await self._collect_completion(command.command_id)
-        except BaseException:
-            with contextlib.suppress(Exception):
-                await self._send(TaskFinished(finished_command_id=command.command_id))
-            self._chat_completion_queues.pop(command.command_id, None)
-            raise
-
-    async def _collect_completion(self, command_id: CommandId) -> CompletionResponse:
-        """Collect completion response chunks into a single response."""
-        text = ""
-        tokens: list[str] = []
-        token_logprobs: list[float | None] = []
-        top_logprobs: list[dict[str, float]] = []
-        text_offset: list[int] = []
-        finish_reason: FinishReason | None = None
-        model = ""
-
-        try:
-            self._chat_completion_queues[command_id], recv = channel[
-                TokenChunk | ErrorChunk | ToolCallChunk | CompletionChunk
-            ]()
-
-            with recv as chunks:
-                async for chunk in chunks:
-                    if isinstance(chunk, CompletionChunk):
-                        text = chunk.text
-                        tokens = chunk.tokens
-                        token_logprobs = chunk.token_logprobs
-                        top_logprobs = chunk.top_logprobs
-                        text_offset = chunk.text_offset
-                        finish_reason = chunk.finish_reason
-                        model = chunk.model
-                    elif isinstance(chunk, ErrorChunk):
-                        raise HTTPException(
-                            status_code=500, detail=chunk.error_message
-                        )
-
-                    if chunk.finish_reason is not None:
-                        break
-        finally:
-            command = TaskFinished(finished_command_id=command_id)
-            await self._send(command)
-            if command_id in self._chat_completion_queues:
-                del self._chat_completion_queues[command_id]
-
-        logprobs_data: CompletionLogprobs | None = None
-        if tokens:
-            logprobs_data = CompletionLogprobs(
-                tokens=tokens,
-                token_logprobs=token_logprobs,
-                top_logprobs=top_logprobs,
-                text_offset=text_offset,
-            )
-
-        return CompletionResponse(
-            id=f"cmpl-{uuid4()}",
-            created=int(time.time()),
-            model=model,
-            choices=[
-                CompletionChoice(
-                    text=text,
-                    index=0,
-                    logprobs=logprobs_data,
-                    finish_reason=finish_reason,
-                )
-            ],
-        )
 
     async def bench_chat_completions(
         self, payload: BenchChatCompletionTaskParams
@@ -1066,6 +996,7 @@ class API:
                             # Yield partial image event (always use b64_json for partials)
                             event_data = {
                                 "type": "partial",
+                                "image_index": chunk.image_index,
                                 "partial_index": partial_idx,
                                 "total_partials": total_partials,
                                 "format": str(chunk.format),
@@ -1255,6 +1186,9 @@ class API:
         stream: bool,
         partial_images: int,
         bench: bool,
+        quality: Literal["high", "medium", "low"],
+        output_format: Literal["png", "jpeg", "webp"],
+        advanced_params: AdvancedImageParams | None,
     ) -> ImageEdits:
         """Prepare and send an image edits command with chunked image upload."""
         resolved_model = await self._validate_image_model(model)
@@ -1283,6 +1217,9 @@ class API:
                 stream=stream,
                 partial_images=partial_images,
                 bench=bench,
+                quality=quality,
+                output_format=output_format,
+                advanced_params=advanced_params,
             ),
         )
 
@@ -1317,11 +1254,21 @@ class API:
         input_fidelity: Literal["low", "high"] = Form("low"),
         stream: str = Form("false"),
         partial_images: str = Form("0"),
+        quality: Literal["high", "medium", "low"] = Form("medium"),
+        output_format: Literal["png", "jpeg", "webp"] = Form("png"),
+        advanced_params: str | None = Form(None),
     ) -> ImageGenerationResponse | StreamingResponse:
         """Handle image editing requests (img2img)."""
         # Parse string form values to proper types
         stream_bool = stream.lower() in ("true", "1", "yes")
         partial_images_int = int(partial_images) if partial_images.isdigit() else 0
+
+        parsed_advanced_params: AdvancedImageParams | None = None
+        if advanced_params:
+            with contextlib.suppress(Exception):
+                parsed_advanced_params = AdvancedImageParams.model_validate_json(
+                    advanced_params
+                )
 
         command = await self._send_image_edits_command(
             image=image,
@@ -1334,6 +1281,9 @@ class API:
             stream=stream_bool,
             partial_images=partial_images_int,
             bench=False,
+            quality=quality,
+            output_format=output_format,
+            advanced_params=parsed_advanced_params,
         )
 
         if stream_bool and partial_images_int > 0:
@@ -1364,8 +1314,18 @@ class API:
         size: str = Form("1024x1024"),
         response_format: Literal["url", "b64_json"] = Form("b64_json"),
         input_fidelity: Literal["low", "high"] = Form("low"),
+        quality: Literal["high", "medium", "low"] = Form("medium"),
+        output_format: Literal["png", "jpeg", "webp"] = Form("png"),
+        advanced_params: str | None = Form(None),
     ) -> BenchImageGenerationResponse:
         """Handle benchmark image editing requests with generation stats."""
+        parsed_advanced_params: AdvancedImageParams | None = None
+        if advanced_params:
+            with contextlib.suppress(Exception):
+                parsed_advanced_params = AdvancedImageParams.model_validate_json(
+                    advanced_params
+                )
+
         command = await self._send_image_edits_command(
             image=image,
             prompt=prompt,
@@ -1377,6 +1337,9 @@ class API:
             stream=False,
             partial_images=0,
             bench=True,
+            quality=quality,
+            output_format=output_format,
+            advanced_params=parsed_advanced_params,
         )
 
         return await self._collect_image_generation_with_stats(
@@ -1488,3 +1451,28 @@ class API:
         await self.command_sender.send(
             ForwarderCommand(origin=self.node_id, command=command)
         )
+
+    async def _send_download(self, command: DownloadCommand):
+        await self.download_command_sender.send(
+            ForwarderDownloadCommand(origin=self.node_id, command=command)
+        )
+
+    async def start_download(
+        self, payload: StartDownloadParams
+    ) -> StartDownloadResponse:
+        command = StartDownload(
+            target_node_id=payload.target_node_id,
+            shard_metadata=payload.shard_metadata,
+        )
+        await self._send_download(command)
+        return StartDownloadResponse(command_id=command.command_id)
+
+    async def delete_download(
+        self, node_id: NodeId, model_id: ModelId
+    ) -> DeleteDownloadResponse:
+        command = DeleteDownload(
+            target_node_id=node_id,
+            model_id=ModelId(model_id),
+        )
+        await self._send_download(command)
+        return DeleteDownloadResponse(command_id=command.command_id)
