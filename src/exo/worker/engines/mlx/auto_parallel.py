@@ -635,10 +635,10 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
 
             # Shard qk_norm weights if present (must match sharded head count)
             if getattr(layer.self_attn, "use_qk_norm", False):
-                layer.self_attn.q_norm.weight = layer.self_attn.q_norm.weight.split( # type: ignore
+                layer.self_attn.q_norm.weight = layer.self_attn.q_norm.weight.split(  # type: ignore
                     self.N, axis=-1
                 )[rank]
-                layer.self_attn.k_norm.weight = layer.self_attn.k_norm.weight.split( # type: ignore
+                layer.self_attn.k_norm.weight = layer.self_attn.k_norm.weight.split(  # type: ignore
                     self.N, axis=-1
                 )[rank]
 
