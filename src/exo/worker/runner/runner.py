@@ -62,7 +62,7 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
-from exo.shared.types.worker.shards import ShardMetadata
+from exo.shared.types.worker.shards import ShardMetadata, TensorShardMetadata
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.image import (
     DistributedImageModel,
@@ -298,16 +298,23 @@ def main(
 
                     # Initialize batch handler for text generation models
                     if BATCH_ENABLED:
+                        # For tensor parallelism, distributed ops are handled inside model layers
+                        # so batch handler should use world_size=1 (no pipelining)
+                        batch_world_size = (
+                            1
+                            if isinstance(shard_metadata, TensorShardMetadata)
+                            else shard_metadata.world_size
+                        )
                         batch_handler = BatchedInferenceHandler(
                             model=model,
                             tokenizer=tokenizer,
                             model_id=shard_metadata.model_card.model_id,
                             device_rank=device_rank,
-                            world_size=shard_metadata.world_size,
+                            world_size=batch_world_size,
                             max_batch_size=BATCH_MAX_SIZE,
                         )
                         logger.info(
-                            f"Batch handler initialized (max_batch_size={BATCH_MAX_SIZE}, world_size={shard_metadata.world_size})"
+                            f"Batch handler initialized (max_batch_size={BATCH_MAX_SIZE}, world_size={batch_world_size})"
                         )
                         kv_prefix_cache = KVPrefixCache(tokenizer)
 

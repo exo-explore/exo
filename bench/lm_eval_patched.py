@@ -3,13 +3,28 @@
 Fixes:
 - UnboundLocalError on `outputs` in TemplateAPI.amodel_call when API returns error
 - Prevents eval crash on transient API failures (returns None instead of raising)
+- Compatibility with transformers 5.x (missing AutoModelForVision2Seq)
 
 Usage: python -m bench.lm_eval_patched [lm_eval args...]
 """
 
+# ruff: noqa: I001, E402
 # pyright: reportMissingTypeStubs=false, reportUnknownVariableType=false
 # pyright: reportUnknownMemberType=false, reportAny=false
-# ruff: noqa: I001
+
+# MUST patch transformers BEFORE any lm_eval imports
+# AutoModelForVision2Seq/AutoModelForImageTextToText were removed in transformers 5.0
+# Patch the lazy module's __getattr__ to return stubs for missing classes
+from transformers.utils import import_utils
+
+_original_getattr = import_utils._LazyModule.__getattr__
+
+def _patched_getattr(self: object, name: str) -> object:
+    if name in ("AutoModelForVision2Seq", "AutoModelForImageTextToText"):
+        return type(name, (), {})  # Return a stub class
+    return _original_getattr(self, name)  # type: ignore
+
+import_utils._LazyModule.__getattr__ = _patched_getattr  # type: ignore
 
 import functools
 from typing import Any
