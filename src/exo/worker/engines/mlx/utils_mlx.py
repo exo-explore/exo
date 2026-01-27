@@ -259,10 +259,10 @@ def shard_and_load(
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 
-    # Estimate timeout based on model size
-    base_timeout = float(os.environ.get("EXO_MODEL_LOAD_TIMEOUT", "60"))
+    # Estimate timeout based on model size (5x default for large queued workloads)
+    base_timeout = float(os.environ.get("EXO_MODEL_LOAD_TIMEOUT", "300"))
     model_size_gb = get_weights_size(shard_metadata).in_bytes / (1024**3)
-    timeout_seconds = base_timeout + model_size_gb / 5
+    timeout_seconds = base_timeout + model_size_gb
     logger.info(
         f"Evaluating model parameters with timeout of {timeout_seconds:.0f}s "
         f"(model size: {model_size_gb:.1f}GB)"
