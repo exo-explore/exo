@@ -1,7 +1,7 @@
 export NIX_CONFIG := "extra-experimental-features = nix-command flakes"
 
 fmt:
-    nix fmt
+    treefmt || nix fmt
 
 lint:
     uv run ruff check --fix
