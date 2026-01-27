@@ -126,10 +126,7 @@ class PipelineFirstLayer(CustomMlxLayer):
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
-            mx.eval(x)
-        output = self.original_layer(x, *args, **kwargs)
-        mx.eval(output)
-        return output
+        return self.original_layer(x, *args, **kwargs)
 
 
 class PipelineLastLayer(CustomMlxLayer):
@@ -657,10 +654,10 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
 
             # Shard qk_norm weights if present (must match sharded head count)
             if getattr(layer.self_attn, "use_qk_norm", False):
-                layer.self_attn.q_norm.weight = layer.self_attn.q_norm.weight.split(
+                layer.self_attn.q_norm.weight = layer.self_attn.q_norm.weight.split(  # type: ignore
                     self.N, axis=-1
                 )[rank]
-                layer.self_attn.k_norm.weight = layer.self_attn.k_norm.weight.split(
+                layer.self_attn.k_norm.weight = layer.self_attn.k_norm.weight.split(  # type: ignore
                     self.N, axis=-1
                 )[rank]
 
