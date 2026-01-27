@@ -347,7 +347,9 @@ def load_tokenizer_for_model_id(
         # Load tool_declaration_ts first (tokenization_kimi imports it with relative import)
         tool_decl_path = model_path / "tool_declaration_ts.py"
         if tool_decl_path.exists():
-            spec = importlib.util.spec_from_file_location("tool_declaration_ts", tool_decl_path)
+            spec = importlib.util.spec_from_file_location(
+                "tool_declaration_ts", tool_decl_path
+            )
             if spec and spec.loader:
                 tool_decl_module = importlib.util.module_from_spec(spec)
                 sys.modules["tool_declaration_ts"] = tool_decl_module
