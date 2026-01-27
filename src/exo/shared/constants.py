@@ -2,6 +2,8 @@ import os
 import sys
 from pathlib import Path
 
+from exo.utils.dashboard_path import find_dashboard, find_resources
+
 _EXO_HOME_ENV = os.environ.get("EXO_HOME", None)
 
 
@@ -30,6 +32,14 @@ EXO_MODELS_DIR = (
     EXO_DATA_HOME / "models"
     if _EXO_MODELS_DIR_ENV is None
     else Path.home() / _EXO_MODELS_DIR_ENV
+)
+_RESOURCES_DIR_ENV = os.environ.get("EXO_RESOURCES_DIR", None)
+RESOURCES_DIR = (
+    find_resources() if _RESOURCES_DIR_ENV is None else Path.home() / _RESOURCES_DIR_ENV
+)
+_DASHBOARD_DIR_ENV = os.environ.get("EXO_DASHBOARD_DIR", None)
+DASHBOARD_DIR = (
+    find_dashboard() if _RESOURCES_DIR_ENV is None else Path.home() / _RESOURCES_DIR_ENV
 )
 
 # Log files (data/logs or cache)

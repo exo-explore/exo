@@ -7,7 +7,7 @@ from loguru import logger
 
 from exo.download.download_utils import RepoDownloadProgress, download_shard
 from exo.download.shard_downloader import ShardDownloader
-from exo.shared.models.model_cards import MODEL_CARDS, ModelCard, ModelId
+from exo.shared.models.model_cards import ModelCard, ModelId, get_model_cards
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
     ShardMetadata,
@@ -160,7 +160,7 @@ class ResumableShardDownloader(ShardDownloader):
         # Kick off download status coroutines concurrently
         tasks = [
             asyncio.create_task(_status_for_model(model_card.model_id))
-            for model_card in MODEL_CARDS.values()
+            for model_card in await get_model_cards()
         ]
 
         for task in asyncio.as_completed(tasks):
