@@ -397,18 +397,6 @@ def main(
                     try:
                         _process_serial_chat_completion(
                             task, model, tokenizer, shard_metadata, event_sender
-                        _check_for_debug_prompts(task_params.messages[0].content)
-
-                        # Build prompt once - used for both generation and thinking detection
-                        prompt = apply_chat_template(tokenizer, task_params)
-
-                        # Generate responses using the actual MLX generation
-                        mlx_generator = mlx_generate(
-                            model=model,
-                            tokenizer=tokenizer,
-                            task=task_params,
-                            prompt=prompt,
-                            kv_prefix_cache=kv_prefix_cache,
                         )
                     except Exception as e:
                         if device_rank == 0:
@@ -423,56 +411,6 @@ def main(
                                 )
                             )
                         raise
-
-                        # For other thinking models (GLM, etc.), check if we need to
-                        # prepend the thinking tag that was consumed by the chat template
-                        if detect_thinking_prompt_suffix(prompt, tokenizer):
-                            mlx_generator = parse_thinking_models(
-                                mlx_generator, tokenizer
-                            )
-
-                        # Kimi-K2 has tool call sections - we don't care about them
-                        if "kimi" in shard_metadata.model_card.model_id.lower():
-                            mlx_generator = filter_kimi_tokens(mlx_generator)
-                            patch_kimi_tokenizer(tokenizer)
-
-                        # GLM models need patched parser (upstream has bug with None regex match)
-                        elif "glm" in shard_metadata.model_card.model_id.lower():
-                            patch_glm_tokenizer(tokenizer)
-
-                        # GPT-OSS specific parsing to match other model formats.
-                        elif isinstance(model, GptOssModel):
-                            mlx_generator = parse_gpt_oss(mlx_generator)
-
-                        if tokenizer.has_tool_calling and not isinstance(
-                            model, GptOssModel
-                        ):
-                            assert tokenizer.tool_call_start
-                            assert tokenizer.tool_call_end
-                            assert tokenizer.tool_parser  # pyright: ignore[reportAny]
-                            mlx_generator = parse_tool_calls(
-                                mlx_generator,
-                                tokenizer.tool_call_start,
-                                tokenizer.tool_call_end,
-                                tokenizer.tool_parser,  # pyright: ignore[reportAny]
-                            )
-
-                        for response in mlx_generator:
-                            match response:
-                                case GenerationResponse():
-                                    if (
-                                        device_rank == 0
-                                        and response.finish_reason == "error"
-                                    ):
-                                        event_sender.send(
-                                            ChunkGenerated(
-                                                command_id=command_id,
-                                                chunk=ErrorChunk(
-                                                    error_message=response.text,
-                                                    model=shard_metadata.model_card.model_id,
-                                                ),
-                                            )
-                                        )
 
                     current_status = RunnerReady()
                     logger.info("runner ready")

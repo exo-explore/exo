@@ -25,7 +25,6 @@ from exo.worker.engines.mlx.cache import KVPrefixCache, encode_prompt, make_kv_c
 from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
-    make_kv_cache,
     mx_barrier,
 )
 from exo.worker.runner.bootstrap import logger
