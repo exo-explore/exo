@@ -1,0 +1,8 @@
+model_id = "mlx-community/GLM-4.5-Air-8bit"
+n_layers = 46
+hidden_size = 4096
+supports_tensor = false
+tasks = ["TextGeneration"]
+
+[storage_size]
+in_bytes = 122406567936
