@@ -572,7 +572,7 @@ class API:
         )
 
     async def _chat_chunk_stream(
-        self, command_id: CommandId, timeout: float = 600.0
+        self, command_id: CommandId, timeout: float = 60000.0
     ) -> AsyncGenerator[TokenChunk | ErrorChunk | ToolCallChunk, None]:
         """Yield `TokenChunk`s for a given command until completion.
 
