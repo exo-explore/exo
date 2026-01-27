@@ -232,11 +232,14 @@ def build_lm_eval_args(
         model_type = "local-chat-completions"
         endpoint_url = f"{base_url}/v1/chat/completions"
 
-    # Build model_args string with num_concurrent if specified
+    # Build model_args string with num_concurrent and timeout
     model_args_parts = [f"model={model}", f"base_url={endpoint_url}"]
     num_concurrent = lm_eval_config.get("num_concurrent")
     if num_concurrent is not None and num_concurrent > 1:
         model_args_parts.append(f"num_concurrent={num_concurrent}")
+    # Use a very long timeout (1 week) to handle large request queues
+    timeout = lm_eval_config.get("timeout", 604800)
+    model_args_parts.append(f"timeout={timeout}")
     model_args = ",".join(model_args_parts)
 
     args = [
@@ -515,8 +518,8 @@ def main() -> int:
     ap.add_argument(
         "--timeout",
         type=float,
-        default=1200.0,
-        help="HTTP timeout in seconds (default: 1200)",
+        default=604800.0,
+        help="HTTP timeout in seconds (default: 604800 = 1 week)",
     )
     ap.add_argument(
         "--skip-instance-setup",
