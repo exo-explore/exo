@@ -57,8 +57,8 @@ class ActiveRequest:
     command_id: CommandId
     should_extract_logprobs: bool
     top_k: int
-    gpt_oss_parser: Any | None = None  # StreamableParser for GPT-OSS models
-    gpt_oss_thinking: bool = False
+    harmony_parser: Any | None = None  # StreamableParser for GPT-OSS models
+    in_thinking: bool = False  # Currently in thinking/reasoning section
     tokens_generated: int = 0
     reasoning_tokens: int = 0
     prompt_tokens: int = 0
@@ -89,12 +89,21 @@ class BatchedInferenceHandler:
         self.world_size = world_size
         self.max_batch_size = max_batch_size
 
-        # GPT-OSS model detection
+        # Model-specific thinking/reasoning detection
         self.is_gpt_oss = isinstance(model, GptOssModel)
-        self._gpt_oss_encoding: Any | None = None
+        self._harmony_encoding: Any | None = None
         if self.is_gpt_oss:
-            self._gpt_oss_encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
-            logger.info("GPT-OSS model detected, enabling per-request stream parsing")
+            self._harmony_encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
+            logger.info("GPT-OSS model detected, enabling harmony stream parsing")
+
+        # Detect <think></think> tokens from tokenizer (works for any model)
+        self._think_start_token: int | None = None
+        self._think_end_token: int | None = None
+        think_start: int | None = tokenizer.think_start_id  # pyright: ignore[reportAny]
+        if not self.is_gpt_oss and think_start is not None:
+            self._think_start_token = think_start
+            self._think_end_token = tokenizer.think_end_id  # pyright: ignore[reportAny]
+            logger.info(f"Detected <think></think> tokens ({self._think_start_token}/{self._think_end_token}), enabling reasoning tracking")
 
         # Pending requests waiting to be batched
         self.pending: list[PendingRequest] = []
@@ -224,14 +233,14 @@ class BatchedInferenceHandler:
 
         for uid, req, prompt_tokens in zip(uids, requests_to_flush, prompt_token_counts, strict=True):
             parser = None
-            if self.is_gpt_oss and self._gpt_oss_encoding is not None:
-                parser = StreamableParser(self._gpt_oss_encoding, role=Role.ASSISTANT)  # pyright: ignore[reportAny]
+            if self.is_gpt_oss and self._harmony_encoding is not None:
+                parser = StreamableParser(self._harmony_encoding, role=Role.ASSISTANT)  # pyright: ignore[reportAny]
             self.uid_to_request[uid] = ActiveRequest(
                 command_id=req.task.command_id,
                 should_extract_logprobs=req.should_extract_logprobs,
                 top_k=req.top_k,
                 prompt_tokens=prompt_tokens,
-                gpt_oss_parser=parser,
+                harmony_parser=parser,
             )
 
         logger.info(f"Flushed {len(requests_to_flush)} requests into pipelined generator (active={self.pipelined_generator.active_count}, uids={list(self.uid_to_request.keys())})")
@@ -266,14 +275,14 @@ class BatchedInferenceHandler:
 
         for uid, req, prompt_tokens in zip(uids, requests_to_flush, prompt_token_counts, strict=True):  # pyright: ignore[reportUnknownArgumentType]
             parser = None
-            if self.is_gpt_oss and self._gpt_oss_encoding is not None:
-                parser = StreamableParser(self._gpt_oss_encoding, role=Role.ASSISTANT)  # pyright: ignore[reportAny]
+            if self.is_gpt_oss and self._harmony_encoding is not None:
+                parser = StreamableParser(self._harmony_encoding, role=Role.ASSISTANT)  # pyright: ignore[reportAny]
             self.uid_to_request[uid] = ActiveRequest(
                 command_id=req.task.command_id,
                 should_extract_logprobs=req.should_extract_logprobs,
                 top_k=req.top_k,
                 prompt_tokens=prompt_tokens,
-                gpt_oss_parser=parser,
+                harmony_parser=parser,
             )
 
         logger.info(f"Flushed {len(requests_to_flush)} requests into batch (active={self.current_batch_size}, uids={list(self.uid_to_request.keys())})")
@@ -319,14 +328,17 @@ class BatchedInferenceHandler:
                     completed_uids.append(uid)  # pyright: ignore[reportUnknownArgumentType]
                 continue
 
-            # Decode token to text, applying GPT-OSS parsing if needed
+            # Decode token to text
             # Skip emitting EOS token text (e.g., <|eot_id|>)
             if resp_token in self.stop_tokens:
                 token_text = ""
             else:
                 token_text = self.tokenizer.decode([resp_token])
-            if active_request.gpt_oss_parser is not None:
-                parser = active_request.gpt_oss_parser  # pyright: ignore[reportAny]
+
+            # Handle thinking/reasoning token tracking
+            if active_request.harmony_parser is not None:
+                # GPT-OSS: Use harmony parser for channel-based thinking detection
+                parser = active_request.harmony_parser  # pyright: ignore[reportAny]
                 parser.process(resp_token)  # pyright: ignore[reportAny]
                 delta: str | None = parser.last_content_delta  # pyright: ignore[reportAny]
                 channel: str = parser.current_channel  # pyright: ignore[reportAny]
@@ -337,23 +349,31 @@ class BatchedInferenceHandler:
 
                 # Handle thinking tag transitions
                 prefix = ""
-                if channel == "analysis" and not active_request.gpt_oss_thinking:
-                    active_request.gpt_oss_thinking = True
+                if channel == "analysis" and not active_request.in_thinking:
+                    active_request.in_thinking = True
                     prefix = "<think>"
-                elif channel != "analysis" and active_request.gpt_oss_thinking:
-                    active_request.gpt_oss_thinking = False
+                elif channel != "analysis" and active_request.in_thinking:
+                    active_request.in_thinking = False
                     prefix = "</think>"
 
-                if resp_finish_reason is not None and active_request.gpt_oss_thinking:
+                if resp_finish_reason is not None and active_request.in_thinking:
                     # Close thinking tag on finish
                     prefix = "</think>"
-                    active_request.gpt_oss_thinking = False
+                    active_request.in_thinking = False
 
                 effective_delta = delta or ""
                 token_text = prefix + effective_delta if (prefix or effective_delta) else ""
                 # Skip empty tokens (channel markers with no content delta)
                 if not token_text and resp_finish_reason is None:
                     continue
+            elif self._think_start_token is not None:
+                # MiniMax: Track <think>/</ think> tokens directly
+                if resp_token == self._think_start_token:
+                    active_request.in_thinking = True
+                elif resp_token == self._think_end_token:
+                    active_request.in_thinking = False
+                elif active_request.in_thinking:
+                    active_request.reasoning_tokens += 1
 
             # Extract logprobs if requested
             logprob: float | None = None
@@ -455,8 +475,11 @@ class BatchedInferenceHandler:
                 token_text = ""
             else:
                 token_text = self.tokenizer.decode([resp_token])
-            if active_request.gpt_oss_parser is not None:
-                parser = active_request.gpt_oss_parser  # pyright: ignore[reportAny]
+
+            # Handle thinking/reasoning token tracking
+            if active_request.harmony_parser is not None:
+                # GPT-OSS: Use harmony parser for channel-based thinking detection
+                parser = active_request.harmony_parser  # pyright: ignore[reportAny]
                 parser.process(resp_token)  # pyright: ignore[reportAny]
                 delta: str | None = parser.last_content_delta  # pyright: ignore[reportAny]
                 channel: str = parser.current_channel  # pyright: ignore[reportAny]
@@ -465,21 +488,29 @@ class BatchedInferenceHandler:
                     active_request.reasoning_tokens += 1
 
                 prefix = ""
-                if channel == "analysis" and not active_request.gpt_oss_thinking:
-                    active_request.gpt_oss_thinking = True
+                if channel == "analysis" and not active_request.in_thinking:
+                    active_request.in_thinking = True
                     prefix = "<think>"
-                elif channel != "analysis" and active_request.gpt_oss_thinking:
-                    active_request.gpt_oss_thinking = False
+                elif channel != "analysis" and active_request.in_thinking:
+                    active_request.in_thinking = False
                     prefix = "</think>"
 
-                if resp_finish_reason is not None and active_request.gpt_oss_thinking:
+                if resp_finish_reason is not None and active_request.in_thinking:
                     prefix = "</think>"
-                    active_request.gpt_oss_thinking = False
+                    active_request.in_thinking = False
 
                 effective_delta = delta or ""
                 token_text = prefix + effective_delta if (prefix or effective_delta) else ""
                 if not token_text and resp_finish_reason is None:
                     continue
+            elif self._think_start_token is not None:
+                # MiniMax: Track <think>/</think> tokens directly
+                if resp_token == self._think_start_token:
+                    active_request.in_thinking = True
+                elif resp_token == self._think_end_token:
+                    active_request.in_thinking = False
+                elif active_request.in_thinking:
+                    active_request.reasoning_tokens += 1
 
             # Extract logprobs if requested
             logprob: float | None = None
