@@ -53,6 +53,13 @@ HIDDEN_IMPORTS = sorted(
         collect_submodules("mlx")
         + _safe_collect("mlx_lm")
         + _safe_collect("transformers")
+        + [
+            # Standard library modules required by torch that PyInstaller may miss
+            "timeit",
+            "cProfile",
+            "pstats",
+            "profile",
+        ]
     )
 )
 
