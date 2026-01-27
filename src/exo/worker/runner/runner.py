@@ -312,19 +312,6 @@ def main(
                         )
                         kv_prefix_cache = KVPrefixCache(tokenizer)
 
-                    elif (
-                        ModelTask.TextToImage in shard_metadata.model_card.tasks
-                        or ModelTask.ImageToImage in shard_metadata.model_card.tasks
-                    ):
-                        model = initialize_image_model(bound_instance)
-                    else:
-                        raise ValueError(
-                            f"Unknown model task(s): {shard_metadata.model_card.tasks}"
-                        )
-                    current_status = RunnerLoaded()
-                    logger.info("runner loaded")
-                case StartWarmup() if isinstance(current_status, RunnerLoaded):
-                    assert model
                 elif (
                     ModelTask.TextToImage in shard_metadata.model_card.tasks
                     or ModelTask.ImageToImage in shard_metadata.model_card.tasks
