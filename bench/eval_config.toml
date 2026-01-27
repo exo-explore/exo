@@ -12,12 +12,12 @@ require_hf_token = true
 # Controls how exo sets up the model instance before running evals
 [instance]
 # Placement strategy: "ring" | "jaccl" | "both"
-instance_meta = "ring"
+instance_meta = "jaccl"
 # Sharding strategy: "pipeline" | "tensor" | "both"
-sharding = "pipeline"
+sharding = "tensor"
 # Node constraints
-min_nodes = 1
-max_nodes = 4
+min_nodes = 2
+max_nodes = 2
 
 # lm_eval configuration (EleutherAI's lm-evaluation-harness)
 [lm_eval]
