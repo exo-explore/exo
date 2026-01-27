@@ -320,7 +320,11 @@ class BatchedInferenceHandler:
                 continue
 
             # Decode token to text, applying GPT-OSS parsing if needed
-            token_text = self.tokenizer.decode([resp_token])
+            # Skip emitting EOS token text (e.g., <|eot_id|>)
+            if resp_token in self.stop_tokens:
+                token_text = ""
+            else:
+                token_text = self.tokenizer.decode([resp_token])
             if active_request.gpt_oss_parser is not None:
                 parser = active_request.gpt_oss_parser  # pyright: ignore[reportAny]
                 parser.process(resp_token)  # pyright: ignore[reportAny]
@@ -446,7 +450,11 @@ class BatchedInferenceHandler:
                 continue
 
             # Decode token to text
-            token_text = self.tokenizer.decode([resp_token])
+            # Skip emitting EOS token text (e.g., <|eot_id|>)
+            if resp_token in self.stop_tokens:
+                token_text = ""
+            else:
+                token_text = self.tokenizer.decode([resp_token])
             if active_request.gpt_oss_parser is not None:
                 parser = active_request.gpt_oss_parser  # pyright: ignore[reportAny]
                 parser.process(resp_token)  # pyright: ignore[reportAny]
