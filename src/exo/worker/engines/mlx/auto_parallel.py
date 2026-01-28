@@ -648,7 +648,7 @@ class WrappedMiniMaxAttention(CustomMlxLayer):
 
         queries, keys, values = self.q_proj(x), self.k_proj(x), self.v_proj(x)
 
-        if getattr(self.self_attn, "use_qk_norm", False):
+        if getattr(self, "use_qk_norm", False):
             q_dim = queries.shape[-1]
             k_dim = keys.shape[-1]
 
