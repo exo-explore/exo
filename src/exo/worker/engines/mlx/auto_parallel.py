@@ -633,6 +633,65 @@ class ShardedGLM4MoeLiteMoE(CustomMlxLayer):
         return y
 
 
+class WrappedMiniMaxAttention(CustomMlxLayer):
+    def __init__(self, layer: _LayerCallable, group: mx.distributed.Group):
+        super().__init__(layer)
+        self.group = group
+
+    def __call__(
+        self,
+        x: mx.array,
+        mask: mx.array | Any = None,
+        cache: Any | None = None,
+    ) -> mx.array:
+        B, L, D = x.shape
+
+        queries, keys, values = self.q_proj(x), self.k_proj(x), self.v_proj(x)
+
+        if getattr(self.self_attn, "use_qk_norm", False):
+            q_dim = queries.shape[-1]
+            k_dim = keys.shape[-1]
+
+            qk = mx.concatenate([queries, keys], axis=-1)
+            qk = mx.distributed.all_gather(qk, group=self.group)
+
+            queries, keys = qk[..., :q_dim], qk[..., q_dim : q_dim + k_dim]
+
+            queries = self.q_norm(queries)
+            keys = self.k_norm(keys)
+
+            queries = queries.split(  # type: ignore
+                self.group.size(), axis=-1
+            )[self.group.rank()]
+            keys = keys.split(self.group.size(), axis=-1)[self.group.rank()]  # type: ignore
+
+        queries = queries.reshape(B, L, self.num_attention_heads, -1).transpose(
+            0, 2, 1, 3
+        )
+        keys = keys.reshape(B, L, self.num_key_value_heads, -1).transpose(
+            0, 2, 1, 3
+        )
+        values = values.reshape(B, L, self.num_key_value_heads, -1).transpose(
+            0, 2, 1, 3
+        )
+
+        if cache is not None:
+            queries = self.rope(queries, offset=cache.offset)
+            keys = self.rope(keys, offset=cache.offset)
+            keys, values = cache.update_and_fetch(keys, values)
+        else:
+            queries = self.rope(queries)
+            keys = self.rope(keys)
+
+        output = scaled_dot_product_attention(
+            queries, keys, values, cache=cache, scale=self.scale, mask=mask
+        )
+
+        output = output.transpose(0, 2, 1, 3).reshape(B, L, -1)
+
+        return self.o_proj(output)
+
+
 class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
     def shard_model(
         self,
@@ -655,7 +714,7 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
             layer.self_attn.num_attention_heads //= self.N
             layer.self_attn.num_key_value_heads //= self.N
 
-            layer.self_attn = WrappedMinimaxAttention(layer.self_attn, self.group)
+            layer.self_attn = WrappedMiniMaxAttention(layer.self_attn, self.group)
 
             # Shard the MoE. Shard in place since the MoE should be responsible
             # for aggregating the results.
@@ -672,64 +731,6 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
             layer.block_sparse_moe.sharding_group = self.group  # pyright: ignore[reportAttributeAccessIssue]
             mx.eval(layer)
         return model
-
-    class WrappedMiniMaxAttention(CustomMlxLayer):
-        def __init__(self, layer: _LayerCallable, group: mx.distributed.Group):
-            super().__init__(layer)
-            self.group = group
-
-        def __call__(
-            self,
-            x: mx.array,
-            mask: mx.array | Any = None,
-            cache: Any | None = None,
-        ) -> mx.array:
-            B, L, D = x.shape
-
-            queries, keys, values = self.q_proj(x), self.k_proj(x), self.v_proj(x)
-
-            if getattr(self.self_attn, "use_qk_norm", False):
-                q_dim = queries.shape[-1]
-                k_dim = keys.shape[-1]
-
-                qk = mx.concatenate([queries, keys], axis=-1)
-                qk = mx.distributed.all_gather(qk, group=self.group)
-
-                queries, keys = qk[..., :q_dim], qk[..., q_dim : q_dim + k_dim]
-
-                queries = self.q_norm(queries)
-                keys = self.k_norm(keys)
-
-                queries = queries.split(  # type: ignore
-                    self.group.size(), axis=-1
-                )[self.group.rank()]
-                keys = keys.split(self.group.size(), axis=-1)[self.group.rank()]  # type: ignore
-
-            queries = queries.reshape(B, L, self.num_attention_heads, -1).transpose(
-                0, 2, 1, 3
-            )
-            keys = keys.reshape(B, L, self.num_key_value_heads, -1).transpose(
-                0, 2, 1, 3
-            )
-            values = values.reshape(B, L, self.num_key_value_heads, -1).transpose(
-                0, 2, 1, 3
-            )
-
-            if cache is not None:
-                queries = self.rope(queries, offset=cache.offset)
-                keys = self.rope(keys, offset=cache.offset)
-                keys, values = cache.update_and_fetch(keys, values)
-            else:
-                queries = self.rope(queries)
-                keys = self.rope(keys)
-
-            output = scaled_dot_product_attention(
-                queries, keys, values, cache=cache, scale=self.scale, mask=mask
-            )
-
-            output = output.transpose(0, 2, 1, 3).reshape(B, L, -1)
-
-            return self.o_proj(output)
 
 
 class QwenShardingStrategy(TensorParallelShardingStrategy):
