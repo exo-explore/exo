@@ -649,21 +649,23 @@ class WrappedMiniMaxAttention(CustomMlxLayer):
         queries, keys, values = self.q_proj(x), self.k_proj(x), self.v_proj(x)
 
         if getattr(self, "use_qk_norm", False):
-            q_dim = queries.shape[-1]
-            k_dim = keys.shape[-1]
+            q_dim = queries.shape[-1]  # per-shard q dimension
+            k_dim = keys.shape[-1]  # per-shard k dimension
+            N = self.group.size()
 
-            qk = mx.concatenate([queries, keys], axis=-1)
-            qk = mx.distributed.all_gather(qk, group=self.group)
+            qk = mx.concatenate([queries, keys], axis=-1)  # (B, L, q_dim + k_dim)
+            qk = mx.distributed.all_gather(qk, group=self.group)  # (B, L, N * (q_dim + k_dim))
 
-            queries, keys = qk[..., :q_dim], qk[..., q_dim : q_dim + k_dim]
+            # Reshape to separate rank contributions, then extract q and k
+            qk = qk.reshape(B, L, N, q_dim + k_dim)
+            queries = qk[..., :q_dim].reshape(B, L, -1)  # (B, L, N * q_dim)
+            keys = qk[..., q_dim:].reshape(B, L, -1)  # (B, L, N * k_dim)
 
             queries = self.q_norm(queries)
             keys = self.k_norm(keys)
 
-            queries = queries.split(  # type: ignore
-                self.group.size(), axis=-1
-            )[self.group.rank()]
-            keys = keys.split(self.group.size(), axis=-1)[self.group.rank()]  # type: ignore
+            queries = queries.split(N, axis=-1)[self.group.rank()]  # type: ignore
+            keys = keys.split(N, axis=-1)[self.group.rank()]  # type: ignore
 
         queries = queries.reshape(B, L, self.num_attention_heads, -1).transpose(
             0, 2, 1, 3
