@@ -4,7 +4,10 @@ from typing import Any, Callable, Generator, cast, get_args
 import mlx.core as mx
 from mlx_lm.generate import stream_generate
 from mlx_lm.models.cache import trim_prompt_cache
-from mlx_lm.sample_utils import make_sampler
+from mlx_lm.sample_utils import (
+    make_logits_processors,  # pyright: ignore[reportUnknownVariableType]
+    make_sampler,
+)
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.api import (
@@ -197,6 +200,15 @@ def mlx_generate(
         # Only sample length eos tokens
         eos_ids = eos_ids_from_tokenizer(tokenizer)
         logits_processors = [ban_token_ids(eos_ids)]
+
+    # MiniMax M2 models have a tendency to get into repetition loops without this
+    if task.model and "minimax" in task.model.lower():
+        logits_processors.extend(
+            cast(
+                list[Callable[[mx.array, mx.array], mx.array]],
+                make_logits_processors(repetition_penalty=1.1),
+            )
+        )
 
     sampler = make_sampler(
         temp=task.temperature if task.temperature is not None else 0.7,
