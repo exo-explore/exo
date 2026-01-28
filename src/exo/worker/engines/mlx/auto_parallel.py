@@ -13,7 +13,9 @@ from mlx.nn.layers.distributed import (
     shard_linear,
     sum_gradients,
 )
-from mlx_lm.models.base import scaled_dot_product_attention  # pyright: ignore[reportUnknownVariableType]
+from mlx_lm.models.base import (
+    scaled_dot_product_attention,  # pyright: ignore[reportUnknownVariableType]
+)
 from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
 from mlx_lm.models.deepseek_v32 import DeepseekV32MLP
@@ -30,7 +32,8 @@ from mlx_lm.models.ministral3 import Model as Ministral3Model
 from mlx_lm.models.qwen3_moe import Model as Qwen3MoeModel
 from mlx_lm.models.qwen3_moe import Qwen3MoeSparseMoeBlock
 from mlx_lm.models.qwen3_next import Model as Qwen3NextModel
-from mlx_lm.models.qwen3_next import Qwen3NextSparseMoeBlock
+from mlx_lm.models.qwen3_next import Qwen3NextDecoderLayer, Qwen3NextSparseMoeBlock
+from transformers.models.qwen3.modeling_qwen3 import Qwen3DecoderLayer
 
 from exo.shared.logging import logger
 from exo.shared.types.worker.shards import PipelineShardMetadata
@@ -655,13 +658,19 @@ class WrappedMiniMaxAttention(CustomMlxLayer):
             N = self.group.size()
 
             qk = mx.concatenate([queries, keys], axis=-1)  # (B, L, q_dim + k_dim)
-            qk = mx.distributed.all_gather(qk, group=self.group)  # (N*B, L, q_dim + k_dim)
+            qk = mx.distributed.all_gather(
+                qk, group=self.group
+            )  # (N*B, L, q_dim + k_dim)
 
             # Reshape to separate rank contributions: (N, B, L, q_dim + k_dim)
             # Then transpose to (B, L, N, q_dim + k_dim) and merge N into feature dim
             qk = qk.reshape(N, B, L, q_dim + k_dim).transpose(1, 2, 0, 3)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-            queries = qk[..., :q_dim].reshape(B, L, -1)  # (B, L, N * q_dim)  # pyright: ignore[reportUnknownMemberType]
-            keys = qk[..., q_dim:].reshape(B, L, -1)  # (B, L, N * k_dim)  # pyright: ignore[reportUnknownMemberType]
+            queries = qk[..., :q_dim].reshape(
+                B, L, -1
+            )  # (B, L, N * q_dim)  # pyright: ignore[reportUnknownMemberType]
+            keys = qk[..., q_dim:].reshape(
+                B, L, -1
+            )  # (B, L, N * k_dim)  # pyright: ignore[reportUnknownMemberType]
 
             queries = self.q_norm(queries)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
             keys = self.k_norm(keys)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
@@ -689,7 +698,12 @@ class WrappedMiniMaxAttention(CustomMlxLayer):
             keys = self.rope(keys)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
         output = scaled_dot_product_attention(
-            queries, keys, values, cache=cache, scale=self.scale, mask=mask  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+            queries,
+            keys,
+            values,
+            cache=cache,
+            scale=self.scale,
+            mask=mask,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         )
 
         output = output.transpose(0, 2, 1, 3).reshape(B, L, -1)  # pyright: ignore[reportUnknownMemberType]
@@ -744,18 +758,32 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
     ) -> nn.Module:
-        model = cast(Qwen3MoeModel, model)
+        model = cast(Qwen3MoeModel | Qwen3NextModel, model)
         for layer in model.layers:
             eval_with_timeout(
                 layer.parameters(), timeout_seconds / len(model.layers), on_timeout
             )
             # Shard the self attention
-            layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
-            layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
-            layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
-            layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
-            layer.self_attn.n_heads //= self.N
-            layer.self_attn.n_kv_heads //= self.N
+            if isinstance(layer, Qwen3DecoderLayer) or hasattr(layer, "self_attn"):
+                layer.self_attn.q_proj = self.all_to_sharded_linear(
+                    layer.self_attn.q_proj
+                )
+                layer.self_attn.k_proj = self.all_to_sharded_linear(
+                    layer.self_attn.k_proj
+                )
+                layer.self_attn.v_proj = self.all_to_sharded_linear(
+                    layer.self_attn.v_proj
+                )
+                layer.self_attn.o_proj = self.sharded_to_all_linear(
+                    layer.self_attn.o_proj
+                )
+                layer.self_attn.n_heads //= self.N
+                layer.self_attn.n_kv_heads //= self.N
+            else:
+                assert isinstance(layer, Qwen3NextDecoderLayer) and hasattr(
+                    layer, "linear_attn"
+                )
+                # These layers are fast so we don't shard. This may change in future.
 
             # Shard the MoE. Shard in place since the MoE should be responsible
             # for aggregating the results.
