@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Any
 
 import aiofiles
 import aiofiles.os as aios
@@ -7,7 +7,14 @@ import tomlkit
 from anyio import Path, open_file
 from huggingface_hub import model_info
 from loguru import logger
-from pydantic import BaseModel, Field, PositiveInt, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    PositiveInt,
+    field_validator,
+    model_validator,
+)
 
 from exo.shared.constants import EXO_ENABLE_IMAGE_MODELS
 from exo.shared.types.common import ModelId
@@ -711,15 +718,18 @@ if EXO_ENABLE_IMAGE_MODELS:
 class ConfigData(BaseModel):
     model_config = {"extra": "ignore"}  # Allow unknown fields
 
-    # Common field names for number of layers across different architectures
-    num_hidden_layers: Annotated[int, Field(ge=0)] | None = None
-    num_layers: Annotated[int, Field(ge=0)] | None = None
-    n_layer: Annotated[int, Field(ge=0)] | None = None
-    n_layers: Annotated[int, Field(ge=0)] | None = None  # Sometimes used
-    num_decoder_layers: Annotated[int, Field(ge=0)] | None = None  # Transformer models
-    decoder_layers: Annotated[int, Field(ge=0)] | None = None  # Some architectures
-    hidden_size: Annotated[int, Field(ge=0)] | None = None
     architectures: list[str] | None = None
+    hidden_size: Annotated[int, Field(ge=0)] | None = None
+    layer_count: int = Field(
+        validation_alias=AliasChoices(
+            "num_hidden_layers",
+            "num_layers",
+            "n_layer",
+            "n_layers",
+            "num_decoder_layers",
+            "decoder_layers",
+        )
+    )
 
     @property
     def supports_tensor(self) -> bool:
@@ -734,25 +744,27 @@ class ConfigData(BaseModel):
             ["GptOssForCausalLM"],
         ]
 
-    @property
-    def layer_count(self) -> int:
-        # Check common field names for layer count
-        layer_fields = [
-            self.num_hidden_layers,
-            self.num_layers,
-            self.n_layer,
-            self.n_layers,
-            self.num_decoder_layers,
-            self.decoder_layers,
-        ]
+    @model_validator(mode="before")
+    @classmethod
+    def defer_to_text_config(cls, data: dict[str, Any]):
+        text_config = data.get("text_config")
+        if text_config is None:
+            return data
 
-        for layer_count in layer_fields:
-            if layer_count is not None:
-                return layer_count
+        for field in [
+            "architectures",
+            "hidden_size",
+            "num_hidden_layers",
+            "num_layers",
+            "n_layer",
+            "n_layers",
+            "num_decoder_layers",
+            "decoder_layers",
+        ]:
+            if (val := text_config.get(field)) is not None:  # pyright: ignore[reportAny]
+                data[field] = val
 
-        raise ValueError(
-            f"No layer count found in config.json: {self.model_dump_json()}"
-        )
+        return data
 
 
 async def get_config_data(model_id: ModelId) -> ConfigData:
