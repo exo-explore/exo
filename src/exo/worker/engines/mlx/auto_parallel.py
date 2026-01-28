@@ -23,6 +23,7 @@ from mlx_lm.models.glm4_moe_lite import Glm4MoeLiteDecoderLayer, Glm4MoeLiteMLP
 from mlx_lm.models.glm4_moe_lite import Model as GLM4MoeLiteModel
 from mlx_lm.models.gpt_oss import GptOssMoeModel
 from mlx_lm.models.gpt_oss import Model as GptOssModel
+from mlx_lm.models.kimi_k25 import Model as KimiK25Model
 from mlx_lm.models.llama import Model as LlamaModel
 from mlx_lm.models.minimax import Model as MiniMaxModel
 from mlx_lm.models.ministral3 import Model as Ministral3Model
@@ -344,7 +345,7 @@ def tensor_auto_parallel(
             all_to_sharded_linear_in_place,
             sharded_to_all_linear_in_place,
         )
-    elif isinstance(model, (DeepseekV3Model, DeepseekV32Model)):
+    elif isinstance(model, (DeepseekV3Model, DeepseekV32Model, KimiK25Model)):
         tensor_parallel_sharding_strategy = DeepSeekShardingStrategy(
             group,
             all_to_sharded_linear,
@@ -453,7 +454,7 @@ def _set_layers(model: nn.Module, layers: list[_LayerCallable]) -> None:
 
         # Update DeepSeek V3 specific parameters when layers are shrunk
         if isinstance(
-            model, (DeepseekV3Model, DeepseekV32Model, Glm4MoeModel)
+            model, (DeepseekV3Model, DeepseekV32Model, Glm4MoeModel, KimiK25Model)
         ) and hasattr(inner_model_instance, "num_layers"):
             logger.info(
                 f"Setting num_layers to {len(layers)} for model {model.model.__class__.__name__}"
