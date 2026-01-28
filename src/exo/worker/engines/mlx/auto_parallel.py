@@ -13,6 +13,7 @@ from mlx.nn.layers.distributed import (
     shard_linear,
     sum_gradients,
 )
+from mlx_lm.models.base import scaled_dot_product_attention
 from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
 from mlx_lm.models.deepseek_v32 import DeepseekV32MLP
