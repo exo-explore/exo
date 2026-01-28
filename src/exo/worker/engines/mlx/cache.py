@@ -171,7 +171,7 @@ def encode_prompt(tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
 def _cache_length(cache: KVCacheType) -> int:
     """Get the number of tokens in a KV cache."""
     # Use .offset attribute which all cache types have (len() not implemented in older QuantizedKVCache)
-    return max(c.offset for c in cache)  # type: ignore
+    return max(c.offset for c in cache)
 
 
 def _get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:

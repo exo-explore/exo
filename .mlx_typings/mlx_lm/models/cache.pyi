@@ -11,7 +11,10 @@ import mlx.core as mx
 class Cache(Protocol):
     keys: mx.array
     values: mx.array
-    def update_and_fetch(self, keys: mx.array, values: mx.array) -> None: ...
+    offset: int
+    def update_and_fetch(
+        self, keys: mx.array, values: mx.array
+    ) -> tuple[mx.array, mx.array]: ...
     @property
     def state(self) -> tuple[mx.array, mx.array]: ...
     @state.setter
@@ -87,6 +90,7 @@ def create_attention_mask(
 class _BaseCache(Cache):
     keys: mx.array
     values: mx.array
+    offset: int
     @property
     def state(self) -> tuple[mx.array, mx.array]: ...
     @state.setter
