@@ -454,9 +454,9 @@ def main(
                                 )
                             )
                         raise
-            case ImageGeneration(
-                task_params=task_params, command_id=command_id
-            ) if isinstance(current_status, RunnerReady):
+            case ImageGeneration(task_params=task_params, command_id=command_id) if (
+                isinstance(current_status, RunnerReady)
+            ):
                 assert isinstance(model, DistributedImageModel)
                 logger.info(f"received image generation request: {str(task)[:500]}")
                 current_status = RunnerRunning()
@@ -473,10 +473,7 @@ def main(
                     # Track image_index for final images only
                     image_index = 0
                     for response in generate_image(model=model, task=task_params):
-                        if (
-                            shard_metadata.device_rank
-                            == shard_metadata.world_size - 1
-                        ):
+                        if shard_metadata.device_rank == shard_metadata.world_size - 1:
                             match response:
                                 case PartialImageResponse():
                                     logger.info(
@@ -533,10 +530,7 @@ def main(
                 try:
                     image_index = 0
                     for response in generate_image(model=model, task=task_params):
-                        if (
-                            shard_metadata.device_rank
-                            == shard_metadata.world_size - 1
-                        ):
+                        if shard_metadata.device_rank == shard_metadata.world_size - 1:
                             match response:
                                 case PartialImageResponse():
                                     logger.info(
@@ -635,7 +629,9 @@ def main(
 
                 # Flush all pending requests before stepping
                 if batch_handler.has_pending:
-                    logger.info(f"Flushing batch (pending={len(batch_handler.pending)}, active={batch_handler.current_batch_size})")
+                    logger.info(
+                        f"Flushing batch (pending={len(batch_handler.pending)}, active={batch_handler.current_batch_size})"
+                    )
                     batch_handler.flush()
 
                 # Step generation and emit events

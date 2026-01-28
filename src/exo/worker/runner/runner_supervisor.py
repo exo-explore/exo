@@ -52,7 +52,9 @@ class RunnerSupervisor:
     _tg: TaskGroup | None = field(default=None, init=False)
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
-    sent: set[TaskId] = field(default_factory=set, init=False)  # Tasks sent to runner (not yet completed)
+    sent: set[TaskId] = field(
+        default_factory=set, init=False
+    )  # Tasks sent to runner (not yet completed)
     completed: set[TaskId] = field(default_factory=set, init=False)
 
     @classmethod

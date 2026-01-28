@@ -21,10 +21,12 @@ from transformers.utils import import_utils
 
 _original_getattr = import_utils._LazyModule.__getattr__
 
+
 def _patched_getattr(self: object, name: str) -> object:
     if name in ("AutoModelForVision2Seq", "AutoModelForImageTextToText"):
         return type(name, (), {})  # Return a stub class
     return _original_getattr(self, name)  # type: ignore
+
 
 import_utils._LazyModule.__getattr__ = _patched_getattr
 
@@ -71,14 +73,23 @@ def _patch_client_timeout() -> None:
         # This prevents connection drops when requests are queued for a long time
         original_timeout = getattr(self, "timeout", 604800)
         conn = TCPConnector(limit=self._concurrent, ssl=self.verify_certificate)
-        timeout = ClientTimeout(total=original_timeout, sock_read=None, sock_connect=None)
+        timeout = ClientTimeout(
+            total=original_timeout, sock_read=None, sock_connect=None
+        )
 
         async with ClientSession(connector=conn, timeout=timeout) as session:
             # Call the internal async logic with our session
-            return await _run_batched_requests_with_session(self, session, *args, **kwargs)
+            return await _run_batched_requests_with_session(
+                self, session, *args, **kwargs
+            )
 
     async def _run_batched_requests_with_session(
-        self: Any, session: ClientSession, requests: Any, cache_keys: Any = None, ctxlens: Any = None, **kwargs: Any
+        self: Any,
+        session: ClientSession,
+        requests: Any,
+        cache_keys: Any = None,
+        ctxlens: Any = None,
+        **kwargs: Any,
     ) -> Any:
         import asyncio
         import copy
@@ -96,7 +107,9 @@ def _patch_client_timeout() -> None:
             stop=stop_after_attempt(self.max_retries),
             wait=wait_exponential(multiplier=0.5, min=1, max=10),
             reraise=True,
-            before_sleep=lambda retry_state: eval_logger.info(f"Retry attempt {retry_state.attempt_number}"),
+            before_sleep=lambda retry_state: eval_logger.info(
+                f"Retry attempt {retry_state.attempt_number}"
+            ),
         )(self.amodel_call)
 
         tasks = [

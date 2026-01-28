@@ -215,7 +215,7 @@ class PipelinedGenerator:
             with mx.stream(self.streams[i]):
                 for e in range(len(mb)):
                     # Process each sequence individually with its own cache
-                    input_token = mb.y[e: e + 1][None, :]  # [1, 1]
+                    input_token = mb.y[e : e + 1][None, :]  # [1, 1]
 
                     # Forward pass (lazy graph construction)
                     # For pipeline models, this includes send/recv/all_gather ops

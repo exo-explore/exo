@@ -202,7 +202,9 @@ def teardown_instance(client: ExoClient, instance_id: str) -> None:
         if e.status != 404:
             raise
     except (ConnectionRefusedError, OSError):
-        logger.warning(f"Could not connect to exo to delete instance {instance_id} (server may be down)")
+        logger.warning(
+            f"Could not connect to exo to delete instance {instance_id} (server may be down)"
+        )
         return
     try:
         wait_for_instance_gone(client, instance_id)
@@ -242,7 +244,9 @@ def build_lm_eval_args(
     model_args = ",".join(model_args_parts)
 
     args = [
-        sys.executable, "-m", "bench.lm_eval_patched",
+        sys.executable,
+        "-m",
+        "bench.lm_eval_patched",
         "--model",
         model_type,
         "--model_args",
@@ -324,23 +328,38 @@ def run_lm_eval(
         # Print token usage summary from exo
         try:
             import httpx
+
             usage_resp = httpx.get(f"{exo_base_url}/v1/usage", timeout=5)
             if usage_resp.status_code == 200:
                 usage = usage_resp.json()
                 logger.info("--- Token Usage (Total) ---")
                 logger.info(f"  Requests:          {usage.get('total_requests', 0)}")
-                logger.info(f"  Prompt tokens:     {usage.get('total_prompt_tokens', 0)}")
-                logger.info(f"  Completion tokens: {usage.get('total_completion_tokens', 0)}")
-                logger.info(f"  Reasoning tokens:  {usage.get('total_reasoning_tokens', 0)}")
+                logger.info(
+                    f"  Prompt tokens:     {usage.get('total_prompt_tokens', 0)}"
+                )
+                logger.info(
+                    f"  Completion tokens: {usage.get('total_completion_tokens', 0)}"
+                )
+                logger.info(
+                    f"  Reasoning tokens:  {usage.get('total_reasoning_tokens', 0)}"
+                )
                 logger.info(f"  Total tokens:      {usage.get('total_tokens', 0)}")
                 by_model = usage.get("by_model", {})
                 if by_model:
                     for model_name, counters in by_model.items():
                         logger.info(f"--- Token Usage ({model_name}) ---")
-                        logger.info(f"  Requests:          {counters.get('requests', 0)}")
-                        logger.info(f"  Prompt tokens:     {counters.get('prompt_tokens', 0)}")
-                        logger.info(f"  Completion tokens: {counters.get('completion_tokens', 0)}")
-                        logger.info(f"  Reasoning tokens:  {counters.get('reasoning_tokens', 0)}")
+                        logger.info(
+                            f"  Requests:          {counters.get('requests', 0)}"
+                        )
+                        logger.info(
+                            f"  Prompt tokens:     {counters.get('prompt_tokens', 0)}"
+                        )
+                        logger.info(
+                            f"  Completion tokens: {counters.get('completion_tokens', 0)}"
+                        )
+                        logger.info(
+                            f"  Reasoning tokens:  {counters.get('reasoning_tokens', 0)}"
+                        )
         except Exception:
             pass  # Usage endpoint not available
 

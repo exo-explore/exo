@@ -5,7 +5,7 @@ import re
 import time
 from collections.abc import AsyncGenerator
 from http import HTTPStatus
-from typing import Annotated, Literal, cast, Any
+from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 import anyio
@@ -43,10 +43,6 @@ from exo.shared.types.api import (
     ChatCompletionChoice,
     ChatCompletionMessage,
     ChatCompletionResponse,
-    CompletionChoice,
-    CompletionLogprobs,
-    CompletionResponse,
-    CompletionTaskParams,
     CompletionTokensDetails,
     CreateInstanceParams,
     CreateInstanceResponse,
@@ -337,7 +333,13 @@ class API:
             "by_model": self._usage_by_model,
         }
 
-    def _accumulate_usage(self, model: str, prompt_tokens: int, completion_tokens: int, reasoning_tokens: int) -> None:
+    def _accumulate_usage(
+        self,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        reasoning_tokens: int,
+    ) -> None:
         """Accumulate usage stats for a model instance."""
         if model not in self._usage_by_model:
             self._usage_by_model[model] = {
@@ -595,7 +597,9 @@ class API:
         except anyio.get_cancelled_exc_class():
             raise
         except TimeoutError:
-            logger.warning(f"Chat completion timed out after {timeout}s (command_id={command_id})")
+            logger.warning(
+                f"Chat completion timed out after {timeout}s (command_id={command_id})"
+            )
             yield ErrorChunk(
                 model=ModelId("unknown"),
                 finish_reason="error",
@@ -711,7 +715,9 @@ class API:
                 total_tokens=stats.prompt_tokens + completion_tokens,
                 completion_tokens_details=CompletionTokensDetails(
                     reasoning_tokens=stats.reasoning_tokens,
-                ) if stats.reasoning_tokens > 0 else None,
+                )
+                if stats.reasoning_tokens > 0
+                else None,
             )
             self._accumulate_usage(
                 model=model or "unknown",
@@ -750,7 +756,6 @@ class API:
         stats: GenerationStats | None = None
 
         async for chunk in self._chat_chunk_stream(command_id):
-
             if isinstance(chunk, ErrorChunk):
                 raise HTTPException(
                     status_code=500,

@@ -93,7 +93,9 @@ class BatchedInferenceHandler:
         self.is_gpt_oss = isinstance(model, GptOssModel)
         self._harmony_encoding: Any | None = None
         if self.is_gpt_oss:
-            self._harmony_encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
+            self._harmony_encoding = load_harmony_encoding(
+                HarmonyEncodingName.HARMONY_GPT_OSS
+            )
             logger.info("GPT-OSS model detected, enabling harmony stream parsing")
 
         # Detect <think></think> tokens from tokenizer (works for any model)
@@ -103,7 +105,9 @@ class BatchedInferenceHandler:
         if not self.is_gpt_oss and think_start is not None:
             self._think_start_token = think_start
             self._think_end_token = tokenizer.think_end_id  # pyright: ignore[reportAny]
-            logger.info(f"Detected <think></think> tokens ({self._think_start_token}/{self._think_end_token}), enabling reasoning tracking")
+            logger.info(
+                f"Detected <think></think> tokens ({self._think_start_token}/{self._think_end_token}), enabling reasoning tracking"
+            )
 
         # Pending requests waiting to be batched
         self.pending: list[PendingRequest] = []
@@ -116,7 +120,9 @@ class BatchedInferenceHandler:
         # Use pipelined generator for multi-device pipeline parallelism
         self.use_pipelined = world_size > 1
         if self.use_pipelined:
-            logger.info(f"Using PipelinedGenerator with {world_size} streams for pipeline overlap")
+            logger.info(
+                f"Using PipelinedGenerator with {world_size} streams for pipeline overlap"
+            )
 
         # EOS tokens for the model
         self.stop_tokens: set[int] = set()
@@ -128,7 +134,10 @@ class BatchedInferenceHandler:
     def is_active(self) -> bool:
         """Check if there's an active batch being processed."""
         if self.use_pipelined:
-            return self.pipelined_generator is not None and self.pipelined_generator.has_active
+            return (
+                self.pipelined_generator is not None
+                and self.pipelined_generator.has_active
+            )
         return self.batch_generator is not None and len(self.uid_to_request) > 0
 
     @property
@@ -153,7 +162,9 @@ class BatchedInferenceHandler:
 
         # Create sampler for this request
         sampler = make_sampler(
-            temp=task_params.temperature if task_params.temperature is not None else 0.7,
+            temp=task_params.temperature
+            if task_params.temperature is not None
+            else 0.7,
             top_p=task_params.top_p if task_params.top_p is not None else 1.0,
         )
 
@@ -200,9 +211,21 @@ class BatchedInferenceHandler:
             prompt_token_counts.append(len(tokens))
 
         if self.use_pipelined:
-            self._flush_pipelined(requests_to_flush, tokenized_prompts, max_tokens_list, samplers, prompt_token_counts)
+            self._flush_pipelined(
+                requests_to_flush,
+                tokenized_prompts,
+                max_tokens_list,
+                samplers,
+                prompt_token_counts,
+            )
         else:
-            self._flush_batch(requests_to_flush, tokenized_prompts, max_tokens_list, samplers, prompt_token_counts)
+            self._flush_batch(
+                requests_to_flush,
+                tokenized_prompts,
+                max_tokens_list,
+                samplers,
+                prompt_token_counts,
+            )
 
     def _flush_pipelined(
         self,
@@ -214,7 +237,9 @@ class BatchedInferenceHandler:
     ) -> None:
         """Flush using PipelinedGenerator (multi-stream pipeline overlap)."""
         if self.pipelined_generator is None:
-            logger.info(f"Creating PipelinedGenerator for {len(requests_to_flush)} requests ({self.world_size} streams)")
+            logger.info(
+                f"Creating PipelinedGenerator for {len(requests_to_flush)} requests ({self.world_size} streams)"
+            )
             mx.reset_peak_memory()
             self.pipelined_generator = PipelinedGenerator(
                 model=self.model,
@@ -223,7 +248,9 @@ class BatchedInferenceHandler:
                 max_tokens=MAX_TOKENS,
             )
         else:
-            logger.info(f"Adding {len(requests_to_flush)} requests to PipelinedGenerator")
+            logger.info(
+                f"Adding {len(requests_to_flush)} requests to PipelinedGenerator"
+            )
 
         uids = self.pipelined_generator.insert(
             prompts=tokenized_prompts,
@@ -231,12 +258,17 @@ class BatchedInferenceHandler:
             samplers=samplers,
         )
 
-        for uid, req, prompt_tokens, tokens in zip(uids, requests_to_flush, prompt_token_counts, tokenized_prompts, strict=True):
+        for uid, req, prompt_tokens, tokens in zip(
+            uids, requests_to_flush, prompt_token_counts, tokenized_prompts, strict=True
+        ):
             parser = None
             if self.is_gpt_oss and self._harmony_encoding is not None:
                 parser = StreamableParser(self._harmony_encoding, role=Role.ASSISTANT)  # pyright: ignore[reportAny]
             # Check if prompt contains <think> token - if so, model is already in thinking mode
-            starts_in_thinking = self._think_start_token is not None and self._think_start_token in tokens
+            starts_in_thinking = (
+                self._think_start_token is not None
+                and self._think_start_token in tokens
+            )
             self.uid_to_request[uid] = ActiveRequest(
                 command_id=req.task.command_id,
                 should_extract_logprobs=req.should_extract_logprobs,
@@ -246,7 +278,9 @@ class BatchedInferenceHandler:
                 in_thinking=starts_in_thinking,
             )
 
-        logger.info(f"Flushed {len(requests_to_flush)} requests into pipelined generator (active={self.pipelined_generator.active_count}, uids={list(self.uid_to_request.keys())})")
+        logger.info(
+            f"Flushed {len(requests_to_flush)} requests into pipelined generator (active={self.pipelined_generator.active_count}, uids={list(self.uid_to_request.keys())})"
+        )
 
     def _flush_batch(
         self,
@@ -258,7 +292,9 @@ class BatchedInferenceHandler:
     ) -> None:
         """Flush using BatchGenerator (single-stream, for non-pipeline instances)."""
         if self.batch_generator is None:
-            logger.info(f"Creating new BatchGenerator for {len(requests_to_flush)} requests")
+            logger.info(
+                f"Creating new BatchGenerator for {len(requests_to_flush)} requests"
+            )
             mx.reset_peak_memory()
             self.batch_generator = BatchGenerator(
                 model=self.model,
@@ -267,7 +303,9 @@ class BatchedInferenceHandler:
                 prefill_batch_size=1,
             )
         else:
-            logger.info(f"Adding {len(requests_to_flush)} requests to existing BatchGenerator")
+            logger.info(
+                f"Adding {len(requests_to_flush)} requests to existing BatchGenerator"
+            )
 
         # Insert into batch generator
         uids: list[int] = self.batch_generator.insert(  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
@@ -276,12 +314,17 @@ class BatchedInferenceHandler:
             samplers=samplers,  # pyright: ignore[reportCallIssue]
         )
 
-        for uid, req, prompt_tokens, tokens in zip(uids, requests_to_flush, prompt_token_counts, tokenized_prompts, strict=True):  # pyright: ignore[reportUnknownArgumentType]
+        for uid, req, prompt_tokens, tokens in zip(
+            uids, requests_to_flush, prompt_token_counts, tokenized_prompts, strict=True
+        ):  # pyright: ignore[reportUnknownArgumentType]
             parser = None
             if self.is_gpt_oss and self._harmony_encoding is not None:
                 parser = StreamableParser(self._harmony_encoding, role=Role.ASSISTANT)  # pyright: ignore[reportAny]
             # Check if prompt contains <think> token - if so, model is already in thinking mode
-            starts_in_thinking = self._think_start_token is not None and self._think_start_token in tokens
+            starts_in_thinking = (
+                self._think_start_token is not None
+                and self._think_start_token in tokens
+            )
             self.uid_to_request[uid] = ActiveRequest(
                 command_id=req.task.command_id,
                 should_extract_logprobs=req.should_extract_logprobs,
@@ -291,7 +334,9 @@ class BatchedInferenceHandler:
                 in_thinking=starts_in_thinking,
             )
 
-        logger.info(f"Flushed {len(requests_to_flush)} requests into batch (active={self.current_batch_size}, uids={list(self.uid_to_request.keys())})")
+        logger.info(
+            f"Flushed {len(requests_to_flush)} requests into batch (active={self.current_batch_size}, uids={list(self.uid_to_request.keys())})"
+        )
 
     def step(self) -> Generator[Event, None, None]:
         """
@@ -308,7 +353,9 @@ class BatchedInferenceHandler:
 
         # Get next tokens for all active requests
         # BatchGenerator.next() returns list of Response objects
-        logger.debug(f"BatchGenerator.next() called (active_uids={list(self.uid_to_request.keys())})")
+        logger.debug(
+            f"BatchGenerator.next() called (active_uids={list(self.uid_to_request.keys())})"
+        )
         responses: list[Any] = self.batch_generator.next()  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
         logger.debug(f"BatchGenerator.next() returned {len(responses)} responses")  # pyright: ignore[reportUnknownArgumentType]
 
@@ -368,7 +415,9 @@ class BatchedInferenceHandler:
                     active_request.in_thinking = False
 
                 effective_delta = delta or ""
-                token_text = prefix + effective_delta if (prefix or effective_delta) else ""
+                token_text = (
+                    prefix + effective_delta if (prefix or effective_delta) else ""
+                )
                 # Skip empty tokens (channel markers with no content delta)
                 if not token_text and resp_finish_reason is None:
                     continue
@@ -398,7 +447,9 @@ class BatchedInferenceHandler:
             if resp_finish_reason is not None:
                 elapsed_time = time.perf_counter() - active_request.start_time
                 prompt_tps = active_request.prompt_tokens / max(elapsed_time, 0.001)
-                generation_tps = active_request.tokens_generated / max(elapsed_time, 0.001)
+                generation_tps = active_request.tokens_generated / max(
+                    elapsed_time, 0.001
+                )
 
                 # Get peak memory
                 peak_memory_bytes = 0
@@ -423,7 +474,9 @@ class BatchedInferenceHandler:
                     finish_reason = "content_filter"
                 else:
                     # Unknown finish reasons default to "stop"
-                    logger.warning(f"Unknown finish_reason: {resp_finish_reason}, mapping to 'stop'")
+                    logger.warning(
+                        f"Unknown finish_reason: {resp_finish_reason}, mapping to 'stop'"
+                    )
                     finish_reason = "stop"
 
                 completed_uids.append(uid)  # pyright: ignore[reportUnknownArgumentType]
@@ -450,7 +503,9 @@ class BatchedInferenceHandler:
         if self.pipelined_generator is None or not self.uid_to_request:
             return
 
-        logger.debug(f"PipelinedGenerator.next() called (active={self.pipelined_generator.active_count})")
+        logger.debug(
+            f"PipelinedGenerator.next() called (active={self.pipelined_generator.active_count})"
+        )
         responses: list[PipelinedResponse] = self.pipelined_generator.next()
         logger.debug(f"PipelinedGenerator.next() returned {len(responses)} responses")
 
@@ -506,7 +561,9 @@ class BatchedInferenceHandler:
                     active_request.in_thinking = False
 
                 effective_delta = delta or ""
-                token_text = prefix + effective_delta if (prefix or effective_delta) else ""
+                token_text = (
+                    prefix + effective_delta if (prefix or effective_delta) else ""
+                )
                 if not token_text and resp_finish_reason is None:
                     continue
             elif self._think_start_token is not None:
@@ -535,7 +592,9 @@ class BatchedInferenceHandler:
             if resp_finish_reason is not None:
                 elapsed_time = time.perf_counter() - active_request.start_time
                 prompt_tps = active_request.prompt_tokens / max(elapsed_time, 0.001)
-                generation_tps = active_request.tokens_generated / max(elapsed_time, 0.001)
+                generation_tps = active_request.tokens_generated / max(
+                    elapsed_time, 0.001
+                )
 
                 peak_memory_bytes = 0
                 if mx.metal.is_available():

@@ -688,15 +688,14 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
 
             queries, keys, values = self.q_proj(x), self.k_proj(x), self.v_proj(x)
 
-            q_dim = queries.shape[-1]
-            k_dim = keys.shape[-1]
-
-            qk = mx.concatenate([queries, keys], axis=-1)
-            qk = mx.distributed.all_gather(qk, group=self.group)
-
-
             if getattr(self.self_attn, "use_qk_norm", False):
-                queries, keys = qk[..., :q_dim], qk[..., q_dim: q_dim + k_dim]
+                q_dim = queries.shape[-1]
+                k_dim = keys.shape[-1]
+
+                qk = mx.concatenate([queries, keys], axis=-1)
+                qk = mx.distributed.all_gather(qk, group=self.group)
+
+                queries, keys = qk[..., :q_dim], qk[..., q_dim : q_dim + k_dim]
 
                 queries = self.q_norm(queries)
                 keys = self.k_norm(keys)
