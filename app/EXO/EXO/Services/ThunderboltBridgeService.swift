@@ -127,21 +127,24 @@ final class ThunderboltBridgeService: ObservableObject {
 
         // 2. Request specific network configuration rights
         let rightName = "system.services.systemconfiguration.network"
-        var item = AuthorizationItem(
-            name: rightName,
-            valueLength: 0,
-            value: nil,
-            flags: 0
-        )
-        var rights = AuthorizationRights(count: 1, items: &item)
-
-        status = AuthorizationCopyRights(
-            authRef,
-            &rights,
-            nil,
-            [.extendRights, .interactionAllowed],
-            nil
-        )
+        status = rightName.withCString { nameCString in
+            var item = AuthorizationItem(
+                name: nameCString,
+                valueLength: 0,
+                value: nil,
+                flags: 0
+            )
+            return withUnsafeMutablePointer(to: &item) { itemPointer in
+                var rights = AuthorizationRights(count: 1, items: itemPointer)
+                return AuthorizationCopyRights(
+                    authRef,
+                    &rights,
+                    nil,
+                    [.extendRights, .interactionAllowed],
+                    nil
+                )
+            }
+        }
         guard status == errAuthorizationSuccess else {
             if status == errAuthorizationCanceled {
                 throw ThunderboltBridgeError.authorizationCanceled
