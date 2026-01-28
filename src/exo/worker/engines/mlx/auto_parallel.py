@@ -13,7 +13,7 @@ from mlx.nn.layers.distributed import (
     shard_linear,
     sum_gradients,
 )
-from mlx_lm.models.base import scaled_dot_product_attention
+from mlx_lm.models.base import scaled_dot_product_attention  # pyright: ignore[reportUnknownVariableType]
 from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
 from mlx_lm.models.deepseek_v32 import DeepseekV32MLP
@@ -645,54 +645,56 @@ class WrappedMiniMaxAttention(CustomMlxLayer):
         mask: mx.array | Any = None,
         cache: Any | None = None,
     ) -> mx.array:
-        B, L, D = x.shape
+        B, L, _ = x.shape
 
-        queries, keys, values = self.q_proj(x), self.k_proj(x), self.v_proj(x)
+        queries, keys, values = self.q_proj(x), self.k_proj(x), self.v_proj(x)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
         if getattr(self, "use_qk_norm", False):
-            q_dim = queries.shape[-1]  # per-shard q dimension
-            k_dim = keys.shape[-1]  # per-shard k dimension
+            q_dim = queries.shape[-1]  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+            k_dim = keys.shape[-1]  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
             N = self.group.size()
 
             qk = mx.concatenate([queries, keys], axis=-1)  # (B, L, q_dim + k_dim)
-            qk = mx.distributed.all_gather(qk, group=self.group)  # (B, L, N * (q_dim + k_dim))
+            qk = mx.distributed.all_gather(qk, group=self.group)  # (N*B, L, q_dim + k_dim)
 
-            # Reshape to separate rank contributions, then extract q and k
-            qk = qk.reshape(B, L, N, q_dim + k_dim)
-            queries = qk[..., :q_dim].reshape(B, L, -1)  # (B, L, N * q_dim)
-            keys = qk[..., q_dim:].reshape(B, L, -1)  # (B, L, N * k_dim)
+            # Reshape to separate rank contributions: (N, B, L, q_dim + k_dim)
+            # Then transpose to (B, L, N, q_dim + k_dim) and merge N into feature dim
+            qk = qk.reshape(N, B, L, q_dim + k_dim).transpose(1, 2, 0, 3)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+            queries = qk[..., :q_dim].reshape(B, L, -1)  # (B, L, N * q_dim)  # pyright: ignore[reportUnknownMemberType]
+            keys = qk[..., q_dim:].reshape(B, L, -1)  # (B, L, N * k_dim)  # pyright: ignore[reportUnknownMemberType]
 
-            queries = self.q_norm(queries)
-            keys = self.k_norm(keys)
+            queries = self.q_norm(queries)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+            keys = self.k_norm(keys)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
-            queries = queries.split(N, axis=-1)[self.group.rank()]  # type: ignore
-            keys = keys.split(N, axis=-1)[self.group.rank()]  # type: ignore
+            # Split back and take this rank's portion
+            queries = mx.split(queries, N, axis=-1)[self.group.rank()]
+            keys = mx.split(keys, N, axis=-1)[self.group.rank()]
 
-        queries = queries.reshape(B, L, self.num_attention_heads, -1).transpose(
+        queries = queries.reshape(B, L, self.num_attention_heads, -1).transpose(  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType,reportUnknownArgumentType]
             0, 2, 1, 3
         )
-        keys = keys.reshape(B, L, self.num_key_value_heads, -1).transpose(
+        keys = keys.reshape(B, L, self.num_key_value_heads, -1).transpose(  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType,reportUnknownArgumentType]
             0, 2, 1, 3
         )
-        values = values.reshape(B, L, self.num_key_value_heads, -1).transpose(
+        values = values.reshape(B, L, self.num_key_value_heads, -1).transpose(  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
             0, 2, 1, 3
         )
 
         if cache is not None:
-            queries = self.rope(queries, offset=cache.offset)
-            keys = self.rope(keys, offset=cache.offset)
-            keys, values = cache.update_and_fetch(keys, values)
+            queries = self.rope(queries, offset=cache.offset)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType,reportAny]
+            keys = self.rope(keys, offset=cache.offset)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType,reportAny]
+            keys, values = cache.update_and_fetch(keys, values)  # pyright: ignore[reportAny]
         else:
-            queries = self.rope(queries)
-            keys = self.rope(keys)
+            queries = self.rope(queries)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+            keys = self.rope(keys)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
         output = scaled_dot_product_attention(
-            queries, keys, values, cache=cache, scale=self.scale, mask=mask
+            queries, keys, values, cache=cache, scale=self.scale, mask=mask  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         )
 
-        output = output.transpose(0, 2, 1, 3).reshape(B, L, -1)
+        output = output.transpose(0, 2, 1, 3).reshape(B, L, -1)  # pyright: ignore[reportUnknownMemberType]
 
-        return self.o_proj(output)
+        return self.o_proj(output)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
 
 class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
@@ -703,7 +705,6 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
         on_timeout: TimeoutCallback | None,
     ) -> nn.Module:
         model = cast(MiniMaxModel, model)
-        rank = self.group.rank()
         for layer in model.layers:
             eval_with_timeout(
                 layer.parameters(), timeout_seconds / len(model.layers), on_timeout
@@ -717,7 +718,7 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
             layer.self_attn.num_attention_heads //= self.N
             layer.self_attn.num_key_value_heads //= self.N
 
-            layer.self_attn = WrappedMiniMaxAttention(layer.self_attn, self.group)
+            layer.self_attn = WrappedMiniMaxAttention(layer.self_attn, self.group)  # pyright: ignore[reportAttributeAccessIssue,reportArgumentType]
 
             # Shard the MoE. Shard in place since the MoE should be responsible
             # for aggregating the results.
