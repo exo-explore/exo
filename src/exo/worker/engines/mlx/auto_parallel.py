@@ -681,8 +681,8 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
         def __call__(
             self,
             x: mx.array,
-            mask: Optional[mx.array] = None,
-            cache: Optional[Any] = None,
+            mask: mx.array | Any = None,
+            cache: Any | None = None,
         ) -> mx.array:
             B, L, D = x.shape
 
