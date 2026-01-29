@@ -58,6 +58,11 @@
           pkgsSwift = import inputs.nixpkgs-swift { inherit system; };
         in
         {
+          # Allow unfree for metal-toolchain (needed for Darwin Metal packages)
+          _module.args.pkgs = import inputs.nixpkgs {
+            inherit system;
+            config.allowUnfreePredicate = pkg: (pkg.pname or "") == "metal-toolchain";
+          };
           treefmt = {
             projectRootFile = "flake.nix";
             programs = {
@@ -87,6 +92,21 @@
             ${pkgs.ruff}/bin/ruff check ${inputs.self}/
             touch $out
           '';
+
+          packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin (
+            let
+              uvLock = builtins.fromTOML (builtins.readFile ./uv.lock);
+              mlxPackage = builtins.head (builtins.filter (p: p.name == "mlx") uvLock.package);
+              uvLockMlxVersion = mlxPackage.version;
+            in
+            {
+              metal-toolchain = pkgs.callPackage ./nix/metal-toolchain.nix { };
+              mlx = pkgs.callPackage ./nix/mlx.nix {
+                metal-toolchain = self'.packages.metal-toolchain;
+                inherit uvLockMlxVersion;
+              };
+            }
+          );
 
           devShells.default = with pkgs; pkgs.mkShell {
             inputsFrom = [ self'.checks.cargo-build ];
