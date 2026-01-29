@@ -303,7 +303,7 @@ def run_lm_eval(
     output_path: str | None,
     limit: int | None,
     dry_run: bool,
-) -> int:
+) -> tuple[int, dict[str, Any] | None, float | None]:
     """Run lm_eval evaluation."""
     lm_eval_config = config.get("lm_eval", {})
     tasks = lm_eval_config.get("tasks", ["mmlu"])
@@ -311,6 +311,7 @@ def run_lm_eval(
         tasks = [tasks]
 
     exo_base_url = f"http://{host}:{port}"
+    effective_output = output_path or lm_eval_config.get("output_path")
 
     # Build args - use native completions or chat completions endpoint directly
     args = build_lm_eval_args(
@@ -320,31 +321,37 @@ def run_lm_eval(
 
     if dry_run:
         logger.info("[dry-run] Would execute the above command")
-        return 0
+        return 0, None, None
 
     try:
+        start_time = time.perf_counter()
         result = subprocess.run(args, check=False)
+        elapsed_seconds = time.perf_counter() - start_time
 
-        # Print token usage summary from exo
+        # Fetch and return token usage summary from exo
+        usage: dict[str, Any] | None = None
         try:
             import httpx
 
             usage_resp = httpx.get(f"{exo_base_url}/v1/usage", timeout=5)
             if usage_resp.status_code == 200:
-                usage = usage_resp.json()
+                usage_data: dict[str, Any] = usage_resp.json()
+                usage = usage_data
                 logger.info("--- Token Usage (Total) ---")
-                logger.info(f"  Requests:          {usage.get('total_requests', 0)}")
                 logger.info(
-                    f"  Prompt tokens:     {usage.get('total_prompt_tokens', 0)}"
+                    f"  Requests:          {usage_data.get('total_requests', 0)}"
                 )
                 logger.info(
-                    f"  Completion tokens: {usage.get('total_completion_tokens', 0)}"
+                    f"  Prompt tokens:     {usage_data.get('total_prompt_tokens', 0)}"
                 )
                 logger.info(
-                    f"  Reasoning tokens:  {usage.get('total_reasoning_tokens', 0)}"
+                    f"  Completion tokens: {usage_data.get('total_completion_tokens', 0)}"
                 )
-                logger.info(f"  Total tokens:      {usage.get('total_tokens', 0)}")
-                by_model = usage.get("by_model", {})
+                logger.info(
+                    f"  Reasoning tokens:  {usage_data.get('total_reasoning_tokens', 0)}"
+                )
+                logger.info(f"  Total tokens:      {usage_data.get('total_tokens', 0)}")
+                by_model = usage_data.get("by_model", {})
                 if by_model:
                     for model_name, counters in by_model.items():
                         logger.info(f"--- Token Usage ({model_name}) ---")
@@ -363,10 +370,59 @@ def run_lm_eval(
         except Exception:
             pass  # Usage endpoint not available
 
-        return result.returncode
+        logger.info(f"Evaluation completed in {elapsed_seconds:.2f}s")
+
+        # Append token usage to lm_eval's results.json
+        if effective_output and usage:
+            _append_token_usage_to_results(effective_output, usage, elapsed_seconds)
+
+        return result.returncode, usage, elapsed_seconds
     except FileNotFoundError:
         logger.error("lm_eval not found. Install with: uv sync --extra eval")
-        return 1
+        return 1, None, None
+
+
+def _append_token_usage_to_results(
+    output_path: str, usage: dict[str, Any], elapsed_seconds: float
+) -> None:
+    """Append token usage data to lm_eval's results.json file."""
+    output_dir = Path(output_path)
+    results_file = output_dir / "results.json"
+
+    if not results_file.exists():
+        # lm_eval may put results in a subdirectory named after the model
+        for subdir in output_dir.iterdir():
+            if subdir.is_dir():
+                candidate = subdir / "results.json"
+                if candidate.exists():
+                    results_file = candidate
+                    break
+
+    if not results_file.exists():
+        logger.warning(f"Could not find results.json in {output_path}")
+        return
+
+    try:
+        with open(results_file, encoding="utf-8") as f:
+            results = json.load(f)
+
+        # Add token usage to the results
+        results["token_usage"] = {
+            "prompt_tokens": usage.get("total_prompt_tokens", 0),
+            "completion_tokens": usage.get("total_completion_tokens", 0),
+            "reasoning_tokens": usage.get("total_reasoning_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+            "total_requests": usage.get("total_requests", 0),
+            "by_model": usage.get("by_model"),
+        }
+        results["elapsed_seconds"] = elapsed_seconds
+
+        with open(results_file, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"Added token usage to: {results_file}")
+    except Exception as e:
+        logger.warning(f"Failed to append token usage to results.json: {e}")
 
 
 def run_swe_bench(
@@ -376,7 +432,7 @@ def run_swe_bench(
     model: str,
     output_path: str | None,
     dry_run: bool,
-) -> int:
+) -> tuple[int, dict[str, Any] | None, float | None]:
     """Run SWE-bench evaluation (placeholder)."""
     swe_config = config.get("swe_bench", {})
 
@@ -395,13 +451,13 @@ def run_swe_bench(
 
     if dry_run:
         logger.info("[dry-run] SWE-bench evaluation would be executed")
-        return 0
+        return 0, None, None
 
     logger.warning(
         "SWE-bench integration is a placeholder. "
         "Implement swebench inference and evaluation logic as needed."
     )
-    return 0
+    return 0, None, None
 
 
 def run_custom_eval(
@@ -411,19 +467,19 @@ def run_custom_eval(
     model: str,
     output_path: str | None,
     dry_run: bool,
-) -> int:
+) -> tuple[int, dict[str, Any] | None, float | None]:
     """Run custom evaluation script."""
     custom_config = config.get("custom", {})
 
     script = custom_config.get("script")
     if not script:
         logger.error("No script specified in [custom] config section")
-        return 1
+        return 1, None, None
 
     script_path = Path(script)
     if not script_path.exists():
         logger.error(f"Custom script not found: {script}")
-        return 1
+        return 1, None, None
 
     script_args = custom_config.get("args", [])
     if not isinstance(script_args, list):
@@ -442,10 +498,13 @@ def run_custom_eval(
 
     if dry_run:
         logger.info("[dry-run] Would execute the above command")
-        return 0
+        return 0, None, None
 
+    start_time = time.perf_counter()
     result = subprocess.run(cmd, env=env, check=False)
-    return result.returncode
+    elapsed_seconds = time.perf_counter() - start_time
+    logger.info(f"Custom evaluation completed in {elapsed_seconds:.2f}s")
+    return result.returncode, None, elapsed_seconds
 
 
 def write_results_metadata(
@@ -457,6 +516,8 @@ def write_results_metadata(
     eval_type: EvalType,
     return_code: int,
     preview: dict[str, Any] | None,
+    usage: dict[str, Any] | None,
+    elapsed_seconds: float | None,
 ) -> None:
     """Write evaluation metadata to a JSON file."""
     metadata: dict[str, Any] = {
@@ -468,6 +529,9 @@ def write_results_metadata(
         "return_code": return_code,
     }
 
+    if elapsed_seconds is not None:
+        metadata["elapsed_seconds"] = elapsed_seconds
+
     if preview:
         metadata["placement"] = {
             "sharding": preview.get("sharding"),
@@ -475,6 +539,16 @@ def write_results_metadata(
             "instance_id": instance_id_from_instance(preview["instance"])
             if "instance" in preview
             else None,
+        }
+
+    if usage:
+        metadata["token_usage"] = {
+            "prompt_tokens": usage.get("total_prompt_tokens", 0),
+            "completion_tokens": usage.get("total_completion_tokens", 0),
+            "reasoning_tokens": usage.get("total_reasoning_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+            "total_requests": usage.get("total_requests", 0),
+            "by_model": usage.get("by_model"),
         }
 
     output_dir = Path(output_path)
@@ -621,8 +695,10 @@ def main() -> int:
 
     try:
         # Run evaluation
+        usage: dict[str, Any] | None = None
+        elapsed_seconds: float | None = None
         if eval_type == "lm_eval":
-            return_code = run_lm_eval(
+            return_code, usage, elapsed_seconds = run_lm_eval(
                 config,
                 args.host,
                 args.port,
@@ -632,7 +708,7 @@ def main() -> int:
                 args.dry_run,
             )
         elif eval_type == "swe_bench":
-            return_code = run_swe_bench(
+            return_code, usage, elapsed_seconds = run_swe_bench(
                 config,
                 args.host,
                 args.port,
@@ -641,7 +717,7 @@ def main() -> int:
                 args.dry_run,
             )
         elif eval_type == "custom":
-            return_code = run_custom_eval(
+            return_code, usage, elapsed_seconds = run_custom_eval(
                 config,
                 args.host,
                 args.port,
@@ -665,6 +741,8 @@ def main() -> int:
                 eval_type,
                 return_code,
                 preview,
+                usage,
+                elapsed_seconds,
             )
 
         return return_code
