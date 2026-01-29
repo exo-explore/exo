@@ -12,7 +12,7 @@ from exo.master.placement import (
 )
 from exo.shared.apply import apply
 from exo.shared.types.commands import (
-    ChatCompletion,
+    TextGeneration,
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
@@ -38,7 +38,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
-    ChatCompletion as ChatCompletionTask,
+    TextGeneration as TextGenerationTask,
 )
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
@@ -117,7 +117,7 @@ class Master:
                     match command:
                         case TestCommand():
                             pass
-                        case ChatCompletion():
+                        case TextGeneration():
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
@@ -148,7 +148,7 @@ class Master:
                             generated_events.append(
                                 TaskCreated(
                                     task_id=task_id,
-                                    task=ChatCompletionTask(
+                                    task=TextGenerationTask(
                                         task_id=task_id,
                                         command_id=command.command_id,
                                         instance_id=available_instance_ids[0],

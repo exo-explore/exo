@@ -52,7 +52,7 @@ class StartWarmup(BaseTask):  # emitted by Worker
     pass
 
 
-class ChatCompletion(BaseTask):  # emitted by Master
+class TextGeneration(BaseTask):  # emitted by Master
     command_id: CommandId
     task_params: ResponsesRequest
 
@@ -86,7 +86,7 @@ Task = (
     | ConnectToGroup
     | LoadModel
     | StartWarmup
-    | ChatCompletion
+    | TextGeneration
     | ImageGeneration
     | ImageEdits
     | Shutdown

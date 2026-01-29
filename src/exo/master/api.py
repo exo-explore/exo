@@ -94,7 +94,7 @@ from exo.shared.types.claude_api import (
     ClaudeMessagesResponse,
 )
 from exo.shared.types.commands import (
-    ChatCompletion,
+    TextGeneration,
     Command,
     CreateInstance,
     DeleteDownload,
@@ -219,7 +219,7 @@ class API:
             name="dashboard",
         )
 
-        self._chat_completion_queues: dict[
+        self._text_generation_queues: dict[
             CommandId, Sender[TokenChunk | ErrorChunk | ToolCallChunk]
         ] = {}
         self._image_generation_queues: dict[
@@ -233,7 +233,7 @@ class API:
         self.state = State()
         self.session_id = new_session_id
         self.event_buffer = OrderedBuffer[Event]()
-        self._chat_completion_queues = {}
+        self._text_generation_queues = {}
         self._image_generation_queues = {}
         self.unpause(result_clock)
 
@@ -524,7 +524,7 @@ class API:
         This is the internal low-level stream used by all API adapters.
         """
         try:
-            self._chat_completion_queues[command_id], recv = channel[
+            self._text_generation_queues[command_id], recv = channel[
                 ErrorChunk | ToolCallChunk | TokenChunk
             ]()
 
@@ -545,8 +545,8 @@ class API:
         finally:
             command = TaskFinished(finished_command_id=command_id)
             await self._send(command)
-            if command_id in self._chat_completion_queues:
-                del self._chat_completion_queues[command_id]
+            if command_id in self._text_generation_queues:
+                del self._text_generation_queues[command_id]
 
     async def _generate_chat_stream(
         self, command_id: CommandId
@@ -634,7 +634,7 @@ class API:
         )
 
 
-    async def _collect_chat_completion_with_stats(
+    async def _collect_text_generation_with_stats(
         self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
         text_parts: list[str] = []
@@ -715,7 +715,7 @@ class API:
                 detail=f"No instance found for model {internal_params.model}",
             )
 
-        command = ChatCompletion(request_params=internal_params)
+        command = TextGeneration(request_params=internal_params)
         await self._send(command)
 
         if payload.stream:
@@ -755,10 +755,10 @@ class API:
 
         internal_params.stream = False
 
-        command = ChatCompletion(request_params=internal_params)
+        command = TextGeneration(request_params=internal_params)
         await self._send(command)
 
-        response = await self._collect_chat_completion_with_stats(command.command_id)
+        response = await self._collect_text_generation_with_stats(command.command_id)
         return response
 
     async def _validate_image_model(self, model: str) -> ModelId:
@@ -1267,7 +1267,7 @@ class API:
                 detail=f"No instance found for model {internal_params.model}",
             )
 
-        command = ChatCompletion(request_params=internal_params)
+        command = TextGeneration(request_params=internal_params)
         await self._send(command)
 
         if payload.stream:
@@ -1309,7 +1309,7 @@ class API:
                 detail=f"No instance found for model {internal_params.model}",
             )
 
-        command = ChatCompletion(request_params=internal_params)
+        command = TextGeneration(request_params=internal_params)
         await self._send(command)
 
         if payload.stream:
@@ -1403,14 +1403,14 @@ class API:
                                 self._image_generation_queues.pop(
                                     event.command_id, None
                                 )
-                        if queue := self._chat_completion_queues.get(
+                        if queue := self._text_generation_queues.get(
                             event.command_id, None
                         ):
                             assert not isinstance(event.chunk, ImageChunk)
                             try:
                                 await queue.send(event.chunk)
                             except BrokenResourceError:
-                                self._chat_completion_queues.pop(event.command_id, None)
+                                self._text_generation_queues.pop(event.command_id, None)
 
     async def _pause_on_new_election(self):
         with self.election_receiver as ems:

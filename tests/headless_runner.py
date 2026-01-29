@@ -22,7 +22,7 @@ from exo.shared.types.common import Host, NodeId
 from exo.shared.types.events import Event
 from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.tasks import (
-    ChatCompletion,
+    TextGeneration,
     ConnectToGroup,
     LoadModel,
     Shutdown,
@@ -179,7 +179,7 @@ async def execute_test(test: Tests, instance: Instance, hn: str):
         case "inference":
             send.send(StartWarmup(instance_id=iid))
             send.send(
-                ChatCompletion(
+                TextGeneration(
                     task_params=ResponsesRequest(
                         model=test.model_id,
                         instructions="You are a helpful assistant",

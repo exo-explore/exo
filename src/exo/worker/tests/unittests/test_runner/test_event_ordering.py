@@ -15,7 +15,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.tasks import (
-    ChatCompletion,
+    TextGeneration,
     ConnectToGroup,
     LoadModel,
     Shutdown,
@@ -92,7 +92,7 @@ CHAT_PARAMS = ResponsesRequest(
     temperature=0.0,
 )
 
-CHAT_TASK = ChatCompletion(
+CHAT_TASK = TextGeneration(
     task_id=CHAT_COMPLETION_TASK_ID,
     command_id=COMMAND_1_ID,
     task_params=CHAT_PARAMS,

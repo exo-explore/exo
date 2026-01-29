@@ -21,7 +21,7 @@ class TestCommand(BaseCommand):
     __test__ = False
 
 
-class ChatCompletion(BaseCommand):
+class TextGeneration(BaseCommand):
     request_params: ResponsesRequest
 
 
@@ -78,7 +78,7 @@ DownloadCommand = StartDownload | DeleteDownload
 Command = (
     TestCommand
     | RequestEventLog
-    | ChatCompletion
+    | TextGeneration
     | ImageGeneration
     | ImageEdits
     | PlaceInstance

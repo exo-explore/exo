@@ -10,7 +10,7 @@ from mlx_lm.sample_utils import make_sampler
 
 from exo.shared.types.api import ChatCompletionMessage
 from exo.shared.types.common import ModelId
-from exo.shared.types.tasks import ChatCompletionTaskParams
+from exo.shared.types.api import ChatCompletionTaskParams
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.cache import (
     KVPrefixCache,

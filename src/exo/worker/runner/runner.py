@@ -30,7 +30,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.tasks import (
-    ChatCompletion,
+    TextGeneration,
     ConnectToGroup,
     ImageEdits,
     ImageGeneration,
@@ -215,7 +215,7 @@ def main(
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
-                case ChatCompletion(task_params=task_params, command_id=command_id) if (
+                case TextGeneration(task_params=task_params, command_id=command_id) if (
                     isinstance(current_status, RunnerReady)
                 ):
                     logger.info(f"received chat request: {task}")
