@@ -251,7 +251,7 @@ def _find_ip_prioritised(
     """Find an IP address between nodes with prioritization.
 
     Default priority: ethernet > wifi > unknown > maybe_ethernet > thunderbolt
-    With prefer_thunderbolt: thunderbolt > ethernet > wifi > unknown > maybe_ethernet
+    With prefer_thunderbolt: thunderbolt/link-local > ethernet > wifi > unknown > maybe_ethernet
     """
     ips = list(_find_connection_ip(node_id, other_node_id, cycle_digraph))
     if not ips:
@@ -260,25 +260,33 @@ def _find_ip_prioritised(
     ip_to_type = {
         iface.ip_address: iface.interface_type for iface in other_network.interfaces
     }
-    if prefer_thunderbolt:
-        priority = {
-            "thunderbolt": 0,
-            "ethernet": 1,
-            "wifi": 2,
-            "unknown": 3,
-            "maybe_ethernet": 4,
-        }
-        default_priority = 3
-    else:
-        priority = {
-            "ethernet": 0,
-            "wifi": 1,
-            "unknown": 2,
-            "maybe_ethernet": 3,
-            "thunderbolt": 4,
-        }
-        default_priority = 2
-    return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), default_priority))
+
+    def get_priority(ip: str) -> int:
+        interface_type = ip_to_type.get(ip, "unknown")
+        if prefer_thunderbolt:
+            # Link-local IPs (169.254.x.x) on maybe_ethernet are likely Thunderbolt
+            # TODO: This is a hack - fix this.
+            if interface_type == "maybe_ethernet" and ip.startswith("169.254."):
+                return 0
+            priority = {
+                "thunderbolt": 0,
+                "ethernet": 1,
+                "wifi": 2,
+                "unknown": 3,
+                "maybe_ethernet": 4,
+            }
+            return priority.get(interface_type, 3)
+        else:
+            priority = {
+                "ethernet": 0,
+                "wifi": 1,
+                "unknown": 2,
+                "maybe_ethernet": 3,
+                "thunderbolt": 4,
+            }
+            return priority.get(interface_type, 2)
+
+    return min(ips, key=get_priority)
 
 
 def get_mlx_ring_hosts_by_node(
