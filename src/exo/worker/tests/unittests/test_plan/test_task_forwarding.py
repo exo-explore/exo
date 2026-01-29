@@ -65,7 +65,6 @@ def test_plan_forwards_pending_chat_completion_when_runner_ready():
     result = plan_mod.plan(
         node_id=NODE_A,
         runners=runners,  # type: ignore
-        download_status={},
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,
@@ -113,7 +112,6 @@ def test_plan_does_not_forward_chat_completion_if_any_runner_not_ready():
     result = plan_mod.plan(
         node_id=NODE_A,
         runners=runners,  # type: ignore
-        download_status={},
         global_download_status={NODE_A: [], NODE_B: []},
         instances=instances,
         all_runners=all_runners,
@@ -158,7 +156,6 @@ def test_plan_does_not_forward_tasks_for_other_instances():
     result = plan_mod.plan(
         node_id=NODE_A,
         runners=runners,  # type: ignore
-        download_status={},
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,
@@ -221,7 +218,6 @@ def test_plan_ignores_non_pending_or_non_chat_tasks():
     result = plan_mod.plan(
         node_id=NODE_A,
         runners=runners,  # type: ignore
-        download_status={},
         global_download_status={NODE_A: [], NODE_B: []},
         instances=instances,
         all_runners=all_runners,
@@ -261,7 +257,6 @@ def test_plan_returns_none_when_nothing_to_do():
     result = plan_mod.plan(
         node_id=NODE_A,
         runners=runners,  # type: ignore
-        download_status={},
         global_download_status={NODE_A: [], NODE_B: []},
         instances=instances,
         all_runners=all_runners,

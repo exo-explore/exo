@@ -6,6 +6,8 @@
     type DownloadProgress,
     refreshState,
     lastUpdate as lastUpdateStore,
+    startDownload,
+    deleteDownload,
   } from "$lib/stores/app.svelte";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
 
@@ -28,6 +30,7 @@
     etaMs: number;
     status: "completed" | "downloading";
     files: FileProgress[];
+    shardMetadata?: Record<string, unknown>;
   };
 
   type NodeEntry = {
@@ -172,33 +175,6 @@
   }
 
   let downloadOverview = $state<NodeEntry[]>([]);
-  let models = $state<Array<{ id: string; storage_size_megabytes?: number }>>(
-    [],
-  );
-
-  async function fetchModels() {
-    try {
-      const response = await fetch("/models");
-      if (response.ok) {
-        const data = await response.json();
-        models = data.data || [];
-      }
-    } catch (error) {
-      console.error("Failed to fetch models:", error);
-    }
-  }
-
-  function getModelTotalBytes(
-    modelId: string,
-    downloadTotalBytes: number,
-  ): number {
-    if (downloadTotalBytes > 0) return downloadTotalBytes;
-    const model = models.find((m) => m.id === modelId);
-    if (model?.storage_size_megabytes) {
-      return model.storage_size_megabytes * 1024 * 1024;
-    }
-    return 0;
-  }
 
   $effect(() => {
     try {
@@ -296,6 +272,12 @@
             }
           }
 
+          // Extract shard_metadata for use with download actions
+          const shardMetadata = (downloadPayload.shard_metadata ??
+            downloadPayload.shardMetadata) as
+            | Record<string, unknown>
+            | undefined;
+
           const entry: ModelEntry = {
             modelId,
             prettyName,
@@ -312,6 +294,7 @@
                 ? "completed"
                 : "downloading",
             files,
+            shardMetadata,
           };
 
           const existing = modelMap.get(modelId);
@@ -373,7 +356,6 @@
   onMount(() => {
     // Ensure we fetch at least once when visiting downloads directly
     refreshState();
-    fetchModels();
   });
 </script>
 
@@ -482,7 +464,7 @@
                     {#if model.status !== "completed"}
                       <div class="text-[11px] text-exo-light-gray font-mono">
                         {formatBytes(model.downloadedBytes)} / {formatBytes(
-                          getModelTotalBytes(model.modelId, model.totalBytes),
+                          model.totalBytes,
                         )}
                       </div>
                     {/if}
@@ -497,6 +479,52 @@
                     >
                       {pct.toFixed(1)}%
                     </span>
+                    {#if model.status !== "completed" && model.shardMetadata}
+                      <button
+                        type="button"
+                        class="text-exo-light-gray hover:text-exo-yellow transition-colors"
+                        onclick={() =>
+                          startDownload(node.nodeId, model.shardMetadata!)}
+                        title="Start download"
+                      >
+                        <svg
+                          class="w-4 h-4"
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                        >
+                          <path
+                            d="M10 3v10m0 0l-3-3m3 3l3-3M3 17h14"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          ></path>
+                        </svg>
+                      </button>
+                    {/if}
+                    {#if model.status === "completed"}
+                      <button
+                        type="button"
+                        class="text-exo-light-gray hover:text-red-400 transition-colors"
+                        onclick={() =>
+                          deleteDownload(node.nodeId, model.modelId)}
+                        title="Delete download"
+                      >
+                        <svg
+                          class="w-4 h-4"
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                        >
+                          <path
+                            d="M4 6h12M8 6V4h4v2m1 0v10a1 1 0 01-1 1H8a1 1 0 01-1-1V6h6"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          ></path>
+                        </svg>
+                      </button>
+                    {/if}
                     <button
                       type="button"
                       class="text-exo-light-gray hover:text-exo-yellow transition-colors"

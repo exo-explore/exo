@@ -3,7 +3,6 @@ import pytest
 from exo.master.placement_utils import (
     allocate_layers_proportionally,
     filter_cycles_by_memory,
-    get_hosts_from_subgraph,
     get_mlx_jaccl_coordinators,
     get_shard_assignments,
     get_smallest_cycles,
@@ -14,7 +13,7 @@ from exo.master.tests.conftest import (
 )
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
-from exo.shared.types.common import Host, NodeId
+from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     NetworkInterfaceInfo,
@@ -271,45 +270,6 @@ def test_get_shard_assignments(
         - shard_assignments.runner_to_shard[runner_id_c].start_layer
         == expected_layers[2]
     )
-
-
-def test_get_hosts_from_subgraph():
-    # arrange
-    node_a_id = NodeId()
-    node_b_id = NodeId()
-    node_c_id = NodeId()
-    topology = Topology()
-
-    topology.add_node(node_a_id)
-    topology.add_node(node_b_id)
-    topology.add_node(node_c_id)
-
-    connection1 = Connection(
-        source=node_a_id, sink=node_b_id, edge=create_socket_connection(1)
-    )
-    connection2 = Connection(
-        source=node_b_id, sink=node_c_id, edge=create_socket_connection(2)
-    )
-    connection3 = Connection(
-        source=node_c_id, sink=node_a_id, edge=create_socket_connection(3)
-    )
-
-    topology.add_connection(connection1)
-    topology.add_connection(connection2)
-    topology.add_connection(connection3)
-
-    # act
-    hosts = get_hosts_from_subgraph(topology)
-
-    # assert
-    assert len(hosts) == 3
-    expected_hosts = [
-        Host(ip="169.254.0.1", port=1234),
-        Host(ip="169.254.0.2", port=1234),
-        Host(ip="169.254.0.3", port=1234),
-    ]
-    for expected_host in expected_hosts:
-        assert expected_host in hosts
 
 
 def test_get_mlx_jaccl_coordinators():

@@ -7,10 +7,11 @@ from pydantic import BaseModel, Field, field_validator
 from pydantic_core import PydanticUseDefault
 
 from exo.shared.models.model_cards import ModelCard, ModelId
-from exo.shared.types.common import CommandId
+from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
-from exo.shared.types.worker.shards import Sharding
+from exo.shared.types.worker.shards import Sharding, ShardMetadata
+from exo.utils.pydantic_ext import CamelCaseModel
 
 FinishReason = Literal[
     "stop", "length", "tool_calls", "content_filter", "function_call", "error"
@@ -54,6 +55,18 @@ class ChatCompletionMessageText(BaseModel):
     text: str
 
 
+class ToolCallItem(BaseModel):
+    name: str
+    arguments: str
+
+
+class ToolCall(BaseModel):
+    id: str
+    index: int | None = None
+    type: Literal["function"] = "function"
+    function: ToolCallItem
+
+
 class ChatCompletionMessage(BaseModel):
     role: Literal["system", "user", "assistant", "developer", "tool", "function"]
     content: (
@@ -61,7 +74,7 @@ class ChatCompletionMessage(BaseModel):
     ) = None
     thinking: str | None = None  # Added for GPT-OSS harmony format support
     name: str | None = None
-    tool_calls: list[dict[str, Any]] | None = None
+    tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
     function_call: dict[str, Any] | None = None
 
@@ -341,3 +354,16 @@ class ImageListItem(BaseModel, frozen=True):
 
 class ImageListResponse(BaseModel, frozen=True):
     data: list[ImageListItem]
+
+
+class StartDownloadParams(CamelCaseModel):
+    target_node_id: NodeId
+    shard_metadata: ShardMetadata
+
+
+class StartDownloadResponse(CamelCaseModel):
+    command_id: CommandId
+
+
+class DeleteDownloadResponse(CamelCaseModel):
+    command_id: CommandId

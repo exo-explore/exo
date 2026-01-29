@@ -19,6 +19,7 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     MemoryUsage,
     NetworkInterfaceInfo,
+    ThunderboltBridgeStatus,
 )
 from exo.shared.types.thunderbolt import (
     ThunderboltConnection,
@@ -32,6 +33,142 @@ from .macmon import MacmonMetrics
 from .system_info import get_friendly_name, get_model_and_chip, get_network_interfaces
 
 IS_DARWIN = sys.platform == "darwin"
+
+
+async def _get_thunderbolt_devices() -> set[str] | None:
+    """Get Thunderbolt interface device names (e.g., en2, en3) from hardware ports.
+
+    Returns None if the networksetup command fails.
+    """
+    result = await anyio.run_process(
+        ["networksetup", "-listallhardwareports"],
+        check=False,
+    )
+    if result.returncode != 0:
+        logger.warning(
+            f"networksetup -listallhardwareports failed with code "
+            f"{result.returncode}: {result.stderr.decode()}"
+        )
+        return None
+
+    output = result.stdout.decode()
+    thunderbolt_devices: set[str] = set()
+    current_port: str | None = None
+
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith("Hardware Port:"):
+            current_port = line.split(":", 1)[1].strip()
+        elif line.startswith("Device:") and current_port:
+            device = line.split(":", 1)[1].strip()
+            if "thunderbolt" in current_port.lower():
+                thunderbolt_devices.add(device)
+            current_port = None
+
+    return thunderbolt_devices
+
+
+async def _get_bridge_services() -> dict[str, str] | None:
+    """Get mapping of bridge device -> service name from network service order.
+
+    Returns None if the networksetup command fails.
+    """
+    result = await anyio.run_process(
+        ["networksetup", "-listnetworkserviceorder"],
+        check=False,
+    )
+    if result.returncode != 0:
+        logger.warning(
+            f"networksetup -listnetworkserviceorder failed with code "
+            f"{result.returncode}: {result.stderr.decode()}"
+        )
+        return None
+
+    # Parse service order to find bridge devices and their service names
+    # Format: "(1) Service Name\n(Hardware Port: ..., Device: bridge0)\n"
+    service_order_output = result.stdout.decode()
+    bridge_services: dict[str, str] = {}  # device -> service name
+    current_service: str | None = None
+
+    for line in service_order_output.splitlines():
+        line = line.strip()
+        # Match "(N) Service Name" or "(*) Service Name" (disabled)
+        # but NOT "(Hardware Port: ...)" lines
+        if (
+            line
+            and line.startswith("(")
+            and ")" in line
+            and not line.startswith("(Hardware Port:")
+        ):
+            paren_end = line.index(")")
+            if paren_end + 2 <= len(line):
+                current_service = line[paren_end + 2 :]
+        # Match "(Hardware Port: ..., Device: bridgeX)"
+        elif current_service and "Device: bridge" in line:
+            # Extract device name from "..., Device: bridge0)"
+            device_start = line.find("Device: ") + len("Device: ")
+            device_end = line.find(")", device_start)
+            if device_end > device_start:
+                device = line[device_start:device_end]
+                bridge_services[device] = current_service
+
+    return bridge_services
+
+
+async def _get_bridge_members(bridge_device: str) -> set[str]:
+    """Get member interfaces of a bridge device via ifconfig."""
+    result = await anyio.run_process(
+        ["ifconfig", bridge_device],
+        check=False,
+    )
+    if result.returncode != 0:
+        logger.debug(f"ifconfig {bridge_device} failed with code {result.returncode}")
+        return set()
+
+    members: set[str] = set()
+    ifconfig_output = result.stdout.decode()
+    for line in ifconfig_output.splitlines():
+        line = line.strip()
+        if line.startswith("member:"):
+            parts = line.split()
+            if len(parts) > 1:
+                members.add(parts[1])
+
+    return members
+
+
+async def _find_thunderbolt_bridge(
+    bridge_services: dict[str, str], thunderbolt_devices: set[str]
+) -> str | None:
+    """Find the service name of a bridge containing Thunderbolt interfaces.
+
+    Returns the service name if found, None otherwise.
+    """
+    for bridge_device, service_name in bridge_services.items():
+        members = await _get_bridge_members(bridge_device)
+        if members & thunderbolt_devices:  # intersection is non-empty
+            return service_name
+    return None
+
+
+async def _is_service_enabled(service_name: str) -> bool | None:
+    """Check if a network service is enabled.
+
+    Returns True if enabled, False if disabled, None on error.
+    """
+    result = await anyio.run_process(
+        ["networksetup", "-getnetworkserviceenabled", service_name],
+        check=False,
+    )
+    if result.returncode != 0:
+        logger.warning(
+            f"networksetup -getnetworkserviceenabled '{service_name}' "
+            f"failed with code {result.returncode}: {result.stderr.decode()}"
+        )
+        return None
+
+    stdout = result.stdout.decode().strip().lower()
+    return stdout == "enabled"
 
 
 class StaticNodeInformation(TaggedModel):
@@ -56,6 +193,66 @@ class MacThunderboltIdentifiers(TaggedModel):
 
 class MacThunderboltConnections(TaggedModel):
     conns: Sequence[ThunderboltConnection]
+
+
+class ThunderboltBridgeInfo(TaggedModel):
+    status: ThunderboltBridgeStatus
+
+    @classmethod
+    async def gather(cls) -> Self | None:
+        """Check if a Thunderbolt Bridge network service is enabled on this node.
+
+        Detection approach:
+        1. Find all Thunderbolt interface devices (en2, en3, etc.) from hardware ports
+        2. Find bridge devices from network service order (not hardware ports, as
+           bridges may not appear there)
+        3. Check each bridge's members via ifconfig
+        4. If a bridge contains Thunderbolt interfaces, it's a Thunderbolt Bridge
+        5. Check if that network service is enabled
+        """
+        if not IS_DARWIN:
+            return None
+
+        def _no_bridge_status() -> Self:
+            return cls(
+                status=ThunderboltBridgeStatus(
+                    enabled=False, exists=False, service_name=None
+                )
+            )
+
+        try:
+            tb_devices = await _get_thunderbolt_devices()
+            if tb_devices is None:
+                return _no_bridge_status()
+
+            bridge_services = await _get_bridge_services()
+            if not bridge_services:
+                return _no_bridge_status()
+
+            tb_service_name = await _find_thunderbolt_bridge(
+                bridge_services, tb_devices
+            )
+            if not tb_service_name:
+                return _no_bridge_status()
+
+            enabled = await _is_service_enabled(tb_service_name)
+            if enabled is None:
+                return cls(
+                    status=ThunderboltBridgeStatus(
+                        enabled=False, exists=True, service_name=tb_service_name
+                    )
+                )
+
+            return cls(
+                status=ThunderboltBridgeStatus(
+                    enabled=enabled,
+                    exists=True,
+                    service_name=tb_service_name,
+                )
+            )
+        except Exception as e:
+            logger.warning(f"Failed to gather Thunderbolt Bridge info: {e}")
+            return None
 
 
 class NodeConfig(TaggedModel):
@@ -111,6 +308,7 @@ GatheredInfo = (
     | NodeNetworkInterfaces
     | MacThunderboltIdentifiers
     | MacThunderboltConnections
+    | ThunderboltBridgeInfo
     | NodeConfig
     | MiscData
     | StaticNodeInformation
@@ -125,6 +323,7 @@ class InfoGatherer:
     system_profiler_interval: float | None = 5 if IS_DARWIN else None
     memory_poll_rate: float | None = None if IS_DARWIN else 1
     macmon_interval: float | None = 1 if IS_DARWIN else None
+    thunderbolt_bridge_poll_interval: float | None = 10 if IS_DARWIN else None
     _tg: TaskGroup = field(init=False, default_factory=create_task_group)
 
     async def run(self):
@@ -133,6 +332,7 @@ class InfoGatherer:
                 if (macmon_path := shutil.which("macmon")) is not None:
                     tg.start_soon(self._monitor_macmon, macmon_path)
                 tg.start_soon(self._monitor_system_profiler_thunderbolt_data)
+                tg.start_soon(self._monitor_thunderbolt_bridge_status)
             tg.start_soon(self._watch_system_info)
             tg.start_soon(self._monitor_memory_usage)
             tg.start_soon(self._monitor_misc)
@@ -149,13 +349,8 @@ class InfoGatherer:
     async def _monitor_misc(self):
         if self.misc_poll_interval is None:
             return
-        prev = await MiscData.gather()
-        await self.info_sender.send(prev)
         while True:
-            curr = await MiscData.gather()
-            if prev != curr:
-                prev = curr
-                await self.info_sender.send(curr)
+            await self.info_sender.send(await MiscData.gather())
             await anyio.sleep(self.misc_poll_interval)
 
     async def _monitor_system_profiler_thunderbolt_data(self):
@@ -165,15 +360,12 @@ class InfoGatherer:
         if iface_map is None:
             return
 
-        old_idents = []
         while True:
             data = await ThunderboltConnectivity.gather()
             assert data is not None
 
             idents = [it for i in data if (it := i.ident(iface_map)) is not None]
-            if idents != old_idents:
-                await self.info_sender.send(MacThunderboltIdentifiers(idents=idents))
-            old_idents = idents
+            await self.info_sender.send(MacThunderboltIdentifiers(idents=idents))
 
             conns = [it for i in data if (it := i.conn()) is not None]
             await self.info_sender.send(MacThunderboltConnections(conns=conns))
@@ -198,13 +390,19 @@ class InfoGatherer:
     async def _watch_system_info(self):
         if self.interface_watcher_interval is None:
             return
-        old_nics = []
         while True:
-            nics = get_network_interfaces()
-            if nics != old_nics:
-                old_nics = nics
-                await self.info_sender.send(NodeNetworkInterfaces(ifaces=nics))
+            nics = await get_network_interfaces()
+            await self.info_sender.send(NodeNetworkInterfaces(ifaces=nics))
             await anyio.sleep(self.interface_watcher_interval)
+
+    async def _monitor_thunderbolt_bridge_status(self):
+        if self.thunderbolt_bridge_poll_interval is None:
+            return
+        while True:
+            curr = await ThunderboltBridgeInfo.gather()
+            if curr is not None:
+                await self.info_sender.send(curr)
+            await anyio.sleep(self.thunderbolt_bridge_poll_interval)
 
     async def _monitor_macmon(self, macmon_path: str):
         if self.macmon_interval is None:

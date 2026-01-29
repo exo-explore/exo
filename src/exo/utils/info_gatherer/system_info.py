@@ -5,7 +5,7 @@ from subprocess import CalledProcessError
 import psutil
 from anyio import run_process
 
-from exo.shared.types.profiling import NetworkInterfaceInfo
+from exo.shared.types.profiling import InterfaceType, NetworkInterfaceInfo
 
 
 async def get_friendly_name() -> str:
@@ -16,8 +16,7 @@ async def get_friendly_name() -> str:
     """
     hostname = socket.gethostname()
 
-    # TODO: better non mac support
-    if sys.platform != "darwin":  # 'darwin' is the platform name for macOS
+    if sys.platform != "darwin":
         return hostname
 
     try:
@@ -28,7 +27,41 @@ async def get_friendly_name() -> str:
     return process.stdout.decode("utf-8", errors="replace").strip() or hostname
 
 
-def get_network_interfaces() -> list[NetworkInterfaceInfo]:
+async def _get_interface_types_from_networksetup() -> dict[str, InterfaceType]:
+    """Parse networksetup -listallhardwareports to get interface types."""
+    if sys.platform != "darwin":
+        return {}
+
+    try:
+        result = await run_process(["networksetup", "-listallhardwareports"])
+    except CalledProcessError:
+        return {}
+
+    types: dict[str, InterfaceType] = {}
+    current_type: InterfaceType = "unknown"
+
+    for line in result.stdout.decode().splitlines():
+        if line.startswith("Hardware Port:"):
+            port_name = line.split(":", 1)[1].strip()
+            if "Wi-Fi" in port_name:
+                current_type = "wifi"
+            elif "Ethernet" in port_name or "LAN" in port_name:
+                current_type = "ethernet"
+            elif port_name.startswith("Thunderbolt"):
+                current_type = "thunderbolt"
+            else:
+                current_type = "unknown"
+        elif line.startswith("Device:"):
+            device = line.split(":", 1)[1].strip()
+            # enX is ethernet adapters or thunderbolt - these must be deprioritised
+            if device.startswith("en") and device not in ["en0", "en1"]:
+                current_type = "maybe_ethernet"
+            types[device] = current_type
+
+    return types
+
+
+async def get_network_interfaces() -> list[NetworkInterfaceInfo]:
     """
     Retrieves detailed network interface information on macOS.
     Parses output from 'networksetup -listallhardwareports' and 'ifconfig'
@@ -36,13 +69,18 @@ def get_network_interfaces() -> list[NetworkInterfaceInfo]:
     Returns a list of NetworkInterfaceInfo objects.
     """
     interfaces_info: list[NetworkInterfaceInfo] = []
+    interface_types = await _get_interface_types_from_networksetup()
 
     for iface, services in psutil.net_if_addrs().items():
         for service in services:
             match service.family:
                 case socket.AF_INET | socket.AF_INET6:
                     interfaces_info.append(
-                        NetworkInterfaceInfo(name=iface, ip_address=service.address)
+                        NetworkInterfaceInfo(
+                            name=iface,
+                            ip_address=service.address,
+                            interface_type=interface_types.get(iface, "unknown"),
+                        )
                     )
                 case _:
                     pass

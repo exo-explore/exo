@@ -75,19 +75,20 @@ def generate_image(
     intermediate images, then ImageGenerationResponse for the final image.
 
     Yields:
-        PartialImageResponse for intermediate images (if partial_images > 0)
-        ImageGenerationResponse for the final complete image
+        PartialImageResponse for intermediate images (if partial_images > 0, first image only)
+        ImageGenerationResponse for final complete images
     """
     width, height = parse_size(task.size)
     quality: Literal["low", "medium", "high"] = task.quality or "medium"
 
     advanced_params = task.advanced_params
     if advanced_params is not None and advanced_params.seed is not None:
-        seed = advanced_params.seed
+        base_seed = advanced_params.seed
     else:
-        seed = random.randint(0, 2**32 - 1)
+        base_seed = random.randint(0, 2**32 - 1)
 
     is_bench = getattr(task, "bench", False)
+    num_images = task.n or 1
 
     generation_start_time: float = 0.0
 
@@ -95,7 +96,11 @@ def generate_image(
         mx.reset_peak_memory()
         generation_start_time = time.perf_counter()
 
-    partial_images = task.partial_images or (3 if task.stream else 0)
+    partial_images = (
+        task.partial_images
+        if task.partial_images is not None
+        else (3 if task.stream else 0)
+    )
 
     image_path: Path | None = None
 
@@ -105,72 +110,81 @@ def generate_image(
             image_path = Path(tmpdir) / "input.png"
             image_path.write_bytes(base64.b64decode(task.image_data))
 
-        # Iterate over generator results
-        for result in model.generate(
-            prompt=task.prompt,
-            height=height,
-            width=width,
-            quality=quality,
-            seed=seed,
-            image_path=image_path,
-            partial_images=partial_images,
-            advanced_params=advanced_params,
-        ):
-            if isinstance(result, tuple):
-                # Partial image: (Image, partial_index, total_partials)
-                image, partial_idx, total_partials = result
-                buffer = io.BytesIO()
-                image_format = task.output_format.upper()
-                if image_format == "JPG":
-                    image_format = "JPEG"
-                if image_format == "JPEG" and image.mode == "RGBA":
-                    image = image.convert("RGB")
-                image.save(buffer, format=image_format)
+        for image_num in range(num_images):
+            # Increment seed for each image to ensure unique results
+            current_seed = base_seed + image_num
 
-                yield PartialImageResponse(
-                    image_data=buffer.getvalue(),
-                    format=task.output_format,
-                    partial_index=partial_idx,
-                    total_partials=total_partials,
-                )
-            else:
-                image = result
+            for result in model.generate(
+                prompt=task.prompt,
+                height=height,
+                width=width,
+                quality=quality,
+                seed=current_seed,
+                image_path=image_path,
+                partial_images=partial_images,
+                advanced_params=advanced_params,
+            ):
+                if isinstance(result, tuple):
+                    # Partial image: (Image, partial_index, total_partials)
+                    image, partial_idx, total_partials = result
+                    buffer = io.BytesIO()
+                    image_format = task.output_format.upper()
+                    if image_format == "JPG":
+                        image_format = "JPEG"
+                    if image_format == "JPEG" and image.mode == "RGBA":
+                        image = image.convert("RGB")
+                    image.save(buffer, format=image_format)
 
-                stats: ImageGenerationStats | None = None
-                if is_bench:
-                    generation_end_time = time.perf_counter()
-                    total_generation_time = generation_end_time - generation_start_time
-
-                    num_inference_steps = model.get_steps_for_quality(quality)
-
-                    seconds_per_step = (
-                        total_generation_time / num_inference_steps
-                        if num_inference_steps > 0
-                        else 0.0
+                    yield PartialImageResponse(
+                        image_data=buffer.getvalue(),
+                        format=task.output_format,
+                        partial_index=partial_idx,
+                        total_partials=total_partials,
+                        image_index=image_num,
                     )
+                else:
+                    image = result
 
-                    peak_memory_gb = mx.get_peak_memory() / (1024**3)
+                    # Only include stats on the final image
+                    stats: ImageGenerationStats | None = None
+                    if is_bench and image_num == num_images - 1:
+                        generation_end_time = time.perf_counter()
+                        total_generation_time = (
+                            generation_end_time - generation_start_time
+                        )
 
-                    stats = ImageGenerationStats(
-                        seconds_per_step=seconds_per_step,
-                        total_generation_time=total_generation_time,
-                        num_inference_steps=num_inference_steps,
-                        num_images=task.n or 1,
-                        image_width=width,
-                        image_height=height,
-                        peak_memory_usage=Memory.from_gb(peak_memory_gb),
+                        num_inference_steps = model.get_steps_for_quality(quality)
+                        total_steps = num_inference_steps * num_images
+
+                        seconds_per_step = (
+                            total_generation_time / total_steps
+                            if total_steps > 0
+                            else 0.0
+                        )
+
+                        peak_memory_gb = mx.get_peak_memory() / (1024**3)
+
+                        stats = ImageGenerationStats(
+                            seconds_per_step=seconds_per_step,
+                            total_generation_time=total_generation_time,
+                            num_inference_steps=num_inference_steps,
+                            num_images=num_images,
+                            image_width=width,
+                            image_height=height,
+                            peak_memory_usage=Memory.from_gb(peak_memory_gb),
+                        )
+
+                    buffer = io.BytesIO()
+                    image_format = task.output_format.upper()
+                    if image_format == "JPG":
+                        image_format = "JPEG"
+                    if image_format == "JPEG" and image.mode == "RGBA":
+                        image = image.convert("RGB")
+                    image.save(buffer, format=image_format)
+
+                    yield ImageGenerationResponse(
+                        image_data=buffer.getvalue(),
+                        format=task.output_format,
+                        stats=stats,
+                        image_index=image_num,
                     )
-
-                buffer = io.BytesIO()
-                image_format = task.output_format.upper()
-                if image_format == "JPG":
-                    image_format = "JPEG"
-                if image_format == "JPEG" and image.mode == "RGBA":
-                    image = image.convert("RGB")
-                image.save(buffer, format=image_format)
-
-                yield ImageGenerationResponse(
-                    image_data=buffer.getvalue(),
-                    format=task.output_format,
-                    stats=stats,
-                )

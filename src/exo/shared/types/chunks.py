@@ -1,5 +1,4 @@
 from collections.abc import Generator
-from enum import Enum
 from typing import Any, Literal
 
 from exo.shared.models.model_cards import ModelId
@@ -8,24 +7,29 @@ from exo.utils.pydantic_ext import TaggedModel
 
 from .api import FinishReason
 from .common import CommandId
-
-
-class ChunkType(str, Enum):
-    Token = "Token"
-    Image = "Image"
+from .worker.runner_response import ToolCallItem
 
 
 class BaseChunk(TaggedModel):
-    idx: int
     model: ModelId
 
 
 class TokenChunk(BaseChunk):
     text: str
     token_id: int
-    finish_reason: FinishReason | None = None
+    finish_reason: Literal["stop", "length", "content_filter"] | None = None
     stats: GenerationStats | None = None
-    error_message: str | None = None
+
+
+class ErrorChunk(BaseChunk):
+    error_message: str
+    finish_reason: Literal["error"] = "error"
+
+
+class ToolCallChunk(BaseChunk):
+    tool_calls: list[ToolCallItem]
+    finish_reason: Literal["tool_calls"] = "tool_calls"
+    stats: GenerationStats | None = None
 
 
 class ImageChunk(BaseChunk):
@@ -63,4 +67,4 @@ class InputImageChunk(BaseChunk):
                 yield name, value
 
 
-GenerationChunk = TokenChunk | ImageChunk
+GenerationChunk = TokenChunk | ImageChunk | ToolCallChunk | ErrorChunk
