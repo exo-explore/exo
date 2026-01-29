@@ -245,10 +245,13 @@ def _find_ip_prioritised(
     other_node_id: NodeId,
     cycle_digraph: Topology,
     node_network: Mapping[NodeId, NodeNetworkInfo],
+    *,
+    prefer_thunderbolt: bool = False,
 ) -> str | None:
     """Find an IP address between nodes with prioritization.
 
-    Priority: ethernet > wifi > unknown > thunderbolt
+    Default priority: ethernet > wifi > unknown > maybe_ethernet > thunderbolt
+    With prefer_thunderbolt: thunderbolt > ethernet > wifi > unknown > maybe_ethernet
     """
     ips = list(_find_connection_ip(node_id, other_node_id, cycle_digraph))
     if not ips:
@@ -257,14 +260,25 @@ def _find_ip_prioritised(
     ip_to_type = {
         iface.ip_address: iface.interface_type for iface in other_network.interfaces
     }
-    priority = {
-        "ethernet": 0,
-        "wifi": 1,
-        "unknown": 2,
-        "maybe_ethernet": 3,
-        "thunderbolt": 4,
-    }
-    return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2))
+    if prefer_thunderbolt:
+        priority = {
+            "thunderbolt": 0,
+            "ethernet": 1,
+            "wifi": 2,
+            "unknown": 3,
+            "maybe_ethernet": 4,
+        }
+        default_priority = 3
+    else:
+        priority = {
+            "ethernet": 0,
+            "wifi": 1,
+            "unknown": 2,
+            "maybe_ethernet": 3,
+            "thunderbolt": 4,
+        }
+        default_priority = 2
+    return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), default_priority))
 
 
 def get_mlx_ring_hosts_by_node(
@@ -303,7 +317,8 @@ def get_mlx_ring_hosts_by_node(
                 continue
 
             connection_ip = _find_ip_prioritised(
-                node_id, other_node_id, cycle_digraph, node_network
+                node_id, other_node_id, cycle_digraph, node_network,
+                prefer_thunderbolt=True,
             )
             if connection_ip is None:
                 raise ValueError(
