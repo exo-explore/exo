@@ -2,6 +2,8 @@
 
 import time
 from collections.abc import AsyncGenerator
+from typing import Any
+from uuid import uuid4
 
 from exo.shared.types.api import (
     ChatCompletionChoice,
@@ -13,6 +15,7 @@ from exo.shared.types.api import (
     ErrorResponse,
     FinishReason,
     StreamingChoiceResponse,
+    ToolCall,
 )
 from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
@@ -23,9 +26,12 @@ def chat_request_to_internal(request: ChatCompletionTaskParams) -> ResponsesRequ
     """Convert Chat Completions API request to ResponsesRequest (canonical internal format).
 
     Extracts system message as instructions, converts messages to input.
+    Also builds chat_template_messages to preserve tool_calls, thinking,
+    and other fields for the tokenizer's chat template.
     """
     instructions: str | None = None
     input_messages: list[ResponseInputMessage] = []
+    chat_template_messages: list[dict[str, Any]] = []
 
     for msg in request.messages:
         # Normalize content to string
@@ -47,12 +53,23 @@ def chat_request_to_internal(request: ChatCompletionTaskParams) -> ResponsesRequ
             else:
                 # Append additional system messages
                 instructions = f"{instructions}\n{content}"
+            chat_template_messages.append({"role": "system", "content": content})
         else:
-            # Convert to ResponseInputMessage (only user, assistant, developer roles)
+            # Skip messages with no meaningful content
+            if msg.content is None and msg.thinking is None and msg.tool_calls is None:
+                continue
+
+            # Build clean ResponseInputMessage for the Responses API input
             if msg.role in ("user", "assistant", "developer"):
                 input_messages.append(
                     ResponseInputMessage(role=msg.role, content=content)
                 )
+
+            # Build full message dict for chat template (preserves tool_calls etc.)
+            # Normalize content for model_dump
+            msg_copy = msg.model_copy(update={"content": content})
+            dumped: dict[str, Any] = msg_copy.model_dump(exclude_none=True)
+            chat_template_messages.append(dumped)
 
     return ResponsesRequest(
         model=request.model,
@@ -66,6 +83,9 @@ def chat_request_to_internal(request: ChatCompletionTaskParams) -> ResponsesRequ
         seed=request.seed,
         stream=request.stream,
         tools=request.tools,
+        chat_template_messages=chat_template_messages
+        if chat_template_messages
+        else None,
     )
 
 
@@ -121,6 +141,7 @@ async def collect_chat_response(
 ) -> ChatCompletionResponse:
     """Collect all token chunks and return a single ChatCompletionResponse."""
     text_parts: list[str] = []
+    tool_calls: list[ToolCall] = []
     model: str | None = None
     finish_reason: FinishReason | None = None
     error_message: str | None = None
@@ -130,13 +151,21 @@ async def collect_chat_response(
             error_message = chunk.error_message or "Internal server error"
             break
 
-        if not isinstance(chunk, TokenChunk):
-            continue
-
         if model is None:
             model = chunk.model
 
-        text_parts.append(chunk.text)
+        if isinstance(chunk, TokenChunk):
+            text_parts.append(chunk.text)
+
+        if isinstance(chunk, ToolCallChunk):
+            tool_calls.extend(
+                ToolCall(
+                    id=str(uuid4()),
+                    index=i,
+                    function=tool,
+                )
+                for i, tool in enumerate(chunk.tool_calls)
+            )
 
         if chunk.finish_reason is not None:
             finish_reason = chunk.finish_reason
@@ -157,6 +186,7 @@ async def collect_chat_response(
                 message=ChatCompletionMessage(
                     role="assistant",
                     content=combined_text,
+                    tool_calls=tool_calls if tool_calls else None,
                 ),
                 finish_reason=finish_reason,
             )

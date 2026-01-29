@@ -1,11 +1,7 @@
-"""OpenAI Responses API types for request/response conversion.
+"""OpenAI Responses API types.
 
-ResponsesRequest serves as both:
-1. The external API request type for /v1/responses
-2. The canonical internal type used throughout the inference pipeline
-
-All external API formats (Chat Completions, Claude) are converted to
-ResponsesRequest at the API boundary.
+ResponsesRequest also serves as the canonical internal task params type.
+All external API formats are converted to it at the API boundary.
 """
 
 import time
@@ -22,10 +18,7 @@ ResponseRole = Literal["user", "assistant", "system", "developer"]
 
 # Request types
 class ResponseInputMessage(BaseModel, frozen=True):
-    """Input message for Responses API.
-
-    This is also used as the internal message format throughout the pipeline.
-    """
+    """Input message for Responses API."""
 
     role: ResponseRole
     content: str
@@ -34,30 +27,45 @@ class ResponseInputMessage(BaseModel, frozen=True):
 class ResponsesRequest(BaseModel, frozen=True):
     """Request body for OpenAI Responses API.
 
-    This is also the canonical internal task params format used throughout
-    the inference pipeline. All external API formats are converted to this
-    format at the API boundary.
-
-    Field mapping from other APIs:
-    - input: Replaces 'messages' from Chat Completions
-    - instructions: System message, extracted from messages or Claude's 'system'
-    - max_output_tokens: Replaces 'max_tokens' from Chat Completions
+    Also serves as the canonical internal task params format throughout the
+    inference pipeline. All external API formats (Chat Completions, Claude)
+    are converted to this at the API boundary via adapters.
     """
 
+    # --- OpenAI Responses API standard fields ---
     model: ModelId
     input: str | list[ResponseInputMessage]
     instructions: str | None = None
     max_output_tokens: int | None = None
     temperature: float | None = None
     top_p: float | None = None
-    top_k: int | None = None
-    stop: str | list[str] | None = None
-    seed: int | None = None
     stream: bool = False
-    # Tools support
     tools: list[dict[str, Any]] | None = None
-    # previous_response_id not supported in MVP
     metadata: dict[str, str] | None = None
+
+    # --- exo extensions (not in OpenAI Responses API spec) ---
+    top_k: int | None = Field(
+        default=None,
+        description="[exo extension] Top-k sampling parameter. Not part of the OpenAI Responses API.",
+        json_schema_extra={"x-exo-extension": True},
+    )
+    stop: str | list[str] | None = Field(
+        default=None,
+        description="[exo extension] Stop sequence(s). Not part of the OpenAI Responses API.",
+        json_schema_extra={"x-exo-extension": True},
+    )
+    seed: int | None = Field(
+        default=None,
+        description="[exo extension] Seed for deterministic sampling. Not part of the OpenAI Responses API.",
+        json_schema_extra={"x-exo-extension": True},
+    )
+
+    # --- Internal fields (preserved during serialization, hidden from OpenAPI schema) ---
+    chat_template_messages: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Internal: pre-formatted messages for tokenizer chat template. Not part of the OpenAI Responses API.",
+        json_schema_extra={"x-exo-internal": True},
+    )
 
 
 # Response types

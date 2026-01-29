@@ -387,6 +387,28 @@ def load_tokenizer_for_model_id(
     return tokenizer
 
 
+def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
+    """Normalize tool_calls in a message dict.
+
+    OpenAI format has tool_calls[].function.arguments as a JSON string,
+    but some chat templates (e.g., GLM) expect it as a dict.
+    """
+    tool_calls = msg_dict.get("tool_calls")
+    if not tool_calls or not isinstance(tool_calls, list):
+        return
+
+    for tc in tool_calls:  # pyright: ignore[reportUnknownVariableType]
+        if not isinstance(tc, dict):
+            continue
+        func = tc.get("function")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        if not isinstance(func, dict):
+            continue
+        args = func.get("arguments")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        if isinstance(args, str):
+            with contextlib.suppress(json.JSONDecodeError):
+                func["arguments"] = json.loads(args)
+
+
 def apply_chat_template(
     tokenizer: TokenizerWrapper,
     task_params: ResponsesRequest,
@@ -395,26 +417,35 @@ def apply_chat_template(
 
     Converts the internal format (input + instructions) to a messages list
     that can be processed by the tokenizer's chat template.
+
+    When chat_template_messages is available (from Chat Completions API),
+    uses those directly to preserve tool_calls, thinking, and other fields.
+    Otherwise builds messages from the ResponsesRequest input/instructions.
     """
     formatted_messages: list[dict[str, Any]] = []
-
-    # Add system message (instructions) if present
-    if task_params.instructions:
-        formatted_messages.append(
-            {"role": "system", "content": task_params.instructions}
-        )
-
-    # Convert input to messages
-    if isinstance(task_params.input, str):
-        # Simple string input becomes a single user message
-        formatted_messages.append({"role": "user", "content": task_params.input})
+    if task_params.chat_template_messages is not None:
+        # Use pre-formatted messages that preserve tool_calls, thinking, etc.
+        formatted_messages = list(task_params.chat_template_messages)
+        for msg in formatted_messages:
+            _normalize_tool_calls(msg)
     else:
-        # List of InputMessage
-        for msg in task_params.input:
-            if not msg.content:
-                logger.warning("Received message with empty content, skipping")
-                continue
-            formatted_messages.append({"role": msg.role, "content": msg.content})
+        # Add system message (instructions) if present
+        if task_params.instructions:
+            formatted_messages.append(
+                {"role": "system", "content": task_params.instructions}
+            )
+
+        # Convert input to messages
+        if isinstance(task_params.input, str):
+            # Simple string input becomes a single user message
+            formatted_messages.append({"role": "user", "content": task_params.input})
+        else:
+            # List of InputMessage
+            for msg in task_params.input:
+                if not msg.content:
+                    logger.warning("Received message with empty content, skipping")
+                    continue
+                formatted_messages.append({"role": msg.role, "content": msg.content})
 
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,

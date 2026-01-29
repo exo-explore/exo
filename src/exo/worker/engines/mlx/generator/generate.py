@@ -157,7 +157,6 @@ def mlx_generate(
     tokenizer: TokenizerWrapper,
     task: ResponsesRequest,
     prompt: str,
-    is_bench: bool = False,
     kv_prefix_cache: KVPrefixCache | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
@@ -167,6 +166,7 @@ def mlx_generate(
         mx.random.seed(task.seed)
 
     # Do not use the prefix cache if we are trying to do benchmarks.
+    is_bench = (task.metadata or {}).get("bench") == "true"
     if is_bench:
         kv_prefix_cache = None
 

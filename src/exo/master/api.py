@@ -79,7 +79,6 @@ from exo.shared.types.api import (
     PlacementPreviewResponse,
     StartDownloadParams,
     StartDownloadResponse,
-    StreamingChoiceResponse,
     ToolCall,
 )
 from exo.shared.types.chunks import (
@@ -132,35 +131,6 @@ from exo.utils.event_buffer import OrderedBuffer
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
     return f"image/{image_format or 'png'}"
-
-
-def chunk_to_response(
-    chunk: TokenChunk | ToolCallChunk, command_id: CommandId
-) -> ChatCompletionResponse:
-    return ChatCompletionResponse(
-        id=command_id,
-        created=int(time.time()),
-        model=chunk.model,
-        choices=[
-            StreamingChoiceResponse(
-                index=0,
-                delta=ChatCompletionMessage(role="assistant", content=chunk.text)
-                if isinstance(chunk, TokenChunk)
-                else ChatCompletionMessage(
-                    role="assistant",
-                    tool_calls=[
-                        ToolCall(
-                            id=str(uuid4()),
-                            index=i,
-                            function=tool,
-                        )
-                        for i, tool in enumerate(chunk.tool_calls)
-                    ],
-                ),
-                finish_reason=chunk.finish_reason,
-            )
-        ],
-    )
 
 
 async def resolve_model_card(model_id: ModelId) -> ModelCard:
@@ -547,91 +517,6 @@ class API:
             if command_id in self._text_generation_queues:
                 del self._text_generation_queues[command_id]
 
-    async def _generate_chat_stream(
-        self, command_id: CommandId
-    ) -> AsyncGenerator[str, None]:
-        """Generate chat completion stream as JSON strings."""
-
-        async for chunk in self._token_chunk_stream(command_id):
-            assert not isinstance(chunk, ImageChunk)
-            if chunk.finish_reason == "error":
-                error_response = ErrorResponse(
-                    error=ErrorInfo(
-                        message=chunk.error_message or "Internal server error",
-                        type="InternalServerError",
-                        code=500,
-                    )
-                )
-                yield f"data: {error_response.model_dump_json()}\n\n"
-                yield "data: [DONE]\n\n"
-                return
-
-            chunk_response: ChatCompletionResponse = chunk_to_response(
-                chunk, command_id
-            )
-            logger.debug(f"chunk_response: {chunk_response}")
-
-            yield f"data: {chunk_response.model_dump_json()}\n\n"
-
-            if chunk.finish_reason is not None:
-                yield "data: [DONE]\n\n"
-
-    async def _collect_chat_completion(
-        self, command_id: CommandId
-    ) -> ChatCompletionResponse:
-        """Collect all token chunks for a chat completion and return a single response."""
-
-        text_parts: list[str] = []
-        tool_calls: list[ToolCall] = []
-        model: str | None = None
-        finish_reason: FinishReason | None = None
-
-        async for chunk in self._token_chunk_stream(command_id):
-            if isinstance(chunk, ErrorChunk):
-                raise HTTPException(
-                    status_code=500,
-                    detail=chunk.error_message or "Internal server error",
-                )
-
-            if model is None:
-                model = chunk.model
-
-            if isinstance(chunk, TokenChunk):
-                text_parts.append(chunk.text)
-
-            if isinstance(chunk, ToolCallChunk):
-                tool_calls.extend(
-                    ToolCall(
-                        id=str(uuid4()),
-                        index=i,
-                        function=tool,
-                    )
-                    for i, tool in enumerate(chunk.tool_calls)
-                )
-
-            if chunk.finish_reason is not None:
-                finish_reason = chunk.finish_reason
-
-        combined_text = "".join(text_parts)
-        assert model is not None
-
-        return ChatCompletionResponse(
-            id=command_id,
-            created=int(time.time()),
-            model=model,
-            choices=[
-                ChatCompletionChoice(
-                    index=0,
-                    message=ChatCompletionMessage(
-                        role="assistant",
-                        content=combined_text,
-                        tool_calls=tool_calls,
-                    ),
-                    finish_reason=finish_reason,
-                )
-            ],
-        )
-
     async def _collect_text_generation_with_stats(
         self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
@@ -681,7 +566,9 @@ class API:
                 ChatCompletionChoice(
                     index=0,
                     message=ChatCompletionMessage(
-                        role="assistant", content=combined_text, tool_calls=tool_calls
+                        role="assistant",
+                        content=combined_text,
+                        tool_calls=tool_calls if tool_calls else None,
                     ),
                     finish_reason=finish_reason,
                 )
@@ -759,7 +646,9 @@ class API:
                 detail=f"No instance found for model {internal_params.model}",
             )
 
-        internal_params = internal_params.model_copy(update={"stream": False})
+        internal_params = internal_params.model_copy(
+            update={"stream": False, "metadata": {"bench": "true"}}
+        )
 
         command = TextGeneration(request_params=internal_params)
         await self._send(command)
