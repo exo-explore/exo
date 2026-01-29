@@ -18,7 +18,7 @@ from pydantic import ValidationError
 
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE
 from exo.shared.models.model_cards import ModelId, ModelTask
-from exo.shared.types.api import ChatCompletionMessageText, ImageGenerationStats, Usage
+from exo.shared.types.api import ChatCompletionMessageText, ImageGenerationStats
 from exo.shared.types.chunks import ErrorChunk, ImageChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
@@ -302,14 +302,6 @@ def main(
                                             "tool_calls",
                                             "function_call",
                                         )
-                                        usage: Usage | None = None
-                                        if response.stats is not None:
-                                            usage = Usage(
-                                                prompt_tokens=response.stats.prompt_tokens,
-                                                completion_tokens=completion_tokens,
-                                                total_tokens=response.stats.prompt_tokens
-                                                + completion_tokens,
-                                            )
                                         event_sender.send(
                                             ChunkGenerated(
                                                 command_id=command_id,
@@ -317,7 +309,7 @@ def main(
                                                     model=shard_metadata.model_card.model_id,
                                                     text=response.text,
                                                     token_id=response.token,
-                                                    usage=usage,
+                                                    usage=response.usage,
                                                     finish_reason=response.finish_reason,
                                                     stats=response.stats,
                                                 ),
@@ -331,6 +323,7 @@ def main(
                                                 chunk=ToolCallChunk(
                                                     tool_calls=response.tool_calls,
                                                     model=shard_metadata.model_card.model_id,
+                                                    usage=response.usage,
                                                 ),
                                             )
                                         )
@@ -546,7 +539,8 @@ def parse_gpt_oss(
                             name=current_tool_name,
                             arguments="".join(tool_arg_parts).strip(),
                         )
-                    ]
+                    ],
+                    usage=response.usage,
                 )
                 tool_arg_parts = []
             current_tool_name = recipient
@@ -694,7 +688,7 @@ def parse_tool_calls(
                     tools = [_validate_single_tool(tool) for tool in parsed]
                 else:
                     tools = [_validate_single_tool(parsed)]
-                yield ToolCallResponse(tool_calls=tools)
+                yield ToolCallResponse(tool_calls=tools, usage=response.usage)
 
             except (
                 json.JSONDecodeError,

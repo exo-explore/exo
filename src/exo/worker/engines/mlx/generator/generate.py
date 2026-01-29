@@ -10,8 +10,11 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 from exo.shared.types.api import (
     BenchChatCompletionTaskParams,
     ChatCompletionMessage,
+    CompletionTokensDetails,
     FinishReason,
     GenerationStats,
+    PromptTokensDetails,
+    Usage,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType
@@ -216,18 +219,22 @@ def mlx_generate(
     max_tokens = task.max_tokens or MAX_TOKENS
     generated_text_parts: list[str] = []
     generation_start_time = time.perf_counter()
-    for out in stream_generate(
-        model=model,
-        tokenizer=tokenizer,
-        prompt=last_token,
-        max_tokens=max_tokens,
-        sampler=sampler,
-        logits_processors=logits_processors,
-        prompt_cache=caches,
-        # TODO: Dynamically change prefill step size to be the maximum possible without timing out.
-        prefill_step_size=2048,
-        kv_group_size=KV_GROUP_SIZE,
-        kv_bits=KV_BITS,
+    usage: Usage | None = None
+    for completion_tokens, out in enumerate(
+        stream_generate(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=last_token,
+            max_tokens=max_tokens,
+            sampler=sampler,
+            logits_processors=logits_processors,
+            prompt_cache=caches,
+            # TODO: Dynamically change prefill step size to be the maximum possible without timing out.
+            prefill_step_size=2048,
+            kv_group_size=KV_GROUP_SIZE,
+            kv_bits=KV_BITS,
+        ),
+        start=1,
     ):
         generated_text_parts.append(out.text)
         logger.info(out.text)
@@ -249,11 +256,20 @@ def mlx_generate(
                     f"Model generated unexpected finish_reason: {out.finish_reason}"
                 )
 
+            usage = Usage(
+                prompt_tokens=int(out.prompt_tokens),
+                completion_tokens=completion_tokens,
+                total_tokens=int(out.prompt_tokens) + completion_tokens,
+                prompt_tokens_details=PromptTokensDetails(),
+                completion_tokens_details=CompletionTokensDetails(),
+            )
+
         yield GenerationResponse(
             text=out.text,
             token=out.token,
             finish_reason=cast(FinishReason | None, out.finish_reason),
             stats=stats,
+            usage=usage,
         )
 
         if out.finish_reason is not None:

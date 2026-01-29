@@ -120,7 +120,7 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_runner, "detect_thinking_prompt_suffix", make_nothin(False))
 
     def fake_generate(*_1: object, **_2: object):
-        yield GenerationResponse(token=0, text="hi", finish_reason="stop")
+        yield GenerationResponse(token=0, text="hi", finish_reason="stop", usage=None)
 
     monkeypatch.setattr(mlx_runner, "mlx_generate", fake_generate)
 
@@ -182,6 +182,8 @@ def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
             text="hi",
             token_id=0,
             finish_reason="stop",
+            usage=None,
+            stats=None,
         ),
     )
 

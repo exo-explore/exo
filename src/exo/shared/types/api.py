@@ -116,8 +116,8 @@ class Usage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-    prompt_tokens_details: PromptTokensDetails | None = None
-    completion_tokens_details: CompletionTokensDetails | None = None
+    prompt_tokens_details: PromptTokensDetails
+    completion_tokens_details: CompletionTokensDetails
 
 
 class StreamingChoiceResponse(BaseModel):
