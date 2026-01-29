@@ -9,8 +9,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, cast
 
-import mlx.core as mx
-
 _TRACING_ENV_VAR: Final[str] = "EXO_TRACING_ENABLED"
 
 
@@ -51,7 +49,6 @@ def trace(
     name: str,
     rank: int,
     category: str = "compute",
-    evals: mx.array | list[mx.array] | None = None,
 ) -> Generator[None, None, None]:
     """Context manager to trace any operation.
 
@@ -59,14 +56,13 @@ def trace(
         name: Name of the operation (e.g., "recv 0", "send 1", "joint_blocks")
         rank: This rank's ID
         category: Category for grouping in trace viewer ("comm", "compute", "step")
-        evals: Optional array(s) to eval before recording the span duration
 
     Example:
         with trace_span(f"recv {from_rank}", rank, "comm"):
             hidden_states = mx.distributed.recv(...)
             mx.eval(hidden_states)
 
-        with trace_span("joint_blocks", rank, evals=hidden_states):
+        with trace_span("joint_blocks", rank):
             hidden_states = some_computation(...)
     """
     if not is_tracing_enabled():
@@ -75,11 +71,6 @@ def trace(
 
     start_us = int(time.time() * 1_000_000)
     yield
-    if evals is not None:
-        if isinstance(evals, list):
-            mx.eval(*evals)
-        else:
-            mx.eval(evals)
     duration_us = int(time.time() * 1_000_000) - start_us
     _record_span(name, start_us, duration_us, rank, category)
 
