@@ -201,6 +201,9 @@ def pipeline_auto_parallel(
     device_rank, world_size = model_shard_meta.device_rank, model_shard_meta.world_size
 
     layers = layers[start_layer:end_layer]
+    for layer in layers:
+        mx.eval(layer)  # type: ignore
+
     layers[0] = PipelineFirstLayer(layers[0], device_rank, group=group)
     layers[-1] = PipelineLastLayer(
         layers[-1],
