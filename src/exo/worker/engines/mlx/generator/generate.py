@@ -39,7 +39,7 @@ def prefill(
     sampler: Callable[[mx.array], mx.array],
     prompt_tokens: mx.array,
     cache: KVCacheType,
-) -> tuple[float, float]:
+) -> tuple[float, int]:
     """Prefill the KV cache with prompt tokens.
 
     This runs the model over the prompt tokens to populate the cache,
@@ -50,7 +50,7 @@ def prefill(
     """
     num_tokens = len(prompt_tokens)
     if num_tokens == 0:
-        return 0.0, 0.0
+        return 0.0, 0
 
     logger.debug(f"Prefilling {num_tokens} tokens...")
     start_time = time.perf_counter()
