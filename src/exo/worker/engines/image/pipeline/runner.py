@@ -676,7 +676,7 @@ class DiffusionRunner:
 
             assert self.single_block_wrappers is not None
             with trace(
-                name="single_blocks",
+                name="single blocks",
                 rank=self.rank,
                 category="compute",
             ):
@@ -968,7 +968,7 @@ class DiffusionRunner:
             assert self.joint_block_wrappers is not None
             assert encoder_hidden_states is not None
             with trace(
-                name=f"joint patch_{patch_idx}",
+                name=f"joint patch {patch_idx}",
                 rank=self.rank,
                 category="compute",
             ):
@@ -1030,7 +1030,7 @@ class DiffusionRunner:
 
             assert self.single_block_wrappers is not None
             with trace(
-                name=f"single patch_{patch_idx}",
+                name=f"single patch {patch_idx}",
                 rank=self.rank,
                 category="compute",
             ):
