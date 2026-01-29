@@ -2,12 +2,12 @@ from pydantic import Field
 
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.api import (
-    ChatCompletionTaskParams,
     ImageEditsInternalParams,
     ImageGenerationTaskParams,
 )
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
@@ -21,8 +21,8 @@ class TestCommand(BaseCommand):
     __test__ = False
 
 
-class ChatCompletion(BaseCommand):
-    request_params: ChatCompletionTaskParams
+class TextGeneration(BaseCommand):
+    request_params: ResponsesRequest
 
 
 class ImageGeneration(BaseCommand):
@@ -78,7 +78,7 @@ DownloadCommand = StartDownload | DeleteDownload
 Command = (
     TestCommand
     | RequestEventLog
-    | ChatCompletion
+    | TextGeneration
     | ImageGeneration
     | ImageEdits
     | PlaceInstance

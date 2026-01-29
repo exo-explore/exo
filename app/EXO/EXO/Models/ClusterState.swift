@@ -293,7 +293,7 @@ struct ClusterTask {
     let modelName: String?
     let promptPreview: String?
     let errorMessage: String?
-    let parameters: ChatCompletionTaskParameters?
+    let parameters: TextGenerationTaskParameters?
 
     var sortPriority: Int {
         switch status {
@@ -330,12 +330,12 @@ struct ClusterTaskPayload: Decodable {
     let taskStatus: TaskStatus?
     let instanceId: String?
     let commandId: String?
-    let taskParams: ChatCompletionTaskParameters?
+    let taskParams: TextGenerationTaskParameters?
     let errorType: String?
     let errorMessage: String?
 }
 
-struct ChatCompletionTaskParameters: Decodable, Equatable {
+struct TextGenerationTaskParameters: Decodable, Equatable {
     let model: String?
     let messages: [ChatCompletionMessage]?
     let maxTokens: Int?
@@ -374,7 +374,7 @@ extension ClusterTask {
         guard let id = payload.taskId else { return nil }
         let status = payload.taskStatus ?? .unknown
         switch kindKey {
-        case "ChatCompletion":
+        case "TextGeneration":
             self.init(
                 id: id,
                 status: status,

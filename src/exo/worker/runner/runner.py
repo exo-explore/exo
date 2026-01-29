@@ -18,7 +18,7 @@ from pydantic import ValidationError
 
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE
 from exo.shared.models.model_cards import ModelId, ModelTask
-from exo.shared.types.api import ChatCompletionMessageText, ImageGenerationStats
+from exo.shared.types.api import FinishReason, ImageGenerationStats
 from exo.shared.types.chunks import ErrorChunk, ImageChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
@@ -28,8 +28,8 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
+from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.tasks import (
-    ChatCompletion,
     ConnectToGroup,
     ImageEdits,
     ImageGeneration,
@@ -38,6 +38,7 @@ from exo.shared.types.tasks import (
     StartWarmup,
     Task,
     TaskStatus,
+    TextGeneration,
 )
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import (
@@ -214,7 +215,7 @@ def main(
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
-                case ChatCompletion(task_params=task_params, command_id=command_id) if (
+                case TextGeneration(task_params=task_params, command_id=command_id) if (
                     isinstance(current_status, RunnerReady)
                 ):
                     logger.info(f"received chat request: {task}")
@@ -227,10 +228,9 @@ def main(
                     )
                     assert model and not isinstance(model, DistributedImageModel)
                     assert tokenizer
-                    assert task_params.messages[0].content is not None
 
                     try:
-                        _check_for_debug_prompts(task_params.messages[0].content)
+                        _check_for_debug_prompts(task_params)
 
                         # Build prompt once - used for both generation and thinking detection
                         prompt = apply_chat_template(tokenizer, task_params)
@@ -665,11 +665,14 @@ def parse_tool_calls(
 ) -> Generator[GenerationResponse | ToolCallResponse]:
     in_tool_call = False
     tool_call_text_parts: list[str] = []
+    last_buffered_response: GenerationResponse | None = None
+    last_finish_reason: FinishReason | None = None
     for response in responses:
         assert isinstance(response, GenerationResponse)
         # assumption: the tool call start is one token
         if response.text == tool_call_start:
             in_tool_call = True
+            last_finish_reason = response.finish_reason
             continue
         # assumption: the tool call end is one token
         if in_tool_call and response.text == tool_call_end:
@@ -703,13 +706,47 @@ def parse_tool_calls(
 
             in_tool_call = False
             tool_call_text_parts = []
+            last_buffered_response = None
             continue
 
         if in_tool_call:
             tool_call_text_parts.append(response.text)
+            last_buffered_response = response
+            if response.finish_reason is not None:
+                last_finish_reason = response.finish_reason
             continue
         # fallthrough
         yield response
+
+    # If the generator exhausted while inside an unclosed tool call (model
+    # generated <tool_call> but never </tool_call>), the buffered tokens —
+    # including the finish token — were never yielded.  Emit them as regular
+    # text so the stream receives the finish_reason and doesn't hang.
+    if in_tool_call:
+        flushed_text = tool_call_start + "".join(tool_call_text_parts)
+        if last_buffered_response is not None:
+            logger.warning(
+                "generator exhausted inside unclosed tool call, flushing buffered text"
+            )
+            last_buffered_response.text = flushed_text
+            # Ensure finish_reason is propagated even if the last buffered token
+            # didn't carry it (e.g. the finish token was the <tool_call> start).
+            if (
+                last_buffered_response.finish_reason is None
+                and last_finish_reason is not None
+            ):
+                last_buffered_response.finish_reason = last_finish_reason
+            yield last_buffered_response
+        else:
+            # <tool_call> was the only/last token — nothing was buffered after it.
+            logger.warning(
+                "generator exhausted with unclosed tool call and no buffered content"
+            )
+            yield GenerationResponse(
+                text=flushed_text,
+                token=0,
+                finish_reason=last_finish_reason or "stop",
+            )
 
 
 def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
@@ -779,7 +816,7 @@ def patch_glm_tokenizer(tokenizer: TokenizerWrapper):
 
     _func_name_regex = re.compile(r"^(.*?)<arg_key>", re.DOTALL)
     _func_arg_regex = re.compile(
-        r"<arg_key>(.*?)</arg_key>(?:\\n|\s)*<arg_value>(.*?)</arg_value>",
+        r"<arg_key>(.*?)</arg_key>(?:\n|\s)*<arg_value>(.*?)(?:</arg_value>|(?=<arg_key>)|$)",
         re.DOTALL,
     )
 
@@ -853,17 +890,23 @@ EXO_RUNNER_MUST_OOM = "EXO RUNNER MUST OOM"
 EXO_RUNNER_MUST_TIMEOUT = "EXO RUNNER MUST TIMEOUT"
 
 
-def _check_for_debug_prompts(
-    prompt: str | ChatCompletionMessageText | list[ChatCompletionMessageText],
-):
-    if isinstance(prompt, list):
-        if len(prompt) == 0:
-            logger.debug("Empty message prompt received in debug prompt")
-            return
-        prompt = prompt[0]
+def _check_for_debug_prompts(task_params: ResponsesRequest) -> None:
+    """Check for debug prompt triggers in the input.
 
-    if isinstance(prompt, ChatCompletionMessageText):
-        prompt = prompt.text
+    Extracts the first user input text and checks for debug triggers.
+    """
+    prompt: str
+    if isinstance(task_params.input, str):
+        prompt = task_params.input
+    else:
+        # List of InputMessage - get first message content
+        if len(task_params.input) == 0:
+            logger.debug("Empty message list in debug prompt check")
+            return
+        prompt = task_params.input[0].content
+
+    if not prompt:
+        return
 
     if EXO_RUNNER_MUST_FAIL in prompt:
         logger.info("raising exception")

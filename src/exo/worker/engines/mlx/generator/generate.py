@@ -8,14 +8,13 @@ from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.api import (
-    BenchChatCompletionTaskParams,
-    ChatCompletionMessage,
     FinishReason,
     GenerationStats,
 )
+from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType
-from exo.shared.types.tasks import ChatCompletionTaskParams
+from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
@@ -96,14 +95,9 @@ def warmup_inference(
 
     warmup_prompt = apply_chat_template(
         tokenizer=tokenizer,
-        chat_task_data=ChatCompletionTaskParams(
-            model="",
-            messages=[
-                ChatCompletionMessage(
-                    role="user",
-                    content=content,
-                )
-            ],
+        task_params=ResponsesRequest(
+            model=ModelId(""),
+            input=content,
         ),
     )
 
@@ -161,21 +155,18 @@ def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
 def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
-    task: ChatCompletionTaskParams,
+    task: ResponsesRequest,
     prompt: str,
     kv_prefix_cache: KVPrefixCache | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
-    is_bench: bool = isinstance(task, BenchChatCompletionTaskParams)
-
-    # Currently we support chat-completion tasks only.
-    logger.debug(f"task_params: {task}")
 
     if task.seed is not None:
         mx.random.seed(task.seed)
 
     # Do not use the prefix cache if we are trying to do benchmarks.
+    is_bench = (task.metadata or {}).get("bench") == "true"
     if is_bench:
         kv_prefix_cache = None
 
@@ -201,7 +192,16 @@ def mlx_generate(
     sampler = make_sampler(
         temp=task.temperature if task.temperature is not None else 0.7,
         top_p=task.top_p if task.top_p is not None else 1.0,
+        top_k=task.top_k if task.top_k is not None else 0,
     )
+
+    # Normalize stop sequences to a list
+    stop_sequences: list[str] = (
+        ([task.stop] if isinstance(task.stop, str) else task.stop)
+        if task.stop is not None
+        else []
+    )
+    max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
     # Prefill cache with all tokens except the last one
     prefill_tps = prefill(model, tokenizer, sampler, prompt_tokens[:-1], caches)
@@ -209,7 +209,8 @@ def mlx_generate(
     # stream_generate starts from the last token
     last_token = prompt_tokens[-1:]
 
-    max_tokens = task.max_tokens or MAX_TOKENS
+    max_tokens = task.max_output_tokens or MAX_TOKENS
+    accumulated_text = ""
     generated_text_parts: list[str] = []
     generation_start_time = time.perf_counter()
     for out in stream_generate(
@@ -227,9 +228,30 @@ def mlx_generate(
     ):
         generated_text_parts.append(out.text)
         logger.info(out.text)
+        accumulated_text += out.text
 
+        # Check for stop sequences
+        text = out.text
+        finish_reason: FinishReason | None = cast(
+            FinishReason | None, out.finish_reason
+        )
+        stop_matched = False
+
+        if stop_sequences:
+            for stop_seq in stop_sequences:
+                if stop_seq in accumulated_text:
+                    # Trim text to just before the stop sequence
+                    stop_index = accumulated_text.find(stop_seq)
+                    text_before_stop = accumulated_text[:stop_index]
+                    chunk_start = len(accumulated_text) - len(out.text)
+                    text = text_before_stop[chunk_start:]
+                    finish_reason = "stop"
+                    stop_matched = True
+                    break
+
+        is_done = finish_reason is not None
         stats: GenerationStats | None = None
-        if out.finish_reason is not None:
+        if is_done:
             stats = GenerationStats(
                 prompt_tps=float(prefill_tps or out.prompt_tps),
                 generation_tps=float(out.generation_tps),
@@ -237,22 +259,19 @@ def mlx_generate(
                 generation_tokens=int(out.generation_tokens),
                 peak_memory_usage=Memory.from_gb(out.peak_memory),
             )
-
-            if out.finish_reason not in get_args(FinishReason):
-                # We don't throw here as this failure case is really not all that bad
-                # Just log the error and move on
+            if not stop_matched and out.finish_reason not in get_args(FinishReason):
                 logger.warning(
                     f"Model generated unexpected finish_reason: {out.finish_reason}"
                 )
 
         yield GenerationResponse(
-            text=out.text,
+            text=text,
             token=out.token,
-            finish_reason=cast(FinishReason | None, out.finish_reason),
+            finish_reason=finish_reason,
             stats=stats,
         )
 
-        if out.finish_reason is not None:
+        if is_done:
             # Log generation stats
             generation_elapsed = time.perf_counter() - generation_start_time
             generated_tokens = len(generated_text_parts)
@@ -274,5 +293,9 @@ def mlx_generate(
                 else:
                     kv_prefix_cache.add_kv_cache(full_prompt, caches)
             break
+
+        # Limit accumulated_text to what's needed for stop sequence detection
+        if max_stop_len > 0 and len(accumulated_text) > max_stop_len:
+            accumulated_text = accumulated_text[-max_stop_len:]
 
         # TODO: Do we want an mx_barrier?
