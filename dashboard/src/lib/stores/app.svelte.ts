@@ -63,6 +63,21 @@ export interface TopologyData {
   edges: TopologyEdge[];
 }
 
+export interface Memory {
+  inBytes: number;
+}
+
+export interface ModelCard {
+  modelId: string;
+  prettyName?: string;
+  storageSize: Memory;
+  nLayers: number;
+  hiddenSize: number;
+  supportsTensor: boolean;
+  tasks: string[];
+  components?: any[];
+}
+
 export interface Instance {
   shardAssignments?: {
     modelId?: string;
@@ -433,6 +448,7 @@ class AppStore {
   runners = $state<Record<string, unknown>>({});
   downloads = $state<Record<string, unknown[]>>({});
   placementPreviews = $state<PlacementPreview[]>([]);
+  models = $state<ModelCard[]>([]);
   selectedPreviewModelId = $state<string | null>(null);
   isLoadingPreviews = $state(false);
   previewNodeFilter = $state<Set<string>>(new Set());
@@ -1098,6 +1114,7 @@ class AppStore {
 
   startPolling() {
     this.fetchState();
+    this.fetchModels();
     this.fetchInterval = setInterval(() => this.fetchState(), 1000);
   }
 
@@ -1144,6 +1161,27 @@ class AppStore {
       this.lastUpdate = Date.now();
     } catch (error) {
       console.error("Error fetching state:", error);
+    }
+  }
+
+  async fetchModels() {
+    try {
+      // Add cache-buster to ensure we get the latest models from the master
+      const response = await fetch("/models?t=" + Date.now());
+      if (response.ok) {
+        const data = await response.json();
+        this.models = (data.data || []).map((m: any) => ({
+          modelId: m.id,
+          prettyName: m.name,
+          storageSize: { inBytes: (m.storage_size_megabytes || 0) * 1024 * 1024 },
+          nLayers: m.n_layers || 0,
+          hiddenSize: m.hidden_size || 0,
+          supportsTensor: m.supports_tensor || false,
+          tasks: m.tasks || [],
+        }));
+      }
+    } catch (error) {
+      console.error("Failed to fetch models:", error);
     }
   }
 
@@ -2486,8 +2524,38 @@ class AppStore {
           `Failed to delete download: ${response.status} - ${errorText}`,
         );
       }
+      // After successfully deleting a download, refresh the model list
+      // in case it was a custom model that got deregistered.
+      await this.fetchModels();
     } catch (error) {
       console.error("Error deleting download:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Register a custom model
+   */
+  async registerCustomModel(
+    repoId: string,
+  ): Promise<{ modelId: string; prettyName: string; modelCard: ModelCard }> {
+    try {
+      const response = await fetch("/custom_models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repo_id: repoId }),
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to register custom model: ${response.status} - ${errorText}`,
+        );
+      }
+      const data = await response.json();
+      await this.fetchModels();
+      return data;
+    } catch (error) {
+      console.error("Error registering custom model:", error);
       throw error;
     }
   }
@@ -2584,6 +2652,7 @@ export const toggleChatSidebarVisible = () =>
 export const setChatSidebarVisible = (visible: boolean) =>
   appStore.setChatSidebarVisible(visible);
 export const refreshState = () => appStore.fetchState();
+export const allModels = () => appStore.models;
 
 // Thunderbolt bridge status
 export const thunderboltBridgeCycles = () => appStore.thunderboltBridgeCycles;
@@ -2602,3 +2671,5 @@ export const startDownload = (nodeId: string, shardMetadata: object) =>
   appStore.startDownload(nodeId, shardMetadata);
 export const deleteDownload = (nodeId: string, modelId: string) =>
   appStore.deleteDownload(nodeId, modelId);
+export const registerCustomModel = (repoId: string) =>
+  appStore.registerCustomModel(repoId);

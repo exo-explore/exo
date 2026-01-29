@@ -10,6 +10,7 @@
     deleteDownload,
   } from "$lib/stores/app.svelte";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
+  import CustomModel from "$lib/components/CustomModel.svelte";
 
   type FileProgress = {
     name: string;
@@ -388,6 +389,9 @@
             : "n/a"}
         </div>
       </div>
+    </div>
+    <div class="max-w-4xl">
+      <CustomModel />
     </div>
 
     {#if !hasDownloads}

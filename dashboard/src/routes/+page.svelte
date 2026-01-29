@@ -33,6 +33,8 @@
     toggleChatSidebarVisible,
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
+    registerCustomModel,
+    allModels,
     type DownloadProgress,
     type PlacementPreview,
   } from "$lib/stores/app.svelte";
@@ -93,15 +95,26 @@
   let mounted = $state(false);
 
   // Instance launch state
-  let models = $state<
-    Array<{
-      id: string;
-      name?: string;
-      storage_size_megabytes?: number;
-      tasks?: string[];
-      hugging_face_id?: string;
-    }>
-  >([]);
+  const rawModels = $derived(allModels());
+  const models = $derived(
+    rawModels.map((m) => ({
+      id: m.modelId,
+      name: m.prettyName,
+      storage_size_megabytes: m.storageSize.inBytes / (1024 * 1024),
+      hugging_face_id: m.modelId,
+      description: "",
+      tags: [],
+      supports_tensor: m.supportsTensor,
+      tasks: m.tasks,
+    })),
+  );
+
+  $effect(() => {
+    if (models.length > 0) {
+      const currentNodeCount = data ? Object.keys(data.nodes).length : 1;
+      applyLaunchDefaults(models, currentNodeCount);
+    }
+  });
 
   // Model tasks lookup for ChatForm - maps both short IDs and full HuggingFace IDs
   const modelTasks = $derived(() => {
@@ -509,26 +522,7 @@
 
   onMount(() => {
     mounted = true;
-    fetchModels();
   });
-
-  async function fetchModels() {
-    try {
-      const response = await fetch("/models");
-      if (response.ok) {
-        const data = await response.json();
-        // API returns { data: [{ id, name }] } format
-        models = data.data || [];
-        // Restore last launch defaults if available
-        const currentNodeCount = topologyData()
-          ? Object.keys(topologyData()!.nodes).length
-          : 1;
-        applyLaunchDefaults(models, currentNodeCount);
-      }
-    } catch (error) {
-      console.error("Failed to fetch models:", error);
-    }
-  }
 
   async function launchInstance(
     modelId: string,
@@ -572,6 +566,15 @@
       if (!response.ok) {
         const errorText = await response.text();
         console.error("Failed to launch instance:", errorText);
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch (e) {
+          // ignore
+        }
+        const message =
+          errorData?.detail || errorText || "Failed to launch instance";
+        alert(`Error: ${message}`);
       } else {
         // Always auto-select the newly launched model so the user chats to what they just launched
         setSelectedChatModel(modelId);
@@ -2508,13 +2511,12 @@
                             modelDropdownSearch = "";
                           }
                         }}
-                        disabled={!modelCanFit}
                         class="w-full px-3 py-2 text-left text-sm font-mono tracking-wide transition-colors duration-100 flex items-center justify-between gap-2 {selectedModelId ===
                         model.id
                           ? 'bg-transparent text-exo-yellow cursor-pointer'
                           : modelCanFit
                             ? 'text-white/80 hover:text-exo-yellow cursor-pointer'
-                            : 'text-white/30 cursor-default'}"
+                            : 'text-red-400/80 cursor-not-allowed'}"
                       >
                         <span class="flex items-center gap-2 truncate flex-1">
                           {#if isImageModel}
