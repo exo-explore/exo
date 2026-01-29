@@ -93,12 +93,20 @@
             touch $out
           '';
 
-          packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
-            metal-toolchain = pkgs.callPackage ./nix/metal-toolchain.nix { };
-            mlx = pkgs.callPackage ./nix/mlx.nix {
-              metal-toolchain = self'.packages.metal-toolchain;
-            };
-          };
+          packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin (
+            let
+              uvLock = builtins.fromTOML (builtins.readFile ./uv.lock);
+              mlxPackage = builtins.head (builtins.filter (p: p.name == "mlx") uvLock.package);
+              uvLockMlxVersion = mlxPackage.version;
+            in
+            {
+              metal-toolchain = pkgs.callPackage ./nix/metal-toolchain.nix { };
+              mlx = pkgs.callPackage ./nix/mlx.nix {
+                metal-toolchain = self'.packages.metal-toolchain;
+                inherit uvLockMlxVersion;
+              };
+            }
+          );
 
           devShells.default = with pkgs; pkgs.mkShell {
             inputsFrom = [ self'.checks.cargo-build ];
