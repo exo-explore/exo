@@ -220,6 +220,10 @@ def mlx_generate(
     generated_text_parts: list[str] = []
     generation_start_time = time.perf_counter()
     usage: Usage | None = None
+    in_thinking = False
+    reasoning_tokens = 0
+    think_start = tokenizer.think_start
+    think_end = tokenizer.think_end
     for completion_tokens, out in enumerate(
         stream_generate(
             model=model,
@@ -238,6 +242,13 @@ def mlx_generate(
     ):
         generated_text_parts.append(out.text)
         logger.info(out.text)
+
+        if think_start is not None and out.text == think_start:
+            in_thinking = True
+        elif think_end is not None and out.text == think_end:
+            in_thinking = False
+        if in_thinking:
+            reasoning_tokens += 1
 
         stats: GenerationStats | None = None
         if out.finish_reason is not None:
@@ -260,8 +271,8 @@ def mlx_generate(
                 prompt_tokens=int(out.prompt_tokens),
                 completion_tokens=completion_tokens,
                 total_tokens=int(out.prompt_tokens) + completion_tokens,
-                prompt_tokens_details=PromptTokensDetails(),
-                completion_tokens_details=CompletionTokensDetails(),
+                prompt_tokens_details=PromptTokensDetails(cached_tokens=prefix_hit_length),
+                completion_tokens_details=CompletionTokensDetails(reasoning_tokens=reasoning_tokens),
             )
 
         yield GenerationResponse(
