@@ -107,6 +107,10 @@ uv run exo
 
 This starts the exo dashboard and API at http://localhost:52415/
 
+
+*Please view the section on RDMA to enable this feature on MacOS >=26.2!*
+
+
 ### Run from Source (Linux)
 
 **Prerequisites:**
@@ -230,7 +234,7 @@ This removes:
 
 RDMA is a new capability added to macOS 26.2. It works on any Mac with Thunderbolt 5 (M4 Pro Mac Mini, M4 Max Mac Studio, M4 Max MacBook Pro, M3 Ultra Mac Studio).
 
-Note that on Mac Studio, you cannot use the Thunderbolt 5 port next to the Ethernet port.
+Please refer to the caveats for immediate troubleshooting.
 
 To enable RDMA on macOS, follow these steps:
 
@@ -246,6 +250,14 @@ To enable RDMA on macOS, follow these steps:
 6. Reboot your Mac.
 
 After that, RDMA will be enabled in macOS and exo will take care of the rest.
+
+**Important Caveats**
+
+1. Devices that wish to be part of an RDMA cluster must be connected to all other devices in the cluster.
+2. The cables must support TB5.
+3. On a Mac Studio, you cannot use the Thunderbolt 5 port next to the Ethernet port.
+4. If running from source, please use the script found at `tmp/set_rdma_network_config.sh`, which will disable Thunderbolt Bridge and set dhcp on each RDMA port.
+5. RDMA ports may be unable to discover each other on different versions of MacOS. Please ensure that OS versions match exactly (even beta version numbers) on all devices.
 
 ---
 
