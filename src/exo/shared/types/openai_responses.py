@@ -31,7 +31,7 @@ class ResponseInputMessage(BaseModel, frozen=True):
     content: str
 
 
-class ResponsesRequest(BaseModel):
+class ResponsesRequest(BaseModel, frozen=True):
     """Request body for OpenAI Responses API.
 
     This is also the canonical internal task params format used throughout

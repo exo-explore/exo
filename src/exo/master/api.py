@@ -753,7 +753,7 @@ class API:
                 detail=f"No instance found for model {internal_params.model}",
             )
 
-        internal_params.stream = False
+        internal_params = internal_params.model_copy(update={"stream": False})
 
         command = TextGeneration(request_params=internal_params)
         await self._send(command)
@@ -1255,7 +1255,7 @@ class API:
         """Claude Messages API - adapter."""
         internal_params = claude_request_to_internal(payload)
         model_card = await resolve_model_card(ModelId(internal_params.model))
-        internal_params.model = model_card.model_id
+        internal_params = internal_params.model_copy(update={"model": model_card.model_id})
 
         if not any(
             instance.shard_assignments.model_id == internal_params.model
@@ -1295,7 +1295,7 @@ class API:
         """OpenAI Responses API - native format."""
         internal_params = payload
         model_card = await resolve_model_card(internal_params.model)
-        internal_params.model = model_card.model_id
+        internal_params = internal_params.model_copy(update={"model": model_card.model_id})
 
         if not any(
             instance.shard_assignments.model_id == internal_params.model
