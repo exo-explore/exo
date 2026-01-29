@@ -1173,7 +1173,9 @@ class AppStore {
         this.models = (data.data || []).map((m: any) => ({
           modelId: m.id,
           prettyName: m.name,
-          storageSize: { inBytes: (m.storage_size_megabytes || 0) * 1024 * 1024 },
+          storageSize: {
+            inBytes: (m.storage_size_megabytes || 0) * 1024 * 1024,
+          },
           nLayers: m.n_layers || 0,
           hiddenSize: m.hidden_size || 0,
           supportsTensor: m.supports_tensor || false,

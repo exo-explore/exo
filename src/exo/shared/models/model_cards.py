@@ -16,6 +16,7 @@ from exo.shared.types.memory import Memory
 from exo.utils.pydantic_ext import CamelCaseModel
 
 from pathlib import Path as PPath
+
 CUSTOM_MODELS_PATH = PPath(EXO_CONFIG_HOME) / "custom_models.json"
 
 
@@ -757,12 +758,13 @@ def load_custom_models() -> None:
 
                 card = ModelCard.model_validate(card_data)
                 MODEL_CARDS[key] = card
-                # Also cache by model_id if needed, similar to how _card_cache works? 
+                # Also cache by model_id if needed, similar to how _card_cache works?
                 # resolving usages: resolve_model_card in api.py iterates MODEL_CARDS values.
             except Exception as e:
                 logger.error(f"Failed to load custom model {key}: {e}")
     except Exception as e:
         logger.error(f"Failed to load custom models: {e}")
+
 
 load_custom_models()
 

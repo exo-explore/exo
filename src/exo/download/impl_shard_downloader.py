@@ -149,7 +149,7 @@ class ResumableShardDownloader(ShardDownloader):
                 if card.model_id == shard.model_card.model_id:
                     known = True
                     break
-        
+
         if not known:
             repo_id = shard.model_card.model_id
             short_id = f"custom-{repo_id.split('/')[-1]}"

@@ -1368,7 +1368,9 @@ class API:
             k.startswith("custom-") and v.model_id == model_id_obj
             for k, v in MODEL_CARDS.items()
         )
-        logger.info(f"Delete download request: model_id={model_id}, node_id={node_id}, is_custom={is_custom}")
+        logger.info(
+            f"Delete download request: model_id={model_id}, node_id={node_id}, is_custom={is_custom}"
+        )
         if is_custom:
             other_nodes_have_it = False
             for n_id, downloads in self.state.downloads.items():
@@ -1377,12 +1379,14 @@ class API:
                 for d in downloads:
                     # Check if model matches. We use string comparison for safety.
                     if str(d.shard_metadata.model_card.model_id) == str(model_id_obj):
-                        logger.info(f"Model {model_id} still found on node {n_id} (state: {type(d).__name__})")
+                        logger.info(
+                            f"Model {model_id} still found on node {n_id} (state: {type(d).__name__})"
+                        )
                         other_nodes_have_it = True
                         break
                 if other_nodes_have_it:
                     break
-            
+
             logger.info(f"other_nodes_have_it for {model_id}: {other_nodes_have_it}")
             if not other_nodes_have_it:
                 logger.info(

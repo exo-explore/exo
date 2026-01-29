@@ -100,7 +100,6 @@ def _create_runner(
         if runner_id in runners:
             continue
 
-
         shard = instance.shard(runner_id)
         assert shard is not None
 
@@ -127,10 +126,10 @@ def _model_needs_download(
         runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)
         if runner_id is None:
             continue
-        
+
         # Original logic used runner.status is RunnerIdle.
         # If runner doesn't exist, it's conceptually "Idle" or "Not Started".
-        
+
         runner = runners.get(runner_id)
         if runner and not isinstance(runner.status, RunnerIdle):
             continue
@@ -139,12 +138,9 @@ def _model_needs_download(
         assert shard is not None
         model_id = shard.model_card.model_id
 
-        if (
-            model_id not in download_status
-            or not isinstance(
-                download_status[model_id],
-                (DownloadOngoing, DownloadCompleted, DownloadFailed),
-            )
+        if model_id not in download_status or not isinstance(
+            download_status[model_id],
+            (DownloadOngoing, DownloadCompleted, DownloadFailed),
         ):
             return DownloadModel(
                 instance_id=instance.instance_id,
