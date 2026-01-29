@@ -702,6 +702,8 @@ class API:
     ) -> ChatCompletionResponse | StreamingResponse:
         """OpenAI Chat Completions API - adapter."""
         internal_params = chat_request_to_internal(payload)
+        model_card = await resolve_model_card(ModelId(internal_params.model))
+        internal_params = internal_params.model_copy(update={"model": model_card.model_id})
 
         if not any(
             instance.shard_assignments.model_id == internal_params.model
@@ -740,6 +742,8 @@ class API:
     ) -> BenchChatCompletionResponse:
         # Convert to internal format (BenchChatCompletionTaskParams extends ChatCompletionTaskParams)
         internal_params = chat_request_to_internal(payload)
+        model_card = await resolve_model_card(ModelId(internal_params.model))
+        internal_params = internal_params.model_copy(update={"model": model_card.model_id})
 
         if not any(
             instance.shard_assignments.model_id == internal_params.model
