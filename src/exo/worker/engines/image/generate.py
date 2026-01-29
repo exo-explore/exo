@@ -98,8 +98,8 @@ def generate_image(
 
     partial_images = (
         task.partial_images
-        if task.partial_images is not None
-        else (3 if task.stream else 0)
+        if task.partial_images is not None and task.stream is not None and task.stream
+        else 0
     )
 
     image_path: Path | None = None
