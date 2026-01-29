@@ -3,6 +3,7 @@ from enum import Enum
 from pydantic import Field
 
 from exo.shared.types.api import (
+    BenchChatCompletionTaskParams,
     ChatCompletionTaskParams,
     ImageEditsInternalParams,
     ImageGenerationTaskParams,
@@ -54,7 +55,7 @@ class StartWarmup(BaseTask):  # emitted by Worker
 
 class ChatCompletion(BaseTask):  # emitted by Master
     command_id: CommandId
-    task_params: ChatCompletionTaskParams
+    task_params: ChatCompletionTaskParams | BenchChatCompletionTaskParams
 
     error_type: str | None = Field(default=None)
     error_message: str | None = Field(default=None)

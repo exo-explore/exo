@@ -538,7 +538,6 @@ def parse_gpt_oss(
                     ]
                 )
                 tool_arg_parts = []
-                break
             current_tool_name = recipient
 
         # If inside a tool call, accumulate arguments

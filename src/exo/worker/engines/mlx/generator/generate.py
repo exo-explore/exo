@@ -39,7 +39,7 @@ def prefill(
     sampler: Callable[[mx.array], mx.array],
     prompt_tokens: mx.array,
     cache: KVCacheType,
-) -> float:
+) -> tuple[float, int]:
     """Prefill the KV cache with prompt tokens.
 
     This runs the model over the prompt tokens to populate the cache,
@@ -50,7 +50,7 @@ def prefill(
     """
     num_tokens = len(prompt_tokens)
     if num_tokens == 0:
-        return 0.0
+        return 0.0, 0
 
     logger.debug(f"Prefilling {num_tokens} tokens...")
     start_time = time.perf_counter()
@@ -85,7 +85,7 @@ def prefill(
         f"Prefill complete: {num_tokens} tokens in {elapsed:.2f}s "
         f"({tokens_per_sec:.1f} tok/s)"
     )
-    return tokens_per_sec
+    return tokens_per_sec, num_tokens
 
 
 def warmup_inference(
@@ -169,6 +169,8 @@ def mlx_generate(
     mx.reset_peak_memory()
     is_bench: bool = isinstance(task, BenchChatCompletionTaskParams)
 
+    logger.info(f"{is_bench=}")
+
     # Currently we support chat-completion tasks only.
     logger.debug(f"task_params: {task}")
 
@@ -204,7 +206,9 @@ def mlx_generate(
     )
 
     # Prefill cache with all tokens except the last one
-    prefill_tps = prefill(model, tokenizer, sampler, prompt_tokens[:-1], caches)
+    prefill_tps, prefill_tokens = prefill(
+        model, tokenizer, sampler, prompt_tokens[:-1], caches
+    )
 
     # stream_generate starts from the last token
     last_token = prompt_tokens[-1:]
@@ -233,7 +237,7 @@ def mlx_generate(
             stats = GenerationStats(
                 prompt_tps=float(prefill_tps or out.prompt_tps),
                 generation_tps=float(out.generation_tps),
-                prompt_tokens=int(out.prompt_tokens),
+                prompt_tokens=int(prefill_tokens + out.prompt_tokens),
                 generation_tokens=int(out.generation_tokens),
                 peak_memory_usage=Memory.from_gb(out.peak_memory),
             )

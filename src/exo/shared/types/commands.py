@@ -2,6 +2,7 @@ from pydantic import Field
 
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.api import (
+    BenchChatCompletionTaskParams,
     ChatCompletionTaskParams,
     ImageEditsInternalParams,
     ImageGenerationTaskParams,
@@ -22,7 +23,7 @@ class TestCommand(BaseCommand):
 
 
 class ChatCompletion(BaseCommand):
-    request_params: ChatCompletionTaskParams
+    request_params: ChatCompletionTaskParams | BenchChatCompletionTaskParams
 
 
 class ImageGeneration(BaseCommand):
