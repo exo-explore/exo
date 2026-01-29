@@ -33,6 +33,7 @@ from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
     save_custom_models,
+    deregister_custom_model,
 )
 from exo.shared.types.api import (
     AdvancedImageParams,
@@ -1359,4 +1360,34 @@ class API:
             model_id=ModelId(model_id),
         )
         await self._send_download(command)
+
+        # If this is a custom model, check if any other node still has it.
+        # If not, deregister it from custom_models.json.
+        model_id_obj = ModelId(model_id)
+        is_custom = any(
+            k.startswith("custom-") and v.model_id == model_id_obj
+            for k, v in MODEL_CARDS.items()
+        )
+        logger.info(f"Delete download request: model_id={model_id}, node_id={node_id}, is_custom={is_custom}")
+        if is_custom:
+            other_nodes_have_it = False
+            for n_id, downloads in self.state.downloads.items():
+                if str(n_id) == str(node_id):
+                    continue
+                for d in downloads:
+                    # Check if model matches. We use string comparison for safety.
+                    if str(d.shard_metadata.model_card.model_id) == str(model_id_obj):
+                        logger.info(f"Model {model_id} still found on node {n_id} (state: {type(d).__name__})")
+                        other_nodes_have_it = True
+                        break
+                if other_nodes_have_it:
+                    break
+            
+            logger.info(f"other_nodes_have_it for {model_id}: {other_nodes_have_it}")
+            if not other_nodes_have_it:
+                logger.info(
+                    f"Last instance of custom model {model_id} deleted or not found on other nodes. Deregistering."
+                )
+                deregister_custom_model(model_id_obj)
+
         return DeleteDownloadResponse(command_id=command.command_id)

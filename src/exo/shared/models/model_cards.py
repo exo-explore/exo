@@ -720,8 +720,6 @@ def save_custom_models() -> None:
         for k, v in MODEL_CARDS.items()
         if k not in _IMAGE_MODEL_CARDS and k.startswith("custom-")
     }
-    if not custom_cards:
-        return
 
     try:
         CUSTOM_MODELS_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -767,6 +765,26 @@ def load_custom_models() -> None:
         logger.error(f"Failed to load custom models: {e}")
 
 load_custom_models()
+
+
+def deregister_custom_model(model_id: ModelId) -> bool:
+    """Removes a custom model from MODEL_CARDS and custom_models.json."""
+    logger.info(f"Attempting to deregister custom model: {model_id}")
+    keys_to_delete = [
+        k
+        for k, v in MODEL_CARDS.items()
+        if k.startswith("custom-") and str(v.model_id) == str(model_id)
+    ]
+    if not keys_to_delete:
+        logger.warning(f"No custom model keys found for {model_id}")
+        return False
+
+    for k in keys_to_delete:
+        logger.info(f"Deleting custom model key: {k}")
+        del MODEL_CARDS[k]
+
+    save_custom_models()
+    return True
 
 
 class ConfigData(BaseModel):
