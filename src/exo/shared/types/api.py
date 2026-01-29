@@ -11,7 +11,7 @@ from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 FinishReason = Literal[
     "stop", "length", "tool_calls", "content_filter", "function_call", "error"
@@ -170,7 +170,7 @@ class BenchChatCompletionResponse(ChatCompletionResponse):
     generation_stats: GenerationStats | None = None
 
 
-class ChatCompletionTaskParams(BaseModel):
+class ChatCompletionTaskParams(TaggedModel):
     model: str
     frequency_penalty: float | None = None
     messages: list[ChatCompletionMessage]
