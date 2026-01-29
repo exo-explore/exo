@@ -54,8 +54,8 @@ def plan(
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
         _kill_runner(runners, all_runners, instances)
-        or _create_runner(node_id, runners, instances)
-        or _model_needs_download(node_id, runners, global_download_status)
+        or _create_runner(node_id, runners, instances, tasks)
+        or _model_needs_download(node_id, runners, global_download_status, instances)
         or _init_distributed_backend(runners, all_runners)
         or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
@@ -90,6 +90,7 @@ def _create_runner(
     node_id: NodeId,
     runners: Mapping[RunnerId, RunnerSupervisor],
     instances: Mapping[InstanceId, Instance],
+    tasks: Mapping[TaskId, Task],
 ) -> CreateRunner | None:
     for instance in instances.values():
         runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)
@@ -98,6 +99,7 @@ def _create_runner(
 
         if runner_id in runners:
             continue
+
 
         shard = instance.shard(runner_id)
         assert shard is not None
@@ -114,25 +116,39 @@ def _model_needs_download(
     node_id: NodeId,
     runners: Mapping[RunnerId, RunnerSupervisor],
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+    instances: Mapping[InstanceId, Instance],
 ) -> DownloadModel | None:
     local_downloads = global_download_status.get(node_id, [])
     download_status = {
         dp.shard_metadata.model_card.model_id: dp for dp in local_downloads
     }
 
-    for runner in runners.values():
-        model_id = runner.bound_instance.bound_shard.model_card.model_id
-        if isinstance(runner.status, RunnerIdle) and (
+    for instance in instances.values():
+        runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)
+        if runner_id is None:
+            continue
+        
+        # Original logic used runner.status is RunnerIdle.
+        # If runner doesn't exist, it's conceptually "Idle" or "Not Started".
+        
+        runner = runners.get(runner_id)
+        if runner and not isinstance(runner.status, RunnerIdle):
+            continue
+
+        shard = instance.shard(runner_id)
+        assert shard is not None
+        model_id = shard.model_card.model_id
+
+        if (
             model_id not in download_status
             or not isinstance(
                 download_status[model_id],
                 (DownloadOngoing, DownloadCompleted, DownloadFailed),
             )
         ):
-            # We don't invalidate download_status randomly in case a file gets deleted on disk
             return DownloadModel(
-                instance_id=runner.bound_instance.instance.instance_id,
-                shard_metadata=runner.bound_instance.bound_shard,
+                instance_id=instance.instance_id,
+                shard_metadata=shard,
             )
 
 

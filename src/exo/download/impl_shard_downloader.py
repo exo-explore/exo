@@ -7,10 +7,15 @@ from loguru import logger
 
 from exo.download.download_utils import RepoDownloadProgress, download_shard
 from exo.download.shard_downloader import ShardDownloader
-from exo.shared.models.model_cards import MODEL_CARDS, ModelCard, ModelId
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
     ShardMetadata,
+)
+from exo.shared.models.model_cards import (
+    MODEL_CARDS,
+    ModelCard,
+    ModelId,
+    save_custom_models,
 )
 
 
@@ -135,6 +140,24 @@ class ResumableShardDownloader(ShardDownloader):
     async def ensure_shard(
         self, shard: ShardMetadata, config_only: bool = False
     ) -> Path:
+        # Check if model is already registered
+        known = False
+        if shard.model_card.model_id in MODEL_CARDS:
+            known = True
+        else:
+            for card in MODEL_CARDS.values():
+                if card.model_id == shard.model_card.model_id:
+                    known = True
+                    break
+        
+        if not known:
+            repo_id = shard.model_card.model_id
+            short_id = f"custom-{repo_id.split('/')[-1]}"
+            if not shard.model_card.pretty_name:
+                shard.model_card.pretty_name = repo_id.split("/")[-1].replace("-", " ")
+            MODEL_CARDS[short_id] = shard.model_card
+            save_custom_models()
+
         allow_patterns = ["config.json"] if config_only else None
 
         target_dir, _ = await download_shard(

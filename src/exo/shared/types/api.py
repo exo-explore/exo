@@ -366,3 +366,13 @@ class StartDownloadResponse(CamelCaseModel):
 
 class DeleteDownloadResponse(CamelCaseModel):
     command_id: CommandId
+
+
+class RegisterCustomModelRequest(BaseModel):
+    repo_id: str
+
+
+class RegisterCustomModelResponse(CamelCaseModel):
+    model_id: str
+    pretty_name: str
+    model_card: ModelCard

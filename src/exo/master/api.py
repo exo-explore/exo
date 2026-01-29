@@ -32,6 +32,7 @@ from exo.shared.models.model_cards import (
     MODEL_CARDS,
     ModelCard,
     ModelId,
+    save_custom_models,
 )
 from exo.shared.types.api import (
     AdvancedImageParams,
@@ -62,6 +63,8 @@ from exo.shared.types.api import (
     PlaceInstanceParams,
     PlacementPreview,
     PlacementPreviewResponse,
+    RegisterCustomModelRequest,
+    RegisterCustomModelResponse,
     StartDownloadParams,
     StartDownloadResponse,
     StreamingChoiceResponse,
@@ -271,6 +274,28 @@ class API:
         self.app.get("/events")(lambda: self._event_log)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
+        self.app.post("/custom_models")(self.register_custom_model)
+
+    async def register_custom_model(
+        self, payload: RegisterCustomModelRequest
+    ) -> RegisterCustomModelResponse:
+        repo_id = payload.repo_id
+        try:
+            model_card = await ModelCard.from_hf(ModelId(repo_id))
+            short_id = f"custom-{repo_id.split('/')[-1]}"
+            model_card.pretty_name = repo_id.split("/")[-1].replace("-", " ")
+            MODEL_CARDS[short_id] = model_card
+            save_custom_models()
+            return RegisterCustomModelResponse(
+                model_id=short_id,
+                pretty_name=model_card.pretty_name,
+                model_card=model_card,
+            )
+        except Exception as e:
+            logger.exception("Failed to register custom model")
+            raise HTTPException(
+                status_code=400, detail=f"Invalid model ID or not supported: {e}"
+            )
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(

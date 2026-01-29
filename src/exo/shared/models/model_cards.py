@@ -1,6 +1,7 @@
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, cast
 
+import json
 import aiofiles
 import aiofiles.os as aios
 import tomlkit
@@ -9,10 +10,14 @@ from huggingface_hub import model_info
 from loguru import logger
 from pydantic import BaseModel, Field, PositiveInt, field_validator
 
-from exo.shared.constants import EXO_ENABLE_IMAGE_MODELS
+from exo.shared.constants import EXO_ENABLE_IMAGE_MODELS, EXO_CONFIG_HOME
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.utils.pydantic_ext import CamelCaseModel
+
+from pathlib import Path as PPath
+CUSTOM_MODELS_PATH = PPath(EXO_CONFIG_HOME) / "custom_models.json"
+
 
 _card_cache: dict[str, "ModelCard"] = {}
 
@@ -34,6 +39,7 @@ class ComponentInfo(CamelCaseModel):
 
 class ModelCard(CamelCaseModel):
     model_id: ModelId
+    pretty_name: str | None = None
     storage_size: Memory
     n_layers: PositiveInt
     hidden_size: PositiveInt
@@ -706,6 +712,61 @@ _IMAGE_MODEL_CARDS = _image_model_cards
 
 if EXO_ENABLE_IMAGE_MODELS:
     MODEL_CARDS.update(_IMAGE_MODEL_CARDS)
+
+
+def save_custom_models() -> None:
+    custom_cards: dict[str, object] = {
+        k: cast(dict[str, object], v.model_dump(mode="json"))
+        for k, v in MODEL_CARDS.items()
+        if k not in _IMAGE_MODEL_CARDS and k.startswith("custom-")
+    }
+    if not custom_cards:
+        return
+
+    try:
+        CUSTOM_MODELS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(CUSTOM_MODELS_PATH, "w") as f:
+            json.dump(custom_cards, f, indent=2)
+    except Exception as e:
+        logger.error(f"Failed to save custom models: {e}")
+
+
+def load_custom_models() -> None:
+    if not CUSTOM_MODELS_PATH.exists():
+        return
+
+    try:
+        with open(CUSTOM_MODELS_PATH, "r") as f:
+            loaded_data = cast(object, json.load(f))
+            if not isinstance(loaded_data, dict):
+                return
+            custom_cards = cast(dict[str, object], loaded_data)
+
+        for key, value in custom_cards.items():
+            if not isinstance(value, dict):
+                continue
+            data = cast(dict[str, object], value)
+            try:
+                # Support legacy format where card data is nested in "metadata"
+                raw_card_data = data.get("metadata", data)
+                if not isinstance(raw_card_data, dict):
+                    continue
+                card_data = cast(dict[str, object], raw_card_data)
+
+                # Check for tasks and add default if missing (for legacy custom models)
+                if "tasks" not in card_data:
+                    card_data["tasks"] = [ModelTask.TextGeneration]
+
+                card = ModelCard.model_validate(card_data)
+                MODEL_CARDS[key] = card
+                # Also cache by model_id if needed, similar to how _card_cache works? 
+                # resolving usages: resolve_model_card in api.py iterates MODEL_CARDS values.
+            except Exception as e:
+                logger.error(f"Failed to load custom model {key}: {e}")
+    except Exception as e:
+        logger.error(f"Failed to load custom models: {e}")
+
+load_custom_models()
 
 
 class ConfigData(BaseModel):
