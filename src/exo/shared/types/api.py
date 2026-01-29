@@ -3,7 +3,7 @@ from collections.abc import Generator
 from typing import Annotated, Any, Literal
 
 from fastapi import UploadFile
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_core import PydanticUseDefault
 
 from exo.shared.models.model_cards import ModelCard, ModelId
@@ -171,6 +171,8 @@ class BenchChatCompletionResponse(ChatCompletionResponse):
 
 
 class ChatCompletionTaskParams(TaggedModel):
+    model_config = ConfigDict(extra="ignore")
+
     model: str
     frequency_penalty: float | None = None
     messages: list[ChatCompletionMessage]
