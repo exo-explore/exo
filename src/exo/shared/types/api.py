@@ -170,6 +170,10 @@ class BenchChatCompletionResponse(ChatCompletionResponse):
     generation_stats: GenerationStats | None = None
 
 
+class StreamOptions(BaseModel):
+    include_usage: bool = False
+
+
 class ChatCompletionTaskParams(TaggedModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -186,6 +190,7 @@ class ChatCompletionTaskParams(TaggedModel):
     seed: int | None = None
     stop: str | list[str] | None = None
     stream: bool = False
+    stream_options: StreamOptions | None = None
     temperature: float | None = None
     top_p: float | None = None
     tools: list[dict[str, Any]] | None = None

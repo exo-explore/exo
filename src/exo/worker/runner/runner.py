@@ -18,7 +18,7 @@ from pydantic import ValidationError
 
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE
 from exo.shared.models.model_cards import ModelId, ModelTask
-from exo.shared.types.api import ChatCompletionMessageText, ImageGenerationStats
+from exo.shared.types.api import ChatCompletionMessageText, ImageGenerationStats, Usage
 from exo.shared.types.chunks import ErrorChunk, ImageChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
@@ -277,9 +277,11 @@ def main(
                                 tokenizer.tool_parser,  # pyright: ignore[reportAny]
                             )
 
+                        completion_tokens = 0
                         for response in mlx_generator:
                             match response:
                                 case GenerationResponse():
+                                    completion_tokens += 1
                                     if (
                                         device_rank == 0
                                         and response.finish_reason == "error"
@@ -300,6 +302,14 @@ def main(
                                             "tool_calls",
                                             "function_call",
                                         )
+                                        usage: Usage | None = None
+                                        if response.stats is not None:
+                                            usage = Usage(
+                                                prompt_tokens=response.stats.prompt_tokens,
+                                                completion_tokens=completion_tokens,
+                                                total_tokens=response.stats.prompt_tokens
+                                                + completion_tokens,
+                                            )
                                         event_sender.send(
                                             ChunkGenerated(
                                                 command_id=command_id,
@@ -307,6 +317,7 @@ def main(
                                                     model=shard_metadata.model_card.model_id,
                                                     text=response.text,
                                                     token_id=response.token,
+                                                    usage=usage,
                                                     finish_reason=response.finish_reason,
                                                     stats=response.stats,
                                                 ),
