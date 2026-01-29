@@ -14,7 +14,7 @@ from exo.shared.types.api import (
     FinishReason,
     StreamingChoiceResponse,
 )
-from exo.shared.types.chunks import TokenChunk
+from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
 from exo.shared.types.openai_responses import ResponseInputMessage, ResponsesRequest
 
@@ -89,7 +89,7 @@ def chunk_to_response(
 
 async def generate_chat_stream(
     command_id: CommandId,
-    chunk_stream: AsyncGenerator[TokenChunk, None],
+    chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
 ) -> AsyncGenerator[str, None]:
     """Generate Chat Completions API streaming events from TokenChunks."""
     async for chunk in chunk_stream:
@@ -114,7 +114,7 @@ async def generate_chat_stream(
 
 async def collect_chat_response(
     command_id: CommandId,
-    chunk_stream: AsyncGenerator[TokenChunk, None],
+    chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
 ) -> ChatCompletionResponse:
     """Collect all token chunks and return a single ChatCompletionResponse."""
     text_parts: list[str] = []

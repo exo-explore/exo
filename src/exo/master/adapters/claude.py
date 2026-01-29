@@ -3,7 +3,7 @@
 from collections.abc import AsyncGenerator
 
 from exo.shared.types.api import FinishReason
-from exo.shared.types.chunks import TokenChunk
+from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.claude_api import (
     ClaudeContentBlockDeltaEvent,
     ClaudeContentBlockStartEvent,
@@ -89,7 +89,7 @@ def claude_request_to_internal(request: ClaudeMessagesRequest) -> ResponsesReque
 async def collect_claude_response(
     command_id: CommandId,
     model: str,
-    chunk_stream: AsyncGenerator[TokenChunk, None],
+    chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
 ) -> ClaudeMessagesResponse:
     """Collect all token chunks and return a single ClaudeMessagesResponse."""
     text_parts: list[str] = []
@@ -132,7 +132,7 @@ async def collect_claude_response(
 async def generate_claude_stream(
     command_id: CommandId,
     model: str,
-    chunk_stream: AsyncGenerator[TokenChunk, None],
+    chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
 ) -> AsyncGenerator[str, None]:
     """Generate Claude Messages API streaming events from TokenChunks."""
     # Initial message_start event

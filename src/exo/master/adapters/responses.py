@@ -7,7 +7,7 @@ Completions, Claude) are converted TO ResponsesRequest.
 
 from collections.abc import AsyncGenerator
 
-from exo.shared.types.chunks import TokenChunk
+from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
 from exo.shared.types.openai_responses import (
     ResponseCompletedEvent,
@@ -29,7 +29,7 @@ from exo.shared.types.openai_responses import (
 async def collect_responses_response(
     command_id: CommandId,
     model: str,
-    chunk_stream: AsyncGenerator[TokenChunk, None],
+    chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
 ) -> ResponsesResponse:
     """Collect all token chunks and return a single ResponsesResponse."""
     response_id = f"resp_{command_id}"
@@ -77,7 +77,7 @@ async def collect_responses_response(
 async def generate_responses_stream(
     command_id: CommandId,
     model: str,
-    chunk_stream: AsyncGenerator[TokenChunk, None],
+    chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
 ) -> AsyncGenerator[str, None]:
     """Generate OpenAI Responses API streaming events from TokenChunks."""
     response_id = f"resp_{command_id}"
