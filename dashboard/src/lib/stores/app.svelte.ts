@@ -173,6 +173,11 @@ export interface PlacementPreviewResponse {
   previews: PlacementPreview[];
 }
 
+interface ImageApiResponse {
+  created: number;
+  data: Array<{ b64_json?: string; url?: string }>;
+}
+
 interface RawStateResponse {
   topology?: RawTopology;
   instances?: Record<
@@ -2095,107 +2100,137 @@ class AppStore {
         throw new Error(`API error: ${response.status} - ${errorText}`);
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("No response body");
-      }
+      // Streaming requires both stream=true AND partialImages > 0
+      const isStreaming = params.stream && params.partialImages > 0;
 
-      interface ImageGenerationChunk {
-        data?: { b64_json?: string };
-        format?: string;
-        type?: "partial" | "final";
-        image_index?: number;
-        partial_index?: number;
-        total_partials?: number;
-      }
+      if (!isStreaming) {
+        // Non-streaming: parse JSON response directly
+        const jsonResponse = (await response.json()) as ImageApiResponse;
+        const format = params.outputFormat || "png";
+        const mimeType = `image/${format}`;
 
-      const numImages = params.numImages;
+        const attachments: MessageAttachment[] = jsonResponse.data
+          .filter((img) => img.b64_json)
+          .map((img, index) => ({
+            type: "generated-image" as const,
+            name: `generated-image-${index + 1}.${format}`,
+            preview: `data:${mimeType};base64,${img.b64_json}`,
+            mimeType,
+          }));
 
-      await this.parseSSEStream<ImageGenerationChunk>(
-        reader,
-        targetConversationId,
-        (parsed) => {
-          const imageData = parsed.data?.b64_json;
+        this.updateConversationMessage(
+          targetConversationId,
+          assistantMessage.id,
+          (msg) => {
+            msg.content = "";
+            msg.attachments = attachments;
+          },
+        );
+        this.syncActiveMessagesIfNeeded(targetConversationId);
+      } else {
+        // Streaming mode: use SSE parser
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error("No response body");
+        }
 
-          if (imageData) {
-            const format = parsed.format || "png";
-            const mimeType = `image/${format}`;
-            const imageIndex = parsed.image_index ?? 0;
+        interface ImageGenerationChunk {
+          data?: { b64_json?: string };
+          format?: string;
+          type?: "partial" | "final";
+          image_index?: number;
+          partial_index?: number;
+          total_partials?: number;
+        }
 
-            if (parsed.type === "partial") {
-              // Update with partial image and progress
-              const partialNum = (parsed.partial_index ?? 0) + 1;
-              const totalPartials = parsed.total_partials ?? 3;
-              const progressText =
-                numImages > 1
-                  ? `Generating image ${imageIndex + 1}/${numImages}... ${partialNum}/${totalPartials}`
-                  : `Generating... ${partialNum}/${totalPartials}`;
+        const numImages = params.numImages;
 
-              const partialAttachment: MessageAttachment = {
-                type: "generated-image",
-                name: `generated-image.${format}`,
-                preview: `data:${mimeType};base64,${imageData}`,
-                mimeType,
-              };
+        await this.parseSSEStream<ImageGenerationChunk>(
+          reader,
+          targetConversationId,
+          (parsed) => {
+            const imageData = parsed.data?.b64_json;
 
-              this.updateConversationMessage(
-                targetConversationId,
-                assistantMessage.id,
-                (msg) => {
-                  msg.content = progressText;
-                  if (imageIndex === 0) {
-                    // First image - safe to replace attachments with partial preview
-                    msg.attachments = [partialAttachment];
-                  } else {
-                    // Subsequent images - keep existing finals, show partial at current position
-                    const existingAttachments = msg.attachments || [];
-                    // Keep only the completed final images (up to current imageIndex)
-                    const finals = existingAttachments.slice(0, imageIndex);
-                    msg.attachments = [...finals, partialAttachment];
-                  }
-                },
-              );
-            } else if (parsed.type === "final") {
-              // Final image - replace partial at this position
-              const newAttachment: MessageAttachment = {
-                type: "generated-image",
-                name: `generated-image-${imageIndex + 1}.${format}`,
-                preview: `data:${mimeType};base64,${imageData}`,
-                mimeType,
-              };
+            if (imageData) {
+              const format = parsed.format || "png";
+              const mimeType = `image/${format}`;
+              const imageIndex = parsed.image_index ?? 0;
 
-              this.updateConversationMessage(
-                targetConversationId,
-                assistantMessage.id,
-                (msg) => {
-                  if (imageIndex === 0) {
-                    // First final image - replace any partial preview
-                    msg.attachments = [newAttachment];
-                  } else {
-                    // Subsequent images - keep previous finals, replace partial at current position
-                    const existingAttachments = msg.attachments || [];
-                    // Slice keeps indices 0 to imageIndex-1 (the previous final images)
-                    const previousFinals = existingAttachments.slice(
-                      0,
-                      imageIndex,
-                    );
-                    msg.attachments = [...previousFinals, newAttachment];
-                  }
+              if (parsed.type === "partial") {
+                // Update with partial image and progress
+                const partialNum = (parsed.partial_index ?? 0) + 1;
+                const totalPartials = parsed.total_partials ?? 3;
+                const progressText =
+                  numImages > 1
+                    ? `Generating image ${imageIndex + 1}/${numImages}... ${partialNum}/${totalPartials}`
+                    : `Generating... ${partialNum}/${totalPartials}`;
 
-                  // Update progress message for multiple images
-                  if (numImages > 1 && imageIndex < numImages - 1) {
-                    msg.content = `Generating image ${imageIndex + 2}/${numImages}...`;
-                  } else {
-                    msg.content = "";
-                  }
-                },
-              );
+                const partialAttachment: MessageAttachment = {
+                  type: "generated-image",
+                  name: `generated-image.${format}`,
+                  preview: `data:${mimeType};base64,${imageData}`,
+                  mimeType,
+                };
+
+                this.updateConversationMessage(
+                  targetConversationId,
+                  assistantMessage.id,
+                  (msg) => {
+                    msg.content = progressText;
+                    if (imageIndex === 0) {
+                      // First image - safe to replace attachments with partial preview
+                      msg.attachments = [partialAttachment];
+                    } else {
+                      // Subsequent images - keep existing finals, show partial at current position
+                      const existingAttachments = msg.attachments || [];
+                      // Keep only the completed final images (up to current imageIndex)
+                      const finals = existingAttachments.slice(0, imageIndex);
+                      msg.attachments = [...finals, partialAttachment];
+                    }
+                  },
+                );
+              } else if (parsed.type === "final") {
+                // Final image - replace partial at this position
+                const newAttachment: MessageAttachment = {
+                  type: "generated-image",
+                  name: `generated-image-${imageIndex + 1}.${format}`,
+                  preview: `data:${mimeType};base64,${imageData}`,
+                  mimeType,
+                };
+
+                this.updateConversationMessage(
+                  targetConversationId,
+                  assistantMessage.id,
+                  (msg) => {
+                    if (imageIndex === 0) {
+                      // First final image - replace any partial preview
+                      msg.attachments = [newAttachment];
+                    } else {
+                      // Subsequent images - keep previous finals, replace partial at current position
+                      const existingAttachments = msg.attachments || [];
+                      // Slice keeps indices 0 to imageIndex-1 (the previous final images)
+                      const previousFinals = existingAttachments.slice(
+                        0,
+                        imageIndex,
+                      );
+                      msg.attachments = [...previousFinals, newAttachment];
+                    }
+
+                    // Update progress message for multiple images
+                    if (numImages > 1 && imageIndex < numImages - 1) {
+                      msg.content = `Generating image ${imageIndex + 2}/${numImages}...`;
+                    } else {
+                      msg.content = "";
+                    }
+                  },
+                );
+              }
+
+              this.syncActiveMessagesIfNeeded(targetConversationId);
             }
-
-            this.syncActiveMessagesIfNeeded(targetConversationId);
-          }
-        },
-      );
+          },
+        );
+      }
     } catch (error) {
       console.error("Error generating image:", error);
       this.handleStreamingError(
@@ -2343,69 +2378,98 @@ class AppStore {
         throw new Error(`API error: ${apiResponse.status} - ${errorText}`);
       }
 
-      const reader = apiResponse.body?.getReader();
-      if (!reader) {
-        throw new Error("No response body");
-      }
+      // Streaming requires both stream=true AND partialImages > 0
+      const isStreaming = params.stream && params.partialImages > 0;
 
-      interface ImageEditChunk {
-        data?: { b64_json?: string };
-        format?: string;
-        type?: "partial" | "final";
-        partial_index?: number;
-        total_partials?: number;
-      }
+      if (!isStreaming) {
+        // Non-streaming: parse JSON response directly
+        const jsonResponse = (await apiResponse.json()) as ImageApiResponse;
+        const format = params.outputFormat || "png";
+        const mimeType = `image/${format}`;
+        const attachments: MessageAttachment[] = jsonResponse.data
+          .filter((img) => img.b64_json)
+          .map((img) => ({
+            type: "generated-image" as const,
+            name: `edited-image.${format}`,
+            preview: `data:${mimeType};base64,${img.b64_json}`,
+            mimeType,
+          }));
 
-      await this.parseSSEStream<ImageEditChunk>(
-        reader,
-        targetConversationId,
-        (parsed) => {
-          const imageData = parsed.data?.b64_json;
+        this.updateConversationMessage(
+          targetConversationId,
+          assistantMessage.id,
+          (msg) => {
+            msg.content = "";
+            msg.attachments = attachments;
+          },
+        );
+        this.syncActiveMessagesIfNeeded(targetConversationId);
+      } else {
+        // Streaming mode: use SSE parser
+        const reader = apiResponse.body?.getReader();
+        if (!reader) {
+          throw new Error("No response body");
+        }
 
-          if (imageData) {
-            const format = parsed.format || "png";
-            const mimeType = `image/${format}`;
-            if (parsed.type === "partial") {
-              // Update with partial image and progress
-              const partialNum = (parsed.partial_index ?? 0) + 1;
-              const totalPartials = parsed.total_partials ?? 3;
-              this.updateConversationMessage(
-                targetConversationId,
-                assistantMessage.id,
-                (msg) => {
-                  msg.content = `Editing... ${partialNum}/${totalPartials}`;
-                  msg.attachments = [
-                    {
-                      type: "generated-image",
-                      name: `edited-image.${format}`,
-                      preview: `data:${mimeType};base64,${imageData}`,
-                      mimeType,
-                    },
-                  ];
-                },
-              );
-            } else if (parsed.type === "final") {
-              // Final image
-              this.updateConversationMessage(
-                targetConversationId,
-                assistantMessage.id,
-                (msg) => {
-                  msg.content = "";
-                  msg.attachments = [
-                    {
-                      type: "generated-image",
-                      name: `edited-image.${format}`,
-                      preview: `data:${mimeType};base64,${imageData}`,
-                      mimeType,
-                    },
-                  ];
-                },
-              );
+        interface ImageEditChunk {
+          data?: { b64_json?: string };
+          format?: string;
+          type?: "partial" | "final";
+          partial_index?: number;
+          total_partials?: number;
+        }
+
+        await this.parseSSEStream<ImageEditChunk>(
+          reader,
+          targetConversationId,
+          (parsed) => {
+            const imageData = parsed.data?.b64_json;
+
+            if (imageData) {
+              const format = parsed.format || "png";
+              const mimeType = `image/${format}`;
+              if (parsed.type === "partial") {
+                // Update with partial image and progress
+                const partialNum = (parsed.partial_index ?? 0) + 1;
+                const totalPartials = parsed.total_partials ?? 3;
+                this.updateConversationMessage(
+                  targetConversationId,
+                  assistantMessage.id,
+                  (msg) => {
+                    msg.content = `Editing... ${partialNum}/${totalPartials}`;
+                    msg.attachments = [
+                      {
+                        type: "generated-image",
+                        name: `edited-image.${format}`,
+                        preview: `data:${mimeType};base64,${imageData}`,
+                        mimeType,
+                      },
+                    ];
+                  },
+                );
+              } else if (parsed.type === "final") {
+                // Final image
+                this.updateConversationMessage(
+                  targetConversationId,
+                  assistantMessage.id,
+                  (msg) => {
+                    msg.content = "";
+                    msg.attachments = [
+                      {
+                        type: "generated-image",
+                        name: `edited-image.${format}`,
+                        preview: `data:${mimeType};base64,${imageData}`,
+                        mimeType,
+                      },
+                    ];
+                  },
+                );
+              }
+              this.syncActiveMessagesIfNeeded(targetConversationId);
             }
-            this.syncActiveMessagesIfNeeded(targetConversationId);
-          }
-        },
-      );
+          },
+        );
+      }
     } catch (error) {
       console.error("Error editing image:", error);
       this.handleStreamingError(
