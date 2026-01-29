@@ -84,6 +84,7 @@
                 enable = true;
                 package = pkgsSwift.swiftPackages.swift-format;
               };
+              shfmt.enable = true;
             };
           };
 
