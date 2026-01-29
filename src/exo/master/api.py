@@ -94,7 +94,6 @@ from exo.shared.types.claude_api import (
     ClaudeMessagesResponse,
 )
 from exo.shared.types.commands import (
-    TextGeneration,
     Command,
     CreateInstance,
     DeleteDownload,
@@ -108,6 +107,7 @@ from exo.shared.types.commands import (
     SendInputChunk,
     StartDownload,
     TaskFinished,
+    TextGeneration,
 )
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
 from exo.shared.types.events import (
@@ -161,7 +161,6 @@ def chunk_to_response(
             )
         ],
     )
-
 
 
 async def resolve_model_card(model_id: ModelId) -> ModelCard:
@@ -633,7 +632,6 @@ class API:
             ],
         )
 
-
     async def _collect_text_generation_with_stats(
         self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
@@ -703,7 +701,9 @@ class API:
         """OpenAI Chat Completions API - adapter."""
         internal_params = chat_request_to_internal(payload)
         model_card = await resolve_model_card(ModelId(internal_params.model))
-        internal_params = internal_params.model_copy(update={"model": model_card.model_id})
+        internal_params = internal_params.model_copy(
+            update={"model": model_card.model_id}
+        )
 
         if not any(
             instance.shard_assignments.model_id == internal_params.model
@@ -743,7 +743,9 @@ class API:
         # Convert to internal format (BenchChatCompletionTaskParams extends ChatCompletionTaskParams)
         internal_params = chat_request_to_internal(payload)
         model_card = await resolve_model_card(ModelId(internal_params.model))
-        internal_params = internal_params.model_copy(update={"model": model_card.model_id})
+        internal_params = internal_params.model_copy(
+            update={"model": model_card.model_id}
+        )
 
         if not any(
             instance.shard_assignments.model_id == internal_params.model
@@ -1259,7 +1261,9 @@ class API:
         """Claude Messages API - adapter."""
         internal_params = claude_request_to_internal(payload)
         model_card = await resolve_model_card(ModelId(internal_params.model))
-        internal_params = internal_params.model_copy(update={"model": model_card.model_id})
+        internal_params = internal_params.model_copy(
+            update={"model": model_card.model_id}
+        )
 
         if not any(
             instance.shard_assignments.model_id == internal_params.model
@@ -1299,7 +1303,9 @@ class API:
         """OpenAI Responses API - native format."""
         internal_params = payload
         model_card = await resolve_model_card(internal_params.model)
-        internal_params = internal_params.model_copy(update={"model": model_card.model_id})
+        internal_params = internal_params.model_copy(
+            update={"model": model_card.model_id}
+        )
 
         if not any(
             instance.shard_assignments.model_id == internal_params.model

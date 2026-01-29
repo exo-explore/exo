@@ -39,7 +39,6 @@ from mlx_lm.utils import load_model
 from pydantic import RootModel
 
 from exo.download.download_utils import build_model_path
-from exo.shared.types.api import ChatCompletionMessageText
 from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
 from exo.shared.types.openai_responses import ResponsesRequest
@@ -386,29 +385,6 @@ def load_tokenizer_for_model_id(
     )
 
     return tokenizer
-
-
-def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
-    """
-    Normalize tool_calls in a message dict.
-
-    OpenAI format has tool_calls[].function.arguments as a JSON string,
-    but some chat templates (e.g., GLM) expect it as a dict.
-    """
-    tool_calls = msg_dict.get("tool_calls")
-    if not tool_calls or not isinstance(tool_calls, list):
-        return
-
-    for tc in tool_calls:  # pyright: ignore[reportUnknownVariableType]
-        if not isinstance(tc, dict):
-            continue
-        func = tc.get("function")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        if not isinstance(func, dict):
-            continue
-        args = func.get("arguments")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        if isinstance(args, str):
-            with contextlib.suppress(json.JSONDecodeError):
-                func["arguments"] = json.loads(args)
 
 
 def apply_chat_template(

@@ -2,7 +2,7 @@ from typing import cast
 
 import exo.worker.plan as plan_mod
 from exo.shared.types.openai_responses import ResponsesRequest
-from exo.shared.types.tasks import TextGeneration, Task, TaskId, TaskStatus
+from exo.shared.types.tasks import Task, TaskId, TaskStatus, TextGeneration
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import (
     RunnerIdle,

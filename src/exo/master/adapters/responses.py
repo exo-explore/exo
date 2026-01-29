@@ -39,9 +39,12 @@ async def collect_responses_response(
     error_message: str | None = None
 
     async for chunk in chunk_stream:
-        if chunk.finish_reason == "error":
+        if isinstance(chunk, ErrorChunk):
             error_message = chunk.error_message or "Internal server error"
             break
+
+        if not isinstance(chunk, TokenChunk):
+            continue
 
         accumulated_text += chunk.text
         last_stats = chunk.stats or last_stats
@@ -118,6 +121,9 @@ async def generate_responses_stream(
     last_stats = None
 
     async for chunk in chunk_stream:
+        if not isinstance(chunk, TokenChunk):
+            continue
+
         accumulated_text += chunk.text
         last_stats = chunk.stats or last_stats
 

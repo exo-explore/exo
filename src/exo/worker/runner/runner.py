@@ -18,7 +18,7 @@ from pydantic import ValidationError
 
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE
 from exo.shared.models.model_cards import ModelId, ModelTask
-from exo.shared.types.api import ChatCompletionMessageText, ImageGenerationStats
+from exo.shared.types.api import ImageGenerationStats
 from exo.shared.types.chunks import ErrorChunk, ImageChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
@@ -30,7 +30,6 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.tasks import (
-    TextGeneration,
     ConnectToGroup,
     ImageEdits,
     ImageGeneration,
@@ -39,6 +38,7 @@ from exo.shared.types.tasks import (
     StartWarmup,
     Task,
     TaskStatus,
+    TextGeneration,
 )
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import (

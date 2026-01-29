@@ -12,7 +12,6 @@ from exo.master.placement import (
 )
 from exo.shared.apply import apply
 from exo.shared.types.commands import (
-    TextGeneration,
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
@@ -23,6 +22,7 @@ from exo.shared.types.commands import (
     SendInputChunk,
     TaskFinished,
     TestCommand,
+    TextGeneration,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
 from exo.shared.types.events import (
@@ -38,9 +38,6 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
-    TextGeneration as TextGenerationTask,
-)
-from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
 )
 from exo.shared.types.tasks import (
@@ -49,6 +46,9 @@ from exo.shared.types.tasks import (
 from exo.shared.types.tasks import (
     TaskId,
     TaskStatus,
+)
+from exo.shared.types.tasks import (
+    TextGeneration as TextGenerationTask,
 )
 from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, Sender, channel

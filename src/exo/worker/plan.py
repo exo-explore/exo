@@ -4,7 +4,6 @@ from collections.abc import Mapping, Sequence
 
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.tasks import (
-    TextGeneration,
     ConnectToGroup,
     CreateRunner,
     DownloadModel,
@@ -16,6 +15,7 @@ from exo.shared.types.tasks import (
     Task,
     TaskId,
     TaskStatus,
+    TextGeneration,
 )
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,

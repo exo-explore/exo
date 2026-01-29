@@ -15,13 +15,13 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.tasks import (
-    TextGeneration,
     ConnectToGroup,
     LoadModel,
     Shutdown,
     StartWarmup,
     Task,
     TaskStatus,
+    TextGeneration,
 )
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.shared.types.worker.runners import (

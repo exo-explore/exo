@@ -91,9 +91,9 @@ async def generate_chat_stream(
     command_id: CommandId,
     chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
 ) -> AsyncGenerator[str, None]:
-    """Generate Chat Completions API streaming events from TokenChunks."""
+    """Generate Chat Completions API streaming events from chunks."""
     async for chunk in chunk_stream:
-        if chunk.finish_reason == "error":
+        if isinstance(chunk, ErrorChunk):
             error_response = ErrorResponse(
                 error=ErrorInfo(
                     message=chunk.error_message or "Internal server error",
@@ -104,6 +104,9 @@ async def generate_chat_stream(
             yield f"data: {error_response.model_dump_json()}\n\n"
             yield "data: [DONE]\n\n"
             return
+
+        if not isinstance(chunk, TokenChunk):
+            continue
 
         chunk_response = chunk_to_response(chunk, command_id)
         yield f"data: {chunk_response.model_dump_json()}\n\n"
@@ -123,9 +126,12 @@ async def collect_chat_response(
     error_message: str | None = None
 
     async for chunk in chunk_stream:
-        if chunk.finish_reason == "error":
+        if isinstance(chunk, ErrorChunk):
             error_message = chunk.error_message or "Internal server error"
             break
+
+        if not isinstance(chunk, TokenChunk):
+            continue
 
         if model is None:
             model = chunk.model

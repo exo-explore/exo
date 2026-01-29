@@ -9,10 +9,10 @@ from exo.master.main import Master
 from exo.routing.router import get_node_id_keypair
 from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.commands import (
-    TextGeneration,
     CommandId,
     ForwarderCommand,
     PlaceInstance,
+    TextGeneration,
 )
 from exo.shared.types.common import ModelId, NodeId, SessionId
 from exo.shared.types.events import (
@@ -27,8 +27,8 @@ from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.profiling import (
     MemoryUsage,
 )
-from exo.shared.types.tasks import TextGeneration as TextGenerationTask
 from exo.shared.types.tasks import TaskStatus
+from exo.shared.types.tasks import TextGeneration as TextGenerationTask
 from exo.shared.types.worker.instances import (
     InstanceMeta,
     MlxRingInstance,

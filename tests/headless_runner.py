@@ -22,12 +22,12 @@ from exo.shared.types.common import Host, NodeId
 from exo.shared.types.events import Event
 from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.tasks import (
-    TextGeneration,
     ConnectToGroup,
     LoadModel,
     Shutdown,
     StartWarmup,
     Task,
+    TextGeneration,
 )
 from exo.shared.types.worker.instances import (
     BoundInstance,
