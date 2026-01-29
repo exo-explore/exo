@@ -206,7 +206,9 @@ def mlx_generate(
     )
 
     # Prefill cache with all tokens except the last one
-    prefill_tps, prefill_tokens = prefill(model, tokenizer, sampler, prompt_tokens[:-1], caches)
+    prefill_tps, prefill_tokens = prefill(
+        model, tokenizer, sampler, prompt_tokens[:-1], caches
+    )
 
     # stream_generate starts from the last token
     last_token = prompt_tokens[-1:]
