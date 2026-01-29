@@ -370,9 +370,15 @@ def print_stats(stats: TraceStats) -> None:
                     pct = (
                         subcat_stats.total_us / phase_total * 100 if phase_total else 0
                     )
+                    # Use parent phase's step count for per-step average
+                    phase_step_count = subcats.get("_total", CategoryStats()).count
+                    if phase_step_count > 0:
+                        avg_per_step = subcat_stats.total_us / phase_step_count
+                    else:
+                        avg_per_step = subcat_stats.avg_us  # fallback
                     print(
                         f"    {subcat:12s} {_format_duration(subcat_stats.total_us):>10s} "
-                        f"({pct:5.1f}%)  avg: {_format_duration(subcat_stats.avg_us)}"
+                        f"({pct:5.1f}%)  avg: {_format_duration(avg_per_step)}"
                     )
             print()
         else:
@@ -429,9 +435,15 @@ def print_stats(stats: TraceStats) -> None:
                             if phase_total
                             else 0
                         )
+                        # Use parent phase's step count for per-step average
+                        phase_step_count = subcats.get("_total", CategoryStats()).count
+                        if phase_step_count > 0:
+                            avg_per_step = subcat_stats.total_us / phase_step_count
+                        else:
+                            avg_per_step = subcat_stats.avg_us  # fallback
                         print(
                             f"      {subcat:12s} {_format_duration(subcat_stats.total_us):>10s} "
-                            f"({pct:5.1f}%)  avg: {_format_duration(subcat_stats.avg_us)}"
+                            f"({pct:5.1f}%)  avg: {_format_duration(avg_per_step)}"
                         )
             else:
                 # Flat display fallback
