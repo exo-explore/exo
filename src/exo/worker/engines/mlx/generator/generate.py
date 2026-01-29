@@ -169,6 +169,8 @@ def mlx_generate(
     mx.reset_peak_memory()
     is_bench: bool = isinstance(task, BenchChatCompletionTaskParams)
 
+    logger.info(f"{is_bench=}")
+
     # Currently we support chat-completion tasks only.
     logger.debug(f"task_params: {task}")
 
