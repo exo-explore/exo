@@ -202,7 +202,7 @@ def pipeline_auto_parallel(
 
     layers = layers[start_layer:end_layer]
     for layer in layers:
-        mx.eval(layer)
+        mx.eval(layer)  # type: ignore
 
     layers[0] = PipelineFirstLayer(layers[0], device_rank, group=group)
     layers[-1] = PipelineLastLayer(
