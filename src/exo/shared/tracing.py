@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from collections import defaultdict
 from collections.abc import Generator
@@ -10,7 +11,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final, cast
+from typing import Final, cast, final
 
 _TRACING_ENV_VAR: Final[str] = "EXO_TRACING_ENABLED"
 
@@ -18,6 +19,7 @@ _TRACING_ENV_VAR: Final[str] = "EXO_TRACING_ENABLED"
 _current_category: ContextVar[str | None] = ContextVar("current_category", default=None)
 
 
+@final
 @dataclass(frozen=True)
 class TraceEvent:
     name: str
@@ -27,6 +29,7 @@ class TraceEvent:
     category: str
 
 
+@final
 @dataclass
 class CategoryStats:
     total_us: int = 0
@@ -49,6 +52,7 @@ class CategoryStats:
         return self.total_us / self.count if self.count > 0 else 0.0
 
 
+@final
 @dataclass
 class TraceStats:
     total_wall_time_us: int = 0
@@ -58,6 +62,7 @@ class TraceStats:
 
 
 # Global trace buffer - each rank accumulates traces here
+_trace_buffer_lock = threading.Lock()
 _trace_buffer: list[TraceEvent] = []
 
 
@@ -69,15 +74,16 @@ def is_tracing_enabled() -> bool:
 def _record_span(
     name: str, start_us: int, duration_us: int, rank: int, category: str
 ) -> None:
-    _trace_buffer.append(
-        TraceEvent(
-            name=name,
-            start_us=start_us,
-            duration_us=duration_us,
-            rank=rank,
-            category=category,
+    with _trace_buffer_lock:
+        _trace_buffer.append(
+            TraceEvent(
+                name=name,
+                start_us=start_us,
+                duration_us=duration_us,
+                rank=rank,
+                category=category,
+            )
         )
-    )
 
 
 @contextmanager
@@ -115,19 +121,22 @@ def trace(
 
     try:
         start_us = int(time.time() * 1_000_000)
+        start_perf = time.perf_counter()
         yield
-        duration_us = int(time.time() * 1_000_000) - start_us
+        duration_us = int((time.perf_counter() - start_perf) * 1_000_000)
         _record_span(name, start_us, duration_us, rank, full_category)
     finally:
         _current_category.reset(token)
 
 
 def get_trace_buffer() -> list[TraceEvent]:
-    return list(_trace_buffer)
+    with _trace_buffer_lock:
+        return list(_trace_buffer)
 
 
 def clear_trace_buffer() -> None:
-    _trace_buffer.clear()
+    with _trace_buffer_lock:
+        _trace_buffer.clear()
 
 
 def export_trace(traces: list[TraceEvent], output_path: Path) -> None:

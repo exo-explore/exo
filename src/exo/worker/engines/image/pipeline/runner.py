@@ -1054,7 +1054,7 @@ class DiffusionRunner:
 
         noise: mx.array | None = None
         if self.is_last_stage:
-            patch_img_only = patch[:, text_seq_len:, :]
-            noise = self.adapter.final_projection(patch_img_only, text_embeddings)
+            patch = patch[:, text_seq_len:, :]
+            noise = self.adapter.final_projection(patch, text_embeddings)
 
         return noise, encoder_hidden_states
