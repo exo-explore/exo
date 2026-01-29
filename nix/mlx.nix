@@ -10,6 +10,7 @@
 , runCommand
 , fmt
 , python313Packages
+, uvLockMlxVersion
 }:
 
 assert stdenv.isDarwin;
@@ -40,14 +41,16 @@ let
 
   mlx = stdenv.mkDerivation rec {
     pname = "mlx";
-    version = "0.30.3";
+    version = let v = "0.30.4"; in
+      assert v == uvLockMlxVersion || throw "MLX version mismatch: nix/mlx.nix has ${v} but uv.lock has ${uvLockMlxVersion}. Update both the version and hash in nix/mlx.nix.";
+      v;
     pyproject = true;
 
     src = fetchFromGitHub {
       owner = "ml-explore";
       repo = "mlx";
       tag = "v${version}";
-      hash = "sha256-Y4RTkGcDCZ9HLyflN0qYhPt/oVOsBhF1mHnKM4n1/ys=";
+      hash = "sha256-OJk6jPlbaSlsUdk3ADz3tWcRzTWXRof3/q8Soe1AO6w=";
     };
 
     patches = [
