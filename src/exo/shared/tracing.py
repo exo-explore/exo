@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
+from collections import defaultdict
 from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, cast
 
 _TRACING_ENV_VAR: Final[str] = "EXO_TRACING_ENABLED"
+
+# Context variable to track the current trace category for hierarchical nesting
+_current_category: ContextVar[str | None] = ContextVar("current_category", default=None)
 
 
 @dataclass(frozen=True)
@@ -19,6 +25,36 @@ class TraceEvent:
     duration_us: int
     rank: int
     category: str
+
+
+@dataclass
+class CategoryStats:
+    total_us: int = 0
+    count: int = 0
+    min_us: int = 0
+    max_us: int = 0
+
+    def add(self, duration_us: int) -> None:
+        if self.count == 0:
+            self.min_us = duration_us
+            self.max_us = duration_us
+        else:
+            self.min_us = min(self.min_us, duration_us)
+            self.max_us = max(self.max_us, duration_us)
+        self.total_us += duration_us
+        self.count += 1
+
+    @property
+    def avg_us(self) -> float:
+        return self.total_us / self.count if self.count > 0 else 0.0
+
+
+@dataclass
+class TraceStats:
+    total_wall_time_us: int = 0
+    by_category: dict[str, CategoryStats] = field(default_factory=dict)
+    by_rank: dict[int, dict[str, CategoryStats]] = field(default_factory=dict)
+    comm_matrix: dict[tuple[int, int], int] = field(default_factory=dict)
 
 
 # Global trace buffer - each rank accumulates traces here
@@ -52,27 +88,38 @@ def trace(
 ) -> Generator[None, None, None]:
     """Context manager to trace any operation.
 
+    Nested traces automatically inherit the parent category, creating hierarchical
+    categories like "sync/compute" or "async/comms".
+
     Args:
         name: Name of the operation (e.g., "recv 0", "send 1", "joint_blocks")
         rank: This rank's ID
         category: Category for grouping in trace viewer ("comm", "compute", "step")
 
     Example:
-        with trace_span(f"recv {from_rank}", rank, "comm"):
-            hidden_states = mx.distributed.recv(...)
-            mx.eval(hidden_states)
-
-        with trace_span("joint_blocks", rank):
-            hidden_states = some_computation(...)
+        with trace(f"sync {t}", rank, "sync"):
+            with trace("joint_blocks", rank, "compute"):
+                # Recorded with category "sync/compute"
+                hidden_states = some_computation(...)
     """
     if not is_tracing_enabled():
         yield
         return
 
-    start_us = int(time.time() * 1_000_000)
-    yield
-    duration_us = int(time.time() * 1_000_000) - start_us
-    _record_span(name, start_us, duration_us, rank, category)
+    # Combine with parent category if nested
+    parent = _current_category.get()
+    full_category = f"{parent}/{category}" if parent else category
+
+    # Set as current for nested traces
+    token = _current_category.set(full_category)
+
+    try:
+        start_us = int(time.time() * 1_000_000)
+        yield
+        duration_us = int(time.time() * 1_000_000) - start_us
+        _record_span(name, start_us, duration_us, rank, full_category)
+    finally:
+        _current_category.reset(token)
 
 
 def get_trace_buffer() -> list[TraceEvent]:
@@ -162,3 +209,273 @@ def merge_trace_files(trace_dir: Path | None = None) -> Path | None:
         json.dump({"traceEvents": merged_events}, f, indent=2)
 
     return output_path
+
+
+def _format_duration(us: int | float) -> str:
+    """Format microseconds as human-readable duration."""
+    if us < 1000:
+        return f"{us:.0f}µs"
+    elif us < 1_000_000:
+        return f"{us / 1000:.2f}ms"
+    else:
+        return f"{us / 1_000_000:.2f}s"
+
+
+def _parse_comm_pair(name: str, rank: int) -> tuple[int, int] | None:
+    """Extract (from_rank, to_rank) from communication event names.
+
+    Args:
+        name: Event name like "recv_*_from_1" or "send_*_to_0"
+        rank: The rank that recorded this event
+
+    Returns:
+        (from_rank, to_rank) tuple or None if not a comm event
+    """
+    # Match patterns like "recv_*_from_N" or "recv N"
+    recv_match = re.match(r"^recv.*_from_(\d+)$", name) or re.match(
+        r"^recv\s+(\d+)$", name
+    )
+    if recv_match:
+        from_rank = int(recv_match.group(1))
+        return (from_rank, rank)
+
+    # Match patterns like "send_*_to_N" or "send N"
+    send_match = re.match(r"^send.*_to_(\d+)$", name) or re.match(
+        r"^send\s+(\d+)$", name
+    )
+    if send_match:
+        to_rank = int(send_match.group(1))
+        return (rank, to_rank)
+
+    return None
+
+
+def load_trace_file(path: Path) -> list[TraceEvent]:
+    """Load a Chrome Trace Format JSON file into TraceEvent objects."""
+    with open(path) as f:
+        data = cast(dict[str, list[dict[str, object]]], json.load(f))
+
+    events = data.get("traceEvents", [])
+    traces: list[TraceEvent] = []
+
+    for event in events:
+        # Skip metadata events
+        if event.get("ph") == "M":
+            continue
+
+        name = str(event.get("name", ""))
+        category = str(event.get("cat", ""))
+        ts_value = event.get("ts", 0)
+        dur_value = event.get("dur", 0)
+        tid_value = event.get("tid", 0)
+        start_us = int(ts_value) if isinstance(ts_value, (int, float, str)) else 0
+        duration_us = int(dur_value) if isinstance(dur_value, (int, float, str)) else 0
+
+        # Get rank from tid or args
+        rank = int(tid_value) if isinstance(tid_value, (int, float, str)) else 0
+        args = event.get("args")
+        if isinstance(args, dict):
+            args_dict = cast(dict[str, object], args)
+            rank_from_args = args_dict.get("rank")
+            if isinstance(rank_from_args, (int, float, str)):
+                rank = int(rank_from_args)
+
+        traces.append(
+            TraceEvent(
+                name=name,
+                start_us=start_us,
+                duration_us=duration_us,
+                rank=rank,
+                category=category,
+            )
+        )
+
+    return traces
+
+
+def compute_stats(traces: list[TraceEvent]) -> TraceStats:
+    """Compute comprehensive statistics from trace events."""
+    stats = TraceStats()
+
+    if not traces:
+        return stats
+
+    # Calculate wall time from earliest start to latest end
+    min_start = min(t.start_us for t in traces)
+    max_end = max(t.start_us + t.duration_us for t in traces)
+    stats.total_wall_time_us = max_end - min_start
+
+    # Initialize nested dicts
+    by_category: dict[str, CategoryStats] = defaultdict(CategoryStats)
+    by_rank: dict[int, dict[str, CategoryStats]] = defaultdict(
+        lambda: defaultdict(CategoryStats)
+    )
+    comm_matrix: dict[tuple[int, int], int] = defaultdict(int)
+
+    for event in traces:
+        # By category
+        by_category[event.category].add(event.duration_us)
+
+        # By rank and category
+        by_rank[event.rank][event.category].add(event.duration_us)
+
+        # Communication matrix
+        comm_pair = _parse_comm_pair(event.name, event.rank)
+        if comm_pair is not None:
+            comm_matrix[comm_pair] += event.duration_us
+
+    stats.by_category = dict(by_category)
+    stats.by_rank = {k: dict(v) for k, v in by_rank.items()}
+    stats.comm_matrix = dict(comm_matrix)
+
+    return stats
+
+
+def print_stats(stats: TraceStats) -> None:
+    """Print formatted trace statistics."""
+    print("=== Trace Statistics ===")
+    print()
+    print(f"Wall Time: {_format_duration(stats.total_wall_time_us)}")
+    print()
+
+    # Parse hierarchical categories (e.g., "sync/compute" -> phase="sync", subcat="compute")
+    if stats.by_category:
+        phases: dict[str, dict[str, CategoryStats]] = defaultdict(dict)
+        has_hierarchical = False
+
+        for cat, cat_stats in stats.by_category.items():
+            if "/" in cat:
+                phase, subcat = cat.split("/", 1)
+                phases[phase][subcat] = cat_stats
+                has_hierarchical = True
+            else:
+                phases[cat]["_total"] = cat_stats
+
+        if has_hierarchical:
+            print("By Phase:")
+            for phase in sorted(phases.keys()):
+                subcats = phases[phase]
+                # Skip phases that only have _total (non-hierarchical top-level categories)
+                non_total_subcats = {k: v for k, v in subcats.items() if k != "_total"}
+                if not non_total_subcats:
+                    continue
+
+                phase_total = sum(s.total_us for s in non_total_subcats.values())
+                print(f"  {phase}:")
+                for subcat, subcat_stats in sorted(
+                    non_total_subcats.items(),
+                    key=lambda x: x[1].total_us,
+                    reverse=True,
+                ):
+                    pct = (
+                        subcat_stats.total_us / phase_total * 100 if phase_total else 0
+                    )
+                    print(
+                        f"    {subcat:12s} {_format_duration(subcat_stats.total_us):>10s} "
+                        f"({pct:5.1f}%)  avg: {_format_duration(subcat_stats.avg_us)}"
+                    )
+            print()
+        else:
+            # Fall back to flat category display if no hierarchical categories
+            print("By Category:")
+            total_time = sum(c.total_us for c in stats.by_category.values())
+            for category, cat_stats in sorted(
+                stats.by_category.items(), key=lambda x: x[1].total_us, reverse=True
+            ):
+                pct = (cat_stats.total_us / total_time * 100) if total_time > 0 else 0
+                print(
+                    f"  {category:12s} {_format_duration(cat_stats.total_us):>10s} "
+                    f"({pct:5.1f}%)  avg: {_format_duration(cat_stats.avg_us):>8s}  "
+                    f"count: {cat_stats.count}"
+                )
+            print()
+
+    # By Rank
+    if stats.by_rank:
+        print("By Rank:")
+        for rank in sorted(stats.by_rank.keys()):
+            rank_stats = stats.by_rank[rank]
+            print(f"  Rank {rank}:")
+
+            # Parse hierarchical categories for this rank
+            rank_phases: dict[str, dict[str, CategoryStats]] = defaultdict(dict)
+            has_hierarchical = False
+            for cat, cat_stats in rank_stats.items():
+                if "/" in cat:
+                    phase, subcat = cat.split("/", 1)
+                    rank_phases[phase][subcat] = cat_stats
+                    has_hierarchical = True
+                else:
+                    rank_phases[cat]["_total"] = cat_stats
+
+            if has_hierarchical:
+                for phase in sorted(rank_phases.keys()):
+                    subcats = rank_phases[phase]
+                    non_total_subcats = {
+                        k: v for k, v in subcats.items() if k != "_total"
+                    }
+                    if not non_total_subcats:
+                        continue
+
+                    phase_total = sum(s.total_us for s in non_total_subcats.values())
+                    print(f"    {phase}:")
+                    for subcat, subcat_stats in sorted(
+                        non_total_subcats.items(),
+                        key=lambda x: x[1].total_us,
+                        reverse=True,
+                    ):
+                        pct = (
+                            subcat_stats.total_us / phase_total * 100
+                            if phase_total
+                            else 0
+                        )
+                        print(
+                            f"      {subcat:12s} {_format_duration(subcat_stats.total_us):>10s} "
+                            f"({pct:5.1f}%)  avg: {_format_duration(subcat_stats.avg_us)}"
+                        )
+            else:
+                # Flat display fallback
+                for category, cat_stats in sorted(
+                    rank_stats.items(), key=lambda x: x[1].total_us, reverse=True
+                ):
+                    print(f"    {category}: {_format_duration(cat_stats.total_us)}")
+        print()
+
+    # Communication Matrix
+    if stats.comm_matrix:
+        print("Communication Matrix (total time):")
+        ranks = sorted(set(r for pair in stats.comm_matrix for r in pair))
+
+        # Header row
+        header = "         " + "".join(f"→ Rank {r:>2}  " for r in ranks)
+        print(header)
+
+        # Data rows
+        for from_rank in ranks:
+            row = f"Rank {from_rank:>2}  "
+            for to_rank in ranks:
+                if from_rank == to_rank:
+                    row += "       -   "
+                else:
+                    duration = stats.comm_matrix.get((from_rank, to_rank), 0)
+                    row += f"{_format_duration(duration):>10s} "
+            print(row)
+        print()
+
+
+if __name__ == "__main__":
+    import sys
+
+    path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("trace.json")
+
+    if not path.exists():
+        print(f"Error: File not found: {path}")
+        sys.exit(1)
+
+    traces = load_trace_file(path)
+    if not traces:
+        print("No trace events found in file.")
+        sys.exit(0)
+
+    computed_stats = compute_stats(traces)
+    print_stats(computed_stats)
