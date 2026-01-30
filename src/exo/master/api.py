@@ -8,8 +8,8 @@ from typing import Annotated, Literal, cast
 from uuid import uuid4
 
 import anyio
-from anyio import BrokenResourceError, create_task_group
-from anyio.abc import TaskGroup
+from anyio import BrokenResourceError, ClosedResourceError, EndOfStream, create_task_group
+from anyio.abc import SocketStream, TaskGroup
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -264,8 +264,6 @@ class API:
         self.app.get("/events")(lambda: self._event_log)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
-        self.app.post("/bandwidth_test/upload")(self.bandwidth_test_upload)
-        self.app.get("/bandwidth_test/download")(self.bandwidth_test_download)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -1252,12 +1250,50 @@ class API:
             tg.start_soon(self._apply_state)
             tg.start_soon(self._pause_on_new_election)
             tg.start_soon(self._cleanup_expired_images)
+            tg.start_soon(self._run_bandwidth_server)
             print_startup_banner(self.port)
             await serve(
                 cast(ASGIFramework, self.app),
                 cfg,
                 shutdown_trigger=lambda: anyio.sleep_forever(),
             )
+
+    async def _run_bandwidth_server(self):
+        """TCP server for iperf-like bandwidth testing."""
+        bandwidth_port = self.port + 1
+        listener = await anyio.create_tcp_listener(local_port=bandwidth_port)
+        logger.info(f"Bandwidth test server listening on port {bandwidth_port}")
+        await listener.serve(self._handle_bandwidth_connection)
+
+    async def _handle_bandwidth_connection(self, stream: SocketStream) -> None:
+        """Handle a single bandwidth test connection."""
+        try:
+            mode = await stream.receive(1)
+            if mode == b"U":
+                # Upload test: client sends, we receive
+                bytes_received = 0
+                start = time.perf_counter()
+                while True:
+                    try:
+                        data = await stream.receive(1024 * 1024)
+                        if not data or data == b"DONE" or b"DONE" in data:
+                            break
+                        bytes_received += len(data)
+                    except EndOfStream:
+                        break
+                elapsed = time.perf_counter() - start
+                logger.debug(f"Bandwidth upload: {bytes_received} bytes in {elapsed:.3f}s")
+            elif mode == b"D":
+                # Download test: we send, client receives
+                chunk = b"X" * (1024 * 1024)
+                start = time.perf_counter()
+                while time.perf_counter() - start < 1.0:  # Send for 1s
+                    try:
+                        await stream.send(chunk)
+                    except (BrokenResourceError, ClosedResourceError):
+                        break
+        except Exception as e:
+            logger.debug(f"Bandwidth connection error: {e}")
 
         self.command_sender.close()
         self.global_event_receiver.close()
@@ -1338,26 +1374,3 @@ class API:
         )
         await self._send_download(command)
         return DeleteDownloadResponse(command_id=command.command_id)
-
-    async def bandwidth_test_upload(self, request: Request) -> JSONResponse:
-        total_bytes = 0
-        start = time.perf_counter()
-        deadline = start + 0.5
-
-        async for chunk in request.stream():
-            total_bytes += len(chunk)
-            if time.perf_counter() >= deadline:
-                break
-
-        duration = time.perf_counter() - start
-        return JSONResponse({"bytes_received": total_bytes, "duration_s": duration})
-
-    async def bandwidth_test_download(self) -> StreamingResponse:
-        async def generate_data():
-            chunk = b"X" * (1024 * 1024 * 1024)
-            yield chunk
-
-        return StreamingResponse(
-            generate_data(),
-            media_type="application/octet-stream",
-        )

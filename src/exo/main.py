@@ -40,6 +40,7 @@ class Node:
 
     node_id: NodeId
     event_index_counter: Iterator[int]
+    _profiling_in_progress: set[NodeId] = field(default_factory=set)
     _tg: TaskGroup = field(init=False, default_factory=anyio.create_task_group)
 
     @classmethod
@@ -86,6 +87,7 @@ class Node:
         else:
             api = None
 
+        profiling_in_progress: set[NodeId] = set()
         if not args.no_worker:
             worker = Worker(
                 node_id,
@@ -96,6 +98,7 @@ class Node:
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 event_index_counter=event_index_counter,
+                profiling_in_progress=profiling_in_progress,
             )
         else:
             worker = None
@@ -133,6 +136,7 @@ class Node:
             api,
             node_id,
             event_index_counter,
+            profiling_in_progress,
         )
 
     async def run(self):
@@ -239,6 +243,7 @@ class Node:
                                 topics.DOWNLOAD_COMMANDS
                             ),
                             event_index_counter=self.event_index_counter,
+                            profiling_in_progress=self._profiling_in_progress,
                         )
                         self._tg.start_soon(self.worker.run)
                     if self.api:

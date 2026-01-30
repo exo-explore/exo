@@ -66,6 +66,7 @@ class Worker:
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
         event_index_counter: Iterator[int],
+        profiling_in_progress: set[NodeId] | None = None,
     ):
         self.node_id: NodeId = node_id
         self.session_id: SessionId = session_id
@@ -82,6 +83,8 @@ class Worker:
         self.state: State = State()
         self.runners: dict[RunnerId, RunnerSupervisor] = {}
         self._tg: TaskGroup = create_task_group()
+        self._profiling_in_progress: set[NodeId] = profiling_in_progress if profiling_in_progress is not None else set()
+        self._profiling_lock = anyio.Lock()
 
         self._nack_cancel_scope: CancelScope | None = None
         self._nack_attempts: int = 0
@@ -289,12 +292,17 @@ class Worker:
 
     async def _convert_connection_message_to_event(self, msg: ConnectionMessage):
         if msg.connection_type == ConnectionMessageType.Connected:
+            async with self._profiling_lock:
+                if msg.node_id in self._profiling_in_progress:
+                    return None
+                self._profiling_in_progress.add(msg.node_id)
             return await self._profile_and_emit_connection(
                 msg.node_id,
                 msg.remote_ipv4,
                 msg.remote_tcp_port,
             )
         elif msg.connection_type == ConnectionMessageType.Disconnected:
+            self._profiling_in_progress.discard(msg.node_id)
             target_ip = msg.remote_ipv4
             for connection in self.state.topology.list_connections():
                 if (

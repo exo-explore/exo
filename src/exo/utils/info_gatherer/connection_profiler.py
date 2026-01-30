@@ -2,11 +2,13 @@ import time
 
 import anyio
 import httpx
+from anyio.abc import SocketStream
 from exo.shared.logging import logger
 from pydantic.v1 import BaseModel
 
 LATENCY_PING_COUNT = 5
 BANDWIDTH_TEST_DURATION_S = 0.5
+BANDWIDTH_TEST_PORT_OFFSET = 1  # API port + 1
 
 
 class ConnectionProfile(BaseModel):
@@ -41,72 +43,61 @@ async def measure_latency(target_ip: str, port: int = 52415) -> float:
     return sum(rtts) / len(rtts)
 
 
-async def measure_bandwidth(target_ip: str, port: int = 52415) -> tuple[float, float]:
-    if ":" in target_ip:
-        base_url = f"http://[{target_ip}]:{port}"
-    else:
-        base_url = f"http://{target_ip}:{port}"
+async def _measure_upload_tcp(stream: SocketStream, duration: float) -> float:
+    """Send data for duration seconds, return Mbps."""
+    chunk = b"X" * (1024 * 1024)  # 1MB
+    bytes_sent = 0
+    start = time.perf_counter()
+    deadline = start + duration
 
-    upload_url = f"{base_url}/bandwidth_test/upload"
-    download_url = f"{base_url}/bandwidth_test/download"
+    while time.perf_counter() < deadline:
+        await stream.send(chunk)
+        bytes_sent += len(chunk)
 
+    elapsed = time.perf_counter() - start
+    return (bytes_sent * 8 / elapsed) / 1_000_000 if elapsed > 0 else 0.0
+
+
+async def _measure_download_tcp(stream: SocketStream, duration: float) -> float:
+    """Receive data for duration seconds, return Mbps."""
+    bytes_received = 0
+    start = time.perf_counter()
+
+    with anyio.move_on_after(duration):
+        while True:
+            data = await stream.receive(1024 * 1024)
+            if not data:
+                break
+            bytes_received += len(data)
+
+    elapsed = time.perf_counter() - start
+    return (bytes_received * 8 / elapsed) / 1_000_000 if elapsed > 0 else 0.0
+
+
+async def measure_bandwidth_tcp(target_ip: str, port: int) -> tuple[float, float]:
+    """Measure bandwidth using raw TCP like iperf."""
     upload_mbps = 0.0
     download_mbps = 0.0
 
-    timeout = httpx.Timeout(timeout=10.0)
+    try:
+        async with await anyio.connect_tcp(target_ip, port) as stream:
+            # Protocol: send 'U' for upload test, 'D' for download test
+            # Upload: client sends, server receives
+            await stream.send(b"U")
+            upload_mbps = await _measure_upload_tcp(stream, BANDWIDTH_TEST_DURATION_S)
+            await stream.send(b"DONE")
+            logger.debug(f"Upload: {upload_mbps:.1f} Mbps")
+    except Exception as e:
+        logger.debug(f"Upload TCP test failed: {e}")
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        # Upload: stream chunks, measure on client side
-        try:
-            bytes_uploaded = 0
-            upload_start = time.perf_counter()
-            upload_done = False
-
-            async def upload_generator():
-                nonlocal bytes_uploaded, upload_done
-                chunk = b"X" * (64 * 1024 * 1024)
-                deadline = upload_start + BANDWIDTH_TEST_DURATION_S
-                while time.perf_counter() < deadline:
-                    yield chunk
-                    bytes_uploaded += len(chunk)
-                upload_done = True
-
-            with anyio.move_on_after(BANDWIDTH_TEST_DURATION_S * 2):
-                await client.post(upload_url, content=upload_generator())
-
-            upload_duration = time.perf_counter() - upload_start
-            if upload_duration > 0 and bytes_uploaded > 0:
-                upload_mbps = (bytes_uploaded * 8 / upload_duration) / 1_000_000
-                logger.debug(
-                    f"Upload: {bytes_uploaded / 1_000_000:.1f}MB in "
-                    f"{upload_duration:.3f}s = {upload_mbps:.1f} Mbps"
-                )
-        except (TimeoutError, httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
-            logger.debug(f"Upload test failed: {e}")
-
-        # Download: stream chunks, measure on client side
-        try:
-            bytes_downloaded = 0
-            start = time.perf_counter()
-
-            with anyio.move_on_after(BANDWIDTH_TEST_DURATION_S):
-                async with client.stream("GET", download_url) as response:
-                    if response.status_code == 200:
-                        async for chunk in response.aiter_bytes():
-                            bytes_downloaded += len(chunk)
-
-            duration = time.perf_counter() - start
-            if duration > 0 and bytes_downloaded > 0:
-                download_mbps = (bytes_downloaded * 8 / duration) / 1_000_000
-                logger.debug(
-                    f"Download: {bytes_downloaded / 1_000_000:.1f}MB in "
-                    f"{duration:.3f}s = {download_mbps:.1f} Mbps"
-                )
-        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
-            logger.debug(f"Download test failed: {e}")
-
-    if upload_mbps == 0.0 and download_mbps == 0.0:
-        raise ConnectionError(f"Failed to measure bandwidth to {target_ip}:{port}")
+    try:
+        async with await anyio.connect_tcp(target_ip, port) as stream:
+            # Download: client receives, server sends
+            await stream.send(b"D")
+            download_mbps = await _measure_download_tcp(stream, BANDWIDTH_TEST_DURATION_S)
+            logger.debug(f"Download: {download_mbps:.1f} Mbps")
+    except Exception as e:
+        logger.debug(f"Download TCP test failed: {e}")
 
     return upload_mbps, download_mbps
 
@@ -117,11 +108,15 @@ async def profile_connection(target_ip: str, port: int = 52415) -> ConnectionPro
     latency_ms = await measure_latency(target_ip, port)
     logger.debug(f"Measured latency to {target_ip}: {latency_ms:.2f}ms")
 
-    upload_mbps, download_mbps = await measure_bandwidth(target_ip, port)
+    bandwidth_port = port + BANDWIDTH_TEST_PORT_OFFSET
+    upload_mbps, download_mbps = await measure_bandwidth_tcp(target_ip, bandwidth_port)
     logger.debug(
         f"Measured bandwidth to {target_ip}: "
         f"upload={upload_mbps:.1f}Mbps, download={download_mbps:.1f}Mbps"
     )
+
+    if upload_mbps == 0.0 and download_mbps == 0.0:
+        raise ConnectionError(f"Failed to measure bandwidth to {target_ip}:{bandwidth_port}")
 
     return ConnectionProfile(
         latency_ms=latency_ms,
