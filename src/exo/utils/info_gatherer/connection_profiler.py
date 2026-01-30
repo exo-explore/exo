@@ -34,7 +34,7 @@ async def measure_latency(target_ip: str, port: int = 52415) -> float:
 
                 if response.status_code == 200:
                     rtts.append((end - start) * 1000)
-            except (httpx.TimeoutException, httpx.NetworkError) as e:
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
                 logger.debug(f"Latency ping failed: {e}")
 
     if not rtts:
@@ -73,7 +73,7 @@ async def measure_bandwidth(target_ip: str, port: int = 52415) -> tuple[float, f
                             f"Upload: {bytes_received / 1_000_000:.1f}MB in "
                             f"{duration:.3f}s = {upload_mbps:.1f} Mbps"
                         )
-        except (TimeoutError, httpx.TimeoutException, httpx.NetworkError) as e:
+        except (TimeoutError, httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
             logger.debug(f"Upload test failed: {e}")
 
         try:
@@ -93,7 +93,7 @@ async def measure_bandwidth(target_ip: str, port: int = 52415) -> tuple[float, f
                     f"Download: {bytes_downloaded / 1_000_000:.1f}MB in "
                     f"{duration:.3f}s = {download_mbps:.1f} Mbps"
                 )
-        except (httpx.TimeoutException, httpx.NetworkError) as e:
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
             logger.debug(f"Download test failed: {e}")
 
     if upload_mbps == 0.0 and download_mbps == 0.0:

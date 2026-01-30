@@ -310,7 +310,7 @@ class Worker:
         remote_port: int,
     ):
         try:
-            profile = await profile_connection(remote_ip, remote_port)
+            profile = await profile_connection(remote_ip)
         except ConnectionError as e:
             logger.warning(f"Failed to profile connection to {sink_node_id}: {e}")
             profile = None
