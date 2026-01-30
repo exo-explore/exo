@@ -5,18 +5,18 @@
 [X] Fetching download status of all models on start
 [X] Deduplication of tasks in plan_step.
 [X] resolve_allow_patterns should just be wildcard now.
-[] no mx_barrier in genreate.py mlx_generate at the end.
+[X] no mx_barrier in genreate.py mlx_generate at the end.
 [] cache assertion not needed in auto_parallel.py PipelineLastLayer.
-[] GPTOSS support dropped in auto_parallel.py.
-[] sharding changed "all-to-sharded" became _all_to_sharded in auto_parallel.py.
-[] same as above with "sharded-to-all" became _sharded_to_all in auto_parallel.py.
-[] Dropped support for Ministral3Model, DeepseekV32Model, Glm4MoeModel, Qwen3NextModel, GptOssMode in auto_parallel.py.
+[X] GPTOSS support dropped in auto_parallel.py.
+[X] sharding changed "all-to-sharded" became _all_to_sharded in auto_parallel.py.
+[X] same as above with "sharded-to-all" became _sharded_to_all in auto_parallel.py.
+[X] Dropped support for Ministral3Model, DeepseekV32Model, Glm4MoeModel, Qwen3NextModel, GptOssMode in auto_parallel.py.
 [] Dropped prefill/decode code in auto_parallel.py and utils_mlx.py.
 [X] KV_CACHE_BITS should be None to disable quantized KV cache.
-[] Dropped _set_nofile_limit in utils_mlx.py.
-[] We have group optional in load_mlx_items in utils_mlx.py.
+[X] Dropped _set_nofile_limit in utils_mlx.py.
+[X] We have group optional in load_mlx_items in utils_mlx.py.
 [] Dropped add_missing_chat_templates for GptOss in load_mlx_items in utils_mlx.py.
-[] Dropped model.make_cache in make_kv_cache in utils_mlx.py.
+[X] Dropped model.make_cache in make_kv_cache in utils_mlx.py.
 [X] We put cache limit back in utils_mlx.py.
 [] topology.py remove_node removes the connections after checking if node is is in self._node_id_to_rx_id_map. on beta_1 it checks after, so would remove stale connections I guess?
 [] Missing Glm 4.7 model cards (this isn't ready yet but should be picked up, probably create an issue... the blocker is transforemrs version doesn't support the tokenizer for Glm 4.7. rc-1 does but we can't upgrade as it breaks other things.)

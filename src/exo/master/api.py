@@ -90,6 +90,7 @@ from exo.shared.types.commands import (
     PlaceInstance,
     SendInputChunk,
     StartDownload,
+    TaskCancelled,
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
@@ -501,16 +502,14 @@ class API:
                         break
 
         except anyio.get_cancelled_exc_class():
-            # TODO: TaskCancelled
-            """
-            self.command_sender.send_nowait(
-                ForwarderCommand(origin=self.node_id, command=command)
-            )
-            """
+            command = TaskCancelled(cancelled_command_id=command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(origin=self.node_id, command=command)
+                )
             raise
         finally:
-            command = TaskFinished(finished_command_id=command_id)
-            await self._send(command)
+            await self._send(TaskFinished(finished_command_id=command_id))
             if command_id in self._chat_completion_queues:
                 del self._chat_completion_queues[command_id]
 
@@ -548,7 +547,7 @@ class API:
 
     async def _collect_chat_completion(
         self, command_id: CommandId
-    ) -> ChatCompletionResponse:
+    ) -> AsyncGenerator[ChatCompletionResponse]:
         """Collect all token chunks for a chat completion and return a single response."""
 
         text_parts: list[str] = []
@@ -589,7 +588,7 @@ class API:
         combined_text = "".join(text_parts)
         assert model is not None
 
-        return ChatCompletionResponse(
+        yield ChatCompletionResponse(
             id=command_id,
             created=int(time.time()),
             model=model,
@@ -606,6 +605,7 @@ class API:
             ],
             usage=usage,
         )
+        return
 
     async def _collect_chat_completion_with_stats(
         self, command_id: CommandId
@@ -696,7 +696,10 @@ class API:
                 media_type="text/event-stream",
             )
 
-        return await self._collect_chat_completion(command.command_id)
+        return StreamingResponse(
+            self._collect_chat_completion(command.command_id),
+            media_type="application/json",
+        )
 
     async def bench_chat_completions(
         self, payload: BenchChatCompletionTaskParams
@@ -902,6 +905,11 @@ class API:
                         del image_metadata[key]
 
         except anyio.get_cancelled_exc_class():
+            command = TaskCancelled(cancelled_command_id=command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(origin=self.node_id, command=command)
+                )
             raise
         finally:
             await self._send(TaskFinished(finished_command_id=command_id))
@@ -983,6 +991,11 @@ class API:
 
             return (images, stats if capture_stats else None)
         except anyio.get_cancelled_exc_class():
+            command = TaskCancelled(cancelled_command_id=command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(origin=self.node_id, command=command)
+                )
             raise
         finally:
             await self._send(TaskFinished(finished_command_id=command_id))
