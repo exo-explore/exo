@@ -19,7 +19,7 @@ dependencies = [
     "anyio==4.11.0",
     "mlx==0.30.4; sys_platform == 'darwin'",
     "mlx[cpu]==0.30.4; sys_platform == 'linux'",
-    "mlx-lm",
+    "mlx-lm==0.30.5",
     "tiktoken>=0.12.0", # required for kimi k2 tokenizer
     "hypercorn>=0.18.0",
     "openai-harmony>=0.0.8",
@@ -31,8 +31,6 @@ dependencies = [
 ]
 
 [project.scripts]
-exo-master = "exo.master.main:main"
-exo-worker = "exo.worker.main:main"
 exo = "exo.main:main"
 
 # dependencies only required for development
@@ -46,12 +44,6 @@ dev = [
     "ruff>=0.11.13",
 ]
 
-# mlx[cuda] requires a newer version of mlx. the ideal on linux is: default to mlx[cpu] unless[cuda] specified.
-[project.optional-dependencies]
-# cuda = [
-#     "mlx[cuda]==0.26.3",
-# ]
-
 ###
 # workspace configuration
 ###
@@ -63,8 +55,8 @@ members = [
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
-mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", branch = "main" }
 # Uncomment to use local mlx/mlx-lm development versions:
+# mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", branch = "main" }
 # mlx = { path = "/Users/Shared/mlx", editable=true }
 # mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }
 
@@ -116,7 +108,7 @@ environments = [
 ###
 
 [tool.ruff]
-extend-exclude = ["shared/protobufs/**", "*mlx_typings/**", "rust/exo_pyo3_bindings/**"]
+extend-exclude = ["*mlx_typings/**", "rust/exo_pyo3_bindings/**"]
 
 [tool.ruff.lint]
 extend-select = ["I", "N", "B", "A", "PIE", "SIM"]
