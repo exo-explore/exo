@@ -8,7 +8,7 @@ from multiprocessing.synchronize import Event as EventT
 from multiprocessing.synchronize import Semaphore as SemaphoreT
 
 from loguru import logger
-from pytest import LogCaptureFixture
+from pytest import LogCaptureFixture, mark
 
 from exo.routing.router import get_node_id_keypair
 from exo.shared.constants import EXO_NODE_ID_KEYPAIR
@@ -74,6 +74,7 @@ def _delete_if_exists(p: str | bytes | os.PathLike[str] | os.PathLike[bytes]):
         os.remove(p)
 
 
+@mark.skip(reason="this functionality is currently disabled but may return in future")
 def test_node_id_fetching(caplog: LogCaptureFixture):
     reps = 10
 
