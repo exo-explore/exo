@@ -65,7 +65,9 @@ from exo.shared.types.api import (
     StartDownloadParams,
     StartDownloadResponse,
     StreamingChoiceResponse,
+    StreamOptions,
     ToolCall,
+    Usage,
 )
 from exo.shared.types.chunks import (
     ErrorChunk,
@@ -113,7 +115,9 @@ def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None)
 
 
 def chunk_to_response(
-    chunk: TokenChunk | ToolCallChunk, command_id: CommandId
+    chunk: TokenChunk | ToolCallChunk,
+    command_id: CommandId,
+    usage: Usage | None,
 ) -> ChatCompletionResponse:
     return ChatCompletionResponse(
         id=command_id,
@@ -138,19 +142,8 @@ def chunk_to_response(
                 finish_reason=chunk.finish_reason,
             )
         ],
+        usage=usage,
     )
-
-
-async def resolve_model_card(model_id: ModelId) -> ModelCard:
-    if model_id in MODEL_CARDS:
-        model_card = MODEL_CARDS[model_id]
-        return model_card
-
-    for card in MODEL_CARDS.values():
-        if card.model_id == ModelId(model_id):
-            return card
-
-    return await ModelCard.from_hf(model_id)
 
 
 class API:
@@ -274,7 +267,7 @@ class API:
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
-            model_card=await resolve_model_card(payload.model_id),
+            model_card=await ModelCard.load(payload.model_id),
             sharding=payload.sharding,
             instance_meta=payload.instance_meta,
             min_nodes=payload.min_nodes,
@@ -291,7 +284,7 @@ class API:
         self, payload: CreateInstanceParams
     ) -> CreateInstanceResponse:
         instance = payload.instance
-        model_card = await resolve_model_card(instance.shard_assignments.model_id)
+        model_card = await ModelCard.load(instance.shard_assignments.model_id)
         required_memory = model_card.storage_size
         available_memory = self._calculate_total_available_memory()
 
@@ -319,7 +312,7 @@ class API:
         instance_meta: InstanceMeta = InstanceMeta.MlxRing,
         min_nodes: int = 1,
     ) -> Instance:
-        model_card = await resolve_model_card(model_id)
+        model_card = await ModelCard.load(model_id)
 
         try:
             placements = get_instance_placements(
@@ -522,9 +515,10 @@ class API:
                 del self._chat_completion_queues[command_id]
 
     async def _generate_chat_stream(
-        self, command_id: CommandId
+        self, command_id: CommandId, stream_options: StreamOptions | None = None
     ) -> AsyncGenerator[str, None]:
         """Generate chat completion stream as JSON strings."""
+        include_usage = stream_options.include_usage if stream_options else False
 
         async for chunk in self._chat_chunk_stream(command_id):
             assert not isinstance(chunk, ImageChunk)
@@ -540,8 +534,10 @@ class API:
                 yield "data: [DONE]\n\n"
                 return
 
+            usage = chunk.usage if include_usage else None
+
             chunk_response: ChatCompletionResponse = chunk_to_response(
-                chunk, command_id
+                chunk, command_id, usage=usage
             )
             logger.debug(f"chunk_response: {chunk_response}")
 
@@ -557,8 +553,9 @@ class API:
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
-        model: str | None = None
+        model: ModelId | None = None
         finish_reason: FinishReason | None = None
+        usage: Usage | None = None
 
         async for chunk in self._chat_chunk_stream(command_id):
             if isinstance(chunk, ErrorChunk):
@@ -583,6 +580,9 @@ class API:
                     for i, tool in enumerate(chunk.tool_calls)
                 )
 
+            if chunk.usage is not None:
+                usage = chunk.usage
+
             if chunk.finish_reason is not None:
                 finish_reason = chunk.finish_reason
 
@@ -604,6 +604,7 @@ class API:
                     finish_reason=finish_reason,
                 )
             ],
+            usage=usage,
         )
 
     async def _collect_chat_completion_with_stats(
@@ -611,7 +612,7 @@ class API:
     ) -> BenchChatCompletionResponse:
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
-        model: str | None = None
+        model: ModelId | None = None
         finish_reason: FinishReason | None = None
 
         stats: GenerationStats | None = None
@@ -664,7 +665,7 @@ class API:
         )
         return resp
 
-    async def _trigger_notify_user_to_download_model(self, model_id: str) -> None:
+    async def _trigger_notify_user_to_download_model(self, model_id: ModelId) -> None:
         logger.warning(
             "TODO: we should send a notification to the user to download the model"
         )
@@ -673,7 +674,7 @@ class API:
         self, payload: ChatCompletionTaskParams
     ) -> ChatCompletionResponse | StreamingResponse:
         """Handle chat completions, supporting both streaming and non-streaming responses."""
-        model_card = await resolve_model_card(ModelId(payload.model))
+        model_card = await ModelCard.load(ModelId(payload.model))
         payload.model = model_card.model_id
 
         if not any(
@@ -691,7 +692,7 @@ class API:
         await self._send(command)
         if payload.stream:
             return StreamingResponse(
-                self._generate_chat_stream(command.command_id),
+                self._generate_chat_stream(command.command_id, payload.stream_options),
                 media_type="text/event-stream",
             )
 
@@ -700,7 +701,7 @@ class API:
     async def bench_chat_completions(
         self, payload: BenchChatCompletionTaskParams
     ) -> BenchChatCompletionResponse:
-        model_card = await resolve_model_card(ModelId(payload.model))
+        model_card = await ModelCard.load(ModelId(payload.model))
         payload.model = model_card.model_id
 
         if not any(
@@ -720,12 +721,12 @@ class API:
         response = await self._collect_chat_completion_with_stats(command.command_id)
         return response
 
-    async def _validate_image_model(self, model: str) -> ModelId:
+    async def _validate_image_model(self, model: ModelId) -> ModelId:
         """Validate model exists and return resolved model ID.
 
         Raises HTTPException 404 if no instance is found for the model.
         """
-        model_card = await resolve_model_card(ModelId(model))
+        model_card = await ModelCard.load(model)
         resolved_model = model_card.model_id
         if not any(
             instance.shard_assignments.model_id == resolved_model
@@ -771,7 +772,7 @@ class API:
         When stream=True and partial_images > 0, returns a StreamingResponse
         with SSE-formatted events for partial and final images.
         """
-        payload.model = await self._validate_image_model(payload.model)
+        payload.model = await self._validate_image_model(ModelId(payload.model))
 
         command = ImageGeneration(
             request_params=payload,
@@ -1016,7 +1017,7 @@ class API:
     async def bench_image_generations(
         self, request: Request, payload: BenchImageGenerationTaskParams
     ) -> BenchImageGenerationResponse:
-        payload.model = await self._validate_image_model(payload.model)
+        payload.model = await self._validate_image_model(ModelId(payload.model))
 
         payload.stream = False
         payload.partial_images = 0
@@ -1037,7 +1038,7 @@ class API:
         self,
         image: UploadFile,
         prompt: str,
-        model: str,
+        model: ModelId,
         n: int,
         size: str,
         response_format: Literal["url", "b64_json"],
@@ -1132,7 +1133,7 @@ class API:
         command = await self._send_image_edits_command(
             image=image,
             prompt=prompt,
-            model=model,
+            model=ModelId(model),
             n=n,
             size=size,
             response_format=response_format,
@@ -1188,7 +1189,7 @@ class API:
         command = await self._send_image_edits_command(
             image=image,
             prompt=prompt,
-            model=model,
+            model=ModelId(model),
             n=n,
             size=size,
             response_format=response_format,
