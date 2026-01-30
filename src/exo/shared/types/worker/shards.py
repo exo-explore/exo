@@ -57,7 +57,44 @@ class PipelineShardMetadata(BaseShardMetadata):
 
     Layers are represented as a half-open interval [start_layer, end_layer),
     where start_layer is inclusive and end_layer is exclusive.
+
+    CFG parallelism fields:
+    - cfg_rank: 0 = positive branch, 1 = negative branch (or 0 if no CFG parallel)
+    - cfg_world_size: 1 = sequential CFG, 2 = parallel CFG
     """
+
+    cfg_rank: int = 0
+    cfg_world_size: int = 1
+
+    @property
+    def pipeline_world_size(self) -> int:
+        return self.world_size // self.cfg_world_size
+
+    @property
+    def pipeline_rank(self) -> int:
+        return self.device_rank % self.pipeline_world_size
+
+    @property
+    def is_pipeline_first(self) -> bool:
+        return self.pipeline_rank == 0
+
+    @property
+    def is_pipeline_last(self) -> bool:
+        return self.pipeline_rank == self.pipeline_world_size - 1
+
+    def __hash__(self) -> int:
+        return hash(
+            (
+                self.model_card.model_id,
+                self.start_layer,
+                self.end_layer,
+                self.n_layers,
+                self.device_rank,
+                self.world_size,
+                self.cfg_rank,
+                self.cfg_world_size,
+            )
+        )
 
 
 class TensorShardMetadata(BaseShardMetadata):

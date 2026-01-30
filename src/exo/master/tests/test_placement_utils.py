@@ -5,6 +5,7 @@ from exo.master.placement_utils import (
     filter_cycles_by_memory,
     get_mlx_jaccl_coordinators,
     get_shard_assignments,
+    get_shard_assignments_for_pipeline_parallel,
     get_smallest_cycles,
 )
 from exo.master.tests.conftest import (
@@ -20,7 +21,7 @@ from exo.shared.types.profiling import (
     NodeNetworkInfo,
 )
 from exo.shared.types.topology import Connection, SocketConnection
-from exo.shared.types.worker.shards import Sharding
+from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 
 
 def test_filter_cycles_by_memory():
@@ -487,3 +488,195 @@ def test_get_shard_assignments_insufficient_memory_raises():
         get_shard_assignments(
             model_card, selected_cycle, Sharding.Pipeline, node_memory
         )
+
+
+class TestCfgParallelPlacement:
+    def _create_ring_topology(self, node_ids: list[NodeId]) -> Topology:
+        topology = Topology()
+        for node_id in node_ids:
+            topology.add_node(node_id)
+
+        for i, node_id in enumerate(node_ids):
+            next_node = node_ids[(i + 1) % len(node_ids)]
+            conn = Connection(
+                source=node_id,
+                sink=next_node,
+                edge=create_socket_connection(i + 1),
+            )
+            topology.add_connection(conn)
+
+        return topology
+
+    def test_two_nodes_cfg_model_uses_cfg_parallel(self):
+        """Two nodes with CFG model should use CFG parallel (no pipeline)."""
+        node_a = NodeId()
+        node_b = NodeId()
+
+        topology = self._create_ring_topology([node_a, node_b])
+        cycles = [c for c in topology.get_cycles() if len(c) == 2]
+        cycle = cycles[0]
+
+        node_memory = {
+            node_a: create_node_memory(1000 * 1024),
+            node_b: create_node_memory(1000 * 1024),
+        }
+
+        model_card = ModelCard(
+            model_id=ModelId("qwen-image-test"),
+            n_layers=60,
+            storage_size=Memory.from_kb(1000),
+            hidden_size=1,
+            supports_tensor=False,
+            uses_cfg=True,
+            tasks=[ModelTask.TextToImage],
+        )
+
+        assignments = get_shard_assignments_for_pipeline_parallel(
+            model_card, cycle, node_memory
+        )
+
+        shards = list(assignments.runner_to_shard.values())
+        assert len(shards) == 2
+
+        # Both nodes should have all layers (no pipeline split)
+        for shard in shards:
+            assert isinstance(shard, PipelineShardMetadata)
+            assert shard.start_layer == 0
+            assert shard.end_layer == 60
+            assert shard.cfg_world_size == 2
+
+        cfg_ranks = sorted(
+            s.cfg_rank for s in shards if isinstance(s, PipelineShardMetadata)
+        )
+        assert cfg_ranks == [0, 1]
+
+    def test_four_nodes_cfg_model_uses_hybrid(self):
+        """Four nodes with CFG model should use 2 CFG groups x 2 pipeline stages."""
+        nodes = [NodeId() for _ in range(4)]
+
+        topology = self._create_ring_topology(nodes)
+        cycles = [c for c in topology.get_cycles() if len(c) == 4]
+        cycle = cycles[0]
+
+        node_memory = {n: create_node_memory(1000 * 1024) for n in nodes}
+
+        model_card = ModelCard(
+            model_id=ModelId("qwen-image-test"),
+            n_layers=60,
+            storage_size=Memory.from_kb(1000),
+            hidden_size=1,
+            supports_tensor=False,
+            uses_cfg=True,
+            tasks=[ModelTask.TextToImage],
+        )
+
+        assignments = get_shard_assignments_for_pipeline_parallel(
+            model_card, cycle, node_memory
+        )
+
+        shards = list(assignments.runner_to_shard.values())
+        assert len(shards) == 4
+
+        for shard in shards:
+            assert isinstance(shard, PipelineShardMetadata)
+            assert shard.cfg_world_size == 2
+            assert shard.pipeline_world_size == 2
+
+        # Check we have 2 nodes in each CFG group
+        cfg_0_shards = [
+            s
+            for s in shards
+            if isinstance(s, PipelineShardMetadata) and s.cfg_rank == 0
+        ]
+        cfg_1_shards = [
+            s
+            for s in shards
+            if isinstance(s, PipelineShardMetadata) and s.cfg_rank == 1
+        ]
+        assert len(cfg_0_shards) == 2
+        assert len(cfg_1_shards) == 2
+
+        # Both CFG groups should have the same layer assignments
+        cfg_0_layers = [(s.start_layer, s.end_layer) for s in cfg_0_shards]
+        cfg_1_layers = [(s.start_layer, s.end_layer) for s in cfg_1_shards]
+        assert sorted(cfg_0_layers) == sorted(cfg_1_layers)
+
+    def test_three_nodes_cfg_model_uses_sequential_cfg(self):
+        """Three nodes (odd) with CFG model should use sequential CFG."""
+        nodes = [NodeId() for _ in range(3)]
+
+        topology = self._create_ring_topology(nodes)
+        cycles = [c for c in topology.get_cycles() if len(c) == 3]
+        cycle = cycles[0]
+
+        node_memory = {n: create_node_memory(1000 * 1024) for n in nodes}
+
+        model_card = ModelCard(
+            model_id=ModelId("qwen-image-test"),
+            n_layers=60,
+            storage_size=Memory.from_kb(1000),
+            hidden_size=1,
+            supports_tensor=False,
+            uses_cfg=True,
+            tasks=[ModelTask.TextToImage],
+        )
+
+        assignments = get_shard_assignments_for_pipeline_parallel(
+            model_card, cycle, node_memory
+        )
+
+        shards = list(assignments.runner_to_shard.values())
+        assert len(shards) == 3
+
+        for shard in shards:
+            assert isinstance(shard, PipelineShardMetadata)
+            # cfg_world_size = 1 means sequential CFG
+            assert shard.cfg_world_size == 1
+            assert shard.cfg_rank == 0
+
+    def test_two_nodes_non_cfg_model_uses_pipeline(self):
+        """Two nodes with non-CFG model should use pure pipeline."""
+        node_a = NodeId()
+        node_b = NodeId()
+
+        topology = self._create_ring_topology([node_a, node_b])
+        cycles = [c for c in topology.get_cycles() if len(c) == 2]
+        cycle = cycles[0]
+
+        node_memory = {
+            node_a: create_node_memory(1000 * 1024),
+            node_b: create_node_memory(1000 * 1024),
+        }
+
+        model_card = ModelCard(
+            model_id=ModelId("flux-test"),
+            n_layers=57,
+            storage_size=Memory.from_kb(1000),
+            hidden_size=1,
+            supports_tensor=False,
+            uses_cfg=False,  # Non-CFG model
+            tasks=[ModelTask.TextToImage],
+        )
+
+        assignments = get_shard_assignments_for_pipeline_parallel(
+            model_card, cycle, node_memory
+        )
+
+        shards = list(assignments.runner_to_shard.values())
+        assert len(shards) == 2
+
+        for shard in shards:
+            assert isinstance(shard, PipelineShardMetadata)
+            # cfg_world_size = 1 means no CFG parallel
+            assert shard.cfg_world_size == 1
+            assert shard.cfg_rank == 0
+
+        # Should have actual layer sharding (pipeline)
+        layer_ranges = sorted(
+            (s.start_layer, s.end_layer)
+            for s in shards
+            if isinstance(s, PipelineShardMetadata)
+        )
+        # First shard starts at 0, last shard ends at 57
+        assert layer_ranges[0][0] == 0
+        assert layer_ranges[-1][1] == 57

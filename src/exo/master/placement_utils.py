@@ -94,20 +94,35 @@ def get_shard_assignments_for_pipeline_parallel(
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
 
+    # Determine CFG parallelism topology
+    # CFG parallel only for even node counts with CFG models (2+ nodes)
+    use_cfg_parallel = model_card.uses_cfg and world_size >= 2 and world_size % 2 == 0
+    cfg_world_size = 2 if use_cfg_parallel else 1
+    pipeline_world_size = world_size // cfg_world_size
+
+    # For CFG parallel, we only need to allocate layers for one pipeline group
+    # (both CFG groups run the same layers). Use the first pipeline group's nodes.
+    pipeline_node_ids = cycle.node_ids[:pipeline_world_size]
+    pipeline_memory = sum(
+        (node_memory[node_id].ram_available for node_id in pipeline_node_ids),
+        start=Memory(),
+    )
+
     layer_allocations = allocate_layers_proportionally(
         total_layers=total_layers,
         memory_fractions=[
-            node_memory[node_id].ram_available.in_bytes / cycle_memory.in_bytes
-            for node_id in cycle.node_ids
+            node_memory[node_id].ram_available.in_bytes / pipeline_memory.in_bytes
+            for node_id in pipeline_node_ids
         ],
     )
 
-    # Validate each node has sufficient memory for its assigned layers
-    memory_per_layer = model_card.storage_size.in_bytes / total_layers
-    for i, (node_id, node_layers) in enumerate(
-        zip(cycle.node_ids, layer_allocations, strict=True)
-    ):
-        required_memory = node_layers * memory_per_layer
+    # Validate each pipeline node has sufficient memory for its assigned layers
+    # Use integer arithmetic to avoid floating point precision issues
+    total_storage_bytes = model_card.storage_size.in_bytes
+    for i, node_id in enumerate(pipeline_node_ids):
+        node_layers = layer_allocations[i]
+        # Integer division then multiply to get conservative estimate
+        required_memory = (total_storage_bytes * node_layers) // total_layers
         available_memory = node_memory[node_id].ram_available.in_bytes
         if required_memory > available_memory:
             raise ValueError(
@@ -116,24 +131,32 @@ def get_shard_assignments_for_pipeline_parallel(
                 f"but only has {available_memory / (1024**3):.2f} GB available"
             )
 
-    layers_assigned = 0
-    for i, (node_id, node_layers) in enumerate(
-        zip(cycle.node_ids, layer_allocations, strict=True)
-    ):
+    # Assign shards to all nodes
+    # For CFG parallel: nodes 0..pipeline_world_size-1 are CFG group 0 (positive)
+    #                   nodes pipeline_world_size..world_size-1 are CFG group 1 (negative)
+    for i, node_id in enumerate(cycle.node_ids):
+        cfg_rank = i // pipeline_world_size
+        pipeline_rank = i % pipeline_world_size
+
+        # Compute layer range for this pipeline position
+        layers_before = sum(layer_allocations[:pipeline_rank])
+        node_layers = layer_allocations[pipeline_rank]
+
         runner_id = RunnerId()
 
         shard = PipelineShardMetadata(
             model_card=model_card,
             device_rank=i,
             world_size=world_size,
-            start_layer=layers_assigned,
-            end_layer=layers_assigned + node_layers,
+            start_layer=layers_before,
+            end_layer=layers_before + node_layers,
             n_layers=total_layers,
+            cfg_rank=cfg_rank,
+            cfg_world_size=cfg_world_size,
         )
 
         runner_to_shard[runner_id] = shard
         node_to_runner[node_id] = runner_id
-        layers_assigned += node_layers
 
     shard_assignments = ShardAssignments(
         model_id=model_card.model_id,
