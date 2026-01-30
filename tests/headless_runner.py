@@ -20,7 +20,6 @@ from exo.shared.models.model_cards import MODEL_CARDS, ModelId
 from exo.shared.types.commands import CommandId
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.events import Event
-from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.tasks import (
     ConnectToGroup,
     LoadModel,
@@ -29,6 +28,7 @@ from exo.shared.types.tasks import (
     Task,
     TextGeneration,
 )
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     BoundInstance,
     Instance,
@@ -180,7 +180,7 @@ async def execute_test(test: Tests, instance: Instance, hn: str):
             send.send(StartWarmup(instance_id=iid))
             send.send(
                 TextGeneration(
-                    task_params=ResponsesRequest(
+                    task_params=TextGenerationTaskParams(
                         model=test.model_id,
                         instructions="You are a helpful assistant",
                         input="What is the capital of France?",

@@ -9,8 +9,8 @@ from exo.shared.types.api import (
     ChatCompletionChoice,
     ChatCompletionMessage,
     ChatCompletionMessageText,
+    ChatCompletionRequest,
     ChatCompletionResponse,
-    ChatCompletionTaskParams,
     ErrorInfo,
     ErrorResponse,
     FinishReason,
@@ -19,18 +19,14 @@ from exo.shared.types.api import (
 )
 from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
-from exo.shared.types.openai_responses import ResponseInputMessage, ResponsesRequest
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 
 
-def chat_request_to_internal(request: ChatCompletionTaskParams) -> ResponsesRequest:
-    """Convert Chat Completions API request to ResponsesRequest (canonical internal format).
-
-    Extracts system message as instructions, converts messages to input.
-    Also builds chat_template_messages to preserve tool_calls, thinking,
-    and other fields for the tokenizer's chat template.
-    """
+def chat_request_to_text_generation(
+    request: ChatCompletionRequest,
+) -> TextGenerationTaskParams:
     instructions: str | None = None
-    input_messages: list[ResponseInputMessage] = []
+    input_messages: list[InputMessage] = []
     chat_template_messages: list[dict[str, Any]] = []
 
     for msg in request.messages:
@@ -59,11 +55,8 @@ def chat_request_to_internal(request: ChatCompletionTaskParams) -> ResponsesRequ
             if msg.content is None and msg.thinking is None and msg.tool_calls is None:
                 continue
 
-            # Build clean ResponseInputMessage for the Responses API input
             if msg.role in ("user", "assistant", "developer"):
-                input_messages.append(
-                    ResponseInputMessage(role=msg.role, content=content)
-                )
+                input_messages.append(InputMessage(role=msg.role, content=content))
 
             # Build full message dict for chat template (preserves tool_calls etc.)
             # Normalize content for model_dump
@@ -71,7 +64,7 @@ def chat_request_to_internal(request: ChatCompletionTaskParams) -> ResponsesRequ
             dumped: dict[str, Any] = msg_copy.model_dump(exclude_none=True)
             chat_template_messages.append(dumped)
 
-    return ResponsesRequest(
+    return TextGenerationTaskParams(
         model=request.model,
         input=input_messages if input_messages else "",
         instructions=instructions,

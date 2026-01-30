@@ -1,7 +1,7 @@
-"""Tests for OpenAI Responses API types.
+"""Tests for OpenAI Responses API wire types.
 
-ResponsesRequest is the canonical internal type used throughout the pipeline.
-No conversion is needed for Responses API requests.
+ResponsesRequest is the API wire type for the Responses endpoint.
+The responses adapter converts it to TextGenerationTaskParams for the pipeline.
 """
 
 import json
@@ -28,8 +28,8 @@ from exo.shared.types.openai_responses import (
 )
 
 
-class TestResponsesRequestAsCanonicalType:
-    """Tests for ResponsesRequest as the canonical internal type."""
+class TestResponsesRequestWireType:
+    """Tests for ResponsesRequest as the API wire type."""
 
     def test_string_input(self):
         request = ResponsesRequest(

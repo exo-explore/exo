@@ -3,11 +3,11 @@ from enum import Enum
 from pydantic import Field
 
 from exo.shared.types.api import (
-    ImageEditsInternalParams,
+    ImageEditsTaskParams,
     ImageGenerationTaskParams,
 )
 from exo.shared.types.common import CommandId, Id
-from exo.shared.types.openai_responses import ResponsesRequest
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerId
 from exo.shared.types.worker.shards import ShardMetadata
@@ -54,7 +54,7 @@ class StartWarmup(BaseTask):  # emitted by Worker
 
 class TextGeneration(BaseTask):  # emitted by Master
     command_id: CommandId
-    task_params: ResponsesRequest
+    task_params: TextGenerationTaskParams
 
     error_type: str | None = Field(default=None)
     error_message: str | None = Field(default=None)
@@ -70,7 +70,7 @@ class ImageGeneration(BaseTask):  # emitted by Master
 
 class ImageEdits(BaseTask):  # emitted by Master
     command_id: CommandId
-    task_params: ImageEditsInternalParams
+    task_params: ImageEditsTaskParams
 
     error_type: str | None = Field(default=None)
     error_message: str | None = Field(default=None)

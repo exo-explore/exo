@@ -121,7 +121,7 @@ class Master:
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
-                                    == command.request_params.model
+                                    == command.task_params.model
                                 ):
                                     task_count = sum(
                                         1
@@ -134,7 +134,7 @@ class Master:
 
                             if not instance_task_counts:
                                 raise ValueError(
-                                    f"No instance found for model {command.request_params.model}"
+                                    f"No instance found for model {command.task_params.model}"
                                 )
 
                             available_instance_ids = sorted(
@@ -153,7 +153,7 @@ class Master:
                                         command_id=command.command_id,
                                         instance_id=available_instance_ids[0],
                                         task_status=TaskStatus.Pending,
-                                        task_params=command.request_params,
+                                        task_params=command.task_params,
                                     ),
                                 )
                             )
@@ -163,7 +163,7 @@ class Master:
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
-                                    == command.request_params.model
+                                    == command.task_params.model
                                 ):
                                     task_count = sum(
                                         1
@@ -176,7 +176,7 @@ class Master:
 
                             if not instance_task_counts:
                                 raise ValueError(
-                                    f"No instance found for model {command.request_params.model}"
+                                    f"No instance found for model {command.task_params.model}"
                                 )
 
                             available_instance_ids = sorted(
@@ -195,7 +195,7 @@ class Master:
                                         command_id=command.command_id,
                                         instance_id=available_instance_ids[0],
                                         task_status=TaskStatus.Pending,
-                                        task_params=command.request_params,
+                                        task_params=command.task_params,
                                     ),
                                 )
                             )
@@ -205,7 +205,7 @@ class Master:
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
-                                    == command.request_params.model
+                                    == command.task_params.model
                                 ):
                                     task_count = sum(
                                         1
@@ -218,7 +218,7 @@ class Master:
 
                             if not instance_task_counts:
                                 raise ValueError(
-                                    f"No instance found for model {command.request_params.model}"
+                                    f"No instance found for model {command.task_params.model}"
                                 )
 
                             available_instance_ids = sorted(
@@ -237,7 +237,7 @@ class Master:
                                         command_id=command.command_id,
                                         instance_id=available_instance_ids[0],
                                         task_status=TaskStatus.Pending,
-                                        task_params=command.request_params,
+                                        task_params=command.task_params,
                                     ),
                                 )
                             )

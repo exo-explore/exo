@@ -1,8 +1,8 @@
 from typing import cast
 
 import exo.worker.plan as plan_mod
-from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.tasks import Task, TaskId, TaskStatus, TextGeneration
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import (
     RunnerIdle,
@@ -59,7 +59,7 @@ def test_plan_forwards_pending_chat_completion_when_runner_ready():
         instance_id=INSTANCE_1_ID,
         task_status=TaskStatus.Pending,
         command_id=COMMAND_1_ID,
-        task_params=ResponsesRequest(model=MODEL_A_ID, input=""),
+        task_params=TextGenerationTaskParams(model=MODEL_A_ID, input=""),
     )
 
     result = plan_mod.plan(
@@ -106,7 +106,7 @@ def test_plan_does_not_forward_chat_completion_if_any_runner_not_ready():
         instance_id=INSTANCE_1_ID,
         task_status=TaskStatus.Pending,
         command_id=COMMAND_1_ID,
-        task_params=ResponsesRequest(model=MODEL_A_ID, input=""),
+        task_params=TextGenerationTaskParams(model=MODEL_A_ID, input=""),
     )
 
     result = plan_mod.plan(
@@ -150,7 +150,7 @@ def test_plan_does_not_forward_tasks_for_other_instances():
         instance_id=other_instance_id,
         task_status=TaskStatus.Pending,
         command_id=COMMAND_1_ID,
-        task_params=ResponsesRequest(model=MODEL_A_ID, input=""),
+        task_params=TextGenerationTaskParams(model=MODEL_A_ID, input=""),
     )
 
     result = plan_mod.plan(
@@ -198,7 +198,7 @@ def test_plan_ignores_non_pending_or_non_chat_tasks():
         instance_id=INSTANCE_1_ID,
         task_status=TaskStatus.Complete,
         command_id=COMMAND_1_ID,
-        task_params=ResponsesRequest(model=MODEL_A_ID, input=""),
+        task_params=TextGenerationTaskParams(model=MODEL_A_ID, input=""),
     )
 
     other_task_id = TaskId("other-task")

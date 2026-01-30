@@ -23,12 +23,12 @@ from exo.shared.types.events import (
     TaskCreated,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.profiling import (
     MemoryUsage,
 )
 from exo.shared.types.tasks import TaskStatus
 from exo.shared.types.tasks import TextGeneration as TextGenerationTask
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     InstanceMeta,
     MlxRingInstance,
@@ -134,7 +134,7 @@ async def test_master():
                 command=(
                     TextGeneration(
                         command_id=CommandId(),
-                        request_params=ResponsesRequest(
+                        task_params=TextGenerationTaskParams(
                             model=ModelId("llama-3.2-1b"),
                             input="Hello, how are you?",
                         ),
@@ -187,7 +187,7 @@ async def test_master():
         assert isinstance(events[2].event, TaskCreated)
         assert events[2].event.task.task_status == TaskStatus.Pending
         assert isinstance(events[2].event.task, TextGenerationTask)
-        assert events[2].event.task.task_params == ResponsesRequest(
+        assert events[2].event.task.task_params == TextGenerationTaskParams(
             model=ModelId("llama-3.2-1b"),
             input="Hello, how are you?",
         )

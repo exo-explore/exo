@@ -1,9 +1,4 @@
-"""OpenAI Responses API adapter for converting requests/responses.
-
-ResponsesRequest is the canonical internal format. Responses API is the most featureful,
-making it the natural choice for the internal format. All other API formats (Chat
-Completions, Claude) are converted TO ResponsesRequest.
-"""
+"""OpenAI Responses API adapter for converting requests/responses."""
 
 from collections.abc import AsyncGenerator
 
@@ -19,11 +14,40 @@ from exo.shared.types.openai_responses import (
     ResponseOutputItemAddedEvent,
     ResponseOutputItemDoneEvent,
     ResponseOutputText,
+    ResponsesRequest,
     ResponsesResponse,
     ResponseTextDeltaEvent,
     ResponseTextDoneEvent,
     ResponseUsage,
 )
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+
+
+def responses_request_to_text_generation(
+    request: ResponsesRequest,
+) -> TextGenerationTaskParams:
+    input_value: str | list[InputMessage]
+    if isinstance(request.input, str):
+        input_value = request.input
+    else:
+        input_value = [
+            InputMessage(role=msg.role, content=msg.content) for msg in request.input
+        ]
+    return TextGenerationTaskParams(
+        model=request.model,
+        input=input_value,
+        instructions=request.instructions,
+        max_output_tokens=request.max_output_tokens,
+        temperature=request.temperature,
+        top_p=request.top_p,
+        stream=request.stream,
+        tools=request.tools,
+        metadata=request.metadata,
+        top_k=request.top_k,
+        stop=request.stop,
+        seed=request.seed,
+        chat_template_messages=request.chat_template_messages,
+    )
 
 
 async def collect_responses_response(

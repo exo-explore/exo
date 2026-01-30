@@ -1,7 +1,9 @@
-"""OpenAI Responses API types.
+"""OpenAI Responses API wire types.
 
-ResponsesRequest also serves as the canonical internal task params type.
-All external API formats are converted to it at the API boundary.
+These types model the OpenAI Responses API request/response format.
+ResponsesRequest is the API-level wire type; for the canonical internal
+task params type used by the inference pipeline, see
+``exo.shared.types.text_generation.TextGenerationTaskParams``.
 """
 
 import time
@@ -27,9 +29,9 @@ class ResponseInputMessage(BaseModel, frozen=True):
 class ResponsesRequest(BaseModel, frozen=True):
     """Request body for OpenAI Responses API.
 
-    Also serves as the canonical internal task params format throughout the
-    inference pipeline. All external API formats (Chat Completions, Claude)
-    are converted to this at the API boundary via adapters.
+    This is the API wire type for the Responses endpoint. The canonical
+    internal task params type is ``TextGenerationTaskParams``; see the
+    ``responses_request_to_text_generation`` adapter for conversion.
     """
 
     # --- OpenAI Responses API standard fields ---

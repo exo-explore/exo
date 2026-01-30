@@ -41,7 +41,7 @@ from pydantic import RootModel
 from exo.download.download_utils import build_model_path
 from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
-from exo.shared.types.openai_responses import ResponsesRequest
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     BoundInstance,
     MlxJacclInstance,
@@ -411,16 +411,16 @@ def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
 
 def apply_chat_template(
     tokenizer: TokenizerWrapper,
-    task_params: ResponsesRequest,
+    task_params: TextGenerationTaskParams,
 ) -> str:
-    """Convert ResponsesRequest to a chat template prompt.
+    """Convert TextGenerationTaskParams to a chat template prompt.
 
     Converts the internal format (input + instructions) to a messages list
     that can be processed by the tokenizer's chat template.
 
     When chat_template_messages is available (from Chat Completions API),
     uses those directly to preserve tool_calls, thinking, and other fields.
-    Otherwise builds messages from the ResponsesRequest input/instructions.
+    Otherwise builds messages from the task params input/instructions.
     """
     formatted_messages: list[dict[str, Any]] = []
     if task_params.chat_template_messages is not None:

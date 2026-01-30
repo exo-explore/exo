@@ -10,7 +10,7 @@ from loguru import logger
 from exo.routing.connection_message import ConnectionMessage, ConnectionMessageType
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelId
-from exo.shared.types.api import ImageEditsInternalParams
+from exo.shared.types.api import ImageEditsTaskParams
 from exo.shared.types.commands import (
     ForwarderCommand,
     ForwarderDownloadCommand,
@@ -244,7 +244,7 @@ class Worker:
                         command_id=task.command_id,
                         instance_id=task.instance_id,
                         task_status=task.task_status,
-                        task_params=ImageEditsInternalParams(
+                        task_params=ImageEditsTaskParams(
                             image_data=assembled,
                             total_input_chunks=task.task_params.total_input_chunks,
                             prompt=task.task_params.prompt,

@@ -28,7 +28,6 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
-from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.tasks import (
     ConnectToGroup,
     ImageEdits,
@@ -40,6 +39,7 @@ from exo.shared.types.tasks import (
     TaskStatus,
     TextGeneration,
 )
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
@@ -890,7 +890,7 @@ EXO_RUNNER_MUST_OOM = "EXO RUNNER MUST OOM"
 EXO_RUNNER_MUST_TIMEOUT = "EXO RUNNER MUST TIMEOUT"
 
 
-def _check_for_debug_prompts(task_params: ResponsesRequest) -> None:
+def _check_for_debug_prompts(task_params: TextGenerationTaskParams) -> None:
     """Check for debug prompt triggers in the input.
 
     Extracts the first user input text and checks for debug triggers.

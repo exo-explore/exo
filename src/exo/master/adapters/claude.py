@@ -29,7 +29,7 @@ from exo.shared.types.claude_api import (
     ClaudeUsage,
 )
 from exo.shared.types.common import CommandId
-from exo.shared.types.openai_responses import ResponseInputMessage, ResponsesRequest
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 
 
 def finish_reason_to_claude_stop_reason(
@@ -48,12 +48,9 @@ def finish_reason_to_claude_stop_reason(
     return mapping.get(finish_reason, "end_turn")
 
 
-def claude_request_to_internal(request: ClaudeMessagesRequest) -> ResponsesRequest:
-    """Convert Claude Messages API request to ResponsesRequest (canonical internal format).
-
-    Converts Claude's system parameter to instructions,
-    and messages to input.
-    """
+def claude_request_to_text_generation(
+    request: ClaudeMessagesRequest,
+) -> TextGenerationTaskParams:
     # Handle system message
     instructions: str | None = None
     if request.system:
@@ -64,7 +61,7 @@ def claude_request_to_internal(request: ClaudeMessagesRequest) -> ResponsesReque
             instructions = "".join(block.text for block in request.system)
 
     # Convert messages to input
-    input_messages: list[ResponseInputMessage] = []
+    input_messages: list[InputMessage] = []
     for msg in request.messages:
         content: str
         if isinstance(msg.content, str):
@@ -85,7 +82,7 @@ def claude_request_to_internal(request: ClaudeMessagesRequest) -> ResponsesReque
             content = "".join(text_parts)
 
         # Claude uses "user" and "assistant" roles
-        input_messages.append(ResponseInputMessage(role=msg.role, content=content))
+        input_messages.append(InputMessage(role=msg.role, content=content))
 
     # Convert Claude tool definitions to OpenAI-style function tools
     tools: list[dict[str, Any]] | None = None
@@ -102,7 +99,7 @@ def claude_request_to_internal(request: ClaudeMessagesRequest) -> ResponsesReque
             for tool in request.tools
         ]
 
-    return ResponsesRequest(
+    return TextGenerationTaskParams(
         model=request.model,
         input=input_messages if input_messages else "",
         instructions=instructions,

@@ -7,7 +7,7 @@ import pydantic
 import pytest
 
 from exo.master.adapters.claude import (
-    claude_request_to_internal,
+    claude_request_to_text_generation,
     finish_reason_to_claude_stop_reason,
 )
 from exo.shared.types.claude_api import (
@@ -52,7 +52,7 @@ class TestFinishReasonToClaudeStopReason:
 
 
 class TestClaudeRequestToInternal:
-    """Tests for converting Claude Messages API requests to ResponsesRequest."""
+    """Tests for converting Claude Messages API requests to TextGenerationTaskParams."""
 
     def test_basic_request_conversion(self):
         request = ClaudeMessagesRequest(
@@ -62,7 +62,7 @@ class TestClaudeRequestToInternal:
                 ClaudeMessage(role="user", content="Hello"),
             ],
         )
-        params = claude_request_to_internal(request)
+        params = claude_request_to_text_generation(request)
 
         assert params.model == "claude-3-opus"
         assert params.max_output_tokens == 100
@@ -81,7 +81,7 @@ class TestClaudeRequestToInternal:
                 ClaudeMessage(role="user", content="Hello"),
             ],
         )
-        params = claude_request_to_internal(request)
+        params = claude_request_to_text_generation(request)
 
         assert params.instructions == "You are a helpful assistant."
         assert isinstance(params.input, list)
@@ -101,7 +101,7 @@ class TestClaudeRequestToInternal:
                 ClaudeMessage(role="user", content="Hello"),
             ],
         )
-        params = claude_request_to_internal(request)
+        params = claude_request_to_text_generation(request)
 
         assert params.instructions == "You are helpful. Be concise."
         assert isinstance(params.input, list)
@@ -121,7 +121,7 @@ class TestClaudeRequestToInternal:
                 ),
             ],
         )
-        params = claude_request_to_internal(request)
+        params = claude_request_to_text_generation(request)
 
         assert isinstance(params.input, list)
         assert len(params.input) == 1
@@ -137,7 +137,7 @@ class TestClaudeRequestToInternal:
                 ClaudeMessage(role="user", content="How are you?"),
             ],
         )
-        params = claude_request_to_internal(request)
+        params = claude_request_to_text_generation(request)
 
         assert isinstance(params.input, list)
         assert len(params.input) == 3
@@ -156,7 +156,7 @@ class TestClaudeRequestToInternal:
             stop_sequences=["STOP", "END"],
             stream=True,
         )
-        params = claude_request_to_internal(request)
+        params = claude_request_to_text_generation(request)
 
         assert params.temperature == 0.7
         assert params.top_p == 0.9

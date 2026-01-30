@@ -13,7 +13,6 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
-from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.tasks import (
     ConnectToGroup,
     LoadModel,
@@ -23,6 +22,7 @@ from exo.shared.types.tasks import (
     TaskStatus,
     TextGeneration,
 )
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.shared.types.worker.runners import (
     RunnerConnected,
@@ -84,7 +84,7 @@ SHUTDOWN_TASK = Shutdown(
     runner_id=RUNNER_1_ID,
 )
 
-CHAT_PARAMS = ResponsesRequest(
+CHAT_PARAMS = TextGenerationTaskParams(
     model=MODEL_A_ID,
     input="hello",
     stream=True,

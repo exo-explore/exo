@@ -8,8 +8,8 @@ import pytest
 from mlx_lm.models.cache import KVCache
 from mlx_lm.sample_utils import make_sampler
 
-from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from exo.shared.types.common import ModelId
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.cache import (
     KVPrefixCache,
@@ -133,10 +133,10 @@ class TestKVPrefixCacheWithModel:
     def test_prefill_populates_cache(self, model_and_tokenizer):
         model, tokenizer = model_and_tokenizer
 
-        task = ChatCompletionTaskParams(
+        task = TextGenerationTaskParams(
             model=DEFAULT_GPT_OSS_MODEL_ID,
-            messages=[ChatCompletionMessage(role="user", content="Hello!!")],
-            max_tokens=1,
+            input=[InputMessage(role="user", content="Hello!!")],
+            max_output_tokens=1,
         )
         prompt = apply_chat_template(tokenizer, task)
         tokens = encode_prompt(tokenizer, prompt)
@@ -150,10 +150,10 @@ class TestKVPrefixCacheWithModel:
     def test_add_and_get_exact_match(self, model_and_tokenizer):
         model, tokenizer = model_and_tokenizer
 
-        task = ChatCompletionTaskParams(
+        task = TextGenerationTaskParams(
             model=DEFAULT_GPT_OSS_MODEL_ID,
-            messages=[ChatCompletionMessage(role="user", content="Test exact")],
-            max_tokens=1,
+            input=[InputMessage(role="user", content="Test exact")],
+            max_output_tokens=1,
         )
         prompt = apply_chat_template(tokenizer, task)
         tokens = encode_prompt(tokenizer, prompt)
@@ -182,10 +182,10 @@ class TestKVPrefixCacheWithModel:
         """get_kv_cache with a longer prompt sharing prefix should return partial match."""
         model, tokenizer = model_and_tokenizer
 
-        short_task = ChatCompletionTaskParams(
+        short_task = TextGenerationTaskParams(
             model=DEFAULT_GPT_OSS_MODEL_ID,
-            messages=[ChatCompletionMessage(role="user", content="Hi")],
-            max_tokens=1,
+            input=[InputMessage(role="user", content="Hi")],
+            max_output_tokens=1,
         )
         short_prompt = apply_chat_template(tokenizer, short_task)
         short_tokens = encode_prompt(tokenizer, short_prompt)
@@ -197,12 +197,10 @@ class TestKVPrefixCacheWithModel:
         kv_prefix_cache.add_kv_cache(short_prompt, cache)
 
         # Query with longer prompt that shares the chat template prefix
-        long_task = ChatCompletionTaskParams(
+        long_task = TextGenerationTaskParams(
             model=DEFAULT_GPT_OSS_MODEL_ID,
-            messages=[
-                ChatCompletionMessage(role="user", content="Hi there, how are you?")
-            ],
-            max_tokens=1,
+            input=[InputMessage(role="user", content="Hi there, how are you?")],
+            max_output_tokens=1,
         )
         long_prompt = apply_chat_template(tokenizer, long_task)
         long_tokens = encode_prompt(tokenizer, long_prompt)
@@ -228,10 +226,10 @@ class TestKVPrefixCacheWithModel:
         """Getting a cache and then mutating it (as generation does) must not corrupt stored cache."""
         model, tokenizer = model_and_tokenizer
 
-        task = ChatCompletionTaskParams(
+        task = TextGenerationTaskParams(
             model=DEFAULT_GPT_OSS_MODEL_ID,
-            messages=[ChatCompletionMessage(role="user", content="Mutation test")],
-            max_tokens=1,
+            input=[InputMessage(role="user", content="Mutation test")],
+            max_output_tokens=1,
         )
         prompt = apply_chat_template(tokenizer, task)
         tokens = encode_prompt(tokenizer, prompt)
@@ -266,10 +264,10 @@ class TestKVPrefixCacheWithModel:
         """Multiple get+mutate cycles (like repeated user requests) must not corrupt cache."""
         model, tokenizer = model_and_tokenizer
 
-        task = ChatCompletionTaskParams(
+        task = TextGenerationTaskParams(
             model=DEFAULT_GPT_OSS_MODEL_ID,
-            messages=[ChatCompletionMessage(role="user", content="Repeat test")],
-            max_tokens=1,
+            input=[InputMessage(role="user", content="Repeat test")],
+            max_output_tokens=1,
         )
         prompt = apply_chat_template(tokenizer, task)
         tokens = encode_prompt(tokenizer, prompt)
@@ -301,10 +299,10 @@ class TestKVPrefixCacheWithModel:
         model, tokenizer = model_and_tokenizer
 
         kv_prefix_cache = KVPrefixCache(tokenizer)
-        task = ChatCompletionTaskParams(
+        task = TextGenerationTaskParams(
             model=DEFAULT_GPT_OSS_MODEL_ID,
-            messages=[ChatCompletionMessage(role="user", content="Hello")],
-            max_tokens=5,
+            input=[InputMessage(role="user", content="Hello")],
+            max_output_tokens=5,
         )
         prompt = apply_chat_template(tokenizer, task)
         prompt_tokens = encode_prompt(tokenizer, prompt)
@@ -331,10 +329,10 @@ class TestKVPrefixCacheWithModel:
         model, tokenizer = model_and_tokenizer
 
         kv_prefix_cache = KVPrefixCache(tokenizer)
-        task = ChatCompletionTaskParams(
+        task = TextGenerationTaskParams(
             model=DEFAULT_GPT_OSS_MODEL_ID,
-            messages=[ChatCompletionMessage(role="user", content="Reuse test")],
-            max_tokens=5,
+            input=[InputMessage(role="user", content="Reuse test")],
+            max_output_tokens=5,
         )
         prompt = apply_chat_template(tokenizer, task)
         prompt_tokens = encode_prompt(tokenizer, prompt)
@@ -375,10 +373,10 @@ class TestKVPrefixCacheWithModel:
         repeats = (1200 // len(base_tokens)) + 2
         long_content = base_text * repeats
 
-        task1 = ChatCompletionTaskParams(
+        task1 = TextGenerationTaskParams(
             model=DEFAULT_GPT_OSS_MODEL_ID,
-            messages=[ChatCompletionMessage(role="user", content=long_content)],
-            max_tokens=5,
+            input=[InputMessage(role="user", content=long_content)],
+            max_output_tokens=5,
         )
         prompt1 = apply_chat_template(tokenizer, task1)
         prompt1_tokens = encode_prompt(tokenizer, prompt1)
@@ -402,14 +400,14 @@ class TestKVPrefixCacheWithModel:
         first_cache_length = _cache_length(kv_prefix_cache.caches[0])
 
         # Second generation: same long prompt + extra content (simulating multi-turn)
-        task2 = ChatCompletionTaskParams(
+        task2 = TextGenerationTaskParams(
             model=DEFAULT_GPT_OSS_MODEL_ID,
-            messages=[
-                ChatCompletionMessage(role="user", content=long_content),
-                ChatCompletionMessage(role="assistant", content="Sure, I can help."),
-                ChatCompletionMessage(role="user", content="Tell me more."),
+            input=[
+                InputMessage(role="user", content=long_content),
+                InputMessage(role="assistant", content="Sure, I can help."),
+                InputMessage(role="user", content="Tell me more."),
             ],
-            max_tokens=5,
+            max_output_tokens=5,
         )
         prompt2 = apply_chat_template(tokenizer, task2)
         prompt2_tokens = encode_prompt(tokenizer, prompt2)
@@ -447,10 +445,10 @@ class TestKVPrefixCacheWithModel:
         model, tokenizer = model_and_tokenizer
 
         kv_prefix_cache = KVPrefixCache(tokenizer)
-        task = ChatCompletionTaskParams(
+        task = TextGenerationTaskParams(
             model=DEFAULT_GPT_OSS_MODEL_ID,
-            messages=[ChatCompletionMessage(role="user", content="Immutable test")],
-            max_tokens=5,
+            input=[InputMessage(role="user", content="Immutable test")],
+            max_output_tokens=5,
         )
         prompt = apply_chat_template(tokenizer, task)
 
@@ -488,10 +486,10 @@ class TestKVPrefixCacheWithModel:
         # Add three cache entries with different prompts
         prompts = ["First entry", "Second entry", "Third entry"]
         for i, content in enumerate(prompts):
-            task = ChatCompletionTaskParams(
+            task = TextGenerationTaskParams(
                 model=DEFAULT_GPT_OSS_MODEL_ID,
-                messages=[ChatCompletionMessage(role="user", content=content)],
-                max_tokens=1,
+                input=[InputMessage(role="user", content=content)],
+                max_output_tokens=1,
             )
             prompt = apply_chat_template(tokenizer, task)
             tokens = encode_prompt(tokenizer, prompt)
@@ -522,10 +520,10 @@ class TestKVPrefixCacheWithModel:
             ),
         ):
             # Trigger eviction by adding a new entry
-            task = ChatCompletionTaskParams(
+            task = TextGenerationTaskParams(
                 model=DEFAULT_GPT_OSS_MODEL_ID,
-                messages=[ChatCompletionMessage(role="user", content="New entry")],
-                max_tokens=1,
+                input=[InputMessage(role="user", content="New entry")],
+                max_output_tokens=1,
             )
             prompt = apply_chat_template(tokenizer, task)
             tokens = encode_prompt(tokenizer, prompt)

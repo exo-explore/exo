@@ -14,7 +14,7 @@ from exo.shared.types.api import (
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType
-from exo.shared.types.openai_responses import ResponsesRequest
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
@@ -95,7 +95,7 @@ def warmup_inference(
 
     warmup_prompt = apply_chat_template(
         tokenizer=tokenizer,
-        task_params=ResponsesRequest(
+        task_params=TextGenerationTaskParams(
             model=ModelId(""),
             input=content,
         ),
@@ -155,7 +155,7 @@ def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
 def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
-    task: ResponsesRequest,
+    task: TextGenerationTaskParams,
     prompt: str,
     kv_prefix_cache: KVPrefixCache | None = None,
 ) -> Generator[GenerationResponse]:
