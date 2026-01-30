@@ -333,7 +333,9 @@ class API:
             # stdout/stderr pipe fds. Using PIPE would cause communicate() to hang
             # because the daemon child never closes them. Use DEVNULL instead.
             is_daemonize = "--daemonize" in cmd_str
-            out_mode = asyncio.subprocess.DEVNULL if is_daemonize else asyncio.subprocess.PIPE
+            out_mode = (
+                asyncio.subprocess.DEVNULL if is_daemonize else asyncio.subprocess.PIPE
+            )
 
             if needs_shell:
                 process = await asyncio.create_subprocess_shell(

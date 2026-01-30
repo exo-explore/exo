@@ -120,7 +120,7 @@ def place_flash_instance(
             # Prefer private network IPs (10.x, 192.168.x) over Tailscale CGNAT (100.64-127.x)
             chosen_ip: str | None = None
             for ip in candidate_ips:
-                if ip.startswith("10.") or ip.startswith("192.168."):
+                if ip.startswith(("10.", "192.168.")):
                     chosen_ip = ip
                     break
             if chosen_ip is None and candidate_ips:
