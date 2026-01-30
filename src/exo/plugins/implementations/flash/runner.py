@@ -199,6 +199,7 @@ def main(
                                 "--wdir",
                                 instance.working_directory,
                                 "--oversubscribe",
+                                "--allow-run-as-root",
                                 "--mca",
                                 "btl",
                                 "tcp,self",

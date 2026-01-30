@@ -329,22 +329,34 @@ class API:
             # "VAR=value;export VAR;/path/to/prted --args"
             needs_shell = any(c in cmd_str for c in ";|&$`")
 
+            # Commands with --daemonize (e.g., prted) fork a child that inherits
+            # stdout/stderr pipe fds. Using PIPE would cause communicate() to hang
+            # because the daemon child never closes them. Use DEVNULL instead.
+            is_daemonize = "--daemonize" in cmd_str
+            out_mode = asyncio.subprocess.DEVNULL if is_daemonize else asyncio.subprocess.PIPE
+
             if needs_shell:
                 process = await asyncio.create_subprocess_shell(
                     cmd_str,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+                    stdout=out_mode,
+                    stderr=out_mode,
                     cwd=request.cwd,
                     env=env,
                 )
             else:
                 process = await asyncio.create_subprocess_exec(
                     *request.command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+                    stdout=out_mode,
+                    stderr=out_mode,
                     cwd=request.cwd,
                     env=env,
                 )
+
+            if is_daemonize:
+                await process.wait()
+                exit_code = process.returncode or 0
+                logger.info(f"Daemonized command completed with exit code {exit_code}")
+                return ExecuteResponse(exit_code=exit_code, stdout="", stderr="")
 
             stdout, stderr = await process.communicate()
             exit_code = process.returncode or 0

@@ -101,28 +101,43 @@ def place_flash_instance(
             f"FLASH placement: coordinator will be rank 0 at IP {explicit_hosts[0]}"
         )
     else:
-        # Try to get IPs from topology edges
+        # Get each node's own IP by looking at how OTHER nodes see it.
+        # out_edges(A) gives edges A->B with B's IP in sink_multiaddr,
+        # so to find A's IP we look at edges B->A from any other node.
         for node_id in selected_nodes:
-            node_hosts: list[Host] = []
+            candidate_ips: set[str] = set()
 
-            # Get IP from outgoing edges (connections to other nodes via mDNS discovery)
-            for conn in topology.out_edges(node_id):
-                if isinstance(conn.edge, SocketConnection):
-                    # Extract IP from multiaddr
-                    ip = conn.edge.sink_multiaddr.ip_address
-                    # Skip link-local and localhost addresses
-                    if not ip.startswith("169.254.") and not ip.startswith("127."):
-                        node_hosts.append(Host(ip=ip, port=0))
-                        break
+            for other_node in all_nodes:
+                if other_node == node_id:
+                    continue
+                for conn in topology.out_edges(other_node):
+                    if conn.sink == node_id and isinstance(conn.edge, SocketConnection):
+                        ip = conn.edge.sink_multiaddr.ip_address
+                        # Skip link-local and localhost addresses
+                        if not ip.startswith("169.254.") and not ip.startswith("127."):
+                            candidate_ips.add(ip)
 
-            # Last resort: use localhost (will only work for single-node)
-            if not node_hosts:
+            # Prefer private network IPs (10.x, 192.168.x) over Tailscale CGNAT (100.64-127.x)
+            chosen_ip: str | None = None
+            for ip in candidate_ips:
+                if ip.startswith("10.") or ip.startswith("192.168."):
+                    chosen_ip = ip
+                    break
+            if chosen_ip is None and candidate_ips:
+                chosen_ip = next(iter(candidate_ips))
+
+            if chosen_ip:
+                hosts_by_node[node_id] = [Host(ip=chosen_ip, port=0)]
+            else:
                 logger.warning(
                     f"Could not determine IP for node {node_id}, using localhost"
                 )
-                node_hosts.append(Host(ip="127.0.0.1", port=0))
+                hosts_by_node[node_id] = [Host(ip="127.0.0.1", port=0)]
 
-            hosts_by_node[node_id] = node_hosts
+            logger.info(
+                f"FLASH placement: node {node_id} -> IP {hosts_by_node[node_id][0].ip}"
+                f" (candidates: {candidate_ips})"
+            )
 
     total_ranks = len(selected_nodes) * command.ranks_per_node
 
