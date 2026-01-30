@@ -1139,7 +1139,7 @@ class array:
     ) -> array:
         """See :func:`flatten`."""
 
-    def reshape(self, *shape, stream: Stream | Device | None = ...) -> array:
+    def reshape(self, *shape: int, stream: Stream | Device | None = ...) -> array:
         """
         Equivalent to :func:`reshape` but the shape can be passed either as a
         :obj:`tuple` or as separate arguments.
@@ -1222,7 +1222,7 @@ class array:
     ) -> array:
         """See :func:`swapaxes`."""
 
-    def transpose(self, *axes, stream: Stream | Device | None = ...) -> array:
+    def transpose(self, *axes: int, stream: Stream | Device | None = ...) -> array:
         """
         Equivalent to :func:`transpose` but the axes can be passed either as
         a tuple or as separate arguments.
