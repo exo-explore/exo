@@ -1,5 +1,4 @@
 import time
-from typing import cast
 
 import anyio
 import httpx
@@ -8,7 +7,6 @@ from pydantic.v1 import BaseModel
 
 LATENCY_PING_COUNT = 5
 BANDWIDTH_TEST_DURATION_S = 0.5
-UPLOAD_BUFFER_SIZE = 256 * 1024 * 1024
 
 
 class ConnectionProfile(BaseModel):
@@ -55,27 +53,38 @@ async def measure_bandwidth(target_ip: str, port: int = 52415) -> tuple[float, f
     upload_mbps = 0.0
     download_mbps = 0.0
 
-    upload_buffer = b"X" * UPLOAD_BUFFER_SIZE
-
     timeout = httpx.Timeout(timeout=10.0)
 
     async with httpx.AsyncClient(timeout=timeout) as client:
+        # Upload: stream chunks, measure on client side
         try:
-            with anyio.fail_after(10.0):
-                response = await client.post(upload_url, content=upload_buffer)
-                if response.status_code == 200:
-                    data = cast(dict[str, float], response.json())
-                    bytes_received = data["bytes_received"]
-                    duration = data["duration_s"]
-                    if duration > 0:
-                        upload_mbps = (bytes_received * 8 / duration) / 1_000_000
-                        logger.debug(
-                            f"Upload: {bytes_received / 1_000_000:.1f}MB in "
-                            f"{duration:.3f}s = {upload_mbps:.1f} Mbps"
-                        )
+            bytes_uploaded = 0
+            upload_start = time.perf_counter()
+            upload_done = False
+
+            async def upload_generator():
+                nonlocal bytes_uploaded, upload_done
+                chunk = b"X" * (64 * 1024 * 1024)
+                deadline = upload_start + BANDWIDTH_TEST_DURATION_S
+                while time.perf_counter() < deadline:
+                    yield chunk
+                    bytes_uploaded += len(chunk)
+                upload_done = True
+
+            with anyio.move_on_after(BANDWIDTH_TEST_DURATION_S * 2):
+                await client.post(upload_url, content=upload_generator())
+
+            upload_duration = time.perf_counter() - upload_start
+            if upload_duration > 0 and bytes_uploaded > 0:
+                upload_mbps = (bytes_uploaded * 8 / upload_duration) / 1_000_000
+                logger.debug(
+                    f"Upload: {bytes_uploaded / 1_000_000:.1f}MB in "
+                    f"{upload_duration:.3f}s = {upload_mbps:.1f} Mbps"
+                )
         except (TimeoutError, httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
             logger.debug(f"Upload test failed: {e}")
 
+        # Download: stream chunks, measure on client side
         try:
             bytes_downloaded = 0
             start = time.perf_counter()
