@@ -24,9 +24,21 @@ class RDMAConnection(FrozenModel):
 
 class SocketConnection(FrozenModel):
     sink_multiaddr: Multiaddr
+    latency_ms: float
+    sink_to_other_bandwidth_mbps: float
+    other_to_sink_bandwidth_mbps: float
+
+    @property
+    def bandwidth_mbps(self):
+        return min(self.sink_to_other_bandwidth_mbps, self.other_to_sink_bandwidth_mbps)
 
     def __hash__(self):
         return hash(self.sink_multiaddr.ip_address)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, SocketConnection):
+            return NotImplemented
+        return self.sink_multiaddr == other.sink_multiaddr
 
 
 class Connection(FrozenModel):

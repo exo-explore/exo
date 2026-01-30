@@ -16,6 +16,9 @@ def test_state_serialization_roundtrip() -> None:
         sink=node_b,
         edge=SocketConnection(
             sink_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/10001"),
+            latency_ms=1.5,
+            sink_to_other_bandwidth_mbps=1000.0,
+            other_to_sink_bandwidth_mbps=1100.0,
         ),
     )
 

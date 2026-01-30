@@ -264,6 +264,8 @@ class API:
         self.app.get("/events")(lambda: self._event_log)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
+        self.app.post("/bandwidth_test/upload")(self.bandwidth_test_upload)
+        self.app.get("/bandwidth_test/download")(self.bandwidth_test_download)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -1336,3 +1338,26 @@ class API:
         )
         await self._send_download(command)
         return DeleteDownloadResponse(command_id=command.command_id)
+
+    async def bandwidth_test_upload(self, request: Request) -> JSONResponse:
+        total_bytes = 0
+        start = time.perf_counter()
+        deadline = start + 0.5
+
+        async for chunk in request.stream():
+            total_bytes += len(chunk)
+            if time.perf_counter() >= deadline:
+                break
+
+        duration = time.perf_counter() - start
+        return JSONResponse({"bytes_received": total_bytes, "duration_s": duration})
+
+    async def bandwidth_test_download(self) -> StreamingResponse:
+        async def generate_data():
+            chunk = b"X" * (1024 * 1024 * 1024)
+            yield chunk
+
+        return StreamingResponse(
+            generate_data(),
+            media_type="application/octet-stream",
+        )

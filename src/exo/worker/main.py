@@ -44,6 +44,7 @@ from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
+from exo.utils.info_gatherer.connection_profiler import profile_connection
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
 from exo.utils.info_gatherer.net_profile import check_reachable
 from exo.utils.keyed_backoff import KeyedBackoff
@@ -282,37 +283,68 @@ class Worker:
     async def _connection_message_event_writer(self):
         with self.connection_message_receiver as connection_messages:
             async for msg in connection_messages:
-                await self.event_sender.send(
-                    self._convert_connection_message_to_event(msg)
-                )
+                event = await self._convert_connection_message_to_event(msg)
+                if event:
+                    await self.event_sender.send(event)
 
-    def _convert_connection_message_to_event(self, msg: ConnectionMessage):
-        match msg.connection_type:
-            case ConnectionMessageType.Connected:
-                return TopologyEdgeCreated(
-                    conn=Connection(
-                        source=self.node_id,
-                        sink=msg.node_id,
-                        edge=SocketConnection(
-                            sink_multiaddr=Multiaddr(
-                                address=f"/ip4/{msg.remote_ipv4}/tcp/{msg.remote_tcp_port}"
-                            ),
-                        ),
-                    ),
-                )
+    async def _convert_connection_message_to_event(self, msg: ConnectionMessage):
+        if msg.connection_type == ConnectionMessageType.Connected:
+            return await self._profile_and_emit_connection(
+                msg.node_id,
+                msg.remote_ipv4,
+                msg.remote_tcp_port,
+            )
+        elif msg.connection_type == ConnectionMessageType.Disconnected:
+            target_ip = msg.remote_ipv4
+            for connection in self.state.topology.list_connections():
+                if (
+                    isinstance(connection.edge, SocketConnection)
+                    and connection.edge.sink_multiaddr.ip_address == target_ip
+                ):
+                    return TopologyEdgeDeleted(conn=connection)
 
-            case ConnectionMessageType.Disconnected:
-                return TopologyEdgeDeleted(
-                    conn=Connection(
-                        source=self.node_id,
-                        sink=msg.node_id,
-                        edge=SocketConnection(
-                            sink_multiaddr=Multiaddr(
-                                address=f"/ip4/{msg.remote_ipv4}/tcp/{msg.remote_tcp_port}"
-                            ),
-                        ),
+    async def _profile_and_emit_connection(
+        self,
+        sink_node_id: NodeId,
+        remote_ip: str,
+        remote_port: int,
+    ):
+        try:
+            profile = await profile_connection(remote_ip, remote_port)
+        except ConnectionError as e:
+            logger.warning(f"Failed to profile connection to {sink_node_id}: {e}")
+            profile = None
+
+        if profile:
+            latency_ms = profile.latency_ms
+            other_to_sink_mbps = profile.upload_mbps
+            sink_to_other_mbps = profile.download_mbps
+        else:
+            latency_ms = 0.0
+            other_to_sink_mbps = 0.0
+            sink_to_other_mbps = 0.0
+
+        logger.info(
+            f"Connection to {sink_node_id} profiled: "
+            f"latency={latency_ms:.2f}ms, "
+            f"upload={other_to_sink_mbps:.1f}Mbps, "
+            f"download={sink_to_other_mbps:.1f}Mbps"
+        )
+
+        return TopologyEdgeCreated(
+            conn=Connection(
+                source=self.node_id,
+                sink=sink_node_id,
+                edge=SocketConnection(
+                    sink_multiaddr=Multiaddr(
+                        address=f"/ip4/{remote_ip}/tcp/{remote_port}"
                     ),
-                )
+                    latency_ms=latency_ms,
+                    sink_to_other_bandwidth_mbps=sink_to_other_mbps,
+                    other_to_sink_bandwidth_mbps=other_to_sink_mbps,
+                ),
+            ),
+        )
 
     async def _nack_request(self, since_idx: int) -> None:
         # We request all events after (and including) the missing index.
@@ -389,21 +421,21 @@ class Worker:
             )
             for nid in conns:
                 for ip in conns[nid]:
-                    edge = SocketConnection(
-                        # nonsense multiaddr
+                    temp_edge = SocketConnection(
                         sink_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/52415")
                         if "." in ip
-                        # nonsense multiaddr
                         else Multiaddr(address=f"/ip6/{ip}/tcp/52415"),
+                        latency_ms=0.0,
+                        sink_to_other_bandwidth_mbps=0.0,
+                        other_to_sink_bandwidth_mbps=0.0,
                     )
-                    if edge not in edges:
-                        logger.debug(f"ping discovered {edge=}")
-                        await self.event_sender.send(
-                            TopologyEdgeCreated(
-                                conn=Connection(
-                                    source=self.node_id, sink=nid, edge=edge
-                                )
-                            )
+                    if temp_edge not in edges:
+                        logger.debug(f"ping discovered new connection to {nid} at {ip}")
+                        self._tg.start_soon(
+                            self._profile_and_emit_connection,
+                            nid,
+                            ip,
+                            52415,
                         )
 
             for conn in self.state.topology.out_edges(self.node_id):

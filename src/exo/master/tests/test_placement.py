@@ -366,7 +366,10 @@ def test_tensor_rdma_backend_connectivity_matrix(
         ip_address="10.0.0.1",
     )
     ethernet_conn = SocketConnection(
-        sink_multiaddr=Multiaddr(address="/ip4/10.0.0.1/tcp/8000")
+        sink_multiaddr=Multiaddr(address="/ip4/10.0.0.1/tcp/8000"),
+        latency_ms=1.0,
+        other_to_sink_bandwidth_mbps=1000.0,
+        sink_to_other_bandwidth_mbps=1000.0,
     )
 
     node_network = {

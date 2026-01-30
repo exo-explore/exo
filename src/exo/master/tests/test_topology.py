@@ -15,6 +15,9 @@ def topology() -> Topology:
 def socket_connection() -> SocketConnection:
     return SocketConnection(
         sink_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1235"),
+        latency_ms=1.0,
+        sink_to_other_bandwidth_mbps=1000.0,
+        other_to_sink_bandwidth_mbps=1000.0,
     )
 
 
