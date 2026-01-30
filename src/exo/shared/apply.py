@@ -25,6 +25,7 @@ from exo.shared.types.events import (
     TestEvent,
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
+    TracesCollected,
 )
 from exo.shared.types.profiling import (
     NodeIdentity,
@@ -55,7 +56,11 @@ def event_apply(event: Event, state: State) -> State:
     """Apply an event to state."""
     match event:
         case (
-            TestEvent() | ChunkGenerated() | TaskAcknowledged() | InputChunkReceived()
+            TestEvent()
+            | ChunkGenerated()
+            | TaskAcknowledged()
+            | InputChunkReceived()
+            | TracesCollected()
         ):  # Pass-through events that don't modify state
             return state
         case InstanceCreated():

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import final
 
 from pydantic import Field
 
@@ -10,7 +11,7 @@ from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo
-from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
+from exo.utils.pydantic_ext import CamelCaseModel, FrozenModel, TaggedModel
 
 
 class EventId(Id):
@@ -109,6 +110,22 @@ class TopologyEdgeDeleted(BaseEvent):
     conn: Connection
 
 
+@final
+class TraceEventData(FrozenModel):
+    name: str
+    start_us: int
+    duration_us: int
+    rank: int
+    category: str
+
+
+@final
+class TracesCollected(BaseEvent):
+    task_id: TaskId
+    rank: int
+    traces: list[TraceEventData]
+
+
 Event = (
     TestEvent
     | TaskCreated
@@ -127,6 +144,7 @@ Event = (
     | InputChunkReceived
     | TopologyEdgeCreated
     | TopologyEdgeDeleted
+    | TracesCollected
 )
 
 
