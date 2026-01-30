@@ -37,7 +37,12 @@ class DistributedImageModel:
         config = get_config_for_model(model_id)
         adapter = create_adapter_for_model(config, model_id, local_path, quantize)
 
-        if group is not None:
+        has_layer_sharding = (
+            shard_metadata.start_layer != 0
+            or shard_metadata.end_layer != shard_metadata.n_layers
+        )
+
+        if group is not None and has_layer_sharding:
             adapter.slice_transformer_blocks(
                 start_layer=shard_metadata.start_layer,
                 end_layer=shard_metadata.end_layer,

@@ -1,5 +1,7 @@
+from collections.abc import Iterator
+from dataclasses import dataclass
 from math import ceil
-from typing import Any, Optional
+from typing import Any, Optional, final
 
 import mlx.core as mx
 from mflux.models.common.config.config import Config
@@ -23,6 +25,16 @@ from exo.worker.engines.image.pipeline.block_wrapper import (
     JointBlockWrapper,
     SingleBlockWrapper,
 )
+
+
+@final
+@dataclass
+class CfgBranch:
+    positive: bool
+    embeds: mx.array
+    mask: mx.array | None
+    pooled: mx.array | None
+    cond_latents: mx.array | None
 
 
 def calculate_patch_heights(
@@ -77,22 +89,11 @@ class DiffusionRunner:
         self.adapter = adapter
         self.group = group
 
-        if group is None:
-            self.rank = 0
-            self.world_size = 1
-            self.next_rank = 0
-            self.prev_rank = 0
-            self.start_layer = 0
-            self.end_layer = config.total_blocks
-        else:
-            self.rank = shard_metadata.device_rank
-            self.world_size = shard_metadata.world_size
-            self.next_rank = (self.rank + 1) % self.world_size
-            self.prev_rank = (self.rank - 1 + self.world_size) % self.world_size
-            self.start_layer = shard_metadata.start_layer
-            self.end_layer = shard_metadata.end_layer
+        self._init_cfg_topology(shard_metadata)
 
-        self.num_patches = num_patches if num_patches else max(1, self.world_size)
+        self.num_patches = (
+            num_patches if num_patches else max(1, self.pipeline_world_size)
+        )
 
         self.total_joint = config.joint_block_count
         self.total_single = config.single_block_count
@@ -101,6 +102,56 @@ class DiffusionRunner:
         self._guidance_override: float | None = None
 
         self._compute_assigned_blocks()
+
+    def _init_cfg_topology(self, shard_metadata: PipelineShardMetadata) -> None:
+        """Initialize CFG and pipeline topology from shard metadata."""
+        if self.group is None:
+            self.rank = 0
+            self.world_size = 1
+            self.start_layer = 0
+            self.end_layer = self.config.total_blocks
+            # CFG topology: single node handles all CFG sequentially
+            self.cfg_rank = 0
+            self.cfg_world_size = 1
+            self.cfg_parallel = False
+            # Pipeline topology within CFG group
+            self.pipeline_world_size = 1
+            self.pipeline_rank = 0
+            # Communication ranks (not used in single node)
+            self.next_pipeline_rank = 0
+            self.prev_pipeline_rank = 0
+            self.cfg_peer_rank: int | None = None
+        else:
+            self.rank = shard_metadata.device_rank
+            self.world_size = shard_metadata.world_size
+            self.start_layer = shard_metadata.start_layer
+            self.end_layer = shard_metadata.end_layer
+
+            # CFG topology from shard metadata
+            self.cfg_rank = shard_metadata.cfg_rank
+            self.cfg_world_size = shard_metadata.cfg_world_size
+            self.cfg_parallel = self.cfg_world_size > 1
+
+            # Pipeline topology within CFG group
+            self.pipeline_world_size = shard_metadata.pipeline_world_size
+            self.pipeline_rank = shard_metadata.pipeline_rank
+
+            # Pipeline communication ranks (within CFG group)
+            cfg_group_start = self.cfg_rank * self.pipeline_world_size
+            self.next_pipeline_rank = cfg_group_start + (
+                (self.pipeline_rank + 1) % self.pipeline_world_size
+            )
+            self.prev_pipeline_rank = cfg_group_start + (
+                (self.pipeline_rank - 1 + self.pipeline_world_size)
+                % self.pipeline_world_size
+            )
+
+            # CFG peer rank (the corresponding node in the other CFG group)
+            if self.cfg_parallel:
+                other_cfg_group_start = (1 - self.cfg_rank) * self.pipeline_world_size
+                self.cfg_peer_rank = other_cfg_group_start + self.pipeline_rank
+            else:
+                self.cfg_peer_rank = None
 
     def _compute_assigned_blocks(self) -> None:
         """Determine which joint/single blocks this stage owns."""
@@ -138,11 +189,11 @@ class DiffusionRunner:
 
     @property
     def is_first_stage(self) -> bool:
-        return self.rank == 0
+        return self.pipeline_rank == 0
 
     @property
     def is_last_stage(self) -> bool:
-        return self.rank == self.world_size - 1
+        return self.pipeline_rank == self.pipeline_world_size - 1
 
     @property
     def is_distributed(self) -> bool:
@@ -152,6 +203,95 @@ class DiffusionRunner:
         if self._guidance_override is not None:
             return self._guidance_override
         return self.config.guidance_scale
+
+    def _get_cfg_branches(self, prompt_data: PromptData) -> Iterator[CfgBranch]:
+        """Yield the CFG branches this node should process.
+
+        - No CFG: yields one branch (positive)
+        - CFG parallel: yields one branch (our assigned branch)
+        - Sequential CFG: yields two branches (positive, then negative)
+        """
+        if not self.adapter.needs_cfg:
+            embeds, mask, pooled, cond = prompt_data.get_cfg_branch_data(positive=True)
+            yield CfgBranch(
+                positive=True,
+                embeds=embeds,
+                mask=mask,
+                pooled=pooled,
+                cond_latents=cond,
+            )
+        elif self.cfg_parallel:
+            positive = self.cfg_rank == 0
+            embeds, mask, pooled, cond = prompt_data.get_cfg_branch_data(positive)
+            yield CfgBranch(
+                positive=positive,
+                embeds=embeds,
+                mask=mask,
+                pooled=pooled,
+                cond_latents=cond,
+            )
+        else:
+            pos_embeds, pos_mask, pos_pooled, pos_cond = (
+                prompt_data.get_cfg_branch_data(positive=True)
+            )
+            yield CfgBranch(
+                positive=True,
+                embeds=pos_embeds,
+                mask=pos_mask,
+                pooled=pos_pooled,
+                cond_latents=pos_cond,
+            )
+            neg_embeds, neg_mask, neg_pooled, neg_cond = (
+                prompt_data.get_cfg_branch_data(positive=False)
+            )
+            yield CfgBranch(
+                positive=False,
+                embeds=neg_embeds,
+                mask=neg_mask,
+                pooled=neg_pooled,
+                cond_latents=neg_cond,
+            )
+
+    def _combine_cfg_results(self, results: list[tuple[bool, mx.array]]) -> mx.array:
+        if len(results) == 1:
+            positive, noise = results[0]
+            if self.cfg_parallel and self.is_last_stage:
+                return self._exchange_and_apply_guidance(noise, positive)
+            return noise
+
+        noise_neg = next(n for p, n in results if not p)
+        noise_pos = next(n for p, n in results if p)
+        return self._apply_guidance(noise_pos, noise_neg)
+
+    def _exchange_and_apply_guidance(
+        self, noise: mx.array, is_positive: bool
+    ) -> mx.array:
+        assert self.group is not None
+        assert self.cfg_peer_rank is not None
+
+        if is_positive:
+            sent = mx.distributed.send(noise, self.cfg_peer_rank, group=self.group)
+            mx.async_eval(sent)
+            noise_neg = mx.distributed.recv_like(
+                noise, self.cfg_peer_rank, group=self.group
+            )
+            mx.eval(noise_neg)
+            noise_pos = noise
+        else:
+            sent = mx.distributed.send(noise, self.cfg_peer_rank, group=self.group)
+            mx.async_eval(sent)
+            noise_pos = mx.distributed.recv_like(
+                noise, self.cfg_peer_rank, group=self.group
+            )
+            mx.eval(noise_pos)
+            noise_neg = noise
+
+        return self._apply_guidance(noise_pos, noise_neg)
+
+    def _apply_guidance(self, noise_pos: mx.array, noise_neg: mx.array) -> mx.array:
+        scale = self._get_effective_guidance_scale()
+        assert scale is not None
+        return self.adapter.apply_guidance(noise_pos, noise_neg, scale)
 
     def _ensure_wrappers(
         self,
@@ -470,7 +610,9 @@ class DiffusionRunner:
     ) -> mx.array:
         if self.group is None:
             return self._single_node_step(t, config, latents, prompt_data)
-        elif t < config.init_time_step + num_sync_steps:
+        elif (
+            self.pipeline_world_size == 1 or t < config.init_time_step + num_sync_steps
+        ):
             with trace(name=f"sync {t}", rank=self.rank, category="sync"):
                 return self._sync_pipeline_step(
                     t,
@@ -496,42 +638,29 @@ class DiffusionRunner:
         prompt_data: PromptData,
     ) -> mx.array:
         cond_image_grid = prompt_data.cond_image_grid
-        needs_cfg = self.adapter.needs_cfg
+        results: list[tuple[bool, mx.array]] = []
 
-        if needs_cfg:
-            batched_data = prompt_data.get_batched_cfg_data()
-            assert batched_data is not None, "CFG model must provide batched data"
-            prompt_embeds, encoder_mask, batched_pooled, cond_latents = batched_data
+        for branch in self._get_cfg_branches(prompt_data):
+            # Reset caches before each branch to ensure no state contamination
+            self._reset_all_caches()
+
             pooled_embeds = (
-                batched_pooled if batched_pooled is not None else prompt_embeds
-            )
-            step_latents = mx.concatenate([latents, latents], axis=0)
-        else:
-            prompt_embeds = prompt_data.prompt_embeds
-            pooled_embeds = prompt_data.pooled_prompt_embeds
-            encoder_mask = prompt_data.get_encoder_hidden_states_mask(positive=True)
-            cond_latents = prompt_data.conditioning_latents
-            step_latents = latents
-
-        noise = self._forward_pass(
-            step_latents,
-            prompt_embeds,
-            pooled_embeds,
-            t=t,
-            config=config,
-            encoder_hidden_states_mask=encoder_mask,
-            cond_image_grid=cond_image_grid,
-            conditioning_latents=cond_latents,
-        )
-
-        if needs_cfg:
-            noise_pos, noise_neg = mx.split(noise, 2, axis=0)
-            guidance_scale = self._get_effective_guidance_scale()
-            assert guidance_scale is not None
-            noise = self.adapter.apply_guidance(
-                noise_pos, noise_neg, guidance_scale=guidance_scale
+                branch.pooled if branch.pooled is not None else branch.embeds
             )
 
+            noise = self._forward_pass(
+                latents,
+                branch.embeds,
+                pooled_embeds,
+                t=t,
+                config=config,
+                encoder_hidden_states_mask=branch.mask,
+                cond_image_grid=cond_image_grid,
+                conditioning_latents=branch.cond_latents,
+            )
+            results.append((branch.positive, noise))
+
+        noise = self._combine_cfg_results(results)
         return config.scheduler.step(noise=noise, timestep=t, latents=latents)  # pyright: ignore[reportAny]
 
     def _create_patches(
@@ -582,7 +711,7 @@ class DiffusionRunner:
             )
 
         text_embeddings = self.adapter.compute_text_embeddings(
-            t, config, pooled_prompt_embeds
+            t, config, pooled_prompt_embeds, hidden_states=hidden_states
         )
         image_rotary_embeddings = self.adapter.compute_rotary_embeddings(
             prompt_embeds,
@@ -595,18 +724,20 @@ class DiffusionRunner:
         if self.has_joint_blocks:
             if not self.is_first_stage:
                 with trace(
-                    name=f"recv {self.prev_rank}", rank=self.rank, category="comms"
+                    name=f"recv {self.prev_pipeline_rank}",
+                    rank=self.rank,
+                    category="comms",
                 ):
                     hidden_states = mx.distributed.recv(
                         (batch_size, num_img_tokens, hidden_dim),
                         dtype,
-                        self.prev_rank,
+                        self.prev_pipeline_rank,
                         group=self.group,
                     )
                     encoder_hidden_states = mx.distributed.recv(
                         (batch_size, text_seq_len, hidden_dim),
                         dtype,
-                        self.prev_rank,
+                        self.prev_pipeline_rank,
                         group=self.group,
                     )
                     mx.eval(hidden_states, encoder_hidden_states)
@@ -640,33 +771,41 @@ class DiffusionRunner:
                 hidden_states = concatenated
             else:
                 with trace(
-                    name=f"send {self.next_rank}", rank=self.rank, category="comms"
+                    name=f"send {self.next_pipeline_rank}",
+                    rank=self.rank,
+                    category="comms",
                 ):
                     concatenated = mx.distributed.send(
-                        concatenated, self.next_rank, group=self.group
+                        concatenated, self.next_pipeline_rank, group=self.group
                     )
                     mx.async_eval(concatenated)
 
         elif self.has_joint_blocks and not self.is_last_stage:
             assert encoder_hidden_states is not None
-            with trace(name=f"send {self.next_rank}", rank=self.rank, category="comms"):
+            with trace(
+                name=f"send {self.next_pipeline_rank}",
+                rank=self.rank,
+                category="comms",
+            ):
                 hidden_states = mx.distributed.send(
-                    hidden_states, self.next_rank, group=self.group
+                    hidden_states, self.next_pipeline_rank, group=self.group
                 )
                 encoder_hidden_states = mx.distributed.send(
-                    encoder_hidden_states, self.next_rank, group=self.group
+                    encoder_hidden_states, self.next_pipeline_rank, group=self.group
                 )
                 mx.async_eval(hidden_states, encoder_hidden_states)
 
         if self.has_single_blocks:
             if not self.owns_concat_stage and not self.is_first_stage:
                 with trace(
-                    name=f"recv {self.prev_rank}", rank=self.rank, category="comms"
+                    name=f"recv {self.prev_pipeline_rank}",
+                    rank=self.rank,
+                    category="comms",
                 ):
                     hidden_states = mx.distributed.recv(
                         (batch_size, text_seq_len + num_img_tokens, hidden_dim),
                         dtype,
-                        self.prev_rank,
+                        self.prev_pipeline_rank,
                         group=self.group,
                     )
                     mx.eval(hidden_states)
@@ -690,10 +829,12 @@ class DiffusionRunner:
 
             if not self.is_last_stage:
                 with trace(
-                    name=f"send {self.next_rank}", rank=self.rank, category="comms"
+                    name=f"send {self.next_pipeline_rank}",
+                    rank=self.rank,
+                    category="comms",
                 ):
                     hidden_states = mx.distributed.send(
-                        hidden_states, self.next_rank, group=self.group
+                        hidden_states, self.next_pipeline_rank, group=self.group
                     )
                     mx.async_eval(hidden_states)
 
@@ -716,83 +857,71 @@ class DiffusionRunner:
         kontext_image_ids: mx.array | None = None,
     ) -> mx.array:
         prev_latents = hidden_states
-        needs_cfg = self.adapter.needs_cfg
         cond_image_grid = prompt_data.cond_image_grid
 
         scaled_hidden_states = config.scheduler.scale_model_input(hidden_states, t)  # pyright: ignore[reportAny]
         original_latent_tokens: int = scaled_hidden_states.shape[1]  # pyright: ignore[reportAny]
 
-        if needs_cfg:
-            batched_data = prompt_data.get_batched_cfg_data()
-            assert batched_data is not None, "CFG model must provide batched data"
-            prompt_embeds, encoder_mask, batched_pooled, cond_latents = batched_data
+        results: list[tuple[bool, mx.array]] = []
+
+        for branch in self._get_cfg_branches(prompt_data):
             pooled_embeds = (
-                batched_pooled if batched_pooled is not None else prompt_embeds
+                branch.pooled if branch.pooled is not None else branch.embeds
             )
-            step_latents = mx.concatenate(
-                [scaled_hidden_states, scaled_hidden_states], axis=0
+
+            cond_latents = branch.cond_latents
+            if cond_latents is not None:
+                num_img_tokens: int = original_latent_tokens + cond_latents.shape[1]
+            else:
+                num_img_tokens = original_latent_tokens
+
+            step_latents: mx.array = scaled_hidden_states  # pyright: ignore[reportAny]
+            if self.is_first_stage and cond_latents is not None:
+                step_latents = mx.concatenate([step_latents, cond_latents], axis=1)
+
+            text_seq_len = branch.embeds.shape[1]
+            self._ensure_wrappers(text_seq_len, branch.mask)
+
+            noise = self._run_sync_pass(
+                t,
+                config,
+                step_latents,
+                branch.embeds,
+                pooled_embeds,
+                branch.mask,
+                cond_image_grid,
+                kontext_image_ids,
+                num_img_tokens,
+                original_latent_tokens,
+                cond_latents,
             )
-        else:
-            prompt_embeds = prompt_data.prompt_embeds
-            pooled_embeds = prompt_data.pooled_prompt_embeds
-            encoder_mask = prompt_data.get_encoder_hidden_states_mask(positive=True)
-            cond_latents = prompt_data.conditioning_latents
-            step_latents = scaled_hidden_states  # pyright: ignore[reportAny]
 
-        if cond_latents is not None:
-            num_img_tokens: int = original_latent_tokens + cond_latents.shape[1]
-        else:
-            num_img_tokens = original_latent_tokens
-
-        if self.is_first_stage and cond_latents is not None:
-            step_latents = mx.concatenate([step_latents, cond_latents], axis=1)
-
-        text_seq_len = prompt_embeds.shape[1]
-        self._ensure_wrappers(text_seq_len, encoder_mask)
-
-        noise = self._run_sync_pass(
-            t,
-            config,
-            step_latents,
-            prompt_embeds,
-            pooled_embeds,
-            encoder_mask,
-            cond_image_grid,
-            kontext_image_ids,
-            num_img_tokens,
-            original_latent_tokens,
-            cond_latents,
-        )
+            if self.is_last_stage:
+                assert noise is not None
+                results.append((branch.positive, noise))
 
         if self.is_last_stage:
-            assert noise is not None
-            if needs_cfg:
-                noise_pos, noise_neg = mx.split(noise, 2, axis=0)
-                guidance_scale = self._get_effective_guidance_scale()
-                assert guidance_scale is not None
-                noise = self.adapter.apply_guidance(
-                    noise_pos, noise_neg, guidance_scale
-                )
+            noise = self._combine_cfg_results(results)
 
             hidden_states = config.scheduler.step(  # pyright: ignore[reportAny]
                 noise=noise, timestep=t, latents=prev_latents
             )
 
             if not self.is_first_stage:
-                with trace(name="send 0", rank=self.rank, category="comms"):
-                    hidden_states = mx.distributed.send(
-                        hidden_states, 0, group=self.group
-                    )
-                    mx.async_eval(hidden_states)
+                cfg_group_start = self.cfg_rank * self.pipeline_world_size
+                hidden_states = mx.distributed.send(
+                    hidden_states, cfg_group_start, group=self.group
+                )
+                mx.async_eval(hidden_states)
 
         elif self.is_first_stage:
-            with trace(
-                name=f"recv {self.world_size - 1}", rank=self.rank, category="comms"
-            ):
-                hidden_states = mx.distributed.recv_like(
-                    prev_latents, src=self.world_size - 1, group=self.group
-                )
-                mx.eval(hidden_states)
+            last_pipeline_rank = (
+                self.cfg_rank * self.pipeline_world_size + self.pipeline_world_size - 1
+            )
+            hidden_states = mx.distributed.recv_like(
+                prev_latents, src=last_pipeline_rank, group=self.group
+            )
+            mx.eval(hidden_states)
 
         else:
             hidden_states = prev_latents
@@ -809,40 +938,9 @@ class DiffusionRunner:
         kontext_image_ids: mx.array | None = None,
     ) -> mx.array:
         patch_latents, token_indices = self._create_patches(latents, config)
-        needs_cfg = self.adapter.needs_cfg
         cond_image_grid = prompt_data.cond_image_grid
 
-        if needs_cfg:
-            batched_data = prompt_data.get_batched_cfg_data()
-            assert batched_data is not None, "CFG model must provide batched data"
-            prompt_embeds, encoder_mask, batched_pooled, _ = batched_data
-            pooled_embeds = (
-                batched_pooled if batched_pooled is not None else prompt_embeds
-            )
-        else:
-            prompt_embeds = prompt_data.prompt_embeds
-            pooled_embeds = prompt_data.pooled_prompt_embeds
-            encoder_mask = prompt_data.get_encoder_hidden_states_mask(positive=True)
-
-        text_seq_len = prompt_embeds.shape[1]
-        self._ensure_wrappers(text_seq_len, encoder_mask)
-        self._set_text_seq_len(text_seq_len)
-
-        if self.joint_block_wrappers:
-            for wrapper in self.joint_block_wrappers:
-                wrapper.set_encoder_mask(encoder_mask)
-
-        text_embeddings = self.adapter.compute_text_embeddings(t, config, pooled_embeds)
-        image_rotary_embeddings = self.adapter.compute_rotary_embeddings(
-            prompt_embeds,
-            config,
-            encoder_hidden_states_mask=encoder_mask,
-            cond_image_grid=cond_image_grid,
-            kontext_image_ids=kontext_image_ids,
-        )
-
         prev_patch_latents = [p for p in patch_latents]
-        encoder_hidden_states: mx.array | None = None
 
         for patch_idx in range(len(patch_latents)):
             patch = patch_latents[patch_idx]
@@ -852,35 +950,64 @@ class DiffusionRunner:
                 and not self.is_last_stage
                 and not is_first_async_step
             ):
+                last_pipeline_rank = (
+                    self.cfg_rank * self.pipeline_world_size
+                    + self.pipeline_world_size
+                    - 1
+                )
                 with trace(
-                    name=f"recv {self.prev_rank}", rank=self.rank, category="comms"
+                    name=f"recv {last_pipeline_rank}",
+                    rank=self.rank,
+                    category="comms",
                 ):
                     patch = mx.distributed.recv_like(
-                        patch, src=self.prev_rank, group=self.group
+                        patch, src=last_pipeline_rank, group=self.group
                     )
                     mx.eval(patch)
 
-            step_patch = mx.concatenate([patch, patch], axis=0) if needs_cfg else patch
+            results: list[tuple[bool, mx.array]] = []
+            encoder_hidden_states: mx.array | None = None
 
-            noise, encoder_hidden_states = self._run_single_patch_pass(
-                patch=step_patch,
-                patch_idx=patch_idx,
-                token_indices=token_indices[patch_idx],
-                prompt_embeds=prompt_embeds,
-                text_embeddings=text_embeddings,
-                image_rotary_embeddings=image_rotary_embeddings,
-                encoder_hidden_states=encoder_hidden_states,
-            )
+            for branch in self._get_cfg_branches(prompt_data):
+                pooled_embeds = (
+                    branch.pooled if branch.pooled is not None else branch.embeds
+                )
+
+                text_seq_len = branch.embeds.shape[1]
+                self._ensure_wrappers(text_seq_len, branch.mask)
+                self._set_text_seq_len(text_seq_len)
+
+                if self.joint_block_wrappers:
+                    for wrapper in self.joint_block_wrappers:
+                        wrapper.set_encoder_mask(branch.mask)
+
+                text_embeddings = self.adapter.compute_text_embeddings(
+                    t, config, pooled_embeds
+                )
+                image_rotary_embeddings = self.adapter.compute_rotary_embeddings(
+                    branch.embeds,
+                    config,
+                    encoder_hidden_states_mask=branch.mask,
+                    cond_image_grid=cond_image_grid,
+                    kontext_image_ids=kontext_image_ids,
+                )
+
+                noise, encoder_hidden_states = self._run_single_patch_pass(
+                    patch=patch,
+                    patch_idx=patch_idx,
+                    token_indices=token_indices[patch_idx],
+                    prompt_embeds=branch.embeds,
+                    text_embeddings=text_embeddings,
+                    image_rotary_embeddings=image_rotary_embeddings,
+                    encoder_hidden_states=encoder_hidden_states,
+                )
+
+                if self.is_last_stage:
+                    assert noise is not None
+                    results.append((branch.positive, noise))
 
             if self.is_last_stage:
-                assert noise is not None
-                if needs_cfg:
-                    noise_pos, noise_neg = mx.split(noise, 2, axis=0)
-                    guidance_scale = self._get_effective_guidance_scale()
-                    assert guidance_scale is not None
-                    noise = self.adapter.apply_guidance(
-                        noise_pos, noise_neg, guidance_scale
-                    )
+                noise = self._combine_cfg_results(results)
 
                 patch_latents[patch_idx] = config.scheduler.step(  # pyright: ignore[reportAny]
                     noise=noise,
@@ -889,11 +1016,14 @@ class DiffusionRunner:
                 )
 
                 if not self.is_first_stage and t != config.num_inference_steps - 1:
+                    cfg_group_start = self.cfg_rank * self.pipeline_world_size
                     with trace(
-                        name=f"send {self.next_rank}", rank=self.rank, category="comms"
+                        name=f"send {cfg_group_start}",
+                        rank=self.rank,
+                        category="comms",
                     ):
                         patch_latents[patch_idx] = mx.distributed.send(
-                            patch_latents[patch_idx], self.next_rank, group=self.group
+                            patch_latents[patch_idx], cfg_group_start, group=self.group
                         )
                         mx.async_eval(patch_latents[patch_idx])
 
@@ -935,24 +1065,28 @@ class DiffusionRunner:
             if not self.is_first_stage:
                 patch_len = patch.shape[1]
                 with trace(
-                    name=f"recv {self.prev_rank}", rank=self.rank, category="comms"
+                    name=f"recv {self.prev_pipeline_rank}",
+                    rank=self.rank,
+                    category="comms",
                 ):
                     patch = mx.distributed.recv(
                         (batch_size, patch_len, hidden_dim),
                         patch.dtype,
-                        self.prev_rank,
+                        self.prev_pipeline_rank,
                         group=self.group,
                     )
                     mx.eval(patch)
 
                 if patch_idx == 0:
                     with trace(
-                        name=f"recv {self.prev_rank}", rank=self.rank, category="comms"
+                        name=f"recv {self.prev_pipeline_rank}",
+                        rank=self.rank,
+                        category="comms",
                     ):
                         encoder_hidden_states = mx.distributed.recv(
                             (batch_size, text_seq_len, hidden_dim),
                             patch.dtype,
-                            self.prev_rank,
+                            self.prev_pipeline_rank,
                             group=self.group,
                         )
                         mx.eval(encoder_hidden_states)
@@ -989,25 +1123,35 @@ class DiffusionRunner:
                 patch = patch_concat
             else:
                 with trace(
-                    name=f"send {self.next_rank}", rank=self.rank, category="comms"
+                    name=f"send {self.next_pipeline_rank}",
+                    rank=self.rank,
+                    category="comms",
                 ):
                     patch_concat = mx.distributed.send(
-                        patch_concat, self.next_rank, group=self.group
+                        patch_concat, self.next_pipeline_rank, group=self.group
                     )
                     mx.async_eval(patch_concat)
 
         elif self.has_joint_blocks and not self.is_last_stage:
-            with trace(name=f"send {self.next_rank}", rank=self.rank, category="comms"):
-                patch = mx.distributed.send(patch, self.next_rank, group=self.group)
+            with trace(
+                name=f"send {self.next_pipeline_rank}",
+                rank=self.rank,
+                category="comms",
+            ):
+                patch = mx.distributed.send(
+                    patch, self.next_pipeline_rank, group=self.group
+                )
                 mx.async_eval(patch)
 
             if patch_idx == 0:
                 assert encoder_hidden_states is not None
                 with trace(
-                    name=f"send {self.next_rank}", rank=self.rank, category="comms"
+                    name=f"send {self.next_pipeline_rank}",
+                    rank=self.rank,
+                    category="comms",
                 ):
                     encoder_hidden_states = mx.distributed.send(
-                        encoder_hidden_states, self.next_rank, group=self.group
+                        encoder_hidden_states, self.next_pipeline_rank, group=self.group
                     )
                     mx.async_eval(encoder_hidden_states)
 
@@ -1015,12 +1159,14 @@ class DiffusionRunner:
             if not self.owns_concat_stage and not self.is_first_stage:
                 patch_len = patch.shape[1]
                 with trace(
-                    name=f"recv {self.prev_rank}", rank=self.rank, category="comms"
+                    name=f"recv {self.prev_pipeline_rank}",
+                    rank=self.rank,
+                    category="comms",
                 ):
                     patch = mx.distributed.recv(
                         (batch_size, text_seq_len + patch_len, hidden_dim),
                         patch.dtype,
-                        self.prev_rank,
+                        self.prev_pipeline_rank,
                         group=self.group,
                     )
                     mx.eval(patch)
@@ -1044,14 +1190,18 @@ class DiffusionRunner:
 
             if not self.is_last_stage:
                 with trace(
-                    name=f"send {self.next_rank}", rank=self.rank, category="comms"
+                    name=f"send {self.next_pipeline_rank}",
+                    rank=self.rank,
+                    category="comms",
                 ):
-                    patch = mx.distributed.send(patch, self.next_rank, group=self.group)
+                    patch = mx.distributed.send(
+                        patch, self.next_pipeline_rank, group=self.group
+                    )
                     mx.async_eval(patch)
 
         noise: mx.array | None = None
         if self.is_last_stage:
-            patch = patch[:, text_seq_len:, :]
-            noise = self.adapter.final_projection(patch, text_embeddings)
+            patch_img_only = patch[:, text_seq_len:, :]
+            noise = self.adapter.final_projection(patch_img_only, text_embeddings)
 
         return noise, encoder_hidden_states
