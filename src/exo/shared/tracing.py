@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import json
-import os
-import re
-import threading
+import logging
 import time
 from collections import defaultdict
 from collections.abc import Generator
@@ -11,9 +9,11 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final, cast, final
+from typing import cast, final
 
-_TRACING_ENV_VAR: Final[str] = "EXO_TRACING_ENABLED"
+from exo.shared.constants import EXO_TRACING_ENABLED
+
+logger = logging.getLogger(__name__)
 
 # Context variable to track the current trace category for hierarchical nesting
 _current_category: ContextVar[str | None] = ContextVar("current_category", default=None)
@@ -58,32 +58,29 @@ class TraceStats:
     total_wall_time_us: int = 0
     by_category: dict[str, CategoryStats] = field(default_factory=dict)
     by_rank: dict[int, dict[str, CategoryStats]] = field(default_factory=dict)
-    comm_matrix: dict[tuple[int, int], int] = field(default_factory=dict)
 
 
 # Global trace buffer - each rank accumulates traces here
-_trace_buffer_lock = threading.Lock()
 _trace_buffer: list[TraceEvent] = []
 
 
 def is_tracing_enabled() -> bool:
     """Check if tracing is enabled via environment variable."""
-    return os.environ.get(_TRACING_ENV_VAR, "").lower() in ("1", "true", "yes")
+    return EXO_TRACING_ENABLED
 
 
 def _record_span(
     name: str, start_us: int, duration_us: int, rank: int, category: str
 ) -> None:
-    with _trace_buffer_lock:
-        _trace_buffer.append(
-            TraceEvent(
-                name=name,
-                start_us=start_us,
-                duration_us=duration_us,
-                rank=rank,
-                category=category,
-            )
+    _trace_buffer.append(
+        TraceEvent(
+            name=name,
+            start_us=start_us,
+            duration_us=duration_us,
+            rank=rank,
+            category=category,
         )
+    )
 
 
 @contextmanager
@@ -130,31 +127,29 @@ def trace(
 
 
 def get_trace_buffer() -> list[TraceEvent]:
-    with _trace_buffer_lock:
-        return list(_trace_buffer)
+    return list(_trace_buffer)
 
 
 def clear_trace_buffer() -> None:
-    with _trace_buffer_lock:
-        _trace_buffer.clear()
+    _trace_buffer.clear()
 
 
 def export_trace(traces: list[TraceEvent], output_path: Path) -> None:
     trace_events: list[dict[str, object]] = []
 
-    for trace in traces:
+    for event in traces:
         # Chrome trace format uses "X" for complete events (with duration)
-        event: dict[str, object] = {
-            "name": trace.name,
-            "cat": trace.category,
+        chrome_event: dict[str, object] = {
+            "name": event.name,
+            "cat": event.category,
             "ph": "X",
-            "ts": trace.start_us,
-            "dur": trace.duration_us,
+            "ts": event.start_us,
+            "dur": event.duration_us,
             "pid": 0,
-            "tid": trace.rank,
-            "args": {"rank": trace.rank},
+            "tid": event.rank,
+            "args": {"rank": event.rank},
         }
-        trace_events.append(event)
+        trace_events.append(chrome_event)
 
     ranks_seen = set(t.rank for t in traces)
     for rank in ranks_seen:
@@ -170,9 +165,12 @@ def export_trace(traces: list[TraceEvent], output_path: Path) -> None:
 
     chrome_trace = {"traceEvents": trace_events}
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w") as f:
-        json.dump(chrome_trace, f, indent=2)
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w") as f:
+            json.dump(chrome_trace, f, indent=2)
+    except OSError as e:
+        logger.warning("Failed to export trace to %s: %s", output_path, e)
 
 
 def export_local_traces(rank: int) -> None:
@@ -182,7 +180,10 @@ def export_local_traces(rank: int) -> None:
     local_traces = get_trace_buffer()
     if local_traces:
         output_path = Path.home() / ".exo" / "traces" / f"trace_{rank}.json"
-        export_trace(local_traces, output_path)
+        try:
+            export_trace(local_traces, output_path)
+        except Exception as e:
+            logger.warning("Failed to export local traces for rank %d: %s", rank, e)
 
     clear_trace_buffer()
 
@@ -213,50 +214,25 @@ def merge_trace_files(trace_dir: Path | None = None) -> Path | None:
                     event["args"]["rank"] = file_rank
             merged_events.extend(events)
 
-    output_path = Path("trace.json")
-    with open(output_path, "w") as f:
-        json.dump({"traceEvents": merged_events}, f, indent=2)
+    output_path = Path.home() / ".exo" / "traces" / "merged_trace.json"
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w") as f:
+            json.dump({"traceEvents": merged_events}, f, indent=2)
+    except OSError as e:
+        logger.warning("Failed to write merged trace to %s: %s", output_path, e)
+        return None
 
     return output_path
 
 
 def _format_duration(us: int | float) -> str:
-    """Format microseconds as human-readable duration."""
     if us < 1000:
         return f"{us:.0f}µs"
     elif us < 1_000_000:
         return f"{us / 1000:.2f}ms"
     else:
         return f"{us / 1_000_000:.2f}s"
-
-
-def _parse_comm_pair(name: str, rank: int) -> tuple[int, int] | None:
-    """Extract (from_rank, to_rank) from communication event names.
-
-    Args:
-        name: Event name like "recv_*_from_1" or "send_*_to_0"
-        rank: The rank that recorded this event
-
-    Returns:
-        (from_rank, to_rank) tuple or None if not a comm event
-    """
-    # Match patterns like "recv_*_from_N" or "recv N"
-    recv_match = re.match(r"^recv.*_from_(\d+)$", name) or re.match(
-        r"^recv\s+(\d+)$", name
-    )
-    if recv_match:
-        from_rank = int(recv_match.group(1))
-        return (from_rank, rank)
-
-    # Match patterns like "send_*_to_N" or "send N"
-    send_match = re.match(r"^send.*_to_(\d+)$", name) or re.match(
-        r"^send\s+(\d+)$", name
-    )
-    if send_match:
-        to_rank = int(send_match.group(1))
-        return (rank, to_rank)
-
-    return None
 
 
 def load_trace_file(path: Path) -> list[TraceEvent]:
@@ -319,7 +295,6 @@ def compute_stats(traces: list[TraceEvent]) -> TraceStats:
     by_rank: dict[int, dict[str, CategoryStats]] = defaultdict(
         lambda: defaultdict(CategoryStats)
     )
-    comm_matrix: dict[tuple[int, int], int] = defaultdict(int)
 
     for event in traces:
         # By category
@@ -328,14 +303,8 @@ def compute_stats(traces: list[TraceEvent]) -> TraceStats:
         # By rank and category
         by_rank[event.rank][event.category].add(event.duration_us)
 
-        # Communication matrix
-        comm_pair = _parse_comm_pair(event.name, event.rank)
-        if comm_pair is not None:
-            comm_matrix[comm_pair] += event.duration_us
-
     stats.by_category = dict(by_category)
     stats.by_rank = {k: dict(v) for k, v in by_rank.items()}
-    stats.comm_matrix = dict(comm_matrix)
 
     return stats
 
@@ -460,27 +429,6 @@ def print_stats(stats: TraceStats) -> None:
                     rank_stats.items(), key=lambda x: x[1].total_us, reverse=True
                 ):
                     print(f"    {category}: {_format_duration(cat_stats.total_us)}")
-        print()
-
-    # Communication Matrix
-    if stats.comm_matrix:
-        print("Communication Matrix (total time):")
-        ranks = sorted(set(r for pair in stats.comm_matrix for r in pair))
-
-        # Header row
-        header = "         " + "".join(f"→ Rank {r:>2}  " for r in ranks)
-        print(header)
-
-        # Data rows
-        for from_rank in ranks:
-            row = f"Rank {from_rank:>2}  "
-            for to_rank in ranks:
-                if from_rank == to_rank:
-                    row += "       -   "
-                else:
-                    duration = stats.comm_matrix.get((from_rank, to_rank), 0)
-                    row += f"{_format_duration(duration):>10s} "
-            print(row)
         print()
 
 

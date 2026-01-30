@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import anyio
 from anyio.abc import TaskGroup
@@ -11,6 +12,7 @@ from exo.master.placement import (
     place_instance,
 )
 from exo.shared.apply import apply
+from exo.shared.tracing import TraceEvent, export_trace, is_tracing_enabled
 from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
@@ -35,6 +37,8 @@ from exo.shared.types.events import (
     NodeTimedOut,
     TaskCreated,
     TaskDeleted,
+    TraceEventData,
+    TracesCollected,
 )
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
@@ -86,6 +90,8 @@ class Master:
         self._multi_buffer = MultiSourceBuffer[NodeId, Event]()
         # TODO: not have this
         self._event_log: list[Event] = []
+        self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
+        self._expected_ranks: dict[TaskId, set[int]] = {}
 
     async def run(self):
         logger.info("Starting Master")
@@ -187,13 +193,14 @@ class Master:
                             )
 
                             task_id = TaskId()
+                            selected_instance_id = available_instance_ids[0]
                             generated_events.append(
                                 TaskCreated(
                                     task_id=task_id,
                                     task=ImageGenerationTask(
                                         task_id=task_id,
                                         command_id=command.command_id,
-                                        instance_id=available_instance_ids[0],
+                                        instance_id=selected_instance_id,
                                         task_status=TaskStatus.Pending,
                                         task_params=command.task_params,
                                     ),
@@ -201,6 +208,17 @@ class Master:
                             )
 
                             self.command_task_mapping[command.command_id] = task_id
+
+                            if is_tracing_enabled():
+                                selected_instance = self.state.instances.get(
+                                    selected_instance_id
+                                )
+                                if selected_instance:
+                                    ranks = set(
+                                        shard.device_rank
+                                        for shard in selected_instance.shard_assignments.runner_to_shard.values()
+                                    )
+                                    self._expected_ranks[task_id] = ranks
                         case ImageEdits():
                             for instance in self.state.instances.values():
                                 if (
@@ -229,13 +247,14 @@ class Master:
                             )
 
                             task_id = TaskId()
+                            selected_instance_id = available_instance_ids[0]
                             generated_events.append(
                                 TaskCreated(
                                     task_id=task_id,
                                     task=ImageEditsTask(
                                         task_id=task_id,
                                         command_id=command.command_id,
-                                        instance_id=available_instance_ids[0],
+                                        instance_id=selected_instance_id,
                                         task_status=TaskStatus.Pending,
                                         task_params=command.task_params,
                                     ),
@@ -243,6 +262,17 @@ class Master:
                             )
 
                             self.command_task_mapping[command.command_id] = task_id
+
+                            if is_tracing_enabled():
+                                selected_instance = self.state.instances.get(
+                                    selected_instance_id
+                                )
+                                if selected_instance:
+                                    ranks = set(
+                                        shard.device_rank
+                                        for shard in selected_instance.shard_assignments.runner_to_shard.values()
+                                    )
+                                    self._expected_ranks[task_id] = ranks
                         case DeleteInstance():
                             placement = delete_instance(command, self.state.instances)
                             transition_events = get_transition_events(
@@ -335,6 +365,10 @@ class Master:
                     local_event.origin,
                 )
                 for event in self._multi_buffer.drain():
+                    if isinstance(event, TracesCollected):
+                        self._handle_traces_collected(event)
+                        continue
+
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
                     indexed = IndexedEvent(event=event, idx=len(self._event_log))
                     self.state = apply(self.state, indexed)
@@ -373,3 +407,38 @@ class Master:
                 event=event.event,
             )
         )
+
+    def _handle_traces_collected(self, event: TracesCollected) -> None:
+        task_id = event.task_id
+        if task_id not in self._pending_traces:
+            self._pending_traces[task_id] = {}
+        self._pending_traces[task_id][event.rank] = event.traces
+
+        if (
+            task_id in self._expected_ranks
+            and set(self._pending_traces[task_id].keys())
+            >= self._expected_ranks[task_id]
+        ):
+            self._merge_and_save_traces(task_id)
+
+    def _merge_and_save_traces(self, task_id: TaskId) -> None:
+        all_traces: list[TraceEvent] = []
+        for trace_data in self._pending_traces[task_id].values():
+            for t in trace_data:
+                all_traces.append(
+                    TraceEvent(
+                        name=t.name,
+                        start_us=t.start_us,
+                        duration_us=t.duration_us,
+                        rank=t.rank,
+                        category=t.category,
+                    )
+                )
+
+        output_path = Path.home() / ".exo" / "traces" / f"trace_{task_id}.json"
+        export_trace(all_traces, output_path)
+        logger.info(f"Merged traces saved to {output_path}")
+
+        del self._pending_traces[task_id]
+        if task_id in self._expected_ranks:
+            del self._expected_ranks[task_id]

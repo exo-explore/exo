@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE
 from exo.shared.models.model_cards import ModelId, ModelTask
+from exo.shared.tracing import clear_trace_buffer, get_trace_buffer, is_tracing_enabled
 from exo.shared.types.api import ImageGenerationStats
 from exo.shared.types.chunks import ErrorChunk, ImageChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
@@ -27,6 +28,8 @@ from exo.shared.types.events import (
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
+    TraceEventData,
+    TracesCollected,
 )
 from exo.shared.types.tasks import (
     ConnectToGroup,
@@ -408,6 +411,10 @@ def main(
                                 )
                             )
                         raise
+                    finally:
+                        _send_traces_if_enabled(
+                            event_sender, task.task_id, shard_metadata.device_rank
+                        )
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
@@ -466,6 +473,10 @@ def main(
                                 )
                             )
                         raise
+                    finally:
+                        _send_traces_if_enabled(
+                            event_sender, task.task_id, shard_metadata.device_rank
+                        )
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
@@ -638,6 +649,36 @@ def _send_image_chunk(
                 ),
             )
         )
+
+
+def _send_traces_if_enabled(
+    event_sender: MpSender[Event],
+    task_id: TaskId,
+    rank: int,
+) -> None:
+    if not is_tracing_enabled():
+        return
+
+    traces = get_trace_buffer()
+    if traces:
+        trace_data = [
+            TraceEventData(
+                name=t.name,
+                start_us=t.start_us,
+                duration_us=t.duration_us,
+                rank=t.rank,
+                category=t.category,
+            )
+            for t in traces
+        ]
+        event_sender.send(
+            TracesCollected(
+                task_id=task_id,
+                rank=rank,
+                traces=trace_data,
+            )
+        )
+    clear_trace_buffer()
 
 
 def _process_image_response(

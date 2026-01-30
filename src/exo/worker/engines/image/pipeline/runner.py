@@ -8,7 +8,6 @@ from tqdm import tqdm
 
 from exo.shared.tracing import (
     clear_trace_buffer,
-    export_local_traces,
     is_tracing_enabled,
     trace,
 )
@@ -370,8 +369,6 @@ class DiffusionRunner:
                 ) from None
 
         ctx.after_loop(latents=latents)  # pyright: ignore[reportAny]
-
-        export_local_traces(self.rank)
 
         return latents
 

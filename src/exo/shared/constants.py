@@ -53,3 +53,9 @@ EXO_IMAGE_CACHE_DIR = EXO_CACHE_HOME / "images"
 EXO_ENABLE_IMAGE_MODELS = (
     os.getenv("EXO_ENABLE_IMAGE_MODELS", "false").lower() == "true"
 )
+
+EXO_TRACING_ENABLED = os.getenv("EXO_TRACING_ENABLED", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)

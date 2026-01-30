@@ -3,7 +3,9 @@ import contextlib
 import json
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from datetime import datetime, timezone
 from http import HTTPStatus
+from pathlib import Path
 from typing import Annotated, Literal, cast
 from uuid import uuid4
 
@@ -48,6 +50,7 @@ from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
 )
+from exo.shared.tracing import compute_stats, load_trace_file
 from exo.shared.types.api import (
     AdvancedImageParams,
     BenchChatCompletionRequest,
@@ -81,6 +84,13 @@ from exo.shared.types.api import (
     StartDownloadParams,
     StartDownloadResponse,
     ToolCall,
+    TraceCategoryStats,
+    TraceEventResponse,
+    TraceListItem,
+    TraceListResponse,
+    TraceRankStats,
+    TraceResponse,
+    TraceStatsResponse,
 )
 from exo.shared.types.chunks import (
     ErrorChunk,
@@ -275,6 +285,10 @@ class API:
         self.app.get("/events")(lambda: self._event_log)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
+        self.app.get("/v1/traces")(self.list_traces)
+        self.app.get("/v1/traces/{task_id}")(self.get_trace)
+        self.app.get("/v1/traces/{task_id}/stats")(self.get_trace_stats)
+        self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -1325,3 +1339,110 @@ class API:
         )
         await self._send_download(command)
         return DeleteDownloadResponse(command_id=command.command_id)
+
+    def _get_traces_dir(self) -> Path:
+        return Path.home() / ".exo" / "traces"
+
+    def _get_trace_path(self, task_id: str) -> Path:
+        return self._get_traces_dir() / f"trace_{task_id}.json"
+
+    async def list_traces(self) -> TraceListResponse:
+        traces_dir = self._get_traces_dir()
+        traces: list[TraceListItem] = []
+
+        if not traces_dir.exists():
+            return TraceListResponse(traces=[])
+
+        for trace_file in sorted(
+            traces_dir.glob("trace_*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        ):
+            # Extract task_id from filename (trace_{task_id}.json)
+            task_id = trace_file.stem.removeprefix("trace_")
+            stat = trace_file.stat()
+            created_at = datetime.fromtimestamp(
+                stat.st_mtime, tz=timezone.utc
+            ).isoformat()
+            traces.append(
+                TraceListItem(
+                    task_id=task_id,
+                    created_at=created_at,
+                    file_size=stat.st_size,
+                )
+            )
+
+        return TraceListResponse(traces=traces)
+
+    async def get_trace(self, task_id: str) -> TraceResponse:
+        trace_path = self._get_trace_path(task_id)
+
+        if not trace_path.exists():
+            raise HTTPException(status_code=404, detail=f"Trace not found: {task_id}")
+
+        trace_events = load_trace_file(trace_path)
+
+        return TraceResponse(
+            task_id=task_id,
+            traces=[
+                TraceEventResponse(
+                    name=event.name,
+                    start_us=event.start_us,
+                    duration_us=event.duration_us,
+                    rank=event.rank,
+                    category=event.category,
+                )
+                for event in trace_events
+            ],
+        )
+
+    async def get_trace_stats(self, task_id: str) -> TraceStatsResponse:
+        trace_path = self._get_trace_path(task_id)
+
+        if not trace_path.exists():
+            raise HTTPException(status_code=404, detail=f"Trace not found: {task_id}")
+
+        trace_events = load_trace_file(trace_path)
+        stats = compute_stats(trace_events)
+
+        return TraceStatsResponse(
+            task_id=task_id,
+            total_wall_time_us=stats.total_wall_time_us,
+            by_category={
+                category: TraceCategoryStats(
+                    total_us=cat_stats.total_us,
+                    count=cat_stats.count,
+                    min_us=cat_stats.min_us,
+                    max_us=cat_stats.max_us,
+                    avg_us=cat_stats.avg_us,
+                )
+                for category, cat_stats in stats.by_category.items()
+            },
+            by_rank={
+                rank: TraceRankStats(
+                    by_category={
+                        category: TraceCategoryStats(
+                            total_us=cat_stats.total_us,
+                            count=cat_stats.count,
+                            min_us=cat_stats.min_us,
+                            max_us=cat_stats.max_us,
+                            avg_us=cat_stats.avg_us,
+                        )
+                        for category, cat_stats in rank_stats.items()
+                    }
+                )
+                for rank, rank_stats in stats.by_rank.items()
+            },
+        )
+
+    async def get_trace_raw(self, task_id: str) -> FileResponse:
+        trace_path = self._get_trace_path(task_id)
+
+        if not trace_path.exists():
+            raise HTTPException(status_code=404, detail=f"Trace not found: {task_id}")
+
+        return FileResponse(
+            path=trace_path,
+            media_type="application/json",
+            filename=f"trace_{task_id}.json",
+        )
