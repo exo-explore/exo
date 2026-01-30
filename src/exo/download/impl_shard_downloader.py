@@ -166,9 +166,8 @@ class ResumableShardDownloader(ShardDownloader):
         for task in asyncio.as_completed(tasks):
             try:
                 yield await task
-            # TODO: except Exception
             except Exception as e:
-                logger.error("Error downloading shard:", e)
+                logger.warning(f"Error downloading shard: {type(e).__name__}")
 
     async def get_shard_download_status_for_shard(
         self, shard: ShardMetadata
