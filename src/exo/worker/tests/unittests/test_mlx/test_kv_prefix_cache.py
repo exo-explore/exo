@@ -14,9 +14,9 @@ from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.cache import (
     KVPrefixCache,
-    _cache_length,
-    _get_prefix_length,
+    cache_length,
     encode_prompt,
+    get_prefix_length,
     make_kv_cache,
 )
 from exo.worker.engines.mlx.generator.generate import mlx_generate, prefill
@@ -35,47 +35,47 @@ class TestGetPrefixLength:
     def test_identical_arrays(self):
         a = mx.array([1, 2, 3, 4, 5])
         b = mx.array([1, 2, 3, 4, 5])
-        assert _get_prefix_length(a, b) == 5
+        assert get_prefix_length(a, b) == 5
 
     def test_no_common_prefix(self):
         a = mx.array([1, 2, 3])
         b = mx.array([4, 5, 6])
-        assert _get_prefix_length(a, b) == 0
+        assert get_prefix_length(a, b) == 0
 
     def test_partial_prefix(self):
         a = mx.array([1, 2, 3, 4, 5])
         b = mx.array([1, 2, 3, 7, 8])
-        assert _get_prefix_length(a, b) == 3
+        assert get_prefix_length(a, b) == 3
 
     def test_prompt_longer_than_cached(self):
         a = mx.array([1, 2, 3, 4, 5])
         b = mx.array([1, 2, 3])
-        assert _get_prefix_length(a, b) == 3
+        assert get_prefix_length(a, b) == 3
 
     def test_cached_longer_than_prompt(self):
         a = mx.array([1, 2, 3])
         b = mx.array([1, 2, 3, 4, 5])
-        assert _get_prefix_length(a, b) == 3
+        assert get_prefix_length(a, b) == 3
 
     def test_single_token_match(self):
         a = mx.array([1, 2, 3])
         b = mx.array([1, 5, 6])
-        assert _get_prefix_length(a, b) == 1
+        assert get_prefix_length(a, b) == 1
 
     def test_empty_prompt(self):
         a = mx.array([]).astype(mx.int32)
         b = mx.array([1, 2, 3])
-        assert _get_prefix_length(a, b) == 0
+        assert get_prefix_length(a, b) == 0
 
     def test_empty_cached(self):
         a = mx.array([1, 2, 3])
         b = mx.array([]).astype(mx.int32)
-        assert _get_prefix_length(a, b) == 0
+        assert get_prefix_length(a, b) == 0
 
     def test_both_empty(self):
         a = mx.array([]).astype(mx.int32)
         b = mx.array([]).astype(mx.int32)
-        assert _get_prefix_length(a, b) == 0
+        assert get_prefix_length(a, b) == 0
 
 
 class TestKVPrefix:
@@ -146,7 +146,7 @@ class TestKVPrefixCacheWithModel:
         prefill(model, tokenizer, make_sampler(0.0), tokens, cache)
 
         # Cache should now hold the prompt tokens
-        assert _cache_length(cache) == len(tokens)
+        assert cache_length(cache) == len(tokens)
 
     def test_add_and_get_exact_match(self, model_and_tokenizer):
         model, tokenizer = model_and_tokenizer
@@ -166,7 +166,7 @@ class TestKVPrefixCacheWithModel:
         kv_prefix_cache.add_kv_cache(prompt, cache)
 
         assert len(kv_prefix_cache.prompts) == 1
-        stored_length = _cache_length(kv_prefix_cache.caches[0])
+        stored_length = cache_length(kv_prefix_cache.caches[0])
         assert stored_length > 0
 
         # Retrieve with same prompt: exact match
@@ -209,7 +209,7 @@ class TestKVPrefixCacheWithModel:
         long_tokens = encode_prompt(tokenizer, long_prompt)
 
         # The prompts share a prefix (chat template preamble + "Hi")
-        expected_prefix = _get_prefix_length(long_tokens, short_tokens)
+        expected_prefix = get_prefix_length(long_tokens, short_tokens)
         assert expected_prefix > 0, (
             "Prompts should share a prefix from the chat template"
         )
@@ -243,7 +243,7 @@ class TestKVPrefixCacheWithModel:
         kv_prefix_cache = KVPrefixCache(tokenizer)
         kv_prefix_cache.add_kv_cache(prompt, cache)
 
-        stored_length = _cache_length(kv_prefix_cache.caches[0])
+        stored_length = cache_length(kv_prefix_cache.caches[0])
 
         # Get cache and mutate it (simulating what generation does)
         result_cache, _, matched_index = kv_prefix_cache.get_kv_cache(model, prompt)
@@ -259,7 +259,7 @@ class TestKVPrefixCacheWithModel:
         mx.eval([c.keys for c in result_cache])
 
         # Stored cache must be unchanged
-        assert _cache_length(kv_prefix_cache.caches[0]) == stored_length
+        assert cache_length(kv_prefix_cache.caches[0]) == stored_length
 
     def test_stored_cache_survives_repeated_get_mutate_cycles(
         self, model_and_tokenizer
@@ -281,7 +281,7 @@ class TestKVPrefixCacheWithModel:
         kv_prefix_cache = KVPrefixCache(tokenizer)
         kv_prefix_cache.add_kv_cache(prompt, cache)
 
-        stored_length = _cache_length(kv_prefix_cache.caches[0])
+        stored_length = cache_length(kv_prefix_cache.caches[0])
 
         for i in range(3):
             result_cache, _, _ = kv_prefix_cache.get_kv_cache(model, prompt)
@@ -293,7 +293,7 @@ class TestKVPrefixCacheWithModel:
                 layer_cache.update_and_fetch(extra, extra)
             mx.eval([c.keys for c in result_cache])
 
-            assert _cache_length(kv_prefix_cache.caches[0]) == stored_length, (
+            assert cache_length(kv_prefix_cache.caches[0]) == stored_length, (
                 f"Failed on loop {i}"
             )
 
@@ -325,7 +325,7 @@ class TestKVPrefixCacheWithModel:
         assert len(kv_prefix_cache.caches) == 1
         # Cache should contain prompt + generated tokens
         expected_length = len(prompt_tokens) + generated_tokens
-        assert _cache_length(kv_prefix_cache.caches[0]) == expected_length
+        assert cache_length(kv_prefix_cache.caches[0]) == expected_length
 
     def test_mlx_generate_second_call_gets_prefix_hit(self, model_and_tokenizer):
         """Second mlx_generate call with same prompt should get a prefix hit from stored cache."""
@@ -400,7 +400,7 @@ class TestKVPrefixCacheWithModel:
         first_gen_time = time.perf_counter() - t0
 
         assert len(kv_prefix_cache.prompts) == 1
-        first_cache_length = _cache_length(kv_prefix_cache.caches[0])
+        first_cache_length = cache_length(kv_prefix_cache.caches[0])
 
         # Second generation: same long prompt + extra content (simulating multi-turn)
         task2 = ChatCompletionTaskParams(
@@ -416,7 +416,7 @@ class TestKVPrefixCacheWithModel:
         prompt2_tokens = encode_prompt(tokenizer, prompt2)
 
         # Verify the prompts share a long prefix
-        prefix_len = _get_prefix_length(prompt2_tokens, prompt1_tokens)
+        prefix_len = get_prefix_length(prompt2_tokens, prompt1_tokens)
         assert prefix_len > 1000, "Prompts must share > 1000 token prefix"
 
         # Second generation should reuse the cached prefix (only prefill new tokens)
@@ -440,7 +440,7 @@ class TestKVPrefixCacheWithModel:
         # With prefix_hit > 1000, should update in-place (not add a second entry)
         assert len(kv_prefix_cache.prompts) == 1
         # Updated cache should be longer (prompt2 + generated > prompt1 + generated)
-        updated_cache_length = _cache_length(kv_prefix_cache.caches[0])
+        updated_cache_length = cache_length(kv_prefix_cache.caches[0])
         assert updated_cache_length > first_cache_length
 
     def test_mlx_generate_stored_cache_not_mutated(self, model_and_tokenizer):
@@ -465,7 +465,7 @@ class TestKVPrefixCacheWithModel:
         ):
             pass
 
-        first_cache_length = _cache_length(kv_prefix_cache.caches[0])
+        firstcache_length = cache_length(kv_prefix_cache.caches[0])
 
         # Second generation gets the cache and mutates it during generation
         for _response in mlx_generate(
@@ -478,7 +478,7 @@ class TestKVPrefixCacheWithModel:
             pass
 
         # The first stored cache must not have been mutated by the second generation
-        assert _cache_length(kv_prefix_cache.caches[0]) == first_cache_length
+        assert cache_length(kv_prefix_cache.caches[0]) == firstcache_length
 
     def test_evicts_lru_entry_under_memory_pressure(self, model_and_tokenizer):
         """Under memory pressure, adding a new cache entry evicts the least recently used one."""
@@ -540,6 +540,6 @@ class TestKVPrefixCacheWithModel:
         assert len(kv_prefix_cache.prompts) == 1
         # The surviving entry should be the newly added one
         new_tokens = encode_prompt(tokenizer, prompt)
-        assert _get_prefix_length(kv_prefix_cache.prompts[0], new_tokens) == len(
+        assert get_prefix_length(kv_prefix_cache.prompts[0], new_tokens) == len(
             new_tokens
         )

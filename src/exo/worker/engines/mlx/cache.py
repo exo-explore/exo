@@ -3,6 +3,7 @@ from copy import deepcopy
 from typing import Any, cast
 
 import mlx.core as mx
+import psutil
 from mlx_lm.models.cache import (
     KVCache,
     QuantizedKVCache,
@@ -12,25 +13,29 @@ from mlx_lm.models.cache import (
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
 from exo.worker.runner.bootstrap import logger
 
 # Fraction of device memory above which LRU eviction kicks in
-_DEFAULT_MEMORY_THRESHOLD = 0.85
+_DEFAULT_MEMORY_THRESHOLD = 0.9
 _MEMORY_THRESHOLD = float(
     os.environ.get("EXO_MEMORY_THRESHOLD", _DEFAULT_MEMORY_THRESHOLD)
 )
 
 
 class KVPrefixCache:
-    def __init__(self, tokenizer: TokenizerWrapper):
+    def __init__(
+        self, tokenizer: TokenizerWrapper, group: mx.distributed.Group | None = None
+    ):
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
         self.caches: list[KVCacheType] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
         self._access_counter: int = 0
         self._tokenizer: TokenizerWrapper = tokenizer
+        self._group = group
 
     def clear(self):
         """Clear all cached prompts and caches."""
@@ -81,13 +86,13 @@ class KVPrefixCache:
         best_snapshot_index, best_snapshot_length = None, 0
 
         for i, cached_prompt in enumerate(self.prompts):
-            length = _get_prefix_length(tokenized_prompt, cached_prompt)
+            length = get_prefix_length(tokenized_prompt, cached_prompt)
 
             if length == max_length:
                 # Exact match - cached prompt starts with our entire prompt
                 # Trim cache to prompt length - 1, return last token for stream_generate
                 prompt_cache = deepcopy(self.caches[i])
-                cached_length = _cache_length(self.caches[i])
+                cached_length = cache_length(self.caches[i])
                 tokens_to_trim = cached_length - (max_length - 1)
                 if tokens_to_trim > 0:
                     trim_prompt_cache(cast(list[Any], prompt_cache), tokens_to_trim)
@@ -109,7 +114,7 @@ class KVPrefixCache:
             prompt_cache = deepcopy(self.caches[best_snapshot_index])
 
             # Trim removes tokens from the end, so we trim (cached_length - prefix_length) to keep the prefix
-            cached_length = _cache_length(self.caches[best_snapshot_index])
+            cached_length = cache_length(self.caches[best_snapshot_index])
             tokens_to_trim = cached_length - best_snapshot_length
             if tokens_to_trim > 0:
                 trim_prompt_cache(cast(list[Any], prompt_cache), tokens_to_trim)
@@ -131,29 +136,37 @@ class KVPrefixCache:
             return prompt_cache, tokenized_prompt, None
 
     def _evict_if_needed(self):
-        """Evict least recently used entries while memory pressure is high."""
+        """Evict least recently used entries while memory usage is high."""
         if len(self.caches) == 0:
             return
 
-        active: int = mx.metal.get_active_memory()
-        limit = int(mx.metal.device_info()["max_recommended_working_set_size"])
-        if active < limit * _MEMORY_THRESHOLD:
-            return
-
         # Evict LRU entries until below threshold or only one entry left
-        while len(self.caches) > 0:
+        while (
+            len(self.caches) > 1
+            and self.get_memory_used_percentage() > _MEMORY_THRESHOLD
+        ):
             lru_index = self._last_used.index(min(self._last_used))
             evicted_tokens = len(self.prompts[lru_index])
             self.prompts.pop(lru_index)
             self.caches.pop(lru_index)
             self._last_used.pop(lru_index)
             logger.info(
-                f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory pressure"
+                f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory usage"
             )
 
-            active = mx.metal.get_active_memory()
-            if active < limit * _MEMORY_THRESHOLD:
-                break
+    def get_memory_used_percentage(self) -> float:
+        local_pressure: float = get_memory_used_percentage()
+
+        if self._group is None:
+            return local_pressure
+
+        all_pressure = mx.distributed.all_gather(
+            mx.array([local_pressure], dtype=mx.float32),
+            group=self._group,
+        )
+        # .item() evals.
+        max_pressure = float(mx.max(all_pressure).item())
+        return max_pressure
 
 
 def encode_prompt(tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
@@ -168,13 +181,13 @@ def encode_prompt(tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
     return mx.array(tokenized_prompt)
 
 
-def _cache_length(cache: KVCacheType) -> int:
+def cache_length(cache: KVCacheType) -> int:
     """Get the number of tokens in a KV cache."""
     # Use .offset attribute which all cache types have (len() not implemented in older QuantizedKVCache)
     return max(c.offset for c in cache)  # type: ignore
 
 
-def _get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
+def get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
     """Find the length of the common prefix between two token arrays."""
     n = min(int(prompt.shape[0]), int(cached_prompt.shape[0]))
     if n == 0:
@@ -183,6 +196,17 @@ def _get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
     equal = mx.equal(prompt[:n], cached_prompt[:n]).astype(mx.int32)
     prefix_mask = mx.cumprod(equal)  # stays 1 until first mismatch, then 0 forever
     return int(mx.sum(prefix_mask).item())
+
+
+def get_available_memory() -> Memory:
+    mem: int = psutil.virtual_memory().available
+    return Memory.from_bytes(mem)
+
+
+def get_memory_used_percentage() -> float:
+    mem = psutil.virtual_memory()
+    # percent is 0-100
+    return float(mem.percent / 100)
 
 
 def make_kv_cache(
