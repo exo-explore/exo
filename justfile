@@ -38,3 +38,12 @@ clean:
     rm -rf dashboard/node_modules
     rm -rf dashboard/.svelte-kit
     rm -rf dashboard/build
+
+docker-build:
+    docker build -t exo:cuda13 .
+
+docker-run *ARGS:
+    docker compose run --rm exo {{ARGS}}
+
+docker-shell:
+    docker compose run --rm --entrypoint /bin/bash exo
