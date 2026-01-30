@@ -65,7 +65,9 @@ from exo.shared.types.api import (
     StartDownloadParams,
     StartDownloadResponse,
     StreamingChoiceResponse,
+    StreamOptions,
     ToolCall,
+    Usage,
 )
 from exo.shared.types.chunks import (
     ErrorChunk,
@@ -113,7 +115,9 @@ def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None)
 
 
 def chunk_to_response(
-    chunk: TokenChunk | ToolCallChunk, command_id: CommandId
+    chunk: TokenChunk | ToolCallChunk,
+    command_id: CommandId,
+    usage: Usage | None,
 ) -> ChatCompletionResponse:
     return ChatCompletionResponse(
         id=command_id,
@@ -138,6 +142,7 @@ def chunk_to_response(
                 finish_reason=chunk.finish_reason,
             )
         ],
+        usage=usage,
     )
 
 
@@ -522,9 +527,10 @@ class API:
                 del self._chat_completion_queues[command_id]
 
     async def _generate_chat_stream(
-        self, command_id: CommandId
+        self, command_id: CommandId, stream_options: StreamOptions | None = None
     ) -> AsyncGenerator[str, None]:
         """Generate chat completion stream as JSON strings."""
+        include_usage = stream_options.include_usage if stream_options else False
 
         async for chunk in self._chat_chunk_stream(command_id):
             assert not isinstance(chunk, ImageChunk)
@@ -540,8 +546,10 @@ class API:
                 yield "data: [DONE]\n\n"
                 return
 
+            usage = chunk.usage if include_usage else None
+
             chunk_response: ChatCompletionResponse = chunk_to_response(
-                chunk, command_id
+                chunk, command_id, usage=usage
             )
             logger.debug(f"chunk_response: {chunk_response}")
 
@@ -559,6 +567,7 @@ class API:
         tool_calls: list[ToolCall] = []
         model: str | None = None
         finish_reason: FinishReason | None = None
+        usage: Usage | None = None
 
         async for chunk in self._chat_chunk_stream(command_id):
             if isinstance(chunk, ErrorChunk):
@@ -583,6 +592,9 @@ class API:
                     for i, tool in enumerate(chunk.tool_calls)
                 )
 
+            if chunk.usage is not None:
+                usage = chunk.usage
+
             if chunk.finish_reason is not None:
                 finish_reason = chunk.finish_reason
 
@@ -604,6 +616,7 @@ class API:
                     finish_reason=finish_reason,
                 )
             ],
+            usage=usage,
         )
 
     async def _collect_chat_completion_with_stats(
@@ -691,7 +704,7 @@ class API:
         await self._send(command)
         if payload.stream:
             return StreamingResponse(
-                self._generate_chat_stream(command.command_id),
+                self._generate_chat_stream(command.command_id, payload.stream_options),
                 media_type="text/event-stream",
             )
 

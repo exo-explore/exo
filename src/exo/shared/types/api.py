@@ -3,7 +3,7 @@ from collections.abc import Generator
 from typing import Annotated, Any, Literal
 
 from fastapi import UploadFile
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 from pydantic_core import PydanticUseDefault
 
 from exo.shared.models.model_cards import ModelCard, ModelId
@@ -11,7 +11,7 @@ from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
-from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
+from exo.utils.pydantic_ext import CamelCaseModel, ConfigDict, TaggedModel
 
 FinishReason = Literal[
     "stop", "length", "tool_calls", "content_filter", "function_call", "error"
@@ -116,8 +116,8 @@ class Usage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-    prompt_tokens_details: PromptTokensDetails | None = None
-    completion_tokens_details: CompletionTokensDetails | None = None
+    prompt_tokens_details: PromptTokensDetails
+    completion_tokens_details: CompletionTokensDetails
 
 
 class StreamingChoiceResponse(BaseModel):
@@ -170,6 +170,10 @@ class BenchChatCompletionResponse(ChatCompletionResponse):
     generation_stats: GenerationStats | None = None
 
 
+class StreamOptions(BaseModel):
+    include_usage: bool = False
+
+
 class ChatCompletionTaskParams(TaggedModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -186,6 +190,7 @@ class ChatCompletionTaskParams(TaggedModel):
     seed: int | None = None
     stop: str | list[str] | None = None
     stream: bool = False
+    stream_options: StreamOptions | None = None
     temperature: float | None = None
     top_p: float | None = None
     tools: list[dict[str, Any]] | None = None

@@ -277,9 +277,11 @@ def main(
                                 tokenizer.tool_parser,  # pyright: ignore[reportAny]
                             )
 
+                        completion_tokens = 0
                         for response in mlx_generator:
                             match response:
                                 case GenerationResponse():
+                                    completion_tokens += 1
                                     if (
                                         device_rank == 0
                                         and response.finish_reason == "error"
@@ -307,6 +309,7 @@ def main(
                                                     model=shard_metadata.model_card.model_id,
                                                     text=response.text,
                                                     token_id=response.token,
+                                                    usage=response.usage,
                                                     finish_reason=response.finish_reason,
                                                     stats=response.stats,
                                                 ),
@@ -320,6 +323,7 @@ def main(
                                                 chunk=ToolCallChunk(
                                                     tool_calls=response.tool_calls,
                                                     model=shard_metadata.model_card.model_id,
+                                                    usage=response.usage,
                                                 ),
                                             )
                                         )
@@ -535,7 +539,8 @@ def parse_gpt_oss(
                             name=current_tool_name,
                             arguments="".join(tool_arg_parts).strip(),
                         )
-                    ]
+                    ],
+                    usage=response.usage,
                 )
                 tool_arg_parts = []
             current_tool_name = recipient
@@ -683,7 +688,7 @@ def parse_tool_calls(
                     tools = [_validate_single_tool(tool) for tool in parsed]
                 else:
                     tools = [_validate_single_tool(parsed)]
-                yield ToolCallResponse(tool_calls=tools)
+                yield ToolCallResponse(tool_calls=tools, usage=response.usage)
 
             except (
                 json.JSONDecodeError,
