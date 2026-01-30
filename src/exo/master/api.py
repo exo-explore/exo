@@ -20,18 +20,19 @@ from hypercorn.typing import ASGIFramework
 from loguru import logger
 
 from exo.master.adapters.chat_completions import (
-    chat_request_to_internal,
+    chat_request_to_text_generation,
     collect_chat_response,
     generate_chat_stream,
 )
 from exo.master.adapters.claude import (
-    claude_request_to_internal,
+    claude_request_to_text_generation,
     collect_claude_response,
     generate_claude_stream,
 )
 from exo.master.adapters.responses import (
     collect_responses_response,
     generate_responses_stream,
+    responses_request_to_text_generation,
 )
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
@@ -49,14 +50,14 @@ from exo.shared.models.model_cards import (
 )
 from exo.shared.types.api import (
     AdvancedImageParams,
+    BenchChatCompletionRequest,
     BenchChatCompletionResponse,
-    BenchChatCompletionTaskParams,
     BenchImageGenerationResponse,
     BenchImageGenerationTaskParams,
     ChatCompletionChoice,
     ChatCompletionMessage,
+    ChatCompletionRequest,
     ChatCompletionResponse,
-    ChatCompletionTaskParams,
     CreateInstanceParams,
     CreateInstanceResponse,
     DeleteDownloadResponse,
@@ -66,7 +67,7 @@ from exo.shared.types.api import (
     FinishReason,
     GenerationStats,
     ImageData,
-    ImageEditsInternalParams,
+    ImageEditsTaskParams,
     ImageGenerationResponse,
     ImageGenerationStats,
     ImageGenerationTaskParams,
@@ -583,28 +584,14 @@ class API:
         )
 
     async def chat_completions(
-        self, payload: ChatCompletionTaskParams
+        self, payload: ChatCompletionRequest
     ) -> ChatCompletionResponse | StreamingResponse:
         """OpenAI Chat Completions API - adapter."""
-        internal_params = chat_request_to_internal(payload)
-        model_card = await resolve_model_card(ModelId(internal_params.model))
-        internal_params = internal_params.model_copy(
-            update={"model": model_card.model_id}
-        )
+        task_params = chat_request_to_text_generation(payload)
+        resolved_model = await self._resolve_and_validate_text_model(ModelId(task_params.model))
+        task_params = task_params.model_copy(update={"model": resolved_model})
 
-        if not any(
-            instance.shard_assignments.model_id == internal_params.model
-            for instance in self.state.instances.values()
-        ):
-            await self._trigger_notify_user_to_download_model(
-                ModelId(internal_params.model)
-            )
-            raise HTTPException(
-                status_code=404,
-                detail=f"No instance found for model {internal_params.model}",
-            )
-
-        command = TextGeneration(request_params=internal_params)
+        command = TextGeneration(task_params=task_params)
         await self._send(command)
 
         if payload.stream:
@@ -616,45 +603,45 @@ class API:
                 media_type="text/event-stream",
             )
 
-        try:
-            return await collect_chat_response(
-                command.command_id,
-                self._token_chunk_stream(command.command_id),
-            )
-        except ValueError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
-
-    async def bench_chat_completions(
-        self, payload: BenchChatCompletionTaskParams
-    ) -> BenchChatCompletionResponse:
-        # Convert to internal format (BenchChatCompletionTaskParams extends ChatCompletionTaskParams)
-        internal_params = chat_request_to_internal(payload)
-        model_card = await resolve_model_card(ModelId(internal_params.model))
-        internal_params = internal_params.model_copy(
-            update={"model": model_card.model_id}
+        return await collect_chat_response(
+            command.command_id,
+            self._token_chunk_stream(command.command_id),
         )
 
-        if not any(
-            instance.shard_assignments.model_id == internal_params.model
-            for instance in self.state.instances.values()
-        ):
-            await self._trigger_notify_user_to_download_model(
-                ModelId(internal_params.model)
-            )
-            raise HTTPException(
-                status_code=404,
-                detail=f"No instance found for model {internal_params.model}",
-            )
+    async def bench_chat_completions(
+        self, payload: BenchChatCompletionRequest
+    ) -> BenchChatCompletionResponse:
+        task_params = chat_request_to_text_generation(payload)
+        resolved_model = await self._resolve_and_validate_text_model(ModelId(task_params.model))
+        task_params = task_params.model_copy(update={"model": resolved_model})
 
-        internal_params = internal_params.model_copy(
+        task_params = task_params.model_copy(
             update={"stream": False, "metadata": {"bench": "true"}}
         )
 
-        command = TextGeneration(request_params=internal_params)
+        command = TextGeneration(task_params=task_params)
         await self._send(command)
 
         response = await self._collect_text_generation_with_stats(command.command_id)
         return response
+
+    async def _resolve_and_validate_text_model(self, model: ModelId) -> ModelId:
+        """Validate a text model exists and return the resolved model ID.
+
+        Raises HTTPException 404 if no instance is found for the model.
+        """
+        model_card = await resolve_model_card(model)
+        resolved = model_card.model_id
+        if not any(
+            instance.shard_assignments.model_id == resolved
+            for instance in self.state.instances.values()
+        ):
+            await self._trigger_notify_user_to_download_model(resolved)
+            raise HTTPException(
+                status_code=404,
+                detail=f"No instance found for model {resolved}",
+            )
+        return resolved
 
     async def _validate_image_model(self, model: str) -> ModelId:
         """Validate model exists and return resolved model ID.
@@ -710,7 +697,7 @@ class API:
         payload.model = await self._validate_image_model(payload.model)
 
         command = ImageGeneration(
-            request_params=payload,
+            task_params=payload,
         )
         await self._send(command)
 
@@ -958,7 +945,7 @@ class API:
         payload.partial_images = 0
 
         command = ImageGeneration(
-            request_params=payload,
+            task_params=payload,
         )
         await self._send(command)
 
@@ -1000,7 +987,7 @@ class API:
         total_chunks = len(data_chunks)
 
         command = ImageEdits(
-            request_params=ImageEditsInternalParams(
+            task_params=ImageEditsTaskParams(
                 image_data="",
                 total_input_chunks=total_chunks,
                 prompt=prompt,
@@ -1148,23 +1135,11 @@ class API:
         self, payload: ClaudeMessagesRequest
     ) -> ClaudeMessagesResponse | StreamingResponse:
         """Claude Messages API - adapter."""
-        internal_params = claude_request_to_internal(payload)
-        model_card = await resolve_model_card(ModelId(internal_params.model))
-        internal_params = internal_params.model_copy(
-            update={"model": model_card.model_id}
-        )
+        task_params = claude_request_to_text_generation(payload)
+        resolved_model = await self._resolve_and_validate_text_model(ModelId(task_params.model))
+        task_params = task_params.model_copy(update={"model": resolved_model})
 
-        if not any(
-            instance.shard_assignments.model_id == internal_params.model
-            for instance in self.state.instances.values()
-        ):
-            await self._trigger_notify_user_to_download_model(internal_params.model)
-            raise HTTPException(
-                status_code=404,
-                detail=f"No instance found for model {internal_params.model}",
-            )
-
-        command = TextGeneration(request_params=internal_params)
+        command = TextGeneration(task_params=task_params)
         await self._send(command)
 
         if payload.stream:
@@ -1177,38 +1152,21 @@ class API:
                 media_type="text/event-stream",
             )
 
-        try:
-            return await collect_claude_response(
-                command.command_id,
-                payload.model,
-                self._token_chunk_stream(command.command_id),
-            )
-        except ValueError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
+        return await collect_claude_response(
+            command.command_id,
+            payload.model,
+            self._token_chunk_stream(command.command_id),
+        )
 
     async def openai_responses(
         self, payload: ResponsesRequest
     ) -> ResponsesResponse | StreamingResponse:
         """OpenAI Responses API - native format."""
-        internal_params = payload
-        model_card = await resolve_model_card(internal_params.model)
-        internal_params = internal_params.model_copy(
-            update={"model": model_card.model_id}
-        )
+        task_params = responses_request_to_text_generation(payload)
+        resolved_model = await self._resolve_and_validate_text_model(task_params.model)
+        task_params = task_params.model_copy(update={"model": resolved_model})
 
-        if not any(
-            instance.shard_assignments.model_id == internal_params.model
-            for instance in self.state.instances.values()
-        ):
-            await self._trigger_notify_user_to_download_model(
-                ModelId(internal_params.model)
-            )
-            raise HTTPException(
-                status_code=404,
-                detail=f"No instance found for model {internal_params.model}",
-            )
-
-        command = TextGeneration(request_params=internal_params)
+        command = TextGeneration(task_params=task_params)
         await self._send(command)
 
         if payload.stream:
@@ -1221,14 +1179,11 @@ class API:
                 media_type="text/event-stream",
             )
 
-        try:
-            return await collect_responses_response(
-                command.command_id,
-                payload.model,
-                self._token_chunk_stream(command.command_id),
-            )
-        except ValueError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
+        return await collect_responses_response(
+            command.command_id,
+            payload.model,
+            self._token_chunk_stream(command.command_id),
+        )
 
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
