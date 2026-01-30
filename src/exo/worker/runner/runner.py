@@ -37,6 +37,7 @@ from exo.shared.types.tasks import (
     Shutdown,
     StartWarmup,
     Task,
+    TaskId,
     TaskStatus,
 )
 from exo.shared.types.worker.instances import BoundInstance
@@ -111,8 +112,12 @@ def main(
     event_sender.send(
         RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
     )
+    seen = set[TaskId]()
     with task_receiver as tasks:
         for task in tasks:
+            if task.task_id in seen:
+                logger.warning("repeat task - potential error")
+            seen.add(task.task_id)
             event_sender.send(
                 TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Running)
             )
