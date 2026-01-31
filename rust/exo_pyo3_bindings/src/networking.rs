@@ -13,7 +13,7 @@ use crate::pylibp2p::ident::{PyKeypair, PyPeerId};
 use libp2p::futures::StreamExt as _;
 use libp2p::gossipsub::{IdentTopic, Message, MessageId, PublishError};
 use libp2p::swarm::SwarmEvent;
-use libp2p::{gossipsub, mdns};
+use libp2p::{gossipsub, mdns, PeerId};
 use networking::discovery;
 use networking::swarm::create_swarm;
 use pyo3::prelude::{PyModule, PyModuleMethods as _};
@@ -101,7 +101,41 @@ mod exception {
     }
 }
 
-/// Connection or disconnection event discriminant type.
+/// Connection or disconnection event discriminant type (pure Rust, GIL-safe).
+/// Used internally in Tokio tasks to avoid Python GIL issues.
+#[derive(Debug, Clone, PartialEq)]
+enum ConnectionUpdateType {
+    Connected,
+    Disconnected,
+}
+
+/// Pure Rust connection update struct for use in Tokio tasks.
+/// This avoids holding Python objects (PyPeerId) in async contexts,
+/// which can cause GIL race conditions when dropped from Tokio worker threads.
+#[derive(Debug, Clone)]
+struct ConnectionUpdate {
+    update_type: ConnectionUpdateType,
+    peer_id: PeerId,
+    remote_ipv4: String,
+    remote_tcp_port: u16,
+}
+
+impl ConnectionUpdate {
+    /// Convert to Python-facing type. Must be called while holding the GIL.
+    fn into_py(self) -> PyConnectionUpdate {
+        PyConnectionUpdate {
+            update_type: match self.update_type {
+                ConnectionUpdateType::Connected => PyConnectionUpdateType::Connected,
+                ConnectionUpdateType::Disconnected => PyConnectionUpdateType::Disconnected,
+            },
+            peer_id: PyPeerId(self.peer_id),
+            remote_ipv4: self.remote_ipv4,
+            remote_tcp_port: self.remote_tcp_port,
+        }
+    }
+}
+
+/// Connection or disconnection event discriminant type (Python-facing).
 #[gen_stub_pyclass_enum]
 #[pyclass(eq, eq_int, name = "ConnectionUpdateType")]
 #[derive(Debug, Clone, PartialEq)]
@@ -110,6 +144,7 @@ enum PyConnectionUpdateType {
     Disconnected,
 }
 
+/// Python-facing connection update struct.
 #[gen_stub_pyclass]
 #[pyclass(frozen, name = "ConnectionUpdate")]
 #[derive(Debug, Clone)]
@@ -151,7 +186,7 @@ enum ToTask {
 async fn networking_task(
     mut swarm: networking::swarm::Swarm,
     mut to_task_rx: mpsc::Receiver<ToTask>,
-    connection_update_tx: mpsc::Sender<PyConnectionUpdate>,
+    connection_update_tx: mpsc::Sender<ConnectionUpdate>,
     gossipsub_message_tx: mpsc::Sender<(String, Vec<u8>)>,
 ) {
     use SwarmEvent::*;
@@ -251,9 +286,10 @@ async fn networking_task(
                         };
 
                         // send connection event to channel (or exit if connection closed)
-                        if let Err(e) = connection_update_tx.send(PyConnectionUpdate {
-                            update_type: PyConnectionUpdateType::Connected,
-                            peer_id: PyPeerId(peer_id),
+                        // NOTE: Using pure Rust ConnectionUpdate to avoid GIL issues in Tokio tasks
+                        if let Err(e) = connection_update_tx.send(ConnectionUpdate {
+                            update_type: ConnectionUpdateType::Connected,
+                            peer_id,
                             remote_ipv4,
                             remote_tcp_port,
                         }).await {
@@ -272,9 +308,10 @@ async fn networking_task(
                         };
 
                         // send disconnection event to channel (or exit if connection closed)
-                        if let Err(e) = connection_update_tx.send(PyConnectionUpdate {
-                            update_type: PyConnectionUpdateType::Disconnected,
-                            peer_id: PyPeerId(peer_id),
+                        // NOTE: Using pure Rust ConnectionUpdate to avoid GIL issues in Tokio tasks
+                        if let Err(e) = connection_update_tx.send(ConnectionUpdate {
+                            update_type: ConnectionUpdateType::Disconnected,
+                            peer_id,
                             remote_ipv4,
                             remote_tcp_port,
                         }).await {
@@ -299,7 +336,8 @@ async fn networking_task(
 struct PyNetworkingHandle {
     // channels
     to_task_tx: Option<mpsc::Sender<ToTask>>,
-    connection_update_rx: Mutex<mpsc::Receiver<PyConnectionUpdate>>,
+    // NOTE: Using pure Rust ConnectionUpdate to avoid GIL issues when Tokio tasks drop senders
+    connection_update_rx: Mutex<mpsc::Receiver<ConnectionUpdate>>,
     gossipsub_message_rx: Mutex<mpsc::Receiver<(String, Vec<u8>)>>,
 }
 
@@ -316,7 +354,7 @@ impl Drop for PyNetworkingHandle {
 impl PyNetworkingHandle {
     fn new(
         to_task_tx: mpsc::Sender<ToTask>,
-        connection_update_rx: mpsc::Receiver<PyConnectionUpdate>,
+        connection_update_rx: mpsc::Receiver<ConnectionUpdate>,
         gossipsub_message_rx: mpsc::Receiver<(String, Vec<u8>)>,
     ) -> Self {
         Self {
@@ -393,13 +431,16 @@ impl PyNetworkingHandle {
 
     /// Receives the next `ConnectionUpdate` from networking.
     async fn connection_update_recv(&self) -> PyResult<PyConnectionUpdate> {
-        self.connection_update_rx
+        // Receive the pure Rust ConnectionUpdate from the channel
+        let update = self.connection_update_rx
             .lock()
             .allow_threads_py() // allow-threads-aware async call
             .await
             .recv_py()
             .allow_threads_py() // allow-threads-aware async call
-            .await
+            .await?;
+        // Convert to Python type (we have the GIL here since this is a #[pymethod])
+        Ok(update.into_py())
     }
 
     /// Receives at most `limit` `ConnectionUpdate`s from networking and returns them.
@@ -408,13 +449,16 @@ impl PyNetworkingHandle {
     /// For `limit > 0`, if there are no `ConnectionUpdate`s in the channel's queue this method
     /// will sleep until a `ConnectionUpdate`s is sent.
     async fn connection_update_recv_many(&self, limit: usize) -> PyResult<Vec<PyConnectionUpdate>> {
-        self.connection_update_rx
+        // Receive pure Rust ConnectionUpdates from the channel
+        let updates = self.connection_update_rx
             .lock()
             .allow_threads_py() // allow-threads-aware async call
             .await
             .recv_many_py(limit)
             .allow_threads_py() // allow-threads-aware async call
-            .await
+            .await?;
+        // Convert to Python types (we have the GIL here since this is a #[pymethod])
+        Ok(updates.into_iter().map(ConnectionUpdate::into_py).collect())
     }
 
     // TODO: rn this blocks main thread if anything else is awaiting the channel (bc its a mutex)
