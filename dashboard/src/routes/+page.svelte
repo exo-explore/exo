@@ -100,6 +100,7 @@
       storage_size_megabytes?: number;
       tasks?: string[];
       hugging_face_id?: string;
+      tags?: string[];
     }>
   >([]);
 
@@ -140,7 +141,29 @@
     return model.tasks.includes("ImageToImage");
   }
   let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
-  type InstanceMeta = "MlxRing" | "MlxIbv" | "MlxJaccl";
+  type InstanceMeta = "MlxRing" | "MlxIbv" | "MlxJaccl" | "Pytorch";
+
+  // Helper to translate UI instance type to backend API value
+  function getBackendInstanceMeta(uiInstanceType: InstanceMeta): string {
+    // MlxIbv is shown in UI but backend only has MlxJaccl
+    if (uiInstanceType === "MlxIbv") {
+      return "MlxJaccl";
+    }
+    return uiInstanceType;
+  }
+
+  // Helper to check if a model is compatible with the selected engine
+  function isModelCompatibleWithEngine(model: { tags?: string[] }, instanceType: InstanceMeta): boolean {
+    const tags = model.tags || [];
+    
+    if (instanceType === "Pytorch") {
+      // PyTorch engine only works with pytorch-tagged models
+      return tags.includes("pytorch");
+    } else {
+      // MLX engines work with mlx-tagged models or untagged (legacy) models
+      return tags.includes("mlx") || tags.length === 0;
+    }
+  }
 
   // Launch defaults persistence
   const LAUNCH_DEFAULTS_KEY = "exo-launch-defaults";
@@ -229,6 +252,15 @@
 
   // Preview card hover state for highlighting nodes in topology
   let hoveredPreviewNodes = $state<Set<string>>(new Set());
+
+  // Clear selected model when instance type changes (models are filtered by engine)
+  let previousInstanceType = $state<InstanceMeta | null>(null);
+  $effect(() => {
+    if (previousInstanceType !== null && previousInstanceType !== selectedInstanceType) {
+      selectPreviewModel(null);
+    }
+    previousInstanceType = selectedInstanceType;
+  });
 
   // Computed: Check if filter is active (from store)
   const isFilterActive = $derived(() => nodeFilter.size > 0);
@@ -388,10 +420,16 @@
     return { ttft: 300, tps: 50 };
   }
 
-  const matchesSelectedRuntime = (runtime: InstanceMeta): boolean =>
-    selectedInstanceType === "MlxRing"
-      ? runtime === "MlxRing"
-      : runtime === "MlxIbv" || runtime === "MlxJaccl";
+  const matchesSelectedRuntime = (runtime: InstanceMeta): boolean => {
+    if (selectedInstanceType === "Pytorch") {
+      return runtime === "Pytorch";
+    }
+    if (selectedInstanceType === "MlxRing") {
+      return runtime === "MlxRing";
+    }
+    // MlxIbv maps to MlxJaccl on the backend
+    return runtime === "MlxIbv" || runtime === "MlxJaccl";
+  };
 
   // Helper to check if a model can be launched (has valid placement with >= minNodes)
   function canModelFit(modelId: string): boolean {
@@ -550,7 +588,7 @@
       } else {
         // Fallback: GET placement from API
         const placementResponse = await fetch(
-          `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${selectedSharding}&instance_meta=${selectedInstanceType}&min_nodes=${selectedMinNodes}`,
+          `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${selectedSharding}&instance_meta=${getBackendInstanceMeta(selectedInstanceType)}&min_nodes=${selectedMinNodes}`,
         );
 
         if (!placementResponse.ok) {
@@ -2487,9 +2525,9 @@
 
                   <!-- Options -->
                   <div class="py-1">
-                    {#each sortedModels().filter((m) => !modelDropdownSearch || (m.name || m.id)
+                    {#each sortedModels().filter((m) => isModelCompatibleWithEngine(m, selectedInstanceType) && (!modelDropdownSearch || (m.name || m.id)
                           .toLowerCase()
-                          .includes(modelDropdownSearch.toLowerCase())) as model}
+                          .includes(modelDropdownSearch.toLowerCase()))) as model}
                       {@const sizeGB = getModelSizeGB(model)}
                       {@const modelCanFit = hasEnoughMemory(model)}
                       {@const isImageModel = modelSupportsImageGeneration(
@@ -2637,7 +2675,8 @@
                 <div class="text-xs text-white/70 font-mono mb-2">
                   Instance Type:
                 </div>
-                <div class="flex gap-2">
+                <!-- MLX Options (Apple Silicon) - First Row -->
+                <div class="flex gap-2 mb-2">
                   <button
                     onclick={() => {
                       selectedInstanceType = "MlxRing";
@@ -2681,6 +2720,31 @@
                       {/if}
                     </span>
                     MLX RDMA
+                  </button>
+                </div>
+                <!-- PyTorch/NVIDIA Options - Second Row -->
+                <div class="flex gap-2">
+                  <button
+                    onclick={() => {
+                      selectedInstanceType = "Pytorch";
+                      saveLaunchDefaults();
+                    }}
+                    class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
+                    'Pytorch'
+                      ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                      : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                  >
+                    <span
+                      class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
+                      'Pytorch'
+                        ? 'border-exo-yellow'
+                        : 'border-exo-medium-gray'}"
+                    >
+                      {#if selectedInstanceType === "Pytorch"}
+                        <span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
+                      {/if}
+                    </span>
+                    PyTorch (NVIDIA)
                   </button>
                 </div>
               </div>
