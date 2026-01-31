@@ -61,10 +61,25 @@ class PipelineShardMetadata(BaseShardMetadata):
     CFG parallelism fields:
     - cfg_rank: 0 = positive branch, 1 = negative branch (or 0 if no CFG parallel)
     - cfg_world_size: 1 = sequential CFG, 2 = parallel CFG
+
+    Communication rank fields (explicit to support ring topology):
+    - next_pipeline_device: device to send to in pipeline forward pass
+    - prev_pipeline_device: device to receive from in pipeline forward pass
+    - cfg_peer_device: device for CFG exchange (last stage only)
+    - first_pipeline_device: device of first stage in same CFG group (for latent return)
     """
 
     cfg_rank: int = 0
     cfg_world_size: int = 1
+
+    # Explicit pipeline position (CFG group 1 uses reversed pipeline order)
+    explicit_pipeline_rank: int | None = None
+
+    next_pipeline_device: int | None = None
+    prev_pipeline_device: int | None = None
+    cfg_peer_device: int | None = None
+    first_pipeline_device: int | None = None
+    last_pipeline_device: int | None = None
 
     @property
     def pipeline_world_size(self) -> int:
@@ -72,6 +87,8 @@ class PipelineShardMetadata(BaseShardMetadata):
 
     @property
     def pipeline_rank(self) -> int:
+        if self.explicit_pipeline_rank is not None:
+            return self.explicit_pipeline_rank
         return self.device_rank % self.pipeline_world_size
 
     @property

@@ -110,48 +110,40 @@ class DiffusionRunner:
             self.world_size = 1
             self.start_layer = 0
             self.end_layer = self.config.total_blocks
-            # CFG topology: single node handles all CFG sequentially
+
             self.cfg_rank = 0
             self.cfg_world_size = 1
             self.cfg_parallel = False
-            # Pipeline topology within CFG group
+
             self.pipeline_world_size = 1
             self.pipeline_rank = 0
-            # Communication ranks (not used in single node)
-            self.next_pipeline_rank = 0
-            self.prev_pipeline_rank = 0
+
+            self.next_pipeline_rank: int | None = None
+            self.prev_pipeline_rank: int | None = None
             self.cfg_peer_rank: int | None = None
+            self.first_pipeline_rank: int = 0
+            self.last_pipeline_rank: int = 0
         else:
             self.rank = shard_metadata.device_rank
             self.world_size = shard_metadata.world_size
             self.start_layer = shard_metadata.start_layer
             self.end_layer = shard_metadata.end_layer
 
-            # CFG topology from shard metadata
             self.cfg_rank = shard_metadata.cfg_rank
             self.cfg_world_size = shard_metadata.cfg_world_size
             self.cfg_parallel = self.cfg_world_size > 1
 
-            # Pipeline topology within CFG group
             self.pipeline_world_size = shard_metadata.pipeline_world_size
             self.pipeline_rank = shard_metadata.pipeline_rank
 
-            # Pipeline communication ranks (within CFG group)
-            cfg_group_start = self.cfg_rank * self.pipeline_world_size
-            self.next_pipeline_rank = cfg_group_start + (
-                (self.pipeline_rank + 1) % self.pipeline_world_size
-            )
-            self.prev_pipeline_rank = cfg_group_start + (
-                (self.pipeline_rank - 1 + self.pipeline_world_size)
-                % self.pipeline_world_size
-            )
+            self.next_pipeline_rank = shard_metadata.next_pipeline_device
+            self.prev_pipeline_rank = shard_metadata.prev_pipeline_device
+            self.cfg_peer_rank = shard_metadata.cfg_peer_device
 
-            # CFG peer rank (the corresponding node in the other CFG group)
-            if self.cfg_parallel:
-                other_cfg_group_start = (1 - self.cfg_rank) * self.pipeline_world_size
-                self.cfg_peer_rank = other_cfg_group_start + self.pipeline_rank
-            else:
-                self.cfg_peer_rank = None
+            assert shard_metadata.first_pipeline_device is not None
+            assert shard_metadata.last_pipeline_device is not None
+            self.first_pipeline_rank = shard_metadata.first_pipeline_device
+            self.last_pipeline_rank = shard_metadata.last_pipeline_device
 
     def _compute_assigned_blocks(self) -> None:
         """Determine which joint/single blocks this stage owns."""
@@ -270,20 +262,20 @@ class DiffusionRunner:
         assert self.cfg_peer_rank is not None
 
         if is_positive:
-            sent = mx.distributed.send(noise, self.cfg_peer_rank, group=self.group)
-            mx.async_eval(sent)
+            noise = mx.distributed.send(noise, self.cfg_peer_rank, group=self.group)
+            mx.async_eval(noise)
             noise_neg = mx.distributed.recv_like(
                 noise, self.cfg_peer_rank, group=self.group
             )
             mx.eval(noise_neg)
             noise_pos = noise
         else:
-            sent = mx.distributed.send(noise, self.cfg_peer_rank, group=self.group)
-            mx.async_eval(sent)
             noise_pos = mx.distributed.recv_like(
                 noise, self.cfg_peer_rank, group=self.group
             )
             mx.eval(noise_pos)
+            noise = mx.distributed.send(noise, self.cfg_peer_rank, group=self.group)
+            mx.async_eval(noise)
             noise_neg = noise
 
         return self._apply_guidance(noise_pos, noise_neg)
@@ -723,6 +715,7 @@ class DiffusionRunner:
 
         if self.has_joint_blocks:
             if not self.is_first_stage:
+                assert self.prev_pipeline_rank is not None
                 with trace(
                     name=f"recv {self.prev_pipeline_rank}",
                     rank=self.rank,
@@ -770,6 +763,7 @@ class DiffusionRunner:
             if self.has_single_blocks or self.is_last_stage:
                 hidden_states = concatenated
             else:
+                assert self.next_pipeline_rank is not None
                 with trace(
                     name=f"send {self.next_pipeline_rank}",
                     rank=self.rank,
@@ -782,6 +776,7 @@ class DiffusionRunner:
 
         elif self.has_joint_blocks and not self.is_last_stage:
             assert encoder_hidden_states is not None
+            assert self.next_pipeline_rank is not None
             with trace(
                 name=f"send {self.next_pipeline_rank}",
                 rank=self.rank,
@@ -797,6 +792,7 @@ class DiffusionRunner:
 
         if self.has_single_blocks:
             if not self.owns_concat_stage and not self.is_first_stage:
+                assert self.prev_pipeline_rank is not None
                 with trace(
                     name=f"recv {self.prev_pipeline_rank}",
                     rank=self.rank,
@@ -828,6 +824,7 @@ class DiffusionRunner:
                     mx.eval(hidden_states)
 
             if not self.is_last_stage:
+                assert self.next_pipeline_rank is not None
                 with trace(
                     name=f"send {self.next_pipeline_rank}",
                     rank=self.rank,
@@ -908,18 +905,14 @@ class DiffusionRunner:
             )
 
             if not self.is_first_stage:
-                cfg_group_start = self.cfg_rank * self.pipeline_world_size
                 hidden_states = mx.distributed.send(
-                    hidden_states, cfg_group_start, group=self.group
+                    hidden_states, self.first_pipeline_rank, group=self.group
                 )
                 mx.async_eval(hidden_states)
 
         elif self.is_first_stage:
-            last_pipeline_rank = (
-                self.cfg_rank * self.pipeline_world_size + self.pipeline_world_size - 1
-            )
             hidden_states = mx.distributed.recv_like(
-                prev_latents, src=last_pipeline_rank, group=self.group
+                prev_latents, src=self.last_pipeline_rank, group=self.group
             )
             mx.eval(hidden_states)
 
@@ -942,6 +935,8 @@ class DiffusionRunner:
 
         prev_patch_latents = [p for p in patch_latents]
 
+        encoder_hidden_states: mx.array | None = None
+
         for patch_idx in range(len(patch_latents)):
             patch = patch_latents[patch_idx]
 
@@ -950,23 +945,17 @@ class DiffusionRunner:
                 and not self.is_last_stage
                 and not is_first_async_step
             ):
-                last_pipeline_rank = (
-                    self.cfg_rank * self.pipeline_world_size
-                    + self.pipeline_world_size
-                    - 1
-                )
                 with trace(
-                    name=f"recv {last_pipeline_rank}",
+                    name=f"recv {self.last_pipeline_rank}",
                     rank=self.rank,
                     category="comms",
                 ):
                     patch = mx.distributed.recv_like(
-                        patch, src=last_pipeline_rank, group=self.group
+                        patch, src=self.last_pipeline_rank, group=self.group
                     )
                     mx.eval(patch)
 
             results: list[tuple[bool, mx.array]] = []
-            encoder_hidden_states: mx.array | None = None
 
             for branch in self._get_cfg_branches(prompt_data):
                 pooled_embeds = (
@@ -1016,14 +1005,15 @@ class DiffusionRunner:
                 )
 
                 if not self.is_first_stage and t != config.num_inference_steps - 1:
-                    cfg_group_start = self.cfg_rank * self.pipeline_world_size
                     with trace(
-                        name=f"send {cfg_group_start}",
+                        name=f"send {self.first_pipeline_rank}",
                         rank=self.rank,
                         category="comms",
                     ):
                         patch_latents[patch_idx] = mx.distributed.send(
-                            patch_latents[patch_idx], cfg_group_start, group=self.group
+                            patch_latents[patch_idx],
+                            self.first_pipeline_rank,
+                            group=self.group,
                         )
                         mx.async_eval(patch_latents[patch_idx])
 
@@ -1063,6 +1053,7 @@ class DiffusionRunner:
 
         if self.has_joint_blocks:
             if not self.is_first_stage:
+                assert self.prev_pipeline_rank is not None
                 patch_len = patch.shape[1]
                 with trace(
                     name=f"recv {self.prev_pipeline_rank}",
@@ -1122,6 +1113,7 @@ class DiffusionRunner:
             if self.has_single_blocks or self.is_last_stage:
                 patch = patch_concat
             else:
+                assert self.next_pipeline_rank is not None
                 with trace(
                     name=f"send {self.next_pipeline_rank}",
                     rank=self.rank,
@@ -1133,6 +1125,7 @@ class DiffusionRunner:
                     mx.async_eval(patch_concat)
 
         elif self.has_joint_blocks and not self.is_last_stage:
+            assert self.next_pipeline_rank is not None
             with trace(
                 name=f"send {self.next_pipeline_rank}",
                 rank=self.rank,
@@ -1157,6 +1150,7 @@ class DiffusionRunner:
 
         if self.has_single_blocks:
             if not self.owns_concat_stage and not self.is_first_stage:
+                assert self.prev_pipeline_rank is not None
                 patch_len = patch.shape[1]
                 with trace(
                     name=f"recv {self.prev_pipeline_rank}",
@@ -1189,6 +1183,7 @@ class DiffusionRunner:
                     mx.eval(patch)
 
             if not self.is_last_stage:
+                assert self.next_pipeline_rank is not None
                 with trace(
                     name=f"send {self.next_pipeline_rank}",
                     rank=self.rank,

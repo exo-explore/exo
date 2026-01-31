@@ -131,16 +131,47 @@ def get_shard_assignments_for_pipeline_parallel(
                 f"but only has {available_memory / (1024**3):.2f} GB available"
             )
 
-    # Assign shards to all nodes
-    # For CFG parallel: nodes 0..pipeline_world_size-1 are CFG group 0 (positive)
-    #                   nodes pipeline_world_size..world_size-1 are CFG group 1 (negative)
-    for i, node_id in enumerate(cycle.node_ids):
-        cfg_rank = i // pipeline_world_size
-        pipeline_rank = i % pipeline_world_size
+    # CFG group 0: pipeline ranks in ascending order (0, 1, 2, ...)
+    # CFG group 1: pipeline ranks in descending order (reversed)
+    # This places both "last stages" as ring neighbors for CFG exchange.
+    position_to_cfg_pipeline = [(0, r) for r in range(pipeline_world_size)] + [
+        (1, r) for r in reversed(range(pipeline_world_size))
+    ]
 
-        # Compute layer range for this pipeline position
+    cfg_pipeline_to_device: dict[tuple[int, int], int] = {
+        (cfg_rank, pipeline_rank): i
+        for i, (cfg_rank, pipeline_rank) in enumerate(position_to_cfg_pipeline)
+    }
+
+    for i, node_id in enumerate(cycle.node_ids):
+        cfg_rank, pipeline_rank = position_to_cfg_pipeline[i]
+
         layers_before = sum(layer_allocations[:pipeline_rank])
         node_layers = layer_allocations[pipeline_rank]
+
+        is_first_stage = pipeline_rank == 0
+        is_last_stage = pipeline_rank == pipeline_world_size - 1
+
+        if is_last_stage:
+            next_pipeline_device = None
+        else:
+            next_pipeline_device = cfg_pipeline_to_device[(cfg_rank, pipeline_rank + 1)]
+
+        if is_first_stage:
+            prev_pipeline_device = None
+        else:
+            prev_pipeline_device = cfg_pipeline_to_device[(cfg_rank, pipeline_rank - 1)]
+
+        if is_last_stage and use_cfg_parallel:
+            other_cfg_rank = 1 - cfg_rank
+            cfg_peer_device = cfg_pipeline_to_device[(other_cfg_rank, pipeline_rank)]
+        else:
+            cfg_peer_device = None
+
+        first_pipeline_device = cfg_pipeline_to_device[(cfg_rank, 0)]
+        last_pipeline_device = cfg_pipeline_to_device[
+            (cfg_rank, pipeline_world_size - 1)
+        ]
 
         runner_id = RunnerId()
 
@@ -153,6 +184,12 @@ def get_shard_assignments_for_pipeline_parallel(
             n_layers=total_layers,
             cfg_rank=cfg_rank,
             cfg_world_size=cfg_world_size,
+            explicit_pipeline_rank=pipeline_rank,
+            next_pipeline_device=next_pipeline_device,
+            prev_pipeline_device=prev_pipeline_device,
+            cfg_peer_device=cfg_peer_device,
+            first_pipeline_device=first_pipeline_device,
+            last_pipeline_device=last_pipeline_device,
         )
 
         runner_to_shard[runner_id] = shard
