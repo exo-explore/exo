@@ -47,6 +47,7 @@ class ModelCard(CamelCaseModel):
     supports_tensor: bool
     tasks: list[ModelTask]
     components: list[ComponentInfo] | None = None
+    tags: list[str] | None = None  # Engine compatibility tags: "mlx", "pytorch"
 
     @field_validator("tasks", mode="before")
     @classmethod
@@ -424,6 +425,53 @@ MODEL_CARDS: dict[str, ModelCard] = {
         n_layers=61,
         hidden_size=3072,
         supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+    ),
+    # PyTorch-compatible models from standard HuggingFace repos
+    # NOTE: Only ungated models that don't require HuggingFace authentication
+    "tinyllama-1.1b-pytorch": ModelCard(
+        model_id=ModelId("TinyLlama/TinyLlama-1.1B-Chat-v1.0"),
+        tags=["pytorch"],
+        storage_size=Memory.from_bytes(2362232013),
+        n_layers=22,
+        hidden_size=2048,
+        supports_tensor=False,
+        tasks=[ModelTask.TextGeneration],
+    ),
+    "qwen2.5-0.5b-instruct-pytorch": ModelCard(
+        model_id=ModelId("Qwen/Qwen2.5-0.5B-Instruct"),
+        tags=["pytorch"],
+        storage_size=Memory.from_gb(1.0),
+        n_layers=24,
+        hidden_size=896,
+        supports_tensor=False,
+        tasks=[ModelTask.TextGeneration],
+    ),
+    "qwen2.5-1.5b-instruct-pytorch": ModelCard(
+        model_id=ModelId("Qwen/Qwen2.5-1.5B-Instruct"),
+        tags=["pytorch"],
+        storage_size=Memory.from_gb(3.1),
+        n_layers=28,
+        hidden_size=1536,
+        supports_tensor=False,
+        tasks=[ModelTask.TextGeneration],
+    ),
+    "qwen2.5-3b-instruct-pytorch": ModelCard(
+        model_id=ModelId("Qwen/Qwen2.5-3B-Instruct"),
+        tags=["pytorch"],
+        storage_size=Memory.from_gb(6.2),
+        n_layers=36,
+        hidden_size=2048,
+        supports_tensor=False,
+        tasks=[ModelTask.TextGeneration],
+    ),
+    "phi-3-mini-4k-instruct-pytorch": ModelCard(
+        model_id=ModelId("microsoft/Phi-3-mini-4k-instruct"),
+        tags=["pytorch"],
+        storage_size=Memory.from_gb(7.6),
+        n_layers=32,
+        hidden_size=3072,
+        supports_tensor=False,
         tasks=[ModelTask.TextGeneration],
     ),
 }

@@ -421,3 +421,47 @@ class Worker:
                     await self.event_sender.send(TopologyEdgeDeleted(conn=conn))
 
             await anyio.sleep(10)
+
+    async def _emit_existing_download_progress(self) -> None:
+        try:
+            while True:
+                logger.info("Fetching and emitting existing download progress...")
+                async for (
+                    _,
+                    progress,
+                ) in self.shard_downloader.get_shard_download_status():
+                    if progress.status == "complete":
+                        status = DownloadCompleted(
+                            node_id=self.node_id, shard_metadata=progress.shard
+                        )
+                        # Only store completed downloads in download_status
+                        # This allows the planner to trigger downloads for incomplete models
+                        self.download_status[progress.shard.model_meta.model_id] = status
+                        await self.event_sender.send(
+                            NodeDownloadProgress(download_progress=status)
+                        )
+                    elif progress.status in ["in_progress", "not_started"]:
+                        # For incomplete downloads, emit progress for UI display
+                        # but DON'T store in download_status so the planner can
+                        # create a DownloadModel task to resume the download.
+                        if progress.downloaded_bytes.in_bytes > 0:
+                            # Emit ongoing status with progress data for UI
+                            status = DownloadOngoing(
+                                node_id=self.node_id,
+                                shard_metadata=progress.shard,
+                                download_progress=map_repo_download_progress_to_download_progress_data(
+                                    progress
+                                ),
+                            )
+                        else:
+                            status = DownloadPending(
+                                node_id=self.node_id, shard_metadata=progress.shard
+                            )
+                        # Only emit for UI, don't store in download_status
+                        await self.event_sender.send(
+                            NodeDownloadProgress(download_progress=status)
+                        )
+                logger.info("Done emitting existing download progress.")
+                await anyio.sleep(5 * 60)  # 5 minutes
+        except Exception as e:
+            logger.error(f"Error emitting existing download progress: {e}")

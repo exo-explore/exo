@@ -36,6 +36,9 @@ from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.channels import MpReceiver, MpSender, Sender, mp_channel
 from exo.worker.runner.bootstrap import entrypoint
 
+def _run_entrypoint(*args, **kwargs):
+    anyio.run(entrypoint, *args, **kwargs)
+
 PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5
 
@@ -67,7 +70,7 @@ class RunnerSupervisor:
         task_sender, task_recv = mp_channel[Task]()
 
         runner_process = Process(
-            target=entrypoint,
+            target=_run_entrypoint,
             args=(
                 bound_instance,
                 ev_send,

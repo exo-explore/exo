@@ -1,11 +1,12 @@
 # Check tasks are complete before runner is ever ready.
+import asyncio
 from collections.abc import Iterable
-from typing import Callable
+from typing import Any, AsyncGenerator, Callable, Tuple
 
 import pytest
 
 import exo.worker.runner.runner as mlx_runner
-from exo.shared.types.api import ChatCompletionMessage
+from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -16,7 +17,6 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.tasks import (
     ChatCompletion,
-    ChatCompletionTaskParams,
     ConnectToGroup,
     LoadModel,
     Shutdown,
@@ -38,6 +38,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import mp_channel
+from exo.worker.engines.base_engine import Engine
 
 from ...constants import (
     CHAT_COMPLETION_TASK_ID,
@@ -109,20 +110,24 @@ def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Even
 
 @pytest.fixture
 def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
-    # initialize_mlx returns a mock group
-    monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(MockGroup()))
-    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
-    monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
+    # Only need to patch _check_for_debug_prompts now - everything else goes through the engine
     monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", nothin)
-    # Mock apply_chat_template since we're using a fake tokenizer (integer 1).
-    # Returns a prompt without thinking tag so detect_thinking_prompt_suffix returns None.
-    monkeypatch.setattr(mlx_runner, "apply_chat_template", make_nothin("test prompt"))
-    monkeypatch.setattr(mlx_runner, "detect_thinking_prompt_suffix", make_nothin(False))
 
-    def fake_generate(*_1: object, **_2: object):
+
+class MockEngine(Engine):
+    """Mock engine for testing that doesn't require any MLX/PyTorch imports."""
+    
+    def initialize_distributed_group(self) -> Any:
+        return 1  # fake group
+    
+    def load_model_and_tokenizer(self) -> Tuple[Any, Any]:
+        return (1, MockTokenizer)  # fake model and tokenizer
+    
+    def warmup_inference(self) -> int:
+        return 1
+    
+    async def generate(self, task_params: ChatCompletionTaskParams) -> AsyncGenerator[GenerationResponse, None]:
         yield GenerationResponse(token=0, text="hi", finish_reason="stop", usage=None)
-
-    monkeypatch.setattr(mlx_runner, "mlx_generate", fake_generate)
 
 
 # Use a fake event_sender to remove test flakiness.
@@ -165,6 +170,7 @@ def _run(tasks: Iterable[Task]):
 
     task_sender, task_receiver = mp_channel[Task]()
     event_sender = EventCollector()
+    engine = MockEngine(bound_instance)
 
     with task_sender:
         for t in tasks:
@@ -175,7 +181,8 @@ def _run(tasks: Iterable[Task]):
         task_receiver.close = nothin
         task_receiver.join = nothin
 
-        mlx_runner.main(bound_instance, event_sender, task_receiver)  # type: ignore[arg-type]
+        # main is now async, so we need to run it with asyncio
+        asyncio.run(mlx_runner.main(bound_instance, event_sender, task_receiver, engine))  # type: ignore[arg-type]
 
         return event_sender.events
 
