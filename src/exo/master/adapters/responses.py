@@ -42,7 +42,6 @@ def responses_request_to_text_generation(
         top_p=request.top_p,
         stream=request.stream,
         tools=request.tools,
-        metadata=request.metadata,
         top_k=request.top_k,
         stop=request.stop,
         seed=request.seed,

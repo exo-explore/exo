@@ -46,5 +46,3 @@ class TestResponsesRequestValidation:
             input=[ResponseInputMessage(role="user", content="Hello")],
         )
         assert len(request.input) == 1
-
-

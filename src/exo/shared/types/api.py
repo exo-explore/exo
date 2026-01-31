@@ -115,8 +115,8 @@ class Usage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-    prompt_tokens_details: PromptTokensDetails | None = None
-    completion_tokens_details: CompletionTokensDetails | None = None
+    prompt_tokens_details: PromptTokensDetails
+    completion_tokens_details: CompletionTokensDetails
 
 
 class StreamingChoiceResponse(BaseModel):
@@ -169,6 +169,10 @@ class BenchChatCompletionResponse(ChatCompletionResponse):
     generation_stats: GenerationStats | None = None
 
 
+class StreamOptions(BaseModel):
+    include_usage: bool = False
+
+
 class ChatCompletionRequest(BaseModel):
     model: ModelId
     frequency_penalty: float | None = None
@@ -183,6 +187,7 @@ class ChatCompletionRequest(BaseModel):
     seed: int | None = None
     stop: str | list[str] | None = None
     stream: bool = False
+    stream_options: StreamOptions | None = None
     temperature: float | None = None
     top_p: float | None = None
     top_k: int | None = None

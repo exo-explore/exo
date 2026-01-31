@@ -180,5 +180,3 @@ class TestClaudeMessagesRequestValidation:
                     "max_tokens": 100,
                 }
             )
-
-

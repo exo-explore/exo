@@ -38,6 +38,7 @@ class TestCollectClaudeResponseToolUse:
         chunks: list[ErrorChunk | ToolCallChunk | TokenChunk] = [
             ToolCallChunk(
                 model=MODEL,
+                usage=None,
                 tool_calls=[
                     ToolCallItem(
                         name="get_weather",
@@ -63,6 +64,7 @@ class TestCollectClaudeResponseToolUse:
         chunks: list[ErrorChunk | ToolCallChunk | TokenChunk] = [
             ToolCallChunk(
                 model=MODEL,
+                usage=None,
                 tool_calls=[
                     ToolCallItem(
                         name="get_weather",
@@ -87,10 +89,11 @@ class TestCollectClaudeResponseToolUse:
 
     async def test_mixed_text_and_tool_use(self):
         chunks: list[ErrorChunk | ToolCallChunk | TokenChunk] = [
-            TokenChunk(model=MODEL, text="Let me check ", token_id=1),
-            TokenChunk(model=MODEL, text="the weather.", token_id=2),
+            TokenChunk(model=MODEL, text="Let me check ", token_id=1, usage=None),
+            TokenChunk(model=MODEL, text="the weather.", token_id=2, usage=None),
             ToolCallChunk(
                 model=MODEL,
+                usage=None,
                 tool_calls=[
                     ToolCallItem(
                         name="get_weather",
@@ -127,6 +130,7 @@ class TestGenerateClaudeStreamToolUse:
         chunks: list[ErrorChunk | ToolCallChunk | TokenChunk] = [
             ToolCallChunk(
                 model=MODEL,
+                usage=None,
                 tool_calls=[
                     ToolCallItem(
                         name="get_weather",
@@ -176,9 +180,10 @@ class TestGenerateClaudeStreamToolUse:
 
     async def test_streaming_mixed_text_and_tool_use(self):
         chunks: list[ErrorChunk | ToolCallChunk | TokenChunk] = [
-            TokenChunk(model=MODEL, text="Hello ", token_id=1),
+            TokenChunk(model=MODEL, text="Hello ", token_id=1, usage=None),
             ToolCallChunk(
                 model=MODEL,
+                usage=None,
                 tool_calls=[
                     ToolCallItem(
                         name="search",
@@ -225,6 +230,7 @@ class TestGenerateClaudeStreamToolUse:
         chunks: list[ErrorChunk | ToolCallChunk | TokenChunk] = [
             ToolCallChunk(
                 model=MODEL,
+                usage=None,
                 tool_calls=[
                     ToolCallItem(name="fn1", arguments="{}"),
                     ToolCallItem(name="fn2", arguments='{"a": 1}'),

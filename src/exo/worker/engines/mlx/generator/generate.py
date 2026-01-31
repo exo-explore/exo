@@ -8,8 +8,11 @@ from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.api import (
+    CompletionTokensDetails,
     FinishReason,
     GenerationStats,
+    PromptTokensDetails,
+    Usage,
 )
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
@@ -38,7 +41,7 @@ def prefill(
     sampler: Callable[[mx.array], mx.array],
     prompt_tokens: mx.array,
     cache: KVCacheType,
-) -> float:
+) -> tuple[float, int]:
     """Prefill the KV cache with prompt tokens.
 
     This runs the model over the prompt tokens to populate the cache,
@@ -49,7 +52,7 @@ def prefill(
     """
     num_tokens = len(prompt_tokens)
     if num_tokens == 0:
-        return 0.0
+        return 0.0, 0
 
     logger.debug(f"Prefilling {num_tokens} tokens...")
     start_time = time.perf_counter()
@@ -84,7 +87,7 @@ def prefill(
         f"Prefill complete: {num_tokens} tokens in {elapsed:.2f}s "
         f"({tokens_per_sec:.1f} tok/s)"
     )
-    return tokens_per_sec
+    return tokens_per_sec, num_tokens
 
 
 def warmup_inference(
@@ -161,12 +164,11 @@ def mlx_generate(
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
-
     if task.seed is not None:
         mx.random.seed(task.seed)
 
     # Do not use the prefix cache if we are trying to do benchmarks.
-    is_bench = (task.metadata or {}).get("bench") == "true"
+    is_bench = task.bench
     if is_bench:
         kv_prefix_cache = None
 
@@ -204,7 +206,9 @@ def mlx_generate(
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
     # Prefill cache with all tokens except the last one
-    prefill_tps = prefill(model, tokenizer, sampler, prompt_tokens[:-1], caches)
+    prefill_tps, prefill_tokens = prefill(
+        model, tokenizer, sampler, prompt_tokens[:-1], caches
+    )
 
     # stream_generate starts from the last token
     last_token = prompt_tokens[-1:]
@@ -213,22 +217,37 @@ def mlx_generate(
     accumulated_text = ""
     generated_text_parts: list[str] = []
     generation_start_time = time.perf_counter()
-    for out in stream_generate(
-        model=model,
-        tokenizer=tokenizer,
-        prompt=last_token,
-        max_tokens=max_tokens,
-        sampler=sampler,
-        logits_processors=logits_processors,
-        prompt_cache=caches,
-        # TODO: Dynamically change prefill step size to be the maximum possible without timing out.
-        prefill_step_size=2048,
-        kv_group_size=KV_GROUP_SIZE,
-        kv_bits=KV_BITS,
+    usage: Usage | None = None
+    in_thinking = False
+    reasoning_tokens = 0
+    think_start = tokenizer.think_start
+    think_end = tokenizer.think_end
+    for completion_tokens, out in enumerate(
+        stream_generate(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=last_token,
+            max_tokens=max_tokens,
+            sampler=sampler,
+            logits_processors=logits_processors,
+            prompt_cache=caches,
+            # TODO: Dynamically change prefill step size to be the maximum possible without timing out.
+            prefill_step_size=2048,
+            kv_group_size=KV_GROUP_SIZE,
+            kv_bits=KV_BITS,
+        ),
+        start=1,
     ):
         generated_text_parts.append(out.text)
         logger.info(out.text)
         accumulated_text += out.text
+
+        if think_start is not None and out.text == think_start:
+            in_thinking = True
+        elif think_end is not None and out.text == think_end:
+            in_thinking = False
+        if in_thinking:
+            reasoning_tokens += 1
 
         # Check for stop sequences
         text = out.text
@@ -250,12 +269,13 @@ def mlx_generate(
                     break
 
         is_done = finish_reason is not None
+
         stats: GenerationStats | None = None
         if is_done:
             stats = GenerationStats(
                 prompt_tps=float(prefill_tps or out.prompt_tps),
                 generation_tps=float(out.generation_tps),
-                prompt_tokens=int(out.prompt_tokens),
+                prompt_tokens=int(prefill_tokens + out.prompt_tokens),
                 generation_tokens=int(out.generation_tokens),
                 peak_memory_usage=Memory.from_gb(out.peak_memory),
             )
@@ -264,11 +284,24 @@ def mlx_generate(
                     f"Model generated unexpected finish_reason: {out.finish_reason}"
                 )
 
+            usage = Usage(
+                prompt_tokens=int(out.prompt_tokens),
+                completion_tokens=completion_tokens,
+                total_tokens=int(out.prompt_tokens) + completion_tokens,
+                prompt_tokens_details=PromptTokensDetails(
+                    cached_tokens=prefix_hit_length
+                ),
+                completion_tokens_details=CompletionTokensDetails(
+                    reasoning_tokens=reasoning_tokens
+                ),
+            )
+
         yield GenerationResponse(
             text=text,
             token=out.token,
             finish_reason=finish_reason,
             stats=stats,
+            usage=usage,
         )
 
         if is_done:

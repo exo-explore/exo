@@ -269,7 +269,7 @@ class API:
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
-            model_card=await resolve_model_card(payload.model_id),
+            model_card=await ModelCard.load(payload.model_id),
             sharding=payload.sharding,
             instance_meta=payload.instance_meta,
             min_nodes=payload.min_nodes,
@@ -286,7 +286,7 @@ class API:
         self, payload: CreateInstanceParams
     ) -> CreateInstanceResponse:
         instance = payload.instance
-        model_card = await resolve_model_card(instance.shard_assignments.model_id)
+        model_card = await ModelCard.load(instance.shard_assignments.model_id)
         required_memory = model_card.storage_size
         available_memory = self._calculate_total_available_memory()
 
@@ -314,7 +314,7 @@ class API:
         instance_meta: InstanceMeta = InstanceMeta.MlxRing,
         min_nodes: int = 1,
     ) -> Instance:
-        model_card = await resolve_model_card(model_id)
+        model_card = await ModelCard.load(model_id)
 
         try:
             placements = get_instance_placements(
@@ -523,7 +523,7 @@ class API:
     ) -> BenchChatCompletionResponse:
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
-        model: str | None = None
+        model: ModelId | None = None
         finish_reason: FinishReason | None = None
 
         stats: GenerationStats | None = None
@@ -588,7 +588,9 @@ class API:
     ) -> ChatCompletionResponse | StreamingResponse:
         """OpenAI Chat Completions API - adapter."""
         task_params = chat_request_to_text_generation(payload)
-        resolved_model = await self._resolve_and_validate_text_model(ModelId(task_params.model))
+        resolved_model = await self._resolve_and_validate_text_model(
+            ModelId(task_params.model)
+        )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
         command = TextGeneration(task_params=task_params)
@@ -612,12 +614,12 @@ class API:
         self, payload: BenchChatCompletionRequest
     ) -> BenchChatCompletionResponse:
         task_params = chat_request_to_text_generation(payload)
-        resolved_model = await self._resolve_and_validate_text_model(ModelId(task_params.model))
+        resolved_model = await self._resolve_and_validate_text_model(
+            ModelId(task_params.model)
+        )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        task_params = task_params.model_copy(
-            update={"stream": False, "metadata": {"bench": "true"}}
-        )
+        task_params = task_params.model_copy(update={"stream": False, "bench": True})
 
         command = TextGeneration(task_params=task_params)
         await self._send(command)
@@ -643,12 +645,12 @@ class API:
             )
         return resolved
 
-    async def _validate_image_model(self, model: str) -> ModelId:
+    async def _validate_image_model(self, model: ModelId) -> ModelId:
         """Validate model exists and return resolved model ID.
 
         Raises HTTPException 404 if no instance is found for the model.
         """
-        model_card = await resolve_model_card(ModelId(model))
+        model_card = await ModelCard.load(model)
         resolved_model = model_card.model_id
         if not any(
             instance.shard_assignments.model_id == resolved_model
@@ -694,7 +696,7 @@ class API:
         When stream=True and partial_images > 0, returns a StreamingResponse
         with SSE-formatted events for partial and final images.
         """
-        payload.model = await self._validate_image_model(payload.model)
+        payload.model = await self._validate_image_model(ModelId(payload.model))
 
         command = ImageGeneration(
             task_params=payload,
@@ -939,7 +941,7 @@ class API:
     async def bench_image_generations(
         self, request: Request, payload: BenchImageGenerationTaskParams
     ) -> BenchImageGenerationResponse:
-        payload.model = await self._validate_image_model(payload.model)
+        payload.model = await self._validate_image_model(ModelId(payload.model))
 
         payload.stream = False
         payload.partial_images = 0
@@ -960,7 +962,7 @@ class API:
         self,
         image: UploadFile,
         prompt: str,
-        model: str,
+        model: ModelId,
         n: int,
         size: str,
         response_format: Literal["url", "b64_json"],
@@ -1055,7 +1057,7 @@ class API:
         command = await self._send_image_edits_command(
             image=image,
             prompt=prompt,
-            model=model,
+            model=ModelId(model),
             n=n,
             size=size,
             response_format=response_format,
@@ -1111,7 +1113,7 @@ class API:
         command = await self._send_image_edits_command(
             image=image,
             prompt=prompt,
-            model=model,
+            model=ModelId(model),
             n=n,
             size=size,
             response_format=response_format,
@@ -1136,7 +1138,9 @@ class API:
     ) -> ClaudeMessagesResponse | StreamingResponse:
         """Claude Messages API - adapter."""
         task_params = claude_request_to_text_generation(payload)
-        resolved_model = await self._resolve_and_validate_text_model(ModelId(task_params.model))
+        resolved_model = await self._resolve_and_validate_text_model(
+            ModelId(task_params.model)
+        )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
         command = TextGeneration(task_params=task_params)
@@ -1161,7 +1165,7 @@ class API:
     async def openai_responses(
         self, payload: ResponsesRequest
     ) -> ResponsesResponse | StreamingResponse:
-        """OpenAI Responses API - native format."""
+        """OpenAI Responses API."""
         task_params = responses_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(task_params.model)
         task_params = task_params.model_copy(update={"model": resolved_model})

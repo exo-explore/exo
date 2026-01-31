@@ -2,7 +2,7 @@ from collections.abc import Generator
 from typing import Any, Literal
 
 from exo.shared.models.model_cards import ModelId
-from exo.shared.types.api import GenerationStats, ImageGenerationStats
+from exo.shared.types.api import GenerationStats, ImageGenerationStats, Usage
 from exo.utils.pydantic_ext import TaggedModel
 
 from .api import FinishReason
@@ -17,8 +17,8 @@ class BaseChunk(TaggedModel):
 class TokenChunk(BaseChunk):
     text: str
     token_id: int
-    finish_reason: Literal["stop", "length", "content_filter", "error"] | None = None
-    error_message: str | None = None
+    usage: Usage | None
+    finish_reason: Literal["stop", "length", "content_filter"] | None = None
     stats: GenerationStats | None = None
 
 
@@ -29,6 +29,7 @@ class ErrorChunk(BaseChunk):
 
 class ToolCallChunk(BaseChunk):
     tool_calls: list[ToolCallItem]
+    usage: Usage | None
     finish_reason: Literal["tool_calls"] = "tool_calls"
     stats: GenerationStats | None = None
 

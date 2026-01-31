@@ -36,6 +36,7 @@ from exo.shared.types.tasks import (
     Shutdown,
     StartWarmup,
     Task,
+    TaskId,
     TaskStatus,
     TextGeneration,
 )
@@ -112,8 +113,12 @@ def main(
     event_sender.send(
         RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
     )
+    seen = set[TaskId]()
     with task_receiver as tasks:
         for task in tasks:
+            if task.task_id in seen:
+                logger.warning("repeat task - potential error")
+            seen.add(task.task_id)
             event_sender.send(
                 TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Running)
             )
@@ -164,7 +169,7 @@ def main(
                         logger.info(
                             f"model has_tool_calling={tokenizer.has_tool_calling}"
                         )
-                        kv_prefix_cache = KVPrefixCache(tokenizer)
+                        kv_prefix_cache = KVPrefixCache(tokenizer, group)
 
                     elif (
                         ModelTask.TextToImage in shard_metadata.model_card.tasks
@@ -277,9 +282,11 @@ def main(
                                 tokenizer.tool_parser,  # pyright: ignore[reportAny]
                             )
 
+                        completion_tokens = 0
                         for response in mlx_generator:
                             match response:
                                 case GenerationResponse():
+                                    completion_tokens += 1
                                     if (
                                         device_rank == 0
                                         and response.finish_reason == "error"
@@ -307,6 +314,7 @@ def main(
                                                     model=shard_metadata.model_card.model_id,
                                                     text=response.text,
                                                     token_id=response.token,
+                                                    usage=response.usage,
                                                     finish_reason=response.finish_reason,
                                                     stats=response.stats,
                                                 ),
@@ -320,6 +328,7 @@ def main(
                                                 chunk=ToolCallChunk(
                                                     tool_calls=response.tool_calls,
                                                     model=shard_metadata.model_card.model_id,
+                                                    usage=response.usage,
                                                 ),
                                             )
                                         )
@@ -535,10 +544,10 @@ def parse_gpt_oss(
                             name=current_tool_name,
                             arguments="".join(tool_arg_parts).strip(),
                         )
-                    ]
+                    ],
+                    usage=response.usage,
                 )
                 tool_arg_parts = []
-                break
             current_tool_name = recipient
 
         # If inside a tool call, accumulate arguments
@@ -684,7 +693,7 @@ def parse_tool_calls(
                     tools = [_validate_single_tool(tool) for tool in parsed]
                 else:
                     tools = [_validate_single_tool(parsed)]
-                yield ToolCallResponse(tool_calls=tools)
+                yield ToolCallResponse(tool_calls=tools, usage=response.usage)
 
             except (
                 json.JSONDecodeError,

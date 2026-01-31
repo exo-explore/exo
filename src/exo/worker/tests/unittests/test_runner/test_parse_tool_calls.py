@@ -18,6 +18,7 @@ def _make_responses(
             text=text,
             token=i,
             finish_reason="stop" if (is_last and finish_on_last) else None,
+            usage=None,
         )
 
 
