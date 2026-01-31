@@ -34,6 +34,7 @@ from .macmon import MacmonMetrics
 from .system_info import get_friendly_name, get_model_and_chip, get_network_interfaces
 
 IS_DARWIN = sys.platform == "darwin"
+IS_LINUX = sys.platform == "linux"
 
 
 async def _get_thunderbolt_devices() -> set[str] | None:
@@ -335,6 +336,9 @@ class InfoGatherer:
                     tg.start_soon(self._monitor_macmon, macmon_path)
                 tg.start_soon(self._monitor_system_profiler_thunderbolt_data)
                 tg.start_soon(self._monitor_thunderbolt_bridge_status)
+            elif IS_LINUX:
+                # Monitor NVIDIA GPU metrics on Linux
+                tg.start_soon(self._monitor_linux_gpu)
             tg.start_soon(self._watch_system_info)
             tg.start_soon(self._monitor_memory_usage)
             tg.start_soon(self._monitor_misc)
@@ -433,3 +437,16 @@ class InfoGatherer:
             logger.warning(
                 f"MacMon failed with return code {e.returncode}: {stderr_msg}"
             )
+
+    async def _monitor_linux_gpu(self):
+        """Monitor NVIDIA GPU metrics on Linux using nvidia-smi."""
+        from .linux_metrics import get_linux_metrics_async
+
+        poll_interval = 1.0  # Poll every 1 second like macmon
+        while True:
+            try:
+                metrics = await get_linux_metrics_async()
+                await self.info_sender.send(metrics)
+            except Exception as e:
+                logger.warning(f"Failed to get Linux GPU metrics: {e}")
+            await anyio.sleep(poll_interval)

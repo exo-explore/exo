@@ -1,10 +1,19 @@
 """Tests for parse_tool_calls generator, especially unclosed tool call handling."""
 
+import sys
 from collections.abc import Generator
 from typing import Any
 
+import pytest
+
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
-from exo.worker.runner.runner import parse_tool_calls
+
+# Skip this entire module on non-Darwin (macOS) platforms
+# The MLX patches module imports mlx_lm which only works on macOS with MLX
+if sys.platform != "darwin":
+    pytest.skip("MLX patches only available on macOS (Darwin)", allow_module_level=True)
+
+from exo.worker.engines.mlx.patches import parse_tool_calls
 
 
 def _make_responses(

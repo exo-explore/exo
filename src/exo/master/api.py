@@ -407,6 +407,17 @@ class API:
         # instance_combinations.append((Sharding.PrefillDecodeDisaggregation, InstanceMeta.MlxRing, 1))
 
         for sharding, instance_meta, min_nodes in instance_combinations:
+            # Skip incompatible model/engine combinations
+            model_tags = model_card.tags or []
+            if instance_meta == InstanceMeta.Pytorch and "pytorch" not in model_tags:
+                continue
+            if (
+                instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl)
+                and model_tags
+                and "mlx" not in model_tags
+            ):
+                continue
+
             try:
                 placements = get_instance_placements(
                     PlaceInstance(

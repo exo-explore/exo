@@ -111,6 +111,7 @@
       quantization?: string;
       base_model?: string;
       capabilities?: string[];
+      tags?: string[];
     }>
   >([]);
 
