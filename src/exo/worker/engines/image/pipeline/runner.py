@@ -248,6 +248,8 @@ class DiffusionRunner:
         if len(results) == 1:
             positive, noise = results[0]
             if self.cfg_parallel and self.is_last_stage:
+                # TODO(ciaran): try to remove
+                mx.eval(noise)
                 return self._exchange_and_apply_guidance(noise, positive)
             return noise
 
