@@ -66,7 +66,7 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
-from exo.shared.types.worker.shards import ShardMetadata
+from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.image import (
     DistributedImageModel,
@@ -372,8 +372,9 @@ def main(
                         image_index = 0
                         for response in generate_image(model=model, task=task_params):
                             if (
-                                shard_metadata.device_rank
-                                == shard_metadata.world_size - 1
+                                isinstance(shard_metadata, PipelineShardMetadata)
+                                and shard_metadata.is_pipeline_last
+                                and shard_metadata.cfg_rank == 0
                             ):
                                 match response:
                                     case PartialImageResponse():
@@ -399,7 +400,11 @@ def main(
                                         image_index += 1
                     # can we make this more explicit?
                     except Exception as e:
-                        if shard_metadata.device_rank == shard_metadata.world_size - 1:
+                        if (
+                            isinstance(shard_metadata, PipelineShardMetadata)
+                            and shard_metadata.is_pipeline_last
+                            and shard_metadata.cfg_rank == 0
+                        ):
                             event_sender.send(
                                 ChunkGenerated(
                                     command_id=command_id,
@@ -435,8 +440,9 @@ def main(
                         image_index = 0
                         for response in generate_image(model=model, task=task_params):
                             if (
-                                shard_metadata.device_rank
-                                == shard_metadata.world_size - 1
+                                isinstance(shard_metadata, PipelineShardMetadata)
+                                and shard_metadata.is_pipeline_last
+                                and shard_metadata.cfg_rank == 0
                             ):
                                 match response:
                                     case PartialImageResponse():
@@ -461,7 +467,11 @@ def main(
                                         )
                                         image_index += 1
                     except Exception as e:
-                        if shard_metadata.device_rank == shard_metadata.world_size - 1:
+                        if (
+                            isinstance(shard_metadata, PipelineShardMetadata)
+                            and shard_metadata.is_pipeline_last
+                            and shard_metadata.cfg_rank == 0
+                        ):
                             event_sender.send(
                                 ChunkGenerated(
                                     command_id=command_id,
