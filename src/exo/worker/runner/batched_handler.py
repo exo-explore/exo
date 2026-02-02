@@ -81,6 +81,7 @@ class BatchedInferenceHandler:
         device_rank: int,
         world_size: int = 1,
         max_batch_size: int = 32,
+        tensor_parallel_group: mx.distributed.Group | None = None,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -88,6 +89,7 @@ class BatchedInferenceHandler:
         self.device_rank = device_rank
         self.world_size = world_size
         self.max_batch_size = max_batch_size
+        self.tensor_parallel_group = tensor_parallel_group
 
         # Model-specific thinking/reasoning detection
         self.is_gpt_oss = isinstance(model, GptOssModel)
@@ -189,13 +191,26 @@ class BatchedInferenceHandler:
 
     def flush(self) -> None:
         """Start processing pending requests by adding them to the batch/pipelined generator."""
-        if not self.has_pending:
-            return
-
-        # Determine how many requests to flush (up to available slots)
-        available_slots = self.max_batch_size - self.current_batch_size
-        requests_to_flush = self.pending[:available_slots]
-        self.pending = self.pending[available_slots:]
+        # For tensor parallel: sync pending count across all devices
+        # Rank 0 broadcasts its count, all devices flush that many
+        if self.tensor_parallel_group is not None:
+            local_count = len(self.pending) if self.device_rank == 0 else 0
+            count_arr = mx.array([local_count], dtype=mx.int32)
+            synced = mx.distributed.all_sum(count_arr, group=self.tensor_parallel_group)
+            mx.eval(synced)
+            num_pending = int(synced.item())
+            if num_pending == 0:
+                return
+            available_slots = self.max_batch_size - self.current_batch_size
+            num_to_flush = min(num_pending, available_slots)
+            requests_to_flush = self.pending[:num_to_flush]
+            self.pending = self.pending[num_to_flush:]
+        else:
+            if not self.has_pending:
+                return
+            available_slots = self.max_batch_size - self.current_batch_size
+            requests_to_flush = self.pending[:available_slots]
+            self.pending = self.pending[available_slots:]
 
         # Prepare batch data - tokenize prompts
         tokenized_prompts: list[list[int]] = []

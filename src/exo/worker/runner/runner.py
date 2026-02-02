@@ -299,28 +299,21 @@ def main(
                     logger.info(f"model has_tool_calling={tokenizer.has_tool_calling}")
 
                     # Initialize batch handler for text generation models
-                    # NOTE: Batching is disabled for tensor parallelism because:
-                    # 1. Each runner independently drains tasks, leading to different batch sizes
-                    # 2. Tensor parallel requires all devices to call model with identical inputs
-                    # 3. Synchronization via all_reduce breaks the ring backend
                     is_tensor_parallel = isinstance(shard_metadata, TensorShardMetadata)
-                    if BATCH_ENABLED and not is_tensor_parallel:
+                    if BATCH_ENABLED:
                         batch_handler = BatchedInferenceHandler(
                             model=model,
                             tokenizer=tokenizer,
                             model_id=shard_metadata.model_card.model_id,
                             device_rank=device_rank,
-                            world_size=shard_metadata.world_size,
+                            world_size=1 if is_tensor_parallel else shard_metadata.world_size,
                             max_batch_size=BATCH_MAX_SIZE,
+                            tensor_parallel_group=group if is_tensor_parallel else None,
                         )
                         logger.info(
-                            f"Batch handler initialized (max_batch_size={BATCH_MAX_SIZE}, world_size={shard_metadata.world_size})"
+                            f"Batch handler initialized (max_batch_size={BATCH_MAX_SIZE}, tensor_parallel={is_tensor_parallel})"
                         )
                         kv_prefix_cache = KVPrefixCache(tokenizer)
-                    elif is_tensor_parallel:
-                        logger.info(
-                            "Batching disabled for tensor parallelism - using serial processing"
-                        )
 
                 elif (
                     ModelTask.TextToImage in shard_metadata.model_card.tasks
