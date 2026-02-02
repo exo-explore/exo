@@ -62,11 +62,6 @@ class TraceStats:
 _trace_buffer: list[TraceEvent] = []
 
 
-def is_tracing_enabled() -> bool:
-    """Check if tracing is enabled via environment variable."""
-    return EXO_TRACING_ENABLED
-
-
 def _record_span(
     name: str, start_us: int, duration_us: int, rank: int, category: str
 ) -> None:
@@ -103,7 +98,7 @@ def trace(
                 # Recorded with category "sync/compute"
                 hidden_states = some_computation(...)
     """
-    if not is_tracing_enabled():
+    if not EXO_TRACING_ENABLED:
         yield
         return
 
@@ -172,7 +167,7 @@ def export_trace(traces: list[TraceEvent], output_path: Path) -> None:
 
 
 def export_local_traces(rank: int) -> None:
-    if not is_tracing_enabled():
+    if not EXO_TRACING_ENABLED:
         return
 
     local_traces = get_trace_buffer()

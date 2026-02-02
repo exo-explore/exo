@@ -16,9 +16,9 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
 )
 from pydantic import ValidationError
 
-from exo.shared.constants import EXO_MAX_CHUNK_SIZE
+from exo.shared.constants import EXO_MAX_CHUNK_SIZE, EXO_TRACING_ENABLED
 from exo.shared.models.model_cards import ModelId, ModelTask
-from exo.shared.tracing import clear_trace_buffer, get_trace_buffer, is_tracing_enabled
+from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
 from exo.shared.types.api import ImageGenerationStats
 from exo.shared.types.chunks import ErrorChunk, ImageChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
@@ -656,7 +656,7 @@ def _send_traces_if_enabled(
     task_id: TaskId,
     rank: int,
 ) -> None:
-    if not is_tracing_enabled():
+    if not EXO_TRACING_ENABLED:
         return
 
     traces = get_trace_buffer()

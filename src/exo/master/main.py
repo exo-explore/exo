@@ -11,8 +11,8 @@ from exo.master.placement import (
     place_instance,
 )
 from exo.shared.apply import apply
-from exo.shared.constants import EXO_TRACING_CACHE_DIR
-from exo.shared.tracing import TraceEvent, export_trace, is_tracing_enabled
+from exo.shared.constants import EXO_TRACING_CACHE_DIR, EXO_TRACING_ENABLED
+from exo.shared.tracing import TraceEvent, export_trace
 from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
@@ -210,7 +210,7 @@ class Master:
 
                             self.command_task_mapping[command.command_id] = task_id
 
-                            if is_tracing_enabled():
+                            if EXO_TRACING_ENABLED:
                                 selected_instance = self.state.instances.get(
                                     selected_instance_id
                                 )
@@ -264,7 +264,7 @@ class Master:
 
                             self.command_task_mapping[command.command_id] = task_id
 
-                            if is_tracing_enabled():
+                            if EXO_TRACING_ENABLED:
                                 selected_instance = self.state.instances.get(
                                     selected_instance_id
                                 )
