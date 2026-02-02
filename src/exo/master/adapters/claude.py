@@ -48,41 +48,83 @@ def finish_reason_to_claude_stop_reason(
     return mapping.get(finish_reason, "end_turn")
 
 
+def _extract_tool_result_text(block: ClaudeToolResultBlock) -> str:
+    """Extract plain text from a tool_result content field."""
+    if block.content is None:
+        return ""
+    if isinstance(block.content, str):
+        return block.content
+    return "".join(sub_block.text for sub_block in block.content)
+
+
 def claude_request_to_text_generation(
     request: ClaudeMessagesRequest,
 ) -> TextGenerationTaskParams:
     # Handle system message
     instructions: str | None = None
+    chat_template_messages: list[dict[str, Any]] = []
+
     if request.system:
         if isinstance(request.system, str):
             instructions = request.system
         else:
-            # List of text blocks
             instructions = "".join(block.text for block in request.system)
+        chat_template_messages.append({"role": "system", "content": instructions})
 
     # Convert messages to input
     input_messages: list[InputMessage] = []
     for msg in request.messages:
-        content: str
         if isinstance(msg.content, str):
-            content = msg.content
-        else:
-            # Extract text from all block types
-            text_parts: list[str] = []
-            for block in msg.content:
-                if isinstance(block, ClaudeTextBlock):
-                    text_parts.append(block.text)
-                elif isinstance(block, ClaudeToolResultBlock):
-                    # Extract text content from tool_result blocks
-                    if isinstance(block.content, str):
-                        text_parts.append(block.content)
-                    elif isinstance(block.content, list):
-                        for sub_block in block.content:
-                            text_parts.append(sub_block.text)
-            content = "".join(text_parts)
+            input_messages.append(InputMessage(role=msg.role, content=msg.content))
+            chat_template_messages.append(
+                {"role": msg.role, "content": msg.content}
+            )
+            continue
 
-        # Claude uses "user" and "assistant" roles
-        input_messages.append(InputMessage(role=msg.role, content=content))
+        # Process structured content blocks
+        text_parts: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
+        tool_results: list[ClaudeToolResultBlock] = []
+
+        for block in msg.content:
+            if isinstance(block, ClaudeTextBlock):
+                text_parts.append(block.text)
+            elif isinstance(block, ClaudeToolUseBlock):
+                tool_calls.append(
+                    {
+                        "id": block.id,
+                        "type": "function",
+                        "function": {
+                            "name": block.name,
+                            "arguments": json.dumps(block.input),
+                        },
+                    }
+                )
+            elif isinstance(block, ClaudeToolResultBlock):
+                tool_results.append(block)
+
+        content = "".join(text_parts)
+
+        # Build InputMessage from text content
+        if msg.role in ("user", "assistant"):
+            input_messages.append(InputMessage(role=msg.role, content=content))
+
+        # Build chat_template_messages preserving tool structure
+        if tool_calls:
+            chat_template_messages.append(
+                {"role": "assistant", "content": content, "tool_calls": tool_calls}
+            )
+        elif tool_results:
+            for tr in tool_results:
+                chat_template_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tr.tool_use_id,
+                        "content": _extract_tool_result_text(tr),
+                    }
+                )
+        else:
+            chat_template_messages.append({"role": msg.role, "content": content})
 
     # Convert Claude tool definitions to OpenAI-style function tools
     tools: list[dict[str, Any]] | None = None
@@ -110,6 +152,7 @@ def claude_request_to_text_generation(
         stop=request.stop_sequences,
         stream=request.stream,
         tools=tools,
+        chat_template_messages=chat_template_messages if chat_template_messages else None,
     )
 
 
