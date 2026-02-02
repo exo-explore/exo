@@ -597,6 +597,13 @@ def run_livecodebench(
             pass  # Usage endpoint not available
 
         logger.info(f"LiveCodeBench evaluation completed in {elapsed_seconds:.2f}s")
+
+        # Generate results.json from eval files
+        if result.returncode == 0:
+            _generate_livecodebench_results(
+                effective_output, model, elapsed_seconds, usage, lcb_config
+            )
+
         return result.returncode, usage, elapsed_seconds
 
     except FileNotFoundError:
@@ -607,6 +614,105 @@ def run_livecodebench(
             "cd LiveCodeBench && uv pip install -e ."
         )
         return 1, None, None
+
+
+def _generate_livecodebench_results(
+    output_path: str,
+    model: str,
+    elapsed_seconds: float,
+    usage: dict[str, Any] | None,
+    lcb_config: dict[str, Any],
+) -> None:
+    """Generate a results.json file from LiveCodeBench evaluation results."""
+    output_dir = Path(output_path)
+    model_dir = output_dir / model
+
+    if not model_dir.exists():
+        logger.warning(f"Model output directory not found: {model_dir}")
+        return
+
+    # Find all eval.json files (not eval_all.json)
+    eval_files = list(model_dir.glob("*_eval.json"))
+    eval_files = [f for f in eval_files if "_eval_all.json" not in f.name]
+
+    if not eval_files:
+        logger.warning(f"No eval files found in {model_dir}")
+        return
+
+    # Parse the most recent eval file (by modification time)
+    eval_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    latest_eval = eval_files[0]
+
+    try:
+        with open(latest_eval, encoding="utf-8") as f:
+            eval_data = json.load(f)
+
+        # Extract pass@k scores from the first element
+        scores: dict[str, float] = {}
+        details: dict[str, Any] = {}
+
+        if isinstance(eval_data, list) and len(eval_data) > 0:
+            first_elem = eval_data[0]
+            if isinstance(first_elem, dict):
+                # Extract all pass@k scores
+                for key, value in first_elem.items():
+                    if key.startswith("pass@") and isinstance(value, (int, float)):
+                        scores[key] = float(value)
+                    elif key == "detail":
+                        details = value
+
+        # Count problems from the corresponding output file
+        output_file_name = latest_eval.name.replace("_eval.json", ".json")
+        output_file = model_dir / output_file_name
+        num_problems = 0
+        if output_file.exists():
+            with open(output_file, encoding="utf-8") as f:
+                problems_data = json.load(f)
+                if isinstance(problems_data, list):
+                    num_problems = len(problems_data)
+
+        # Build results.json
+        results: dict[str, Any] = {
+            "model": model,
+            "eval_type": "livecodebench",
+            "scenario": lcb_config.get("scenario", "codegeneration"),
+            "release_version": lcb_config.get("release_version", "release_v5"),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "elapsed_seconds": elapsed_seconds,
+            "num_problems": num_problems,
+            "results": scores,
+            "config": {
+                "temperature": lcb_config.get("temperature", 0),
+                "n_samples": lcb_config.get("n_samples", 1),
+                "max_tokens": lcb_config.get("max_tokens", 16384),
+            },
+        }
+
+        if details:
+            results["details"] = details
+
+        if usage:
+            results["token_usage"] = {
+                "prompt_tokens": usage.get("total_prompt_tokens", 0),
+                "completion_tokens": usage.get("total_completion_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
+                "total_requests": usage.get("total_requests", 0),
+            }
+
+        # Write results.json to the model directory
+        results_file = model_dir / "results.json"
+        with open(results_file, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"Generated LiveCodeBench results: {results_file}")
+
+        # Also log the key metrics
+        if scores:
+            scores_str = ", ".join(f"{k}={v:.2%}" for k, v in sorted(scores.items()))
+            logger.info(f"LiveCodeBench scores: {scores_str}")
+
+    except Exception as e:
+        logger.warning(f"Failed to generate results.json: {e}")
 
 
 def run_custom_eval(
