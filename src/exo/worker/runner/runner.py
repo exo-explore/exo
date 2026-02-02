@@ -757,6 +757,16 @@ def parse_tool_calls(
 
         if in_tool_call:
             tool_call_text_parts.append(response.text)
+            if response.finish_reason is not None:
+                logger.info(
+                    "toll call parsing interrupted, yield partial tool call as text"
+                )
+                yield GenerationResponse(
+                    text=tool_call_start + "".join(tool_call_text_parts),
+                    token=0,
+                    finish_reason=response.finish_reason,
+                    usage=None,
+                )
             continue
         # fallthrough
         yield response
@@ -829,7 +839,7 @@ def patch_glm_tokenizer(tokenizer: TokenizerWrapper):
 
     _func_name_regex = re.compile(r"^(.*?)<arg_key>", re.DOTALL)
     _func_arg_regex = re.compile(
-        r"<arg_key>(.*?)</arg_key>(?:\\n|\s)*<arg_value>(.*?)</arg_value>",
+        r"<arg_key>(.*?)</arg_key>(?:\n|\s)*<arg_value>(.*?)(?:</arg_value>|(?=<arg_key>)|$)",
         re.DOTALL,
     )
 
