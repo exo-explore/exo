@@ -494,6 +494,9 @@ def run_livecodebench(
     fast = lcb_config.get("fast", True)  # Use code_generation_lite by default
     evaluate = lcb_config.get("evaluate", True)
     multiprocess = lcb_config.get("multiprocess", 4)
+    # Timeouts (high defaults for slow inference)
+    timeout = lcb_config.get("timeout", 1800)  # 30 min per problem
+    openai_timeout = lcb_config.get("openai_timeout", 3600)  # 1 hour per request
 
     exo_base_url = f"http://{host}:{port}/v1"
     effective_output = output_path or lcb_config.get("output_path", "bench/lcb_results")
@@ -544,6 +547,10 @@ def run_livecodebench(
 
     if multiprocess > 1:
         args.extend(["--multiprocess", str(multiprocess)])
+
+    # Add timeouts
+    args.extend(["--timeout", str(timeout)])
+    args.extend(["--openai_timeout", str(openai_timeout)])
 
     if limit is not None:
         args.extend(["--limit", str(limit)])
