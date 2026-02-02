@@ -301,6 +301,8 @@ class BatchedInferenceHandler:
                 model=self.model,
                 max_tokens=MAX_TOKENS,
                 stop_tokens=self.stop_tokens if self.stop_tokens else None,
+                # Process prefills one at a time to avoid cache corruption with mixed cache types (GPT-OSS)
+                prefill_batch_size=1,
             )
         else:
             logger.info(
@@ -390,6 +392,11 @@ class BatchedInferenceHandler:
             resp_token: int = response.token  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
             resp_finish_reason: str | None = response.finish_reason  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
             resp_logprobs: mx.array = response.logprobs  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+
+            # Log first few tokens for debugging
+            if active_request.tokens_generated <= 3:
+                token_text_debug = self.tokenizer.decode([resp_token])
+                logger.info(f"[BATCH DEBUG] uid={uid} gen={active_request.tokens_generated} token={resp_token} text={token_text_debug!r} finish={resp_finish_reason}")
 
             # Only emit events from device_rank 0
             if self.device_rank != 0:
