@@ -340,6 +340,10 @@ class BatchedInferenceHandler:
             f"Flushed {len(requests_to_flush)} requests into batch (active={self.current_batch_size}, uids={list(self.uid_to_request.keys())})"
         )
 
+        # Force synchronization after insert for GPT-OSS mixed cache types
+        if self.is_gpt_oss:
+            mx.synchronize()
+
     def step(self) -> Generator[Event, None, None]:
         """
         Process one generation step and yield ChunkGenerated events.
@@ -359,6 +363,9 @@ class BatchedInferenceHandler:
             f"BatchGenerator.next() called (active_uids={list(self.uid_to_request.keys())})"
         )
         responses: list[Any] = self.batch_generator.next()  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        # Force synchronization for GPT-OSS mixed cache types
+        if self.is_gpt_oss:
+            mx.synchronize()
         logger.debug(f"BatchGenerator.next() returned {len(responses)} responses")  # pyright: ignore[reportUnknownArgumentType]
 
         # Detect if BatchGenerator returned empty but we still have active requests
@@ -392,11 +399,6 @@ class BatchedInferenceHandler:
             resp_token: int = response.token  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
             resp_finish_reason: str | None = response.finish_reason  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
             resp_logprobs: mx.array = response.logprobs  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-
-            # Log first few tokens for debugging
-            if active_request.tokens_generated <= 3:
-                token_text_debug = self.tokenizer.decode([resp_token])
-                logger.info(f"[BATCH DEBUG] uid={uid} gen={active_request.tokens_generated} token={resp_token} text={token_text_debug!r} finish={resp_finish_reason}")
 
             # Only emit events from device_rank 0
             if self.device_rank != 0:
