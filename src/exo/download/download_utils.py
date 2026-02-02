@@ -155,13 +155,23 @@ async def seed_models(seed_dir: str | Path):
 
 
 async def fetch_file_list_with_cache(
-    model_id: ModelId, revision: str = "main", recursive: bool = False
+    model_id: ModelId,
+    revision: str = "main",
+    recursive: bool = False,
+    cache_ttl_seconds: int = 3600,
 ) -> list[FileListEntry]:
     target_dir = (await ensure_models_dir()) / "caches" / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)
     cache_file = target_dir / f"{model_id.normalize()}--{revision}--file_list.json"
 
-    # Always try fresh first
+    # Use cache if it exists and is fresh (< TTL seconds old)
+    if await aios.path.exists(cache_file):
+        cache_age = time.time() - (await aios.stat(cache_file)).st_mtime
+        if cache_age < cache_ttl_seconds:
+            async with aiofiles.open(cache_file, "r") as f:
+                return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
+
+    # Cache missing or stale - fetch fresh
     try:
         file_list = await fetch_file_list_with_retry(
             model_id, revision, recursive=recursive
@@ -173,7 +183,7 @@ async def fetch_file_list_with_cache(
             )
         return file_list
     except Exception as e:
-        # Fetch failed - try cache fallback
+        # Fetch failed - try cache fallback (even if stale)
         if await aios.path.exists(cache_file):
             logger.warning(
                 f"Failed to fetch file list for {model_id}, using cached data: {e}"
