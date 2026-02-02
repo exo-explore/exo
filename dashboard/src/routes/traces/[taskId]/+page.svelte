@@ -74,6 +74,18 @@
       .sort((a, b) => b.totalUs - a.totalUs);
   }
 
+  async function downloadTrace() {
+    if (!taskId) return;
+    const response = await fetch(getTraceRawUrl(taskId));
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `trace_${taskId}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function openInPerfetto() {
     if (!taskId) return;
 
@@ -165,6 +177,14 @@
         >
           All Traces
         </a>
+        <button
+          type="button"
+          class="text-xs font-mono text-exo-light-gray hover:text-exo-yellow transition-colors uppercase border border-exo-medium-gray/40 px-3 py-1.5 rounded"
+          onclick={downloadTrace}
+          disabled={loading || !!error}
+        >
+          Download
+        </button>
         <button
           type="button"
           class="text-xs font-mono text-exo-dark-gray bg-exo-yellow hover:bg-exo-yellow/90 transition-colors uppercase px-3 py-1.5 rounded font-semibold"

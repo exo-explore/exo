@@ -27,6 +27,17 @@
     return date.toLocaleString();
   }
 
+  async function downloadTrace(taskId: string) {
+    const response = await fetch(getTraceRawUrl(taskId));
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `trace_${taskId}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function openInPerfetto(taskId: string) {
     // Fetch trace data from our local API
     const response = await fetch(getTraceRawUrl(taskId));
@@ -156,6 +167,13 @@
               >
                 View Stats
               </a>
+              <button
+                type="button"
+                class="text-xs font-mono text-exo-light-gray hover:text-exo-yellow transition-colors uppercase border border-exo-medium-gray/40 px-2 py-1 rounded"
+                onclick={() => downloadTrace(trace.taskId)}
+              >
+                Download
+              </button>
               <button
                 type="button"
                 class="text-xs font-mono text-exo-dark-gray bg-exo-yellow hover:bg-exo-yellow/90 transition-colors uppercase px-2 py-1 rounded font-semibold"
