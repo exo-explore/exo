@@ -471,6 +471,7 @@ def run_livecodebench(
     port: int,
     model: str,
     output_path: str | None,
+    limit: int | None,
     dry_run: bool,
 ) -> tuple[int, dict[str, Any] | None, float | None]:
     """Run LiveCodeBench evaluation.
@@ -541,6 +542,9 @@ def run_livecodebench(
 
     if multiprocess > 1:
         args.extend(["--multiprocess", str(multiprocess)])
+
+    if limit is not None:
+        args.extend(["--limit", str(limit)])
 
     logger.info(f"LiveCodeBench command: {' '.join(args)}")
 
@@ -857,6 +861,7 @@ def main() -> int:
                 args.port,
                 full_model_id,
                 args.output,
+                args.limit,
                 args.dry_run,
             )
         elif eval_type == "custom":

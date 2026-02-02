@@ -22,7 +22,9 @@ Requires LiveCodeBench to be installed:
 from __future__ import annotations
 
 import argparse
+import multiprocessing
 import os
+import signal
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +32,14 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Any
+
+
+def _signal_handler(signum: int, frame: object) -> None:
+    """Handle interrupt signals by terminating all child processes."""
+    # Terminate any active multiprocessing pools
+    for child in multiprocessing.active_children():
+        child.terminate()
+    sys.exit(130)  # Standard exit code for SIGINT
 
 
 def get_lcb_directory() -> Path | None:
@@ -138,6 +148,10 @@ def patch_openai_client(base_url: str) -> None:
 
 def main() -> int:
     """Main entry point."""
+    # Set up signal handlers for clean exit
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+
     parser = argparse.ArgumentParser(
         description="LiveCodeBench runner wrapper for exo",
         epilog="Additional arguments are passed to lcb_runner.runner.main",
@@ -156,6 +170,12 @@ def main() -> int:
         "--output-dir",
         default=None,
         help="Output directory for results (maps to LiveCodeBench's --custom_output_save_name)",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit number of problems to evaluate (for testing)",
     )
 
     # Parse known args, pass rest to LiveCodeBench
@@ -196,10 +216,31 @@ def main() -> int:
     try:
         from lcb_runner.runner.main import main as lcb_main  # noqa: I001 # pyright: ignore[reportMissingImports]
 
+        # Patch benchmark loading to support --limit
+        if args.limit is not None:
+            from lcb_runner.runner import scenario_router  # noqa: I001 # pyright: ignore[reportMissingImports]
+
+            original_build = scenario_router.build_prompt_benchmark
+
+            def limited_build(*a: Any, **kw: Any) -> Any:
+                benchmark, format_prompt = original_build(*a, **kw)
+                if args.limit and len(benchmark) > args.limit:
+                    print(f"Limiting benchmark from {len(benchmark)} to {args.limit} problems")
+                    benchmark = benchmark[: args.limit]
+                return benchmark, format_prompt
+
+            scenario_router.build_prompt_benchmark = limited_build
+
         # Patch sys.argv for argparse in lcb_main
         sys.argv = [sys.argv[0], *lcb_args]
         lcb_main()
         return 0
+    except KeyboardInterrupt:
+        print("\nInterrupted by user", file=sys.stderr)
+        # Terminate any remaining child processes
+        for child in multiprocessing.active_children():
+            child.terminate()
+        return 130
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1
     except Exception as e:
