@@ -75,8 +75,8 @@ fast = true
 evaluate = true
 # Number of parallel API requests
 multiprocess = 32
-# Cache generated outputs for resumption
-use_cache = true
+# Cache generated outputs for resumption (disabled by default to avoid stale results)
+use_cache = false
 # Timeout per problem in seconds (default: 1800 = 30 min)
 timeout = 1800
 # OpenAI API request timeout in seconds (default: 3600 = 1 hour)

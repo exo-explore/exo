@@ -490,7 +490,7 @@ def run_livecodebench(
     temperature = lcb_config.get("temperature", 0)  # 0 for non-reasoning models
     n_samples = lcb_config.get("n_samples", 1)  # pass@1
     max_tokens = lcb_config.get("max_tokens", 16384)
-    use_cache = lcb_config.get("use_cache", True)
+    use_cache = lcb_config.get("use_cache", False)
     fast = lcb_config.get("fast", True)  # Use code_generation_lite by default
     evaluate = lcb_config.get("evaluate", True)
     multiprocess = lcb_config.get("multiprocess", 4)
