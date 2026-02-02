@@ -76,9 +76,7 @@ def claude_request_to_text_generation(
     for msg in request.messages:
         if isinstance(msg.content, str):
             input_messages.append(InputMessage(role=msg.role, content=msg.content))
-            chat_template_messages.append(
-                {"role": msg.role, "content": msg.content}
-            )
+            chat_template_messages.append({"role": msg.role, "content": msg.content})
             continue
 
         # Process structured content blocks
@@ -152,7 +150,9 @@ def claude_request_to_text_generation(
         stop=request.stop_sequences,
         stream=request.stream,
         tools=tools,
-        chat_template_messages=chat_template_messages if chat_template_messages else None,
+        chat_template_messages=chat_template_messages
+        if chat_template_messages
+        else None,
     )
 
 
