@@ -239,10 +239,12 @@ class ChatCompletionTaskParams(BaseModel):
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool | None = None
     user: str | None = None
+    # Internal flag for benchmark mode - set by API, preserved through serialization
+    bench: bool = False
 
 
 class BenchChatCompletionTaskParams(ChatCompletionTaskParams):
-    pass
+    bench: bool = True
 
 
 class PlaceInstanceParams(BaseModel):

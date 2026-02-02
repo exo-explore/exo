@@ -8,7 +8,6 @@ from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.api import (
-    BenchChatCompletionTaskParams,
     ChatCompletionMessage,
     FinishReason,
     GenerationStats,
@@ -368,7 +367,7 @@ def mlx_generate(
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
-    is_bench: bool = isinstance(task, BenchChatCompletionTaskParams)
+    is_bench: bool = task.bench
 
     # Currently we support chat-completion tasks only.
     logger.debug(f"task_params: {task}")
