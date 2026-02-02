@@ -8,14 +8,94 @@ import http.client
 import itertools
 import json
 import os
+import sys
 import time
 from collections.abc import Callable
+from pathlib import Path
 from statistics import mean
 from typing import Any
 from urllib.parse import urlencode
 
 from loguru import logger
 from transformers import AutoTokenizer
+
+# Monkey-patch for transformers 5.x compatibility
+# Kimi's tokenization_kimi.py imports bytes_to_unicode from the old location
+# which was moved in transformers 5.0.0rc2
+try:
+    import transformers.models.gpt2.tokenization_gpt2 as gpt2_tokenization
+    from transformers.convert_slow_tokenizer import bytes_to_unicode
+
+    if not hasattr(gpt2_tokenization, "bytes_to_unicode"):
+        gpt2_tokenization.bytes_to_unicode = bytes_to_unicode  # type: ignore[attr-defined]
+except ImportError:
+    pass  # transformers < 5.0 or bytes_to_unicode not available
+
+
+def load_tokenizer_for_bench(model_id: str) -> Any:
+    """
+    Load tokenizer for benchmarking, with special handling for Kimi models.
+
+    Kimi uses a custom TikTokenTokenizer that transformers 5.x can't load via AutoTokenizer.
+    This function replicates the logic from utils_mlx.py for bench compatibility.
+    """
+    model_id_lower = model_id.lower()
+
+    if "kimi-k2" in model_id_lower:
+        import importlib.util
+        import types
+
+        from huggingface_hub import snapshot_download
+
+        # Download/get the model path
+        model_path = Path(
+            snapshot_download(
+                model_id,
+                allow_patterns=["*.json", "*.py", "*.tiktoken"],
+            )
+        )
+
+        sys.path.insert(0, str(model_path))
+
+        # Load tool_declaration_ts first (tokenization_kimi imports it with relative import)
+        tool_decl_path = model_path / "tool_declaration_ts.py"
+        if tool_decl_path.exists():
+            spec = importlib.util.spec_from_file_location(
+                "tool_declaration_ts", tool_decl_path
+            )
+            if spec and spec.loader:
+                tool_decl_module = importlib.util.module_from_spec(spec)
+                sys.modules["tool_declaration_ts"] = tool_decl_module
+                spec.loader.exec_module(tool_decl_module)
+
+        # Load tokenization_kimi with patched source (convert relative to absolute import)
+        tok_path = model_path / "tokenization_kimi.py"
+        source = tok_path.read_text()
+        source = source.replace("from .tool_declaration_ts", "from tool_declaration_ts")
+        spec = importlib.util.spec_from_file_location("tokenization_kimi", tok_path)
+        if spec:
+            tok_module = types.ModuleType("tokenization_kimi")
+            tok_module.__file__ = str(tok_path)
+            sys.modules["tokenization_kimi"] = tok_module
+            exec(compile(source, tok_path, "exec"), tok_module.__dict__)  # noqa: S102
+            TikTokenTokenizer = tok_module.TikTokenTokenizer  # noqa: N806
+        else:
+            from tokenization_kimi import TikTokenTokenizer  # type: ignore[import-not-found]  # noqa: I001
+
+        hf_tokenizer: Any = TikTokenTokenizer.from_pretrained(model_path)
+
+        # Patch encode to use internal tiktoken model directly
+        # transformers 5.x has a bug in the encode->pad path for slow tokenizers
+        def _patched_encode(text: str, **kwargs: object) -> list[int]:
+            # Pass allowed_special="all" to handle special tokens like <|im_user|>
+            return list(hf_tokenizer.model.encode(text, allowed_special="all"))
+
+        hf_tokenizer.encode = _patched_encode
+
+        return hf_tokenizer
+
+    # Default: use AutoTokenizer
+    return AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 
 
 class ExoHttpError(RuntimeError):
@@ -234,7 +314,11 @@ def run_one_completion(
 
     stats = out.get("generation_stats")
 
-    preview = (out.get("choices") or [{}])[0]["message"]["content"][:200]
+    # Extract preview, handling None content (common for thinking models)
+    choices = out.get("choices") or [{}]
+    message = choices[0].get("message", {}) if choices else {}
+    content = message.get("content") or ""
+    preview = content[:200] if content else ""
 
     return {
         "elapsed_s": elapsed,
@@ -400,10 +484,7 @@ def main() -> int:
     )
     previews = previews_resp.get("previews") or []
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        full_model_id,
-        trust_remote_code=True,
-    )
+    tokenizer = load_tokenizer_for_bench(full_model_id)
     if tokenizer is None:
         raise RuntimeError("[exo-bench] tokenizer load failed")
 
