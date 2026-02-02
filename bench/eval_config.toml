@@ -2,8 +2,8 @@
 # See bench/exo_eval.py for usage
 
 [eval]
-# Eval framework type: "lm_eval" | "swe_bench" | "custom"
-type = "lm_eval"
+# Eval framework type: "lm_eval" | "swe_bench" | "custom" | "livecodebench"
+type = "livecodebench"
 # Require HuggingFace token (default: true)
 # Set to false if using only public datasets
 require_hf_token = true
