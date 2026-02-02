@@ -5,12 +5,17 @@ exo-eval: Evaluation harness for exo inference system.
 
 Supports multiple evaluation frameworks via TOML configuration:
 - lm_eval: Language model evaluation using EleutherAI's lm-evaluation-harness
+- livecodebench: Code generation benchmark (https://livecodebench.github.io/)
 - swe_bench: SWE-bench evaluation (placeholder for future implementation)
 - custom: Custom evaluation scripts
 
 Usage:
     uv run python -m bench.exo_eval --config bench/eval_config.toml --model Llama-3.2-1b-Instruct-4bit
     uv run python -m bench.exo_eval --config bench/eval_config.toml --model Llama-3.2-1b-Instruct-4bit --dry-run
+
+    # Run LiveCodeBench (requires livecodebench package):
+    # First: git clone https://github.com/LiveCodeBench/LiveCodeBench && cd LiveCodeBench && uv pip install -e .
+    # Then set type = "livecodebench" in eval_config.toml
 """
 
 from __future__ import annotations
@@ -47,7 +52,7 @@ from bench.exo_bench import (
     wait_for_instance_ready,
 )
 
-EvalType = Literal["lm_eval", "swe_bench", "custom"]
+EvalType = Literal["lm_eval", "swe_bench", "livecodebench", "custom"]
 
 
 def load_config(config_path: str) -> dict[str, Any]:
@@ -64,7 +69,7 @@ def get_eval_type(config: dict[str, Any]) -> EvalType:
     """Extract evaluation type from config."""
     eval_section = config.get("eval", {})
     eval_type = eval_section.get("type", "lm_eval")
-    if eval_type not in ("lm_eval", "swe_bench", "custom"):
+    if eval_type not in ("lm_eval", "swe_bench", "livecodebench", "custom"):
         raise ValueError(f"Unknown eval type: {eval_type}")
     return eval_type
 
@@ -460,6 +465,135 @@ def run_swe_bench(
     return 0, None, None
 
 
+def run_livecodebench(
+    config: dict[str, Any],
+    host: str,
+    port: int,
+    model: str,
+    output_path: str | None,
+    dry_run: bool,
+) -> tuple[int, dict[str, Any] | None, float | None]:
+    """Run LiveCodeBench evaluation.
+
+    LiveCodeBench is a contamination-free benchmark for code generation that
+    continuously collects new problems from LeetCode, AtCoder, and Codeforces.
+
+    See: https://livecodebench.github.io/
+    """
+    lcb_config = config.get("livecodebench", {})
+
+    scenario = lcb_config.get("scenario", "codegeneration")
+    release_version = lcb_config.get("release_version", "release_v5")
+    temperature = lcb_config.get("temperature", 0.2)
+    n_samples = lcb_config.get("n_samples", 10)
+    max_tokens = lcb_config.get("max_tokens", 4096)
+    use_cache = lcb_config.get("use_cache", True)
+    fast = lcb_config.get("fast", True)  # Use code_generation_lite by default
+    evaluate = lcb_config.get("evaluate", True)
+    multiprocess = lcb_config.get("multiprocess", 4)
+
+    exo_base_url = f"http://{host}:{port}/v1"
+    effective_output = output_path or lcb_config.get("output_path", "bench/lcb_results")
+
+    logger.info("LiveCodeBench evaluation configuration:")
+    logger.info(f"  Scenario: {scenario}")
+    logger.info(f"  Release version: {release_version}")
+    logger.info(f"  Model: {model}")
+    logger.info(f"  API endpoint: {exo_base_url}")
+    logger.info(f"  Temperature: {temperature}")
+    logger.info(f"  N samples: {n_samples}")
+    logger.info(f"  Max tokens: {max_tokens}")
+    logger.info(f"  Output path: {effective_output}")
+
+    # Build command using our wrapper script that handles:
+    # 1. Registering custom models in LiveCodeBench's registry
+    # 2. Patching the OpenAI client to use exo's endpoint
+    args = [
+        sys.executable,
+        "-m",
+        "bench.livecodebench_runner",
+        "--base-url",
+        exo_base_url,
+        "--model",
+        model,
+        "--scenario",
+        scenario,
+        "--release_version",
+        release_version,
+        "--temperature",
+        str(temperature),
+        "--codegen_n",
+        str(n_samples),
+        "--max_tokens",
+        str(max_tokens),
+        "--output_dir",
+        effective_output,
+    ]
+
+    if use_cache:
+        args.append("--use_cache")
+
+    if not fast:
+        args.append("--not_fast")
+
+    if evaluate:
+        args.append("--evaluate")
+
+    if multiprocess > 1:
+        args.extend(["--multiprocess", str(multiprocess)])
+
+    logger.info(f"LiveCodeBench command: {' '.join(args)}")
+
+    if dry_run:
+        logger.info("[dry-run] Would execute the above command")
+        return 0, None, None
+
+    # Environment is set up by the wrapper script
+    env = os.environ.copy()
+
+    try:
+        start_time = time.perf_counter()
+        result = subprocess.run(args, env=env, check=False)
+        elapsed_seconds = time.perf_counter() - start_time
+
+        # Fetch token usage from exo
+        usage: dict[str, Any] | None = None
+        try:
+            import httpx
+
+            usage_resp = httpx.get(f"http://{host}:{port}/v1/usage", timeout=5)
+            if usage_resp.status_code == 200:
+                usage_data: dict[str, Any] = usage_resp.json()
+                usage = usage_data
+                logger.info("--- Token Usage (Total) ---")
+                logger.info(
+                    f"  Requests:          {usage_data.get('total_requests', 0)}"
+                )
+                logger.info(
+                    f"  Prompt tokens:     {usage_data.get('total_prompt_tokens', 0)}"
+                )
+                logger.info(
+                    f"  Completion tokens: {usage_data.get('total_completion_tokens', 0)}"
+                )
+                logger.info(
+                    f"  Total tokens:      {usage_data.get('total_tokens', 0)}"
+                )
+        except Exception:
+            pass  # Usage endpoint not available
+
+        logger.info(f"LiveCodeBench evaluation completed in {elapsed_seconds:.2f}s")
+        return result.returncode, usage, elapsed_seconds
+
+    except FileNotFoundError:
+        logger.error(
+            "LiveCodeBench not found. Install with: "
+            "pip install livecodebench  OR  "
+            "git clone https://github.com/LiveCodeBench/LiveCodeBench && "
+            "cd LiveCodeBench && uv pip install -e ."
+        )
+        return 1, None, None
+
+
 def run_custom_eval(
     config: dict[str, Any],
     host: str,
@@ -709,6 +843,15 @@ def main() -> int:
             )
         elif eval_type == "swe_bench":
             return_code, usage, elapsed_seconds = run_swe_bench(
+                config,
+                args.host,
+                args.port,
+                full_model_id,
+                args.output,
+                args.dry_run,
+            )
+        elif eval_type == "livecodebench":
+            return_code, usage, elapsed_seconds = run_livecodebench(
                 config,
                 args.host,
                 args.port,
