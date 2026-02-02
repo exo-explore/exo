@@ -214,13 +214,12 @@ def main() -> int:
 
     # Run LiveCodeBench
     try:
-        from lcb_runner.runner.main import main as lcb_main  # noqa: I001 # pyright: ignore[reportMissingImports]
+        from lcb_runner.runner import main as lcb_main_module  # noqa: I001 # pyright: ignore[reportMissingImports]
 
         # Patch benchmark loading to support --limit
+        # Must patch in the main module since it imports the function directly
         if args.limit is not None:
-            from lcb_runner.runner import scenario_router  # noqa: I001 # pyright: ignore[reportMissingImports]
-
-            original_build = scenario_router.build_prompt_benchmark
+            original_build = lcb_main_module.build_prompt_benchmark
 
             def limited_build(*a: Any, **kw: Any) -> Any:
                 benchmark, format_prompt = original_build(*a, **kw)
@@ -229,11 +228,11 @@ def main() -> int:
                     benchmark = benchmark[: args.limit]
                 return benchmark, format_prompt
 
-            scenario_router.build_prompt_benchmark = limited_build
+            lcb_main_module.build_prompt_benchmark = limited_build
 
         # Patch sys.argv for argparse in lcb_main
         sys.argv = [sys.argv[0], *lcb_args]
-        lcb_main()
+        lcb_main_module.main()
         return 0
     except KeyboardInterrupt:
         print("\nInterrupted by user", file=sys.stderr)
