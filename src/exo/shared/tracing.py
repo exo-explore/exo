@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import time
 from collections import defaultdict
 from collections.abc import Generator
@@ -12,8 +11,7 @@ from pathlib import Path
 from typing import cast, final
 
 from exo.shared.constants import EXO_TRACING_ENABLED
-
-logger = logging.getLogger(__name__)
+from exo.worker.runner.bootstrap import logger
 
 # Context variable to track the current trace category for hierarchical nesting
 _current_category: ContextVar[str | None] = ContextVar("current_category", default=None)
