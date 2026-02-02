@@ -59,9 +59,7 @@ def responses_request_to_text_generation(
             if isinstance(item, ResponseInputMessage):
                 content = _extract_content(item.content)
                 if item.role in ("user", "assistant", "developer"):
-                    input_messages.append(
-                        InputMessage(role=item.role, content=content)
-                    )
+                    input_messages.append(InputMessage(role=item.role, content=content))
                 if item.role == "system":
                     chat_template_messages.append(
                         {"role": "system", "content": content}

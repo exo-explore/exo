@@ -66,7 +66,9 @@ class FunctionCallOutputInputItem(BaseModel, frozen=True):
     status: ResponseStatus | None = None
 
 
-ResponseInputItem = ResponseInputMessage | FunctionCallInputItem | FunctionCallOutputInputItem
+ResponseInputItem = (
+    ResponseInputMessage | FunctionCallInputItem | FunctionCallOutputInputItem
+)
 
 
 class ResponsesRequest(BaseModel, frozen=True):
