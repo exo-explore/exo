@@ -1,6 +1,7 @@
 """OpenAI Responses API adapter for converting requests/responses."""
 
 from collections.abc import AsyncGenerator
+from uuid import uuid4
 
 from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
@@ -9,7 +10,11 @@ from exo.shared.types.openai_responses import (
     ResponseContentPartAddedEvent,
     ResponseContentPartDoneEvent,
     ResponseCreatedEvent,
+    ResponseFunctionCallArgumentsDeltaEvent,
+    ResponseFunctionCallArgumentsDoneEvent,
+    ResponseFunctionCallItem,
     ResponseInProgressEvent,
+    ResponseItem,
     ResponseMessageItem,
     ResponseOutputItemAddedEvent,
     ResponseOutputItemDoneEvent,
@@ -58,6 +63,7 @@ async def collect_responses_response(
     response_id = f"resp_{command_id}"
     item_id = f"item_{command_id}"
     accumulated_text = ""
+    function_call_items: list[ResponseFunctionCallItem] = []
     last_stats = None
     error_message: str | None = None
 
@@ -66,7 +72,17 @@ async def collect_responses_response(
             error_message = chunk.error_message or "Internal server error"
             break
 
-        if not isinstance(chunk, TokenChunk):
+        if isinstance(chunk, ToolCallChunk):
+            for tool in chunk.tool_calls:
+                function_call_items.append(
+                    ResponseFunctionCallItem(
+                        id=f"fc_{uuid4().hex[:24]}",
+                        call_id=f"call_{uuid4().hex[:24]}",
+                        name=tool.name,
+                        arguments=tool.arguments,
+                    )
+                )
+            last_stats = chunk.stats or last_stats
             continue
 
         accumulated_text += chunk.text
@@ -84,17 +100,20 @@ async def collect_responses_response(
             total_tokens=last_stats.prompt_tokens + last_stats.generation_tokens,
         )
 
-    output_item = ResponseMessageItem(
-        id=item_id,
-        content=[ResponseOutputText(text=accumulated_text)],
-        status="completed",
-    )
+    output: list[ResponseItem] = [
+        ResponseMessageItem(
+            id=item_id,
+            content=[ResponseOutputText(text=accumulated_text)],
+            status="completed",
+        )
+    ]
+    output.extend(function_call_items)
 
     return ResponsesResponse(
         id=response_id,
         model=model,
         status="completed",
-        output=[output_item],
+        output=output,
         output_text=accumulated_text,
         usage=usage,
     )
@@ -141,10 +160,65 @@ async def generate_responses_stream(
     yield f"event: response.content_part.added\ndata: {part_added.model_dump_json()}\n\n"
 
     accumulated_text = ""
+    function_call_items: list[ResponseFunctionCallItem] = []
     last_stats = None
+    next_output_index = 1  # message item is at 0
 
     async for chunk in chunk_stream:
-        if not isinstance(chunk, TokenChunk):
+        if isinstance(chunk, ErrorChunk):
+            break
+
+        if isinstance(chunk, ToolCallChunk):
+            last_stats = chunk.stats or last_stats
+            for tool in chunk.tool_calls:
+                fc_id = f"fc_{uuid4().hex[:24]}"
+                call_id = f"call_{uuid4().hex[:24]}"
+
+                # response.output_item.added for function_call
+                fc_item = ResponseFunctionCallItem(
+                    id=fc_id,
+                    call_id=call_id,
+                    name=tool.name,
+                    arguments="",
+                    status="in_progress",
+                )
+                fc_added = ResponseOutputItemAddedEvent(
+                    output_index=next_output_index, item=fc_item
+                )
+                yield f"event: response.output_item.added\ndata: {fc_added.model_dump_json()}\n\n"
+
+                # response.function_call_arguments.delta
+                args_delta = ResponseFunctionCallArgumentsDeltaEvent(
+                    item_id=fc_id,
+                    output_index=next_output_index,
+                    delta=tool.arguments,
+                )
+                yield f"event: response.function_call_arguments.delta\ndata: {args_delta.model_dump_json()}\n\n"
+
+                # response.function_call_arguments.done
+                args_done = ResponseFunctionCallArgumentsDoneEvent(
+                    item_id=fc_id,
+                    output_index=next_output_index,
+                    name=tool.name,
+                    arguments=tool.arguments,
+                )
+                yield f"event: response.function_call_arguments.done\ndata: {args_done.model_dump_json()}\n\n"
+
+                # response.output_item.done
+                fc_done_item = ResponseFunctionCallItem(
+                    id=fc_id,
+                    call_id=call_id,
+                    name=tool.name,
+                    arguments=tool.arguments,
+                    status="completed",
+                )
+                fc_item_done = ResponseOutputItemDoneEvent(
+                    output_index=next_output_index, item=fc_done_item
+                )
+                yield f"event: response.output_item.done\ndata: {fc_item_done.model_dump_json()}\n\n"
+
+                function_call_items.append(fc_done_item)
+                next_output_index += 1
             continue
 
         accumulated_text += chunk.text
@@ -172,12 +246,12 @@ async def generate_responses_stream(
     yield f"event: response.content_part.done\ndata: {part_done.model_dump_json()}\n\n"
 
     # response.output_item.done
-    final_item = ResponseMessageItem(
+    final_message_item = ResponseMessageItem(
         id=item_id,
         content=[ResponseOutputText(text=accumulated_text)],
         status="completed",
     )
-    item_done = ResponseOutputItemDoneEvent(output_index=0, item=final_item)
+    item_done = ResponseOutputItemDoneEvent(output_index=0, item=final_message_item)
     yield f"event: response.output_item.done\ndata: {item_done.model_dump_json()}\n\n"
 
     # Create usage from stats if available
@@ -190,11 +264,13 @@ async def generate_responses_stream(
         )
 
     # response.completed
+    output: list[ResponseItem] = [final_message_item]
+    output.extend(function_call_items)
     final_response = ResponsesResponse(
         id=response_id,
         model=model,
         status="completed",
-        output=[final_item],
+        output=output,
         output_text=accumulated_text,
         usage=usage,
     )

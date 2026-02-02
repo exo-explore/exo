@@ -89,7 +89,18 @@ class ResponseMessageItem(BaseModel, frozen=True):
     status: ResponseStatus = "completed"
 
 
-ResponseItem = ResponseMessageItem  # Can expand for function_call, reasoning, etc.
+class ResponseFunctionCallItem(BaseModel, frozen=True):
+    """Function call item in response output array."""
+
+    type: Literal["function_call"] = "function_call"
+    id: str
+    call_id: str
+    name: str
+    arguments: str
+    status: ResponseStatus = "completed"
+
+
+ResponseItem = ResponseMessageItem | ResponseFunctionCallItem
 
 
 class ResponseUsage(BaseModel, frozen=True):
@@ -180,6 +191,29 @@ class ResponseOutputItemDoneEvent(BaseModel, frozen=True):
     item: ResponseItem
 
 
+class ResponseFunctionCallArgumentsDeltaEvent(BaseModel, frozen=True):
+    """Event sent for function call arguments delta during streaming."""
+
+    type: Literal["response.function_call_arguments.delta"] = (
+        "response.function_call_arguments.delta"
+    )
+    item_id: str
+    output_index: int
+    delta: str
+
+
+class ResponseFunctionCallArgumentsDoneEvent(BaseModel, frozen=True):
+    """Event sent when function call arguments are complete."""
+
+    type: Literal["response.function_call_arguments.done"] = (
+        "response.function_call_arguments.done"
+    )
+    item_id: str
+    output_index: int
+    name: str
+    arguments: str
+
+
 class ResponseCompletedEvent(BaseModel, frozen=True):
     """Event sent when response is completed."""
 
@@ -196,5 +230,7 @@ ResponsesStreamEvent = (
     | ResponseTextDoneEvent
     | ResponseContentPartDoneEvent
     | ResponseOutputItemDoneEvent
+    | ResponseFunctionCallArgumentsDeltaEvent
+    | ResponseFunctionCallArgumentsDoneEvent
     | ResponseCompletedEvent
 )
