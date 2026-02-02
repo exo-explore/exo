@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from pathlib import Path
 from random import random
 from typing import Iterator
 
@@ -9,6 +10,7 @@ from loguru import logger
 
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelId
+from exo.shared.tracing import TraceEvent, export_trace
 from exo.shared.types.api import ImageEditsTaskParams
 from exo.shared.types.commands import (
     ForwarderCommand,
@@ -28,6 +30,7 @@ from exo.shared.types.events import (
     TaskStatusUpdated,
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
+    TracesMerged,
 )
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
@@ -155,6 +158,9 @@ class Worker:
                 for idx, event in indexed_events:
                     self.state = apply(self.state, IndexedEvent(idx=idx, event=event))
 
+                    if isinstance(event, TracesMerged):
+                        self._save_merged_trace(event)
+
                     # Buffer input image chunks for image editing
                     if isinstance(event, InputChunkReceived):
                         cmd_id = event.command_id
@@ -270,6 +276,21 @@ class Worker:
 
     def shutdown(self):
         self._tg.cancel_scope.cancel()
+
+    def _save_merged_trace(self, event: TracesMerged) -> None:
+        traces = [
+            TraceEvent(
+                name=t.name,
+                start_us=t.start_us,
+                duration_us=t.duration_us,
+                rank=t.rank,
+                category=t.category,
+            )
+            for t in event.traces
+        ]
+        output_path = Path.home() / ".exo" / "traces" / f"trace_{event.task_id}.json"
+        export_trace(traces, output_path)
+        logger.debug(f"Saved merged trace to {output_path}")
 
     def _task_to_runner_id(self, task: Task):
         instance = self.state.instances[task.instance_id]

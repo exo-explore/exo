@@ -126,6 +126,12 @@ class TracesCollected(BaseEvent):
     traces: list[TraceEventData]
 
 
+@final
+class TracesMerged(BaseEvent):
+    task_id: TaskId
+    traces: list[TraceEventData]
+
+
 Event = (
     TestEvent
     | TaskCreated
@@ -145,6 +151,7 @@ Event = (
     | TopologyEdgeCreated
     | TopologyEdgeDeleted
     | TracesCollected
+    | TracesMerged
 )
 
 

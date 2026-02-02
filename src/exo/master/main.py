@@ -39,6 +39,7 @@ from exo.shared.types.events import (
     TaskDeleted,
     TraceEventData,
     TracesCollected,
+    TracesMerged,
 )
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
@@ -366,7 +367,7 @@ class Master:
                 )
                 for event in self._multi_buffer.drain():
                     if isinstance(event, TracesCollected):
-                        self._handle_traces_collected(event)
+                        await self._handle_traces_collected(event)
                         continue
 
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
@@ -408,7 +409,7 @@ class Master:
             )
         )
 
-    def _handle_traces_collected(self, event: TracesCollected) -> None:
+    async def _handle_traces_collected(self, event: TracesCollected) -> None:
         task_id = event.task_id
         if task_id not in self._pending_traces:
             self._pending_traces[task_id] = {}
@@ -419,25 +420,31 @@ class Master:
             and set(self._pending_traces[task_id].keys())
             >= self._expected_ranks[task_id]
         ):
-            self._merge_and_save_traces(task_id)
+            await self._merge_and_save_traces(task_id)
 
-    def _merge_and_save_traces(self, task_id: TaskId) -> None:
-        all_traces: list[TraceEvent] = []
+    async def _merge_and_save_traces(self, task_id: TaskId) -> None:
+        all_trace_data: list[TraceEventData] = []
         for trace_data in self._pending_traces[task_id].values():
-            for t in trace_data:
-                all_traces.append(
-                    TraceEvent(
-                        name=t.name,
-                        start_us=t.start_us,
-                        duration_us=t.duration_us,
-                        rank=t.rank,
-                        category=t.category,
-                    )
-                )
+            all_trace_data.extend(trace_data)
+
+        all_traces: list[TraceEvent] = [
+            TraceEvent(
+                name=t.name,
+                start_us=t.start_us,
+                duration_us=t.duration_us,
+                rank=t.rank,
+                category=t.category,
+            )
+            for t in all_trace_data
+        ]
 
         output_path = Path.home() / ".exo" / "traces" / f"trace_{task_id}.json"
         export_trace(all_traces, output_path)
         logger.info(f"Merged traces saved to {output_path}")
+
+        await self.event_sender.send(
+            TracesMerged(task_id=task_id, traces=all_trace_data)
+        )
 
         del self._pending_traces[task_id]
         if task_id in self._expected_ranks:
