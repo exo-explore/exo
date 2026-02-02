@@ -678,14 +678,11 @@ def parse_tool_calls(
 ) -> Generator[GenerationResponse | ToolCallResponse]:
     in_tool_call = False
     tool_call_text_parts: list[str] = []
-    last_buffered_response: GenerationResponse | None = None
-    last_finish_reason: FinishReason | None = None
     for response in responses:
         assert isinstance(response, GenerationResponse)
         # assumption: the tool call start is one token
         if response.text == tool_call_start:
             in_tool_call = True
-            last_finish_reason = response.finish_reason
             continue
         # assumption: the tool call end is one token
         if in_tool_call and response.text == tool_call_end:
@@ -719,48 +716,21 @@ def parse_tool_calls(
 
             in_tool_call = False
             tool_call_text_parts = []
-            last_buffered_response = None
             continue
 
         if in_tool_call:
             tool_call_text_parts.append(response.text)
-            last_buffered_response = response
             if response.finish_reason is not None:
-                last_finish_reason = response.finish_reason
+                logger.info("toll call parsing interrupted, yield partial tool call as text")
+                yield GenerationResponse(
+                    text=tool_call_start + "".join(tool_call_text_parts),
+                    token=0,
+                    finish_reason=response.finish_reason,
+                    usage=None,
+                )
             continue
         # fallthrough
         yield response
-
-    # If the generator exhausted while inside an unclosed tool call (model
-    # generated <tool_call> but never </tool_call>), the buffered tokens —
-    # including the finish token — were never yielded.  Emit them as regular
-    # text so the stream receives the finish_reason and doesn't hang.
-    if in_tool_call:
-        flushed_text = tool_call_start + "".join(tool_call_text_parts)
-        if last_buffered_response is not None:
-            logger.warning(
-                "generator exhausted inside unclosed tool call, flushing buffered text"
-            )
-            last_buffered_response.text = flushed_text
-            # Ensure finish_reason is propagated even if the last buffered token
-            # didn't carry it (e.g. the finish token was the <tool_call> start).
-            if (
-                last_buffered_response.finish_reason is None
-                and last_finish_reason is not None
-            ):
-                last_buffered_response.finish_reason = last_finish_reason
-            yield last_buffered_response
-        else:
-            # <tool_call> was the only/last token — nothing was buffered after it.
-            logger.warning(
-                "generator exhausted with unclosed tool call and no buffered content"
-            )
-            yield GenerationResponse(
-                text=flushed_text,
-                token=0,
-                finish_reason=last_finish_reason or "stop",
-                usage=None,
-            )
 
 
 def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
