@@ -369,6 +369,11 @@ def main() -> int:
     ap.add_argument(
         "--dry-run", action="store_true", help="List selected placements and exit."
     )
+    ap.add_argument(
+        "--all-combinations",
+        action="store_true",
+        help="Force all pp×tg combinations (cartesian product) even when lists have equal length.",
+    )
     args = ap.parse_args()
 
     pp_list = parse_int_list(args.pp)
@@ -381,10 +386,11 @@ def main() -> int:
         return 2
 
     # Log pairing mode
-    if len(pp_list) == len(tg_list):
-        logger.info(f"pp/tg mode: tandem (zip) - {len(pp_list)} pairs")
-    else:
+    use_combinations = args.all_combinations or len(pp_list) != len(tg_list)
+    if use_combinations:
         logger.info(f"pp/tg mode: combinations (product) - {len(pp_list) * len(tg_list)} pairs")
+    else:
+        logger.info(f"pp/tg mode: tandem (zip) - {len(pp_list)} pairs")
 
     client = ExoClient(args.host, args.port, timeout_s=args.timeout)
     short_id, full_model_id = resolve_model_short_id(client, args.model)
@@ -504,11 +510,11 @@ def main() -> int:
                 logger.debug(f"  warmup {i + 1}/{args.warmup} done")
 
             # If pp and tg lists have same length, run in tandem (zip)
-            # Otherwise, run all combinations (cartesian product)
-            if len(pp_list) == len(tg_list):
-                pp_tg_pairs = list(zip(pp_list, tg_list))
-            else:
+            # Otherwise (or if --all-combinations), run all combinations (cartesian product)
+            if use_combinations:
                 pp_tg_pairs = list(itertools.product(pp_list, tg_list))
+            else:
+                pp_tg_pairs = list(zip(pp_list, tg_list, strict=True))
 
             for pp, tg in pp_tg_pairs:
                 runs: list[dict[str, Any]] = []
