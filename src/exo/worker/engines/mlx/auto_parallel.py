@@ -520,6 +520,9 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
                 layer.self_attn.kv_b_proj
             )
             layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
+            # Store pre-shard head count and group for context parallelism
+            layer.self_attn.context_parallel_total_heads = layer.self_attn.num_heads
+            layer.self_attn._cp_group = self.group
             layer.self_attn.num_heads //= self.N
 
             # Shard the MLP
@@ -541,6 +544,10 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
                 layer.mlp.sharding_group = self.group
 
             mx.eval(layer)
+
+        # Store group for context parallelism
+        if hasattr(model, "model"):
+            model.model._cp_group = self.group
 
         return model
 
