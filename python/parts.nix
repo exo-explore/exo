@@ -69,7 +69,8 @@
           # Create wrapper scripts
           for script in exo exo-master exo-worker; do
             makeWrapper ${exoVenv}/bin/$script $out/bin/$script \
-              --set DASHBOARD_DIR ${self'.packages.dashboard}
+              --set DASHBOARD_DIR ${self'.packages.dashboard} \
+              ${lib.optionalString pkgs.stdenv.isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
           done
         '';
     in
