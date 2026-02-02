@@ -366,7 +366,8 @@ class BatchedInferenceHandler:
             min_uid = min(self.uid_to_request.keys())
             for r in responses:  # pyright: ignore[reportUnknownVariableType]
                 if r.uid == min_uid:  # pyright: ignore[reportUnknownMemberType]
-                    logger.info(f"[DEBUG] uid={min_uid} token={r.token} finish_reason={r.finish_reason}")  # pyright: ignore[reportUnknownMemberType]
+                    token_text = self.tokenizer.decode([r.token])  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                    logger.info(f"[DEBUG] uid={min_uid} token={r.token} text={token_text!r} finish_reason={r.finish_reason}")  # pyright: ignore[reportUnknownMemberType]
                     break
 
         for response in responses:  # pyright: ignore[reportUnknownVariableType]
@@ -524,7 +525,8 @@ class BatchedInferenceHandler:
             min_uid = min(self.uid_to_request.keys())
             for r in responses:
                 if r.uid == min_uid:
-                    logger.info(f"[DEBUG] uid={min_uid} token={r.token} finish_reason={r.finish_reason}")
+                    token_text = self.tokenizer.decode([r.token])
+                    logger.info(f"[DEBUG] uid={min_uid} token={r.token} text={token_text!r} finish_reason={r.finish_reason}")
                     break
 
         for response in responses:
