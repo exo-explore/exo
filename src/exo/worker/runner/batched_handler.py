@@ -204,8 +204,7 @@ class BatchedInferenceHandler:
         prompt_token_counts: list[int] = []
 
         for req in requests_to_flush:
-            # Don't add special tokens - chat template already includes them
-            tokens = self.tokenizer.encode(req.prompt, add_special_tokens=False)
+            tokens = self.tokenizer.encode(req.prompt)
             tokenized_prompts.append(tokens)
             max_tokens_list.append(req.max_tokens)
             samplers.append(req.sampler)
@@ -301,7 +300,6 @@ class BatchedInferenceHandler:
                 model=self.model,
                 max_tokens=MAX_TOKENS,
                 stop_tokens=self.stop_tokens if self.stop_tokens else None,
-                # Process prefills one at a time to avoid cache corruption with mixed cache types (GPT-OSS)
                 prefill_batch_size=1,
             )
         else:
@@ -340,10 +338,6 @@ class BatchedInferenceHandler:
             f"Flushed {len(requests_to_flush)} requests into batch (active={self.current_batch_size}, uids={list(self.uid_to_request.keys())})"
         )
 
-        # Force synchronization after insert for GPT-OSS mixed cache types
-        if self.is_gpt_oss:
-            mx.synchronize()
-
     def step(self) -> Generator[Event, None, None]:
         """
         Process one generation step and yield ChunkGenerated events.
@@ -363,26 +357,7 @@ class BatchedInferenceHandler:
             f"BatchGenerator.next() called (active_uids={list(self.uid_to_request.keys())})"
         )
         responses: list[Any] = self.batch_generator.next()  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        # Force synchronization for GPT-OSS mixed cache types
-        if self.is_gpt_oss:
-            mx.synchronize()
         logger.debug(f"BatchGenerator.next() returned {len(responses)} responses")  # pyright: ignore[reportUnknownArgumentType]
-
-        # Detect if BatchGenerator returned empty but we still have active requests
-        if len(responses) == 0 and len(self.uid_to_request) > 0:  # pyright: ignore[reportUnknownArgumentType]
-            logger.error(f"BatchGenerator returned 0 responses but {len(self.uid_to_request)} UIDs still active: {list(self.uid_to_request.keys())}")
-            # Force cleanup - emit error chunks for orphaned requests
-            for uid, active_request in list(self.uid_to_request.items()):
-                yield ChunkGenerated(
-                    command_id=active_request.command_id,
-                    chunk=ErrorChunk(
-                        model=self.model_id,
-                        finish_reason="error",
-                        error_message="BatchGenerator terminated unexpectedly",
-                    ),
-                )
-            self.uid_to_request.clear()
-            return
 
         completed_uids: list[int] = []
 
@@ -533,22 +508,6 @@ class BatchedInferenceHandler:
         )
         responses: list[PipelinedResponse] = self.pipelined_generator.next()
         logger.debug(f"PipelinedGenerator.next() returned {len(responses)} responses")
-
-        # Detect if PipelinedGenerator returned empty but we still have active requests
-        if len(responses) == 0 and len(self.uid_to_request) > 0:
-            logger.error(f"PipelinedGenerator returned 0 responses but {len(self.uid_to_request)} UIDs still active: {list(self.uid_to_request.keys())}")
-            # Force cleanup - emit error chunks for orphaned requests
-            for uid, active_request in list(self.uid_to_request.items()):
-                yield ChunkGenerated(
-                    command_id=active_request.command_id,
-                    chunk=ErrorChunk(
-                        model=self.model_id,
-                        finish_reason="error",
-                        error_message="PipelinedGenerator terminated unexpectedly",
-                    ),
-                )
-            self.uid_to_request.clear()
-            return
 
         completed_uids: list[int] = []
 

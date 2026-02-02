@@ -330,7 +330,23 @@ def run_lm_eval(
 
     try:
         start_time = time.perf_counter()
-        result = subprocess.run(args, check=False)
+        # Use Popen with process group so we can kill all children on interrupt
+        proc = subprocess.Popen(args, start_new_session=True)
+        try:
+            proc.wait()
+        except KeyboardInterrupt:
+            # Kill the entire process group on Ctrl+C
+            import signal
+
+            logger.info("Interrupted - terminating lm_eval processes...")
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                proc.wait(timeout=5)
+            except (ProcessLookupError, OSError):
+                pass  # Already dead
+            except subprocess.TimeoutExpired:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            return 130, None, None
         elapsed_seconds = time.perf_counter() - start_time
 
         # Fetch and return token usage summary from exo
@@ -381,7 +397,7 @@ def run_lm_eval(
         if effective_output and usage:
             _append_token_usage_to_results(effective_output, usage, elapsed_seconds)
 
-        return result.returncode, usage, elapsed_seconds
+        return proc.returncode, usage, elapsed_seconds
     except FileNotFoundError:
         logger.error("lm_eval not found. Install with: uv sync --extra eval")
         return 1, None, None
@@ -568,7 +584,23 @@ def run_livecodebench(
 
     try:
         start_time = time.perf_counter()
-        result = subprocess.run(args, env=env, check=False)
+        # Use Popen with process group so we can kill all children on interrupt
+        proc = subprocess.Popen(args, env=env, start_new_session=True)
+        try:
+            proc.wait()
+        except KeyboardInterrupt:
+            # Kill the entire process group on Ctrl+C
+            import signal
+
+            logger.info("Interrupted - terminating LiveCodeBench processes...")
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                proc.wait(timeout=5)
+            except (ProcessLookupError, OSError):
+                pass  # Already dead
+            except subprocess.TimeoutExpired:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            return 130, None, None
         elapsed_seconds = time.perf_counter() - start_time
 
         # Fetch token usage from exo
@@ -599,12 +631,12 @@ def run_livecodebench(
         logger.info(f"LiveCodeBench evaluation completed in {elapsed_seconds:.2f}s")
 
         # Generate results.json from eval files
-        if result.returncode == 0:
+        if proc.returncode == 0:
             _generate_livecodebench_results(
                 effective_output, model, elapsed_seconds, usage, lcb_config
             )
 
-        return result.returncode, usage, elapsed_seconds
+        return proc.returncode, usage, elapsed_seconds
 
     except FileNotFoundError:
         logger.error(

@@ -105,6 +105,7 @@ def _should_use_serial_processing(
     Post-processing (GPT-OSS, thinking models, tool calls) can be applied
     per-request to the individual streams from the batch generator.
     """
+    # All tasks can use batch mode - post-processing is per-request
     return False
 
 
@@ -655,11 +656,6 @@ def main(
                                 )
                             )
                     batched_task_ids.clear()
-
-                    # Reset batch generator for clean state
-                    batch_handler._close_generator()
-                    mx.reset_peak_memory()
-                    logger.info("Batch generator reset for clean state")
 
                     # Return to ready state
                     if isinstance(current_status, RunnerRunning):
