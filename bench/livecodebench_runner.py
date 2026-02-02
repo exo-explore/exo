@@ -25,10 +25,33 @@ import argparse
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Any
+
+
+def get_lcb_directory() -> Path | None:
+    """Find the LiveCodeBench installation directory.
+
+    LiveCodeBench uses relative paths like 'lcb_runner/prompts/few_shot_examples/...'
+    which require running from the LiveCodeBench directory.
+    """
+    try:
+        import lcb_runner  # pyright: ignore[reportMissingImports]
+
+        # Get the package directory (lcb_runner/) and go up one level to LiveCodeBench/
+        lcb_file = lcb_runner.__file__
+        if lcb_file is None:
+            return None
+        lcb_path = Path(lcb_file).parent.parent
+        # Verify the expected file exists
+        if (lcb_path / "lcb_runner" / "prompts" / "few_shot_examples").exists():
+            return lcb_path
+    except ImportError:
+        pass
+    return None
 
 
 def setup_custom_model(model_name: str, base_url: str) -> None:
@@ -121,6 +144,18 @@ def main() -> int:
     if "OPENAI_API_KEY" not in os.environ and "OPENAI_KEY" not in os.environ:
         os.environ["OPENAI_API_KEY"] = "exo-local"
         os.environ["OPENAI_KEY"] = "exo-local"
+
+    # Change to LiveCodeBench directory before imports that use relative paths
+    # LiveCodeBench uses paths like 'lcb_runner/prompts/few_shot_examples/...'
+    lcb_dir = get_lcb_directory()
+    if lcb_dir:
+        os.chdir(lcb_dir)
+    else:
+        print(
+            "Warning: Could not find LiveCodeBench directory. "
+            "Relative path imports may fail.",
+            file=sys.stderr,
+        )
 
     # Setup custom model and patch client
     setup_custom_model(args.model, args.base_url)
