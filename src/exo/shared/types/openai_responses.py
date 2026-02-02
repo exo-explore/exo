@@ -18,7 +18,7 @@ ResponseStatus = Literal["completed", "failed", "in_progress", "incomplete"]
 ResponseRole = Literal["user", "assistant", "system", "developer"]
 
 
-# Request types
+# Request input content part types
 class ResponseInputTextPart(BaseModel, frozen=True):
     """Text content part in a Responses API input message."""
 
@@ -26,11 +26,47 @@ class ResponseInputTextPart(BaseModel, frozen=True):
     text: str
 
 
+class ResponseOutputTextPart(BaseModel, frozen=True):
+    """Output text content part (used when replaying assistant messages in input)."""
+
+    type: Literal["output_text"] = "output_text"
+    text: str
+
+
+ResponseContentPart = ResponseInputTextPart | ResponseOutputTextPart
+
+
+# Request input item types
 class ResponseInputMessage(BaseModel, frozen=True):
     """Input message for Responses API."""
 
     role: ResponseRole
-    content: str | list[ResponseInputTextPart]
+    content: str | list[ResponseContentPart]
+    type: Literal["message"] = "message"
+
+
+class FunctionCallInputItem(BaseModel, frozen=True):
+    """Function call item replayed in input (from a previous assistant response)."""
+
+    type: Literal["function_call"] = "function_call"
+    id: str | None = None
+    call_id: str
+    name: str
+    arguments: str
+    status: ResponseStatus | None = None
+
+
+class FunctionCallOutputInputItem(BaseModel, frozen=True):
+    """Function call output item in input (user providing tool results)."""
+
+    type: Literal["function_call_output"] = "function_call_output"
+    call_id: str
+    output: str
+    id: str | None = None
+    status: ResponseStatus | None = None
+
+
+ResponseInputItem = ResponseInputMessage | FunctionCallInputItem | FunctionCallOutputInputItem
 
 
 class ResponsesRequest(BaseModel, frozen=True):
@@ -43,7 +79,7 @@ class ResponsesRequest(BaseModel, frozen=True):
 
     # --- OpenAI Responses API standard fields ---
     model: ModelId
-    input: str | list[ResponseInputMessage]
+    input: str | list[ResponseInputItem]
     instructions: str | None = None
     max_output_tokens: int | None = None
     temperature: float | None = None

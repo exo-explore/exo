@@ -1,12 +1,15 @@
 """OpenAI Responses API adapter for converting requests/responses."""
 
 from collections.abc import AsyncGenerator
+from typing import Any
 from uuid import uuid4
 
 from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
 from exo.shared.types.openai_responses import (
+    FunctionCallInputItem,
     ResponseCompletedEvent,
+    ResponseContentPart,
     ResponseContentPartAddedEvent,
     ResponseContentPartDoneEvent,
     ResponseCreatedEvent,
@@ -14,7 +17,7 @@ from exo.shared.types.openai_responses import (
     ResponseFunctionCallArgumentsDoneEvent,
     ResponseFunctionCallItem,
     ResponseInProgressEvent,
-    ResponseInputTextPart,
+    ResponseInputMessage,
     ResponseItem,
     ResponseMessageItem,
     ResponseOutputItemAddedEvent,
@@ -29,7 +32,7 @@ from exo.shared.types.openai_responses import (
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 
 
-def _extract_content(content: str | list[ResponseInputTextPart]) -> str:
+def _extract_content(content: str | list[ResponseContentPart]) -> str:
     """Extract plain text from a content field that may be a string or list of parts."""
     if isinstance(content, str):
         return content
@@ -40,13 +43,61 @@ def responses_request_to_text_generation(
     request: ResponsesRequest,
 ) -> TextGenerationTaskParams:
     input_value: str | list[InputMessage]
+    built_chat_template: list[dict[str, Any]] | None = None
     if isinstance(request.input, str):
         input_value = request.input
     else:
-        input_value = [
-            InputMessage(role=msg.role, content=_extract_content(msg.content))
-            for msg in request.input
-        ]
+        input_messages: list[InputMessage] = []
+        chat_template_messages: list[dict[str, Any]] = []
+
+        if request.instructions is not None:
+            chat_template_messages.append(
+                {"role": "system", "content": request.instructions}
+            )
+
+        for item in request.input:
+            if isinstance(item, ResponseInputMessage):
+                content = _extract_content(item.content)
+                if item.role in ("user", "assistant", "developer"):
+                    input_messages.append(
+                        InputMessage(role=item.role, content=content)
+                    )
+                if item.role == "system":
+                    chat_template_messages.append(
+                        {"role": "system", "content": content}
+                    )
+                else:
+                    chat_template_messages.append(
+                        {"role": item.role, "content": content}
+                    )
+            elif isinstance(item, FunctionCallInputItem):
+                chat_template_messages.append(
+                    {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": item.call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": item.name,
+                                    "arguments": item.arguments,
+                                },
+                            }
+                        ],
+                    }
+                )
+            else:
+                chat_template_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": item.call_id,
+                        "content": item.output,
+                    }
+                )
+
+        input_value = input_messages if input_messages else ""
+        built_chat_template = chat_template_messages if chat_template_messages else None
+
     return TextGenerationTaskParams(
         model=request.model,
         input=input_value,
@@ -59,7 +110,7 @@ def responses_request_to_text_generation(
         top_k=request.top_k,
         stop=request.stop,
         seed=request.seed,
-        chat_template_messages=request.chat_template_messages,
+        chat_template_messages=built_chat_template or request.chat_template_messages,
     )
 
 
