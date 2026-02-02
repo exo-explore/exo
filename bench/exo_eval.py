@@ -485,9 +485,11 @@ def run_livecodebench(
 
     scenario = lcb_config.get("scenario", "codegeneration")
     release_version = lcb_config.get("release_version", "release_v5")
-    temperature = lcb_config.get("temperature", 0.2)
-    n_samples = lcb_config.get("n_samples", 10)
-    max_tokens = lcb_config.get("max_tokens", 4096)
+    # Defaults match Artificial Analysis methodology:
+    # https://artificialanalysis.ai/methodology/intelligence-benchmarking
+    temperature = lcb_config.get("temperature", 0)  # 0 for non-reasoning models
+    n_samples = lcb_config.get("n_samples", 1)  # pass@1
+    max_tokens = lcb_config.get("max_tokens", 16384)
     use_cache = lcb_config.get("use_cache", True)
     fast = lcb_config.get("fast", True)  # Use code_generation_lite by default
     evaluate = lcb_config.get("evaluate", True)

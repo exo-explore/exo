@@ -196,6 +196,9 @@ def main() -> int:
         os.environ["OPENAI_API_KEY"] = "exo-local"
         os.environ["OPENAI_KEY"] = "exo-local"
 
+    # Save original directory for output path resolution
+    original_cwd = os.getcwd()
+
     # Change to LiveCodeBench directory before imports that use relative paths
     # LiveCodeBench uses paths like 'lcb_runner/prompts/few_shot_examples/...'
     lcb_dir = get_lcb_directory()
@@ -215,15 +218,38 @@ def main() -> int:
     # Build arguments for LiveCodeBench runner
     lcb_args = ["--model", args.model]
 
-    # Map our --output-dir to LiveCodeBench's --custom_output_save_name
+    # Resolve output directory to absolute path (relative to original cwd)
+    output_base: str | None = None
     if args.output_dir:
-        lcb_args.extend(["--custom_output_save_name", args.output_dir])
+        output_base = str(Path(original_cwd) / args.output_dir)
 
     lcb_args.extend(remaining)
 
     # Run LiveCodeBench
     try:
         from lcb_runner.runner import main as lcb_main_module  # noqa: I001 # pyright: ignore[reportMissingImports]
+        from lcb_runner.utils import path_utils  # noqa: I001 # pyright: ignore[reportMissingImports]
+
+        # Patch output path to use our output directory
+        if output_base:
+            original_get_output_path = path_utils.get_output_path
+
+            def patched_get_output_path(model_repr: str, runner_args: Any) -> str:
+                # Get the original path and replace 'output/' with our base
+                original_path = original_get_output_path(model_repr, runner_args)
+                # Replace 'output/' prefix with our custom base
+                if original_path.startswith("output/"):
+                    new_path = str(Path(output_base) / original_path[7:])  # Skip 'output/'
+                else:
+                    new_path = str(Path(output_base) / original_path)
+                path_utils.ensure_dir(new_path)
+                print(f"Saving results to: {new_path}")
+                return new_path
+
+            path_utils.get_output_path = patched_get_output_path
+            # Also patch in main module since it may have imported directly
+            if hasattr(lcb_main_module, "get_output_path"):
+                lcb_main_module.get_output_path = patched_get_output_path
 
         # Patch benchmark loading to support --limit
         # Must patch in the main module since it imports the function directly
