@@ -101,11 +101,15 @@ def _should_use_serial_processing(
     """
     Determine if a ChatCompletion task requires serial processing.
 
-    Currently always returns False - batch mode handles all cases.
-    Post-processing (GPT-OSS, thinking models, tool calls) can be applied
-    per-request to the individual streams from the batch generator.
+    GPT-OSS models have mixed cache types (KVCache + RotatingKVCache) that
+    don't work reliably with BatchGenerator's batched prefill.
     """
-    # All tasks can use batch mode - post-processing is per-request
+    from mlx_lm.models.gpt_oss import Model as GptOssModel
+
+    # GPT-OSS models don't work reliably with batched generation
+    if isinstance(model, GptOssModel):
+        return True
+
     return False
 
 
