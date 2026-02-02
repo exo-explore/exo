@@ -11,8 +11,7 @@ from exo.master.placement import (
     place_instance,
 )
 from exo.shared.apply import apply
-from exo.shared.constants import EXO_TRACING_CACHE_DIR, EXO_TRACING_ENABLED
-from exo.shared.tracing import TraceEvent, export_trace
+from exo.shared.constants import EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
@@ -426,21 +425,6 @@ class Master:
         all_trace_data: list[TraceEventData] = []
         for trace_data in self._pending_traces[task_id].values():
             all_trace_data.extend(trace_data)
-
-        all_traces: list[TraceEvent] = [
-            TraceEvent(
-                name=t.name,
-                start_us=t.start_us,
-                duration_us=t.duration_us,
-                rank=t.rank,
-                category=t.category,
-            )
-            for t in all_trace_data
-        ]
-
-        output_path = EXO_TRACING_CACHE_DIR / f"trace_{task_id}.json"
-        export_trace(all_traces, output_path)
-        logger.info(f"Merged traces saved to {output_path}")
 
         await self.event_sender.send(
             TracesMerged(task_id=task_id, traces=all_trace_data)
