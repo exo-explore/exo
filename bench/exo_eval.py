@@ -528,6 +528,8 @@ def run_livecodebench(
         release_version,
         "--temperature",
         str(temperature),
+        "--n",
+        str(n_samples),
         "--codegen_n",
         str(n_samples),
         "--max_tokens",
