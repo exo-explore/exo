@@ -90,7 +90,6 @@ class Node:
             worker = Worker(
                 node_id,
                 session_id,
-                connection_message_receiver=router.receiver(topics.CONNECTION_MESSAGES),
                 global_event_receiver=router.receiver(topics.GLOBAL_EVENTS),
                 local_event_sender=router.sender(topics.LOCAL_EVENTS),
                 command_sender=router.sender(topics.COMMANDS),
@@ -227,9 +226,6 @@ class Node:
                         self.worker = Worker(
                             self.node_id,
                             result.session_id,
-                            connection_message_receiver=self.router.receiver(
-                                topics.CONNECTION_MESSAGES
-                            ),
                             global_event_receiver=self.router.receiver(
                                 topics.GLOBAL_EVENTS
                             ),
