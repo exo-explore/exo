@@ -472,7 +472,9 @@ def main() -> int:
     # Log pairing mode
     use_combinations = args.all_combinations or len(pp_list) != len(tg_list)
     if use_combinations:
-        logger.info(f"pp/tg mode: combinations (product) - {len(pp_list) * len(tg_list)} pairs")
+        logger.info(
+            f"pp/tg mode: combinations (product) - {len(pp_list) * len(tg_list)} pairs"
+        )
     else:
         logger.info(f"pp/tg mode: tandem (zip) - {len(pp_list)} pairs")
 
