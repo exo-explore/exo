@@ -361,6 +361,14 @@ class BatchedInferenceHandler:
 
         completed_uids: list[int] = []
 
+        # Debug: print response for lowest active UID
+        if responses and self.uid_to_request:
+            min_uid = min(self.uid_to_request.keys())
+            for r in responses:  # pyright: ignore[reportUnknownVariableType]
+                if r.uid == min_uid:  # pyright: ignore[reportUnknownMemberType]
+                    logger.info(f"[DEBUG] uid={min_uid} token={r.token} finish_reason={r.finish_reason}")  # pyright: ignore[reportUnknownMemberType]
+                    break
+
         for response in responses:  # pyright: ignore[reportUnknownVariableType]
             uid: int = response.uid  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
             if uid not in self.uid_to_request:
@@ -510,6 +518,14 @@ class BatchedInferenceHandler:
         logger.debug(f"PipelinedGenerator.next() returned {len(responses)} responses")
 
         completed_uids: list[int] = []
+
+        # Debug: print response for lowest active UID
+        if responses and self.uid_to_request:
+            min_uid = min(self.uid_to_request.keys())
+            for r in responses:
+                if r.uid == min_uid:
+                    logger.info(f"[DEBUG] uid={min_uid} token={r.token} finish_reason={r.finish_reason}")
+                    break
 
         for response in responses:
             uid = response.uid
