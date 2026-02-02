@@ -38,19 +38,36 @@ def get_lcb_directory() -> Path | None:
     LiveCodeBench uses relative paths like 'lcb_runner/prompts/few_shot_examples/...'
     which require running from the LiveCodeBench directory.
     """
-    try:
-        import lcb_runner  # pyright: ignore[reportMissingImports]
-
-        # Get the package directory (lcb_runner/) and go up one level to LiveCodeBench/
-        lcb_file = lcb_runner.__file__
-        if lcb_file is None:
-            return None
-        lcb_path = Path(lcb_file).parent.parent
-        # Verify the expected file exists
+    # Check environment variable first
+    if env_path := os.environ.get("LIVECODEBENCH_DIR"):
+        lcb_path = Path(env_path)
         if (lcb_path / "lcb_runner" / "prompts" / "few_shot_examples").exists():
             return lcb_path
-    except ImportError:
+
+    # Use importlib to find package location without executing module code
+    # This avoids triggering the relative path imports that would fail
+    try:
+        import importlib.util
+
+        spec = importlib.util.find_spec("lcb_runner")
+        if spec and spec.origin:
+            # spec.origin is the __init__.py path, go up two levels
+            lcb_path = Path(spec.origin).parent.parent
+            if (lcb_path / "lcb_runner" / "prompts" / "few_shot_examples").exists():
+                return lcb_path
+    except (ImportError, ModuleNotFoundError):
         pass
+
+    # Check common locations relative to this script
+    script_dir = Path(__file__).parent.parent  # exo/
+    common_locations = [
+        script_dir / "LiveCodeBench",  # exo/LiveCodeBench
+        script_dir.parent / "LiveCodeBench",  # sibling to exo
+    ]
+    for loc in common_locations:
+        if (loc / "lcb_runner" / "prompts" / "few_shot_examples").exists():
+            return loc
+
     return None
 
 
