@@ -436,16 +436,11 @@ def apply_chat_template(
             )
 
         # Convert input to messages
-        if isinstance(task_params.input, str):
-            # Simple string input becomes a single user message
-            formatted_messages.append({"role": "user", "content": task_params.input})
-        else:
-            # List of InputMessage
-            for msg in task_params.input:
-                if not msg.content:
-                    logger.warning("Received message with empty content, skipping")
-                    continue
-                formatted_messages.append({"role": msg.role, "content": msg.content})
+        for msg in task_params.input:
+            if not msg.content:
+                logger.warning("Received message with empty content, skipping")
+                continue
+            formatted_messages.append({"role": msg.role, "content": msg.content})
 
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,

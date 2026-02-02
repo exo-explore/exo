@@ -28,7 +28,7 @@ from exo.shared.types.profiling import (
 )
 from exo.shared.types.tasks import TaskStatus
 from exo.shared.types.tasks import TextGeneration as TextGenerationTask
-from exo.shared.types.text_generation import TextGenerationTaskParams
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     InstanceMeta,
     MlxRingInstance,
@@ -136,7 +136,9 @@ async def test_master():
                         command_id=CommandId(),
                         task_params=TextGenerationTaskParams(
                             model=ModelId("llama-3.2-1b"),
-                            input="Hello, how are you?",
+                            input=[
+                                InputMessage(role="user", content="Hello, how are you?")
+                            ],
                         ),
                     )
                 ),
@@ -189,7 +191,7 @@ async def test_master():
         assert isinstance(events[2].event.task, TextGenerationTask)
         assert events[2].event.task.task_params == TextGenerationTaskParams(
             model=ModelId("llama-3.2-1b"),
-            input="Hello, how are you?",
+            input=[InputMessage(role="user", content="Hello, how are you?")],
         )
 
         await master.shutdown()
