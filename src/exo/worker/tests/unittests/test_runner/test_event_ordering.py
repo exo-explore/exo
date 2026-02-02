@@ -13,16 +13,16 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
-from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.tasks import (
-    ChatCompletion,
     ConnectToGroup,
     LoadModel,
     Shutdown,
     StartWarmup,
     Task,
     TaskStatus,
+    TextGeneration,
 )
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.shared.types.worker.runners import (
     RunnerConnected,
@@ -84,7 +84,7 @@ SHUTDOWN_TASK = Shutdown(
     runner_id=RUNNER_1_ID,
 )
 
-CHAT_PARAMS = ResponsesRequest(
+CHAT_PARAMS = TextGenerationTaskParams(
     model=MODEL_A_ID,
     input="hello",
     stream=True,
@@ -92,7 +92,7 @@ CHAT_PARAMS = ResponsesRequest(
     temperature=0.0,
 )
 
-CHAT_TASK = ChatCompletion(
+CHAT_TASK = TextGeneration(
     task_id=CHAT_COMPLETION_TASK_ID,
     command_id=COMMAND_1_ID,
     task_params=CHAT_PARAMS,
@@ -108,9 +108,9 @@ def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Even
 
 @pytest.fixture
 def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
-    # initialize_mlx returns a "group" equal to 1
-    monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(1))
-    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, 1)))
+    # initialize_mlx returns a mock group
+    monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(MockGroup()))
+    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
     monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", nothin)
     # Mock apply_chat_template since we're using a fake tokenizer (integer 1).
@@ -119,7 +119,7 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_runner, "detect_thinking_prompt_suffix", make_nothin(False))
 
     def fake_generate(*_1: object, **_2: object):
-        yield GenerationResponse(token=0, text="hi", finish_reason="stop")
+        yield GenerationResponse(token=0, text="hi", finish_reason="stop", usage=None)
 
     monkeypatch.setattr(mlx_runner, "mlx_generate", fake_generate)
 
@@ -137,6 +137,21 @@ class EventCollector:
 
     def join(self) -> None:
         pass
+
+
+class MockTokenizer:
+    tool_parser = None
+    tool_call_start = None
+    tool_call_end = None
+    has_tool_calling = False
+
+
+class MockGroup:
+    def rank(self) -> int:
+        return 0
+
+    def size(self) -> int:
+        return 1
 
 
 def _run(tasks: Iterable[Task]):
@@ -170,11 +185,12 @@ def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
     expected_chunk = ChunkGenerated(
         command_id=COMMAND_1_ID,
         chunk=TokenChunk(
-            idx=0,
             model=MODEL_A_ID,
             text="hi",
             token_id=0,
             finish_reason="stop",
+            usage=None,
+            stats=None,
         ),
     )
 

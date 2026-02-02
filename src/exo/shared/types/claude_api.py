@@ -1,10 +1,22 @@
 """Claude Messages API types for request/response conversion."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from exo.shared.types.common import ModelId
+
+# Tool definition types
+ClaudeToolInputSchema = dict[str, Any]
+
+
+class ClaudeToolDefinition(BaseModel, frozen=True):
+    """Tool definition in Claude Messages API request."""
+
+    name: str
+    description: str | None = None
+    input_schema: ClaudeToolInputSchema
+
 
 # Type aliases
 ClaudeRole = Literal["user", "assistant"]
@@ -35,7 +47,31 @@ class ClaudeImageBlock(BaseModel, frozen=True):
     source: ClaudeImageSource
 
 
-ClaudeContentBlock = ClaudeTextBlock | ClaudeImageBlock
+class ClaudeToolUseBlock(BaseModel, frozen=True):
+    """Tool use content block in Claude Messages API."""
+
+    type: Literal["tool_use"] = "tool_use"
+    id: str
+    name: str
+    input: dict[str, Any]
+
+
+class ClaudeToolResultBlock(BaseModel, frozen=True):
+    """Tool result content block in Claude Messages API request."""
+
+    type: Literal["tool_result"] = "tool_result"
+    tool_use_id: str
+    content: str | list[ClaudeTextBlock] | None = None
+    is_error: bool | None = None
+    cache_control: dict[str, str] | None = None
+
+
+ClaudeContentBlock = ClaudeTextBlock | ClaudeImageBlock | ClaudeToolUseBlock
+
+# Input content blocks can also include tool_result (sent by user after tool_use)
+ClaudeInputContentBlock = (
+    ClaudeTextBlock | ClaudeImageBlock | ClaudeToolUseBlock | ClaudeToolResultBlock
+)
 
 
 # Request types
@@ -43,7 +79,7 @@ class ClaudeMessage(BaseModel, frozen=True):
     """Message in Claude Messages API request."""
 
     role: ClaudeRole
-    content: str | list[ClaudeContentBlock]
+    content: str | list[ClaudeInputContentBlock]
 
 
 class ClaudeMessagesRequest(BaseModel):
@@ -58,6 +94,7 @@ class ClaudeMessagesRequest(BaseModel):
     temperature: float | None = None
     top_p: float | None = None
     top_k: int | None = None
+    tools: list[ClaudeToolDefinition] | None = None
     metadata: dict[str, str] | None = None
 
 
@@ -75,7 +112,7 @@ class ClaudeMessagesResponse(BaseModel, frozen=True):
     id: str
     type: Literal["message"] = "message"
     role: Literal["assistant"] = "assistant"
-    content: list[ClaudeTextBlock]
+    content: list[ClaudeContentBlock]
     model: str
     stop_reason: ClaudeStopReason | None = None
     stop_sequence: str | None = None
@@ -108,7 +145,7 @@ class ClaudeContentBlockStartEvent(BaseModel, frozen=True):
 
     type: Literal["content_block_start"] = "content_block_start"
     index: int
-    content_block: ClaudeTextBlock
+    content_block: ClaudeTextBlock | ClaudeToolUseBlock
 
 
 class ClaudeTextDelta(BaseModel, frozen=True):
@@ -118,12 +155,19 @@ class ClaudeTextDelta(BaseModel, frozen=True):
     text: str
 
 
+class ClaudeInputJsonDelta(BaseModel, frozen=True):
+    """Delta for tool use input JSON content block."""
+
+    type: Literal["input_json_delta"] = "input_json_delta"
+    partial_json: str
+
+
 class ClaudeContentBlockDeltaEvent(BaseModel, frozen=True):
     """Event sent for content block delta."""
 
     type: Literal["content_block_delta"] = "content_block_delta"
     index: int
-    delta: ClaudeTextDelta
+    delta: ClaudeTextDelta | ClaudeInputJsonDelta
 
 
 class ClaudeContentBlockStopEvent(BaseModel, frozen=True):

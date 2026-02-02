@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from exo.shared.models.model_cards import MODEL_CARDS, ModelCard, ModelId
-from exo.worker.download.download_utils import (
+from exo.download.download_utils import (
     download_file_with_retry,
     ensure_models_dir,
     fetch_file_list_with_cache,
 )
+from exo.shared.models.model_cards import MODEL_CARDS, ModelCard, ModelId
 from exo.worker.engines.mlx.utils_mlx import (
     get_eos_token_ids_for_model,
     load_tokenizer_for_model_id,

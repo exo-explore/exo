@@ -86,7 +86,7 @@ struct TopologyViewModel {
 
 extension ClusterState {
     func topologyViewModel(localNodeId: String?) -> TopologyViewModel? {
-        let topologyNodeIds = Set(topology?.nodes.map(\.nodeId) ?? [])
+        let topologyNodeIds = Set(topology?.nodes ?? [])
         let allNodes = nodeViewModels().filter {
             topologyNodeIds.isEmpty || topologyNodeIds.contains($0.id)
         }
@@ -95,8 +95,8 @@ extension ClusterState {
         let nodesById = Dictionary(uniqueKeysWithValues: allNodes.map { ($0.id, $0) })
         var orderedNodes: [NodeViewModel] = []
         if let topologyNodes = topology?.nodes {
-            for topoNode in topologyNodes {
-                if let viewModel = nodesById[topoNode.nodeId] {
+            for nodeId in topologyNodes {
+                if let viewModel = nodesById[nodeId] {
                     orderedNodes.append(viewModel)
                 }
             }
@@ -116,7 +116,7 @@ extension ClusterState {
 
         let nodeIds = Set(orderedNodes.map(\.id))
         let edgesArray: [TopologyEdgeViewModel] =
-            topology?.connections?.compactMap { connection in
+            topology?.connections.compactMap { connection in
                 guard nodeIds.contains(connection.localNodeId),
                     nodeIds.contains(connection.sendBackNodeId)
                 else { return nil }

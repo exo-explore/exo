@@ -3,13 +3,15 @@ from collections.abc import Awaitable
 from pathlib import Path
 from typing import AsyncIterator, Callable
 
+from loguru import logger
+
+from exo.download.download_utils import RepoDownloadProgress, download_shard
+from exo.download.shard_downloader import ShardDownloader
 from exo.shared.models.model_cards import MODEL_CARDS, ModelCard, ModelId
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
     ShardMetadata,
 )
-from exo.worker.download.download_utils import RepoDownloadProgress, download_shard
-from exo.worker.download.shard_downloader import ShardDownloader
 
 
 def exo_shard_downloader(max_parallel_downloads: int = 8) -> ShardDownloader:
@@ -164,9 +166,8 @@ class ResumableShardDownloader(ShardDownloader):
         for task in asyncio.as_completed(tasks):
             try:
                 yield await task
-            # TODO: except Exception
             except Exception as e:
-                print("Error downloading shard:", e)
+                logger.warning(f"Error downloading shard: {type(e).__name__}")
 
     async def get_shard_download_status_for_shard(
         self, shard: ShardMetadata

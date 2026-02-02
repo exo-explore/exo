@@ -11,20 +11,24 @@ from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType
 from loguru import logger
 from pydantic import BaseModel
 
+from exo.download.impl_shard_downloader import (
+    build_full_shard,
+    exo_shard_downloader,
+)
 from exo.shared.logging import InterceptLogger, logger_setup
 from exo.shared.models.model_cards import MODEL_CARDS, ModelId
 from exo.shared.types.commands import CommandId
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.events import Event
-from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.tasks import (
-    ChatCompletion,
     ConnectToGroup,
     LoadModel,
     Shutdown,
     StartWarmup,
     Task,
+    TextGeneration,
 )
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     BoundInstance,
     Instance,
@@ -36,10 +40,6 @@ from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import PipelineShardMetadata, TensorShardMetadata
 from exo.utils.channels import MpReceiver, MpSender, channel, mp_channel
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
-from exo.worker.download.impl_shard_downloader import (
-    build_full_shard,
-    exo_shard_downloader,
-)
 from exo.worker.runner.bootstrap import entrypoint
 
 
@@ -179,8 +179,8 @@ async def execute_test(test: Tests, instance: Instance, hn: str):
         case "inference":
             send.send(StartWarmup(instance_id=iid))
             send.send(
-                ChatCompletion(
-                    task_params=ResponsesRequest(
+                TextGeneration(
+                    task_params=TextGenerationTaskParams(
                         model=test.model_id,
                         instructions="You are a helpful assistant",
                         input="What is the capital of France?",
