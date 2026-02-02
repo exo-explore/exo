@@ -2,7 +2,7 @@ import base64
 import contextlib
 import json
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from http import HTTPStatus
 from typing import Annotated, Literal, cast
 from uuid import uuid4
@@ -176,6 +176,15 @@ class API:
         self.paused_ev: anyio.Event = anyio.Event()
 
         self.app = FastAPI()
+
+        @self.app.middleware("http")
+        async def _log_requests(  # pyright: ignore[reportUnusedFunction]
+            request: Request,
+            call_next: Callable[[Request], Awaitable[StreamingResponse]],
+        ) -> StreamingResponse:
+            logger.debug(f"API request: {request.method} {request.url.path}")
+            return await call_next(request)
+
         self._setup_exception_handlers()
         self._setup_cors()
         self._setup_routes()
