@@ -74,6 +74,7 @@ def responses_request_to_text_generation(
                 chat_template_messages.append(
                     {
                         "role": "assistant",
+                        "content": "",
                         "tool_calls": [
                             {
                                 "id": item.call_id,
