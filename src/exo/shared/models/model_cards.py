@@ -270,7 +270,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
     ),
     "qwen3-80b-a3B-thinking-4bit": ModelCard(
         model_id=ModelId("mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit"),
-        storage_size=Memory.from_mb(84700),
+        storage_size=Memory.from_mb(44900),
         n_layers=48,
         hidden_size=2048,
         supports_tensor=True,

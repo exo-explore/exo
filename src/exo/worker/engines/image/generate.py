@@ -11,7 +11,7 @@ from PIL import Image
 
 from exo.shared.types.api import (
     AdvancedImageParams,
-    ImageEditsInternalParams,
+    ImageEditsTaskParams,
     ImageGenerationStats,
     ImageGenerationTaskParams,
 )
@@ -67,7 +67,7 @@ def warmup_image_generator(model: DistributedImageModel) -> Image.Image | None:
 
 def generate_image(
     model: DistributedImageModel,
-    task: ImageGenerationTaskParams | ImageEditsInternalParams,
+    task: ImageGenerationTaskParams | ImageEditsTaskParams,
 ) -> Generator[ImageGenerationResponse | PartialImageResponse, None, None]:
     """Generate image(s), optionally yielding partial results.
 
@@ -105,7 +105,7 @@ def generate_image(
     image_path: Path | None = None
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        if isinstance(task, ImageEditsInternalParams):
+        if isinstance(task, ImageEditsTaskParams):
             # Decode base64 image data and save to temp file
             image_path = Path(tmpdir) / "input.png"
             image_path.write_bytes(base64.b64decode(task.image_data))

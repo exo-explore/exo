@@ -2,7 +2,7 @@ import base64
 import contextlib
 import json
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from http import HTTPStatus
 from typing import Annotated, Literal, cast
 from uuid import uuid4
@@ -19,6 +19,21 @@ from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from loguru import logger
 
+from exo.master.adapters.chat_completions import (
+    chat_request_to_text_generation,
+    collect_chat_response,
+    generate_chat_stream,
+)
+from exo.master.adapters.claude import (
+    claude_request_to_text_generation,
+    collect_claude_response,
+    generate_claude_stream,
+)
+from exo.master.adapters.responses import (
+    collect_responses_response,
+    generate_responses_stream,
+    responses_request_to_text_generation,
+)
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
@@ -35,12 +50,13 @@ from exo.shared.models.model_cards import (
 )
 from exo.shared.types.api import (
     AdvancedImageParams,
+    BenchChatCompletionRequest,
     BenchChatCompletionResponse,
-    BenchChatCompletionTaskParams,
     BenchImageGenerationResponse,
     BenchImageGenerationTaskParams,
     ChatCompletionChoice,
     ChatCompletionMessage,
+    ChatCompletionRequest,
     ChatCompletionResponse,
     CreateInstanceParams,
     CreateInstanceResponse,
@@ -51,7 +67,7 @@ from exo.shared.types.api import (
     FinishReason,
     GenerationStats,
     ImageData,
-    ImageEditsInternalParams,
+    ImageEditsTaskParams,
     ImageGenerationResponse,
     ImageGenerationStats,
     ImageGenerationTaskParams,
@@ -64,10 +80,7 @@ from exo.shared.types.api import (
     PlacementPreviewResponse,
     StartDownloadParams,
     StartDownloadResponse,
-    StreamingChoiceResponse,
-    StreamOptions,
     ToolCall,
-    Usage,
 )
 from exo.shared.types.chunks import (
     ErrorChunk,
@@ -76,8 +89,11 @@ from exo.shared.types.chunks import (
     TokenChunk,
     ToolCallChunk,
 )
+from exo.shared.types.claude_api import (
+    ClaudeMessagesRequest,
+    ClaudeMessagesResponse,
+)
 from exo.shared.types.commands import (
-    ChatCompletion,
     Command,
     CreateInstance,
     DeleteDownload,
@@ -91,6 +107,7 @@ from exo.shared.types.commands import (
     SendInputChunk,
     StartDownload,
     TaskFinished,
+    TextGeneration,
 )
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
 from exo.shared.types.events import (
@@ -100,8 +117,11 @@ from exo.shared.types.events import (
     IndexedEvent,
 )
 from exo.shared.types.memory import Memory
+from exo.shared.types.openai_responses import (
+    ResponsesRequest,
+    ResponsesResponse,
+)
 from exo.shared.types.state import State
-from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
@@ -114,36 +134,16 @@ def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None)
     return f"image/{image_format or 'png'}"
 
 
-def chunk_to_response(
-    chunk: TokenChunk | ToolCallChunk,
-    command_id: CommandId,
-    usage: Usage | None,
-) -> ChatCompletionResponse:
-    return ChatCompletionResponse(
-        id=command_id,
-        created=int(time.time()),
-        model=chunk.model,
-        choices=[
-            StreamingChoiceResponse(
-                index=0,
-                delta=ChatCompletionMessage(role="assistant", content=chunk.text)
-                if isinstance(chunk, TokenChunk)
-                else ChatCompletionMessage(
-                    role="assistant",
-                    tool_calls=[
-                        ToolCall(
-                            id=str(uuid4()),
-                            index=i,
-                            function=tool,
-                        )
-                        for i, tool in enumerate(chunk.tool_calls)
-                    ],
-                ),
-                finish_reason=chunk.finish_reason,
-            )
-        ],
-        usage=usage,
-    )
+async def resolve_model_card(model_id: ModelId) -> ModelCard:
+    if model_id in MODEL_CARDS:
+        model_card = MODEL_CARDS[model_id]
+        return model_card
+
+    for card in MODEL_CARDS.values():
+        if card.model_id == ModelId(model_id):
+            return card
+
+    return await ModelCard.from_hf(model_id)
 
 
 class API:
@@ -176,6 +176,15 @@ class API:
         self.paused_ev: anyio.Event = anyio.Event()
 
         self.app = FastAPI()
+
+        @self.app.middleware("http")
+        async def _log_requests(  # pyright: ignore[reportUnusedFunction]
+            request: Request,
+            call_next: Callable[[Request], Awaitable[StreamingResponse]],
+        ) -> StreamingResponse:
+            logger.debug(f"API request: {request.method} {request.url.path}")
+            return await call_next(request)
+
         self._setup_exception_handlers()
         self._setup_cors()
         self._setup_routes()
@@ -189,7 +198,7 @@ class API:
             name="dashboard",
         )
 
-        self._chat_completion_queues: dict[
+        self._text_generation_queues: dict[
             CommandId, Sender[TokenChunk | ErrorChunk | ToolCallChunk]
         ] = {}
         self._image_generation_queues: dict[
@@ -203,7 +212,7 @@ class API:
         self.state = State()
         self.session_id = new_session_id
         self.event_buffer = OrderedBuffer[Event]()
-        self._chat_completion_queues = {}
+        self._text_generation_queues = {}
         self._image_generation_queues = {}
         self.unpause(result_clock)
 
@@ -260,6 +269,8 @@ class API:
         self.app.post("/bench/images/edits")(self.bench_image_edits)
         self.app.get("/images")(self.list_images)
         self.app.get("/images/{image_id}")(self.get_image)
+        self.app.post("/v1/messages", response_model=None)(self.claude_messages)
+        self.app.post("/v1/responses", response_model=None)(self.openai_responses)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
         self.app.post("/download/start")(self.start_download)
@@ -484,13 +495,15 @@ class API:
             instance_id=instance_id,
         )
 
-    async def _chat_chunk_stream(
+    async def _token_chunk_stream(
         self, command_id: CommandId
     ) -> AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None]:
-        """Yield `TokenChunk`s for a given command until completion."""
+        """Yield chunks for a given command until completion.
 
+        This is the internal low-level stream used by all API adapters.
+        """
         try:
-            self._chat_completion_queues[command_id], recv = channel[
+            self._text_generation_queues[command_id], recv = channel[
                 ErrorChunk | ToolCallChunk | TokenChunk
             ]()
 
@@ -511,103 +524,10 @@ class API:
         finally:
             command = TaskFinished(finished_command_id=command_id)
             await self._send(command)
-            if command_id in self._chat_completion_queues:
-                del self._chat_completion_queues[command_id]
+            if command_id in self._text_generation_queues:
+                del self._text_generation_queues[command_id]
 
-    async def _generate_chat_stream(
-        self, command_id: CommandId, stream_options: StreamOptions | None = None
-    ) -> AsyncGenerator[str, None]:
-        """Generate chat completion stream as JSON strings."""
-        include_usage = stream_options.include_usage if stream_options else False
-
-        async for chunk in self._chat_chunk_stream(command_id):
-            assert not isinstance(chunk, ImageChunk)
-            if chunk.finish_reason == "error":
-                error_response = ErrorResponse(
-                    error=ErrorInfo(
-                        message=chunk.error_message or "Internal server error",
-                        type="InternalServerError",
-                        code=500,
-                    )
-                )
-                yield f"data: {error_response.model_dump_json()}\n\n"
-                yield "data: [DONE]\n\n"
-                return
-
-            usage = chunk.usage if include_usage else None
-
-            chunk_response: ChatCompletionResponse = chunk_to_response(
-                chunk, command_id, usage=usage
-            )
-            logger.debug(f"chunk_response: {chunk_response}")
-
-            yield f"data: {chunk_response.model_dump_json()}\n\n"
-
-            if chunk.finish_reason is not None:
-                yield "data: [DONE]\n\n"
-
-    async def _collect_chat_completion(
-        self, command_id: CommandId
-    ) -> ChatCompletionResponse:
-        """Collect all token chunks for a chat completion and return a single response."""
-
-        text_parts: list[str] = []
-        tool_calls: list[ToolCall] = []
-        model: ModelId | None = None
-        finish_reason: FinishReason | None = None
-        usage: Usage | None = None
-
-        async for chunk in self._chat_chunk_stream(command_id):
-            if isinstance(chunk, ErrorChunk):
-                raise HTTPException(
-                    status_code=500,
-                    detail=chunk.error_message or "Internal server error",
-                )
-
-            if model is None:
-                model = chunk.model
-
-            if isinstance(chunk, TokenChunk):
-                text_parts.append(chunk.text)
-
-            if isinstance(chunk, ToolCallChunk):
-                tool_calls.extend(
-                    ToolCall(
-                        id=str(uuid4()),
-                        index=i,
-                        function=tool,
-                    )
-                    for i, tool in enumerate(chunk.tool_calls)
-                )
-
-            if chunk.usage is not None:
-                usage = chunk.usage
-
-            if chunk.finish_reason is not None:
-                finish_reason = chunk.finish_reason
-
-        combined_text = "".join(text_parts)
-        assert model is not None
-
-        return ChatCompletionResponse(
-            id=command_id,
-            created=int(time.time()),
-            model=model,
-            choices=[
-                ChatCompletionChoice(
-                    index=0,
-                    message=ChatCompletionMessage(
-                        role="assistant",
-                        content=combined_text,
-                        tool_calls=tool_calls,
-                    ),
-                    finish_reason=finish_reason,
-                )
-            ],
-            usage=usage,
-        )
-
-    async def _collect_chat_completion_with_stats(
+    async def _collect_text_generation_with_stats(
         self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
         text_parts: list[str] = []
@@ -617,7 +537,7 @@ class API:
 
         stats: GenerationStats | None = None
 
-        async for chunk in self._chat_chunk_stream(command_id):
+        async for chunk in self._token_chunk_stream(command_id):
             if chunk.finish_reason == "error":
                 raise HTTPException(
                     status_code=500,
@@ -656,7 +576,9 @@ class API:
                 ChatCompletionChoice(
                     index=0,
                     message=ChatCompletionMessage(
-                        role="assistant", content=combined_text, tool_calls=tool_calls
+                        role="assistant",
+                        content=combined_text,
+                        tool_calls=tool_calls if tool_calls else None,
                     ),
                     finish_reason=finish_reason,
                 )
@@ -671,55 +593,66 @@ class API:
         )
 
     async def chat_completions(
-        self, payload: ChatCompletionTaskParams
+        self, payload: ChatCompletionRequest
     ) -> ChatCompletionResponse | StreamingResponse:
-        """Handle chat completions, supporting both streaming and non-streaming responses."""
-        model_card = await ModelCard.load(ModelId(payload.model))
-        payload.model = model_card.model_id
-
-        if not any(
-            instance.shard_assignments.model_id == payload.model
-            for instance in self.state.instances.values()
-        ):
-            await self._trigger_notify_user_to_download_model(payload.model)
-            raise HTTPException(
-                status_code=404, detail=f"No instance found for model {payload.model}"
-            )
-
-        command = ChatCompletion(
-            request_params=payload,
+        """OpenAI Chat Completions API - adapter."""
+        task_params = chat_request_to_text_generation(payload)
+        resolved_model = await self._resolve_and_validate_text_model(
+            ModelId(task_params.model)
         )
+        task_params = task_params.model_copy(update={"model": resolved_model})
+
+        command = TextGeneration(task_params=task_params)
         await self._send(command)
+
         if payload.stream:
             return StreamingResponse(
-                self._generate_chat_stream(command.command_id, payload.stream_options),
+                generate_chat_stream(
+                    command.command_id,
+                    self._token_chunk_stream(command.command_id),
+                ),
                 media_type="text/event-stream",
             )
 
-        return await self._collect_chat_completion(command.command_id)
+        return await collect_chat_response(
+            command.command_id,
+            self._token_chunk_stream(command.command_id),
+        )
 
     async def bench_chat_completions(
-        self, payload: BenchChatCompletionTaskParams
+        self, payload: BenchChatCompletionRequest
     ) -> BenchChatCompletionResponse:
-        model_card = await ModelCard.load(ModelId(payload.model))
-        payload.model = model_card.model_id
+        task_params = chat_request_to_text_generation(payload)
+        resolved_model = await self._resolve_and_validate_text_model(
+            ModelId(task_params.model)
+        )
+        task_params = task_params.model_copy(update={"model": resolved_model})
 
-        if not any(
-            instance.shard_assignments.model_id == payload.model
-            for instance in self.state.instances.values()
-        ):
-            await self._trigger_notify_user_to_download_model(payload.model)
-            raise HTTPException(
-                status_code=404, detail=f"No instance found for model {payload.model}"
-            )
+        task_params = task_params.model_copy(update={"stream": False, "bench": True})
 
-        payload.stream = False
-
-        command = ChatCompletion(request_params=payload)
+        command = TextGeneration(task_params=task_params)
         await self._send(command)
 
-        response = await self._collect_chat_completion_with_stats(command.command_id)
+        response = await self._collect_text_generation_with_stats(command.command_id)
         return response
+
+    async def _resolve_and_validate_text_model(self, model: ModelId) -> ModelId:
+        """Validate a text model exists and return the resolved model ID.
+
+        Raises HTTPException 404 if no instance is found for the model.
+        """
+        model_card = await resolve_model_card(model)
+        resolved = model_card.model_id
+        if not any(
+            instance.shard_assignments.model_id == resolved
+            for instance in self.state.instances.values()
+        ):
+            await self._trigger_notify_user_to_download_model(resolved)
+            raise HTTPException(
+                status_code=404,
+                detail=f"No instance found for model {resolved}",
+            )
+        return resolved
 
     async def _validate_image_model(self, model: ModelId) -> ModelId:
         """Validate model exists and return resolved model ID.
@@ -775,7 +708,7 @@ class API:
         payload.model = await self._validate_image_model(ModelId(payload.model))
 
         command = ImageGeneration(
-            request_params=payload,
+            task_params=payload,
         )
         await self._send(command)
 
@@ -1023,7 +956,7 @@ class API:
         payload.partial_images = 0
 
         command = ImageGeneration(
-            request_params=payload,
+            task_params=payload,
         )
         await self._send(command)
 
@@ -1065,7 +998,7 @@ class API:
         total_chunks = len(data_chunks)
 
         command = ImageEdits(
-            request_params=ImageEditsInternalParams(
+            task_params=ImageEditsTaskParams(
                 image_data="",
                 total_input_chunks=total_chunks,
                 prompt=prompt,
@@ -1209,6 +1142,62 @@ class API:
             response_format=response_format,
         )
 
+    async def claude_messages(
+        self, payload: ClaudeMessagesRequest
+    ) -> ClaudeMessagesResponse | StreamingResponse:
+        """Claude Messages API - adapter."""
+        task_params = claude_request_to_text_generation(payload)
+        resolved_model = await self._resolve_and_validate_text_model(
+            ModelId(task_params.model)
+        )
+        task_params = task_params.model_copy(update={"model": resolved_model})
+
+        command = TextGeneration(task_params=task_params)
+        await self._send(command)
+
+        if payload.stream:
+            return StreamingResponse(
+                generate_claude_stream(
+                    command.command_id,
+                    payload.model,
+                    self._token_chunk_stream(command.command_id),
+                ),
+                media_type="text/event-stream",
+            )
+
+        return await collect_claude_response(
+            command.command_id,
+            payload.model,
+            self._token_chunk_stream(command.command_id),
+        )
+
+    async def openai_responses(
+        self, payload: ResponsesRequest
+    ) -> ResponsesResponse | StreamingResponse:
+        """OpenAI Responses API."""
+        task_params = responses_request_to_text_generation(payload)
+        resolved_model = await self._resolve_and_validate_text_model(task_params.model)
+        task_params = task_params.model_copy(update={"model": resolved_model})
+
+        command = TextGeneration(task_params=task_params)
+        await self._send(command)
+
+        if payload.stream:
+            return StreamingResponse(
+                generate_responses_stream(
+                    command.command_id,
+                    payload.model,
+                    self._token_chunk_stream(command.command_id),
+                ),
+                media_type="text/event-stream",
+            )
+
+        return await collect_responses_response(
+            command.command_id,
+            payload.model,
+            self._token_chunk_stream(command.command_id),
+        )
+
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
         total_available = Memory()
@@ -1281,14 +1270,14 @@ class API:
                                 self._image_generation_queues.pop(
                                     event.command_id, None
                                 )
-                        if queue := self._chat_completion_queues.get(
+                        if queue := self._text_generation_queues.get(
                             event.command_id, None
                         ):
                             assert not isinstance(event.chunk, ImageChunk)
                             try:
                                 await queue.send(event.chunk)
                             except BrokenResourceError:
-                                self._chat_completion_queues.pop(event.command_id, None)
+                                self._text_generation_queues.pop(event.command_id, None)
 
     async def _pause_on_new_election(self):
         with self.election_receiver as ems:
