@@ -82,6 +82,7 @@ class BatchedInferenceHandler:
         world_size: int = 1,
         max_batch_size: int = 32,
         tensor_parallel_group: mx.distributed.Group | None = None,
+        is_coordinator: bool = True,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -90,6 +91,7 @@ class BatchedInferenceHandler:
         self.world_size = world_size
         self.max_batch_size = max_batch_size
         self.tensor_parallel_group = tensor_parallel_group
+        self.is_coordinator = is_coordinator
 
         # Model-specific thinking/reasoning detection
         self.is_gpt_oss = isinstance(model, GptOssModel)
@@ -113,6 +115,9 @@ class BatchedInferenceHandler:
 
         # Pending requests waiting to be batched
         self.pending: list[PendingRequest] = []
+
+        # Track active count for non-coordinators (they don't have uid_to_request)
+        self._non_coordinator_active_count: int = 0
 
         # Active batch generator and request tracking
         self.batch_generator: BatchGenerator | None = None
@@ -140,7 +145,12 @@ class BatchedInferenceHandler:
                 self.pipelined_generator is not None
                 and self.pipelined_generator.has_active
             )
-        return self.batch_generator is not None and len(self.uid_to_request) > 0
+        if self.batch_generator is None:
+            return False
+        # For non-coordinators, use internal counter (they don't track uid_to_request)
+        if not self.is_coordinator:
+            return self._non_coordinator_active_count > 0
+        return len(self.uid_to_request) > 0
 
     @property
     def has_pending(self) -> bool:
@@ -193,7 +203,7 @@ class BatchedInferenceHandler:
         """Broadcast an integer from rank 0 to all ranks."""
         if self.tensor_parallel_group is None:
             return value
-        arr = mx.array([value if self.device_rank == 0 else 0], dtype=mx.int32)
+        arr = mx.array([value if self.is_coordinator else 0], dtype=mx.int32)
         synced = mx.distributed.all_sum(arr, group=self.tensor_parallel_group)
         mx.eval(synced)
         return int(synced.item())
@@ -213,14 +223,14 @@ class BatchedInferenceHandler:
         for i in range(num_seqs):
             length = self._broadcast_int(
                 len(tokens_list[i])
-                if self.device_rank == 0 and i < len(tokens_list)
+                if self.is_coordinator and i < len(tokens_list)
                 else 0
             )
             lengths.append(length)
 
         # Step 3: Broadcast flattened tokens
         total_tokens = sum(lengths)
-        if self.device_rank == 0:
+        if self.is_coordinator:
             flat: list[int] = []
             for seq in tokens_list:
                 flat.extend(seq)
@@ -257,14 +267,14 @@ class BatchedInferenceHandler:
             # Broadcast how many to flush
             available_slots = self.max_batch_size - self.current_batch_size
             num_to_flush = self._broadcast_int(
-                min(len(self.pending), available_slots) if self.device_rank == 0 else 0
+                min(len(self.pending), available_slots) if self.is_coordinator else 0
             )
 
             if num_to_flush == 0:
                 return
 
             # Get requests and tokenize on rank 0
-            if self.device_rank == 0:
+            if self.is_coordinator:
                 requests_to_flush = self.pending[:num_to_flush]
                 self.pending = self.pending[num_to_flush:]
                 tokenized_prompts = [
@@ -284,7 +294,7 @@ class BatchedInferenceHandler:
             for i in range(num_to_flush):
                 mt = self._broadcast_int(
                     max_tokens_list[i]
-                    if self.device_rank == 0 and i < len(max_tokens_list)
+                    if self.is_coordinator and i < len(max_tokens_list)
                     else 0
                 )
                 synced_max_tokens.append(mt)
@@ -418,32 +428,39 @@ class BatchedInferenceHandler:
             samplers=samplers,  # pyright: ignore[reportCallIssue]
         )
 
-        for uid, req, prompt_tokens, tokens in zip(
-            uids,  # pyright: ignore[reportUnknownArgumentType]
-            requests_to_flush,
-            prompt_token_counts,
-            tokenized_prompts,
-            strict=True,
-        ):
-            parser = None
-            if self.is_gpt_oss and self._harmony_encoding is not None:
-                parser = StreamableParser(self._harmony_encoding, role=Role.ASSISTANT)  # pyright: ignore[reportAny]
-            # Check if prompt contains <think> token - if so, model is already in thinking mode
-            starts_in_thinking = (
-                self._think_start_token is not None
-                and self._think_start_token in tokens
-            )
-            self.uid_to_request[uid] = ActiveRequest(
-                command_id=req.task.command_id,
-                should_extract_logprobs=req.should_extract_logprobs,
-                top_k=req.top_k,
-                prompt_tokens=prompt_tokens,
-                harmony_parser=parser,
-                in_thinking=starts_in_thinking,
-            )
+        # Only coordinator tracks requests (non-coordinators don't have request objects)
+        if self.is_coordinator:
+            for uid, req, prompt_tokens, tokens in zip(
+                uids,  # pyright: ignore[reportUnknownArgumentType]
+                requests_to_flush,
+                prompt_token_counts,
+                tokenized_prompts,
+                strict=True,
+            ):
+                parser = None
+                if self.is_gpt_oss and self._harmony_encoding is not None:
+                    parser = StreamableParser(
+                        self._harmony_encoding, role=Role.ASSISTANT
+                    )  # pyright: ignore[reportAny]
+                # Check if prompt contains <think> token - if so, model is already in thinking mode
+                starts_in_thinking = (
+                    self._think_start_token is not None
+                    and self._think_start_token in tokens
+                )
+                self.uid_to_request[uid] = ActiveRequest(
+                    command_id=req.task.command_id,
+                    should_extract_logprobs=req.should_extract_logprobs,
+                    top_k=req.top_k,
+                    prompt_tokens=prompt_tokens,
+                    harmony_parser=parser,
+                    in_thinking=starts_in_thinking,
+                )
+        else:
+            # Non-coordinator: track active count for is_active check
+            self._non_coordinator_active_count = len(tokenized_prompts)
 
         logger.info(
-            f"Flushed {len(requests_to_flush)} requests into batch (active={self.current_batch_size}, uids={list(self.uid_to_request.keys())})"
+            f"Flushed {len(tokenized_prompts)} requests into batch (active={self.current_batch_size}, uids={list(self.uid_to_request.keys())})"
         )
 
     def step(self) -> Generator[Event, None, None]:
@@ -456,7 +473,20 @@ class BatchedInferenceHandler:
             yield from self._step_pipelined()
             return
 
-        if self.batch_generator is None or not self.uid_to_request:
+        if self.batch_generator is None:
+            return
+
+        # Non-coordinators still need to call next() for model sync but don't emit events
+        if not self.is_coordinator:
+            if self._non_coordinator_active_count > 0:
+                nc_responses: list[Any] = self.batch_generator.next()  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+                # Track completions to update active count
+                for nc_resp in nc_responses:  # pyright: ignore[reportUnknownVariableType]
+                    if nc_resp.finish_reason is not None:  # pyright: ignore[reportUnknownMemberType]
+                        self._non_coordinator_active_count -= 1
+            return
+
+        if not self.uid_to_request:
             return
 
         # Get next tokens for all active requests

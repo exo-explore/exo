@@ -217,6 +217,11 @@ def main(
         bound_instance.bound_shard,
     )
     device_rank = shard_metadata.device_rank
+    # Determine if this node is the coordinator for tensor parallel
+    # Use sorted node ordering for consistency with main.py
+    node_id = bound_instance.bound_node_id
+    sorted_nodes = sorted(instance.shard_assignments.node_to_runner.keys())
+    is_tp_coordinator = node_id == sorted_nodes[0]
     logger.info("hello from the runner")
     if getattr(shard_metadata, "immediate_exception", False):
         raise Exception("Fake exception - runner failed to spin up.")
@@ -315,6 +320,9 @@ def main(
                             else shard_metadata.world_size,
                             max_batch_size=BATCH_MAX_SIZE,
                             tensor_parallel_group=group if is_tensor_parallel else None,
+                            is_coordinator=is_tp_coordinator
+                            if is_tensor_parallel
+                            else True,
                         )
                         logger.info(
                             f"Batch handler initialized (max_batch_size={BATCH_MAX_SIZE}, tensor_parallel={is_tensor_parallel})"
@@ -601,8 +609,12 @@ def main(
 
     with task_receiver as tasks:
         while True:
-            # For tensor parallel non-zero ranks: don't receive tasks, just follow rank 0
-            if is_tensor_parallel and device_rank != 0 and batch_handler is not None:
+            # For tensor parallel non-coordinator ranks: don't receive tasks, just follow coordinator
+            if (
+                is_tensor_parallel
+                and not is_tp_coordinator
+                and batch_handler is not None
+            ):
                 # Wait for rank 0 to signal via flush (broadcasts batch count)
                 batch_handler.flush()
 
