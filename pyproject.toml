@@ -58,7 +58,7 @@ eval = [
     # LiveCodeBench dependencies (livecodebench itself must be installed manually due to packaging issues)
     # Install with: git clone https://github.com/LiveCodeBench/LiveCodeBench && cd LiveCodeBench && uv pip install -e .
     "openai>=1.59.6",
-    "datasets>=3.2.0",
+    "datasets>=2.14.0,<4.0",  # LiveCodeBench requires <4.0 due to dataset script deprecation
     "pebble>=5.1.0",
 ]
 
