@@ -42,6 +42,7 @@ from exo.shared.apply import apply
 from exo.shared.constants import (
     EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
+    EXO_TRACING_CACHE_DIR,
 )
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
@@ -1340,21 +1341,14 @@ class API:
         await self._send_download(command)
         return DeleteDownloadResponse(command_id=command.command_id)
 
-    def _get_traces_dir(self) -> Path:
-        return Path.home() / ".exo" / "traces"
-
     def _get_trace_path(self, task_id: str) -> Path:
-        return self._get_traces_dir() / f"trace_{task_id}.json"
+        return EXO_TRACING_CACHE_DIR / f"trace_{task_id}.json"
 
     async def list_traces(self) -> TraceListResponse:
-        traces_dir = self._get_traces_dir()
         traces: list[TraceListItem] = []
 
-        if not traces_dir.exists():
-            return TraceListResponse(traces=[])
-
         for trace_file in sorted(
-            traces_dir.glob("trace_*.json"),
+            EXO_TRACING_CACHE_DIR.glob("trace_*.json"),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         ):

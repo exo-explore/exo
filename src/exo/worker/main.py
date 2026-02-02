@@ -8,7 +8,7 @@ from anyio.abc import TaskGroup
 from loguru import logger
 
 from exo.shared.apply import apply
-from exo.shared.constants import EXO_CACHE_HOME
+from exo.shared.constants import EXO_TRACING_CACHE_DIR
 from exo.shared.models.model_cards import ModelId
 from exo.shared.tracing import TraceEvent, export_trace
 from exo.shared.types.api import ImageEditsTaskParams
@@ -288,7 +288,7 @@ class Worker:
             )
             for t in event.traces
         ]
-        output_path = EXO_CACHE_HOME / f"trace_{event.task_id}.json"
+        output_path = EXO_TRACING_CACHE_DIR / f"trace_{event.task_id}.json"
         export_trace(traces, output_path)
         logger.debug(f"Saved merged trace to {output_path}")
 
