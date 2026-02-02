@@ -81,6 +81,7 @@ class BatchedInferenceHandler:
         device_rank: int,
         world_size: int = 1,
         max_batch_size: int = 32,
+        tensor_parallel_group: mx.distributed.Group | None = None,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -88,6 +89,7 @@ class BatchedInferenceHandler:
         self.device_rank = device_rank
         self.world_size = world_size
         self.max_batch_size = max_batch_size
+        self.tensor_parallel_group = tensor_parallel_group
 
         # Model-specific thinking/reasoning detection
         self.is_gpt_oss = isinstance(model, GptOssModel)
@@ -187,15 +189,56 @@ class BatchedInferenceHandler:
             f"Added request to batch queue (pending={len(self.pending)}, active={self.current_batch_size})"
         )
 
+    def _sync_pending_count(self) -> int:
+        """Synchronize pending request count across tensor parallel group.
+
+        For tensor parallelism, all devices must process the same batch.
+        Rank 0 broadcasts its pending count so all devices flush the same number.
+        """
+        if self.tensor_parallel_group is None:
+            return len(self.pending)
+
+        # Broadcast from rank 0 (leader decides batch size)
+        # Non-zero ranks contribute 0, so all_sum gives rank 0's value
+        count_to_flush = len(self.pending) if self.device_rank == 0 else 0
+        count_array = mx.array([count_to_flush], dtype=mx.int32)
+        synced = mx.distributed.all_sum(
+            count_array,
+            stream=mx.default_stream(mx.Device(mx.cpu)),
+            group=self.tensor_parallel_group,
+        )
+        mx.eval(synced)
+        return int(synced.item())
+
     def flush(self) -> None:
         """Start processing pending requests by adding them to the batch/pipelined generator."""
         if not self.has_pending:
+            # For tensor parallel, still need to check if other devices have pending
+            if self.tensor_parallel_group is not None:
+                synced_count = self._sync_pending_count()
+                if synced_count == 0:
+                    return
+                # Other devices have pending but we don't - this is a sync error
+                logger.warning(
+                    f"Tensor parallel sync: rank {self.device_rank} has 0 pending but synced count is {synced_count}"
+                )
             return
 
-        # Determine how many requests to flush (up to available slots)
-        available_slots = self.max_batch_size - self.current_batch_size
-        requests_to_flush = self.pending[:available_slots]
-        self.pending = self.pending[available_slots:]
+        # For tensor parallel, synchronize how many requests to flush
+        if self.tensor_parallel_group is not None:
+            synced_count = self._sync_pending_count()
+            available_slots = self.max_batch_size - self.current_batch_size
+            num_to_flush = min(synced_count, available_slots)
+            requests_to_flush = self.pending[:num_to_flush]
+            self.pending = self.pending[num_to_flush:]
+            logger.debug(
+                f"Tensor parallel sync: flushing {num_to_flush} requests (local had {len(self.pending) + num_to_flush})"
+            )
+        else:
+            # Determine how many requests to flush (up to available slots)
+            available_slots = self.max_batch_size - self.current_batch_size
+            requests_to_flush = self.pending[:available_slots]
+            self.pending = self.pending[available_slots:]
 
         # Prepare batch data - tokenize prompts
         tokenized_prompts: list[list[int]] = []
