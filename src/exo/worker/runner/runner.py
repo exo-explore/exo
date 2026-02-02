@@ -83,7 +83,6 @@ from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
     load_mlx_items,
     mlx_force_oom,
-    mx_barrier,
 )
 from exo.worker.runner.batched_handler import BatchedInferenceHandler
 from exo.worker.runner.bootstrap import logger
@@ -300,26 +299,28 @@ def main(
                     logger.info(f"model has_tool_calling={tokenizer.has_tool_calling}")
 
                     # Initialize batch handler for text generation models
-                    if BATCH_ENABLED:
-                        # For tensor parallelism, distributed ops are handled inside model layers
-                        # so batch handler should use world_size=1 (no pipelining)
-                        # But we pass the group for synchronizing batch sizes across devices
-                        is_tensor_parallel = isinstance(shard_metadata, TensorShardMetadata)
-                        batch_world_size = 1 if is_tensor_parallel else shard_metadata.world_size
-                        tensor_parallel_group = group if is_tensor_parallel else None
+                    # NOTE: Batching is disabled for tensor parallelism because:
+                    # 1. Each runner independently drains tasks, leading to different batch sizes
+                    # 2. Tensor parallel requires all devices to call model with identical inputs
+                    # 3. Synchronization via all_reduce breaks the ring backend
+                    is_tensor_parallel = isinstance(shard_metadata, TensorShardMetadata)
+                    if BATCH_ENABLED and not is_tensor_parallel:
                         batch_handler = BatchedInferenceHandler(
                             model=model,
                             tokenizer=tokenizer,
                             model_id=shard_metadata.model_card.model_id,
                             device_rank=device_rank,
-                            world_size=batch_world_size,
+                            world_size=shard_metadata.world_size,
                             max_batch_size=BATCH_MAX_SIZE,
-                            tensor_parallel_group=tensor_parallel_group,
                         )
                         logger.info(
-                            f"Batch handler initialized (max_batch_size={BATCH_MAX_SIZE}, world_size={batch_world_size}, tensor_parallel={is_tensor_parallel})"
+                            f"Batch handler initialized (max_batch_size={BATCH_MAX_SIZE}, world_size={shard_metadata.world_size})"
                         )
                         kv_prefix_cache = KVPrefixCache(tokenizer)
+                    elif is_tensor_parallel:
+                        logger.info(
+                            "Batching disabled for tensor parallelism - using serial processing"
+                        )
 
                 elif (
                     ModelTask.TextToImage in shard_metadata.model_card.tasks
@@ -602,27 +603,10 @@ def main(
 
     with task_receiver as tasks:
         while True:
-            # Check if batch handler has work (active or pending)
-            local_has_work = batch_handler is not None and (
+            # Check if batch handler is active and needs processing
+            if batch_handler is not None and (
                 batch_handler.is_active or batch_handler.has_pending
-            )
-
-            # For tensor parallel: check if ANY runner has work using all_reduce
-            # This ensures all runners make the same branching decision
-            if is_tensor_parallel and group is not None:
-                has_work_int = 1 if local_has_work else 0
-                synced = mx.distributed.all_sum(
-                    mx.array([has_work_int], dtype=mx.int32),
-                    stream=mx.default_stream(mx.Device(mx.cpu)),
-                    group=group,
-                )
-                mx.eval(synced)
-                any_has_work = int(synced.item()) > 0
-            else:
-                any_has_work = local_has_work
-
-            # Enter batch processing if any runner has work
-            if batch_handler is not None and any_has_work:
+            ):
                 # Drain all available tasks before stepping
                 should_break = False
                 while True:
@@ -647,20 +631,12 @@ def main(
                 if should_break:
                     break
 
-                # For tensor parallel: sync before flush to ensure all runners have same tasks
-                if is_tensor_parallel and group is not None:
-                    mx_barrier(group)
-
                 # Flush all pending requests before stepping
                 if batch_handler.has_pending:
                     logger.info(
                         f"Flushing batch (pending={len(batch_handler.pending)}, active={batch_handler.current_batch_size})"
                     )
                     batch_handler.flush()
-
-                # For tensor parallel: sync before step to ensure all runners ready
-                if is_tensor_parallel and group is not None:
-                    mx_barrier(group)
 
                 # Step generation and emit events
                 if batch_handler.is_active:
