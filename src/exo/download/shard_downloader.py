@@ -6,12 +6,15 @@ from pathlib import Path
 from typing import AsyncIterator, Callable
 
 from exo.download.download_utils import RepoDownloadProgress
+from exo.shared.constants import EXO_CACHE_HOME
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
     ShardMetadata,
 )
+
+_NOOP_SHARD_PATH = EXO_CACHE_HOME / "noop_shard"
 
 
 # TODO: the PipelineShardMetadata getting reinstantiated is a bit messy. Should this be a classmethod?
@@ -46,7 +49,7 @@ class ShardDownloader(ABC):
         Yields:
             tuple[Path, RepoDownloadProgress]: The path and progress of a shard download.
         """
-        yield (Path("/tmp/noop_shard"), NOOP_DOWNLOAD_PROGRESS)
+        yield (_NOOP_SHARD_PATH, NOOP_DOWNLOAD_PROGRESS)
 
     @abstractmethod
     async def get_shard_download_status_for_shard(
@@ -58,7 +61,7 @@ class NoopShardDownloader(ShardDownloader):
     async def ensure_shard(
         self, shard: ShardMetadata, config_only: bool = False
     ) -> Path:
-        return Path("/tmp/noop_shard")
+        return _NOOP_SHARD_PATH
 
     def on_progress(
         self,
@@ -70,7 +73,7 @@ class NoopShardDownloader(ShardDownloader):
         self,
     ) -> AsyncIterator[tuple[Path, RepoDownloadProgress]]:
         yield (
-            Path("/tmp/noop_shard"),
+            _NOOP_SHARD_PATH,
             NOOP_DOWNLOAD_PROGRESS,
         )
 

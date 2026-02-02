@@ -10,6 +10,7 @@ from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import (
     MemoryUsage,
     NodeIdentity,
+    NodeGpuInfo,
     NodeNetworkInfo,
     NodeThunderboltInfo,
     SystemPerformanceProfile,
@@ -49,6 +50,7 @@ class State(CamelCaseModel):
     # Granular node state mappings (update independently at different frequencies)
     node_identities: Mapping[NodeId, NodeIdentity] = {}
     node_memory: Mapping[NodeId, MemoryUsage] = {}
+    node_gpus: Mapping[NodeId, NodeGpuInfo] = {}
     node_system: Mapping[NodeId, SystemPerformanceProfile] = {}
     node_network: Mapping[NodeId, NodeNetworkInfo] = {}
     node_thunderbolt: Mapping[NodeId, NodeThunderboltInfo] = {}

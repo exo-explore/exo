@@ -5,11 +5,33 @@ from pathlib import Path
 _EXO_HOME_ENV = os.environ.get("EXO_HOME", None)
 
 
-def _get_xdg_dir(env_var: str, fallback: str) -> Path:
-    """Get XDG directory, prioritising EXO_HOME environment variable if its set. On non-Linux platforms, default to ~/.exo."""
+def _resolve_home_path(path_value: str) -> Path:
+    path = Path(path_value)
+    if path.is_absolute():
+        return path
+    return Path.home() / path
 
+
+def _get_windows_dir(kind: str) -> Path:
+    if kind == "config":
+        base = os.environ.get("APPDATA")
+        if base:
+            return Path(base) / "exo"
+        return Path.home() / "AppData" / "Roaming" / "exo"
+
+    base = os.environ.get("LOCALAPPDATA")
+    if base:
+        return Path(base) / "exo"
+    return Path.home() / "AppData" / "Local" / "exo"
+
+
+def _get_xdg_dir(env_var: str, fallback: str, *, kind: str) -> Path:
+    """Get EXO directory for the platform, honoring EXO_HOME when set."""
     if _EXO_HOME_ENV is not None:
-        return Path.home() / _EXO_HOME_ENV
+        return _resolve_home_path(_EXO_HOME_ENV)
+
+    if sys.platform == "win32":
+        return _get_windows_dir(kind)
 
     if sys.platform != "linux":
         return Path.home() / ".exo"
@@ -20,16 +42,16 @@ def _get_xdg_dir(env_var: str, fallback: str) -> Path:
     return Path.home() / fallback / "exo"
 
 
-EXO_CONFIG_HOME = _get_xdg_dir("XDG_CONFIG_HOME", ".config")
-EXO_DATA_HOME = _get_xdg_dir("XDG_DATA_HOME", ".local/share")
-EXO_CACHE_HOME = _get_xdg_dir("XDG_CACHE_HOME", ".cache")
+EXO_CONFIG_HOME = _get_xdg_dir("XDG_CONFIG_HOME", ".config", kind="config")
+EXO_DATA_HOME = _get_xdg_dir("XDG_DATA_HOME", ".local/share", kind="data")
+EXO_CACHE_HOME = _get_xdg_dir("XDG_CACHE_HOME", ".cache", kind="cache")
 
 # Models directory (data)
 _EXO_MODELS_DIR_ENV = os.environ.get("EXO_MODELS_DIR", None)
 EXO_MODELS_DIR = (
     EXO_DATA_HOME / "models"
     if _EXO_MODELS_DIR_ENV is None
-    else Path.home() / _EXO_MODELS_DIR_ENV
+    else _resolve_home_path(_EXO_MODELS_DIR_ENV)
 )
 
 # Log files (data/logs or cache)

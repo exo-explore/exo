@@ -367,6 +367,11 @@ class StartDownloadParams(CamelCaseModel):
     shard_metadata: ShardMetadata
 
 
+class StartModelDownloadParams(CamelCaseModel):
+    target_node_id: NodeId
+    model_id: ModelId
+
+
 class StartDownloadResponse(CamelCaseModel):
     command_id: CommandId
 

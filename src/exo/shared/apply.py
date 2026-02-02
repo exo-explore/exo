@@ -44,6 +44,7 @@ from exo.utils.info_gatherer.info_gatherer import (
     MacThunderboltIdentifiers,
     MemoryUsage,
     MiscData,
+    NodeGpuDevices,
     NodeConfig,
     NodeNetworkInterfaces,
     StaticNodeInformation,
@@ -216,6 +217,9 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
     node_memory = {
         key: value for key, value in state.node_memory.items() if key != event.node_id
     }
+    node_gpus = {
+        key: value for key, value in state.node_gpus.items() if key != event.node_id
+    }
     node_system = {
         key: value for key, value in state.node_system.items() if key != event.node_id
     }
@@ -249,6 +253,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
             "last_seen": last_seen,
             "node_identities": node_identities,
             "node_memory": node_memory,
+            "node_gpus": node_gpus,
             "node_system": node_system,
             "node_network": node_network,
             "node_thunderbolt": node_thunderbolt,
@@ -305,6 +310,11 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             update["node_network"] = {
                 **state.node_network,
                 event.node_id: NodeNetworkInfo(interfaces=info.ifaces),
+            }
+        case NodeGpuDevices():
+            update["node_gpus"] = {
+                **state.node_gpus,
+                event.node_id: info.info,
             }
         case MacThunderboltIdentifiers():
             update["node_thunderbolt"] = {

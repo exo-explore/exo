@@ -10,7 +10,7 @@ readme = "README.md"
 authors = [
     { name = "Andrei Cravtov", email = "the.andrei.cravtov@gmail.com" }
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.12,<3.13"
 dependencies = []
 
 [dependency-groups]

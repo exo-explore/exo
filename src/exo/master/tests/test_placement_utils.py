@@ -49,7 +49,9 @@ def test_filter_cycles_by_memory():
     assert len(cycles[0]) == 2
 
     # act
-    filtered_cycles = filter_cycles_by_memory(cycles, node_memory, Memory.from_bytes(1))
+    filtered_cycles = filter_cycles_by_memory(
+        cycles, node_memory, {}, Memory.from_bytes(1)
+    )
 
     # assert
     assert len(filtered_cycles) == 1
@@ -80,7 +82,7 @@ def test_filter_cycles_by_insufficient_memory():
 
     # act
     filtered_cycles = filter_cycles_by_memory(
-        topology.get_cycles(), node_memory, Memory.from_kb(2001)
+        topology.get_cycles(), node_memory, {}, Memory.from_kb(2001)
     )
 
     # assert
@@ -126,7 +128,9 @@ def test_filter_multiple_cycles_by_memory():
     cycles = topology.get_cycles()
 
     # act
-    filtered_cycles = filter_cycles_by_memory(cycles, node_memory, Memory.from_kb(1500))
+    filtered_cycles = filter_cycles_by_memory(
+        cycles, node_memory, {}, Memory.from_kb(1500)
+    )
 
     # assert
     assert len(filtered_cycles) == 1
@@ -247,7 +251,11 @@ def test_get_shard_assignments(
 
     # act
     shard_assignments = get_shard_assignments(
-        model_card, selected_cycle, Sharding.Pipeline, node_memory=node_memory
+        model_card,
+        selected_cycle,
+        Sharding.Pipeline,
+        node_memory=node_memory,
+        node_gpus={},
     )
 
     # assert
@@ -485,5 +493,5 @@ def test_get_shard_assignments_insufficient_memory_raises():
 
     with pytest.raises(ValueError, match="insufficient memory"):
         get_shard_assignments(
-            model_card, selected_cycle, Sharding.Pipeline, node_memory
+            model_card, selected_cycle, Sharding.Pipeline, node_memory, {}
         )

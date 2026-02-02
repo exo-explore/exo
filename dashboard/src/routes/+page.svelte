@@ -139,8 +139,11 @@
     if (!model?.tasks) return false;
     return model.tasks.includes("ImageToImage");
   }
+  function isGgufModelId(modelId: string): boolean {
+    return modelId.toLowerCase().endsWith(".gguf");
+  }
   let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
-  type InstanceMeta = "MlxRing" | "MlxIbv" | "MlxJaccl";
+  type InstanceMeta = "MlxRing" | "MlxIbv" | "MlxJaccl" | "LlamaRpc";
 
   // Launch defaults persistence
   const LAUNCH_DEFAULTS_KEY = "exo-launch-defaults";
@@ -202,6 +205,7 @@
       availableModels.some((m) => m.id === defaults.modelId)
     ) {
       selectPreviewModel(defaults.modelId);
+      setSelectedChatModel(defaults.modelId);
     }
   }
 
@@ -391,10 +395,13 @@
   const matchesSelectedRuntime = (runtime: InstanceMeta): boolean =>
     selectedInstanceType === "MlxRing"
       ? runtime === "MlxRing"
-      : runtime === "MlxIbv" || runtime === "MlxJaccl";
+      : selectedInstanceType === "LlamaRpc"
+        ? runtime === "LlamaRpc"
+        : runtime === "MlxIbv" || runtime === "MlxJaccl";
 
   // Helper to check if a model can be launched (has valid placement with >= minNodes)
   function canModelFit(modelId: string): boolean {
+    if (isGgufModelId(modelId)) return true;
     // Find previews matching the model, sharding, and instance type
     const matchingPreviews = previewsData.filter(
       (p: PlacementPreview) =>
@@ -437,14 +444,13 @@
     );
   });
 
-  // Check if a model has enough memory to run
+  // Allow selecting any model; placement/launch will validate capacity.
   function hasEnoughMemory(model: {
     id: string;
     name?: string;
     storage_size_megabytes?: number;
   }): boolean {
-    const modelSizeGB = getModelSizeGB(model);
-    return modelSizeGB <= availableMemoryGB();
+    return true;
   }
 
   // Sorted models for dropdown - biggest first, unrunnable at the end
@@ -541,17 +547,47 @@
     try {
       // Use the specific preview if provided, otherwise fall back to filtered preview
       const preview = specificPreview ?? filteredPreview();
+      const effectiveMinNodes =
+        nodeFilter.size > 0
+          ? Math.max(selectedMinNodes, nodeFilter.size)
+          : selectedMinNodes;
+      const previewNodeCount = preview?.memory_delta_by_node
+        ? Object.keys(preview.memory_delta_by_node).length
+        : null;
+      const previewHasRequiredNodes =
+        nodeFilter.size === 0 ||
+        (preview?.memory_delta_by_node &&
+          Array.from(nodeFilter).every((nodeId) =>
+            Object.prototype.hasOwnProperty.call(
+              preview.memory_delta_by_node,
+              nodeId,
+            ),
+          ));
+      const previewMatchesMinNodes =
+        previewNodeCount !== null && previewNodeCount >= effectiveMinNodes;
+      const canUsePreviewInstance =
+        Boolean(preview?.instance) &&
+        previewMatchesMinNodes &&
+        previewHasRequiredNodes;
 
       let instanceData: unknown;
 
-      if (preview?.instance) {
+      if (canUsePreviewInstance) {
         // Use the instance from the preview
         instanceData = preview.instance;
       } else {
         // Fallback: GET placement from API
-        const placementResponse = await fetch(
-          `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${selectedSharding}&instance_meta=${selectedInstanceType}&min_nodes=${selectedMinNodes}`,
-        );
+        let placementUrl =
+          `/instance/placement?model_id=${encodeURIComponent(modelId)}` +
+          `&sharding=${selectedSharding}` +
+          `&instance_meta=${selectedInstanceType}` +
+          `&min_nodes=${effectiveMinNodes}`;
+        if (nodeFilter.size > 0) {
+          for (const nodeId of nodeFilter) {
+            placementUrl += `&node_ids=${encodeURIComponent(nodeId)}`;
+          }
+        }
+        const placementResponse = await fetch(placementUrl);
 
         if (!placementResponse.ok) {
           const errorText = await placementResponse.text();
@@ -2498,74 +2534,117 @@
                       {@const isImageEditModel = modelSupportsImageEditing(
                         model.id,
                       )}
+                      {@const isGgufModel = isGgufModelId(model.id)}
+                      {@const downloadStatus = getModelDownloadStatus(model.id)}
                       <button
                         type="button"
                         onclick={() => {
                           if (modelCanFit) {
                             selectPreviewModel(model.id);
+                            setSelectedChatModel(model.id);
+                            if (isGgufModel) {
+                              selectedSharding = "Pipeline";
+                              selectedInstanceType = "LlamaRpc";
+                              selectedMinNodes = 1;
+                            }
                             saveLaunchDefaults();
                             isModelDropdownOpen = false;
                             modelDropdownSearch = "";
                           }
                         }}
                         disabled={!modelCanFit}
-                        class="w-full px-3 py-2 text-left text-sm font-mono tracking-wide transition-colors duration-100 flex items-center justify-between gap-2 {selectedModelId ===
+                        class="w-full px-3 py-2 text-left text-sm font-mono tracking-wide transition-colors duration-100 {selectedModelId ===
                         model.id
                           ? 'bg-transparent text-exo-yellow cursor-pointer'
                           : modelCanFit
                             ? 'text-white/80 hover:text-exo-yellow cursor-pointer'
                             : 'text-white/30 cursor-default'}"
                       >
-                        <span class="flex items-center gap-2 truncate flex-1">
-                          {#if isImageModel}
-                            <svg
-                              class="w-4 h-4 flex-shrink-0 text-exo-yellow"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              stroke-width="2"
-                              aria-label="Image generation model"
-                            >
-                              <rect
-                                x="3"
-                                y="3"
-                                width="18"
-                                height="18"
-                                rx="2"
-                                ry="2"
-                              />
-                              <circle cx="8.5" cy="8.5" r="1.5" />
-                              <polyline points="21 15 16 10 5 21" />
-                            </svg>
-                          {/if}
-                          {#if isImageEditModel}
-                            <svg
-                              class="w-4 h-4 flex-shrink-0 text-exo-yellow"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              stroke-width="2"
-                              aria-label="Image editing model"
-                            >
-                              <path
-                                d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
-                              />
-                              <path
-                                d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
-                              />
-                            </svg>
-                          {/if}
-                          <span class="truncate">{model.name || model.id}</span>
-                        </span>
-                        <span
-                          class="flex-shrink-0 text-xs {modelCanFit
-                            ? 'text-white/50'
-                            : 'text-red-400/60'}"
-                        >
-                          {sizeGB >= 1
-                            ? sizeGB.toFixed(0)
-                            : sizeGB.toFixed(1)}GB
-                        </span>
+                        <div class="flex items-center justify-between gap-2 w-full">
+                          <span class="flex items-center gap-2 truncate flex-1">
+                            {#if isImageModel}
+                              <svg
+                                class="w-4 h-4 flex-shrink-0 text-exo-yellow"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                aria-label="Image generation model"
+                              >
+                                <rect
+                                  x="3"
+                                  y="3"
+                                  width="18"
+                                  height="18"
+                                  rx="2"
+                                  ry="2"
+                                />
+                                <circle cx="8.5" cy="8.5" r="1.5" />
+                                <polyline points="21 15 16 10 5 21" />
+                              </svg>
+                            {/if}
+                            {#if isImageEditModel}
+                              <svg
+                                class="w-4 h-4 flex-shrink-0 text-exo-yellow"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                aria-label="Image editing model"
+                              >
+                                <path
+                                  d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
+                                />
+                                <path
+                                  d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
+                                />
+                              </svg>
+                            {/if}
+                            {#if isGgufModel}
+                              <span
+                                class="px-1 py-0.5 text-[10px] font-mono uppercase rounded bg-sky-500/15 text-sky-300 border border-sky-500/30"
+                              >
+                                GGUF
+                              </span>
+                            {/if}
+                            <span class="truncate">{model.name || model.id}</span>
+                          </span>
+                          <span
+                            class="flex-shrink-0 text-xs {modelCanFit
+                              ? 'text-white/50'
+                              : 'text-red-400/60'}"
+                          >
+                            {sizeGB >= 1
+                              ? sizeGB.toFixed(0)
+                              : sizeGB.toFixed(1)}GB
+                          </span>
+                        </div>
+                        {#if downloadStatus.isDownloading && downloadStatus.progress}
+                          <div class="mt-1 w-full space-y-0.5">
+                            <div class="flex justify-between text-[10px] text-exo-light-gray/80">
+                              <span class="text-blue-300"
+                                >{downloadStatus.progress.percentage.toFixed(
+                                  1,
+                                )}%</span
+                              >
+                              <span>
+                                {formatBytes(
+                                  downloadStatus.progress.downloadedBytes,
+                                  1,
+                                )}/{formatBytes(
+                                  downloadStatus.progress.totalBytes,
+                                  1,
+                                )}
+                              </span>
+                            </div>
+                            <div class="relative h-1 bg-exo-black/50 rounded-sm overflow-hidden">
+                              <div
+                                class="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300"
+                                style="width: {downloadStatus.progress.percentage}%"
+                              ></div>
+                            </div>
+                          </div>
+                        {/if}
                       </button>
                     {:else}
                       <div class="px-3 py-2 text-xs text-white/50 font-mono">
@@ -2681,6 +2760,30 @@
                       {/if}
                     </span>
                     MLX RDMA
+                  </button>
+                  <button
+                    onclick={() => {
+                      selectedInstanceType = "LlamaRpc";
+                      selectedSharding = "Pipeline";
+                      selectedMinNodes = 1;
+                      saveLaunchDefaults();
+                    }}
+                    class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
+                    'LlamaRpc'
+                      ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                      : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                  >
+                    <span
+                      class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
+                      'LlamaRpc'
+                        ? 'border-exo-yellow'
+                        : 'border-exo-medium-gray'}"
+                    >
+                      {#if selectedInstanceType === "LlamaRpc"}
+                        <span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
+                      {/if}
+                    </span>
+                    Llama RPC
                   </button>
                 </div>
               </div>
@@ -2805,10 +2908,32 @@
                     {/each}
                   </div>
                 {:else if selectedModel}
-                  <div class="text-center py-4">
-                    <div class="text-xs text-white/50 font-mono">
-                      No valid configurations for current settings
-                    </div>
+                  <div class="text-center py-4 space-y-3">
+                    {#if isGgufModelId(selectedModel.id)}
+                      <div class="text-xs text-white/70 font-mono">
+                        GGUF models run via Llama RPC. Launch an instance to start
+                        chat.
+                      </div>
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-2 px-4 py-2 text-xs font-mono uppercase tracking-wider border border-exo-yellow/70 text-exo-yellow hover:bg-exo-yellow/10"
+                        disabled={launchingModelId === selectedModel.id}
+                        onclick={() => {
+                          selectedSharding = "Pipeline";
+                          selectedInstanceType = "LlamaRpc";
+                          selectedMinNodes = 1;
+                          launchInstance(selectedModel.id, null);
+                        }}
+                      >
+                        {launchingModelId === selectedModel.id
+                          ? "Launching..."
+                          : "Launch GGUF Instance"}
+                      </button>
+                    {:else}
+                      <div class="text-xs text-white/50 font-mono">
+                        No valid configurations for current settings
+                      </div>
+                    {/if}
                   </div>
                 {/if}
               {/if}

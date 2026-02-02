@@ -6,7 +6,7 @@ from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Topology
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
+from exo.shared.types.profiling import MemoryUsage, NodeGpuInfo, NodeNetworkInfo
 from exo.shared.types.topology import Cycle, RDMAConnection, SocketConnection
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import (
@@ -20,6 +20,7 @@ from exo.shared.types.worker.shards import (
 def filter_cycles_by_memory(
     cycles: list[Cycle],
     node_memory: Mapping[NodeId, MemoryUsage],
+    node_gpus: Mapping[NodeId, NodeGpuInfo],
     required_memory: Memory,
 ) -> list[Cycle]:
     filtered_cycles: list[Cycle] = []
@@ -28,7 +29,7 @@ def filter_cycles_by_memory(
             continue
 
         total_mem = sum(
-            (node_memory[node_id].ram_available for node_id in cycle.node_ids),
+            (get_available_memory(node_id, node_memory, node_gpus) for node_id in cycle.node_ids),
             start=Memory(),
         )
         if total_mem >= required_memory:
@@ -78,12 +79,13 @@ def get_shard_assignments_for_pipeline_parallel(
     model_card: ModelCard,
     cycle: Cycle,
     node_memory: Mapping[NodeId, MemoryUsage],
+    node_gpus: Mapping[NodeId, NodeGpuInfo],
 ):
     if not cycle.node_ids:
         raise ValueError("Cannot create shard assignments for empty node cycle")
 
     cycle_memory = sum(
-        (node_memory[node_id].ram_available for node_id in cycle.node_ids),
+        (get_available_memory(node_id, node_memory, node_gpus) for node_id in cycle.node_ids),
         start=Memory(),
     )
     if cycle_memory.in_bytes == 0:
@@ -91,13 +93,16 @@ def get_shard_assignments_for_pipeline_parallel(
 
     total_layers = model_card.n_layers
     world_size = len(cycle)
+    if total_layers < world_size:
+        total_layers = world_size
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
 
     layer_allocations = allocate_layers_proportionally(
         total_layers=total_layers,
         memory_fractions=[
-            node_memory[node_id].ram_available.in_bytes / cycle_memory.in_bytes
+            get_available_memory(node_id, node_memory, node_gpus).in_bytes
+            / cycle_memory.in_bytes
             for node_id in cycle.node_ids
         ],
     )
@@ -108,7 +113,9 @@ def get_shard_assignments_for_pipeline_parallel(
         zip(cycle.node_ids, layer_allocations, strict=True)
     ):
         required_memory = node_layers * memory_per_layer
-        available_memory = node_memory[node_id].ram_available.in_bytes
+        available_memory = get_available_memory(
+            node_id, node_memory, node_gpus
+        ).in_bytes
         if required_memory > available_memory:
             raise ValueError(
                 f"Node {i} ({node_id}) has insufficient memory: "
@@ -182,6 +189,7 @@ def get_shard_assignments(
     cycle: Cycle,
     sharding: Sharding,
     node_memory: Mapping[NodeId, MemoryUsage],
+    node_gpus: Mapping[NodeId, NodeGpuInfo],
 ) -> ShardAssignments:
     match sharding:
         case Sharding.Pipeline:
@@ -189,12 +197,24 @@ def get_shard_assignments(
                 model_card=model_card,
                 cycle=cycle,
                 node_memory=node_memory,
+                node_gpus=node_gpus,
             )
         case Sharding.Tensor:
             return get_shard_assignments_for_tensor_parallel(
                 model_card=model_card,
                 cycle=cycle,
             )
+
+
+def get_available_memory(
+    node_id: NodeId,
+    node_memory: Mapping[NodeId, MemoryUsage],
+    node_gpus: Mapping[NodeId, NodeGpuInfo],
+) -> Memory:
+    gpus = node_gpus.get(node_id)
+    if gpus and gpus.devices:
+        return sum((gpu.memory_free for gpu in gpus.devices), start=Memory())
+    return node_memory[node_id].ram_available
 
 
 def get_mlx_jaccl_devices_matrix(
@@ -346,3 +366,19 @@ def get_mlx_jaccl_coordinators(
         n: f"{get_ip_for_node(n)}:{coordinator_port}"
         for n in cycle_digraph.list_nodes()
     }
+
+
+def select_preferred_ip(node_network: NodeNetworkInfo) -> str | None:
+    priority = {
+        "ethernet": 0,
+        "maybe_ethernet": 1,
+        "wifi": 2,
+        "unknown": 3,
+        "thunderbolt": 4,
+    }
+    if not node_network.interfaces:
+        return None
+    return min(
+        node_network.interfaces,
+        key=lambda iface: priority.get(iface.interface_type, 3),
+    ).ip_address

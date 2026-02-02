@@ -97,6 +97,41 @@ def test_macos_uses_traditional_paths():
         assert home / ".exo" == constants.EXO_CACHE_HOME
 
 
+def test_windows_uses_appdata_paths():
+    """Test that Windows uses AppData locations when EXO_HOME is not set."""
+    appdata = "C:/Users/test/AppData/Roaming"
+    localappdata = "C:/Users/test/AppData/Local"
+    env = {k: v for k, v in os.environ.items() if k != "EXO_HOME"}
+    env.update({"APPDATA": appdata, "LOCALAPPDATA": localappdata})
+    with (
+        mock.patch.dict(os.environ, env, clear=True),
+        mock.patch.object(sys, "platform", "win32"),
+    ):
+        import importlib
+
+        import exo.shared.constants as constants
+
+        importlib.reload(constants)
+
+        assert Path(appdata) / "exo" == constants.EXO_CONFIG_HOME
+        assert Path(localappdata) / "exo" == constants.EXO_DATA_HOME
+        assert Path(localappdata) / "exo" == constants.EXO_CACHE_HOME
+
+
+def test_absolute_exo_home_overrides():
+    """Test that an absolute EXO_HOME is used directly."""
+    abs_home = "/var/tmp/exo-abs"
+    with mock.patch.dict(os.environ, {"EXO_HOME": abs_home}, clear=False):
+        import importlib
+
+        import exo.shared.constants as constants
+
+        importlib.reload(constants)
+
+        assert Path(abs_home) == constants.EXO_CONFIG_HOME
+        assert Path(abs_home) == constants.EXO_DATA_HOME
+
+
 def test_node_id_in_config_dir():
     """Test that node ID keypair is in the config directory."""
     import exo.shared.constants as constants
@@ -116,3 +151,16 @@ def test_models_in_data_dir():
         importlib.reload(constants)
 
         assert constants.EXO_MODELS_DIR.parent == constants.EXO_DATA_HOME
+
+
+def test_absolute_models_dir_overrides():
+    """Test that EXO_MODELS_DIR uses an absolute path when provided."""
+    abs_models_dir = "/var/tmp/exo-models"
+    with mock.patch.dict(os.environ, {"EXO_MODELS_DIR": abs_models_dir}, clear=False):
+        import importlib
+
+        import exo.shared.constants as constants
+
+        importlib.reload(constants)
+
+        assert Path(abs_models_dir) == constants.EXO_MODELS_DIR
