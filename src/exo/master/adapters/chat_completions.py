@@ -118,8 +118,33 @@ async def generate_chat_stream(
             yield "data: [DONE]\n\n"
             return
 
-        if not isinstance(chunk, TokenChunk):
-            continue
+        if isinstance(chunk, ToolCallChunk):
+            tool_call_deltas = [
+                ToolCall(
+                    id=str(uuid4()),
+                    index=i,
+                    function=tool,
+                )
+                for i, tool in enumerate(chunk.tool_calls)
+            ]
+            tool_response = ChatCompletionResponse(
+                id=command_id,
+                created=int(time.time()),
+                model=chunk.model,
+                choices=[
+                    StreamingChoiceResponse(
+                        index=0,
+                        delta=ChatCompletionMessage(
+                            role="assistant",
+                            tool_calls=tool_call_deltas,
+                        ),
+                        finish_reason="tool_calls",
+                    )
+                ],
+            )
+            yield f"data: {tool_response.model_dump_json()}\n\n"
+            yield "data: [DONE]\n\n"
+            return
 
         chunk_response = chunk_to_response(chunk, command_id)
         yield f"data: {chunk_response.model_dump_json()}\n\n"
