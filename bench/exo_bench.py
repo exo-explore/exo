@@ -25,7 +25,7 @@ class ExoHttpError(RuntimeError):
 
 
 class ExoClient:
-    def __init__(self, host: str, port: int, timeout_s: float = 600.0):
+    def __init__(self, host: str, port: int, timeout_s: float = 7200.0):
         self.host = host
         self.port = port
         self.timeout_s = timeout_s
@@ -342,7 +342,7 @@ def main() -> int:
         help="Warmup runs per placement (uses first pp/tg).",
     )
     ap.add_argument(
-        "--timeout", type=float, default=600.0, help="HTTP timeout (seconds)."
+        "--timeout", type=float, default=7200.0, help="HTTP timeout (seconds)."
     )
     ap.add_argument(
         "--json-out",
