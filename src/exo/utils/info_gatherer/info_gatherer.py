@@ -262,6 +262,7 @@ class NodeConfig(TaggedModel):
     @classmethod
     async def gather(cls) -> Self | None:
         cfg_file = anyio.Path(EXO_CONFIG_FILE)
+        await cfg_file.parent.mkdir(parents=True, exist_ok=True)
         await cfg_file.touch(exist_ok=True)
         async with await cfg_file.open("rb") as f:
             try:
