@@ -271,12 +271,29 @@ class PromptSizer:
                 f"Target ({target}) is smaller than template overhead ({self.base_tokens})."
             )
 
-        content = ""
-        tok = self.count_fn(content)
+        # Estimate tokens per atom using a sample
+        sample_count = 100
+        sample_content = self.atom * sample_count
+        sample_tokens = self.count_fn(sample_content) - self.base_tokens
+        tokens_per_atom = sample_tokens / sample_count
 
-        while tok < target:
-            content += self.atom
-            tok = self.count_fn(content)
+        # Estimate starting point
+        needed_tokens = target - self.base_tokens
+        estimated_atoms = int(needed_tokens / tokens_per_atom)
+
+        # Binary search to find exact atom count
+        low, high = 0, estimated_atoms * 2 + 100
+        while low < high:
+            mid = (low + high) // 2
+            tok = self.count_fn(self.atom * mid)
+            if tok < target:
+                low = mid + 1
+            else:
+                high = mid
+
+        content = self.atom * low
+        tok = self.count_fn(content)
+        logger.info(f"{tok=}")
 
         if tok != target:
             raise RuntimeError(
