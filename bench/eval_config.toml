@@ -74,7 +74,7 @@ fast = true
 # Run evaluation after generation (computes pass@1, pass@5)
 evaluate = true
 # Number of parallel API requests
-multiprocess = 4
+multiprocess = 32
 # Cache generated outputs for resumption
 use_cache = true
 # Output path for results
