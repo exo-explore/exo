@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import anyio
 from anyio.abc import TaskGroup
@@ -12,6 +11,7 @@ from exo.master.placement import (
     place_instance,
 )
 from exo.shared.apply import apply
+from exo.shared.constants import EXO_CACHE_HOME
 from exo.shared.tracing import TraceEvent, export_trace, is_tracing_enabled
 from exo.shared.types.commands import (
     CreateInstance,
@@ -438,7 +438,7 @@ class Master:
             for t in all_trace_data
         ]
 
-        output_path = Path.home() / ".exo" / "traces" / f"trace_{task_id}.json"
+        output_path = EXO_CACHE_HOME / f"trace_{task_id}.json"
         export_trace(all_traces, output_path)
         logger.info(f"Merged traces saved to {output_path}")
 

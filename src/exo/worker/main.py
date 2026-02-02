@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from pathlib import Path
 from random import random
 from typing import Iterator
 
@@ -9,6 +8,7 @@ from anyio.abc import TaskGroup
 from loguru import logger
 
 from exo.shared.apply import apply
+from exo.shared.constants import EXO_CACHE_HOME
 from exo.shared.models.model_cards import ModelId
 from exo.shared.tracing import TraceEvent, export_trace
 from exo.shared.types.api import ImageEditsTaskParams
@@ -288,7 +288,7 @@ class Worker:
             )
             for t in event.traces
         ]
-        output_path = Path.home() / ".exo" / "traces" / f"trace_{event.task_id}.json"
+        output_path = EXO_CACHE_HOME / f"trace_{event.task_id}.json"
         export_trace(traces, output_path)
         logger.debug(f"Saved merged trace to {output_path}")
 
