@@ -121,6 +121,14 @@ MODEL_CARDS: dict[str, ModelCard] = {
         supports_tensor=True,
         tasks=[ModelTask.TextGeneration],
     ),
+    "kimi-k2.5": ModelCard(
+        model_id=ModelId("mlx-community/Kimi-K2.5"),
+        storage_size=Memory.from_gb(617),
+        n_layers=61,
+        hidden_size=7168,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+    ),
     # llama-3.1
     "llama-3.1-8b": ModelCard(
         model_id=ModelId("mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"),

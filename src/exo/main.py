@@ -267,6 +267,11 @@ def main():
         os.environ["EXO_FAST_SYNCH"] = "off"
         logger.info("FAST_SYNCH forced OFF")
 
+    # Set EXO_NO_BATCH env var for runner subprocesses
+    if args.no_batch:
+        os.environ["EXO_NO_BATCH"] = "1"
+        logger.info("Batch inference disabled (serial mode)")
+
     node = anyio.run(Node.create, args)
     anyio.run(node.run)
     logger.info("EXO Shutdown complete")
@@ -282,6 +287,7 @@ class Args(CamelCaseModel):
     no_worker: bool = False
     no_downloads: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
+    no_batch: bool = False
 
     @classmethod
     def parse(cls) -> Self:
@@ -341,6 +347,11 @@ class Args(CamelCaseModel):
             action="store_false",
             dest="fast_synch",
             help="Force MLX FAST_SYNCH off",
+        )
+        parser.add_argument(
+            "--no-batch",
+            action="store_true",
+            help="Disable batch inference (use serial processing for benchmarking)",
         )
 
         args = parser.parse_args()

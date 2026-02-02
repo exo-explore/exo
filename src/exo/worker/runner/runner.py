@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import time
 from collections.abc import Generator
 from functools import cache
@@ -87,7 +88,7 @@ from exo.worker.runner.batched_handler import BatchedInferenceHandler
 from exo.worker.runner.bootstrap import logger
 
 # Batching configuration
-BATCH_ENABLED = True
+BATCH_ENABLED = os.environ.get("EXO_NO_BATCH") != "1"
 BATCH_MAX_SIZE = 32
 
 
