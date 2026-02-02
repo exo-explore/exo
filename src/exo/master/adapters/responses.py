@@ -14,6 +14,7 @@ from exo.shared.types.openai_responses import (
     ResponseFunctionCallArgumentsDoneEvent,
     ResponseFunctionCallItem,
     ResponseInProgressEvent,
+    ResponseInputTextPart,
     ResponseItem,
     ResponseMessageItem,
     ResponseOutputItemAddedEvent,
@@ -28,6 +29,13 @@ from exo.shared.types.openai_responses import (
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 
 
+def _extract_content(content: str | list[ResponseInputTextPart]) -> str:
+    """Extract plain text from a content field that may be a string or list of parts."""
+    if isinstance(content, str):
+        return content
+    return "".join(part.text for part in content)
+
+
 def responses_request_to_text_generation(
     request: ResponsesRequest,
 ) -> TextGenerationTaskParams:
@@ -36,7 +44,8 @@ def responses_request_to_text_generation(
         input_value = request.input
     else:
         input_value = [
-            InputMessage(role=msg.role, content=msg.content) for msg in request.input
+            InputMessage(role=msg.role, content=_extract_content(msg.content))
+            for msg in request.input
         ]
     return TextGenerationTaskParams(
         model=request.model,

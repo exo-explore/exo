@@ -19,11 +19,18 @@ ResponseRole = Literal["user", "assistant", "system", "developer"]
 
 
 # Request types
+class ResponseInputTextPart(BaseModel, frozen=True):
+    """Text content part in a Responses API input message."""
+
+    type: Literal["input_text"] = "input_text"
+    text: str
+
+
 class ResponseInputMessage(BaseModel, frozen=True):
     """Input message for Responses API."""
 
     role: ResponseRole
-    content: str
+    content: str | list[ResponseInputTextPart]
 
 
 class ResponsesRequest(BaseModel, frozen=True):
