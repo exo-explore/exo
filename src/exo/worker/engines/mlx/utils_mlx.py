@@ -165,7 +165,6 @@ def mlx_distributed_init(
 
                 jaccl_coordinator = jaccl_coordinators[bound_instance.bound_node_id]
 
-                # TODO: update once upstream fixes
                 logger.info(
                     f"rank {rank} MLX_IBV_DEVICES: {coordination_file} with devices: {jaccl_devices_json}"
                 )
