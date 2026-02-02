@@ -622,9 +622,7 @@ def run_livecodebench(
                 logger.info(
                     f"  Completion tokens: {usage_data.get('total_completion_tokens', 0)}"
                 )
-                logger.info(
-                    f"  Total tokens:      {usage_data.get('total_tokens', 0)}"
-                )
+                logger.info(f"  Total tokens:      {usage_data.get('total_tokens', 0)}")
         except Exception:
             pass  # Usage endpoint not available
 

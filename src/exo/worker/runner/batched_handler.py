@@ -189,51 +189,111 @@ class BatchedInferenceHandler:
             f"Added request to batch queue (pending={len(self.pending)}, active={self.current_batch_size})"
         )
 
+    def _broadcast_int(self, value: int) -> int:
+        """Broadcast an integer from rank 0 to all ranks."""
+        if self.tensor_parallel_group is None:
+            return value
+        arr = mx.array([value if self.device_rank == 0 else 0], dtype=mx.int32)
+        synced = mx.distributed.all_sum(arr, group=self.tensor_parallel_group)
+        mx.eval(synced)
+        return int(synced.item())
+
+    def _broadcast_tokens(self, tokens_list: list[list[int]]) -> list[list[int]]:
+        """Broadcast tokenized prompts from rank 0 to all ranks."""
+        if self.tensor_parallel_group is None:
+            return tokens_list
+
+        # Step 1: Broadcast number of sequences
+        num_seqs = self._broadcast_int(len(tokens_list))
+        if num_seqs == 0:
+            return []
+
+        # Step 2: Broadcast length of each sequence
+        lengths: list[int] = []
+        for i in range(num_seqs):
+            length = self._broadcast_int(
+                len(tokens_list[i])
+                if self.device_rank == 0 and i < len(tokens_list)
+                else 0
+            )
+            lengths.append(length)
+
+        # Step 3: Broadcast flattened tokens
+        total_tokens = sum(lengths)
+        if self.device_rank == 0:
+            flat: list[int] = []
+            for seq in tokens_list:
+                flat.extend(seq)
+            flat_arr = mx.array(flat, dtype=mx.int32)
+        else:
+            flat_arr = mx.zeros((total_tokens,), dtype=mx.int32)
+
+        # Broadcast via all_sum (rank 0 contributes, others contribute zeros)
+        synced_flat = mx.distributed.all_sum(flat_arr, group=self.tensor_parallel_group)
+        mx.eval(synced_flat)
+
+        # Unflatten
+        result: list[list[int]] = []
+        offset = 0
+        for length in lengths:
+            seq_arr = synced_flat[offset : offset + length]
+            seq: list[int] = [int(x) for x in seq_arr.tolist()]  # type: ignore[union-attr]
+            result.append(seq)
+            offset += length
+
+        return result
+
     def flush(self) -> None:
         """Start processing pending requests by adding them to the batch/pipelined generator."""
-        # For tensor parallel: sync pending count across all devices
-        # Use minimum so all devices can fulfill the batch
+        # Declare variables with types
+        tokenized_prompts: list[list[int]]
+        max_tokens_list: list[int]
+        samplers: list[Callable[[mx.array], mx.array]]
+        prompt_token_counts: list[int]
+        requests_to_flush: list[PendingRequest]
+
+        # For tensor parallel: rank 0 broadcasts batch info, others receive and sync
         if self.tensor_parallel_group is not None:
-            local_count = len(self.pending)
-            # Negate, sum, negate to get min (all_sum gives sum, so -sum(-x) = min if we had min)
-            # Actually use all_gather approach: negate so min becomes max after negation
-            neg_count = mx.array([-local_count], dtype=mx.int32)
-            neg_sum = mx.distributed.all_sum(neg_count, group=self.tensor_parallel_group)
-            mx.eval(neg_sum)
-            # This gives us -sum of counts, not min. We need a different approach.
-            # Since MLX doesn't have all_reduce with min, we use: each node reports count,
-            # then we take the min locally after gathering.
-            # Simpler: just use local count but ensure all nodes wait for tasks to arrive
-
-            # Actually, the right fix: wait until all nodes have the same pending count
-            # by checking if our count matches what we'll flush
-            count_arr = mx.array([local_count], dtype=mx.int32)
-            total = mx.distributed.all_sum(count_arr, group=self.tensor_parallel_group)
-            mx.eval(total)
-            total_count = int(total.item())
-
-            # Get world size from group
-            tp_world_size = self.tensor_parallel_group.size()
-
-            # If not all nodes have same count, use minimum (total/world_size if equal, else min)
-            # For now, assume all nodes have same tasks (they receive same pubsub messages)
-            # Just verify and log warning if mismatch
-            expected_total = local_count * tp_world_size
-            if total_count != expected_total:
-                logger.warning(
-                    f"Tensor parallel pending mismatch: local={local_count}, total={total_count}, expected={expected_total}"
-                )
-                # Use the minimum possible: floor(total/world_size)
-                num_pending = total_count // tp_world_size
-            else:
-                num_pending = local_count
-
-            if num_pending == 0:
-                return
+            # Broadcast how many to flush
             available_slots = self.max_batch_size - self.current_batch_size
-            num_to_flush = min(num_pending, available_slots)
-            requests_to_flush = self.pending[:num_to_flush]
-            self.pending = self.pending[num_to_flush:]
+            num_to_flush = self._broadcast_int(
+                min(len(self.pending), available_slots) if self.device_rank == 0 else 0
+            )
+
+            if num_to_flush == 0:
+                return
+
+            # Get requests and tokenize on rank 0
+            if self.device_rank == 0:
+                requests_to_flush = self.pending[:num_to_flush]
+                self.pending = self.pending[num_to_flush:]
+                tokenized_prompts = [
+                    self.tokenizer.encode(req.prompt) for req in requests_to_flush
+                ]
+                max_tokens_list = [req.max_tokens for req in requests_to_flush]
+            else:
+                requests_to_flush = []
+                tokenized_prompts = []
+                max_tokens_list = []
+
+            # Broadcast tokenized prompts to all ranks
+            tokenized_prompts = self._broadcast_tokens(tokenized_prompts)
+
+            # Broadcast max_tokens
+            synced_max_tokens: list[int] = []
+            for i in range(num_to_flush):
+                mt = self._broadcast_int(
+                    max_tokens_list[i]
+                    if self.device_rank == 0 and i < len(max_tokens_list)
+                    else 0
+                )
+                synced_max_tokens.append(mt)
+            max_tokens_list = synced_max_tokens
+
+            # Create samplers (same on all ranks since we use temp=0 typically)
+            samplers = [make_sampler(temp=0.0) for _ in range(num_to_flush)]
+            prompt_token_counts = [len(t) for t in tokenized_prompts]
+
         else:
             if not self.has_pending:
                 return
@@ -241,18 +301,18 @@ class BatchedInferenceHandler:
             requests_to_flush = self.pending[:available_slots]
             self.pending = self.pending[available_slots:]
 
-        # Prepare batch data - tokenize prompts
-        tokenized_prompts: list[list[int]] = []
-        max_tokens_list: list[int] = []
-        samplers: list[Callable[[mx.array], mx.array]] = []
-        prompt_token_counts: list[int] = []
+            # Prepare batch data - tokenize prompts
+            tokenized_prompts = []
+            max_tokens_list = []
+            samplers = []
+            prompt_token_counts = []
 
-        for req in requests_to_flush:
-            tokens = self.tokenizer.encode(req.prompt)
-            tokenized_prompts.append(tokens)
-            max_tokens_list.append(req.max_tokens)
-            samplers.append(req.sampler)
-            prompt_token_counts.append(len(tokens))
+            for req in requests_to_flush:
+                tokens = self.tokenizer.encode(req.prompt)
+                tokenized_prompts.append(tokens)
+                max_tokens_list.append(req.max_tokens)
+                samplers.append(req.sampler)
+                prompt_token_counts.append(len(tokens))
 
         if self.use_pipelined:
             self._flush_pipelined(
@@ -359,8 +419,12 @@ class BatchedInferenceHandler:
         )
 
         for uid, req, prompt_tokens, tokens in zip(
-            uids, requests_to_flush, prompt_token_counts, tokenized_prompts, strict=True
-        ):  # pyright: ignore[reportUnknownArgumentType]
+            uids,  # pyright: ignore[reportUnknownArgumentType]
+            requests_to_flush,
+            prompt_token_counts,
+            tokenized_prompts,
+            strict=True,
+        ):
             parser = None
             if self.is_gpt_oss and self._harmony_encoding is not None:
                 parser = StreamableParser(self._harmony_encoding, role=Role.ASSISTANT)  # pyright: ignore[reportAny]

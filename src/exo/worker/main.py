@@ -275,9 +275,12 @@ class Worker:
                 case ChatCompletion():
                     # Don't wait for acknowledgment for batchable inference tasks
                     # This allows multiple tasks to reach the runner for batching
-                    await self.runners[self._task_to_runner_id(task)].start_task(
-                        task, wait_for_ack=False
-                    )
+                    # For tensor parallel: only node 0 sends tasks to runner
+                    # Other nodes' runners will participate via model sync
+                    runner_id = self._task_to_runner_id(task)
+                    runner = self.runners[runner_id]
+                    if runner.shard_metadata.device_rank == 0:
+                        await runner.start_task(task, wait_for_ack=False)
                 case task:
                     await self.runners[self._task_to_runner_id(task)].start_task(task)
 

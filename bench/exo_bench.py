@@ -384,7 +384,9 @@ def main() -> int:
     if len(pp_list) == len(tg_list):
         logger.info(f"pp/tg mode: tandem (zip) - {len(pp_list)} pairs")
     else:
-        logger.info(f"pp/tg mode: combinations (product) - {len(pp_list) * len(tg_list)} pairs")
+        logger.info(
+            f"pp/tg mode: combinations (product) - {len(pp_list) * len(tg_list)} pairs"
+        )
 
     client = ExoClient(args.host, args.port, timeout_s=args.timeout)
     short_id, full_model_id = resolve_model_short_id(client, args.model)

@@ -239,7 +239,9 @@ def main() -> int:
                 original_path = original_get_output_path(model_repr, runner_args)
                 # Replace 'output/' prefix with our custom base
                 if original_path.startswith("output/"):
-                    new_path = str(Path(output_base) / original_path[7:])  # Skip 'output/'
+                    new_path = str(
+                        Path(output_base) / original_path[7:]
+                    )  # Skip 'output/'
                 else:
                     new_path = str(Path(output_base) / original_path)
                 path_utils.ensure_dir(new_path)
@@ -259,7 +261,9 @@ def main() -> int:
             def limited_build(*a: Any, **kw: Any) -> Any:
                 benchmark, format_prompt = original_build(*a, **kw)
                 if args.limit and len(benchmark) > args.limit:
-                    print(f"Limiting benchmark from {len(benchmark)} to {args.limit} problems")
+                    print(
+                        f"Limiting benchmark from {len(benchmark)} to {args.limit} problems"
+                    )
                     benchmark = benchmark[: args.limit]
                 return benchmark, format_prompt
 

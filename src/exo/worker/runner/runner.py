@@ -72,7 +72,6 @@ from exo.worker.engines.image import (
     warmup_image_generator,
 )
 from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import (
     mlx_generate,
     warmup_inference,
@@ -229,7 +228,6 @@ def main(
     model: Model | DistributedImageModel | None = None
     tokenizer: TokenizerWrapper | None = None
     group = None
-    kv_prefix_cache: KVPrefixCache | None = None
     batch_handler: BatchedInferenceHandler | None = None
     is_tensor_parallel = False
 
@@ -244,7 +242,13 @@ def main(
         Process a single task. Returns True if the runner should continue,
         False if it should shut down.
         """
-        nonlocal current_status, model, tokenizer, group, batch_handler, is_tensor_parallel
+        nonlocal \
+            current_status, \
+            model, \
+            tokenizer, \
+            group, \
+            batch_handler, \
+            is_tensor_parallel
         event_sender.send(
             TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Running)
         )
@@ -306,14 +310,15 @@ def main(
                             tokenizer=tokenizer,
                             model_id=shard_metadata.model_card.model_id,
                             device_rank=device_rank,
-                            world_size=1 if is_tensor_parallel else shard_metadata.world_size,
+                            world_size=1
+                            if is_tensor_parallel
+                            else shard_metadata.world_size,
                             max_batch_size=BATCH_MAX_SIZE,
                             tensor_parallel_group=group if is_tensor_parallel else None,
                         )
                         logger.info(
                             f"Batch handler initialized (max_batch_size={BATCH_MAX_SIZE}, tensor_parallel={is_tensor_parallel})"
                         )
-                        kv_prefix_cache = KVPrefixCache(tokenizer)
 
                 elif (
                     ModelTask.TextToImage in shard_metadata.model_card.tasks
@@ -596,7 +601,18 @@ def main(
 
     with task_receiver as tasks:
         while True:
-            # Check if batch handler is active and needs processing
+            # For tensor parallel non-zero ranks: don't receive tasks, just follow rank 0
+            if is_tensor_parallel and device_rank != 0 and batch_handler is not None:
+                # Wait for rank 0 to signal via flush (broadcasts batch count)
+                batch_handler.flush()
+
+                # Step if there's an active batch
+                if batch_handler.is_active:
+                    for _event in batch_handler.step():
+                        pass  # Non-zero ranks don't emit events
+                continue
+
+            # Rank 0 or non-tensor-parallel: handle tasks normally
             if batch_handler is not None and (
                 batch_handler.is_active or batch_handler.has_pending
             ):
