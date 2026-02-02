@@ -417,6 +417,7 @@ def mlx_generate(
     max_tokens = task.max_tokens or MAX_TOKENS
     generated_text_parts: list[str] = []
     generation_start_time = time.perf_counter()
+    total_prompt_tokens = len(prompt_tokens) + prefix_hit_length
     for out in stream_generate(
         model=model,
         tokenizer=tokenizer,
@@ -438,7 +439,7 @@ def mlx_generate(
             stats = GenerationStats(
                 prompt_tps=float(prefill_tps or out.prompt_tps),
                 generation_tps=float(out.generation_tps),
-                prompt_tokens=int(out.prompt_tokens),
+                prompt_tokens=total_prompt_tokens,
                 generation_tokens=int(out.generation_tokens),
                 peak_memory_usage=Memory.from_gb(out.peak_memory),
             )
