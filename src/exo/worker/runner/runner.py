@@ -18,7 +18,7 @@ from pydantic import ValidationError
 
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE
 from exo.shared.models.model_cards import ModelId, ModelTask
-from exo.shared.types.api import FinishReason, ImageGenerationStats
+from exo.shared.types.api import ImageGenerationStats
 from exo.shared.types.chunks import ErrorChunk, ImageChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
@@ -717,7 +717,9 @@ def parse_tool_calls(
         if in_tool_call:
             tool_call_text_parts.append(response.text)
             if response.finish_reason is not None:
-                logger.info("toll call parsing interrupted, yield partial tool call as text")
+                logger.info(
+                    "toll call parsing interrupted, yield partial tool call as text"
+                )
                 yield GenerationResponse(
                     text=tool_call_start + "".join(tool_call_text_parts),
                     token=0,
