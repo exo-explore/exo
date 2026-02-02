@@ -181,14 +181,7 @@ def parse_int_list(values: list[str]) -> list[int]:
             part = part.strip()
             if part:
                 items.append(int(part))
-
-    seen: set[int] = set()
-    out: list[int] = []
-    for x in items:
-        if x not in seen:
-            out.append(x)
-            seen.add(x)
-    return out
+    return items
 
 
 def resolve_model_short_id(client: ExoClient, model_arg: str) -> tuple[str, str]:
