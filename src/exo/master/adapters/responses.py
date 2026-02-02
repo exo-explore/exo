@@ -136,6 +136,12 @@ async def generate_responses_stream(
     """Generate OpenAI Responses API streaming events from TokenChunks."""
     response_id = f"resp_{command_id}"
     item_id = f"item_{command_id}"
+    seq = 0
+
+    def _next_seq() -> int:
+        nonlocal seq
+        seq += 1
+        return seq
 
     # response.created
     initial_response = ResponsesResponse(
@@ -145,11 +151,15 @@ async def generate_responses_stream(
         output=[],
         output_text="",
     )
-    created_event = ResponseCreatedEvent(response=initial_response)
+    created_event = ResponseCreatedEvent(
+        sequence_number=_next_seq(), response=initial_response
+    )
     yield f"event: response.created\ndata: {created_event.model_dump_json()}\n\n"
 
     # response.in_progress
-    in_progress_event = ResponseInProgressEvent(response=initial_response)
+    in_progress_event = ResponseInProgressEvent(
+        sequence_number=_next_seq(), response=initial_response
+    )
     yield f"event: response.in_progress\ndata: {in_progress_event.model_dump_json()}\n\n"
 
     # response.output_item.added
@@ -158,13 +168,19 @@ async def generate_responses_stream(
         content=[ResponseOutputText(text="")],
         status="in_progress",
     )
-    item_added = ResponseOutputItemAddedEvent(output_index=0, item=initial_item)
+    item_added = ResponseOutputItemAddedEvent(
+        sequence_number=_next_seq(), output_index=0, item=initial_item
+    )
     yield f"event: response.output_item.added\ndata: {item_added.model_dump_json()}\n\n"
 
     # response.content_part.added
     initial_part = ResponseOutputText(text="")
     part_added = ResponseContentPartAddedEvent(
-        output_index=0, content_index=0, part=initial_part
+        sequence_number=_next_seq(),
+        item_id=item_id,
+        output_index=0,
+        content_index=0,
+        part=initial_part,
     )
     yield f"event: response.content_part.added\ndata: {part_added.model_dump_json()}\n\n"
 
@@ -192,12 +208,15 @@ async def generate_responses_stream(
                     status="in_progress",
                 )
                 fc_added = ResponseOutputItemAddedEvent(
-                    output_index=next_output_index, item=fc_item
+                    sequence_number=_next_seq(),
+                    output_index=next_output_index,
+                    item=fc_item,
                 )
                 yield f"event: response.output_item.added\ndata: {fc_added.model_dump_json()}\n\n"
 
                 # response.function_call_arguments.delta
                 args_delta = ResponseFunctionCallArgumentsDeltaEvent(
+                    sequence_number=_next_seq(),
                     item_id=fc_id,
                     output_index=next_output_index,
                     delta=tool.arguments,
@@ -206,6 +225,7 @@ async def generate_responses_stream(
 
                 # response.function_call_arguments.done
                 args_done = ResponseFunctionCallArgumentsDoneEvent(
+                    sequence_number=_next_seq(),
                     item_id=fc_id,
                     output_index=next_output_index,
                     name=tool.name,
@@ -222,7 +242,9 @@ async def generate_responses_stream(
                     status="completed",
                 )
                 fc_item_done = ResponseOutputItemDoneEvent(
-                    output_index=next_output_index, item=fc_done_item
+                    sequence_number=_next_seq(),
+                    output_index=next_output_index,
+                    item=fc_done_item,
                 )
                 yield f"event: response.output_item.done\ndata: {fc_item_done.model_dump_json()}\n\n"
 
@@ -235,6 +257,8 @@ async def generate_responses_stream(
 
         # response.output_text.delta
         delta_event = ResponseTextDeltaEvent(
+            sequence_number=_next_seq(),
+            item_id=item_id,
             output_index=0,
             content_index=0,
             delta=chunk.text,
@@ -243,14 +267,22 @@ async def generate_responses_stream(
 
     # response.output_text.done
     text_done = ResponseTextDoneEvent(
-        output_index=0, content_index=0, text=accumulated_text
+        sequence_number=_next_seq(),
+        item_id=item_id,
+        output_index=0,
+        content_index=0,
+        text=accumulated_text,
     )
     yield f"event: response.output_text.done\ndata: {text_done.model_dump_json()}\n\n"
 
     # response.content_part.done
     final_part = ResponseOutputText(text=accumulated_text)
     part_done = ResponseContentPartDoneEvent(
-        output_index=0, content_index=0, part=final_part
+        sequence_number=_next_seq(),
+        item_id=item_id,
+        output_index=0,
+        content_index=0,
+        part=final_part,
     )
     yield f"event: response.content_part.done\ndata: {part_done.model_dump_json()}\n\n"
 
@@ -260,7 +292,9 @@ async def generate_responses_stream(
         content=[ResponseOutputText(text=accumulated_text)],
         status="completed",
     )
-    item_done = ResponseOutputItemDoneEvent(output_index=0, item=final_message_item)
+    item_done = ResponseOutputItemDoneEvent(
+        sequence_number=_next_seq(), output_index=0, item=final_message_item
+    )
     yield f"event: response.output_item.done\ndata: {item_done.model_dump_json()}\n\n"
 
     # Create usage from stats if available
@@ -283,5 +317,7 @@ async def generate_responses_stream(
         output_text=accumulated_text,
         usage=usage,
     )
-    completed_event = ResponseCompletedEvent(response=final_response)
+    completed_event = ResponseCompletedEvent(
+        sequence_number=_next_seq(), response=final_response
+    )
     yield f"event: response.completed\ndata: {completed_event.model_dump_json()}\n\n"

@@ -136,6 +136,7 @@ class ResponseCreatedEvent(BaseModel, frozen=True):
     """Event sent when response is created."""
 
     type: Literal["response.created"] = "response.created"
+    sequence_number: int
     response: ResponsesResponse
 
 
@@ -143,6 +144,7 @@ class ResponseInProgressEvent(BaseModel, frozen=True):
     """Event sent when response starts processing."""
 
     type: Literal["response.in_progress"] = "response.in_progress"
+    sequence_number: int
     response: ResponsesResponse
 
 
@@ -150,6 +152,7 @@ class ResponseOutputItemAddedEvent(BaseModel, frozen=True):
     """Event sent when an output item is added."""
 
     type: Literal["response.output_item.added"] = "response.output_item.added"
+    sequence_number: int
     output_index: int
     item: ResponseItem
 
@@ -158,6 +161,8 @@ class ResponseContentPartAddedEvent(BaseModel, frozen=True):
     """Event sent when a content part is added."""
 
     type: Literal["response.content_part.added"] = "response.content_part.added"
+    sequence_number: int
+    item_id: str
     output_index: int
     content_index: int
     part: ResponseOutputText
@@ -167,6 +172,8 @@ class ResponseTextDeltaEvent(BaseModel, frozen=True):
     """Event sent for text delta during streaming."""
 
     type: Literal["response.output_text.delta"] = "response.output_text.delta"
+    sequence_number: int
+    item_id: str
     output_index: int
     content_index: int
     delta: str
@@ -176,6 +183,8 @@ class ResponseTextDoneEvent(BaseModel, frozen=True):
     """Event sent when text content is done."""
 
     type: Literal["response.output_text.done"] = "response.output_text.done"
+    sequence_number: int
+    item_id: str
     output_index: int
     content_index: int
     text: str
@@ -185,6 +194,8 @@ class ResponseContentPartDoneEvent(BaseModel, frozen=True):
     """Event sent when a content part is done."""
 
     type: Literal["response.content_part.done"] = "response.content_part.done"
+    sequence_number: int
+    item_id: str
     output_index: int
     content_index: int
     part: ResponseOutputText
@@ -194,6 +205,7 @@ class ResponseOutputItemDoneEvent(BaseModel, frozen=True):
     """Event sent when an output item is done."""
 
     type: Literal["response.output_item.done"] = "response.output_item.done"
+    sequence_number: int
     output_index: int
     item: ResponseItem
 
@@ -204,6 +216,7 @@ class ResponseFunctionCallArgumentsDeltaEvent(BaseModel, frozen=True):
     type: Literal["response.function_call_arguments.delta"] = (
         "response.function_call_arguments.delta"
     )
+    sequence_number: int
     item_id: str
     output_index: int
     delta: str
@@ -215,6 +228,7 @@ class ResponseFunctionCallArgumentsDoneEvent(BaseModel, frozen=True):
     type: Literal["response.function_call_arguments.done"] = (
         "response.function_call_arguments.done"
     )
+    sequence_number: int
     item_id: str
     output_index: int
     name: str
@@ -225,6 +239,7 @@ class ResponseCompletedEvent(BaseModel, frozen=True):
     """Event sent when response is completed."""
 
     type: Literal["response.completed"] = "response.completed"
+    sequence_number: int
     response: ResponsesResponse
 
 
