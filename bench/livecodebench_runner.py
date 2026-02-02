@@ -28,18 +28,27 @@ import signal
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 if TYPE_CHECKING:
     from typing import Any
 
 
-def _signal_handler(signum: int, frame: object) -> None:
-    """Handle interrupt signals by terminating all child processes."""
+def _cleanup_and_exit(exit_code: int = 130) -> NoReturn:
+    """Terminate all child processes and exit."""
     # Terminate any active multiprocessing pools
     for child in multiprocessing.active_children():
         child.terminate()
-    sys.exit(130)  # Standard exit code for SIGINT
+        child.join(timeout=1)
+        if child.is_alive():
+            child.kill()
+    # Force exit to avoid hanging on cleanup
+    os._exit(exit_code)
+
+
+def _signal_handler(signum: int, frame: object) -> NoReturn:
+    """Handle interrupt signals by terminating all child processes."""
+    _cleanup_and_exit(130)
 
 
 def get_lcb_directory() -> Path | None:
@@ -236,10 +245,7 @@ def main() -> int:
         return 0
     except KeyboardInterrupt:
         print("\nInterrupted by user", file=sys.stderr)
-        # Terminate any remaining child processes
-        for child in multiprocessing.active_children():
-            child.terminate()
-        return 130
+        _cleanup_and_exit(130)
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1
     except Exception as e:
