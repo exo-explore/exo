@@ -216,7 +216,7 @@ struct InstanceTaskViewModel: Identifiable, Equatable {
     let promptPreview: String?
     let errorMessage: String?
     let subtitle: String?
-    let parameters: ChatCompletionTaskParameters?
+    let parameters: TextGenerationTaskParameters?
 
     var title: String {
         switch kind {
