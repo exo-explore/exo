@@ -18,6 +18,9 @@ enum NetworkSetupHelper {
 
         set -euo pipefail
 
+        # Wait for macOS to finish network setup after boot
+        sleep 20
+
         PREFS="/Library/Preferences/SystemConfiguration/preferences.plist"
 
         # Remove bridge0 interface
@@ -80,7 +83,7 @@ enum NetworkSetupHelper {
                 let alert = NSAlert()
                 alert.messageText = "EXO Network Configuration"
                 alert.informativeText =
-                    "EXO needs to install a system service to automatically disable Thunderbolt Bridge on startup. This prevents network loops when connecting multiple Macs via Thunderbolt.\n\nYou will be prompted for your administrator password."
+                    "EXO needs to install a system service to configure local networking. This will disable Thunderbolt Bridge (preventing packet storms) and install a Network Location.\n\nYou will be prompted for your password."
                 alert.alertStyle = .informational
                 alert.addButton(withTitle: "Install")
                 alert.addButton(withTitle: "Not Now")
@@ -241,11 +244,11 @@ enum NetworkSetupHelper {
         rm -f "$LOG_OUT" "$LOG_ERR"
 
         # Switch back to Automatic network location
-        networksetup -switchtolocation Automatic 2>/dev/null || true
+        networksetup -switchtolocation Automatic >/dev/null 2>&1 || true
 
         # Delete the exo network location if it exists
-        networksetup -listlocations | grep -q '^exo$' && {
-          networksetup -deletelocation exo 2>/dev/null || true
+        networksetup -listlocations 2>/dev/null | grep -q '^exo$' && {
+          networksetup -deletelocation exo >/dev/null 2>&1 || true
         } || true
 
         # Re-enable any Thunderbolt Bridge service if it exists
@@ -255,12 +258,12 @@ enum NetworkSetupHelper {
           tb_devices=$(networksetup -listallhardwareports 2>/dev/null | awk '
             /^Hardware Port:/ { port = tolower(substr($0, 16)) }
             /^Device:/ { if (port ~ /thunderbolt/) print substr($0, 9) }
-          ')
+          ') || true
           [ -z "$tb_devices" ] && return 0
 
           # For each bridge device, check if it contains Thunderbolt interfaces
           for bridge in bridge0 bridge1 bridge2; do
-            members=$(ifconfig "$bridge" 2>/dev/null | awk '/member:/ {print $2}')
+            members=$(ifconfig "$bridge" 2>/dev/null | awk '/member:/ {print $2}') || true
             [ -z "$members" ] && continue
 
             for tb_dev in $tb_devices; do
@@ -269,7 +272,7 @@ enum NetworkSetupHelper {
                 service_name=$(networksetup -listnetworkserviceorder 2>/dev/null | awk -v dev="$bridge" '
                   /^\\([0-9*]/ { gsub(/^\\([0-9*]+\\) /, ""); svc = $0 }
                   /Device:/ && $0 ~ dev { print svc; exit }
-                ')
+                ') || true
                 if [ -n "$service_name" ]; then
                   networksetup -setnetworkserviceenabled "$service_name" on 2>/dev/null || true
                   return 0
@@ -277,8 +280,9 @@ enum NetworkSetupHelper {
               fi
             done
           done
+          return 0
         }
-        find_and_enable_thunderbolt_bridge
+        find_and_enable_thunderbolt_bridge || true
 
         echo "EXO network components removed successfully"
         """

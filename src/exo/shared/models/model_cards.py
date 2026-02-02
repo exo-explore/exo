@@ -400,6 +400,14 @@ MODEL_CARDS: dict[str, ModelCard] = {
         supports_tensor=True,
         tasks=[ModelTask.TextGeneration],
     ),
+    "kimi-k2.5": ModelCard(
+        model_id=ModelId("mlx-community/Kimi-K2.5"),
+        storage_size=Memory.from_gb(617),
+        n_layers=61,
+        hidden_size=7168,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+    ),
     # llama-3.1
     "llama-3.1-8b": ModelCard(
         model_id=ModelId("mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"),
@@ -692,9 +700,9 @@ MODEL_CARDS: dict[str, ModelCard] = {
     ),
 }
 
-_IMAGE_MODEL_CARDS: dict[str, ModelCard] = {
+_IMAGE_BASE_MODEL_CARDS: dict[str, ModelCard] = {
     "flux1-schnell": ModelCard(
-        model_id=ModelId("black-forest-labs/FLUX.1-schnell"),
+        model_id=ModelId("exolabs/FLUX.1-schnell"),
         storage_size=Memory.from_bytes(23782357120 + 9524621312),
         n_layers=57,
         hidden_size=1,
@@ -707,7 +715,7 @@ _IMAGE_MODEL_CARDS: dict[str, ModelCard] = {
                 storage_size=Memory.from_kb(0),
                 n_layers=12,
                 can_shard=False,
-                safetensors_index_filename=None,  # Single file
+                safetensors_index_filename=None,
             ),
             ComponentInfo(
                 component_name="text_encoder_2",
@@ -721,7 +729,7 @@ _IMAGE_MODEL_CARDS: dict[str, ModelCard] = {
                 component_name="transformer",
                 component_path="transformer/",
                 storage_size=Memory.from_bytes(23782357120),
-                n_layers=57,  # 19 transformer_blocks + 38 single_transformer_blocks
+                n_layers=57,
                 can_shard=True,
                 safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
             ),
@@ -736,7 +744,7 @@ _IMAGE_MODEL_CARDS: dict[str, ModelCard] = {
         ],
     ),
     "flux1-dev": ModelCard(
-        model_id=ModelId("black-forest-labs/FLUX.1-dev"),
+        model_id=ModelId("exolabs/FLUX.1-dev"),
         storage_size=Memory.from_bytes(23782357120 + 9524621312),
         n_layers=57,
         hidden_size=1,
@@ -749,7 +757,7 @@ _IMAGE_MODEL_CARDS: dict[str, ModelCard] = {
                 storage_size=Memory.from_kb(0),
                 n_layers=12,
                 can_shard=False,
-                safetensors_index_filename=None,  # Single file
+                safetensors_index_filename=None,
             ),
             ComponentInfo(
                 component_name="text_encoder_2",
@@ -763,7 +771,7 @@ _IMAGE_MODEL_CARDS: dict[str, ModelCard] = {
                 component_name="transformer",
                 component_path="transformer/",
                 storage_size=Memory.from_bytes(23802816640),
-                n_layers=57,  # 19 transformer_blocks + 38 single_transformer_blocks
+                n_layers=57,
                 can_shard=True,
                 safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
             ),
@@ -778,7 +786,7 @@ _IMAGE_MODEL_CARDS: dict[str, ModelCard] = {
         ],
     ),
     "flux1-krea-dev": ModelCard(
-        model_id=ModelId("black-forest-labs/FLUX.1-Krea-dev"),
+        model_id=ModelId("exolabs/FLUX.1-Krea-dev"),
         storage_size=Memory.from_bytes(23802816640 + 9524621312),  # Same as dev
         n_layers=57,
         hidden_size=1,
@@ -820,9 +828,9 @@ _IMAGE_MODEL_CARDS: dict[str, ModelCard] = {
         ],
     ),
     "qwen-image": ModelCard(
-        model_id=ModelId("Qwen/Qwen-Image"),
+        model_id=ModelId("exolabs/Qwen-Image"),
         storage_size=Memory.from_bytes(16584333312 + 40860802176),
-        n_layers=60,  # Qwen has 60 transformer blocks (all joint-style)
+        n_layers=60,
         hidden_size=1,
         supports_tensor=False,
         tasks=[ModelTask.TextToImage],
@@ -830,10 +838,10 @@ _IMAGE_MODEL_CARDS: dict[str, ModelCard] = {
             ComponentInfo(
                 component_name="text_encoder",
                 component_path="text_encoder/",
-                storage_size=Memory.from_kb(16584333312),
+                storage_size=Memory.from_bytes(16584333312),
                 n_layers=12,
                 can_shard=False,
-                safetensors_index_filename=None,  # Single file
+                safetensors_index_filename=None,
             ),
             ComponentInfo(
                 component_name="transformer",
@@ -854,9 +862,9 @@ _IMAGE_MODEL_CARDS: dict[str, ModelCard] = {
         ],
     ),
     "qwen-image-edit-2509": ModelCard(
-        model_id=ModelId("Qwen/Qwen-Image-Edit-2509"),
+        model_id=ModelId("exolabs/Qwen-Image-Edit-2509"),
         storage_size=Memory.from_bytes(16584333312 + 40860802176),
-        n_layers=60,  # Qwen has 60 transformer blocks (all joint-style)
+        n_layers=60,
         hidden_size=1,
         supports_tensor=False,
         tasks=[ModelTask.ImageToImage],
@@ -864,10 +872,10 @@ _IMAGE_MODEL_CARDS: dict[str, ModelCard] = {
             ComponentInfo(
                 component_name="text_encoder",
                 component_path="text_encoder/",
-                storage_size=Memory.from_kb(16584333312),
+                storage_size=Memory.from_bytes(16584333312),
                 n_layers=12,
                 can_shard=False,
-                safetensors_index_filename=None,  # Single file
+                safetensors_index_filename=None,
             ),
             ComponentInfo(
                 component_name="transformer",
@@ -889,6 +897,92 @@ _IMAGE_MODEL_CARDS: dict[str, ModelCard] = {
     ),
 }
 
+
+def _generate_image_model_quant_variants(
+    base_name: str,
+    base_card: ModelCard,
+) -> dict[str, ModelCard]:
+    """Create quantized variants of an image model card.
+
+    Only the transformer component is quantized; text encoders stay at bf16.
+    Sizes are calculated exactly from the base card's component sizes.
+    """
+    if base_card.components is None:
+        raise ValueError(f"Image model {base_name} must have components defined")
+
+    # quantizations = [8, 6, 5, 4, 3]
+    quantizations = [8, 4]
+
+    num_transformer_bytes = next(
+        c.storage_size.in_bytes
+        for c in base_card.components
+        if c.component_name == "transformer"
+    )
+
+    transformer_bytes = Memory.from_bytes(num_transformer_bytes)
+
+    remaining_bytes = Memory.from_bytes(
+        sum(
+            c.storage_size.in_bytes
+            for c in base_card.components
+            if c.component_name != "transformer"
+        )
+    )
+
+    def with_transformer_size(new_size: Memory) -> list[ComponentInfo]:
+        assert base_card.components is not None
+        return [
+            ComponentInfo(
+                component_name=c.component_name,
+                component_path=c.component_path,
+                storage_size=new_size
+                if c.component_name == "transformer"
+                else c.storage_size,
+                n_layers=c.n_layers,
+                can_shard=c.can_shard,
+                safetensors_index_filename=c.safetensors_index_filename,
+            )
+            for c in base_card.components
+        ]
+
+    variants = {
+        base_name: ModelCard(
+            model_id=base_card.model_id,
+            storage_size=transformer_bytes + remaining_bytes,
+            n_layers=base_card.n_layers,
+            hidden_size=base_card.hidden_size,
+            supports_tensor=base_card.supports_tensor,
+            tasks=base_card.tasks,
+            components=with_transformer_size(transformer_bytes),
+        )
+    }
+
+    for quant in quantizations:
+        quant_transformer_bytes = Memory.from_bytes(
+            (num_transformer_bytes * quant) // 16
+        )
+        total_bytes = remaining_bytes + quant_transformer_bytes
+
+        model_id = ModelId(base_card.model_id + f"-{quant}bit")
+
+        variants[f"{base_name}-{quant}bit"] = ModelCard(
+            model_id=model_id,
+            storage_size=total_bytes,
+            n_layers=base_card.n_layers,
+            hidden_size=base_card.hidden_size,
+            supports_tensor=base_card.supports_tensor,
+            tasks=base_card.tasks,
+            components=with_transformer_size(quant_transformer_bytes),
+        )
+
+    return variants
+
+
+_image_model_cards: dict[str, ModelCard] = {}
+for _base_name, _base_card in _IMAGE_BASE_MODEL_CARDS.items():
+    _image_model_cards |= _generate_image_model_quant_variants(_base_name, _base_card)
+_IMAGE_MODEL_CARDS = _image_model_cards
+
 if EXO_ENABLE_IMAGE_MODELS:
     MODEL_CARDS.update(_IMAGE_MODEL_CARDS)
 
@@ -896,15 +990,18 @@ if EXO_ENABLE_IMAGE_MODELS:
 class ConfigData(BaseModel):
     model_config = {"extra": "ignore"}  # Allow unknown fields
 
-    # Common field names for number of layers across different architectures
-    num_hidden_layers: Annotated[int, Field(ge=0)] | None = None
-    num_layers: Annotated[int, Field(ge=0)] | None = None
-    n_layer: Annotated[int, Field(ge=0)] | None = None
-    n_layers: Annotated[int, Field(ge=0)] | None = None  # Sometimes used
-    num_decoder_layers: Annotated[int, Field(ge=0)] | None = None  # Transformer models
-    decoder_layers: Annotated[int, Field(ge=0)] | None = None  # Some architectures
-    hidden_size: Annotated[int, Field(ge=0)] | None = None
     architectures: list[str] | None = None
+    hidden_size: Annotated[int, Field(ge=0)] | None = None
+    layer_count: int = Field(
+        validation_alias=AliasChoices(
+            "num_hidden_layers",
+            "num_layers",
+            "n_layer",
+            "n_layers",
+            "num_decoder_layers",
+            "decoder_layers",
+        )
+    )
 
     @property
     def supports_tensor(self) -> bool:
@@ -919,25 +1016,27 @@ class ConfigData(BaseModel):
             ["GptOssForCausalLM"],
         ]
 
-    @property
-    def layer_count(self) -> int:
-        # Check common field names for layer count
-        layer_fields = [
-            self.num_hidden_layers,
-            self.num_layers,
-            self.n_layer,
-            self.n_layers,
-            self.num_decoder_layers,
-            self.decoder_layers,
-        ]
+    @model_validator(mode="before")
+    @classmethod
+    def defer_to_text_config(cls, data: dict[str, Any]):
+        text_config = data.get("text_config")
+        if text_config is None:
+            return data
 
-        for layer_count in layer_fields:
-            if layer_count is not None:
-                return layer_count
+        for field in [
+            "architectures",
+            "hidden_size",
+            "num_hidden_layers",
+            "num_layers",
+            "n_layer",
+            "n_layers",
+            "num_decoder_layers",
+            "decoder_layers",
+        ]:
+            if (val := text_config.get(field)) is not None:  # pyright: ignore[reportAny]
+                data[field] = val
 
-        raise ValueError(
-            f"No layer count found in config.json: {self.model_dump_json()}"
-        )
+        return data
 
 
 async def get_config_data(model_id: ModelId) -> ConfigData:

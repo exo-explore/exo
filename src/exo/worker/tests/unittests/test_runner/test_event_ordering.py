@@ -109,8 +109,8 @@ def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Even
 
 @pytest.fixture
 def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
-    # initialize_mlx returns a "group" equal to 1
-    monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(1))
+    # initialize_mlx returns a mock group
+    monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(MockGroup()))
     monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
     monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", nothin)
@@ -120,7 +120,7 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_runner, "detect_thinking_prompt_suffix", make_nothin(False))
 
     def fake_generate(*_1: object, **_2: object):
-        yield GenerationResponse(token=0, text="hi", finish_reason="stop")
+        yield GenerationResponse(token=0, text="hi", finish_reason="stop", usage=None)
 
     monkeypatch.setattr(mlx_runner, "mlx_generate", fake_generate)
 
@@ -145,6 +145,14 @@ class MockTokenizer:
     tool_call_start = None
     tool_call_end = None
     has_tool_calling = False
+
+
+class MockGroup:
+    def rank(self) -> int:
+        return 0
+
+    def size(self) -> int:
+        return 1
 
 
 def _run(tasks: Iterable[Task]):
@@ -182,6 +190,8 @@ def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
             text="hi",
             token_id=0,
             finish_reason="stop",
+            usage=None,
+            stats=None,
         ),
     )
 

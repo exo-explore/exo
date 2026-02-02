@@ -18,15 +18,12 @@ try:
 except ImportError:
     pass  # transformers < 5.0 or bytes_to_unicode not available
 
-from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache
+from mlx_lm.models.cache import KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3Model
-from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelId
 from exo.worker.engines.mlx.constants import (
-    CACHE_GROUP_SIZE,
-    KV_CACHE_BITS,
     TRUST_REMOTE_CODE,
 )
 
@@ -168,12 +165,11 @@ def mlx_distributed_init(
 
                 jaccl_coordinator = jaccl_coordinators[bound_instance.bound_node_id]
 
-                # TODO: update once upstream fixes
                 logger.info(
-                    f"rank {rank} MLX_JACCL_DEVICES: {coordination_file} with devices: {jaccl_devices_json}"
+                    f"rank {rank} MLX_IBV_DEVICES: {coordination_file} with devices: {jaccl_devices_json}"
                 )
                 logger.info(f"rank {rank} MLX_JACCL_COORDINATOR: {jaccl_coordinator}")
-                os.environ["MLX_JACCL_DEVICES"] = coordination_file
+                os.environ["MLX_IBV_DEVICES"] = coordination_file
                 os.environ["MLX_RANK"] = str(rank)
                 os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
                 group = mx.distributed.init(backend="jaccl", strict=True)
@@ -262,10 +258,10 @@ def shard_and_load(
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 
-    # Estimate timeout based on model size
-    base_timeout = float(os.environ.get("EXO_MODEL_LOAD_TIMEOUT", "60"))
+    # Estimate timeout based on model size (5x default for large queued workloads)
+    base_timeout = float(os.environ.get("EXO_MODEL_LOAD_TIMEOUT", "300"))
     model_size_gb = get_weights_size(shard_metadata).in_bytes / (1024**3)
-    timeout_seconds = base_timeout + model_size_gb / 5
+    timeout_seconds = base_timeout + model_size_gb
     logger.info(
         f"Evaluating model parameters with timeout of {timeout_seconds:.0f}s "
         f"(model size: {model_size_gb:.1f}GB)"
@@ -342,8 +338,35 @@ def load_tokenizer_for_model_id(
 
     # Kimi uses a custom TikTokenTokenizer that transformers 5.x can't load via AutoTokenizer
     if "kimi-k2" in model_id_lower:
+        import importlib.util
+        import types
+
         sys.path.insert(0, str(model_path))
-        from tokenization_kimi import TikTokenTokenizer  # type: ignore[import-not-found]  # noqa: I001
+
+        # Load tool_declaration_ts first (tokenization_kimi imports it with relative import)
+        tool_decl_path = model_path / "tool_declaration_ts.py"
+        if tool_decl_path.exists():
+            spec = importlib.util.spec_from_file_location(
+                "tool_declaration_ts", tool_decl_path
+            )
+            if spec and spec.loader:
+                tool_decl_module = importlib.util.module_from_spec(spec)
+                sys.modules["tool_declaration_ts"] = tool_decl_module
+                spec.loader.exec_module(tool_decl_module)
+
+        # Load tokenization_kimi with patched source (convert relative to absolute import)
+        tok_path = model_path / "tokenization_kimi.py"
+        source = tok_path.read_text()
+        source = source.replace("from .tool_declaration_ts", "from tool_declaration_ts")
+        spec = importlib.util.spec_from_file_location("tokenization_kimi", tok_path)
+        if spec:
+            tok_module = types.ModuleType("tokenization_kimi")
+            tok_module.__file__ = str(tok_path)
+            sys.modules["tokenization_kimi"] = tok_module
+            exec(compile(source, tok_path, "exec"), tok_module.__dict__)  # noqa: S102
+            TikTokenTokenizer = tok_module.TikTokenTokenizer  # type: ignore[attr-defined]  # noqa: N806
+        else:
+            from tokenization_kimi import TikTokenTokenizer  # type: ignore[import-not-found]  # noqa: I001
 
         hf_tokenizer: Any = TikTokenTokenizer.from_pretrained(model_path)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -405,7 +428,11 @@ def apply_chat_template(
                 continue
 
             message.content = "\n".join(c.text for c in message.content).strip()
-        if message.content is None and message.thinking is None:
+        if (
+            message.content is None
+            and message.thinking is None
+            and message.tool_calls is None
+        ):
             continue
 
         # Null values are not valid when applying templates in tokenizer
@@ -460,31 +487,6 @@ class NullKVCache(KVCache):
     @state.setter
     def state(self, v: tuple[mx.array, mx.array]) -> None:
         raise NotImplementedError("We should not be setting a NullKVCache.")
-
-
-def make_kv_cache(
-    model: Model, max_kv_size: int | None = None, keep: int = 0
-) -> list[KVCache | RotatingKVCache | QuantizedKVCache]:
-    assert hasattr(model, "layers")
-
-    # TODO: Do this for all models
-    if hasattr(model, "make_cache") and isinstance(model, GptOssModel):
-        logger.info("Using MLX LM's make cache")
-        return model.make_cache()  # type: ignore
-
-    if max_kv_size is None:
-        if KV_CACHE_BITS is None:
-            logger.info("Using default KV cache")
-            return [KVCache() for _ in model.layers]
-        else:
-            logger.info("Using quantized KV cache")
-            return [
-                QuantizedKVCache(group_size=CACHE_GROUP_SIZE, bits=KV_CACHE_BITS)
-                for _ in model.layers
-            ]
-    else:
-        logger.info(f"Using rotating KV cache with {max_kv_size=} with {keep=}")
-        return [RotatingKVCache(max_size=max_kv_size, keep=keep) for _ in model.layers]
 
 
 def mlx_force_oom(size: int = 40000) -> None:

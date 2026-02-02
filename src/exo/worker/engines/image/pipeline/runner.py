@@ -348,6 +348,7 @@ class DiffusionRunner:
                 ctx.in_loop(  # pyright: ignore[reportAny]
                     t=t,
                     latents=latents,
+                    time_steps=time_steps,
                 )
 
                 mx.eval(latents)

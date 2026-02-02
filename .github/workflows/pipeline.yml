@@ -26,73 +26,14 @@ jobs:
           name: exo
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
 
-      - name: Configure git user
-        run: |
-          git config --local user.email "github-actions@users.noreply.github.com"
-          git config --local user.name  "github-actions bot"
-        shell: bash
+      - name: Load nix develop environment
+        run: nix run github:nicknovitski/nix-develop/v1
 
-      - name: Pull LFS files
-        run: |
-          echo "Pulling Git LFS files..."
-          git lfs pull
-        shell: bash
+      - name: Sync dependencies
+        run: uv sync --all-packages
 
-      - name: Setup Nix Environment
-        run: |
-          echo "Checking for nix installation..."
-          
-          # Check if nix binary exists directly
-          if [ -f /nix/var/nix/profiles/default/bin/nix ]; then
-            echo "Found nix binary at /nix/var/nix/profiles/default/bin/nix"
-            export PATH="/nix/var/nix/profiles/default/bin:$PATH"
-            echo "PATH=$PATH" >> $GITHUB_ENV
-            nix --version
-          elif [ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
-            echo "Found nix profile script, sourcing..."
-            source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-            nix --version
-          elif command -v nix >/dev/null 2>&1; then
-            echo "Nix already in PATH"
-            nix --version
-          else
-            echo "Nix not found. Debugging info:"
-            echo "Contents of /nix/var/nix/profiles/default/:"
-            ls -la /nix/var/nix/profiles/default/ 2>/dev/null || echo "Directory not found"
-            echo "Contents of /nix/var/nix/profiles/default/bin/:"
-            ls -la /nix/var/nix/profiles/default/bin/ 2>/dev/null || echo "Directory not found"
-            exit 1
-          fi
-        shell: bash
-
-      - name: Configure basedpyright include for local MLX
-        run: |
-          RUNNER_LABELS='${{ toJSON(runner.labels) }}'
-          if echo "$RUNNER_LABELS" | grep -q "local_mlx"; then
-            if [ -d "/Users/Shared/mlx" ]; then
-              echo "Updating [tool.basedpyright].include to use /Users/Shared/mlx"
-              awk '
-                BEGIN { in=0 }
-                /^\[tool\.basedpyright\]/ { in=1; print; next }
-                in && /^\[/ { in=0 }  # next section
-                in && /^[ \t]*include[ \t]*=/ {
-                  print "include = [\"/Users/Shared/mlx\"]"
-                  next
-                }
-                { print }
-              ' pyproject.toml > pyproject.toml.tmp && mv pyproject.toml.tmp pyproject.toml
-
-              echo "New [tool.basedpyright] section:"
-              sed -n '/^\[tool\.basedpyright\]/,/^\[/p' pyproject.toml | sed '$d' || true
-            else
-              echo "local_mlx tag present but /Users/Shared/mlx not found; leaving pyproject unchanged."
-            fi
-          else
-            echo "Runner does not have 'local_mlx' tag; leaving pyproject unchanged."
-          fi
-        shell: bash
-
-      - uses: ./.github/actions/typecheck
+      - name: Run type checker
+        run: uv run basedpyright --project pyproject.toml
 
   nix:
     name: Build and check (${{ matrix.system }})
@@ -123,6 +64,63 @@ jobs:
           name: exo
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
 
+      - name: Build Metal packages (macOS only)
+        if: runner.os == 'macOS'
+        run: |
+          # Try to build metal-toolchain first (may succeed via cachix cache hit)
+          if nix build .#metal-toolchain 2>/dev/null; then
+            echo "metal-toolchain built successfully (likely cache hit)"
+          else
+            echo "metal-toolchain build failed, extracting from Xcode..."
+
+            NAR_HASH="sha256-ayR5mXN4sZAddwKEG2OszGRF93k9ZFc7H0yi2xbylQw="
+            NAR_NAME="metal-toolchain-17C48.nar"
+
+            # Use RUNNER_TEMP to avoid /tmp symlink issues on macOS
+            WORK_DIR="${RUNNER_TEMP}/metal-work"
+            mkdir -p "$WORK_DIR"
+
+            # Download the Metal toolchain component
+            xcodebuild -downloadComponent MetalToolchain
+
+            # Find and mount the DMG
+            DMG_PATH=$(find /System/Library/AssetsV2/com_apple_MobileAsset_MetalToolchain -name '*.dmg' 2>/dev/null | head -1)
+            if [ -z "$DMG_PATH" ]; then
+              echo "Error: Could not find Metal toolchain DMG"
+              exit 1
+            fi
+
+            echo "Found DMG at: $DMG_PATH"
+            hdiutil attach "$DMG_PATH" -mountpoint "${WORK_DIR}/metal-dmg"
+
+            # Copy the toolchain
+            cp -R "${WORK_DIR}/metal-dmg/Metal.xctoolchain" "${WORK_DIR}/metal-export"
+            hdiutil detach "${WORK_DIR}/metal-dmg"
+
+            # Create NAR and add to store
+            nix nar pack "${WORK_DIR}/metal-export" > "${WORK_DIR}/${NAR_NAME}"
+            STORE_PATH=$(nix store add --mode flat "${WORK_DIR}/${NAR_NAME}")
+            echo "Added NAR to store: $STORE_PATH"
+
+            # Verify the hash matches
+            ACTUAL_HASH=$(nix hash file "${WORK_DIR}/${NAR_NAME}")
+            if [ "$ACTUAL_HASH" != "$NAR_HASH" ]; then
+              echo "Warning: NAR hash mismatch!"
+              echo "Expected: $NAR_HASH"
+              echo "Actual:   $ACTUAL_HASH"
+              echo "The metal-toolchain.nix may need updating"
+            fi
+
+            # Clean up
+            rm -rf "$WORK_DIR"
+
+            # Retry the build now that NAR is in store
+            nix build .#metal-toolchain
+          fi
+
+          # Build mlx (depends on metal-toolchain)
+          nix build .#mlx
+
       - name: Build all Nix outputs
         run: |
           nix flake show --json | jq -r '
@@ -134,3 +132,14 @@ jobs:
 
       - name: Run nix flake check
         run: nix flake check
+
+      - name: Run pytest (macOS only)
+        if: runner.os == 'macOS'
+        run: |
+          # Build the test environment (requires relaxed sandbox for uv2nix on macOS)
+          TEST_ENV=$(nix build '.#exo-test-env' --option sandbox relaxed --print-out-paths)
+
+          # Run pytest outside sandbox (needs GPU access for MLX)
+          export HOME="$RUNNER_TEMP"
+          export EXO_TESTS=1
+          $TEST_ENV/bin/python -m pytest src -m "not slow" --import-mode=importlib
