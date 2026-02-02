@@ -526,7 +526,7 @@ def run_livecodebench(
         str(n_samples),
         "--max_tokens",
         str(max_tokens),
-        "--output_dir",
+        "--output-dir",
         effective_output,
     ]
 

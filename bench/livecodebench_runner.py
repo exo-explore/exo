@@ -152,6 +152,11 @@ def main() -> int:
         required=True,
         help="Model name to use",
     )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Output directory for results (maps to LiveCodeBench's --custom_output_save_name)",
+    )
 
     # Parse known args, pass rest to LiveCodeBench
     args, remaining = parser.parse_known_args()
@@ -179,7 +184,13 @@ def main() -> int:
     patch_openai_client(args.base_url)
 
     # Build arguments for LiveCodeBench runner
-    lcb_args = ["--model", args.model, *remaining]
+    lcb_args = ["--model", args.model]
+
+    # Map our --output-dir to LiveCodeBench's --custom_output_save_name
+    if args.output_dir:
+        lcb_args.extend(["--custom_output_save_name", args.output_dir])
+
+    lcb_args.extend(remaining)
 
     # Run LiveCodeBench
     try:
