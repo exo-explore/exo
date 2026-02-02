@@ -49,7 +49,10 @@ LIBP2P_COMMANDS_TOPIC = "commands"
 EXO_MAX_CHUNK_SIZE = 512 * 1024
 
 EXO_IMAGE_CACHE_DIR = EXO_CACHE_HOME / "images"
+EXO_TRACING_CACHE_DIR = EXO_CACHE_HOME / "traces"
 
 EXO_ENABLE_IMAGE_MODELS = (
     os.getenv("EXO_ENABLE_IMAGE_MODELS", "false").lower() == "true"
 )
+
+EXO_TRACING_ENABLED = os.getenv("EXO_TRACING_ENABLED", "false").lower() == "true"
