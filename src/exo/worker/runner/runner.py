@@ -657,6 +657,11 @@ def main(
                             )
                     batched_task_ids.clear()
 
+                    # Reset batch generator for clean state
+                    batch_handler._close_generator()
+                    mx.reset_peak_memory()
+                    logger.info("Batch generator reset for clean state")
+
                     # Return to ready state
                     if isinstance(current_status, RunnerRunning):
                         current_status = RunnerReady()

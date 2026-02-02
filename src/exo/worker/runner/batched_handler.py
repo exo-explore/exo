@@ -204,7 +204,8 @@ class BatchedInferenceHandler:
         prompt_token_counts: list[int] = []
 
         for req in requests_to_flush:
-            tokens = self.tokenizer.encode(req.prompt)
+            # Don't add special tokens - chat template already includes them
+            tokens = self.tokenizer.encode(req.prompt, add_special_tokens=False)
             tokenized_prompts.append(tokens)
             max_tokens_list.append(req.max_tokens)
             samplers.append(req.sampler)
@@ -300,7 +301,6 @@ class BatchedInferenceHandler:
                 model=self.model,
                 max_tokens=MAX_TOKENS,
                 stop_tokens=self.stop_tokens if self.stop_tokens else None,
-                prefill_batch_size=1,
             )
         else:
             logger.info(
@@ -359,16 +359,23 @@ class BatchedInferenceHandler:
         responses: list[Any] = self.batch_generator.next()  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
         logger.debug(f"BatchGenerator.next() returned {len(responses)} responses")  # pyright: ignore[reportUnknownArgumentType]
 
-        completed_uids: list[int] = []
+        # Detect if BatchGenerator returned empty but we still have active requests
+        if len(responses) == 0 and len(self.uid_to_request) > 0:  # pyright: ignore[reportUnknownArgumentType]
+            logger.error(f"BatchGenerator returned 0 responses but {len(self.uid_to_request)} UIDs still active: {list(self.uid_to_request.keys())}")
+            # Force cleanup - emit error chunks for orphaned requests
+            for uid, active_request in list(self.uid_to_request.items()):
+                yield ChunkGenerated(
+                    command_id=active_request.command_id,
+                    chunk=ErrorChunk(
+                        model=self.model_id,
+                        finish_reason="error",
+                        error_message="BatchGenerator terminated unexpectedly",
+                    ),
+                )
+            self.uid_to_request.clear()
+            return
 
-        # Debug: print response for lowest active UID
-        if responses and self.uid_to_request:
-            min_uid = min(self.uid_to_request.keys())
-            for r in responses:  # pyright: ignore[reportUnknownVariableType]
-                if r.uid == min_uid:  # pyright: ignore[reportUnknownMemberType]
-                    token_text = self.tokenizer.decode([r.token])  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                    logger.info(f"[DEBUG] uid={min_uid} token={r.token} text={token_text!r} finish_reason={r.finish_reason}")  # pyright: ignore[reportUnknownMemberType]
-                    break
+        completed_uids: list[int] = []
 
         for response in responses:  # pyright: ignore[reportUnknownVariableType]
             uid: int = response.uid  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
@@ -518,16 +525,23 @@ class BatchedInferenceHandler:
         responses: list[PipelinedResponse] = self.pipelined_generator.next()
         logger.debug(f"PipelinedGenerator.next() returned {len(responses)} responses")
 
-        completed_uids: list[int] = []
+        # Detect if PipelinedGenerator returned empty but we still have active requests
+        if len(responses) == 0 and len(self.uid_to_request) > 0:
+            logger.error(f"PipelinedGenerator returned 0 responses but {len(self.uid_to_request)} UIDs still active: {list(self.uid_to_request.keys())}")
+            # Force cleanup - emit error chunks for orphaned requests
+            for uid, active_request in list(self.uid_to_request.items()):
+                yield ChunkGenerated(
+                    command_id=active_request.command_id,
+                    chunk=ErrorChunk(
+                        model=self.model_id,
+                        finish_reason="error",
+                        error_message="PipelinedGenerator terminated unexpectedly",
+                    ),
+                )
+            self.uid_to_request.clear()
+            return
 
-        # Debug: print response for lowest active UID
-        if responses and self.uid_to_request:
-            min_uid = min(self.uid_to_request.keys())
-            for r in responses:
-                if r.uid == min_uid:
-                    token_text = self.tokenizer.decode([r.token])
-                    logger.info(f"[DEBUG] uid={min_uid} token={r.token} text={token_text!r} finish_reason={r.finish_reason}")
-                    break
+        completed_uids: list[int] = []
 
         for response in responses:
             uid = response.uid
