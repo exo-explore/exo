@@ -51,7 +51,7 @@ from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
 )
-from exo.shared.tracing import compute_stats, load_trace_file
+from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.api import (
     AdvancedImageParams,
     BenchChatCompletionRequest,
@@ -126,6 +126,7 @@ from exo.shared.types.events import (
     Event,
     ForwarderEvent,
     IndexedEvent,
+    TracesMerged,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.openai_responses import (
@@ -1293,6 +1294,24 @@ class API:
                                 await queue.send(event.chunk)
                             except BrokenResourceError:
                                 self._text_generation_queues.pop(event.command_id, None)
+
+                    if isinstance(event, TracesMerged):
+                        self._save_merged_trace(event)
+
+    def _save_merged_trace(self, event: TracesMerged) -> None:
+        traces = [
+            TraceEvent(
+                name=t.name,
+                start_us=t.start_us,
+                duration_us=t.duration_us,
+                rank=t.rank,
+                category=t.category,
+            )
+            for t in event.traces
+        ]
+        output_path = EXO_TRACING_CACHE_DIR / f"trace_{event.task_id}.json"
+        export_trace(traces, output_path)
+        logger.debug(f"Saved merged trace to {output_path}")
 
     async def _pause_on_new_election(self):
         with self.election_receiver as ems:
