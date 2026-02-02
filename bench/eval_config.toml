@@ -49,6 +49,37 @@ fewshot_as_multiturn = true
 # Output path for results
 output_path = "bench/eval_results"
 
+# LiveCodeBench configuration
+# Contamination-free code generation benchmark
+# See: https://livecodebench.github.io/
+[livecodebench]
+# Evaluation scenario: "codegeneration" | "selfrepair" | "testoutputprediction" | "codeexecution"
+scenario = "codegeneration"
+# Dataset release version (newer versions have more problems)
+# release_v1: May 2023 - March 2024 (400 problems)
+# release_v2: May 2023 - May 2024 (511 problems)
+# release_v3: May 2023 - July 2024 (612 problems)
+# release_v4: May 2023 - September 2024 (713 problems)
+# release_v5: May 2023 - January 2025 (880 problems)
+release_version = "release_v5"
+# Sampling temperature
+temperature = 0.2
+# Number of samples per problem (for pass@k metrics)
+n_samples = 10
+# Max tokens for generation
+max_tokens = 4096
+# Use code_generation_lite for faster evaluation (default: true)
+# Set to false to use full test suite (slower but more thorough)
+fast = true
+# Run evaluation after generation (computes pass@1, pass@5)
+evaluate = true
+# Number of parallel API requests
+multiprocess = 4
+# Cache generated outputs for resumption
+use_cache = true
+# Output path for results
+output_path = "bench/lcb_results"
+
 # SWE-bench configuration (placeholder)
 [swe_bench]
 # SWE-bench dataset

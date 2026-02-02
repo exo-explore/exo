@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import http.client
+import itertools
 import json
 import os
 import time
@@ -369,6 +370,12 @@ def main() -> int:
         logger.error("--repeat must be >= 1")
         return 2
 
+    # Log pairing mode
+    if len(pp_list) == len(tg_list):
+        logger.info(f"pp/tg mode: tandem (zip) - {len(pp_list)} pairs")
+    else:
+        logger.info(f"pp/tg mode: combinations (product) - {len(pp_list) * len(tg_list)} pairs")
+
     client = ExoClient(args.host, args.port, timeout_s=args.timeout)
     short_id, full_model_id = resolve_model_short_id(client, args.model)
 
@@ -486,60 +493,55 @@ def main() -> int:
                 )
                 logger.debug(f"  warmup {i + 1}/{args.warmup} done")
 
-            for pp in pp_list:
-                # if (
-                #     pp * n_nodes > 2048
-                #     and "ring" in instance_meta.lower()
-                #     and "tensor" in sharding.lower()
-                # ):
-                #     model_card = MODEL_CARDS[short_id]
-                #     if model_card.metadata.storage_size > Memory.from_gb(10):
-                #         logger.info(
-                #             f"Skipping tensor ring as this is too slow for model of size {model_card.metadata.storage_size} on {n_nodes=}"
-                #         )
-                #         continue
-                for tg in tg_list:
-                    runs: list[dict[str, Any]] = []
-                    for r in range(args.repeat):
-                        time.sleep(3)
-                        try:
-                            row, actual_pp_tokens = run_one_completion(
-                                client, full_model_id, pp, tg, prompt_sizer
-                            )
-                        except Exception as e:
-                            logger.error(e)
-                            continue
-                        row.update(
-                            {
-                                "model_short_id": short_id,
-                                "model_id": full_model_id,
-                                "placement_sharding": sharding,
-                                "placement_instance_meta": instance_meta,
-                                "placement_nodes": n_nodes,
-                                "instance_id": instance_id,
-                                "pp_tokens": actual_pp_tokens,
-                                "tg": tg,
-                                "repeat_index": r,
-                            }
-                        )
-                        runs.append(row)
-                        all_rows.append(row)
+            # If pp and tg lists have same length, run in tandem (zip)
+            # Otherwise, run all combinations (cartesian product)
+            if len(pp_list) == len(tg_list):
+                pp_tg_pairs = list(zip(pp_list, tg_list))
+            else:
+                pp_tg_pairs = list(itertools.product(pp_list, tg_list))
 
-                    if runs:
-                        prompt_tps = mean(x["stats"]["prompt_tps"] for x in runs)
-                        gen_tps = mean(x["stats"]["generation_tps"] for x in runs)
-                        ptok = mean(x["stats"]["prompt_tokens"] for x in runs)
-                        gtok = mean(x["stats"]["generation_tokens"] for x in runs)
-                        peak = mean(
-                            x["stats"]["peak_memory_usage"]["inBytes"] for x in runs
+            for pp, tg in pp_tg_pairs:
+                runs: list[dict[str, Any]] = []
+                for r in range(args.repeat):
+                    time.sleep(3)
+                    try:
+                        row, actual_pp_tokens = run_one_completion(
+                            client, full_model_id, pp, tg, prompt_sizer
                         )
+                    except Exception as e:
+                        logger.error(e)
+                        continue
+                    row.update(
+                        {
+                            "model_short_id": short_id,
+                            "model_id": full_model_id,
+                            "placement_sharding": sharding,
+                            "placement_instance_meta": instance_meta,
+                            "placement_nodes": n_nodes,
+                            "instance_id": instance_id,
+                            "pp_tokens": actual_pp_tokens,
+                            "tg": tg,
+                            "repeat_index": r,
+                        }
+                    )
+                    runs.append(row)
+                    all_rows.append(row)
 
-                        logger.info(
-                            f"prompt_tps={prompt_tps:.2f} gen_tps={gen_tps:.2f}    "
-                            f"prompt_tokens={ptok} gen_tokens={gtok}    "
-                            f"peak_memory={format_peak_memory(peak)}\n"
-                        )
-                    time.sleep(2)
+                if runs:
+                    prompt_tps = mean(x["stats"]["prompt_tps"] for x in runs)
+                    gen_tps = mean(x["stats"]["generation_tps"] for x in runs)
+                    ptok = mean(x["stats"]["prompt_tokens"] for x in runs)
+                    gtok = mean(x["stats"]["generation_tokens"] for x in runs)
+                    peak = mean(
+                        x["stats"]["peak_memory_usage"]["inBytes"] for x in runs
+                    )
+
+                    logger.info(
+                        f"prompt_tps={prompt_tps:.2f} gen_tps={gen_tps:.2f}    "
+                        f"prompt_tokens={ptok} gen_tokens={gtok}    "
+                        f"peak_memory={format_peak_memory(peak)}\n"
+                    )
+                time.sleep(2)
         finally:
             try:
                 client.request_json("DELETE", f"/instance/{instance_id}")
