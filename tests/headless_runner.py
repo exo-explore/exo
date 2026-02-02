@@ -17,18 +17,18 @@ from exo.download.impl_shard_downloader import (
 )
 from exo.shared.logging import InterceptLogger, logger_setup
 from exo.shared.models.model_cards import MODEL_CARDS, ModelId
-from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from exo.shared.types.commands import CommandId
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.events import Event
 from exo.shared.types.tasks import (
-    ChatCompletion,
     ConnectToGroup,
     LoadModel,
     Shutdown,
     StartWarmup,
     Task,
+    TextGeneration,
 )
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     BoundInstance,
     Instance,
@@ -179,17 +179,11 @@ async def execute_test(test: Tests, instance: Instance, hn: str):
         case "inference":
             send.send(StartWarmup(instance_id=iid))
             send.send(
-                ChatCompletion(
-                    task_params=ChatCompletionTaskParams(
+                TextGeneration(
+                    task_params=TextGenerationTaskParams(
                         model=test.model_id,
-                        messages=[
-                            ChatCompletionMessage(
-                                role="system", content="You are a helpful assistant"
-                            ),
-                            ChatCompletionMessage(
-                                role="user", content="What is the capital of France?"
-                            ),
-                        ],
+                        instructions="You are a helpful assistant",
+                        input="What is the capital of France?",
                     ),
                     command_id=CommandId("yo"),
                     instance_id=iid,

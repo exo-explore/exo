@@ -12,7 +12,6 @@ from exo.master.placement import (
 )
 from exo.shared.apply import apply
 from exo.shared.types.commands import (
-    ChatCompletion,
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
@@ -23,6 +22,7 @@ from exo.shared.types.commands import (
     SendInputChunk,
     TaskFinished,
     TestCommand,
+    TextGeneration,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
 from exo.shared.types.events import (
@@ -38,9 +38,6 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
-    ChatCompletion as ChatCompletionTask,
-)
-from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
 )
 from exo.shared.types.tasks import (
@@ -49,6 +46,9 @@ from exo.shared.types.tasks import (
 from exo.shared.types.tasks import (
     TaskId,
     TaskStatus,
+)
+from exo.shared.types.tasks import (
+    TextGeneration as TextGenerationTask,
 )
 from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, Sender, channel
@@ -117,11 +117,11 @@ class Master:
                     match command:
                         case TestCommand():
                             pass
-                        case ChatCompletion():
+                        case TextGeneration():
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
-                                    == command.request_params.model
+                                    == command.task_params.model
                                 ):
                                     task_count = sum(
                                         1
@@ -134,7 +134,7 @@ class Master:
 
                             if not instance_task_counts:
                                 raise ValueError(
-                                    f"No instance found for model {command.request_params.model}"
+                                    f"No instance found for model {command.task_params.model}"
                                 )
 
                             available_instance_ids = sorted(
@@ -148,12 +148,12 @@ class Master:
                             generated_events.append(
                                 TaskCreated(
                                     task_id=task_id,
-                                    task=ChatCompletionTask(
+                                    task=TextGenerationTask(
                                         task_id=task_id,
                                         command_id=command.command_id,
                                         instance_id=available_instance_ids[0],
                                         task_status=TaskStatus.Pending,
-                                        task_params=command.request_params,
+                                        task_params=command.task_params,
                                     ),
                                 )
                             )
@@ -163,7 +163,7 @@ class Master:
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
-                                    == command.request_params.model
+                                    == command.task_params.model
                                 ):
                                     task_count = sum(
                                         1
@@ -176,7 +176,7 @@ class Master:
 
                             if not instance_task_counts:
                                 raise ValueError(
-                                    f"No instance found for model {command.request_params.model}"
+                                    f"No instance found for model {command.task_params.model}"
                                 )
 
                             available_instance_ids = sorted(
@@ -195,7 +195,7 @@ class Master:
                                         command_id=command.command_id,
                                         instance_id=available_instance_ids[0],
                                         task_status=TaskStatus.Pending,
-                                        task_params=command.request_params,
+                                        task_params=command.task_params,
                                     ),
                                 )
                             )
@@ -205,7 +205,7 @@ class Master:
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
-                                    == command.request_params.model
+                                    == command.task_params.model
                                 ):
                                     task_count = sum(
                                         1
@@ -218,7 +218,7 @@ class Master:
 
                             if not instance_task_counts:
                                 raise ValueError(
-                                    f"No instance found for model {command.request_params.model}"
+                                    f"No instance found for model {command.task_params.model}"
                                 )
 
                             available_instance_ids = sorted(
@@ -237,7 +237,7 @@ class Master:
                                         command_id=command.command_id,
                                         instance_id=available_instance_ids[0],
                                         task_status=TaskStatus.Pending,
-                                        task_params=command.request_params,
+                                        task_params=command.task_params,
                                     ),
                                 )
                             )
