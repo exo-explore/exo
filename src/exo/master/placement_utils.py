@@ -168,11 +168,6 @@ def get_shard_assignments_for_pipeline_parallel(
         else:
             cfg_peer_device = None
 
-        first_pipeline_device = cfg_pipeline_to_device[(cfg_rank, 0)]
-        last_pipeline_device = cfg_pipeline_to_device[
-            (cfg_rank, pipeline_world_size - 1)
-        ]
-
         runner_id = RunnerId()
 
         shard = PipelineShardMetadata(
@@ -184,12 +179,10 @@ def get_shard_assignments_for_pipeline_parallel(
             n_layers=total_layers,
             cfg_rank=cfg_rank,
             cfg_world_size=cfg_world_size,
-            explicit_pipeline_rank=pipeline_rank,
-            next_pipeline_device=next_pipeline_device,
-            prev_pipeline_device=prev_pipeline_device,
+            pipeline_rank=pipeline_rank,
+            next_device=next_pipeline_device,
+            prev_device=prev_pipeline_device,
             cfg_peer_device=cfg_peer_device,
-            first_pipeline_device=first_pipeline_device,
-            last_pipeline_device=last_pipeline_device,
         )
 
         runner_to_shard[runner_id] = shard

@@ -131,19 +131,25 @@ class DiffusionRunner:
 
             self.cfg_rank = shard_metadata.cfg_rank
             self.cfg_world_size = shard_metadata.cfg_world_size
-            self.cfg_parallel = self.cfg_world_size > 1
+            self.cfg_parallel = shard_metadata.cfg_parallel
 
             self.pipeline_world_size = shard_metadata.pipeline_world_size
             self.pipeline_rank = shard_metadata.pipeline_rank
 
-            self.next_pipeline_rank = shard_metadata.next_pipeline_device
-            self.prev_pipeline_rank = shard_metadata.prev_pipeline_device
+            self.next_pipeline_rank = shard_metadata.next_device
+            self.prev_pipeline_rank = shard_metadata.prev_device
             self.cfg_peer_rank = shard_metadata.cfg_peer_device
 
-            assert shard_metadata.first_pipeline_device is not None
-            assert shard_metadata.last_pipeline_device is not None
-            self.first_pipeline_rank = shard_metadata.first_pipeline_device
-            self.last_pipeline_rank = shard_metadata.last_pipeline_device
+            # Compute first/last stage devices from topology
+            # Ring topology places CFG groups as:
+            # - CFG group 0: devices [0, 1, ..., pipeline_world_size-1] with ascending pipeline ranks
+            # - CFG group 1: devices [world_size-1, ..., pipeline_world_size] with ascending pipeline ranks
+            if self.cfg_rank == 0:
+                self.first_pipeline_rank = 0
+                self.last_pipeline_rank = self.pipeline_world_size - 1
+            else:
+                self.first_pipeline_rank = self.world_size - 1
+                self.last_pipeline_rank = self.pipeline_world_size
 
     def _compute_assigned_blocks(self) -> None:
         """Determine which joint/single blocks this stage owns."""
