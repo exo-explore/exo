@@ -6,6 +6,11 @@ from mflux.models.common.config.config import Config
 from mflux.utils.exceptions import StopImageGenerationException
 from tqdm import tqdm
 
+from exo.shared.constants import EXO_TRACING_ENABLED
+from exo.shared.tracing import (
+    clear_trace_buffer,
+    trace,
+)
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.models.base import (
@@ -324,6 +329,7 @@ class DiffusionRunner:
             capture_steps = set()
 
         self._reset_all_caches()
+        clear_trace_buffer()
 
         time_steps = tqdm(range(runtime_config.num_inference_steps))
 
@@ -348,6 +354,7 @@ class DiffusionRunner:
                 ctx.in_loop(  # pyright: ignore[reportAny]
                     t=t,
                     latents=latents,
+                    time_steps=time_steps,
                 )
 
                 mx.eval(latents)
@@ -464,20 +471,22 @@ class DiffusionRunner:
         if self.group is None:
             return self._single_node_step(t, config, latents, prompt_data)
         elif t < config.init_time_step + num_sync_steps:
-            return self._sync_pipeline_step(
-                t,
-                config,
-                latents,
-                prompt_data,
-            )
+            with trace(name=f"sync {t}", rank=self.rank, category="sync"):
+                return self._sync_pipeline_step(
+                    t,
+                    config,
+                    latents,
+                    prompt_data,
+                )
         else:
-            return self._async_pipeline_step(
-                t,
-                config,
-                latents,
-                prompt_data,
-                is_first_async_step=t == config.init_time_step + num_sync_steps,
-            )
+            with trace(name=f"async {t}", rank=self.rank, category="async"):
+                return self._async_pipeline_step(
+                    t,
+                    config,
+                    latents,
+                    prompt_data,
+                    is_first_async_step=t == config.init_time_step + num_sync_steps,
+                )
 
     def _single_node_step(
         self,
@@ -585,30 +594,41 @@ class DiffusionRunner:
 
         if self.has_joint_blocks:
             if not self.is_first_stage:
-                hidden_states = mx.distributed.recv(
-                    (batch_size, num_img_tokens, hidden_dim),
-                    dtype,
-                    self.prev_rank,
-                    group=self.group,
-                )
-                encoder_hidden_states = mx.distributed.recv(
-                    (batch_size, text_seq_len, hidden_dim),
-                    dtype,
-                    self.prev_rank,
-                    group=self.group,
-                )
-                mx.eval(hidden_states, encoder_hidden_states)
+                with trace(
+                    name=f"recv {self.prev_rank}", rank=self.rank, category="comms"
+                ):
+                    hidden_states = mx.distributed.recv(
+                        (batch_size, num_img_tokens, hidden_dim),
+                        dtype,
+                        self.prev_rank,
+                        group=self.group,
+                    )
+                    encoder_hidden_states = mx.distributed.recv(
+                        (batch_size, text_seq_len, hidden_dim),
+                        dtype,
+                        self.prev_rank,
+                        group=self.group,
+                    )
+                    mx.eval(hidden_states, encoder_hidden_states)
 
             assert self.joint_block_wrappers is not None
             assert encoder_hidden_states is not None
-            for wrapper in self.joint_block_wrappers:
-                wrapper.set_patch(BlockWrapperMode.CACHING)
-                encoder_hidden_states, hidden_states = wrapper(
-                    hidden_states=hidden_states,
-                    encoder_hidden_states=encoder_hidden_states,
-                    text_embeddings=text_embeddings,
-                    rotary_embeddings=image_rotary_embeddings,
-                )
+            with trace(
+                name="joint_blocks",
+                rank=self.rank,
+                category="compute",
+            ):
+                for wrapper in self.joint_block_wrappers:
+                    wrapper.set_patch(BlockWrapperMode.CACHING)
+                    encoder_hidden_states, hidden_states = wrapper(
+                        hidden_states=hidden_states,
+                        encoder_hidden_states=encoder_hidden_states,
+                        text_embeddings=text_embeddings,
+                        rotary_embeddings=image_rotary_embeddings,
+                    )
+
+                if EXO_TRACING_ENABLED:
+                    mx.eval(encoder_hidden_states, hidden_states)
 
         if self.owns_concat_stage:
             assert encoder_hidden_states is not None
@@ -619,45 +639,63 @@ class DiffusionRunner:
             if self.has_single_blocks or self.is_last_stage:
                 hidden_states = concatenated
             else:
-                concatenated = mx.distributed.send(
-                    concatenated, self.next_rank, group=self.group
-                )
-                mx.async_eval(concatenated)
+                with trace(
+                    name=f"send {self.next_rank}", rank=self.rank, category="comms"
+                ):
+                    concatenated = mx.distributed.send(
+                        concatenated, self.next_rank, group=self.group
+                    )
+                    mx.async_eval(concatenated)
 
         elif self.has_joint_blocks and not self.is_last_stage:
             assert encoder_hidden_states is not None
-            hidden_states = mx.distributed.send(
-                hidden_states, self.next_rank, group=self.group
-            )
-            encoder_hidden_states = mx.distributed.send(
-                encoder_hidden_states, self.next_rank, group=self.group
-            )
-            mx.async_eval(hidden_states, encoder_hidden_states)
-
-        if self.has_single_blocks:
-            if not self.owns_concat_stage and not self.is_first_stage:
-                hidden_states = mx.distributed.recv(
-                    (batch_size, text_seq_len + num_img_tokens, hidden_dim),
-                    dtype,
-                    self.prev_rank,
-                    group=self.group,
-                )
-                mx.eval(hidden_states)
-
-            assert self.single_block_wrappers is not None
-            for wrapper in self.single_block_wrappers:
-                wrapper.set_patch(BlockWrapperMode.CACHING)
-                hidden_states = wrapper(
-                    hidden_states=hidden_states,
-                    text_embeddings=text_embeddings,
-                    rotary_embeddings=image_rotary_embeddings,
-                )
-
-            if not self.is_last_stage:
+            with trace(name=f"send {self.next_rank}", rank=self.rank, category="comms"):
                 hidden_states = mx.distributed.send(
                     hidden_states, self.next_rank, group=self.group
                 )
-                mx.async_eval(hidden_states)
+                encoder_hidden_states = mx.distributed.send(
+                    encoder_hidden_states, self.next_rank, group=self.group
+                )
+                mx.async_eval(hidden_states, encoder_hidden_states)
+
+        if self.has_single_blocks:
+            if not self.owns_concat_stage and not self.is_first_stage:
+                with trace(
+                    name=f"recv {self.prev_rank}", rank=self.rank, category="comms"
+                ):
+                    hidden_states = mx.distributed.recv(
+                        (batch_size, text_seq_len + num_img_tokens, hidden_dim),
+                        dtype,
+                        self.prev_rank,
+                        group=self.group,
+                    )
+                    mx.eval(hidden_states)
+
+            assert self.single_block_wrappers is not None
+            with trace(
+                name="single blocks",
+                rank=self.rank,
+                category="compute",
+            ):
+                for wrapper in self.single_block_wrappers:
+                    wrapper.set_patch(BlockWrapperMode.CACHING)
+                    hidden_states = wrapper(
+                        hidden_states=hidden_states,
+                        text_embeddings=text_embeddings,
+                        rotary_embeddings=image_rotary_embeddings,
+                    )
+
+                if EXO_TRACING_ENABLED:
+                    mx.eval(hidden_states)
+
+            if not self.is_last_stage:
+                with trace(
+                    name=f"send {self.next_rank}", rank=self.rank, category="comms"
+                ):
+                    hidden_states = mx.distributed.send(
+                        hidden_states, self.next_rank, group=self.group
+                    )
+                    mx.async_eval(hidden_states)
 
         hidden_states = hidden_states[:, text_seq_len:, ...]
 
@@ -741,14 +779,20 @@ class DiffusionRunner:
             )
 
             if not self.is_first_stage:
-                hidden_states = mx.distributed.send(hidden_states, 0, group=self.group)
-                mx.async_eval(hidden_states)
+                with trace(name="send 0", rank=self.rank, category="comms"):
+                    hidden_states = mx.distributed.send(
+                        hidden_states, 0, group=self.group
+                    )
+                    mx.async_eval(hidden_states)
 
         elif self.is_first_stage:
-            hidden_states = mx.distributed.recv_like(
-                prev_latents, src=self.world_size - 1, group=self.group
-            )
-            mx.eval(hidden_states)
+            with trace(
+                name=f"recv {self.world_size - 1}", rank=self.rank, category="comms"
+            ):
+                hidden_states = mx.distributed.recv_like(
+                    prev_latents, src=self.world_size - 1, group=self.group
+                )
+                mx.eval(hidden_states)
 
         else:
             hidden_states = prev_latents
@@ -808,10 +852,13 @@ class DiffusionRunner:
                 and not self.is_last_stage
                 and not is_first_async_step
             ):
-                patch = mx.distributed.recv_like(
-                    patch, src=self.prev_rank, group=self.group
-                )
-                mx.eval(patch)
+                with trace(
+                    name=f"recv {self.prev_rank}", rank=self.rank, category="comms"
+                ):
+                    patch = mx.distributed.recv_like(
+                        patch, src=self.prev_rank, group=self.group
+                    )
+                    mx.eval(patch)
 
             step_patch = mx.concatenate([patch, patch], axis=0) if needs_cfg else patch
 
@@ -842,10 +889,13 @@ class DiffusionRunner:
                 )
 
                 if not self.is_first_stage and t != config.num_inference_steps - 1:
-                    patch_latents[patch_idx] = mx.distributed.send(
-                        patch_latents[patch_idx], self.next_rank, group=self.group
-                    )
-                    mx.async_eval(patch_latents[patch_idx])
+                    with trace(
+                        name=f"send {self.next_rank}", rank=self.rank, category="comms"
+                    ):
+                        patch_latents[patch_idx] = mx.distributed.send(
+                            patch_latents[patch_idx], self.next_rank, group=self.group
+                        )
+                        mx.async_eval(patch_latents[patch_idx])
 
         return mx.concatenate(patch_latents, axis=1)
 
@@ -884,22 +934,28 @@ class DiffusionRunner:
         if self.has_joint_blocks:
             if not self.is_first_stage:
                 patch_len = patch.shape[1]
-                patch = mx.distributed.recv(
-                    (batch_size, patch_len, hidden_dim),
-                    patch.dtype,
-                    self.prev_rank,
-                    group=self.group,
-                )
-                mx.eval(patch)
-
-                if patch_idx == 0:
-                    encoder_hidden_states = mx.distributed.recv(
-                        (batch_size, text_seq_len, hidden_dim),
+                with trace(
+                    name=f"recv {self.prev_rank}", rank=self.rank, category="comms"
+                ):
+                    patch = mx.distributed.recv(
+                        (batch_size, patch_len, hidden_dim),
                         patch.dtype,
                         self.prev_rank,
                         group=self.group,
                     )
-                    mx.eval(encoder_hidden_states)
+                    mx.eval(patch)
+
+                if patch_idx == 0:
+                    with trace(
+                        name=f"recv {self.prev_rank}", rank=self.rank, category="comms"
+                    ):
+                        encoder_hidden_states = mx.distributed.recv(
+                            (batch_size, text_seq_len, hidden_dim),
+                            patch.dtype,
+                            self.prev_rank,
+                            group=self.group,
+                        )
+                        mx.eval(encoder_hidden_states)
 
             if self.is_first_stage:
                 patch, encoder_hidden_states = self.adapter.compute_embeddings(
@@ -908,14 +964,22 @@ class DiffusionRunner:
 
             assert self.joint_block_wrappers is not None
             assert encoder_hidden_states is not None
-            for wrapper in self.joint_block_wrappers:
-                wrapper.set_patch(BlockWrapperMode.PATCHED, start_token, end_token)
-                encoder_hidden_states, patch = wrapper(
-                    hidden_states=patch,
-                    encoder_hidden_states=encoder_hidden_states,
-                    text_embeddings=text_embeddings,
-                    rotary_embeddings=image_rotary_embeddings,
-                )
+            with trace(
+                name=f"joint patch {patch_idx}",
+                rank=self.rank,
+                category="compute",
+            ):
+                for wrapper in self.joint_block_wrappers:
+                    wrapper.set_patch(BlockWrapperMode.PATCHED, start_token, end_token)
+                    encoder_hidden_states, patch = wrapper(
+                        hidden_states=patch,
+                        encoder_hidden_states=encoder_hidden_states,
+                        text_embeddings=text_embeddings,
+                        rotary_embeddings=image_rotary_embeddings,
+                    )
+
+                if EXO_TRACING_ENABLED:
+                    mx.eval(encoder_hidden_states, patch)
 
         if self.owns_concat_stage:
             assert encoder_hidden_states is not None
@@ -924,49 +988,70 @@ class DiffusionRunner:
             if self.has_single_blocks or self.is_last_stage:
                 patch = patch_concat
             else:
-                patch_concat = mx.distributed.send(
-                    patch_concat, self.next_rank, group=self.group
-                )
-                mx.async_eval(patch_concat)
+                with trace(
+                    name=f"send {self.next_rank}", rank=self.rank, category="comms"
+                ):
+                    patch_concat = mx.distributed.send(
+                        patch_concat, self.next_rank, group=self.group
+                    )
+                    mx.async_eval(patch_concat)
 
         elif self.has_joint_blocks and not self.is_last_stage:
-            patch = mx.distributed.send(patch, self.next_rank, group=self.group)
-            mx.async_eval(patch)
+            with trace(name=f"send {self.next_rank}", rank=self.rank, category="comms"):
+                patch = mx.distributed.send(patch, self.next_rank, group=self.group)
+                mx.async_eval(patch)
 
             if patch_idx == 0:
                 assert encoder_hidden_states is not None
-                encoder_hidden_states = mx.distributed.send(
-                    encoder_hidden_states, self.next_rank, group=self.group
-                )
-                mx.async_eval(encoder_hidden_states)
+                with trace(
+                    name=f"send {self.next_rank}", rank=self.rank, category="comms"
+                ):
+                    encoder_hidden_states = mx.distributed.send(
+                        encoder_hidden_states, self.next_rank, group=self.group
+                    )
+                    mx.async_eval(encoder_hidden_states)
 
         if self.has_single_blocks:
             if not self.owns_concat_stage and not self.is_first_stage:
                 patch_len = patch.shape[1]
-                patch = mx.distributed.recv(
-                    (batch_size, text_seq_len + patch_len, hidden_dim),
-                    patch.dtype,
-                    self.prev_rank,
-                    group=self.group,
-                )
-                mx.eval(patch)
+                with trace(
+                    name=f"recv {self.prev_rank}", rank=self.rank, category="comms"
+                ):
+                    patch = mx.distributed.recv(
+                        (batch_size, text_seq_len + patch_len, hidden_dim),
+                        patch.dtype,
+                        self.prev_rank,
+                        group=self.group,
+                    )
+                    mx.eval(patch)
 
             assert self.single_block_wrappers is not None
-            for wrapper in self.single_block_wrappers:
-                wrapper.set_patch(BlockWrapperMode.PATCHED, start_token, end_token)
-                patch = wrapper(
-                    hidden_states=patch,
-                    text_embeddings=text_embeddings,
-                    rotary_embeddings=image_rotary_embeddings,
-                )
+            with trace(
+                name=f"single patch {patch_idx}",
+                rank=self.rank,
+                category="compute",
+            ):
+                for wrapper in self.single_block_wrappers:
+                    wrapper.set_patch(BlockWrapperMode.PATCHED, start_token, end_token)
+                    patch = wrapper(
+                        hidden_states=patch,
+                        text_embeddings=text_embeddings,
+                        rotary_embeddings=image_rotary_embeddings,
+                    )
+
+                if EXO_TRACING_ENABLED:
+                    mx.eval(patch)
 
             if not self.is_last_stage:
-                patch = mx.distributed.send(patch, self.next_rank, group=self.group)
-                mx.async_eval(patch)
+                with trace(
+                    name=f"send {self.next_rank}", rank=self.rank, category="comms"
+                ):
+                    patch = mx.distributed.send(patch, self.next_rank, group=self.group)
+                    mx.async_eval(patch)
 
         noise: mx.array | None = None
         if self.is_last_stage:
-            patch_img_only = patch[:, text_seq_len:, :]
-            noise = self.adapter.final_projection(patch_img_only, text_embeddings)
+            patch = patch[:, text_seq_len:, :]
+            noise = self.adapter.final_projection(patch, text_embeddings)
 
         return noise, encoder_hidden_states

@@ -9,10 +9,10 @@ from exo.master.main import Master
 from exo.routing.router import get_node_id_keypair
 from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.commands import (
-    ChatCompletion,
     CommandId,
     ForwarderCommand,
     PlaceInstance,
+    TextGeneration,
 )
 from exo.shared.types.common import ModelId, NodeId, SessionId
 from exo.shared.types.events import (
@@ -23,12 +23,12 @@ from exo.shared.types.events import (
     TaskCreated,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.openai_responses import ResponsesRequest
 from exo.shared.types.profiling import (
     MemoryUsage,
 )
-from exo.shared.types.tasks import ChatCompletion as ChatCompletionTask
 from exo.shared.types.tasks import TaskStatus
+from exo.shared.types.tasks import TextGeneration as TextGenerationTask
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     InstanceMeta,
     MlxRingInstance,
@@ -127,16 +127,18 @@ async def test_master():
         logger.info("wait for an instance")
         while len(master.state.instances.keys()) == 0:
             await anyio.sleep(0.001)
-        logger.info("inject a ChatCompletion Command")
+        logger.info("inject a TextGeneration Command")
         await command_sender.send(
             ForwarderCommand(
                 origin=node_id,
                 command=(
-                    ChatCompletion(
+                    TextGeneration(
                         command_id=CommandId(),
-                        request_params=ResponsesRequest(
+                        task_params=TextGenerationTaskParams(
                             model=ModelId("llama-3.2-1b"),
-                            input="Hello, how are you?",
+                            input=[
+                                InputMessage(role="user", content="Hello, how are you?")
+                            ],
                         ),
                     )
                 ),
@@ -186,10 +188,10 @@ async def test_master():
         assert created_instance.ephemeral_port > 0
         assert isinstance(events[2].event, TaskCreated)
         assert events[2].event.task.task_status == TaskStatus.Pending
-        assert isinstance(events[2].event.task, ChatCompletionTask)
-        assert events[2].event.task.task_params == ResponsesRequest(
+        assert isinstance(events[2].event.task, TextGenerationTask)
+        assert events[2].event.task.task_params == TextGenerationTaskParams(
             model=ModelId("llama-3.2-1b"),
-            input="Hello, how are you?",
+            input=[InputMessage(role="user", content="Hello, how are you?")],
         )
 
         await master.shutdown()

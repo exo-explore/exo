@@ -1,14 +1,18 @@
 import base64
+import contextlib
 import json
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from datetime import datetime, timezone
 from http import HTTPStatus
-from typing import Literal, cast
+from pathlib import Path
+from typing import Annotated, Literal, cast
+from uuid import uuid4
 
 import anyio
 from anyio import BrokenResourceError, create_task_group
 from anyio.abc import TaskGroup
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,49 +22,57 @@ from hypercorn.typing import ASGIFramework
 from loguru import logger
 
 from exo.master.adapters.chat_completions import (
-    chat_request_to_internal,
-    chunk_to_response,
+    chat_request_to_text_generation,
     collect_chat_response,
     generate_chat_stream,
 )
 from exo.master.adapters.claude import (
-    claude_request_to_internal,
+    claude_request_to_text_generation,
     collect_claude_response,
     generate_claude_stream,
 )
 from exo.master.adapters.responses import (
     collect_responses_response,
     generate_responses_stream,
+    responses_request_to_text_generation,
 )
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
-from exo.shared.constants import EXO_IMAGE_CACHE_DIR, EXO_MAX_CHUNK_SIZE
+from exo.shared.constants import (
+    DASHBOARD_DIR,
+    EXO_IMAGE_CACHE_DIR,
+    EXO_MAX_CHUNK_SIZE,
+    EXO_TRACING_CACHE_DIR,
+)
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import (
-    MODEL_CARDS,
     ModelCard,
     ModelId,
+    get_model_cards,
 )
+from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.api import (
+    AdvancedImageParams,
+    BenchChatCompletionRequest,
     BenchChatCompletionResponse,
-    BenchChatCompletionTaskParams,
     BenchImageGenerationResponse,
     BenchImageGenerationTaskParams,
     ChatCompletionChoice,
     ChatCompletionMessage,
+    ChatCompletionRequest,
     ChatCompletionResponse,
-    ChatCompletionTaskParams,
     CreateInstanceParams,
     CreateInstanceResponse,
+    DeleteDownloadResponse,
     DeleteInstanceResponse,
     ErrorInfo,
     ErrorResponse,
     FinishReason,
     GenerationStats,
     ImageData,
-    ImageEditsInternalParams,
+    ImageEditsTaskParams,
     ImageGenerationResponse,
     ImageGenerationStats,
     ImageGenerationTaskParams,
@@ -71,29 +83,44 @@ from exo.shared.types.api import (
     PlaceInstanceParams,
     PlacementPreview,
     PlacementPreviewResponse,
+    StartDownloadParams,
+    StartDownloadResponse,
+    ToolCall,
+    TraceCategoryStats,
+    TraceEventResponse,
+    TraceListItem,
+    TraceListResponse,
+    TraceRankStats,
+    TraceResponse,
+    TraceStatsResponse,
 )
 from exo.shared.types.chunks import (
+    ErrorChunk,
     ImageChunk,
     InputImageChunk,
     PrefillProgressData,
-    StreamEvent,
     TokenChunk,
+    ToolCallChunk,
 )
 from exo.shared.types.claude_api import (
     ClaudeMessagesRequest,
     ClaudeMessagesResponse,
 )
 from exo.shared.types.commands import (
-    ChatCompletion,
     Command,
     CreateInstance,
+    DeleteDownload,
     DeleteInstance,
+    DownloadCommand,
     ForwarderCommand,
+    ForwarderDownloadCommand,
     ImageEdits,
     ImageGeneration,
     PlaceInstance,
     SendInputChunk,
+    StartDownload,
     TaskFinished,
+    TextGeneration,
 )
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
 from exo.shared.types.events import (
@@ -102,6 +129,7 @@ from exo.shared.types.events import (
     ForwarderEvent,
     IndexedEvent,
     PrefillProgress,
+    TracesMerged,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.openai_responses import (
@@ -113,24 +141,11 @@ from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
-from exo.utils.dashboard_path import find_dashboard
 from exo.utils.event_buffer import OrderedBuffer
 
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
     return f"image/{image_format or 'png'}"
-
-
-async def resolve_model_card(model_id: ModelId) -> ModelCard:
-    if model_id in MODEL_CARDS:
-        model_card = MODEL_CARDS[model_id]
-        return model_card
-
-    for card in MODEL_CARDS.values():
-        if card.model_id == ModelId(model_id):
-            return card
-
-    return await ModelCard.from_hf(model_id)
 
 
 class API:
@@ -143,12 +158,14 @@ class API:
         # Ideally this would be a MasterForwarderEvent but type system says no :(
         global_event_receiver: Receiver[ForwarderEvent],
         command_sender: Sender[ForwarderCommand],
+        download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
     ) -> None:
         self.state = State()
         self._event_log: list[Event] = []
         self.command_sender = command_sender
+        self.download_command_sender = download_command_sender
         self.global_event_receiver = global_event_receiver
         self.election_receiver = election_receiver
         self.event_buffer: OrderedBuffer[Event] = OrderedBuffer[Event]()
@@ -161,6 +178,15 @@ class API:
         self.paused_ev: anyio.Event = anyio.Event()
 
         self.app = FastAPI()
+
+        @self.app.middleware("http")
+        async def _log_requests(  # pyright: ignore[reportUnusedFunction]
+            request: Request,
+            call_next: Callable[[Request], Awaitable[StreamingResponse]],
+        ) -> StreamingResponse:
+            logger.debug(f"API request: {request.method} {request.url.path}")
+            return await call_next(request)
+
         self._setup_exception_handlers()
         self._setup_cors()
         self._setup_routes()
@@ -168,14 +194,19 @@ class API:
         self.app.mount(
             "/",
             StaticFiles(
-                directory=find_dashboard(),
+                directory=DASHBOARD_DIR,
                 html=True,
             ),
             name="dashboard",
         )
 
-        self._chat_completion_queues: dict[CommandId, Sender[StreamEvent]] = {}
-        self._image_generation_queues: dict[CommandId, Sender[ImageChunk]] = {}
+        self._text_generation_queues: dict[
+            CommandId,
+            Sender[TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressData],
+        ] = {}
+        self._image_generation_queues: dict[
+            CommandId, Sender[ImageChunk | ErrorChunk]
+        ] = {}
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup | None = None
 
@@ -184,7 +215,7 @@ class API:
         self.state = State()
         self.session_id = new_session_id
         self.event_buffer = OrderedBuffer[Event]()
-        self._chat_completion_queues = {}
+        self._text_generation_queues = {}
         self._image_generation_queues = {}
         self.unpause(result_clock)
 
@@ -245,10 +276,16 @@ class API:
         self.app.post("/v1/responses", response_model=None)(self.openai_responses)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
+        self.app.post("/download/start")(self.start_download)
+        self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
+        self.app.get("/v1/traces")(self.list_traces)
+        self.app.get("/v1/traces/{task_id}")(self.get_trace)
+        self.app.get("/v1/traces/{task_id}/stats")(self.get_trace_stats)
+        self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
-            model_card=await resolve_model_card(payload.model_id),
+            model_card=await ModelCard.load(payload.model_id),
             sharding=payload.sharding,
             instance_meta=payload.instance_meta,
             min_nodes=payload.min_nodes,
@@ -265,7 +302,7 @@ class API:
         self, payload: CreateInstanceParams
     ) -> CreateInstanceResponse:
         instance = payload.instance
-        model_card = await resolve_model_card(instance.shard_assignments.model_id)
+        model_card = await ModelCard.load(instance.shard_assignments.model_id)
         required_memory = model_card.storage_size
         available_memory = self._calculate_total_available_memory()
 
@@ -293,7 +330,7 @@ class API:
         instance_meta: InstanceMeta = InstanceMeta.MlxRing,
         min_nodes: int = 1,
     ) -> Instance:
-        model_card = await resolve_model_card(model_id)
+        model_card = await ModelCard.load(model_id)
 
         try:
             placements = get_instance_placements(
@@ -324,17 +361,18 @@ class API:
         return placements[new_ids[0]]
 
     async def get_placement_previews(
-        self, model_id: ModelId
+        self,
+        model_id: ModelId,
+        node_ids: Annotated[list[NodeId] | None, Query()] = None,
     ) -> PlacementPreviewResponse:
         seen: set[tuple[ModelId, Sharding, InstanceMeta, int]] = set()
         previews: list[PlacementPreview] = []
+        required_nodes = set(node_ids) if node_ids else None
+
         if len(list(self.state.topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
-        cards = [card for card in MODEL_CARDS.values() if card.model_id == model_id]
-        if not cards:
-            raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
-
+        model_card = await ModelCard.load(model_id)
         instance_combinations: list[tuple[Sharding, InstanceMeta, int]] = []
         for sharding in (Sharding.Pipeline, Sharding.Tensor):
             for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
@@ -349,86 +387,93 @@ class API:
         # TODO: PDD
         # instance_combinations.append((Sharding.PrefillDecodeDisaggregation, InstanceMeta.MlxRing, 1))
 
-        for model_card in cards:
-            for sharding, instance_meta, min_nodes in instance_combinations:
-                try:
-                    placements = get_instance_placements(
-                        PlaceInstance(
-                            model_card=model_card,
-                            sharding=sharding,
-                            instance_meta=instance_meta,
-                            min_nodes=min_nodes,
-                        ),
-                        node_memory=self.state.node_memory,
-                        node_network=self.state.node_network,
-                        topology=self.state.topology,
-                        current_instances=self.state.instances,
-                    )
-                except ValueError as exc:
-                    if (model_card.model_id, sharding, instance_meta, 0) not in seen:
-                        previews.append(
-                            PlacementPreview(
-                                model_id=model_card.model_id,
-                                sharding=sharding,
-                                instance_meta=instance_meta,
-                                instance=None,
-                                error=str(exc),
-                            )
-                        )
-                    seen.add((model_card.model_id, sharding, instance_meta, 0))
-                    continue
-
-                current_ids = set(self.state.instances.keys())
-                new_instances = [
-                    instance
-                    for instance_id, instance in placements.items()
-                    if instance_id not in current_ids
-                ]
-
-                if len(new_instances) != 1:
-                    if (model_card.model_id, sharding, instance_meta, 0) not in seen:
-                        previews.append(
-                            PlacementPreview(
-                                model_id=model_card.model_id,
-                                sharding=sharding,
-                                instance_meta=instance_meta,
-                                instance=None,
-                                error="Expected exactly one new instance from placement",
-                            )
-                        )
-                    seen.add((model_card.model_id, sharding, instance_meta, 0))
-                    continue
-
-                instance = new_instances[0]
-                shard_assignments = instance.shard_assignments
-                node_ids = list(shard_assignments.node_to_runner.keys())
-
-                memory_delta_by_node: dict[str, int] = {}
-                if node_ids:
-                    total_bytes = model_card.storage_size.in_bytes
-                    per_node = total_bytes // len(node_ids)
-                    remainder = total_bytes % len(node_ids)
-                    for index, node_id in enumerate(sorted(node_ids, key=str)):
-                        extra = 1 if index < remainder else 0
-                        memory_delta_by_node[str(node_id)] = per_node + extra
-
-                if (
-                    model_card.model_id,
-                    sharding,
-                    instance_meta,
-                    len(node_ids),
-                ) not in seen:
+        for sharding, instance_meta, min_nodes in instance_combinations:
+            try:
+                placements = get_instance_placements(
+                    PlaceInstance(
+                        model_card=model_card,
+                        sharding=sharding,
+                        instance_meta=instance_meta,
+                        min_nodes=min_nodes,
+                    ),
+                    node_memory=self.state.node_memory,
+                    node_network=self.state.node_network,
+                    topology=self.state.topology,
+                    current_instances=self.state.instances,
+                    required_nodes=required_nodes,
+                )
+            except ValueError as exc:
+                if (model_card.model_id, sharding, instance_meta, 0) not in seen:
                     previews.append(
                         PlacementPreview(
                             model_id=model_card.model_id,
                             sharding=sharding,
                             instance_meta=instance_meta,
-                            instance=instance,
-                            memory_delta_by_node=memory_delta_by_node or None,
-                            error=None,
+                            instance=None,
+                            error=str(exc),
                         )
                     )
-                seen.add((model_card.model_id, sharding, instance_meta, len(node_ids)))
+                seen.add((model_card.model_id, sharding, instance_meta, 0))
+                continue
+
+            current_ids = set(self.state.instances.keys())
+            new_instances = [
+                instance
+                for instance_id, instance in placements.items()
+                if instance_id not in current_ids
+            ]
+
+            if len(new_instances) != 1:
+                if (model_card.model_id, sharding, instance_meta, 0) not in seen:
+                    previews.append(
+                        PlacementPreview(
+                            model_id=model_card.model_id,
+                            sharding=sharding,
+                            instance_meta=instance_meta,
+                            instance=None,
+                            error="Expected exactly one new instance from placement",
+                        )
+                    )
+                seen.add((model_card.model_id, sharding, instance_meta, 0))
+                continue
+
+            instance = new_instances[0]
+            shard_assignments = instance.shard_assignments
+            placement_node_ids = list(shard_assignments.node_to_runner.keys())
+
+            memory_delta_by_node: dict[str, int] = {}
+            if placement_node_ids:
+                total_bytes = model_card.storage_size.in_bytes
+                per_node = total_bytes // len(placement_node_ids)
+                remainder = total_bytes % len(placement_node_ids)
+                for index, node_id in enumerate(sorted(placement_node_ids, key=str)):
+                    extra = 1 if index < remainder else 0
+                    memory_delta_by_node[str(node_id)] = per_node + extra
+
+            if (
+                model_card.model_id,
+                sharding,
+                instance_meta,
+                len(placement_node_ids),
+            ) not in seen:
+                previews.append(
+                    PlacementPreview(
+                        model_id=model_card.model_id,
+                        sharding=sharding,
+                        instance_meta=instance_meta,
+                        instance=instance,
+                        memory_delta_by_node=memory_delta_by_node or None,
+                        error=None,
+                    )
+                )
+            seen.add(
+                (
+                    model_card.model_id,
+                    sharding,
+                    instance_meta,
+                    len(placement_node_ids),
+                )
+            )
 
         return PlacementPreviewResponse(previews=previews)
 
@@ -453,13 +498,17 @@ class API:
 
     async def _stream_events(
         self, command_id: CommandId
-    ) -> AsyncGenerator[StreamEvent, None]:
-        """Yield stream events (TokenChunks or PrefillProgressData) for a command.
+    ) -> AsyncGenerator[
+        TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressData, None
+    ]:
+        """Yield stream events for a command.
 
         This is the internal low-level stream used by all API adapters.
         """
         try:
-            self._chat_completion_queues[command_id], recv = channel[StreamEvent]()
+            self._text_generation_queues[command_id], recv = channel[
+                TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressData
+            ]()
 
             with recv as events:
                 async for event in events:
@@ -481,86 +530,28 @@ class API:
         finally:
             command = TaskFinished(finished_command_id=command_id)
             await self._send(command)
-            del self._chat_completion_queues[command_id]
+            if command_id in self._text_generation_queues:
+                del self._text_generation_queues[command_id]
 
-    async def _chat_chunk_stream(
+    async def _chunk_stream(
         self, command_id: CommandId
-    ) -> AsyncGenerator[TokenChunk, None]:
-        """Yield only TokenChunks, filtering out progress events."""
-
+    ) -> AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None]:
+        """Yield chunks, filtering out prefill progress events."""
         async for event in self._stream_events(command_id):
-            if isinstance(event, TokenChunk):
+            if not isinstance(event, PrefillProgressData):
                 yield event
 
-    async def _generate_chat_stream(
-        self, command_id: CommandId
-    ) -> AsyncGenerator[str, None]:
-        """Generate chat completion stream as JSON strings."""
-
-        async for event in self._stream_events(command_id):
-            if isinstance(event, PrefillProgressData):
-                # Send prefill progress as a named SSE event
-                progress_json = f'{{"processed":{event.processed_tokens},"total":{event.total_tokens}}}'
-                yield f"event: prefill_progress\ndata: {progress_json}\n\n"
-            else:
-                # TokenChunk - regular token generation
-                chunk_response: ChatCompletionResponse = chunk_to_response(
-                    event, command_id
-                )
-                logger.debug(f"chunk_response: {chunk_response}")
-
-                yield f"data: {chunk_response.model_dump_json()}\n\n"
-
-                if event.finish_reason is not None:
-                    yield "data: [DONE]\n\n"
-
-    async def _collect_chat_completion(
-        self, command_id: CommandId
-    ) -> ChatCompletionResponse:
-        """Collect all token chunks for a chat completion and return a single response."""
-
-        text_parts: list[str] = []
-        model: str | None = None
-        finish_reason: FinishReason | None = None
-
-        async for chunk in self._chat_chunk_stream(command_id):
-            if model is None:
-                model = chunk.model
-
-            text_parts.append(chunk.text)
-
-            if chunk.finish_reason is not None:
-                finish_reason = chunk.finish_reason
-
-        combined_text = "".join(text_parts)
-        assert model is not None
-
-        return ChatCompletionResponse(
-            id=command_id,
-            created=int(time.time()),
-            model=model,
-            choices=[
-                ChatCompletionChoice(
-                    index=0,
-                    message=ChatCompletionMessage(
-                        role="assistant",
-                        content=combined_text,
-                    ),
-                    finish_reason=finish_reason,
-                )
-            ],
-        )
-
-    async def _collect_chat_completion_with_stats(
+    async def _collect_text_generation_with_stats(
         self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
         text_parts: list[str] = []
-        model: str | None = None
+        tool_calls: list[ToolCall] = []
+        model: ModelId | None = None
         finish_reason: FinishReason | None = None
 
         stats: GenerationStats | None = None
 
-        async for chunk in self._chat_chunk_stream(command_id):
+        async for chunk in self._chunk_stream(command_id):
             if chunk.finish_reason == "error":
                 raise HTTPException(
                     status_code=500,
@@ -570,7 +561,19 @@ class API:
             if model is None:
                 model = chunk.model
 
-            text_parts.append(chunk.text)
+            if isinstance(chunk, TokenChunk):
+                text_parts.append(chunk.text)
+
+            if isinstance(chunk, ToolCallChunk):
+                tool_calls.extend(
+                    ToolCall(
+                        id=str(uuid4()),
+                        index=i,
+                        function=tool,
+                    )
+                    for i, tool in enumerate(chunk.tool_calls)
+                )
+
             stats = chunk.stats or stats
 
             if chunk.finish_reason is not None:
@@ -587,7 +590,9 @@ class API:
                 ChatCompletionChoice(
                     index=0,
                     message=ChatCompletionMessage(
-                        role="assistant", content=combined_text
+                        role="assistant",
+                        content=combined_text,
+                        tool_calls=tool_calls if tool_calls else None,
                     ),
                     finish_reason=finish_reason,
                 )
@@ -602,24 +607,16 @@ class API:
         )
 
     async def chat_completions(
-        self, payload: ChatCompletionTaskParams
+        self, payload: ChatCompletionRequest
     ) -> ChatCompletionResponse | StreamingResponse:
         """OpenAI Chat Completions API - adapter."""
-        internal_params = chat_request_to_internal(payload)
+        task_params = chat_request_to_text_generation(payload)
+        resolved_model = await self._resolve_and_validate_text_model(
+            ModelId(task_params.model)
+        )
+        task_params = task_params.model_copy(update={"model": resolved_model})
 
-        if not any(
-            instance.shard_assignments.model_id == internal_params.model
-            for instance in self.state.instances.values()
-        ):
-            await self._trigger_notify_user_to_download_model(
-                ModelId(internal_params.model)
-            )
-            raise HTTPException(
-                status_code=404,
-                detail=f"No instance found for model {internal_params.model}",
-            )
-
-        command = ChatCompletion(request_params=internal_params)
+        command = TextGeneration(task_params=task_params)
         await self._send(command)
 
         if payload.stream:
@@ -639,43 +636,50 @@ class API:
         try:
             return await collect_chat_response(
                 command.command_id,
-                self._chat_chunk_stream(command.command_id),
+                self._chunk_stream(command.command_id),
             )
         except ValueError as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     async def bench_chat_completions(
-        self, payload: BenchChatCompletionTaskParams
+        self, payload: BenchChatCompletionRequest
     ) -> BenchChatCompletionResponse:
-        # Convert to internal format (BenchChatCompletionTaskParams extends ChatCompletionTaskParams)
-        internal_params = chat_request_to_internal(payload)
+        task_params = chat_request_to_text_generation(payload)
+        resolved_model = await self._resolve_and_validate_text_model(
+            ModelId(task_params.model)
+        )
+        task_params = task_params.model_copy(update={"model": resolved_model})
 
-        if not any(
-            instance.shard_assignments.model_id == internal_params.model
-            for instance in self.state.instances.values()
-        ):
-            await self._trigger_notify_user_to_download_model(
-                ModelId(internal_params.model)
-            )
-            raise HTTPException(
-                status_code=404,
-                detail=f"No instance found for model {internal_params.model}",
-            )
+        task_params = task_params.model_copy(update={"stream": False, "bench": True})
 
-        internal_params.stream = False
-
-        command = ChatCompletion(request_params=internal_params)
+        command = TextGeneration(task_params=task_params)
         await self._send(command)
 
-        response = await self._collect_chat_completion_with_stats(command.command_id)
+        response = await self._collect_text_generation_with_stats(command.command_id)
         return response
 
-    async def _validate_image_model(self, model: str) -> ModelId:
+    async def _resolve_and_validate_text_model(self, model_id: ModelId) -> ModelId:
+        """Validate a text model exists and return the resolved model ID.
+
+        Raises HTTPException 404 if no instance is found for the model.
+        """
+        if not any(
+            instance.shard_assignments.model_id == model_id
+            for instance in self.state.instances.values()
+        ):
+            await self._trigger_notify_user_to_download_model(model_id)
+            raise HTTPException(
+                status_code=404,
+                detail=f"No instance found for model {model_id}",
+            )
+        return model_id
+
+    async def _validate_image_model(self, model: ModelId) -> ModelId:
         """Validate model exists and return resolved model ID.
 
         Raises HTTPException 404 if no instance is found for the model.
         """
-        model_card = await resolve_model_card(ModelId(model))
+        model_card = await ModelCard.load(model)
         resolved_model = model_card.model_id
         if not any(
             instance.shard_assignments.model_id == resolved_model
@@ -721,10 +725,10 @@ class API:
         When stream=True and partial_images > 0, returns a StreamingResponse
         with SSE-formatted events for partial and final images.
         """
-        payload.model = await self._validate_image_model(payload.model)
+        payload.model = await self._validate_image_model(ModelId(payload.model))
 
         command = ImageGeneration(
-            request_params=payload,
+            task_params=payload,
         )
         await self._send(command)
 
@@ -763,7 +767,9 @@ class API:
         images_complete = 0
 
         try:
-            self._image_generation_queues[command_id], recv = channel[ImageChunk]()
+            self._image_generation_queues[command_id], recv = channel[
+                ImageChunk | ErrorChunk
+            ]()
 
             with recv as chunks:
                 async for chunk in chunks:
@@ -803,6 +809,7 @@ class API:
                             # Yield partial image event (always use b64_json for partials)
                             event_data = {
                                 "type": "partial",
+                                "image_index": chunk.image_index,
                                 "partial_index": partial_idx,
                                 "total_partials": total_partials,
                                 "format": str(chunk.format),
@@ -872,7 +879,9 @@ class API:
         stats: ImageGenerationStats | None = None
 
         try:
-            self._image_generation_queues[command_id], recv = channel[ImageChunk]()
+            self._image_generation_queues[command_id], recv = channel[
+                ImageChunk | ErrorChunk
+            ]()
 
             while images_complete < num_images:
                 with recv as chunks:
@@ -961,13 +970,13 @@ class API:
     async def bench_image_generations(
         self, request: Request, payload: BenchImageGenerationTaskParams
     ) -> BenchImageGenerationResponse:
-        payload.model = await self._validate_image_model(payload.model)
+        payload.model = await self._validate_image_model(ModelId(payload.model))
 
         payload.stream = False
         payload.partial_images = 0
 
         command = ImageGeneration(
-            request_params=payload,
+            task_params=payload,
         )
         await self._send(command)
 
@@ -982,7 +991,7 @@ class API:
         self,
         image: UploadFile,
         prompt: str,
-        model: str,
+        model: ModelId,
         n: int,
         size: str,
         response_format: Literal["url", "b64_json"],
@@ -990,6 +999,9 @@ class API:
         stream: bool,
         partial_images: int,
         bench: bool,
+        quality: Literal["high", "medium", "low"],
+        output_format: Literal["png", "jpeg", "webp"],
+        advanced_params: AdvancedImageParams | None,
     ) -> ImageEdits:
         """Prepare and send an image edits command with chunked image upload."""
         resolved_model = await self._validate_image_model(model)
@@ -1006,7 +1018,7 @@ class API:
         total_chunks = len(data_chunks)
 
         command = ImageEdits(
-            request_params=ImageEditsInternalParams(
+            task_params=ImageEditsTaskParams(
                 image_data="",
                 total_input_chunks=total_chunks,
                 prompt=prompt,
@@ -1018,6 +1030,9 @@ class API:
                 stream=stream,
                 partial_images=partial_images,
                 bench=bench,
+                quality=quality,
+                output_format=output_format,
+                advanced_params=advanced_params,
             ),
         )
 
@@ -1028,7 +1043,6 @@ class API:
             await self._send(
                 SendInputChunk(
                     chunk=InputImageChunk(
-                        idx=chunk_index,
                         model=resolved_model,
                         command_id=command.command_id,
                         data=chunk_data,
@@ -1053,16 +1067,26 @@ class API:
         input_fidelity: Literal["low", "high"] = Form("low"),
         stream: str = Form("false"),
         partial_images: str = Form("0"),
+        quality: Literal["high", "medium", "low"] = Form("medium"),
+        output_format: Literal["png", "jpeg", "webp"] = Form("png"),
+        advanced_params: str | None = Form(None),
     ) -> ImageGenerationResponse | StreamingResponse:
         """Handle image editing requests (img2img)."""
         # Parse string form values to proper types
         stream_bool = stream.lower() in ("true", "1", "yes")
         partial_images_int = int(partial_images) if partial_images.isdigit() else 0
 
+        parsed_advanced_params: AdvancedImageParams | None = None
+        if advanced_params:
+            with contextlib.suppress(Exception):
+                parsed_advanced_params = AdvancedImageParams.model_validate_json(
+                    advanced_params
+                )
+
         command = await self._send_image_edits_command(
             image=image,
             prompt=prompt,
-            model=model,
+            model=ModelId(model),
             n=n,
             size=size,
             response_format=response_format,
@@ -1070,6 +1094,9 @@ class API:
             stream=stream_bool,
             partial_images=partial_images_int,
             bench=False,
+            quality=quality,
+            output_format=output_format,
+            advanced_params=parsed_advanced_params,
         )
 
         if stream_bool and partial_images_int > 0:
@@ -1100,12 +1127,22 @@ class API:
         size: str = Form("1024x1024"),
         response_format: Literal["url", "b64_json"] = Form("b64_json"),
         input_fidelity: Literal["low", "high"] = Form("low"),
+        quality: Literal["high", "medium", "low"] = Form("medium"),
+        output_format: Literal["png", "jpeg", "webp"] = Form("png"),
+        advanced_params: str | None = Form(None),
     ) -> BenchImageGenerationResponse:
         """Handle benchmark image editing requests with generation stats."""
+        parsed_advanced_params: AdvancedImageParams | None = None
+        if advanced_params:
+            with contextlib.suppress(Exception):
+                parsed_advanced_params = AdvancedImageParams.model_validate_json(
+                    advanced_params
+                )
+
         command = await self._send_image_edits_command(
             image=image,
             prompt=prompt,
-            model=model,
+            model=ModelId(model),
             n=n,
             size=size,
             response_format=response_format,
@@ -1113,6 +1150,9 @@ class API:
             stream=False,
             partial_images=0,
             bench=True,
+            quality=quality,
+            output_format=output_format,
+            advanced_params=parsed_advanced_params,
         )
 
         return await self._collect_image_generation_with_stats(
@@ -1126,21 +1166,13 @@ class API:
         self, payload: ClaudeMessagesRequest
     ) -> ClaudeMessagesResponse | StreamingResponse:
         """Claude Messages API - adapter."""
-        internal_params = claude_request_to_internal(payload)
-        model_card = await resolve_model_card(ModelId(internal_params.model))
-        internal_params.model = model_card.model_id
+        task_params = claude_request_to_text_generation(payload)
+        resolved_model = await self._resolve_and_validate_text_model(
+            ModelId(task_params.model)
+        )
+        task_params = task_params.model_copy(update={"model": resolved_model})
 
-        if not any(
-            instance.shard_assignments.model_id == internal_params.model
-            for instance in self.state.instances.values()
-        ):
-            await self._trigger_notify_user_to_download_model(internal_params.model)
-            raise HTTPException(
-                status_code=404,
-                detail=f"No instance found for model {internal_params.model}",
-            )
-
-        command = ChatCompletion(request_params=internal_params)
+        command = TextGeneration(task_params=task_params)
         await self._send(command)
 
         if payload.stream:
@@ -1148,7 +1180,7 @@ class API:
                 generate_claude_stream(
                     command.command_id,
                     payload.model,
-                    self._chat_chunk_stream(command.command_id),
+                    self._chunk_stream(command.command_id),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1162,7 +1194,7 @@ class API:
             return await collect_claude_response(
                 command.command_id,
                 payload.model,
-                self._chat_chunk_stream(command.command_id),
+                self._chunk_stream(command.command_id),
             )
         except ValueError as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
@@ -1170,24 +1202,12 @@ class API:
     async def openai_responses(
         self, payload: ResponsesRequest
     ) -> ResponsesResponse | StreamingResponse:
-        """OpenAI Responses API - native format."""
-        internal_params = payload
-        model_card = await resolve_model_card(internal_params.model)
-        internal_params.model = model_card.model_id
+        """OpenAI Responses API."""
+        task_params = responses_request_to_text_generation(payload)
+        resolved_model = await self._resolve_and_validate_text_model(task_params.model)
+        task_params = task_params.model_copy(update={"model": resolved_model})
 
-        if not any(
-            instance.shard_assignments.model_id == internal_params.model
-            for instance in self.state.instances.values()
-        ):
-            await self._trigger_notify_user_to_download_model(
-                ModelId(internal_params.model)
-            )
-            raise HTTPException(
-                status_code=404,
-                detail=f"No instance found for model {internal_params.model}",
-            )
-
-        command = ChatCompletion(request_params=internal_params)
+        command = TextGeneration(task_params=task_params)
         await self._send(command)
 
         if payload.stream:
@@ -1195,7 +1215,7 @@ class API:
                 generate_responses_stream(
                     command.command_id,
                     payload.model,
-                    self._chat_chunk_stream(command.command_id),
+                    self._chunk_stream(command.command_id),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1209,7 +1229,7 @@ class API:
             return await collect_responses_response(
                 command.command_id,
                 payload.model,
-                self._chat_chunk_stream(command.command_id),
+                self._chunk_stream(command.command_id),
             )
         except ValueError as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
@@ -1237,7 +1257,7 @@ class API:
                     supports_tensor=card.supports_tensor,
                     tasks=[task.value for task in card.tasks],
                 )
-                for card in MODEL_CARDS.values()
+                for card in await get_model_cards()
             ]
         )
 
@@ -1274,30 +1294,31 @@ class API:
                 for idx, event in self.event_buffer.drain_indexed():
                     self._event_log.append(event)
                     self.state = apply(self.state, IndexedEvent(event=event, idx=idx))
+
                     if isinstance(event, ChunkGenerated):
-                        if event.command_id in self._chat_completion_queues:
-                            assert isinstance(event.chunk, TokenChunk)
-                            queue = self._chat_completion_queues.get(event.command_id)
-                            if queue is not None:
-                                try:
-                                    await queue.send(event.chunk)
-                                except BrokenResourceError:
-                                    self._chat_completion_queues.pop(
-                                        event.command_id, None
-                                    )
-                        elif event.command_id in self._image_generation_queues:
+                        if queue := self._image_generation_queues.get(
+                            event.command_id, None
+                        ):
                             assert isinstance(event.chunk, ImageChunk)
-                            queue = self._image_generation_queues.get(event.command_id)
-                            if queue is not None:
-                                try:
-                                    await queue.send(event.chunk)
-                                except BrokenResourceError:
-                                    self._image_generation_queues.pop(
-                                        event.command_id, None
-                                    )
+                            try:
+                                await queue.send(event.chunk)
+                            except BrokenResourceError:
+                                self._image_generation_queues.pop(
+                                    event.command_id, None
+                                )
+                        if queue := self._text_generation_queues.get(
+                            event.command_id, None
+                        ):
+                            assert not isinstance(event.chunk, ImageChunk)
+                            try:
+                                await queue.send(event.chunk)
+                            except BrokenResourceError:
+                                self._text_generation_queues.pop(event.command_id, None)
+
                     elif isinstance(event, PrefillProgress):
-                        queue = self._chat_completion_queues.get(event.command_id)
-                        if queue is not None:
+                        if queue := self._text_generation_queues.get(
+                            event.command_id, None
+                        ):
                             try:
                                 await queue.send(
                                     PrefillProgressData(
@@ -1306,7 +1327,25 @@ class API:
                                     )
                                 )
                             except BrokenResourceError:
-                                self._chat_completion_queues.pop(event.command_id, None)
+                                self._text_generation_queues.pop(event.command_id, None)
+
+                    if isinstance(event, TracesMerged):
+                        self._save_merged_trace(event)
+
+    def _save_merged_trace(self, event: TracesMerged) -> None:
+        traces = [
+            TraceEvent(
+                name=t.name,
+                start_us=t.start_us,
+                duration_us=t.duration_us,
+                rank=t.rank,
+                category=t.category,
+            )
+            for t in event.traces
+        ]
+        output_path = EXO_TRACING_CACHE_DIR / f"trace_{event.task_id}.json"
+        export_trace(traces, output_path)
+        logger.debug(f"Saved merged trace to {output_path}")
 
     async def _pause_on_new_election(self):
         with self.election_receiver as ems:
@@ -1328,4 +1367,129 @@ class API:
             await self.paused_ev.wait()
         await self.command_sender.send(
             ForwarderCommand(origin=self.node_id, command=command)
+        )
+
+    async def _send_download(self, command: DownloadCommand):
+        await self.download_command_sender.send(
+            ForwarderDownloadCommand(origin=self.node_id, command=command)
+        )
+
+    async def start_download(
+        self, payload: StartDownloadParams
+    ) -> StartDownloadResponse:
+        command = StartDownload(
+            target_node_id=payload.target_node_id,
+            shard_metadata=payload.shard_metadata,
+        )
+        await self._send_download(command)
+        return StartDownloadResponse(command_id=command.command_id)
+
+    async def delete_download(
+        self, node_id: NodeId, model_id: ModelId
+    ) -> DeleteDownloadResponse:
+        command = DeleteDownload(
+            target_node_id=node_id,
+            model_id=ModelId(model_id),
+        )
+        await self._send_download(command)
+        return DeleteDownloadResponse(command_id=command.command_id)
+
+    def _get_trace_path(self, task_id: str) -> Path:
+        return EXO_TRACING_CACHE_DIR / f"trace_{task_id}.json"
+
+    async def list_traces(self) -> TraceListResponse:
+        traces: list[TraceListItem] = []
+
+        for trace_file in sorted(
+            EXO_TRACING_CACHE_DIR.glob("trace_*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        ):
+            # Extract task_id from filename (trace_{task_id}.json)
+            task_id = trace_file.stem.removeprefix("trace_")
+            stat = trace_file.stat()
+            created_at = datetime.fromtimestamp(
+                stat.st_mtime, tz=timezone.utc
+            ).isoformat()
+            traces.append(
+                TraceListItem(
+                    task_id=task_id,
+                    created_at=created_at,
+                    file_size=stat.st_size,
+                )
+            )
+
+        return TraceListResponse(traces=traces)
+
+    async def get_trace(self, task_id: str) -> TraceResponse:
+        trace_path = self._get_trace_path(task_id)
+
+        if not trace_path.exists():
+            raise HTTPException(status_code=404, detail=f"Trace not found: {task_id}")
+
+        trace_events = load_trace_file(trace_path)
+
+        return TraceResponse(
+            task_id=task_id,
+            traces=[
+                TraceEventResponse(
+                    name=event.name,
+                    start_us=event.start_us,
+                    duration_us=event.duration_us,
+                    rank=event.rank,
+                    category=event.category,
+                )
+                for event in trace_events
+            ],
+        )
+
+    async def get_trace_stats(self, task_id: str) -> TraceStatsResponse:
+        trace_path = self._get_trace_path(task_id)
+
+        if not trace_path.exists():
+            raise HTTPException(status_code=404, detail=f"Trace not found: {task_id}")
+
+        trace_events = load_trace_file(trace_path)
+        stats = compute_stats(trace_events)
+
+        return TraceStatsResponse(
+            task_id=task_id,
+            total_wall_time_us=stats.total_wall_time_us,
+            by_category={
+                category: TraceCategoryStats(
+                    total_us=cat_stats.total_us,
+                    count=cat_stats.count,
+                    min_us=cat_stats.min_us,
+                    max_us=cat_stats.max_us,
+                    avg_us=cat_stats.avg_us,
+                )
+                for category, cat_stats in stats.by_category.items()
+            },
+            by_rank={
+                rank: TraceRankStats(
+                    by_category={
+                        category: TraceCategoryStats(
+                            total_us=cat_stats.total_us,
+                            count=cat_stats.count,
+                            min_us=cat_stats.min_us,
+                            max_us=cat_stats.max_us,
+                            avg_us=cat_stats.avg_us,
+                        )
+                        for category, cat_stats in rank_stats.items()
+                    }
+                )
+                for rank, rank_stats in stats.by_rank.items()
+            },
+        )
+
+    async def get_trace_raw(self, task_id: str) -> FileResponse:
+        trace_path = self._get_trace_path(task_id)
+
+        if not trace_path.exists():
+            raise HTTPException(status_code=404, detail=f"Trace not found: {task_id}")
+
+        return FileResponse(
+            path=trace_path,
+            media_type="application/json",
+            filename=f"trace_{task_id}.json",
         )

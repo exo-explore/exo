@@ -1,33 +1,44 @@
 from collections.abc import Generator
-from enum import Enum
 from typing import Any, Literal
 
-from exo.shared.types.api import GenerationStats, ImageGenerationStats, TopLogprobItem
-from exo.shared.types.common import ModelId
+from exo.shared.models.model_cards import ModelId
+from exo.shared.types.api import (
+    GenerationStats,
+    ImageGenerationStats,
+    TopLogprobItem,
+    Usage,
+)
 from exo.utils.pydantic_ext import TaggedModel
 
 from .api import FinishReason
 from .common import CommandId
-
-
-class ChunkType(str, Enum):
-    Token = "Token"
-    Image = "Image"
+from .worker.runner_response import ToolCallItem
 
 
 class BaseChunk(TaggedModel):
-    idx: int
     model: ModelId
 
 
 class TokenChunk(BaseChunk):
     text: str
     token_id: int
-    logprob: float | None = None  # Log probability of the selected token
-    top_logprobs: list[TopLogprobItem] | None = None  # Top-k alternative tokens
-    finish_reason: FinishReason | None = None
+    usage: Usage | None
+    finish_reason: Literal["stop", "length", "content_filter"] | None = None
     stats: GenerationStats | None = None
-    error_message: str | None = None
+    logprob: float | None = None
+    top_logprobs: list[TopLogprobItem] | None = None
+
+
+class ErrorChunk(BaseChunk):
+    error_message: str
+    finish_reason: Literal["error"] = "error"
+
+
+class ToolCallChunk(BaseChunk):
+    tool_calls: list[ToolCallItem]
+    usage: Usage | None
+    finish_reason: Literal["tool_calls"] = "tool_calls"
+    stats: GenerationStats | None = None
 
 
 class ImageChunk(BaseChunk):
@@ -65,7 +76,7 @@ class InputImageChunk(BaseChunk):
                 yield name, value
 
 
-GenerationChunk = TokenChunk | ImageChunk
+GenerationChunk = TokenChunk | ImageChunk | ToolCallChunk | ErrorChunk
 
 
 class PrefillProgressData(TaggedModel):
@@ -75,5 +86,4 @@ class PrefillProgressData(TaggedModel):
     total_tokens: int
 
 
-# Stream events can be either token chunks or prefill progress
 StreamEvent = TokenChunk | PrefillProgressData

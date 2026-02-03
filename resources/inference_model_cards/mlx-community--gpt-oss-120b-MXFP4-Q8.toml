@@ -1,0 +1,8 @@
+model_id = "mlx-community/gpt-oss-120b-MXFP4-Q8"
+n_layers = 36
+hidden_size = 2880
+supports_tensor = true
+tasks = ["TextGeneration"]
+
+[storage_size]
+in_bytes = 70652212224
