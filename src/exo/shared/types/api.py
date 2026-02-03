@@ -350,3 +350,45 @@ class StartDownloadResponse(CamelCaseModel):
 
 class DeleteDownloadResponse(CamelCaseModel):
     command_id: CommandId
+
+
+class TraceEventResponse(CamelCaseModel):
+    name: str
+    start_us: int
+    duration_us: int
+    rank: int
+    category: str
+
+
+class TraceResponse(CamelCaseModel):
+    task_id: str
+    traces: list[TraceEventResponse]
+
+
+class TraceCategoryStats(CamelCaseModel):
+    total_us: int
+    count: int
+    min_us: int
+    max_us: int
+    avg_us: float
+
+
+class TraceRankStats(CamelCaseModel):
+    by_category: dict[str, TraceCategoryStats]
+
+
+class TraceStatsResponse(CamelCaseModel):
+    task_id: str
+    total_wall_time_us: int
+    by_category: dict[str, TraceCategoryStats]
+    by_rank: dict[int, TraceRankStats]
+
+
+class TraceListItem(CamelCaseModel):
+    task_id: str
+    created_at: str
+    file_size: int
+
+
+class TraceListResponse(CamelCaseModel):
+    traces: list[TraceListItem]

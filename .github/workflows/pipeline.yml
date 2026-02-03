@@ -142,4 +142,4 @@ jobs:
           # Run pytest outside sandbox (needs GPU access for MLX)
           export HOME="$RUNNER_TEMP"
           export EXO_TESTS=1
-          $TEST_ENV/bin/python -m pytest src -m "not slow" --import-mode=importlib
+          EXO_RESOURCES_DIR="$PWD/resources" $TEST_ENV/bin/python -m pytest src -m "not slow" --import-mode=importlib

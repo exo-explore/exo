@@ -16,8 +16,9 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
 )
 from pydantic import ValidationError
 
-from exo.shared.constants import EXO_MAX_CHUNK_SIZE
+from exo.shared.constants import EXO_MAX_CHUNK_SIZE, EXO_TRACING_ENABLED
 from exo.shared.models.model_cards import ModelId, ModelTask
+from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
 from exo.shared.types.api import ImageGenerationStats
 from exo.shared.types.chunks import ErrorChunk, ImageChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
@@ -27,6 +28,8 @@ from exo.shared.types.events import (
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
+    TraceEventData,
+    TracesCollected,
 )
 from exo.shared.types.tasks import (
     ConnectToGroup,
@@ -410,6 +413,10 @@ def main(
                                 )
                             )
                         raise
+                    finally:
+                        _send_traces_if_enabled(
+                            event_sender, task.task_id, shard_metadata.device_rank
+                        )
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
@@ -468,6 +475,10 @@ def main(
                                 )
                             )
                         raise
+                    finally:
+                        _send_traces_if_enabled(
+                            event_sender, task.task_id, shard_metadata.device_rank
+                        )
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
@@ -642,6 +653,36 @@ def _send_image_chunk(
         )
 
 
+def _send_traces_if_enabled(
+    event_sender: MpSender[Event],
+    task_id: TaskId,
+    rank: int,
+) -> None:
+    if not EXO_TRACING_ENABLED:
+        return
+
+    traces = get_trace_buffer()
+    if traces:
+        trace_data = [
+            TraceEventData(
+                name=t.name,
+                start_us=t.start_us,
+                duration_us=t.duration_us,
+                rank=t.rank,
+                category=t.category,
+            )
+            for t in traces
+        ]
+        event_sender.send(
+            TracesCollected(
+                task_id=task_id,
+                rank=rank,
+                traces=trace_data,
+            )
+        )
+    clear_trace_buffer()
+
+
 def _process_image_response(
     response: ImageGenerationResponse | PartialImageResponse,
     command_id: CommandId,
@@ -718,6 +759,16 @@ def parse_tool_calls(
 
         if in_tool_call:
             tool_call_text_parts.append(response.text)
+            if response.finish_reason is not None:
+                logger.info(
+                    "toll call parsing interrupted, yield partial tool call as text"
+                )
+                yield GenerationResponse(
+                    text=tool_call_start + "".join(tool_call_text_parts),
+                    token=0,
+                    finish_reason=response.finish_reason,
+                    usage=None,
+                )
             continue
         # fallthrough
         yield response
@@ -790,7 +841,7 @@ def patch_glm_tokenizer(tokenizer: TokenizerWrapper):
 
     _func_name_regex = re.compile(r"^(.*?)<arg_key>", re.DOTALL)
     _func_arg_regex = re.compile(
-        r"<arg_key>(.*?)</arg_key>(?:\\n|\s)*<arg_value>(.*?)</arg_value>",
+        r"<arg_key>(.*?)</arg_key>(?:\n|\s)*<arg_value>(.*?)(?:</arg_value>|(?=<arg_key>)|$)",
         re.DOTALL,
     )
 

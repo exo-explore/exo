@@ -10,6 +10,7 @@ PROJECT_ROOT = Path.cwd()
 SOURCE_ROOT = PROJECT_ROOT / "src"
 ENTRYPOINT = SOURCE_ROOT / "exo" / "__main__.py"
 DASHBOARD_DIR = PROJECT_ROOT / "dashboard" / "build"
+RESOURCES_DIR = PROJECT_ROOT / "resources"
 EXO_SHARED_MODELS_DIR = SOURCE_ROOT / "exo" / "shared" / "models"
 
 if not ENTRYPOINT.is_file():
@@ -17,6 +18,9 @@ if not ENTRYPOINT.is_file():
 
 if not DASHBOARD_DIR.is_dir():
     raise SystemExit(f"Dashboard assets are missing: {DASHBOARD_DIR}")
+
+if not RESOURCES_DIR.is_dir():
+    raise SystemExit(f"Resource assets are missing: {RESOURCES_DIR}")
 
 if not EXO_SHARED_MODELS_DIR.is_dir():
     raise SystemExit(f"Shared model assets are missing: {EXO_SHARED_MODELS_DIR}")
@@ -58,6 +62,7 @@ HIDDEN_IMPORTS = sorted(
 
 DATAS: list[tuple[str, str]] = [
     (str(DASHBOARD_DIR), "dashboard"),
+    (str(RESOURCES_DIR), "resources"),
     (str(MLX_LIB_DIR), "mlx/lib"),
     (str(EXO_SHARED_MODELS_DIR), "exo/shared/models"),
 ]
