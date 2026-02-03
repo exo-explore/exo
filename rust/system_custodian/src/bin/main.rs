@@ -1,4 +1,0 @@
-//! TODO: documentation
-//!
-
-fn main() {}

@@ -4341,25 +4341,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "system_custodian"
-version = "0.0.1"
-dependencies = [
- "delegate",
- "derive_more",
- "either",
- "extend",
- "futures",
- "futures-timer",
- "impl-trait-for-tuples",
- "keccak-const",
- "log",
- "thiserror 2.0.17",
- "tokio",
- "tracing-subscriber",
- "util",
-]
-
-[[package]]
 name = "tagptr"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

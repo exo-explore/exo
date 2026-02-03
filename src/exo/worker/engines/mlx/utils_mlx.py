@@ -1,25 +1,36 @@
 import json
 import os
 import resource
+import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, cast
 
-from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache
+# Monkey-patch for transformers 5.x compatibility
+# Kimi's tokenization_kimi.py imports bytes_to_unicode from the old location
+# which was moved in transformers 5.0.0rc2
+try:
+    import transformers.models.gpt2.tokenization_gpt2 as gpt2_tokenization
+    from transformers.convert_slow_tokenizer import bytes_to_unicode
+
+    if not hasattr(gpt2_tokenization, "bytes_to_unicode"):
+        gpt2_tokenization.bytes_to_unicode = bytes_to_unicode  # type: ignore[attr-defined]
+except ImportError:
+    pass  # transformers < 5.0 or bytes_to_unicode not available
+
+from mlx_lm.models.cache import KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3Model
-from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+from exo.shared.models.model_cards import ModelId
 from exo.worker.engines.mlx.constants import (
-    CACHE_GROUP_SIZE,
-    KV_CACHE_BITS,
     TRUST_REMOTE_CODE,
 )
 
 try:
     from mlx_lm.tokenizer_utils import load_tokenizer
 except ImportError:
-    from mlx_lm.tokenizer_utils import load as load_tokenizer  # type: ignore
+    from mlx_lm.tokenizer_utils import load as load_tokenizer
 import contextlib
 
 import mlx.core as mx
@@ -27,10 +38,10 @@ import mlx.nn as nn
 from mlx_lm.utils import load_model
 from pydantic import RootModel
 
-from exo.shared.types.api import ChatCompletionMessageText
+from exo.download.download_utils import build_model_path
 from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
-from exo.shared.types.tasks import ChatCompletionTaskParams
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     BoundInstance,
     MlxJacclInstance,
@@ -41,9 +52,10 @@ from exo.shared.types.worker.shards import (
     ShardMetadata,
     TensorShardMetadata,
 )
-from exo.worker.download.download_utils import build_model_path
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.auto_parallel import (
+    TimeoutCallback,
+    eval_with_timeout,
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
@@ -60,13 +72,17 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
     return Memory.from_float_kb(
         (model_shard_meta.end_layer - model_shard_meta.start_layer)
         / model_shard_meta.n_layers
-        * model_shard_meta.model_meta.storage_size.in_kb
+        * model_shard_meta.model_card.storage_size.in_kb
         / (
             1
             if isinstance(model_shard_meta, PipelineShardMetadata)
             else model_shard_meta.world_size
         )
     )
+
+
+class ModelLoadingTimeoutError(Exception):
+    pass
 
 
 def mx_barrier(group: Group | None = None):
@@ -132,20 +148,25 @@ def mlx_distributed_init(
                 group = mx.distributed.init(backend="ring", strict=True)
 
             case MlxJacclInstance(
-                ibv_devices=ibv_devices, jaccl_coordinators=jaccl_coordinators
+                jaccl_devices=jaccl_devices, jaccl_coordinators=jaccl_coordinators
             ):
+                assert all(
+                    jaccl_devices[i][i] is None for i in range(len(jaccl_devices))
+                )
                 # Use RDMA connectivity matrix
                 coordination_file = (
                     f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
                 )
-                ibv_devices_json = json.dumps(ibv_devices)
+                jaccl_devices_json = json.dumps(jaccl_devices)
 
                 with open(coordination_file, "w") as f:
-                    _ = f.write(ibv_devices_json)
+                    _ = f.write(jaccl_devices_json)
 
                 jaccl_coordinator = jaccl_coordinators[bound_instance.bound_node_id]
 
-                logger.info(f"rank {rank} MLX_IBV_DEVICES: {ibv_devices_json}")
+                logger.info(
+                    f"rank {rank} MLX_IBV_DEVICES: {coordination_file} with devices: {jaccl_devices_json}"
+                )
                 logger.info(f"rank {rank} MLX_JACCL_COORDINATOR: {jaccl_coordinator}")
                 os.environ["MLX_IBV_DEVICES"] = coordination_file
                 os.environ["MLX_RANK"] = str(rank)
@@ -175,15 +196,13 @@ def initialize_mlx(
 
 
 def load_mlx_items(
-    bound_instance: BoundInstance, group: Group | None
-) -> tuple[Model, TokenizerWrapper, Callable[[mx.array], mx.array]]:
-    # TODO: pass temperature
-    sampler: Callable[[mx.array], mx.array] = make_sampler(temp=0.7)
-    logger.info("Created a sampler")
-
+    bound_instance: BoundInstance,
+    group: Group | None,
+    on_timeout: TimeoutCallback | None = None,
+) -> tuple[Model, TokenizerWrapper]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
-        model_path = build_model_path(bound_instance.bound_shard.model_meta.model_id)
+        model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
         start_time = time.perf_counter()
         model, _ = load_model(model_path, strict=True)
         end_time = time.perf_counter()
@@ -193,7 +212,9 @@ def load_mlx_items(
     else:
         logger.info("Starting distributed init")
         start_time = time.perf_counter()
-        model, tokenizer = shard_and_load(bound_instance.bound_shard, group=group)
+        model, tokenizer = shard_and_load(
+            bound_instance.bound_shard, group=group, on_timeout=on_timeout
+        )
         end_time = time.perf_counter()
         logger.info(
             f"Time taken to shard and load model: {(end_time - start_time):.2f}s"
@@ -201,14 +222,15 @@ def load_mlx_items(
 
     set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
 
-    return cast(Model, model), tokenizer, sampler
+    return cast(Model, model), tokenizer
 
 
 def shard_and_load(
     shard_metadata: ShardMetadata,
     group: Group,
+    on_timeout: TimeoutCallback | None = None,
 ) -> tuple[nn.Module, TokenizerWrapper]:
-    model_path = build_model_path(shard_metadata.model_meta.model_id)
+    model_path = build_model_path(shard_metadata.model_card.model_id)
 
     model, _ = load_model(model_path, lazy=True, strict=False)
     logger.debug(model)
@@ -235,15 +257,23 @@ def shard_and_load(
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 
+    # Estimate timeout based on model size (5x default for large queued workloads)
+    base_timeout = float(os.environ.get("EXO_MODEL_LOAD_TIMEOUT", "300"))
+    model_size_gb = get_weights_size(shard_metadata).in_bytes / (1024**3)
+    timeout_seconds = base_timeout + model_size_gb
+    logger.info(
+        f"Evaluating model parameters with timeout of {timeout_seconds:.0f}s "
+        f"(model size: {model_size_gb:.1f}GB)"
+    )
+
     match shard_metadata:
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
-            model = tensor_auto_parallel(model, group)
+            model = tensor_auto_parallel(model, group, timeout_seconds, on_timeout)
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
             model = pipeline_auto_parallel(model, group, shard_metadata)
-
-    mx.eval(model.parameters())
+            eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
 
     # TODO: Do we need this?
     mx.eval(model)
@@ -257,62 +287,186 @@ def shard_and_load(
     return model, tokenizer
 
 
-def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata):
-    # TODO: Let's move away from this custom logic to mlx_lm.load()
-    if "kimi-k2" in shard_metadata.model_meta.model_id.lower():
-        eos_token_ids = [163586]
+def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerWrapper:
+    """Load tokenizer for a model shard. Delegates to load_tokenizer_for_model_id."""
+    return load_tokenizer_for_model_id(shard_metadata.model_card.model_id, model_path)
 
-    elif "glm" in shard_metadata.model_meta.model_id.lower():
-        eos_token_ids = [151336, 151329, 151338]
 
-    else:
-        eos_token_ids = None
+def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
+    """
+    Get the EOS token IDs for a model based on its ID.
 
-    tokenizer = cast(
-        TokenizerWrapper,
-        load_tokenizer(
-            model_path,
-            tokenizer_config_extra={"trust_remote_code": TRUST_REMOTE_CODE},
-            eos_token_ids=eos_token_ids,
-        ),
+    Some models require explicit EOS token configuration that isn't in their
+    tokenizer config. This function returns the known EOS token IDs for such models.
+
+    Args:
+        model_id: The HuggingFace model ID
+
+    Returns:
+        List of EOS token IDs, or None if the model uses standard tokenizer config
+    """
+    model_id_lower = model_id.lower()
+    if "kimi-k2" in model_id_lower:
+        return [163586]
+    elif "glm-4.7-flash" in model_id_lower:
+        # 154820: <|endoftext|>, 154827: <|user|>, 154829: <|observation|>
+        return [154820, 154827, 154829]
+    elif "glm" in model_id_lower:
+        return [151336, 151329, 151338]
+    return None
+
+
+def load_tokenizer_for_model_id(
+    model_id: ModelId, model_path: Path
+) -> TokenizerWrapper:
+    """
+    Load tokenizer for a model given its ID and local path.
+
+    This is the core tokenizer loading logic, handling special cases for different
+    model families (Kimi, GLM, etc.) and transformers 5.x compatibility.
+
+    Args:
+        model_id: The HuggingFace model ID (e.g., "moonshotai/Kimi-K2-Instruct")
+        model_path: Local path where the model/tokenizer files are stored
+
+    Returns:
+        TokenizerWrapper instance configured for the model
+    """
+    model_id_lower = model_id.lower()
+    eos_token_ids = get_eos_token_ids_for_model(model_id)
+
+    # Kimi uses a custom TikTokenTokenizer that transformers 5.x can't load via AutoTokenizer
+    if "kimi-k2" in model_id_lower:
+        import importlib.util
+        import types
+
+        sys.path.insert(0, str(model_path))
+
+        # Load tool_declaration_ts first (tokenization_kimi imports it with relative import)
+        tool_decl_path = model_path / "tool_declaration_ts.py"
+        if tool_decl_path.exists():
+            spec = importlib.util.spec_from_file_location(
+                "tool_declaration_ts", tool_decl_path
+            )
+            if spec and spec.loader:
+                tool_decl_module = importlib.util.module_from_spec(spec)
+                sys.modules["tool_declaration_ts"] = tool_decl_module
+                spec.loader.exec_module(tool_decl_module)
+
+        # Load tokenization_kimi with patched source (convert relative to absolute import)
+        tok_path = model_path / "tokenization_kimi.py"
+        source = tok_path.read_text()
+        source = source.replace("from .tool_declaration_ts", "from tool_declaration_ts")
+        spec = importlib.util.spec_from_file_location("tokenization_kimi", tok_path)
+        if spec:
+            tok_module = types.ModuleType("tokenization_kimi")
+            tok_module.__file__ = str(tok_path)
+            sys.modules["tokenization_kimi"] = tok_module
+            exec(compile(source, tok_path, "exec"), tok_module.__dict__)  # noqa: S102
+            TikTokenTokenizer = tok_module.TikTokenTokenizer  # type: ignore[attr-defined]  # noqa: N806
+        else:
+            from tokenization_kimi import TikTokenTokenizer  # type: ignore[import-not-found]  # noqa: I001
+
+        hf_tokenizer: Any = TikTokenTokenizer.from_pretrained(model_path)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+
+        # Patch encode to use internal tiktoken model directly
+        # transformers 5.x has a bug in the encode->pad path for slow tokenizers
+        def _patched_encode(text: str, **_kwargs: object) -> list[int]:
+            # Pass allowed_special="all" to handle special tokens like <|im_user|>
+            return list(hf_tokenizer.model.encode(text, allowed_special="all"))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+
+        hf_tokenizer.encode = _patched_encode
+        return TokenizerWrapper(hf_tokenizer, eos_token_ids=eos_token_ids)
+
+    tokenizer = load_tokenizer(
+        model_path,
+        tokenizer_config_extra={"trust_remote_code": TRUST_REMOTE_CODE},
+        eos_token_ids=eos_token_ids,
     )
-    assert isinstance(tokenizer, TokenizerWrapper)
 
     return tokenizer
 
 
+def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
+    """Normalize tool_calls in a message dict.
+
+    OpenAI format has tool_calls[].function.arguments as a JSON string,
+    but some chat templates (e.g., GLM) expect it as a dict.
+    """
+    tool_calls = msg_dict.get("tool_calls")
+    if not tool_calls or not isinstance(tool_calls, list):
+        return
+
+    for tc in tool_calls:  # pyright: ignore[reportUnknownVariableType]
+        if not isinstance(tc, dict):
+            continue
+        func = tc.get("function")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        if not isinstance(func, dict):
+            continue
+        args = func.get("arguments")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        if isinstance(args, str):
+            with contextlib.suppress(json.JSONDecodeError):
+                func["arguments"] = json.loads(args)
+
+
 def apply_chat_template(
     tokenizer: TokenizerWrapper,
-    chat_task_data: ChatCompletionTaskParams,
+    task_params: TextGenerationTaskParams,
 ) -> str:
-    # Now we can properly access the messages
-    messages = chat_task_data.messages
+    """Convert TextGenerationTaskParams to a chat template prompt.
 
+    Converts the internal format (input + instructions) to a messages list
+    that can be processed by the tokenizer's chat template.
+
+    When chat_template_messages is available (from Chat Completions API),
+    uses those directly to preserve tool_calls, thinking, and other fields.
+    Otherwise builds messages from the task params input/instructions.
+    """
     formatted_messages: list[dict[str, Any]] = []
-    for _, message in enumerate(messages):
-        if isinstance(message.content, ChatCompletionMessageText):
-            message.content = message.content.text
-        if isinstance(message.content, list):
-            if len(message.content) != 1:
-                logger.warning("Received malformed prompt")
-                continue
+    if task_params.chat_template_messages is not None:
+        # Use pre-formatted messages that preserve tool_calls, thinking, etc.
+        formatted_messages = list(task_params.chat_template_messages)
+        for msg in formatted_messages:
+            _normalize_tool_calls(msg)
+    else:
+        # Add system message (instructions) if present
+        if task_params.instructions:
+            formatted_messages.append(
+                {"role": "system", "content": task_params.instructions}
+            )
 
-            message.content = message.content[0].text
-        if message.content is None and message.thinking is None:
-            continue
+        # Convert input to messages
+        if isinstance(task_params.input, str):
+            # Simple string input becomes a single user message
+            formatted_messages.append({"role": "user", "content": task_params.input})
+        else:
+            # List of InputMessage
+            for msg in task_params.input:
+                if not msg.content:
+                    logger.warning("Received message with empty content, skipping")
+                    continue
+                formatted_messages.append({"role": msg.role, "content": msg.content})
 
-        # Null values are not valid when applying templates in tokenizer
-        formatted_messages.append(
-            {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
-        )
-
-    prompt: str = tokenizer.apply_chat_template(  # type: ignore
+    prompt: str = tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
+        tools=task_params.tools,
     )
 
-    return prompt  # type: ignore
+    logger.info(prompt)
+
+    return prompt
+
+
+def detect_thinking_prompt_suffix(prompt: str, tokenizer: TokenizerWrapper) -> bool:
+    """
+    Detect if prompt ends with a thinking opening tag that should be
+    prepended to the output stream.
+    """
+    think_token = tokenizer.think_start
+
+    return think_token is not None and prompt.rstrip().endswith(think_token)
 
 
 class NullKVCache(KVCache):
@@ -336,26 +490,6 @@ class NullKVCache(KVCache):
     @state.setter
     def state(self, v: tuple[mx.array, mx.array]) -> None:
         raise NotImplementedError("We should not be setting a NullKVCache.")
-
-
-def make_kv_cache(
-    model: Model, max_kv_size: int | None = None, keep: int = 0
-) -> list[KVCache | RotatingKVCache | QuantizedKVCache]:
-    assert hasattr(model, "layers")
-
-    if max_kv_size is None:
-        if KV_CACHE_BITS is None:
-            logger.info("Using default KV cache")
-            return [KVCache() for _ in model.layers]
-        else:
-            logger.info("Using quantized KV cache")
-            return [
-                QuantizedKVCache(group_size=CACHE_GROUP_SIZE, bits=KV_CACHE_BITS)
-                for _ in model.layers
-            ]
-    else:
-        logger.info(f"Using rotating KV cache with {max_kv_size=} with {keep=}")
-        return [RotatingKVCache(max_size=max_kv_size, keep=keep) for _ in model.layers]
 
 
 def mlx_force_oom(size: int = 40000) -> None:
@@ -397,3 +531,13 @@ def set_wired_limit_for_model(model_size: Memory):
         )
     mx.set_wired_limit(max_rec_size)
     logger.info(f"Wired limit set to {max_rec_size}.")
+
+
+def mlx_cleanup(
+    model: Model | None, tokenizer: TokenizerWrapper | None, group: Group | None
+) -> None:
+    del model, tokenizer, group
+    mx.clear_cache()
+    import gc
+
+    gc.collect()

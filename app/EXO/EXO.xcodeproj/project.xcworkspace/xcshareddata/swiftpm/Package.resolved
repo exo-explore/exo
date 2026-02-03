@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/sparkle-project/Sparkle.git",
       "state" : {
-        "revision" : "5581748cef2bae787496fe6d61139aebe0a451f6",
-        "version" : "2.8.1"
+        "revision" : "afea2cda87819c960114f26e26f369a1a0945b17",
+        "version" : "2.9.0-beta.2"
       }
     }
   ],

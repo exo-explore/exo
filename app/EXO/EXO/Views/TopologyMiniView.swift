@@ -76,30 +76,33 @@ struct TopologyMiniView: View {
 
     private func connectionLines(in size: CGSize) -> some View {
         let positions = positionedNodes(in: size)
-        let positionById = Dictionary(uniqueKeysWithValues: positions.map { ($0.node.id, $0.point) })
+        let positionById = Dictionary(
+            uniqueKeysWithValues: positions.map { ($0.node.id, $0.point) })
         return Canvas { context, _ in
             guard !topology.edges.isEmpty else { return }
             let nodeRadius: CGFloat = 32
             let arrowLength: CGFloat = 10
             let arrowSpread: CGFloat = .pi / 7
             for edge in topology.edges {
-                guard let start = positionById[edge.sourceId], let end = positionById[edge.targetId] else { continue }
+                guard let start = positionById[edge.sourceId], let end = positionById[edge.targetId]
+                else { continue }
                 let dx = end.x - start.x
                 let dy = end.y - start.y
                 let distance = max(CGFloat(hypot(dx, dy)), 1)
                 let ux = dx / distance
                 let uy = dy / distance
-                let adjustedStart = CGPoint(x: start.x + ux * nodeRadius, y: start.y + uy * nodeRadius)
+                let adjustedStart = CGPoint(
+                    x: start.x + ux * nodeRadius, y: start.y + uy * nodeRadius)
                 let adjustedEnd = CGPoint(x: end.x - ux * nodeRadius, y: end.y - uy * nodeRadius)
 
                 var linePath = Path()
                 linePath.move(to: adjustedStart)
                 linePath.addLine(to: adjustedEnd)
-            context.stroke(
+                context.stroke(
                     linePath,
                     with: .color(.secondary.opacity(0.3)),
-                style: StrokeStyle(lineWidth: 1, dash: [4, 4])
-            )
+                    style: StrokeStyle(lineWidth: 1, dash: [4, 4])
+                )
 
                 let angle = atan2(uy, ux)
                 let tip = adjustedEnd
@@ -168,5 +171,3 @@ private struct NodeGlyphView: View {
         .frame(width: 95)
     }
 }
-
-

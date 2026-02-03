@@ -1,20 +1,24 @@
-from typing import Callable
-
 import pytest
-from loguru import logger
 
 from exo.master.placement import (
     get_transition_events,
     place_instance,
 )
+from exo.master.tests.conftest import (
+    create_node_memory,
+    create_node_network,
+    create_rdma_connection,
+    create_socket_connection,
+)
+from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.commands import PlaceInstance
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata
-from exo.shared.types.profiling import NetworkInterfaceInfo, NodePerformanceProfile
-from exo.shared.types.topology import Connection, NodeInfo
+from exo.shared.types.multiaddr import Multiaddr
+from exo.shared.types.profiling import NetworkInterfaceInfo, NodeNetworkInfo
+from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.instances import (
     Instance,
     InstanceId,
@@ -24,11 +28,6 @@ from exo.shared.types.worker.instances import (
 )
 from exo.shared.types.worker.runners import ShardAssignments
 from exo.shared.types.worker.shards import Sharding
-
-
-@pytest.fixture
-def topology() -> Topology:
-    return Topology()
 
 
 @pytest.fixture
@@ -44,21 +43,21 @@ def instance() -> Instance:
 
 
 @pytest.fixture
-def model_meta() -> ModelMetadata:
-    return ModelMetadata(
+def model_card() -> ModelCard:
+    return ModelCard(
         model_id=ModelId("test-model"),
         storage_size=Memory.from_kb(1000),
-        pretty_name="Test Model",
         n_layers=10,
         hidden_size=30,
         supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
     )
 
 
-def place_instance_command(model_meta: ModelMetadata) -> PlaceInstance:
+def place_instance_command(model_card: ModelCard) -> PlaceInstance:
     return PlaceInstance(
         command_id=CommandId(),
-        model_meta=model_meta,
+        model_card=model_card,
         sharding=Sharding.Pipeline,
         instance_meta=InstanceMeta.MlxRing,
         min_nodes=1,
@@ -70,47 +69,75 @@ def place_instance_command(model_meta: ModelMetadata) -> PlaceInstance:
     [
         ((500, 500, 1000), 12, (3, 3, 6)),
         ((500, 500, 500), 12, (4, 4, 4)),
-        ((312, 518, 1024), 12, (2, 3, 7)),
+        ((312, 468, 1092), 12, (2, 3, 7)),
     ],
 )
 def test_get_instance_placements_create_instance(
     available_memory: tuple[int, int, int],
     total_layers: int,
     expected_layers: tuple[int, int, int],
-    topology: Topology,
-    model_meta: ModelMetadata,
-    create_node: Callable[[int, NodeId | None], NodeInfo],
-    create_connection: Callable[[NodeId, NodeId], Connection],
+    model_card: ModelCard,
 ):
     # arrange
-    model_meta.n_layers = total_layers
-    model_meta.storage_size.in_bytes = sum(
+    model_card.n_layers = total_layers
+    model_card.storage_size.in_bytes = sum(
         available_memory
     )  # make it exactly fit across all nodes
+    topology = Topology()
 
-    cic = place_instance_command(model_meta)
+    cic = place_instance_command(model_card)
     node_id_a = NodeId()
     node_id_b = NodeId()
     node_id_c = NodeId()
-    topology.add_node(create_node(available_memory[0], node_id_a))
-    topology.add_node(create_node(available_memory[1], node_id_b))
-    topology.add_node(create_node(available_memory[2], node_id_c))
-    # Add bidirectional connections for ring topology
-    topology.add_connection(create_connection(node_id_a, node_id_b))
-    topology.add_connection(create_connection(node_id_b, node_id_a))
-    topology.add_connection(create_connection(node_id_b, node_id_c))
-    topology.add_connection(create_connection(node_id_c, node_id_b))
-    topology.add_connection(create_connection(node_id_c, node_id_a))
-    topology.add_connection(create_connection(node_id_a, node_id_c))
+
+    # fully connected (directed) between the 3 nodes
+    conn_a_b = Connection(
+        source=node_id_a, sink=node_id_b, edge=create_socket_connection(1)
+    )
+    conn_b_c = Connection(
+        source=node_id_b, sink=node_id_c, edge=create_socket_connection(2)
+    )
+    conn_c_a = Connection(
+        source=node_id_c, sink=node_id_a, edge=create_socket_connection(3)
+    )
+    conn_c_b = Connection(
+        source=node_id_c, sink=node_id_b, edge=create_socket_connection(4)
+    )
+    conn_a_c = Connection(
+        source=node_id_a, sink=node_id_c, edge=create_socket_connection(5)
+    )
+    conn_b_a = Connection(
+        source=node_id_b, sink=node_id_a, edge=create_socket_connection(6)
+    )
+
+    node_memory = {
+        node_id_a: create_node_memory(available_memory[0]),
+        node_id_b: create_node_memory(available_memory[1]),
+        node_id_c: create_node_memory(available_memory[2]),
+    }
+    node_network = {
+        node_id_a: create_node_network(),
+        node_id_b: create_node_network(),
+        node_id_c: create_node_network(),
+    }
+    topology.add_node(node_id_a)
+    topology.add_node(node_id_b)
+    topology.add_node(node_id_c)
+    topology.add_connection(conn_a_b)
+    topology.add_connection(conn_b_c)
+    topology.add_connection(conn_c_a)
+    topology.add_connection(conn_c_b)
+    topology.add_connection(conn_a_c)
+    topology.add_connection(conn_b_a)
 
     # act
-    placements = place_instance(cic, topology, {})
+    placements = place_instance(cic, topology, {}, node_memory, node_network)
 
     # assert
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
     instance = placements[instance_id]
-    assert instance.shard_assignments.model_id == model_meta.model_id
+    assert instance.shard_assignments.model_id == model_card.model_id
 
     runner_id_a = instance.shard_assignments.node_to_runner[node_id_a]
     runner_id_b = instance.shard_assignments.node_to_runner[node_id_b]
@@ -130,23 +157,23 @@ def test_get_instance_placements_create_instance(
     assert shards_sorted[-1].end_layer == total_layers
 
 
-def test_get_instance_placements_one_node_exact_fit(
-    create_node: Callable[[int, NodeId | None], NodeInfo],
-) -> None:
+def test_get_instance_placements_one_node_exact_fit() -> None:
     topology = Topology()
     node_id = NodeId()
-    topology.add_node(create_node(1000 * 1024, node_id))
+    topology.add_node(node_id)
+    node_memory = {node_id: create_node_memory(1000 * 1024)}
+    node_network = {node_id: create_node_network()}
     cic = place_instance_command(
-        ModelMetadata(
+        ModelCard(
             model_id=ModelId("test-model"),
             storage_size=Memory.from_kb(1000),
-            pretty_name="Test Model",
             n_layers=10,
             hidden_size=1000,
             supports_tensor=True,
+            tasks=[ModelTask.TextGeneration],
         ),
     )
-    placements = place_instance(cic, topology, {})
+    placements = place_instance(cic, topology, {}, node_memory, node_network)
 
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
@@ -157,23 +184,23 @@ def test_get_instance_placements_one_node_exact_fit(
     assert len(instance.shard_assignments.runner_to_shard) == 1
 
 
-def test_get_instance_placements_one_node_fits_with_extra_memory(
-    create_node: Callable[[int, NodeId | None], NodeInfo],
-) -> None:
+def test_get_instance_placements_one_node_fits_with_extra_memory() -> None:
     topology = Topology()
     node_id = NodeId()
-    topology.add_node(create_node(1001 * 1024, node_id))
+    topology.add_node(node_id)
+    node_memory = {node_id: create_node_memory(1001 * 1024)}
+    node_network = {node_id: create_node_network()}
     cic = place_instance_command(
-        ModelMetadata(
+        ModelCard(
             model_id=ModelId("test-model"),
             storage_size=Memory.from_kb(1000),
-            pretty_name="Test Model",
             n_layers=10,
             hidden_size=1000,
             supports_tensor=True,
+            tasks=[ModelTask.TextGeneration],
         ),
     )
-    placements = place_instance(cic, topology, {})
+    placements = place_instance(cic, topology, {}, node_memory, node_network)
 
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
@@ -184,25 +211,25 @@ def test_get_instance_placements_one_node_fits_with_extra_memory(
     assert len(instance.shard_assignments.runner_to_shard) == 1
 
 
-def test_get_instance_placements_one_node_not_fit(
-    create_node: Callable[[int, NodeId | None], NodeInfo],
-) -> None:
+def test_get_instance_placements_one_node_not_fit() -> None:
     topology = Topology()
     node_id = NodeId()
-    topology.add_node(create_node(1000 * 1024, node_id))
+    topology.add_node(node_id)
+    node_memory = {node_id: create_node_memory(1000 * 1024)}
+    node_network = {node_id: create_node_network()}
     cic = place_instance_command(
-        model_meta=ModelMetadata(
+        model_card=ModelCard(
             model_id=ModelId("test-model"),
             storage_size=Memory.from_kb(1001),
-            pretty_name="Test Model",
             n_layers=10,
             hidden_size=1000,
             supports_tensor=True,
+            tasks=[ModelTask.TextGeneration],
         ),
     )
 
     with pytest.raises(ValueError, match="No cycles found with sufficient memory"):
-        place_instance(cic, topology, {})
+        place_instance(cic, topology, {}, node_memory, node_network)
 
 
 def test_get_transition_events_no_change(instance: Instance):
@@ -247,217 +274,175 @@ def test_get_transition_events_delete_instance(instance: Instance):
     assert events[0].instance_id == instance_id
 
 
-def test_placement_selects_cycle_with_most_memory(
-    topology: Topology,
-    model_meta: ModelMetadata,
-    create_node: Callable[[int, NodeId | None], NodeInfo],
-    create_connection: Callable[[NodeId, NodeId], Connection],
+def test_placement_selects_leaf_nodes(
+    model_card: ModelCard,
 ):
-    # Arrange two 3-node cycles with different total memory.
-    # With bidirectional connections for ring topology, both cycles have non-leaf nodes.
-    # The algorithm should select the cycle with the most available memory.
+    # arrange
+    topology = Topology()
 
-    # Model requires more than any single node but fits within a 3-node cycle
-    model_meta.storage_size.in_bytes = 1500
-    model_meta.n_layers = 12
+    model_card.storage_size = Memory.from_bytes(1000)
 
-    # Create node ids
     node_id_a = NodeId()
     node_id_b = NodeId()
     node_id_c = NodeId()
     node_id_d = NodeId()
-    node_id_e = NodeId()
-    node_id_f = NodeId()
 
-    # A-B-C cycle total memory = 1600 (< D-E-F total)
-    topology.add_node(create_node(400, node_id_a))
-    topology.add_node(create_node(400, node_id_b))
-    topology.add_node(create_node(800, node_id_c))
+    node_memory = {
+        node_id_a: create_node_memory(500),
+        node_id_b: create_node_memory(600),
+        node_id_c: create_node_memory(600),
+        node_id_d: create_node_memory(500),
+    }
+    node_network = {
+        node_id_a: create_node_network(),
+        node_id_b: create_node_network(),
+        node_id_c: create_node_network(),
+        node_id_d: create_node_network(),
+    }
 
-    # D-E-F cycle total memory = 1800 (> A-B-C total)
-    topology.add_node(create_node(600, node_id_d))
-    topology.add_node(create_node(600, node_id_e))
-    topology.add_node(create_node(600, node_id_f))
+    topology.add_node(node_id_a)
+    topology.add_node(node_id_b)
+    topology.add_node(node_id_c)
+    topology.add_node(node_id_d)
 
-    # Build bidirectional cycles for ring topology
-    topology.add_connection(create_connection(node_id_a, node_id_b))
-    topology.add_connection(create_connection(node_id_b, node_id_a))
-    topology.add_connection(create_connection(node_id_b, node_id_c))
-    topology.add_connection(create_connection(node_id_c, node_id_b))
-    topology.add_connection(create_connection(node_id_c, node_id_a))
-    topology.add_connection(create_connection(node_id_a, node_id_c))
-
-    topology.add_connection(create_connection(node_id_d, node_id_e))
-    topology.add_connection(create_connection(node_id_e, node_id_d))
-    topology.add_connection(create_connection(node_id_e, node_id_f))
-    topology.add_connection(create_connection(node_id_f, node_id_e))
-    topology.add_connection(create_connection(node_id_f, node_id_d))
-    topology.add_connection(create_connection(node_id_d, node_id_f))
-
-    cic = place_instance_command(
-        model_meta=model_meta,
+    # Daisy chain topology (directed)
+    topology.add_connection(
+        Connection(source=node_id_a, sink=node_id_b, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_id_b, sink=node_id_a, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_id_b, sink=node_id_c, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_id_c, sink=node_id_b, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_id_c, sink=node_id_d, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_id_d, sink=node_id_c, edge=create_socket_connection(1))
     )
 
-    # Act
-    placements = place_instance(cic, topology, {})
+    cic = place_instance_command(model_card=model_card)
 
-    # Assert: D-E-F cycle should be selected as it has more total memory
+    # act
+    placements = place_instance(cic, topology, {}, node_memory, node_network)
+
+    # assert
     assert len(placements) == 1
-    instance_id = list(placements.keys())[0]
-    instance = placements[instance_id]
+    instance = list(placements.values())[0]
 
     assigned_nodes = set(instance.shard_assignments.node_to_runner.keys())
-    less_memory_cycle_nodes = {node_id_a, node_id_b, node_id_c}
-    more_memory_cycle_nodes = {node_id_d, node_id_e, node_id_f}
-
-    assert more_memory_cycle_nodes.issubset(assigned_nodes)
-    assert assigned_nodes.isdisjoint(less_memory_cycle_nodes)
+    assert assigned_nodes == set((node_id_a, node_id_b)) or assigned_nodes == set(
+        (
+            node_id_c,
+            node_id_d,
+        )
+    )
 
 
 def test_tensor_rdma_backend_connectivity_matrix(
-    topology: Topology,
-    model_meta: ModelMetadata,
-    create_node: Callable[[int, NodeId | None], NodeInfo],
-    create_connection: Callable[[NodeId, NodeId], Connection],
+    model_card: ModelCard,
 ):
-    model_meta.n_layers = 12
-    model_meta.storage_size.in_bytes = 1500
+    # arrange
+    topology = Topology()
+    model_card.n_layers = 12
+    model_card.storage_size.in_bytes = 1500
 
-    node_id_a = NodeId()
-    node_id_b = NodeId()
-    node_id_c = NodeId()
+    node_a = NodeId()
+    node_b = NodeId()
+    node_c = NodeId()
 
-    node_a = create_node(500, node_id_a)
-    node_b = create_node(500, node_id_b)
-    node_c = create_node(500, node_id_c)
+    node_memory = {
+        node_a: create_node_memory(500),
+        node_b: create_node_memory(500),
+        node_c: create_node_memory(500),
+    }
 
     ethernet_interface = NetworkInterfaceInfo(
         name="en0",
-        ip_address="192.168.1.100",
+        ip_address="10.0.0.1",
+    )
+    ethernet_conn = SocketConnection(
+        sink_multiaddr=Multiaddr(address="/ip4/10.0.0.1/tcp/8000")
     )
 
-    assert node_a.node_profile is not None
-    assert node_b.node_profile is not None
-    assert node_c.node_profile is not None
-
-    conn_a_b = create_connection(node_id_a, node_id_b)
-    conn_b_c = create_connection(node_id_b, node_id_c)
-    conn_c_a = create_connection(node_id_c, node_id_a)
-
-    conn_b_a = create_connection(node_id_b, node_id_a)
-    conn_c_b = create_connection(node_id_c, node_id_b)
-    conn_a_c = create_connection(node_id_a, node_id_c)
-
-    assert conn_a_b.send_back_multiaddr is not None
-    assert conn_b_c.send_back_multiaddr is not None
-    assert conn_c_a.send_back_multiaddr is not None
-
-    assert conn_b_a.send_back_multiaddr is not None
-    assert conn_c_b.send_back_multiaddr is not None
-    assert conn_a_c.send_back_multiaddr is not None
-
-    node_a.node_profile = NodePerformanceProfile(
-        model_id="test",
-        chip_id="test",
-        friendly_name="test",
-        memory=node_a.node_profile.memory,
-        network_interfaces=[
-            NetworkInterfaceInfo(
-                name="en3",
-                ip_address=conn_c_a.send_back_multiaddr.ip_address,
-            ),
-            NetworkInterfaceInfo(
-                name="en4",
-                ip_address=conn_b_a.send_back_multiaddr.ip_address,
-            ),
-            ethernet_interface,
-        ],
-        system=node_a.node_profile.system,
-    )
-    node_b.node_profile = NodePerformanceProfile(
-        model_id="test",
-        chip_id="test",
-        friendly_name="test",
-        memory=node_b.node_profile.memory,
-        network_interfaces=[
-            NetworkInterfaceInfo(
-                name="en3",
-                ip_address=conn_c_b.send_back_multiaddr.ip_address,
-            ),
-            NetworkInterfaceInfo(
-                name="en4",
-                ip_address=conn_a_b.send_back_multiaddr.ip_address,
-            ),
-            ethernet_interface,
-        ],
-        system=node_b.node_profile.system,
-    )
-    node_c.node_profile = NodePerformanceProfile(
-        model_id="test",
-        chip_id="test",
-        friendly_name="test",
-        memory=node_c.node_profile.memory,
-        network_interfaces=[
-            NetworkInterfaceInfo(
-                name="en3",
-                ip_address=conn_a_c.send_back_multiaddr.ip_address,
-            ),
-            NetworkInterfaceInfo(
-                name="en4",
-                ip_address=conn_b_c.send_back_multiaddr.ip_address,
-            ),
-            ethernet_interface,
-        ],
-        system=node_c.node_profile.system,
-    )
+    node_network = {
+        node_a: NodeNetworkInfo(interfaces=[ethernet_interface]),
+        node_b: NodeNetworkInfo(interfaces=[ethernet_interface]),
+        node_c: NodeNetworkInfo(interfaces=[ethernet_interface]),
+    }
 
     topology.add_node(node_a)
     topology.add_node(node_b)
     topology.add_node(node_c)
-    topology.add_connection(conn_a_b)
-    topology.add_connection(conn_b_c)
-    topology.add_connection(conn_c_a)
-    topology.add_connection(conn_b_a)
-    topology.add_connection(conn_c_b)
-    topology.add_connection(conn_a_c)
+
+    # RDMA connections (directed)
+    topology.add_connection(
+        Connection(source=node_a, sink=node_b, edge=create_rdma_connection(3))
+    )
+    topology.add_connection(
+        Connection(source=node_b, sink=node_a, edge=create_rdma_connection(3))
+    )
+    topology.add_connection(
+        Connection(source=node_b, sink=node_c, edge=create_rdma_connection(4))
+    )
+    topology.add_connection(
+        Connection(source=node_c, sink=node_b, edge=create_rdma_connection(4))
+    )
+    topology.add_connection(
+        Connection(source=node_a, sink=node_c, edge=create_rdma_connection(5))
+    )
+    topology.add_connection(
+        Connection(source=node_c, sink=node_a, edge=create_rdma_connection(5))
+    )
+
+    # Ethernet connections (directed)
+    topology.add_connection(Connection(source=node_a, sink=node_b, edge=ethernet_conn))
+    topology.add_connection(Connection(source=node_b, sink=node_c, edge=ethernet_conn))
+    topology.add_connection(Connection(source=node_c, sink=node_a, edge=ethernet_conn))
+    topology.add_connection(Connection(source=node_a, sink=node_c, edge=ethernet_conn))
+    topology.add_connection(Connection(source=node_b, sink=node_a, edge=ethernet_conn))
+    topology.add_connection(Connection(source=node_c, sink=node_b, edge=ethernet_conn))
 
     cic = PlaceInstance(
         sharding=Sharding.Tensor,
         instance_meta=InstanceMeta.MlxJaccl,
         command_id=CommandId(),
-        model_meta=model_meta,
+        model_card=model_card,
         min_nodes=1,
     )
 
-    placements = place_instance(cic, topology, {})
+    # act
+    placements = place_instance(cic, topology, {}, node_memory, node_network)
 
+    # assert
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
     instance = placements[instance_id]
 
     assert isinstance(instance, MlxJacclInstance)
 
-    assert instance.ibv_devices is not None
+    assert instance.jaccl_devices is not None
     assert instance.jaccl_coordinators is not None
 
-    matrix = instance.ibv_devices
+    matrix = instance.jaccl_devices
     assert len(matrix) == 3
-
     for i in range(3):
         assert matrix[i][i] is None
 
     assigned_nodes = list(instance.shard_assignments.node_to_runner.keys())
     node_to_idx = {node_id: idx for idx, node_id in enumerate(assigned_nodes)}
 
-    idx_a = node_to_idx[node_id_a]
-    idx_b = node_to_idx[node_id_b]
-    idx_c = node_to_idx[node_id_c]
+    idx_a = node_to_idx[node_a]
+    idx_b = node_to_idx[node_b]
+    idx_c = node_to_idx[node_c]
 
-    logger.info(matrix)
-
-    assert matrix[idx_a][idx_b] == "rdma_en4"
-    assert matrix[idx_b][idx_c] == "rdma_en3"
-    assert matrix[idx_c][idx_a] == "rdma_en3"
+    assert matrix[idx_a][idx_b] == "rdma_en3"
+    assert matrix[idx_b][idx_c] == "rdma_en4"
+    assert matrix[idx_c][idx_a] == "rdma_en5"
 
     # Verify coordinators are set for all nodes
     assert len(instance.jaccl_coordinators) == 3
@@ -469,7 +454,5 @@ def test_tensor_rdma_backend_connectivity_matrix(
         if node_id == assigned_nodes[0]:
             assert coordinator.startswith("0.0.0.0:")
         else:
-            # Non-rank-0 nodes should have valid IP addresses (can be link-local)
             ip_part = coordinator.split(":")[0]
-            # Just verify it's a valid IP format
             assert len(ip_part.split(".")) == 4

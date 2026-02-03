@@ -2,8 +2,8 @@ from collections.abc import Mapping
 
 from pydantic import model_validator
 
+from exo.shared.models.model_cards import ModelId
 from exo.shared.types.common import Id, NodeId
-from exo.shared.types.models import ModelId
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
@@ -53,6 +53,10 @@ class RunnerRunning(BaseRunnerStatus):
     pass
 
 
+class RunnerShuttingDown(BaseRunnerStatus):
+    pass
+
+
 class RunnerShutdown(BaseRunnerStatus):
     pass
 
@@ -70,6 +74,7 @@ RunnerStatus = (
     | RunnerWarmingUp
     | RunnerReady
     | RunnerRunning
+    | RunnerShuttingDown
     | RunnerShutdown
     | RunnerFailed
 )

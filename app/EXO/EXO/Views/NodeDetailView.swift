@@ -32,4 +32,3 @@ struct NodeDetailView: View {
         }
     }
 }
-

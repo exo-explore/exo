@@ -7,7 +7,14 @@ from pydantic.alias_generators import to_camel
 
 from exo.shared.topology import Topology, TopologySnapshot
 from exo.shared.types.common import NodeId
-from exo.shared.types.profiling import NodePerformanceProfile
+from exo.shared.types.profiling import (
+    MemoryUsage,
+    NodeIdentity,
+    NodeNetworkInfo,
+    NodeThunderboltInfo,
+    SystemPerformanceProfile,
+    ThunderboltBridgeStatus,
+)
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
@@ -35,10 +42,20 @@ class State(CamelCaseModel):
     runners: Mapping[RunnerId, RunnerStatus] = {}
     downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {}
     tasks: Mapping[TaskId, Task] = {}
-    node_profiles: Mapping[NodeId, NodePerformanceProfile] = {}
     last_seen: Mapping[NodeId, datetime] = {}
     topology: Topology = Field(default_factory=Topology)
     last_event_applied_idx: int = Field(default=-1, ge=-1)
+
+    # Granular node state mappings (update independently at different frequencies)
+    node_identities: Mapping[NodeId, NodeIdentity] = {}
+    node_memory: Mapping[NodeId, MemoryUsage] = {}
+    node_system: Mapping[NodeId, SystemPerformanceProfile] = {}
+    node_network: Mapping[NodeId, NodeNetworkInfo] = {}
+    node_thunderbolt: Mapping[NodeId, NodeThunderboltInfo] = {}
+    node_thunderbolt_bridge: Mapping[NodeId, ThunderboltBridgeStatus] = {}
+
+    # Detected cycles where all nodes have Thunderbolt bridge enabled (>2 nodes)
+    thunderbolt_bridge_cycles: Sequence[Sequence[NodeId]] = []
 
     @field_serializer("topology", mode="plain")
     def _encode_topology(self, value: Topology) -> TopologySnapshot:
