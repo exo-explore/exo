@@ -22,7 +22,7 @@ from exo.shared.types.tasks import (
     TaskStatus,
     TextGeneration,
 )
-from exo.shared.types.text_generation import TextGenerationTaskParams
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.shared.types.worker.runners import (
     RunnerConnected,
@@ -86,7 +86,7 @@ SHUTDOWN_TASK = Shutdown(
 
 CHAT_PARAMS = TextGenerationTaskParams(
     model=MODEL_A_ID,
-    input="hello",
+    input=[InputMessage(role="user", content="hello")],
     stream=True,
     max_output_tokens=4,
     temperature=0.0,

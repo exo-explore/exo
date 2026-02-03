@@ -920,15 +920,10 @@ def _check_for_debug_prompts(task_params: TextGenerationTaskParams) -> None:
 
     Extracts the first user input text and checks for debug triggers.
     """
-    prompt: str
-    if isinstance(task_params.input, str):
-        prompt = task_params.input
-    else:
-        # List of InputMessage - get first message content
-        if len(task_params.input) == 0:
-            logger.debug("Empty message list in debug prompt check")
-            return
-        prompt = task_params.input[0].content
+    if len(task_params.input) == 0:
+        logger.debug("Empty message list in debug prompt check")
+        return
+    prompt = task_params.input[0].content
 
     if not prompt:
         return

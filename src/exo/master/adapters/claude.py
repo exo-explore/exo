@@ -141,7 +141,9 @@ def claude_request_to_text_generation(
 
     return TextGenerationTaskParams(
         model=request.model,
-        input=input_messages if input_messages else "",
+        input=input_messages
+        if input_messages
+        else [InputMessage(role="user", content="")],
         instructions=instructions,
         max_output_tokens=request.max_tokens,
         temperature=request.temperature,
