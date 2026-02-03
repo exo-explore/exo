@@ -457,11 +457,19 @@ class BatchedInferenceHandler:
                     in_thinking=starts_in_thinking,
                 )
         else:
-            # Non-coordinator: track active count for is_active check
-            self._non_coordinator_active_count = len(tokenized_prompts)
+            # Non-coordinator: INCREMENT active count (not set) to track all active requests
+            # across multiple flushes. This ensures is_active remains True when new requests
+            # are added while existing ones are still generating.
+            self._non_coordinator_active_count += len(tokenized_prompts)
 
+        # Log the actual active count (different tracking for coordinator vs non-coordinator)
+        actual_active = (
+            self.current_batch_size
+            if self.is_coordinator
+            else self._non_coordinator_active_count
+        )
         logger.info(
-            f"Flushed {len(tokenized_prompts)} requests into batch (active={self.current_batch_size}, uids={list(self.uid_to_request.keys())})"
+            f"Flushed {len(tokenized_prompts)} requests into batch (active={actual_active}, is_coordinator={self.is_coordinator})"
         )
 
     def step(self) -> Generator[Event, None, None]:

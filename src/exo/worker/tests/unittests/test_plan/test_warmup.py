@@ -5,6 +5,7 @@ from exo.shared.types.worker.runners import (
     RunnerIdle,
     RunnerLoaded,
     RunnerLoading,
+    RunnerReady,
     RunnerWarmingUp,
 )
 from exo.worker.tests.constants import (
