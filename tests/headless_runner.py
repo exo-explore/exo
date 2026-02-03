@@ -23,7 +23,7 @@ from exo.shared.types.tasks import (
     Task,
     TextGeneration,
 )
-from exo.shared.types.text_generation import TextGenerationTaskParams
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     BoundInstance,
     Instance,
@@ -196,7 +196,11 @@ async def execute_test(test: Tests, instance: Instance, hn: str) -> list[Event]:
                 task_params=TextGenerationTaskParams(
                     model=test.model_id,
                     instructions="You are a helpful assistant",
-                    input="What is the capital of France?",
+                    input=[
+                        InputMessage(
+                            role="user", content="What is the capital of France?"
+                        )
+                    ],
                 ),
                 command_id=CommandId("yo"),
                 instance_id=iid,

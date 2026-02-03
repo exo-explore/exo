@@ -17,7 +17,7 @@ from exo.shared.types.api import (
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType
-from exo.shared.types.text_generation import TextGenerationTaskParams
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
@@ -100,7 +100,7 @@ def warmup_inference(
         tokenizer=tokenizer,
         task_params=TextGenerationTaskParams(
             model=ModelId(""),
-            input=content,
+            input=[InputMessage(role="user", content=content)],
         ),
     )
 

@@ -43,10 +43,10 @@ def _extract_content(content: str | list[ResponseContentPart]) -> str:
 def responses_request_to_text_generation(
     request: ResponsesRequest,
 ) -> TextGenerationTaskParams:
-    input_value: str | list[InputMessage]
+    input_value: list[InputMessage]
     built_chat_template: list[dict[str, Any]] | None = None
     if isinstance(request.input, str):
-        input_value = request.input
+        input_value = [InputMessage(role="user", content=request.input)]
     else:
         input_messages: list[InputMessage] = []
         chat_template_messages: list[dict[str, Any]] = []
@@ -95,7 +95,11 @@ def responses_request_to_text_generation(
                     }
                 )
 
-        input_value = input_messages if input_messages else ""
+        input_value = (
+            input_messages
+            if input_messages
+            else [InputMessage(role="user", content="")]
+        )
         built_chat_template = chat_template_messages if chat_template_messages else None
 
     return TextGenerationTaskParams(

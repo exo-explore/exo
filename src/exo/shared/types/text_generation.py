@@ -28,7 +28,7 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     """
 
     model: ModelId
-    input: str | list[InputMessage]
+    input: list[InputMessage]
     instructions: str | None = None
     max_output_tokens: int | None = None
     temperature: float | None = None
