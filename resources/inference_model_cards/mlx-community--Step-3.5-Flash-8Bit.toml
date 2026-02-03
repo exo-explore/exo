@@ -1,7 +1,7 @@
 model_id = "mlx-community/Step-3.5-Flash-8Bit"
 n_layers = 45
 hidden_size = 4096
-supports_tensor = false
+supports_tensor = true
 tasks = ["TextGeneration"]
 
 [storage_size]

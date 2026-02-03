@@ -31,6 +31,8 @@ from mlx_lm.models.qwen3_moe import Model as Qwen3MoeModel
 from mlx_lm.models.qwen3_moe import Qwen3MoeSparseMoeBlock
 from mlx_lm.models.qwen3_next import Model as Qwen3NextModel
 from mlx_lm.models.qwen3_next import Qwen3NextSparseMoeBlock
+from mlx_lm.models.step3p5 import Model as Step3p5Model
+from mlx_lm.models.step3p5 import Step3p5MLP
 
 from exo.shared.logging import logger
 from exo.shared.types.worker.shards import PipelineShardMetadata
@@ -374,6 +376,14 @@ def tensor_auto_parallel(
         )
     elif isinstance(model, (Qwen3MoeModel, Glm4MoeModel, Qwen3NextModel)):
         tensor_parallel_sharding_strategy = QwenShardingStrategy(
+            group,
+            all_to_sharded_linear,
+            sharded_to_all_linear,
+            all_to_sharded_linear_in_place,
+            sharded_to_all_linear_in_place,
+        )
+    elif isinstance(model, Step3p5Model):
+        tensor_parallel_sharding_strategy = Step3p5ShardingStrategy(
             group,
             all_to_sharded_linear,
             sharded_to_all_linear,
@@ -771,6 +781,60 @@ class ShardedGptOssMoE(CustomMlxLayer):
         if self.sharding_group is not None:
             x = sum_gradients(self.sharding_group)(x)
         y = self.original_layer(x)
+        if self.sharding_group is not None:
+            y = mx.distributed.all_sum(y, group=self.sharding_group)
+        return y
+
+
+class Step3p5ShardingStrategy(TensorParallelShardingStrategy):
+    def shard_model(
+        self,
+        model: nn.Module,
+        timeout_seconds: float,
+        on_timeout: TimeoutCallback | None,
+    ) -> nn.Module:
+        model = cast(Step3p5Model, model)
+        for layer in model.layers:
+            eval_with_timeout(
+                layer.parameters(), timeout_seconds / len(model.layers), on_timeout
+            )
+            # Shard attention
+            layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
+            layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
+            layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
+            layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
+            layer.self_attn.num_heads //= self.N  # pyright: ignore[reportUnknownMemberType]
+            layer.self_attn.num_kv_heads //= self.N  # pyright: ignore[reportUnknownMemberType]
+
+            if isinstance(layer.mlp, Step3p5MLP):
+                # Dense MLP layer
+                layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
+                layer.mlp.down_proj = self.sharded_to_all_linear(layer.mlp.down_proj)
+                layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
+            else:
+                # MoE layer: shared expert + routed experts
+                self.all_to_sharded_linear_in_place(layer.mlp.share_expert.gate_proj)
+                self.sharded_to_all_linear_in_place(layer.mlp.share_expert.down_proj)
+                self.all_to_sharded_linear_in_place(layer.mlp.share_expert.up_proj)
+                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
+                self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
+                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
+                layer.mlp = ShardedStep3p5MoE(layer.mlp)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
+                layer.mlp.sharding_group = self.group  # pyright: ignore[reportAttributeAccessIssue]
+
+            mx.eval(layer)
+        return model
+
+
+class ShardedStep3p5MoE(CustomMlxLayer):
+    def __init__(self, layer: _LayerCallable):
+        super().__init__(layer)
+        self.sharding_group: mx.distributed.Group | None = None
+
+    def __call__(self, x: mx.array) -> mx.array:
+        if self.sharding_group is not None:
+            x = sum_gradients(self.sharding_group)(x)
+        y = self.original_layer.__call__(x)
         if self.sharding_group is not None:
             y = mx.distributed.all_sum(y, group=self.sharding_group)
         return y
