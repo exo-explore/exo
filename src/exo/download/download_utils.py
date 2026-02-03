@@ -49,6 +49,10 @@ class HuggingFaceAuthenticationError(Exception):
     """Raised when HuggingFace returns 401/403 for a model download."""
 
 
+class HuggingFaceRateLimitError(Exception):
+    """429 Huggingface code"""
+
+
 async def _build_auth_error_message(status_code: int, model_id: ModelId) -> str:
     token = await get_hf_token()
     if status_code == 401 and token is None:
@@ -187,7 +191,7 @@ async def fetch_file_list_with_cache(
 async def fetch_file_list_with_retry(
     model_id: ModelId, revision: str = "main", path: str = "", recursive: bool = False
 ) -> list[FileListEntry]:
-    n_attempts = 30
+    n_attempts = 3
     for attempt in range(n_attempts):
         try:
             return await _fetch_file_list(model_id, revision, path, recursive)
@@ -196,7 +200,7 @@ async def fetch_file_list_with_retry(
         except Exception as e:
             if attempt == n_attempts - 1:
                 raise e
-            await asyncio.sleep(min(8, 0.1 * float(2.0 ** int(attempt))))
+            await asyncio.sleep(2.0**attempt)
     raise Exception(
         f"Failed to fetch file list for {model_id=} {revision=} {path=} {recursive=}"
     )
@@ -216,7 +220,11 @@ async def _fetch_file_list(
         if response.status in [401, 403]:
             msg = await _build_auth_error_message(response.status, model_id)
             raise HuggingFaceAuthenticationError(msg)
-        if response.status == 200:
+        elif response.status == 429:
+            raise HuggingFaceRateLimitError(
+                f"Couldn't download {model_id} because of HuggingFace rate limit."
+            )
+        elif response.status == 200:
             data_json = await response.text()
             data = TypeAdapter(list[FileListEntry]).validate_json(data_json)
             files: list[FileListEntry] = []
@@ -325,7 +333,7 @@ async def download_file_with_retry(
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
 ) -> Path:
-    n_attempts = 30
+    n_attempts = 3
     for attempt in range(n_attempts):
         try:
             return await _download_file(
@@ -333,14 +341,14 @@ async def download_file_with_retry(
             )
         except HuggingFaceAuthenticationError:
             raise
-        except Exception as e:
-            if isinstance(e, FileNotFoundError) or attempt == n_attempts - 1:
+        except HuggingFaceRateLimitError as e:
+            if attempt == n_attempts - 1:
                 raise e
             logger.error(
                 f"Download error on attempt {attempt}/{n_attempts} for {model_id=} {revision=} {path=} {target_dir=}"
             )
             logger.error(traceback.format_exc())
-            await asyncio.sleep(min(8, 0.1 * (2.0**attempt)))
+            await asyncio.sleep(2.0**attempt)
     raise Exception(
         f"Failed to download file {model_id=} {revision=} {path=} {target_dir=}"
     )

@@ -108,9 +108,9 @@ class ModelCard(CamelCaseModel):
     async def fetch_from_hf(model_id: ModelId) -> "ModelCard":
         """Fetches storage size and number of layers for a Hugging Face model, returns Pydantic ModelMeta."""
         # TODO: failure if files do not exist
-        config_data = await get_config_data(model_id)
+        config_data = await fetch_config_data(model_id)
         num_layers = config_data.layer_count
-        mem_size_bytes = await get_safetensors_size(model_id)
+        mem_size_bytes = await fetch_safetensors_size(model_id)
 
         mc = ModelCard(
             model_id=ModelId(model_id),
@@ -258,7 +258,7 @@ class ConfigData(BaseModel):
         return data
 
 
-async def get_config_data(model_id: ModelId) -> ConfigData:
+async def fetch_config_data(model_id: ModelId) -> ConfigData:
     """Downloads and parses config.json for a model."""
     from exo.download.download_utils import (
         download_file_with_retry,
@@ -280,7 +280,7 @@ async def get_config_data(model_id: ModelId) -> ConfigData:
         return ConfigData.model_validate_json(await f.read())
 
 
-async def get_safetensors_size(model_id: ModelId) -> Memory:
+async def fetch_safetensors_size(model_id: ModelId) -> Memory:
     """Gets model size from safetensors index or falls back to HF API."""
     from exo.download.download_utils import (
         download_file_with_retry,
