@@ -160,7 +160,6 @@ def _ensure_seed(params: AdvancedImageParams | None) -> AdvancedImageParams:
     return params
 
 
-
 class API:
     def __init__(
         self,
