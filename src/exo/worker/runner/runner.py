@@ -613,7 +613,9 @@ def main(
             # the same loop, but only coordinator receives tasks. This ensures
             # flush() all_sum calls are synchronized.
             if batch_handler is not None and (
-                batch_handler.is_active or batch_handler.has_pending or is_tensor_parallel
+                batch_handler.is_active
+                or batch_handler.has_pending
+                or is_tensor_parallel
             ):
                 # Drain all available tasks before stepping
                 # Non-coordinator won't receive any (main.py doesn't send to it)
