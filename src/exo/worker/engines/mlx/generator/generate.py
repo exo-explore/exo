@@ -155,6 +155,26 @@ def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
     return eos
 
 
+def _has_tool_messages(task: TextGenerationTaskParams) -> bool:
+    """Check if the conversation contains tool-related messages.
+
+    Tool-related messages include:
+    - Messages with tool_calls (assistant requesting tool execution)
+    - Messages with role="tool" (tool results)
+
+    These need special cache handling to avoid prefix matching issues.
+    """
+    if task.chat_template_messages is None:
+        return False
+
+    for msg in task.chat_template_messages:
+        if msg.get("tool_calls") is not None:
+            return True
+        if msg.get("role") == "tool":
+            return True
+
+    return False
+
 def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
@@ -170,6 +190,11 @@ def mlx_generate(
     # Do not use the prefix cache if we are trying to do benchmarks.
     is_bench = task.bench
     if is_bench:
+        kv_prefix_cache = None
+
+    # Disable prefix cache if there are tool-related messages
+    if _has_tool_messages(task):
+        logger.info("Disabling KV prefix cache due to tool messages in conversation")
         kv_prefix_cache = None
 
     # Use prefix cache if available, otherwise create fresh cache
