@@ -1072,8 +1072,8 @@ wheels = [
 
 [[package]]
 name = "mlx-lm"
-version = "0.30.5"
-source = { git = "https://github.com/ml-explore/mlx-lm?branch=main#96699e6dadb13b82b28285bb131a0741997d19ae" }
+version = "0.30.6"
+source = { git = "https://github.com/ml-explore/mlx-lm?branch=main#ab050d1fac2ef1d7bea6b8d870f1e5717d7f59f5" }
 dependencies = [
     { name = "jinja2", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", marker = "sys_platform == 'darwin'" },
