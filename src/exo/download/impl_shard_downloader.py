@@ -1,4 +1,5 @@
 import asyncio
+from asyncio import create_task
 from collections.abc import Awaitable
 from pathlib import Path
 from typing import AsyncIterator, Callable
@@ -142,6 +143,7 @@ class ResumableShardDownloader(ShardDownloader):
             self.on_progress_wrapper,
             max_parallel_downloads=self.max_parallel_downloads,
             allow_patterns=allow_patterns,
+            skip_internet=not self.internet_connection,
         )
         return target_dir
 
@@ -154,12 +156,22 @@ class ResumableShardDownloader(ShardDownloader):
             """Helper coroutine that builds the shard for a model and gets its download status."""
             shard = await build_full_shard(model_id)
             return await download_shard(
-                shard, self.on_progress_wrapper, skip_download=True
+                shard,
+                self.on_progress_wrapper,
+                skip_download=True,
+                skip_internet=not self.internet_connection,
             )
 
-        # Kick off download status coroutines concurrently
+        semaphore = asyncio.Semaphore(self.max_parallel_downloads)
+
+        async def download_with_semaphore(
+            model_card: ModelCard,
+        ) -> tuple[Path, RepoDownloadProgress]:
+            async with semaphore:
+                return await _status_for_model(model_card.model_id)
+
         tasks = [
-            asyncio.create_task(_status_for_model(model_card.model_id))
+            create_task(download_with_semaphore(model_card))
             for model_card in await get_model_cards()
         ]
 

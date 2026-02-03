@@ -158,34 +158,52 @@ async def seed_models(seed_dir: str | Path):
                     logger.error(traceback.format_exc())
 
 
+_fetched_file_lists_this_session: set[str] = set()
+
+
 async def fetch_file_list_with_cache(
-    model_id: ModelId, revision: str = "main", recursive: bool = False
+    model_id: ModelId,
+    revision: str = "main",
+    recursive: bool = False,
+    skip_internet: bool = False,
 ) -> list[FileListEntry]:
     target_dir = (await ensure_models_dir()) / "caches" / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)
     cache_file = target_dir / f"{model_id.normalize()}--{revision}--file_list.json"
+    cache_key = f"{model_id.normalize()}--{revision}"
 
-    # Always try fresh first
+    if cache_key in _fetched_file_lists_this_session and await aios.path.exists(
+        cache_file
+    ):
+        async with aiofiles.open(cache_file, "r") as f:
+            return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
+
+    if skip_internet:
+        if await aios.path.exists(cache_file):
+            async with aiofiles.open(cache_file, "r") as f:
+                return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
+        raise FileNotFoundError(
+            f"No internet connection and no cached file list for {model_id}"
+        )
+
     try:
         file_list = await fetch_file_list_with_retry(
             model_id, revision, recursive=recursive
         )
-        # Update cache with fresh data
         async with aiofiles.open(cache_file, "w") as f:
             await f.write(
                 TypeAdapter(list[FileListEntry]).dump_json(file_list).decode()
             )
+        _fetched_file_lists_this_session.add(cache_key)
         return file_list
     except Exception as e:
-        # Fetch failed - try cache fallback
         if await aios.path.exists(cache_file):
             logger.warning(
                 f"Failed to fetch file list for {model_id}, using cached data: {e}"
             )
             async with aiofiles.open(cache_file, "r") as f:
                 return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
-        # No cache available, propagate the error
-        raise
+        raise FileNotFoundError(f"Failed to fetch file list for {model_id}: {e}") from e
 
 
 async def fetch_file_list_with_retry(
@@ -550,6 +568,7 @@ async def download_shard(
     on_progress: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
     max_parallel_downloads: int = 8,
     skip_download: bool = False,
+    skip_internet: bool = False,
     allow_patterns: list[str] | None = None,
 ) -> tuple[Path, RepoDownloadProgress]:
     if not skip_download:
@@ -570,7 +589,7 @@ async def download_shard(
 
     all_start_time = time.time()
     file_list = await fetch_file_list_with_cache(
-        shard.model_card.model_id, revision, recursive=True
+        shard.model_card.model_id, revision, recursive=True, skip_internet=skip_internet
     )
     filtered_file_list = list(
         filter_repo_objects(
