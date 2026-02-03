@@ -439,9 +439,7 @@ class BatchedInferenceHandler:
             ):
                 parser = None
                 if self.is_gpt_oss and self._harmony_encoding is not None:
-                    parser = StreamableParser(
-                        self._harmony_encoding, role=Role.ASSISTANT
-                    )  # pyright: ignore[reportAny]
+                    parser = StreamableParser(self._harmony_encoding, role=Role.ASSISTANT)  # pyright: ignore[reportAny]
                 # Check if prompt contains <think> token - if so, model is already in thinking mode
                 starts_in_thinking = (
                     self._think_start_token is not None

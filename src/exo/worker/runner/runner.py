@@ -609,26 +609,14 @@ def main(
 
     with task_receiver as tasks:
         while True:
-            # For tensor parallel non-coordinator ranks: don't receive tasks, just follow coordinator
-            if (
-                is_tensor_parallel
-                and not is_tp_coordinator
-                and batch_handler is not None
-            ):
-                # Wait for rank 0 to signal via flush (broadcasts batch count)
-                batch_handler.flush()
-
-                # Step if there's an active batch
-                if batch_handler.is_active:
-                    for _event in batch_handler.step():
-                        pass  # Non-zero ranks don't emit events
-                continue
-
-            # Rank 0 or non-tensor-parallel: handle tasks normally
+            # For tensor parallel: both coordinator and non-coordinator go through
+            # the same loop, but only coordinator receives tasks. This ensures
+            # flush() all_sum calls are synchronized.
             if batch_handler is not None and (
-                batch_handler.is_active or batch_handler.has_pending
+                batch_handler.is_active or batch_handler.has_pending or is_tensor_parallel
             ):
                 # Drain all available tasks before stepping
+                # Non-coordinator won't receive any (main.py doesn't send to it)
                 should_break = False
                 while True:
                     try:
@@ -652,11 +640,13 @@ def main(
                 if should_break:
                     break
 
-                # Flush all pending requests before stepping
-                if batch_handler.has_pending:
-                    logger.info(
-                        f"Flushing batch (pending={len(batch_handler.pending)}, active={batch_handler.current_batch_size})"
-                    )
+                # Flush: for tensor parallel, always call so all ranks sync via all_sum
+                # For non-TP, only call when has_pending
+                if batch_handler.has_pending or is_tensor_parallel:
+                    if batch_handler.has_pending:
+                        logger.info(
+                            f"Flushing batch (pending={len(batch_handler.pending)}, active={batch_handler.current_batch_size})"
+                        )
                     batch_handler.flush()
 
                 # Step generation and emit events
