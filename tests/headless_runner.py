@@ -10,7 +10,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from exo.shared.constants import EXO_MODELS_DIR
-from exo.shared.models.model_cards import MODEL_CARDS, ModelId
+from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.commands import CommandId
 from exo.shared.types.common import Host, NodeId
@@ -114,13 +114,13 @@ async def run_test(test: Tests):
 
         instances: list[Instance] = []
         if test.kind in ["ring", "both"]:
-            i = ring_instance(test, hn)
+            i = await ring_instance(test, hn)
             if i is None:
                 yield "no model found"
                 return
             instances.append(i)
-        if test.kind in ["rdma", "both"]:
-            i = jaccl_instance(test)
+        if test.kind in ["jaccl", "both"]:
+            i = await jaccl_instance(test)
             if i is None:
                 yield "no model found"
                 return
@@ -145,7 +145,7 @@ async def run_test(test: Tests):
     return StreamingResponse(run())
 
 
-def ring_instance(test: Tests, hn: str) -> Instance | None:
+async def ring_instance(test: Tests, hn: str) -> Instance | None:
     hbn = [Host(ip="198.51.100.0", port=52417) for _ in test.devs]
     world_size = len(test.devs)
     for i in range(world_size):
@@ -158,11 +158,7 @@ def ring_instance(test: Tests, hn: str) -> Instance | None:
     else:
         raise ValueError(f"{hn} not in {test.devs}")
 
-    card = next(
-        (card for card in MODEL_CARDS.values() if card.model_id == test.model_id), None
-    )
-    if card is None:
-        return None
+    card = await ModelCard.load(test.model_id)
     instance = MlxRingInstance(
         instance_id=iid,
         ephemeral_port=52417,
@@ -230,12 +226,8 @@ async def execute_test(test: Tests, instance: Instance, hn: str) -> list[Event]:
     return []
 
 
-def jaccl_instance(test: Tests) -> MlxJacclInstance | None:
-    card = next(
-        (card for card in MODEL_CARDS.values() if card.model_id == test.model_id), None
-    )
-    if card is None:
-        return None
+async def jaccl_instance(test: Tests) -> MlxJacclInstance | None:
+    card = await ModelCard.load(test.model_id)
     world_size = len(test.devs)
     assert test.ibv_devs
 

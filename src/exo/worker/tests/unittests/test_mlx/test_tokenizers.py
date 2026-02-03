@@ -16,7 +16,7 @@ from exo.download.download_utils import (
     ensure_models_dir,
     fetch_file_list_with_cache,
 )
-from exo.shared.models.model_cards import MODEL_CARDS, ModelCard, ModelId
+from exo.shared.models.model_cards import ModelCard, ModelId, get_model_cards
 from exo.worker.engines.mlx.utils_mlx import (
     get_eos_token_ids_for_model,
     load_tokenizer_for_model_id,
@@ -76,7 +76,7 @@ def get_test_models() -> list[ModelCard]:
     """Get a representative sample of models to test."""
     # Pick one model from each family to test
     families: dict[str, ModelCard] = {}
-    for card in MODEL_CARDS.values():
+    for card in asyncio.run(get_model_cards()):
         # Extract family name (e.g., "llama-3.1" from "llama-3.1-8b")
         parts = card.model_id.short().split("-")
         family = "-".join(parts[:2]) if len(parts) >= 2 else parts[0]
@@ -296,7 +296,7 @@ async def test_tokenizer_special_tokens(model_card: ModelCard) -> None:
 async def test_kimi_tokenizer_specifically():
     """Test Kimi tokenizer with its specific patches and quirks."""
     kimi_models = [
-        card for card in MODEL_CARDS.values() if "kimi" in card.model_id.lower()
+        card for card in await get_model_cards() if "kimi" in card.model_id.lower()
     ]
 
     if not kimi_models:
@@ -343,7 +343,7 @@ async def test_kimi_tokenizer_specifically():
 async def test_glm_tokenizer_specifically():
     """Test GLM tokenizer with its specific EOS tokens."""
     glm_model_cards = [
-        card for card in MODEL_CARDS.values() if "glm" in card.model_id.lower()
+        card for card in await get_model_cards() if "glm" in card.model_id.lower()
     ]
 
     if not glm_model_cards:

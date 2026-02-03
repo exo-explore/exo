@@ -40,6 +40,7 @@ from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
+    DASHBOARD_DIR,
     EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
     EXO_TRACING_CACHE_DIR,
@@ -47,9 +48,9 @@ from exo.shared.constants import (
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import (
-    MODEL_CARDS,
     ModelCard,
     ModelId,
+    get_model_cards,
 )
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.api import (
@@ -138,24 +139,11 @@ from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
-from exo.utils.dashboard_path import find_dashboard
 from exo.utils.event_buffer import OrderedBuffer
 
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
     return f"image/{image_format or 'png'}"
-
-
-async def resolve_model_card(model_id: ModelId) -> ModelCard:
-    if model_id in MODEL_CARDS:
-        model_card = MODEL_CARDS[model_id]
-        return model_card
-
-    for card in MODEL_CARDS.values():
-        if card.model_id == ModelId(model_id):
-            return card
-
-    return await ModelCard.from_hf(model_id)
 
 
 class API:
@@ -204,7 +192,7 @@ class API:
         self.app.mount(
             "/",
             StaticFiles(
-                directory=find_dashboard(),
+                directory=DASHBOARD_DIR,
                 html=True,
             ),
             name="dashboard",
@@ -381,10 +369,7 @@ class API:
         if len(list(self.state.topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
-        cards = [card for card in MODEL_CARDS.values() if card.model_id == model_id]
-        if not cards:
-            raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
-
+        model_card = await ModelCard.load(model_id)
         instance_combinations: list[tuple[Sharding, InstanceMeta, int]] = []
         for sharding in (Sharding.Pipeline, Sharding.Tensor):
             for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
@@ -399,96 +384,93 @@ class API:
         # TODO: PDD
         # instance_combinations.append((Sharding.PrefillDecodeDisaggregation, InstanceMeta.MlxRing, 1))
 
-        for model_card in cards:
-            for sharding, instance_meta, min_nodes in instance_combinations:
-                try:
-                    placements = get_instance_placements(
-                        PlaceInstance(
-                            model_card=model_card,
-                            sharding=sharding,
-                            instance_meta=instance_meta,
-                            min_nodes=min_nodes,
-                        ),
-                        node_memory=self.state.node_memory,
-                        node_network=self.state.node_network,
-                        topology=self.state.topology,
-                        current_instances=self.state.instances,
-                        required_nodes=required_nodes,
-                    )
-                except ValueError as exc:
-                    if (model_card.model_id, sharding, instance_meta, 0) not in seen:
-                        previews.append(
-                            PlacementPreview(
-                                model_id=model_card.model_id,
-                                sharding=sharding,
-                                instance_meta=instance_meta,
-                                instance=None,
-                                error=str(exc),
-                            )
-                        )
-                    seen.add((model_card.model_id, sharding, instance_meta, 0))
-                    continue
-
-                current_ids = set(self.state.instances.keys())
-                new_instances = [
-                    instance
-                    for instance_id, instance in placements.items()
-                    if instance_id not in current_ids
-                ]
-
-                if len(new_instances) != 1:
-                    if (model_card.model_id, sharding, instance_meta, 0) not in seen:
-                        previews.append(
-                            PlacementPreview(
-                                model_id=model_card.model_id,
-                                sharding=sharding,
-                                instance_meta=instance_meta,
-                                instance=None,
-                                error="Expected exactly one new instance from placement",
-                            )
-                        )
-                    seen.add((model_card.model_id, sharding, instance_meta, 0))
-                    continue
-
-                instance = new_instances[0]
-                shard_assignments = instance.shard_assignments
-                placement_node_ids = list(shard_assignments.node_to_runner.keys())
-
-                memory_delta_by_node: dict[str, int] = {}
-                if placement_node_ids:
-                    total_bytes = model_card.storage_size.in_bytes
-                    per_node = total_bytes // len(placement_node_ids)
-                    remainder = total_bytes % len(placement_node_ids)
-                    for index, node_id in enumerate(
-                        sorted(placement_node_ids, key=str)
-                    ):
-                        extra = 1 if index < remainder else 0
-                        memory_delta_by_node[str(node_id)] = per_node + extra
-
-                if (
-                    model_card.model_id,
-                    sharding,
-                    instance_meta,
-                    len(placement_node_ids),
-                ) not in seen:
+        for sharding, instance_meta, min_nodes in instance_combinations:
+            try:
+                placements = get_instance_placements(
+                    PlaceInstance(
+                        model_card=model_card,
+                        sharding=sharding,
+                        instance_meta=instance_meta,
+                        min_nodes=min_nodes,
+                    ),
+                    node_memory=self.state.node_memory,
+                    node_network=self.state.node_network,
+                    topology=self.state.topology,
+                    current_instances=self.state.instances,
+                    required_nodes=required_nodes,
+                )
+            except ValueError as exc:
+                if (model_card.model_id, sharding, instance_meta, 0) not in seen:
                     previews.append(
                         PlacementPreview(
                             model_id=model_card.model_id,
                             sharding=sharding,
                             instance_meta=instance_meta,
-                            instance=instance,
-                            memory_delta_by_node=memory_delta_by_node or None,
-                            error=None,
+                            instance=None,
+                            error=str(exc),
                         )
                     )
-                seen.add(
-                    (
-                        model_card.model_id,
-                        sharding,
-                        instance_meta,
-                        len(placement_node_ids),
+                seen.add((model_card.model_id, sharding, instance_meta, 0))
+                continue
+
+            current_ids = set(self.state.instances.keys())
+            new_instances = [
+                instance
+                for instance_id, instance in placements.items()
+                if instance_id not in current_ids
+            ]
+
+            if len(new_instances) != 1:
+                if (model_card.model_id, sharding, instance_meta, 0) not in seen:
+                    previews.append(
+                        PlacementPreview(
+                            model_id=model_card.model_id,
+                            sharding=sharding,
+                            instance_meta=instance_meta,
+                            instance=None,
+                            error="Expected exactly one new instance from placement",
+                        )
+                    )
+                seen.add((model_card.model_id, sharding, instance_meta, 0))
+                continue
+
+            instance = new_instances[0]
+            shard_assignments = instance.shard_assignments
+            placement_node_ids = list(shard_assignments.node_to_runner.keys())
+
+            memory_delta_by_node: dict[str, int] = {}
+            if placement_node_ids:
+                total_bytes = model_card.storage_size.in_bytes
+                per_node = total_bytes // len(placement_node_ids)
+                remainder = total_bytes % len(placement_node_ids)
+                for index, node_id in enumerate(sorted(placement_node_ids, key=str)):
+                    extra = 1 if index < remainder else 0
+                    memory_delta_by_node[str(node_id)] = per_node + extra
+
+            if (
+                model_card.model_id,
+                sharding,
+                instance_meta,
+                len(placement_node_ids),
+            ) not in seen:
+                previews.append(
+                    PlacementPreview(
+                        model_id=model_card.model_id,
+                        sharding=sharding,
+                        instance_meta=instance_meta,
+                        instance=instance,
+                        memory_delta_by_node=memory_delta_by_node or None,
+                        error=None,
                     )
                 )
+            seen.add(
+                (
+                    model_card.model_id,
+                    sharding,
+                    instance_meta,
+                    len(placement_node_ids),
+                )
+            )
 
         return PlacementPreviewResponse(previews=previews)
 
@@ -652,23 +634,21 @@ class API:
         response = await self._collect_text_generation_with_stats(command.command_id)
         return response
 
-    async def _resolve_and_validate_text_model(self, model: ModelId) -> ModelId:
+    async def _resolve_and_validate_text_model(self, model_id: ModelId) -> ModelId:
         """Validate a text model exists and return the resolved model ID.
 
         Raises HTTPException 404 if no instance is found for the model.
         """
-        model_card = await resolve_model_card(model)
-        resolved = model_card.model_id
         if not any(
-            instance.shard_assignments.model_id == resolved
+            instance.shard_assignments.model_id == model_id
             for instance in self.state.instances.values()
         ):
-            await self._trigger_notify_user_to_download_model(resolved)
+            await self._trigger_notify_user_to_download_model(model_id)
             raise HTTPException(
                 status_code=404,
-                detail=f"No instance found for model {resolved}",
+                detail=f"No instance found for model {model_id}",
             )
-        return resolved
+        return model_id
 
     async def _validate_image_model(self, model: ModelId) -> ModelId:
         """Validate model exists and return resolved model ID.
@@ -1237,7 +1217,7 @@ class API:
                     supports_tensor=card.supports_tensor,
                     tasks=[task.value for task in card.tasks],
                 )
-                for card in MODEL_CARDS.values()
+                for card in await get_model_cards()
             ]
         )
 
