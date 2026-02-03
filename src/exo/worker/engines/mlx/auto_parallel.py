@@ -506,7 +506,8 @@ def _patch_deepseek_for_batching(model: nn.Module) -> None:
     an array (one value per batch item) when batching, but the comparison
     `total_context >= self._mla_crossover` expects a scalar.
 
-    This patch fixes it by taking the max of total_context for the comparison.
+    This patch fixes it by temporarily replacing the cache offset with a scalar
+    (max across batch) before calling the original __call__, then restoring it.
     """
     # Get the inner model (DeepseekV3Model)
     inner_model: Any = getattr(model, "model", None)
@@ -527,42 +528,31 @@ def _patch_deepseek_for_batching(model: nn.Module) -> None:
 
     def patched_inner_call(
         self: Any,  # pyright: ignore[reportAny]
-        inputs: mx.array,
+        x: mx.array,
         cache: Any = None,  # pyright: ignore[reportAny]
-        inputs_embeds: mx.array | None = None,
     ) -> mx.array:
-        # Compute total_context as a scalar (max across batch) for the MLA crossover check
-        # This fixes the batching bug where total_context is an array
-        if cache is not None and hasattr(self, "_mla_crossover"):  # pyright: ignore[reportAny]
-            # Get total context - for batched inputs this will be an array
-            h = inputs_embeds if inputs_embeds is not None else self.embed_tokens(inputs)  # pyright: ignore[reportAny]
-            seq_len = h.shape[1]
-            total_context: Any = cache[0].offset + seq_len  # pyright: ignore[reportAny]
+        # Fix the batching bug where cache[0].offset is an array but the
+        # comparison `total_context >= self._mla_crossover` expects a scalar.
+        # We temporarily replace the offset with a scalar (max across batch)
+        # for the crossover check, then restore it after.
+        if cache is not None and len(cache) > 0 and hasattr(self, "_mla_crossover"):  # pyright: ignore[reportAny]
+            first_cache = cache[0]
+            original_offset: Any = first_cache.offset  # pyright: ignore[reportAny]
 
-            # Convert to scalar by taking max if it's an array
-            if hasattr(total_context, "shape") and total_context.shape:  # pyright: ignore[reportAny]
-                total_context_scalar = int(mx.max(total_context).item())  # pyright: ignore[reportAny]
-            else:
-                total_context_scalar = int(total_context)  # pyright: ignore[reportAny]
+            # Check if offset is an array (batched) and needs fixing
+            if hasattr(original_offset, "shape") and original_offset.shape:  # pyright: ignore[reportAny]
+                # Use max offset for the crossover decision (conservative choice)
+                scalar_offset = int(mx.max(original_offset).item())  # pyright: ignore[reportAny]
+                first_cache.offset = scalar_offset
 
-            # Temporarily set a scalar version for the crossover check
-            # by overriding the cache offset calculation
-            original_mla_crossover: Any = self._mla_crossover  # pyright: ignore[reportAny]
-            if total_context_scalar < original_mla_crossover:
-                # All items in batch are below threshold, use absorbed attention
-                pass
-            else:
-                # At least one item exceeds threshold, use MLA for all
-                # Set crossover to 0 to force MLA path for consistency
-                self._mla_crossover = 0
+                try:
+                    result: Any = original_call(self, x, cache)  # pyright: ignore[reportAny]
+                finally:
+                    # Restore original array offset
+                    first_cache.offset = original_offset
+                return result  # pyright: ignore[reportAny]
 
-            try:
-                result: Any = original_call(self, inputs, cache, inputs_embeds)  # pyright: ignore[reportAny]
-            finally:
-                self._mla_crossover = original_mla_crossover
-            return result  # pyright: ignore[reportAny]
-
-        return original_call(self, inputs, cache, inputs_embeds)  # pyright: ignore[reportAny]
+        return original_call(self, x, cache)  # pyright: ignore[reportAny]
 
     inner_cls.__call__ = patched_inner_call
     inner_cls._batching_patched = True
