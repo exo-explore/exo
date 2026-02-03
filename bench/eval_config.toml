@@ -62,19 +62,23 @@ scenario = "codegeneration"
 # release_v4: May 2023 - September 2024 (713 problems)
 # release_v5: May 2023 - January 2025 (880 problems)
 release_version = "release_v5"
-# Sampling temperature (0 for deterministic, matches Artificial Analysis)
-temperature = 0
+# Sampling temperature
+# - For non-reasoning models: 0 (deterministic)
+# - For reasoning/thinking models (Kimi K2.5, DeepSeek R1): use model-recommended (e.g., 1.0)
+temperature = 1.0
 # Number of samples per problem (1 for pass@1, matches Artificial Analysis)
 n_samples = 1
-# Max tokens for generation (16384, matches Artificial Analysis)
-max_tokens = 16384
+# Max tokens for generation
+# - For non-reasoning models: 16384
+# - For reasoning/thinking models: use model-recommended (Kimi K2.5 uses 96k)
+max_tokens = 96000
 # Use code_generation_lite for faster evaluation (default: true)
 # Set to false to use full test suite (slower but more thorough)
 fast = true
 # Run evaluation after generation (computes pass@1, pass@5)
 evaluate = true
 # Number of parallel API requests
-multiprocess = 32
+multiprocess = 8
 # Cache generated outputs for resumption (disabled by default to avoid stale results)
 use_cache = false
 # Timeout per problem in seconds (default: 1800 = 30 min)
