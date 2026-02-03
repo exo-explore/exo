@@ -28,7 +28,7 @@ from exo.worker.engines.image.pipeline.block_wrapper import (
 
 
 @final
-@dataclass
+@dataclass(frozen=True)
 class CfgBranch:
     positive: bool
     embeds: mx.array

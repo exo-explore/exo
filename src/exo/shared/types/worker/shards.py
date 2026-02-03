@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import TypeAlias, final
 
 from pydantic import Field
 
@@ -51,6 +52,7 @@ class BaseShardMetadata(TaggedModel):
         )
 
 
+@final
 class PipelineShardMetadata(BaseShardMetadata):
     """
     Pipeline parallelism shard meta.
@@ -114,8 +116,9 @@ class PipelineShardMetadata(BaseShardMetadata):
         )
 
 
+@final
 class TensorShardMetadata(BaseShardMetadata):
     pass
 
 
-ShardMetadata = PipelineShardMetadata | TensorShardMetadata
+ShardMetadata: TypeAlias = PipelineShardMetadata | TensorShardMetadata
