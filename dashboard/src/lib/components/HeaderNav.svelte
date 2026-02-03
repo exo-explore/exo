@@ -26,11 +26,11 @@
 </script>
 
 <header
-  class="relative z-20 flex items-center justify-center px-6 pt-8 pb-4 bg-exo-dark-gray"
+  class="relative z-20 flex items-center justify-center px-3 pt-4 pb-2 md:px-6 md:pt-8 md:pb-4 bg-exo-dark-gray"
 >
   <!-- Left: Sidebar Toggle -->
   {#if showSidebarToggle}
-    <div class="absolute left-6 top-1/2 -translate-y-1/2">
+    <div class="absolute left-3 md:left-6 top-1/2 -translate-y-1/2">
       <button
         onclick={handleToggleSidebar}
         class="p-2 rounded border border-exo-medium-gray/40 hover:border-exo-yellow/50 transition-colors cursor-pointer"
@@ -75,13 +75,13 @@
     <img
       src="/exo-logo.png"
       alt="EXO"
-      class="h-18 drop-shadow-[0_0_20px_rgba(255,215,0,0.5)]"
+      class="h-10 md:h-18 drop-shadow-[0_0_20px_rgba(255,215,0,0.5)]"
     />
   </button>
 
   <!-- Right: Home + Downloads -->
   <div
-    class="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-4"
+    class="absolute right-3 md:right-6 top-1/2 -translate-y-1/2 flex items-center gap-4"
   >
     {#if showHome}
       <button
@@ -102,7 +102,7 @@
             d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
           />
         </svg>
-        Home
+        <span class="hidden sm:inline">Home</span>
       </button>
     {/if}
     <a
@@ -123,7 +123,7 @@
         <path d="M7 12l5 5 5-5" />
         <path d="M5 21h14" />
       </svg>
-      Downloads
+      <span class="hidden sm:inline">Downloads</span>
     </a>
   </div>
 </header>

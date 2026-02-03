@@ -182,6 +182,11 @@
   });
   let macStudioEn2Dismissed = $state(false);
 
+  // Mobile tab bar state
+  let mobileTab = $state<"topology" | "chat" | "instances">("topology");
+  let expandedMobileInstance = $state<string | null>(null);
+  let mobileLaunchSheetOpen = $state(false);
+
   // Helper to get friendly node name from node ID
   function getNodeName(nodeId: string): string {
     const node = data?.nodes?.[nodeId];
@@ -2375,11 +2380,12 @@
 />
 
 <div
-  class="relative h-screen w-full flex flex-col bg-exo-dark-gray overflow-hidden"
+  class="relative w-full flex flex-col bg-exo-dark-gray overflow-hidden"
+  style="height: 100vh; height: 100dvh;"
 >
   <!-- Scanline overlay -->
   <div
-    class="fixed inset-0 pointer-events-none z-50 scanlines opacity-20"
+    class="fixed inset-0 pointer-events-none z-50 scanlines opacity-[0.08] md:opacity-20"
   ></div>
 
   <!-- Shooting Stars Background - one every ~15s -->
@@ -2399,28 +2405,217 @@
   </div>
 
   {#if !topologyOnlyEnabled}
-    <HeaderNav
-      showHome={chatStarted}
-      onHome={handleGoHome}
-      showSidebarToggle={true}
-      {sidebarVisible}
-      onToggleSidebar={toggleChatSidebarVisible}
-    />
+    <div class="hidden md:block">
+      <HeaderNav
+        showHome={chatStarted}
+        onHome={handleGoHome}
+        showSidebarToggle={true}
+        {sidebarVisible}
+        onToggleSidebar={toggleChatSidebarVisible}
+      />
+    </div>
   {/if}
 
   <!-- Main Content -->
   <main class="flex-1 flex overflow-hidden relative">
-    <!-- Left: Conversation History Sidebar (hidden in topology-only mode or when toggled off) -->
+    <!-- ===== MOBILE TAB CONTENT (below md) ===== -->
+    <div class="flex-1 flex flex-col md:hidden overflow-hidden" style="padding-top: env(safe-area-inset-top)">
+      <!-- Mobile: Topology tab -->
+      {#if mobileTab === "topology"}
+        <div class="flex-1 flex flex-col min-h-0">
+          <div class="flex-1 relative overflow-hidden">
+            <TopologyGraph
+              class="w-full h-full"
+              highlightedNodes={highlightedNodes()}
+              filteredNodes={nodeFilter}
+              onNodeClick={togglePreviewNodeFilter}
+            />
+            <!-- Floating node count badge -->
+            {#if nodeCount > 0}
+              <div class="absolute top-3 left-3 bg-black/60 backdrop-blur-md rounded-full px-3 py-1.5 border border-white/[0.08]">
+                <span class="text-[12px] font-medium text-white/70 tabular-nums">{nodeCount} {nodeCount === 1 ? 'node' : 'nodes'}</span>
+              </div>
+            {/if}
+          </div>
+          {#if !chatStarted}
+            <div class="flex-shrink-0 px-4 pt-3 pb-2">
+              <ChatForm
+                placeholder="Ask anything"
+                showHelperText={false}
+                showModelSelector={true}
+                modelTasks={modelTasks()}
+              />
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      <!-- Mobile: Chat tab -->
+      {#if mobileTab === "chat"}
+        <div class="flex-1 flex flex-col min-h-0 overflow-hidden">
+          {#if chatStarted}
+            <div
+              class="flex-1 overflow-y-auto px-4 pt-3 pb-2"
+              bind:this={chatScrollRef}
+            >
+              <ChatMessages scrollParent={chatScrollRef} />
+            </div>
+            <div class="flex-shrink-0 px-4 pb-2 pt-1">
+              <ChatForm
+                placeholder="Ask anything"
+                showModelSelector={true}
+                modelTasks={modelTasks()}
+              />
+            </div>
+          {:else}
+            <div class="flex-1 flex flex-col overflow-hidden">
+              <div class="flex-1 overflow-y-auto">
+                <ChatSidebar class="h-full" />
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      <!-- Mobile: Instances tab -->
+      {#if mobileTab === "instances"}
+        <div class="flex-1 overflow-y-auto">
+          <div class="px-4 pt-4 pb-8 space-y-6">
+            <!-- Instances section -->
+            {#if instanceCount > 0}
+              <section>
+                <h3 class="text-[13px] font-semibold text-white/40 uppercase tracking-wide px-1 mb-2">Active Instances</h3>
+                <div class="bg-white/[0.04] rounded-2xl overflow-hidden">
+                  {#each Object.entries(instanceData) as [id, instance], i}
+                    {@const downloadInfo = getInstanceDownloadStatus(id, instance)}
+                    {@const statusText = downloadInfo.statusText}
+                    {@const isReady = statusText === "READY" || statusText === "LOADED"}
+                    {@const isRunning = statusText === "RUNNING"}
+                    {@const isFailed = statusText === "FAILED"}
+                    {@const isDownloading = downloadInfo.isDownloading}
+                    {@const instanceModelId = getInstanceModelId(instance)}
+                    {@const instanceInfo = getInstanceInfo(instance)}
+                    <div class="flex items-center min-h-[52px] px-4 py-3 {i < Object.entries(instanceData).length - 1 ? 'border-b border-white/[0.06]' : ''}">
+                      <div class="flex-1 min-w-0 mr-3">
+                        <div class="text-[15px] text-white/90 font-medium truncate">{instanceModelId ?? id}</div>
+                        {#if instanceInfo}
+                          <div class="text-[13px] text-white/40 mt-0.5">{instanceInfo.sharding ?? ""} {instanceInfo.instanceType ?? ""}</div>
+                        {/if}
+                      </div>
+                      <span class="text-[11px] font-semibold tracking-wider px-2.5 py-1 rounded-full {isReady || isRunning ? 'text-green-400 bg-green-500/15' : isFailed ? 'text-red-400 bg-red-500/15' : isDownloading ? 'text-exo-yellow bg-exo-yellow/15' : 'text-white/40 bg-white/[0.06]'}">{statusText}</span>
+                    </div>
+                  {/each}
+                </div>
+              </section>
+            {:else}
+              <div class="flex flex-col items-center justify-center py-20 text-center">
+                <div class="w-16 h-16 bg-white/[0.03] rounded-full flex items-center justify-center mb-4">
+                  <svg class="w-8 h-8 text-white/15" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+                  </svg>
+                </div>
+                <p class="text-[17px] font-semibold text-white/50 mb-1">No Instances</p>
+                <p class="text-[15px] text-white/30">Start a chat to launch a model</p>
+              </div>
+            {/if}
+
+            <!-- Nodes section -->
+            {#if nodeCount > 0}
+              <section>
+                <div class="flex items-center justify-between px-1 mb-2">
+                  <h3 class="text-[13px] font-semibold text-white/40 uppercase tracking-wide">Nodes</h3>
+                  <span class="text-[13px] text-white/30 tabular-nums">{nodeCount}</span>
+                </div>
+                <div class="bg-white/[0.04] rounded-2xl overflow-hidden">
+                  {#each Object.entries(data?.nodes ?? {}) as [nodeId, nodeInfo], i}
+                    {@const ramTotal = nodeInfo.macmon_info?.memory?.ram_total ?? 0}
+                    {@const ramUsage = nodeInfo.macmon_info?.memory?.ram_usage ?? 0}
+                    {@const ramPercent = ramTotal > 0 ? Math.round((ramUsage / ramTotal) * 100) : 0}
+                    {@const gpuUsage = nodeInfo.macmon_info?.gpu_usage}
+                    {@const temp = nodeInfo.macmon_info?.temp?.gpu_temp_avg}
+                    {@const power = nodeInfo.macmon_info?.sys_power}
+                    {@const nodeEntries = Object.entries(data?.nodes ?? {})}
+                    <div class="flex items-center min-h-[52px] px-4 py-3 {i < nodeEntries.length - 1 ? 'border-b border-white/[0.06]' : ''}">
+                      <div class="flex items-center gap-3 flex-1 min-w-0 mr-3">
+                        <div class="w-8 h-8 rounded-full bg-green-500/10 flex items-center justify-center flex-shrink-0">
+                          <div class="w-2 h-2 rounded-full bg-green-400"></div>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                          <div class="text-[15px] text-white/90 font-medium truncate">{nodeInfo.friendly_name ?? nodeId.slice(0, 12)}</div>
+                          <div class="text-[13px] text-white/40 mt-0.5">{nodeInfo.system_info?.chip ?? "Unknown"} · {ramTotal > 0 ? `${Math.round(ramTotal / (1024 * 1024 * 1024))}GB` : "?"}</div>
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-1.5 flex-shrink-0">
+                        {#if gpuUsage}
+                          <span class="text-[11px] text-white/50 bg-white/[0.06] px-2 py-0.5 rounded-md">{gpuUsage[1]}%</span>
+                        {/if}
+                        {#if temp}
+                          <span class="text-[11px] text-white/50 bg-white/[0.06] px-2 py-0.5 rounded-md">{Math.round(temp)}°</span>
+                        {/if}
+                        {#if power}
+                          <span class="text-[11px] text-white/50 bg-white/[0.06] px-2 py-0.5 rounded-md">{Math.round(power)}W</span>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              </section>
+            {/if}
+          </div>
+        </div>
+      {/if}
+
+      <!-- Mobile Tab Bar -->
+      <nav class="flex-shrink-0 bg-black/70 backdrop-blur-2xl border-t border-white/[0.08]">
+        <div class="flex items-end justify-around px-4 pt-1.5">
+          <button
+            onclick={() => mobileTab = "topology"}
+            class="flex flex-col items-center gap-0.5 pb-1.5 min-w-[72px] transition-colors {mobileTab === 'topology' ? 'text-exo-yellow' : 'text-white/30'}"
+          >
+            <svg class="w-[22px] h-[22px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width={mobileTab === 'topology' ? 2.5 : 1.5}>
+              <circle cx="12" cy="5" r="2" fill={mobileTab === 'topology' ? 'currentColor' : 'none'} />
+              <circle cx="5" cy="19" r="2" fill={mobileTab === 'topology' ? 'currentColor' : 'none'} />
+              <circle cx="19" cy="19" r="2" fill={mobileTab === 'topology' ? 'currentColor' : 'none'} />
+              <path stroke-linecap="round" d="M12 7v5m0 0l-5 5m5-5l5 5" />
+            </svg>
+            <span class="text-[10px] font-medium">Topology</span>
+          </button>
+          <button
+            onclick={() => mobileTab = "chat"}
+            class="flex flex-col items-center gap-0.5 pb-1.5 min-w-[72px] transition-colors {mobileTab === 'chat' ? 'text-exo-yellow' : 'text-white/30'}"
+          >
+            <svg class="w-[22px] h-[22px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width={mobileTab === 'chat' ? 2.5 : 1.5}>
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+            <span class="text-[10px] font-medium">Chat</span>
+          </button>
+          <button
+            onclick={() => mobileTab = "instances"}
+            class="flex flex-col items-center gap-0.5 pb-1.5 min-w-[72px] transition-colors {mobileTab === 'instances' ? 'text-exo-yellow' : 'text-white/30'}"
+          >
+            <svg class="w-[22px] h-[22px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width={mobileTab === 'instances' ? 2.5 : 1.5}>
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span class="text-[10px] font-medium">Cluster</span>
+          </button>
+        </div>
+        <div style="height: env(safe-area-inset-bottom)"></div>
+      </nav>
+    </div>
+
+    <!-- ===== DESKTOP LAYOUT (md and up) ===== -->
+    <!-- Left: Conversation History Sidebar -->
     {#if !topologyOnlyEnabled && sidebarVisible}
-      <div class="w-80 flex-shrink-0 border-r border-exo-yellow/10">
+      <div class="hidden md:block w-80 flex-shrink-0 border-r border-exo-yellow/10">
         <ChatSidebar class="h-full" />
       </div>
     {/if}
 
+    <!-- Desktop: main content area (hidden on mobile, tab bar handles it) -->
     {#if topologyOnlyEnabled}
       <!-- TOPOLOGY ONLY MODE: Full-screen topology -->
       <div
-        class="flex-1 flex flex-col min-h-0 min-w-0 p-4"
+        class="hidden md:flex flex-1 flex-col min-h-0 min-w-0 p-4"
         in:fade={{ duration: 300 }}
       >
         <div
@@ -2539,7 +2734,7 @@
     {:else if !chatStarted}
       <!-- WELCOME STATE: Topology + Instance Controls (no left sidebar for cleaner look) -->
       <div
-        class="flex-1 flex overflow-visible relative"
+        class="hidden md:flex flex-1 overflow-visible relative"
         in:fade={{ duration: 300 }}
         out:fade={{ duration: 200 }}
       >
@@ -2681,7 +2876,7 @@
           </div>
         </div>
 
-        <!-- Right Sidebar: Instance Controls (wider on welcome page for better visibility) -->
+        <!-- Right Sidebar: Instance Controls -->
         <aside
           class="w-80 border-l border-exo-yellow/10 bg-exo-dark-gray flex flex-col flex-shrink-0"
         >
@@ -3429,17 +3624,18 @@
             </div>
           </div>
         </aside>
+
       </div>
     {:else}
       <!-- CHAT STATE: Chat + Mini-Map -->
-      <div class="flex-1 flex overflow-hidden">
+      <div class="hidden md:flex flex-1 overflow-hidden">
         <!-- Chat Area -->
         <div
           class="flex-1 flex flex-col min-w-0 overflow-hidden"
           in:fade={{ duration: 300, delay: 100 }}
         >
           <div
-            class="flex-1 overflow-y-auto px-8 py-6"
+            class="flex-1 overflow-y-auto px-3 sm:px-6 md:px-8 py-6"
             bind:this={chatScrollRef}
           >
             <div class="max-w-7xl mx-auto">
@@ -3448,7 +3644,7 @@
           </div>
 
           <div
-            class="flex-shrink-0 px-8 pb-6 pt-4 bg-gradient-to-t from-exo-black via-exo-black to-transparent"
+            class="flex-shrink-0 px-3 sm:px-6 md:px-8 pb-6 pt-4 bg-gradient-to-t from-exo-black via-exo-black to-transparent"
           >
             <div class="max-w-7xl mx-auto">
               <ChatForm
@@ -3942,6 +4138,7 @@
             {/if}
           </aside>
         {/if}
+
       </div>
     {/if}
   </main>

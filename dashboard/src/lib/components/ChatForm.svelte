@@ -483,7 +483,7 @@
               class="fixed bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto"
               style="bottom: calc(100vh - {dropdownPosition()
                 .top}px + 4px); left: {dropdownPosition()
-                .left}px; width: {dropdownPosition().width}px;"
+                .left}px; width: min({dropdownPosition().width}px, calc(100vw - 24px));"
             >
               <div class="py-1">
                 {#each availableModels() as model}

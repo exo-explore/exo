@@ -17,9 +17,10 @@
 
   interface Props {
     class?: string;
+    onClose?: () => void;
   }
 
-  let { class: className = "" }: Props = $props();
+  let { class: className = "", onClose }: Props = $props();
 
   const conversationList = $derived(conversations());
   const activeId = $derived(activeConversationId());
@@ -251,6 +252,19 @@
 >
   <!-- Header -->
   <div class="p-4">
+    {#if onClose}
+      <div class="flex justify-end mb-2 md:hidden">
+        <button
+          onclick={onClose}
+          class="p-1.5 rounded border border-exo-medium-gray/40 hover:border-exo-yellow/50 transition-colors cursor-pointer"
+          title="Close sidebar"
+        >
+          <svg class="w-4 h-4 text-exo-light-gray" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    {/if}
     <button
       onclick={handleNewChat}
       class="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-transparent border border-exo-yellow/30 text-exo-yellow text-xs font-mono tracking-wider uppercase hover:border-exo-yellow/50 transition-all cursor-pointer"
