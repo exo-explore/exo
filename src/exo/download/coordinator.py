@@ -263,7 +263,7 @@ class DownloadCoordinator:
     async def _emit_existing_download_progress(self) -> None:
         try:
             while True:
-                logger.info(
+                logger.debug(
                     "DownloadCoordinator: Fetching and emitting existing download progress..."
                 )
                 async for (
@@ -296,10 +296,10 @@ class DownloadCoordinator:
                     await self.event_sender.send(
                         NodeDownloadProgress(download_progress=status)
                     )
-                logger.info(
+                logger.debug(
                     "DownloadCoordinator: Done emitting existing download progress."
                 )
-                await anyio.sleep(5 * 60)  # 5 minutes
+                await anyio.sleep(60)
         except Exception as e:
             logger.error(
                 f"DownloadCoordinator: Error emitting existing download progress: {e}"
