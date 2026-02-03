@@ -81,10 +81,9 @@ evaluate = true
 multiprocess = 8
 # Cache generated outputs for resumption (disabled by default to avoid stale results)
 use_cache = false
-# Timeout per problem in seconds (default: 1800 = 30 min)
-timeout = 1800
-# OpenAI API request timeout in seconds (default: 3600 = 1 hour)
-openai_timeout = 3600
+# Timeout in seconds (universal for all operations)
+timeout = 100000
+openai_timeout = 100000
 # Output path for results
 output_path = "bench/lcb_results"
 
