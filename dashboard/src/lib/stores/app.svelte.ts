@@ -178,6 +178,36 @@ interface ImageApiResponse {
   data: Array<{ b64_json?: string; url?: string }>;
 }
 
+// Trace API response types
+export interface TraceCategoryStats {
+  totalUs: number;
+  count: number;
+  minUs: number;
+  maxUs: number;
+  avgUs: number;
+}
+
+export interface TraceRankStats {
+  byCategory: Record<string, TraceCategoryStats>;
+}
+
+export interface TraceStatsResponse {
+  taskId: string;
+  totalWallTimeUs: number;
+  byCategory: Record<string, TraceCategoryStats>;
+  byRank: Record<number, TraceRankStats>;
+}
+
+export interface TraceListItem {
+  taskId: string;
+  createdAt: string;
+  fileSize: number;
+}
+
+export interface TraceListResponse {
+  traces: TraceListItem[];
+}
+
 interface RawStateResponse {
   topology?: RawTopology;
   instances?: Record<
@@ -2555,6 +2585,49 @@ class AppStore {
       throw error;
     }
   }
+
+  /**
+   * List all available traces
+   */
+  async listTraces(): Promise<TraceListResponse> {
+    const response = await fetch("/v1/traces");
+    if (!response.ok) {
+      throw new Error(`Failed to list traces: ${response.status}`);
+    }
+    return (await response.json()) as TraceListResponse;
+  }
+
+  /**
+   * Check if a trace exists for a given task ID
+   */
+  async checkTraceExists(taskId: string): Promise<boolean> {
+    try {
+      const response = await fetch(`/v1/traces/${encodeURIComponent(taskId)}`);
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get computed statistics for a task's trace
+   */
+  async fetchTraceStats(taskId: string): Promise<TraceStatsResponse> {
+    const response = await fetch(
+      `/v1/traces/${encodeURIComponent(taskId)}/stats`,
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to fetch trace stats: ${response.status}`);
+    }
+    return (await response.json()) as TraceStatsResponse;
+  }
+
+  /**
+   * Get the URL for the raw trace file (for Perfetto)
+   */
+  getTraceRawUrl(taskId: string): string {
+    return `/v1/traces/${encodeURIComponent(taskId)}/raw`;
+  }
 }
 
 export const appStore = new AppStore();
@@ -2666,3 +2739,12 @@ export const startDownload = (nodeId: string, shardMetadata: object) =>
   appStore.startDownload(nodeId, shardMetadata);
 export const deleteDownload = (nodeId: string, modelId: string) =>
   appStore.deleteDownload(nodeId, modelId);
+
+// Trace actions
+export const listTraces = () => appStore.listTraces();
+export const checkTraceExists = (taskId: string) =>
+  appStore.checkTraceExists(taskId);
+export const fetchTraceStats = (taskId: string) =>
+  appStore.fetchTraceStats(taskId);
+export const getTraceRawUrl = (taskId: string) =>
+  appStore.getTraceRawUrl(taskId);

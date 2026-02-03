@@ -16,9 +16,10 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
 )
 from pydantic import ValidationError
 
-from exo.shared.constants import EXO_MAX_CHUNK_SIZE
+from exo.shared.constants import EXO_MAX_CHUNK_SIZE, EXO_TRACING_ENABLED
 from exo.shared.models.model_cards import ModelId, ModelTask
-from exo.shared.types.api import ChatCompletionMessageText, ImageGenerationStats
+from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
+from exo.shared.types.api import ImageGenerationStats
 from exo.shared.types.chunks import ErrorChunk, ImageChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
@@ -27,9 +28,10 @@ from exo.shared.types.events import (
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
+    TraceEventData,
+    TracesCollected,
 )
 from exo.shared.types.tasks import (
-    ChatCompletion,
     ConnectToGroup,
     ImageEdits,
     ImageGeneration,
@@ -39,7 +41,9 @@ from exo.shared.types.tasks import (
     Task,
     TaskId,
     TaskStatus,
+    TextGeneration,
 )
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
@@ -219,7 +223,7 @@ def main(
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
-                case ChatCompletion(task_params=task_params, command_id=command_id) if (
+                case TextGeneration(task_params=task_params, command_id=command_id) if (
                     isinstance(current_status, RunnerReady)
                 ):
                     logger.info(f"received chat request: {task}")
@@ -232,10 +236,9 @@ def main(
                     )
                     assert model and not isinstance(model, DistributedImageModel)
                     assert tokenizer
-                    assert task_params.messages[0].content is not None
 
                     try:
-                        _check_for_debug_prompts(task_params.messages[0].content)
+                        _check_for_debug_prompts(task_params)
 
                         # Build prompt once - used for both generation and thinking detection
                         prompt = apply_chat_template(tokenizer, task_params)
@@ -408,6 +411,10 @@ def main(
                                 )
                             )
                         raise
+                    finally:
+                        _send_traces_if_enabled(
+                            event_sender, task.task_id, shard_metadata.device_rank
+                        )
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
@@ -466,6 +473,10 @@ def main(
                                 )
                             )
                         raise
+                    finally:
+                        _send_traces_if_enabled(
+                            event_sender, task.task_id, shard_metadata.device_rank
+                        )
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
@@ -640,6 +651,36 @@ def _send_image_chunk(
         )
 
 
+def _send_traces_if_enabled(
+    event_sender: MpSender[Event],
+    task_id: TaskId,
+    rank: int,
+) -> None:
+    if not EXO_TRACING_ENABLED:
+        return
+
+    traces = get_trace_buffer()
+    if traces:
+        trace_data = [
+            TraceEventData(
+                name=t.name,
+                start_us=t.start_us,
+                duration_us=t.duration_us,
+                rank=t.rank,
+                category=t.category,
+            )
+            for t in traces
+        ]
+        event_sender.send(
+            TracesCollected(
+                task_id=task_id,
+                rank=rank,
+                traces=trace_data,
+            )
+        )
+    clear_trace_buffer()
+
+
 def _process_image_response(
     response: ImageGenerationResponse | PartialImageResponse,
     command_id: CommandId,
@@ -716,6 +757,16 @@ def parse_tool_calls(
 
         if in_tool_call:
             tool_call_text_parts.append(response.text)
+            if response.finish_reason is not None:
+                logger.info(
+                    "toll call parsing interrupted, yield partial tool call as text"
+                )
+                yield GenerationResponse(
+                    text=tool_call_start + "".join(tool_call_text_parts),
+                    token=0,
+                    finish_reason=response.finish_reason,
+                    usage=None,
+                )
             continue
         # fallthrough
         yield response
@@ -788,7 +839,7 @@ def patch_glm_tokenizer(tokenizer: TokenizerWrapper):
 
     _func_name_regex = re.compile(r"^(.*?)<arg_key>", re.DOTALL)
     _func_arg_regex = re.compile(
-        r"<arg_key>(.*?)</arg_key>(?:\\n|\s)*<arg_value>(.*?)</arg_value>",
+        r"<arg_key>(.*?)</arg_key>(?:\n|\s)*<arg_value>(.*?)(?:</arg_value>|(?=<arg_key>)|$)",
         re.DOTALL,
     )
 
@@ -862,17 +913,18 @@ EXO_RUNNER_MUST_OOM = "EXO RUNNER MUST OOM"
 EXO_RUNNER_MUST_TIMEOUT = "EXO RUNNER MUST TIMEOUT"
 
 
-def _check_for_debug_prompts(
-    prompt: str | ChatCompletionMessageText | list[ChatCompletionMessageText],
-):
-    if isinstance(prompt, list):
-        if len(prompt) == 0:
-            logger.debug("Empty message prompt received in debug prompt")
-            return
-        prompt = prompt[0]
+def _check_for_debug_prompts(task_params: TextGenerationTaskParams) -> None:
+    """Check for debug prompt triggers in the input.
 
-    if isinstance(prompt, ChatCompletionMessageText):
-        prompt = prompt.text
+    Extracts the first user input text and checks for debug triggers.
+    """
+    if len(task_params.input) == 0:
+        logger.debug("Empty message list in debug prompt check")
+        return
+    prompt = task_params.input[0].content
+
+    if not prompt:
+        return
 
     if EXO_RUNNER_MUST_FAIL in prompt:
         logger.info("raising exception")

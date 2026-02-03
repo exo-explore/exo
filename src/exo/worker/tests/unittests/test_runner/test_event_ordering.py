@@ -5,7 +5,6 @@ from typing import Callable
 import pytest
 
 import exo.worker.runner.runner as mlx_runner
-from exo.shared.types.api import ChatCompletionMessage
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -15,15 +14,15 @@ from exo.shared.types.events import (
     TaskStatusUpdated,
 )
 from exo.shared.types.tasks import (
-    ChatCompletion,
-    ChatCompletionTaskParams,
     ConnectToGroup,
     LoadModel,
     Shutdown,
     StartWarmup,
     Task,
     TaskStatus,
+    TextGeneration,
 )
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.shared.types.worker.runners import (
     RunnerConnected,
@@ -85,15 +84,15 @@ SHUTDOWN_TASK = Shutdown(
     runner_id=RUNNER_1_ID,
 )
 
-CHAT_PARAMS = ChatCompletionTaskParams(
-    model=str(MODEL_A_ID),
-    messages=[ChatCompletionMessage(role="user", content="hello")],
+CHAT_PARAMS = TextGenerationTaskParams(
+    model=MODEL_A_ID,
+    input=[InputMessage(role="user", content="hello")],
     stream=True,
-    max_tokens=4,
+    max_output_tokens=4,
     temperature=0.0,
 )
 
-CHAT_TASK = ChatCompletion(
+CHAT_TASK = TextGeneration(
     task_id=CHAT_COMPLETION_TASK_ID,
     command_id=COMMAND_1_ID,
     task_params=CHAT_PARAMS,

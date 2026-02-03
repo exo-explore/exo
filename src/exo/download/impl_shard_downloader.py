@@ -1,4 +1,5 @@
 import asyncio
+from asyncio import create_task
 from collections.abc import Awaitable
 from pathlib import Path
 from typing import AsyncIterator, Callable
@@ -7,7 +8,7 @@ from loguru import logger
 
 from exo.download.download_utils import RepoDownloadProgress, download_shard
 from exo.download.shard_downloader import ShardDownloader
-from exo.shared.models.model_cards import MODEL_CARDS, ModelCard, ModelId
+from exo.shared.models.model_cards import ModelCard, ModelId, get_model_cards
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
     ShardMetadata,
@@ -49,6 +50,10 @@ class SingletonShardDownloader(ShardDownloader):
         self.shard_downloader = shard_downloader
         self.active_downloads: dict[ShardMetadata, asyncio.Task[Path]] = {}
 
+    def set_internet_connection(self, value: bool) -> None:
+        self.internet_connection = value
+        self.shard_downloader.set_internet_connection(value)
+
     def on_progress(
         self,
         callback: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
@@ -84,6 +89,10 @@ class CachedShardDownloader(ShardDownloader):
     def __init__(self, shard_downloader: ShardDownloader):
         self.shard_downloader = shard_downloader
         self.cache: dict[tuple[str, ShardMetadata], Path] = {}
+
+    def set_internet_connection(self, value: bool) -> None:
+        self.internet_connection = value
+        self.shard_downloader.set_internet_connection(value)
 
     def on_progress(
         self,
@@ -142,6 +151,8 @@ class ResumableShardDownloader(ShardDownloader):
             self.on_progress_wrapper,
             max_parallel_downloads=self.max_parallel_downloads,
             allow_patterns=allow_patterns,
+            skip_internet=not self.internet_connection,
+            on_connection_lost=lambda: self.set_internet_connection(False),
         )
         return target_dir
 
@@ -154,13 +165,24 @@ class ResumableShardDownloader(ShardDownloader):
             """Helper coroutine that builds the shard for a model and gets its download status."""
             shard = await build_full_shard(model_id)
             return await download_shard(
-                shard, self.on_progress_wrapper, skip_download=True
+                shard,
+                self.on_progress_wrapper,
+                skip_download=True,
+                skip_internet=not self.internet_connection,
+                on_connection_lost=lambda: self.set_internet_connection(False),
             )
 
-        # Kick off download status coroutines concurrently
+        semaphore = asyncio.Semaphore(self.max_parallel_downloads)
+
+        async def download_with_semaphore(
+            model_card: ModelCard,
+        ) -> tuple[Path, RepoDownloadProgress]:
+            async with semaphore:
+                return await _status_for_model(model_card.model_id)
+
         tasks = [
-            asyncio.create_task(_status_for_model(model_card.model_id))
-            for model_card in MODEL_CARDS.values()
+            create_task(download_with_semaphore(model_card))
+            for model_card in await get_model_cards()
         ]
 
         for task in asyncio.as_completed(tasks):

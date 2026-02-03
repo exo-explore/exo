@@ -16,6 +16,11 @@ from exo.shared.types.worker.shards import (
 
 # TODO: the PipelineShardMetadata getting reinstantiated is a bit messy. Should this be a classmethod?
 class ShardDownloader(ABC):
+    internet_connection: bool = False
+
+    def set_internet_connection(self, value: bool) -> None:
+        self.internet_connection = value
+
     @abstractmethod
     async def ensure_shard(
         self, shard: ShardMetadata, config_only: bool = False

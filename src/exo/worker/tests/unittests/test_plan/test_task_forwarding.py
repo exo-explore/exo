@@ -1,8 +1,8 @@
 from typing import cast
 
 import exo.worker.plan as plan_mod
-from exo.shared.types.api import ChatCompletionTaskParams
-from exo.shared.types.tasks import ChatCompletion, Task, TaskId, TaskStatus
+from exo.shared.types.tasks import Task, TaskId, TaskStatus, TextGeneration
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import (
     RunnerIdle,
@@ -29,7 +29,7 @@ from exo.worker.tests.unittests.conftest import (
 
 def test_plan_forwards_pending_chat_completion_when_runner_ready():
     """
-    When there is a pending ChatCompletion for the local instance and all
+    When there is a pending TextGeneration for the local instance and all
     runners are Ready/Running, plan() should forward that task.
     """
     shard0 = get_pipeline_shard_metadata(MODEL_A_ID, device_rank=0, world_size=2)
@@ -54,12 +54,14 @@ def test_plan_forwards_pending_chat_completion_when_runner_ready():
         RUNNER_2_ID: RunnerReady(),
     }
 
-    task = ChatCompletion(
+    task = TextGeneration(
         task_id=TASK_1_ID,
         instance_id=INSTANCE_1_ID,
         task_status=TaskStatus.Pending,
         command_id=COMMAND_1_ID,
-        task_params=ChatCompletionTaskParams(model=MODEL_A_ID, messages=[]),
+        task_params=TextGenerationTaskParams(
+            model=MODEL_A_ID, input=[InputMessage(role="user", content="")]
+        ),
     )
 
     result = plan_mod.plan(
@@ -76,7 +78,7 @@ def test_plan_forwards_pending_chat_completion_when_runner_ready():
 
 def test_plan_does_not_forward_chat_completion_if_any_runner_not_ready():
     """
-    Even with a pending ChatCompletion, plan() should not forward it unless
+    Even with a pending TextGeneration, plan() should not forward it unless
     all runners for the instance are Ready/Running.
     """
     shard1 = get_pipeline_shard_metadata(MODEL_A_ID, device_rank=0, world_size=2)
@@ -101,12 +103,14 @@ def test_plan_does_not_forward_chat_completion_if_any_runner_not_ready():
         RUNNER_2_ID: RunnerIdle(),
     }
 
-    task = ChatCompletion(
+    task = TextGeneration(
         task_id=TASK_1_ID,
         instance_id=INSTANCE_1_ID,
         task_status=TaskStatus.Pending,
         command_id=COMMAND_1_ID,
-        task_params=ChatCompletionTaskParams(model=MODEL_A_ID, messages=[]),
+        task_params=TextGenerationTaskParams(
+            model=MODEL_A_ID, input=[InputMessage(role="user", content="")]
+        ),
     )
 
     result = plan_mod.plan(
@@ -123,7 +127,7 @@ def test_plan_does_not_forward_chat_completion_if_any_runner_not_ready():
 
 def test_plan_does_not_forward_tasks_for_other_instances():
     """
-    plan() should ignore pending ChatCompletion tasks whose instance_id does
+    plan() should ignore pending TextGeneration tasks whose instance_id does
     not match the local instance.
     """
     shard = get_pipeline_shard_metadata(model_id=MODEL_A_ID, device_rank=0)
@@ -145,12 +149,14 @@ def test_plan_does_not_forward_tasks_for_other_instances():
     all_runners = {RUNNER_1_ID: RunnerReady()}
 
     other_instance_id = InstanceId("instance-2")
-    foreign_task = ChatCompletion(
+    foreign_task = TextGeneration(
         task_id=TaskId("other-task"),
         instance_id=other_instance_id,
         task_status=TaskStatus.Pending,
         command_id=COMMAND_1_ID,
-        task_params=ChatCompletionTaskParams(model=MODEL_A_ID, messages=[]),
+        task_params=TextGenerationTaskParams(
+            model=MODEL_A_ID, input=[InputMessage(role="user", content="")]
+        ),
     )
 
     result = plan_mod.plan(
@@ -167,7 +173,7 @@ def test_plan_does_not_forward_tasks_for_other_instances():
 
 def test_plan_ignores_non_pending_or_non_chat_tasks():
     """
-    _pending_tasks should not forward tasks that are either not ChatCompletion
+    _pending_tasks should not forward tasks that are either not TextGeneration
     or not in Pending/Running states.
     """
     shard0 = get_pipeline_shard_metadata(MODEL_A_ID, device_rank=0, world_size=2)
@@ -193,12 +199,14 @@ def test_plan_ignores_non_pending_or_non_chat_tasks():
         RUNNER_2_ID: RunnerReady(),
     }
 
-    completed_task = ChatCompletion(
+    completed_task = TextGeneration(
         task_id=TASK_1_ID,
         instance_id=INSTANCE_1_ID,
         task_status=TaskStatus.Complete,
         command_id=COMMAND_1_ID,
-        task_params=ChatCompletionTaskParams(model=MODEL_A_ID, messages=[]),
+        task_params=TextGenerationTaskParams(
+            model=MODEL_A_ID, input=[InputMessage(role="user", content="")]
+        ),
     )
 
     other_task_id = TaskId("other-task")

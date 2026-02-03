@@ -49,6 +49,10 @@ class HuggingFaceAuthenticationError(Exception):
     """Raised when HuggingFace returns 401/403 for a model download."""
 
 
+class HuggingFaceRateLimitError(Exception):
+    """429 Huggingface code"""
+
+
 async def _build_auth_error_message(status_code: int, model_id: ModelId) -> str:
     token = await get_hf_token()
     if status_code == 401 and token is None:
@@ -154,49 +158,76 @@ async def seed_models(seed_dir: str | Path):
                     logger.error(traceback.format_exc())
 
 
+_fetched_file_lists_this_session: set[str] = set()
+
+
 async def fetch_file_list_with_cache(
-    model_id: ModelId, revision: str = "main", recursive: bool = False
+    model_id: ModelId,
+    revision: str = "main",
+    recursive: bool = False,
+    skip_internet: bool = False,
+    on_connection_lost: Callable[[], None] = lambda: None,
 ) -> list[FileListEntry]:
     target_dir = (await ensure_models_dir()) / "caches" / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)
     cache_file = target_dir / f"{model_id.normalize()}--{revision}--file_list.json"
+    cache_key = f"{model_id.normalize()}--{revision}"
 
-    # Always try fresh first
+    if cache_key in _fetched_file_lists_this_session and await aios.path.exists(
+        cache_file
+    ):
+        async with aiofiles.open(cache_file, "r") as f:
+            return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
+
+    if skip_internet:
+        if await aios.path.exists(cache_file):
+            async with aiofiles.open(cache_file, "r") as f:
+                return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
+        raise FileNotFoundError(
+            f"No internet connection and no cached file list for {model_id}"
+        )
+
     try:
         file_list = await fetch_file_list_with_retry(
-            model_id, revision, recursive=recursive
+            model_id,
+            revision,
+            recursive=recursive,
+            on_connection_lost=on_connection_lost,
         )
-        # Update cache with fresh data
         async with aiofiles.open(cache_file, "w") as f:
             await f.write(
                 TypeAdapter(list[FileListEntry]).dump_json(file_list).decode()
             )
+        _fetched_file_lists_this_session.add(cache_key)
         return file_list
     except Exception as e:
-        # Fetch failed - try cache fallback
         if await aios.path.exists(cache_file):
             logger.warning(
                 f"Failed to fetch file list for {model_id}, using cached data: {e}"
             )
             async with aiofiles.open(cache_file, "r") as f:
                 return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
-        # No cache available, propagate the error
-        raise
+        raise FileNotFoundError(f"Failed to fetch file list for {model_id}: {e}") from e
 
 
 async def fetch_file_list_with_retry(
-    model_id: ModelId, revision: str = "main", path: str = "", recursive: bool = False
+    model_id: ModelId,
+    revision: str = "main",
+    path: str = "",
+    recursive: bool = False,
+    on_connection_lost: Callable[[], None] = lambda: None,
 ) -> list[FileListEntry]:
-    n_attempts = 30
+    n_attempts = 3
     for attempt in range(n_attempts):
         try:
             return await _fetch_file_list(model_id, revision, path, recursive)
         except HuggingFaceAuthenticationError:
             raise
         except Exception as e:
+            on_connection_lost()
             if attempt == n_attempts - 1:
                 raise e
-            await asyncio.sleep(min(8, 0.1 * float(2.0 ** int(attempt))))
+            await asyncio.sleep(2.0**attempt)
     raise Exception(
         f"Failed to fetch file list for {model_id=} {revision=} {path=} {recursive=}"
     )
@@ -216,7 +247,11 @@ async def _fetch_file_list(
         if response.status in [401, 403]:
             msg = await _build_auth_error_message(response.status, model_id)
             raise HuggingFaceAuthenticationError(msg)
-        if response.status == 200:
+        elif response.status == 429:
+            raise HuggingFaceRateLimitError(
+                f"Couldn't download {model_id} because of HuggingFace rate limit."
+            )
+        elif response.status == 200:
             data_json = await response.text()
             data = TypeAdapter(list[FileListEntry]).validate_json(data_json)
             files: list[FileListEntry] = []
@@ -249,7 +284,7 @@ def create_http_session(
     else:
         total_timeout = 1800
         connect_timeout = 60
-        sock_read_timeout = 1800
+        sock_read_timeout = 60
         sock_connect_timeout = 60
 
     ssl_context = ssl.create_default_context(
@@ -324,8 +359,9 @@ async def download_file_with_retry(
     path: str,
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
+    on_connection_lost: Callable[[], None] = lambda: None,
 ) -> Path:
-    n_attempts = 30
+    n_attempts = 3
     for attempt in range(n_attempts):
         try:
             return await _download_file(
@@ -333,14 +369,19 @@ async def download_file_with_retry(
             )
         except HuggingFaceAuthenticationError:
             raise
-        except Exception as e:
-            if isinstance(e, FileNotFoundError) or attempt == n_attempts - 1:
+        except HuggingFaceRateLimitError as e:
+            if attempt == n_attempts - 1:
                 raise e
             logger.error(
                 f"Download error on attempt {attempt}/{n_attempts} for {model_id=} {revision=} {path=} {target_dir=}"
             )
             logger.error(traceback.format_exc())
-            await asyncio.sleep(min(8, 0.1 * (2.0**attempt)))
+            await asyncio.sleep(2.0**attempt)
+        except Exception as e:
+            on_connection_lost()
+            if attempt == n_attempts - 1:
+                raise e
+            break
     raise Exception(
         f"Failed to download file {model_id=} {revision=} {path=} {target_dir=}"
     )
@@ -542,7 +583,9 @@ async def download_shard(
     on_progress: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
     max_parallel_downloads: int = 8,
     skip_download: bool = False,
+    skip_internet: bool = False,
     allow_patterns: list[str] | None = None,
+    on_connection_lost: Callable[[], None] = lambda: None,
 ) -> tuple[Path, RepoDownloadProgress]:
     if not skip_download:
         logger.debug(f"Downloading {shard.model_card.model_id=}")
@@ -562,7 +605,11 @@ async def download_shard(
 
     all_start_time = time.time()
     file_list = await fetch_file_list_with_cache(
-        shard.model_card.model_id, revision, recursive=True
+        shard.model_card.model_id,
+        revision,
+        recursive=True,
+        skip_internet=skip_internet,
+        on_connection_lost=on_connection_lost,
     )
     filtered_file_list = list(
         filter_repo_objects(
@@ -672,6 +719,7 @@ async def download_shard(
                 lambda curr_bytes, total_bytes, is_renamed: schedule_progress(
                     file, curr_bytes, total_bytes, is_renamed
                 ),
+                on_connection_lost=on_connection_lost,
             )
 
     if not skip_download:

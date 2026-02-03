@@ -39,10 +39,9 @@ from mlx_lm.utils import load_model
 from pydantic import RootModel
 
 from exo.download.download_utils import build_model_path
-from exo.shared.types.api import ChatCompletionMessageText
 from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
-from exo.shared.types.tasks import ChatCompletionTaskParams
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     BoundInstance,
     MlxJacclInstance,
@@ -389,8 +388,7 @@ def load_tokenizer_for_model_id(
 
 
 def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
-    """
-    Normalize tool_calls in a message dict.
+    """Normalize tool_calls in a message dict.
 
     OpenAI format has tool_calls[].function.arguments as a JSON string,
     but some chat templates (e.g., GLM) expect it as a dict.
@@ -413,42 +411,42 @@ def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
 
 def apply_chat_template(
     tokenizer: TokenizerWrapper,
-    chat_task_data: ChatCompletionTaskParams,
+    task_params: TextGenerationTaskParams,
 ) -> str:
-    messages = chat_task_data.messages
-    tools = chat_task_data.tools
+    """Convert TextGenerationTaskParams to a chat template prompt.
 
+    Converts the internal format (input + instructions) to a messages list
+    that can be processed by the tokenizer's chat template.
+
+    When chat_template_messages is available (from Chat Completions API),
+    uses those directly to preserve tool_calls, thinking, and other fields.
+    Otherwise builds messages from the task params input/instructions.
+    """
     formatted_messages: list[dict[str, Any]] = []
-    for message in messages:
-        if isinstance(message.content, ChatCompletionMessageText):
-            message.content = message.content.text
-        if isinstance(message.content, list):
-            if len(message.content) == 0:
-                logger.warning("Received prompt with no content, skipping")
+    if task_params.chat_template_messages is not None:
+        # Use pre-formatted messages that preserve tool_calls, thinking, etc.
+        formatted_messages = list(task_params.chat_template_messages)
+        for msg in formatted_messages:
+            _normalize_tool_calls(msg)
+    else:
+        # Add system message (instructions) if present
+        if task_params.instructions:
+            formatted_messages.append(
+                {"role": "system", "content": task_params.instructions}
+            )
+
+        # Convert input to messages
+        for msg in task_params.input:
+            if not msg.content:
+                logger.warning("Received message with empty content, skipping")
                 continue
-
-            message.content = "\n".join(c.text for c in message.content).strip()
-        if (
-            message.content is None
-            and message.thinking is None
-            and message.tool_calls is None
-        ):
-            continue
-
-        # Null values are not valid when applying templates in tokenizer
-        dumped: dict[str, Any] = message.model_dump()
-        msg_dict: dict[str, Any] = {k: v for k, v in dumped.items() if v is not None}  # pyright: ignore[reportAny]
-
-        # Parse tool_calls arguments from JSON string to dict for templates that expect dicts
-        _normalize_tool_calls(msg_dict)
-
-        formatted_messages.append(msg_dict)
+            formatted_messages.append({"role": msg.role, "content": msg.content})
 
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
-        tools=tools,
+        tools=task_params.tools,
     )
 
     logger.info(prompt)

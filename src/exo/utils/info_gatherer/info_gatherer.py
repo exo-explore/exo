@@ -13,6 +13,7 @@ from anyio.abc import TaskGroup
 from anyio.streams.buffered import BufferedByteReceiveStream
 from anyio.streams.text import TextReceiveStream
 from loguru import logger
+from pydantic import ValidationError
 
 from exo.shared.constants import EXO_CONFIG_FILE
 from exo.shared.types.memory import Memory
@@ -261,13 +262,14 @@ class NodeConfig(TaggedModel):
     @classmethod
     async def gather(cls) -> Self | None:
         cfg_file = anyio.Path(EXO_CONFIG_FILE)
+        await cfg_file.parent.mkdir(parents=True, exist_ok=True)
         await cfg_file.touch(exist_ok=True)
         async with await cfg_file.open("rb") as f:
             try:
                 contents = (await f.read()).decode("utf-8")
                 data = tomllib.loads(contents)
                 return cls.model_validate(data)
-            except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+            except (tomllib.TOMLDecodeError, UnicodeDecodeError, ValidationError):
                 logger.warning("Invalid config file, skipping...")
                 return None
 

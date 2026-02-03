@@ -2,7 +2,6 @@ import time
 from collections.abc import Generator
 from typing import Annotated, Any, Literal
 
-from fastapi import UploadFile
 from pydantic import BaseModel, Field, field_validator
 from pydantic_core import PydanticUseDefault
 
@@ -11,7 +10,7 @@ from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
-from exo.utils.pydantic_ext import CamelCaseModel, ConfigDict, TaggedModel
+from exo.utils.pydantic_ext import CamelCaseModel
 
 FinishReason = Literal[
     "stop", "length", "tool_calls", "content_filter", "function_call", "error"
@@ -174,10 +173,8 @@ class StreamOptions(BaseModel):
     include_usage: bool = False
 
 
-class ChatCompletionTaskParams(TaggedModel):
-    model_config = ConfigDict(extra="ignore")
-
-    model: str
+class ChatCompletionRequest(BaseModel):
+    model: ModelId
     frequency_penalty: float | None = None
     messages: list[ChatCompletionMessage]
     logit_bias: dict[str, int] | None = None
@@ -193,13 +190,14 @@ class ChatCompletionTaskParams(TaggedModel):
     stream_options: StreamOptions | None = None
     temperature: float | None = None
     top_p: float | None = None
+    top_k: int | None = None
     tools: list[dict[str, Any]] | None = None
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool | None = None
     user: str | None = None
 
 
-class BenchChatCompletionTaskParams(ChatCompletionTaskParams):
+class BenchChatCompletionRequest(ChatCompletionRequest):
     pass
 
 
@@ -283,28 +281,7 @@ class BenchImageGenerationTaskParams(ImageGenerationTaskParams):
 
 
 class ImageEditsTaskParams(BaseModel):
-    image: UploadFile
-    prompt: str
-    background: str | None = None
-    input_fidelity: float | None = None
-    mask: UploadFile | None = None
-    model: str
-    n: int | None = 1
-    output_compression: int | None = None
-    output_format: Literal["png", "jpeg", "webp"] = "png"
-    partial_images: int | None = 0
-    quality: Literal["high", "medium", "low"] | None = "medium"
-    response_format: Literal["url", "b64_json"] | None = "b64_json"
-    size: str | None = "1024x1024"
-    stream: bool | None = False
-    user: str | None = None
-    advanced_params: AdvancedImageParams | None = None
-    # Internal flag for benchmark mode - set by API, preserved through serialization
-    bench: bool = False
-
-
-class ImageEditsInternalParams(BaseModel):
-    """Serializable version of ImageEditsTaskParams for distributed task execution."""
+    """Internal task params for image-editing requests."""
 
     image_data: str = ""  # Base64-encoded image (empty when using chunked transfer)
     total_input_chunks: int = 0
@@ -373,3 +350,45 @@ class StartDownloadResponse(CamelCaseModel):
 
 class DeleteDownloadResponse(CamelCaseModel):
     command_id: CommandId
+
+
+class TraceEventResponse(CamelCaseModel):
+    name: str
+    start_us: int
+    duration_us: int
+    rank: int
+    category: str
+
+
+class TraceResponse(CamelCaseModel):
+    task_id: str
+    traces: list[TraceEventResponse]
+
+
+class TraceCategoryStats(CamelCaseModel):
+    total_us: int
+    count: int
+    min_us: int
+    max_us: int
+    avg_us: float
+
+
+class TraceRankStats(CamelCaseModel):
+    by_category: dict[str, TraceCategoryStats]
+
+
+class TraceStatsResponse(CamelCaseModel):
+    task_id: str
+    total_wall_time_us: int
+    by_category: dict[str, TraceCategoryStats]
+    by_rank: dict[int, TraceRankStats]
+
+
+class TraceListItem(CamelCaseModel):
+    task_id: str
+    created_at: str
+    file_size: int
+
+
+class TraceListResponse(CamelCaseModel):
+    traces: list[TraceListItem]
