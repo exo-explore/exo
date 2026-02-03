@@ -166,6 +166,7 @@ async def fetch_file_list_with_cache(
     revision: str = "main",
     recursive: bool = False,
     skip_internet: bool = False,
+    on_connection_lost: Callable[[], None] = lambda: None,
 ) -> list[FileListEntry]:
     target_dir = (await ensure_models_dir()) / "caches" / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)
@@ -188,7 +189,10 @@ async def fetch_file_list_with_cache(
 
     try:
         file_list = await fetch_file_list_with_retry(
-            model_id, revision, recursive=recursive
+            model_id,
+            revision,
+            recursive=recursive,
+            on_connection_lost=on_connection_lost,
         )
         async with aiofiles.open(cache_file, "w") as f:
             await f.write(
@@ -207,7 +211,11 @@ async def fetch_file_list_with_cache(
 
 
 async def fetch_file_list_with_retry(
-    model_id: ModelId, revision: str = "main", path: str = "", recursive: bool = False
+    model_id: ModelId,
+    revision: str = "main",
+    path: str = "",
+    recursive: bool = False,
+    on_connection_lost: Callable[[], None] = lambda: None,
 ) -> list[FileListEntry]:
     n_attempts = 3
     for attempt in range(n_attempts):
@@ -216,6 +224,7 @@ async def fetch_file_list_with_retry(
         except HuggingFaceAuthenticationError:
             raise
         except Exception as e:
+            on_connection_lost()
             if attempt == n_attempts - 1:
                 raise e
             await asyncio.sleep(2.0**attempt)
@@ -350,6 +359,7 @@ async def download_file_with_retry(
     path: str,
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
+    on_connection_lost: Callable[[], None] = lambda: None,
 ) -> Path:
     n_attempts = 3
     for attempt in range(n_attempts):
@@ -367,6 +377,11 @@ async def download_file_with_retry(
             )
             logger.error(traceback.format_exc())
             await asyncio.sleep(2.0**attempt)
+        except Exception as e:
+            on_connection_lost()
+            if attempt == n_attempts - 1:
+                raise e
+            break
     raise Exception(
         f"Failed to download file {model_id=} {revision=} {path=} {target_dir=}"
     )
@@ -570,6 +585,7 @@ async def download_shard(
     skip_download: bool = False,
     skip_internet: bool = False,
     allow_patterns: list[str] | None = None,
+    on_connection_lost: Callable[[], None] = lambda: None,
 ) -> tuple[Path, RepoDownloadProgress]:
     if not skip_download:
         logger.debug(f"Downloading {shard.model_card.model_id=}")
@@ -589,7 +605,11 @@ async def download_shard(
 
     all_start_time = time.time()
     file_list = await fetch_file_list_with_cache(
-        shard.model_card.model_id, revision, recursive=True, skip_internet=skip_internet
+        shard.model_card.model_id,
+        revision,
+        recursive=True,
+        skip_internet=skip_internet,
+        on_connection_lost=on_connection_lost,
     )
     filtered_file_list = list(
         filter_repo_objects(
@@ -699,6 +719,7 @@ async def download_shard(
                 lambda curr_bytes, total_bytes, is_renamed: schedule_progress(
                     file, curr_bytes, total_bytes, is_renamed
                 ),
+                on_connection_lost=on_connection_lost,
             )
 
     if not skip_download:

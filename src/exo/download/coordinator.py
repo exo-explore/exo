@@ -82,7 +82,13 @@ class DownloadCoordinator:
         first_connection = True
         while True:
             await asyncio.sleep(10)
+
+            # Assume that internet connection is set to False on 443 errors.
+            if self.shard_downloader.internet_connection:
+                continue
+
             self._test_internet_connection()
+
             if first_connection and self.shard_downloader.internet_connection:
                 first_connection = False
                 self._tg.start_soon(self._emit_existing_download_progress)
