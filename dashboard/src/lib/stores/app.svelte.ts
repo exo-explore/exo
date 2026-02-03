@@ -2183,6 +2183,8 @@ class AppStore {
           messages: apiMessages,
           temperature: 0.7,
           stream: true,
+          logprobs: true,
+          top_logprobs: 5,
         }),
       });
 
@@ -2199,14 +2201,48 @@ class AppStore {
       let streamedContent = "";
 
       interface ChatCompletionChunk {
-        choices?: Array<{ delta?: { content?: string } }>;
+        choices?: Array<{
+          delta?: { content?: string };
+          logprobs?: {
+            content?: Array<{
+              token: string;
+              logprob: number;
+              top_logprobs?: Array<{
+                token: string;
+                logprob: number;
+                bytes: number[] | null;
+              }>;
+            }>;
+          };
+        }>;
       }
+
+      const collectedTokens: TokenData[] = [];
 
       await this.parseSSEStream<ChatCompletionChunk>(
         reader,
         targetConversationId,
         (parsed) => {
-          const tokenContent = parsed.choices?.[0]?.delta?.content;
+          const choice = parsed.choices?.[0];
+          const tokenContent = choice?.delta?.content;
+
+          // Collect logprobs data
+          const logprobsContent = choice?.logprobs?.content;
+          if (logprobsContent) {
+            for (const item of logprobsContent) {
+              collectedTokens.push({
+                token: item.token,
+                logprob: item.logprob,
+                probability: Math.exp(item.logprob),
+                topLogprobs: (item.top_logprobs || []).map((t) => ({
+                  token: t.token,
+                  logprob: t.logprob,
+                  bytes: t.bytes,
+                })),
+              });
+            }
+          }
+
           if (tokenContent) {
             // Track first token for TTFT
             if (firstTokenTime === null) {
@@ -2242,6 +2278,7 @@ class AppStore {
               (msg) => {
                 msg.content = displayContent;
                 msg.thinking = thinkingContent || undefined;
+                msg.tokens = [...collectedTokens];
               },
             );
             this.syncActiveMessagesIfNeeded(targetConversationId);
@@ -2266,6 +2303,7 @@ class AppStore {
           (msg) => {
             msg.content = displayContent;
             msg.thinking = thinkingContent || undefined;
+            msg.tokens = [...collectedTokens];
             // Store performance metrics on the message
             if (this.ttftMs !== null) {
               msg.ttftMs = this.ttftMs;

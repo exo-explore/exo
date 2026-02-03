@@ -164,28 +164,28 @@ def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
 def extract_top_logprobs(
     logprobs: mx.array,
     tokenizer: TokenizerWrapper,
-    top_k: int,
+    top_logprobs: int,
     selected_token: int,
 ) -> tuple[float, list[TopLogprobItem]]:
-    """Extract the selected token's logprob and top-k alternative tokens.
+    """Extract the selected token's logprob and top alternative tokens.
 
     Args:
         logprobs: Full vocabulary logprobs array from MLX
         tokenizer: Tokenizer for decoding token IDs to strings
-        top_k: Number of top alternatives to return
+        top_logprobs: Number of top alternatives to return
         selected_token: The token ID that was actually sampled
 
     Returns:
-        Tuple of (selected_token_logprob, list of TopLogprobItem for top-k tokens)
+        Tuple of (selected_token_logprob, list of TopLogprobItem for top alternatives)
     """
     # Get the logprob of the selected token
     selected_logprob = float(logprobs[selected_token].item())
 
-    # Get top-k indices (most probable tokens)
+    # Get top indices (most probable tokens)
     # mx.argpartition gives indices that would partition the array
     # We negate logprobs since argpartition finds smallest, and we want largest
-    top_k = min(top_k, logprobs.shape[0])  # Don't exceed vocab size
-    top_indices = mx.argpartition(-logprobs, top_k)[:top_k]
+    top_logprobs = min(top_logprobs, logprobs.shape[0])  # Don't exceed vocab size
+    top_indices = mx.argpartition(-logprobs, top_logprobs)[:top_logprobs]
 
     # Get the actual logprob values for these indices
     top_values = logprobs[top_indices]
@@ -197,7 +197,7 @@ def extract_top_logprobs(
 
     # Convert to list of TopLogprobItem
     top_logprob_items: list[TopLogprobItem] = []
-    for i in range(top_k):
+    for i in range(top_logprobs):
         token_id = int(top_indices[i].item())
         token_logprob = float(top_values[i].item())
         # Decode token ID to string
@@ -363,7 +363,7 @@ def mlx_generate(
             logprob, top_logprobs = extract_top_logprobs(
                 logprobs=out.logprobs,
                 tokenizer=tokenizer,
-                top_k=task.top_logprobs or DEFAULT_TOP_LOGPROBS,
+                top_logprobs=task.top_logprobs or DEFAULT_TOP_LOGPROBS,
                 selected_token=out.token,
             )
 
