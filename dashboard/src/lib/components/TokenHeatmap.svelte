@@ -67,7 +67,14 @@
     index: number,
   ) {
     clearHideTimeout();
-    const rect = (event.target as HTMLElement).getBoundingClientRect();
+    const rects = (event.target as HTMLElement).getClientRects();
+    let rect = rects[0];
+    for (let j = 0; j < rects.length; j++) {
+      if (event.clientY >= rects[j].top && event.clientY <= rects[j].bottom) {
+        rect = rects[j];
+        break;
+      }
+    }
     hoveredTokenIndex = index;
     hoveredPosition = {
       x: rect.left + rect.width / 2,
@@ -78,7 +85,7 @@
   function handleMouseLeave() {
     clearHideTimeout();
     // Use longer delay during generation to account for re-renders
-    const delay = isGenerating ? 300 : 100;
+    const delay = isGenerating ? 300 : 200;
     hideTimeoutId = setTimeout(() => {
       if (!isTooltipHovered) {
         hoveredTokenIndex = null;
@@ -143,7 +150,7 @@
 <!-- Tooltip -->
 {#if hoveredToken}
   <div
-    class="fixed z-50"
+    class="fixed z-50 pb-2"
     style="left: {hoveredToken.x}px; top: {hoveredToken.y}px; transform: translate(-50%, -100%);"
     onmouseenter={handleTooltipEnter}
     onmouseleave={handleTooltipLeave}
