@@ -357,13 +357,12 @@ def main(
                     assert not isinstance(model, DistributedImageModel)
                     assert tokenizer
 
-                    # For tensor parallel, skip explicit warmup here.
-                    # The plan.py warmup scheduling sends StartWarmup to ranks at
-                    # different times, which doesn't work with tensor parallel's
-                    # requirement that all ranks call the model simultaneously.
-                    # The first real ChatCompletion request will "warm up" through
-                    # the synchronized batch handler loop instead.
-                    if is_tensor_parallel:
+                    # For tensor parallel with batch handler, skip explicit warmup.
+                    # The batch handler synchronizes all ranks via all_sum in flush(),
+                    # so the first real request warms up the model on all ranks simultaneously.
+                    # Without a batch handler, warmup must run normally to avoid GPU locks
+                    # from mismatched send/recv in serial processing.
+                    if is_tensor_parallel and batch_handler is not None:
                         logger.info(
                             "Tensor parallel: skipping warmup (first request will warm up through batch handler)"
                         )
