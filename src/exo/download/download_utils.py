@@ -284,7 +284,7 @@ def create_http_session(
     else:
         total_timeout = 1800
         connect_timeout = 60
-        sock_read_timeout = 1800
+        sock_read_timeout = 60
         sock_connect_timeout = 60
 
     ssl_context = ssl.create_default_context(
