@@ -357,12 +357,23 @@ def main(
                     assert not isinstance(model, DistributedImageModel)
                     assert tokenizer
 
-                    toks = warmup_inference(
-                        model=model,
-                        tokenizer=tokenizer,
-                        # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
-                    )
-                    logger.info(f"warmed up by generating {toks} tokens")
+                    # For tensor parallel, skip explicit warmup here.
+                    # The plan.py warmup scheduling sends StartWarmup to ranks at
+                    # different times, which doesn't work with tensor parallel's
+                    # requirement that all ranks call the model simultaneously.
+                    # The first real ChatCompletion request will "warm up" through
+                    # the synchronized batch handler loop instead.
+                    if is_tensor_parallel:
+                        logger.info(
+                            "Tensor parallel: skipping warmup (first request will warm up through batch handler)"
+                        )
+                        toks = 0
+                    else:
+                        toks = warmup_inference(
+                            model=model,
+                            tokenizer=tokenizer,
+                        )
+                        logger.info(f"warmed up by generating {toks} tokens")
                     logger.info(
                         f"runner initialized in {time.time() - setup_start_time} seconds"
                     )
