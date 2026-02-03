@@ -499,6 +499,76 @@ def _set_layers(model: nn.Module, layers: list[_LayerCallable]) -> None:
         raise ValueError("Model must have either a 'layers' or 'h' attribute")
 
 
+def _patch_deepseek_for_batching(model: nn.Module) -> None:
+    """Patch DeepseekV3Model to handle batched total_context in __call__.
+
+    The upstream mlx-lm DeepseekV3Model has a bug where total_context becomes
+    an array (one value per batch item) when batching, but the comparison
+    `total_context >= self._mla_crossover` expects a scalar.
+
+    This patch fixes it by taking the max of total_context for the comparison.
+    """
+    # Get the inner model (DeepseekV3Model)
+    inner_model: Any = getattr(model, "model", None)
+    if inner_model is None:
+        inner_model = getattr(model, "language_model", None)
+        if inner_model is not None:
+            inner_model = getattr(inner_model, "model", None)  # pyright: ignore[reportAny]
+
+    if inner_model is None:
+        return
+
+    # Get the inner model's class and patch __call__
+    inner_cls: Any = inner_model.__class__  # pyright: ignore[reportAny]
+    if hasattr(inner_cls, "_batching_patched"):  # pyright: ignore[reportAny]
+        return  # Already patched
+
+    original_call: Any = inner_cls.__call__  # pyright: ignore[reportAny]
+
+    def patched_inner_call(
+        self: Any,  # pyright: ignore[reportAny]
+        inputs: mx.array,
+        cache: Any = None,  # pyright: ignore[reportAny]
+        inputs_embeds: mx.array | None = None,
+    ) -> mx.array:
+        # Compute total_context as a scalar (max across batch) for the MLA crossover check
+        # This fixes the batching bug where total_context is an array
+        if cache is not None and hasattr(self, "_mla_crossover"):  # pyright: ignore[reportAny]
+            # Get total context - for batched inputs this will be an array
+            h = inputs_embeds if inputs_embeds is not None else self.embed_tokens(inputs)  # pyright: ignore[reportAny]
+            seq_len = h.shape[1]
+            total_context: Any = cache[0].offset + seq_len  # pyright: ignore[reportAny]
+
+            # Convert to scalar by taking max if it's an array
+            if hasattr(total_context, "shape") and total_context.shape:  # pyright: ignore[reportAny]
+                total_context_scalar = int(mx.max(total_context).item())  # pyright: ignore[reportAny]
+            else:
+                total_context_scalar = int(total_context)  # pyright: ignore[reportAny]
+
+            # Temporarily set a scalar version for the crossover check
+            # by overriding the cache offset calculation
+            original_mla_crossover: Any = self._mla_crossover  # pyright: ignore[reportAny]
+            if total_context_scalar < original_mla_crossover:
+                # All items in batch are below threshold, use absorbed attention
+                pass
+            else:
+                # At least one item exceeds threshold, use MLA for all
+                # Set crossover to 0 to force MLA path for consistency
+                self._mla_crossover = 0
+
+            try:
+                result: Any = original_call(self, inputs, cache, inputs_embeds)  # pyright: ignore[reportAny]
+            finally:
+                self._mla_crossover = original_mla_crossover
+            return result  # pyright: ignore[reportAny]
+
+        return original_call(self, inputs, cache, inputs_embeds)  # pyright: ignore[reportAny]
+
+    inner_cls.__call__ = patched_inner_call
+    inner_cls._batching_patched = True
+    logger.info("Patched DeepseekV3Model for batched inference")
+
+
 class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
     def shard_model(
         self,
@@ -507,6 +577,10 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
         on_timeout: TimeoutCallback | None,
     ) -> nn.Module:
         model = cast(DeepseekV3Model, model)
+
+        # Patch for batching support
+        _patch_deepseek_for_batching(model)
+
         for layer in model.layers:
             eval_with_timeout(
                 layer.parameters(), timeout_seconds / len(model.layers), on_timeout
