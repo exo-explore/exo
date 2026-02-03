@@ -8,9 +8,14 @@
 		"build": "vite build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"test": "playwright test",
+		"test:e2e": "playwright test tests/e2e",
+		"test:visual": "playwright test tests/visual",
+		"test:update-snapshots": "playwright test tests/visual --update-snapshots"
 	},
 	"devDependencies": {
+		"@playwright/test": "^1.41.0",
 		"prettier": "^3.4.2",
 		"prettier-plugin-svelte": "^3.3.3",
 		"@sveltejs/adapter-static": "^3.0.10",

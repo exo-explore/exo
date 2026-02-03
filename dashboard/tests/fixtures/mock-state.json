@@ -1,0 +1,172 @@
+{
+  "emptyState": {
+    "instances": {},
+    "runners": {},
+    "downloads": {},
+    "tasks": {},
+    "lastSeen": {},
+    "topology": {
+      "nodes": {},
+      "edges": []
+    },
+    "lastEventAppliedIdx": -1,
+    "nodeIdentities": {},
+    "nodeMemory": {},
+    "nodeSystem": {},
+    "nodeNetwork": {},
+    "nodeThunderbolt": {},
+    "nodeThunderboltBridge": {},
+    "thunderboltBridgeCycles": []
+  },
+  "singleNodeState": {
+    "instances": {},
+    "runners": {},
+    "downloads": {},
+    "tasks": {},
+    "lastSeen": {
+      "node-abc123": "2024-01-15T10:30:00Z"
+    },
+    "topology": {
+      "nodes": {
+        "node-abc123": {
+          "peerId": "node-abc123",
+          "friendlyName": "MacBook Pro",
+          "systemInfo": {
+            "modelId": "MacBook Pro",
+            "memory": 34359738368
+          },
+          "macmonInfo": {
+            "memory": {
+              "ramTotal": 34359738368,
+              "ramUsage": 17179869184
+            }
+          }
+        }
+      },
+      "edges": []
+    },
+    "lastEventAppliedIdx": 5,
+    "nodeIdentities": {
+      "node-abc123": {
+        "peerId": "node-abc123",
+        "friendlyName": "MacBook Pro"
+      }
+    },
+    "nodeMemory": {
+      "node-abc123": {
+        "ramTotal": 34359738368,
+        "ramUsage": 17179869184
+      }
+    },
+    "nodeSystem": {},
+    "nodeNetwork": {},
+    "nodeThunderbolt": {},
+    "nodeThunderboltBridge": {},
+    "thunderboltBridgeCycles": []
+  },
+  "multiNodeState": {
+    "instances": {},
+    "runners": {},
+    "downloads": {},
+    "tasks": {},
+    "lastSeen": {
+      "node-abc123": "2024-01-15T10:30:00Z",
+      "node-def456": "2024-01-15T10:30:00Z",
+      "node-ghi789": "2024-01-15T10:30:00Z"
+    },
+    "topology": {
+      "nodes": {
+        "node-abc123": {
+          "peerId": "node-abc123",
+          "friendlyName": "MacBook Pro 1",
+          "systemInfo": {
+            "modelId": "MacBook Pro",
+            "memory": 34359738368
+          },
+          "macmonInfo": {
+            "memory": {
+              "ramTotal": 34359738368,
+              "ramUsage": 17179869184
+            }
+          }
+        },
+        "node-def456": {
+          "peerId": "node-def456",
+          "friendlyName": "Mac Studio",
+          "systemInfo": {
+            "modelId": "Mac Studio",
+            "memory": 68719476736
+          },
+          "macmonInfo": {
+            "memory": {
+              "ramTotal": 68719476736,
+              "ramUsage": 21474836480
+            }
+          }
+        },
+        "node-ghi789": {
+          "peerId": "node-ghi789",
+          "friendlyName": "Mac Mini",
+          "systemInfo": {
+            "modelId": "Mac Mini",
+            "memory": 17179869184
+          },
+          "macmonInfo": {
+            "memory": {
+              "ramTotal": 17179869184,
+              "ramUsage": 8589934592
+            }
+          }
+        }
+      },
+      "edges": [
+        {
+          "source": "node-abc123",
+          "target": "node-def456"
+        },
+        {
+          "source": "node-def456",
+          "target": "node-ghi789"
+        },
+        {
+          "source": "node-ghi789",
+          "target": "node-abc123"
+        }
+      ]
+    },
+    "lastEventAppliedIdx": 10,
+    "nodeIdentities": {
+      "node-abc123": {
+        "peerId": "node-abc123",
+        "friendlyName": "MacBook Pro 1"
+      },
+      "node-def456": {
+        "peerId": "node-def456",
+        "friendlyName": "Mac Studio"
+      },
+      "node-ghi789": {
+        "peerId": "node-ghi789",
+        "friendlyName": "Mac Mini"
+      }
+    },
+    "nodeMemory": {
+      "node-abc123": {
+        "ramTotal": 34359738368,
+        "ramUsage": 17179869184
+      },
+      "node-def456": {
+        "ramTotal": 68719476736,
+        "ramUsage": 21474836480
+      },
+      "node-ghi789": {
+        "ramTotal": 17179869184,
+        "ramUsage": 8589934592
+      }
+    },
+    "nodeSystem": {},
+    "nodeNetwork": {},
+    "nodeThunderbolt": {},
+    "nodeThunderboltBridge": {},
+    "thunderboltBridgeCycles": []
+  }
+}
