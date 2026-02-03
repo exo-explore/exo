@@ -445,6 +445,12 @@ def main(
                     assert batch_handler is not None
                     try:
                         _check_for_debug_prompts(task_params.messages[0].content)
+                        # Non-coordinator TP: don't add to batch handler.
+                        # The batch handler syncs via all_sum in flush();
+                        # non-coordinator participates through that, not through add_request.
+                        if is_tensor_parallel and not is_tp_coordinator:
+                            event_sender.send(TaskAcknowledged(task_id=task.task_id))
+                            return True
                         batch_handler.add_request(task)
 
                         # Update status to running if not already

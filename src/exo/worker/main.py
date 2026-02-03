@@ -43,7 +43,6 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.runners import RunnerId
-from exo.shared.types.worker.shards import TensorShardMetadata
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
@@ -276,22 +275,10 @@ class Worker:
                 case ChatCompletion():
                     # Don't wait for acknowledgment for batchable inference tasks
                     # This allows multiple tasks to reach the runner for batching
-                    # For tensor parallel: only the first node sends tasks to runner
-                    # Other nodes' runners will participate via model sync
+                    # For tensor parallel: all nodes send tasks to their runner
+                    # so non-coordinator can participate in collective ops
                     runner_id = self._task_to_runner_id(task)
-                    runner = self.runners[runner_id]
-                    instance = self.state.instances[task.instance_id]
-                    is_tensor_parallel = isinstance(
-                        runner.shard_metadata, TensorShardMetadata
-                    )
-                    if is_tensor_parallel:
-                        # Use sorted node ordering to determine coordinator
-                        nodes = sorted(instance.shard_assignments.node_to_runner.keys())
-                        is_coordinator = self.node_id == nodes[0]
-                        if is_coordinator:
-                            await runner.start_task(task, wait_for_ack=False)
-                    else:
-                        await runner.start_task(task, wait_for_ack=False)
+                    await self.runners[runner_id].start_task(task, wait_for_ack=False)
                 case task:
                     await self.runners[self._task_to_runner_id(task)].start_task(task)
 
