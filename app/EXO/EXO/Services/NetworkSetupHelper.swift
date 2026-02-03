@@ -288,6 +288,61 @@ enum NetworkSetupHelper {
         """
     }
 
+    /// Direct install without GUI (requires root).
+    /// Returns true on success, false on failure.
+    static func installDirectly() -> Bool {
+        let script = makeInstallerScript()
+        return runShellDirectly(script)
+    }
+
+    /// Direct uninstall without GUI (requires root).
+    /// Returns true on success, false on failure.
+    static func uninstallDirectly() -> Bool {
+        let script = makeUninstallScript()
+        return runShellDirectly(script)
+    }
+
+    /// Run a shell script directly via Process (no AppleScript, requires root).
+    /// Returns true on success, false on failure.
+    private static func runShellDirectly(_ script: String) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-c", script]
+
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+
+            if let output = String(data: outputData, encoding: .utf8), !output.isEmpty {
+                print(output)
+            }
+            if let errorOutput = String(data: errorData, encoding: .utf8), !errorOutput.isEmpty {
+                fputs(errorOutput, stderr)
+            }
+
+            if process.terminationStatus == 0 {
+                logger.info("Shell script completed successfully")
+                return true
+            } else {
+                logger.error("Shell script failed with exit code \(process.terminationStatus)")
+                return false
+            }
+        } catch {
+            logger.error(
+                "Failed to run shell script: \(error.localizedDescription, privacy: .public)")
+            fputs("Error: \(error.localizedDescription)\n", stderr)
+            return false
+        }
+    }
+
     private static func runShellAsAdmin(_ script: String) throws {
         let escapedScript =
             script
