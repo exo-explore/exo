@@ -204,6 +204,9 @@ jobs:
       - name: Load nix develop environment
         run: nix run github:nicknovitski/nix-develop/v1
 
+      - name: Sync Python dependencies
+        run: uv sync --all-packages
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
