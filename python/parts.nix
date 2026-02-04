@@ -7,9 +7,6 @@
       workspace = inputs.uv2nix.lib.workspace.loadWorkspace {
         workspaceRoot = inputs.self;
       };
-      resourcesSrc = lib.cleanSourceWith {
-        src = inputs.self + "/resources";
-      };
 
       # Create overlay from workspace
       # Use wheels from PyPI for most packages; we override mlx with our pure Nix Metal build
@@ -73,7 +70,7 @@
           for script in exo exo-master exo-worker; do
             makeWrapper ${exoVenv}/bin/$script $out/bin/$script \
               --set EXO_DASHBOARD_DIR ${self'.packages.dashboard} \
-              --set EXO_RESOURCES_DIR ${resourcesSrc} \
+              --set EXO_RESOURCES_DIR ${inputs.self + "/resources"} \
               ${lib.optionalString pkgs.stdenv.isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
           done
         '';
