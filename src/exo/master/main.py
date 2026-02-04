@@ -396,7 +396,7 @@ class Master:
                         await self._handle_traces_collected(event)
                         continue
 
-                    logger.debug(f"Master indexing event: {str(event)[:100]}")
+                    logger.trace(f"Master indexing event: {str(event)[:100]}")
                     indexed = IndexedEvent(event=event, idx=len(self._event_log))
                     self.state = apply(self.state, indexed)
 

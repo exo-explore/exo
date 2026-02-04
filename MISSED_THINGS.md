@@ -1,5 +1,5 @@
 # Missed things
-[X] Log EXO_LIBP2P_NAMESPACE on start in exo/main.py
+[X] Log namespace on start in exo/main.py
 [X] Ordering of warmup was changed, which is wrong. It was changed to rank < n-1, then rank=n-1. It should be rank!=0 then rank=0 (this matches the auto_parallel implementation. NOTE: we use a different convention to mlx-lm, our terminal rank is rank=n-1 whereas mlx-lm is rank=0 hence i can see why this was changed wrongly).
 [X] Downloads keying by model_id not shard_metadata (worker/plan.py, worker/main.py).
 [X] Fetching download status of all models on start

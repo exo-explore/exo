@@ -348,7 +348,7 @@ class Worker:
                     session=self.session_id,
                     event=event,
                 )
-                logger.debug(f"Worker published event {idx}: {str(event)[:100]}")
+                logger.trace(f"Worker published event {idx}: {str(event)[:100]}")
                 await self.local_event_sender.send(fe)
                 self.out_for_delivery[event.event_id] = fe
 

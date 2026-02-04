@@ -1,5 +1,5 @@
 from copy import copy
-from itertools import count
+from dataclasses import dataclass, field
 from math import inf
 from os import PathLike
 from pathlib import Path
@@ -14,15 +14,14 @@ from anyio import (
 )
 from anyio.abc import TaskGroup
 from exo_pyo3_bindings import (
-    AllQueuesFullError,
     Keypair,
-    NetworkingHandle,
-    NoPeersSubscribedToTopicError,
+    PyPeer,
 )
 from filelock import FileLock
 from loguru import logger
 
 from exo.shared.constants import EXO_NODE_ID_KEYPAIR
+from exo.shared.types.common import NodeId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.pydantic_ext import CamelCaseModel
 
@@ -99,28 +98,32 @@ class TopicRouter[T: CamelCaseModel]:
         )
 
 
+@dataclass
 class Router:
-    @classmethod
-    def create(cls, identity: Keypair) -> "Router":
-        return cls(handle=NetworkingHandle(identity))
+    _peer: PyPeer
+    topic_routers: dict[str, TopicRouter[CamelCaseModel]] = field(
+        init=False, default_factory=dict
+    )
+    networking_receiver: Receiver[tuple[str, bytes]] = field(init=False)
+    _tmp_networking_sender: Sender[tuple[str, bytes]] | None = field(init=False)
+    _tg: TaskGroup | None = None
 
-    def __init__(self, handle: NetworkingHandle):
-        self.topic_routers: dict[str, TopicRouter[CamelCaseModel]] = {}
-        send, recv = channel[tuple[str, bytes]]()
-        self.networking_receiver: Receiver[tuple[str, bytes]] = recv
-        self._net: NetworkingHandle = handle
-        self._tmp_networking_sender: Sender[tuple[str, bytes]] | None = send
-        self._id_count = count()
-        self._tg: TaskGroup | None = None
+    def __post_init__(self):
+        self._tmp_networking_sender, self.networking_receiver = channel()
+
+    @classmethod
+    def create(cls, identity: Keypair, namespace: str) -> "Router":
+        return cls(_peer=PyPeer.new(identity, namespace))
 
     async def register_topic[T: CamelCaseModel](self, topic: TypedTopic[T]):
-        assert self._tg is None, "Attempted to register topic after setup time"
         send = self._tmp_networking_sender
         if send:
             self._tmp_networking_sender = None
         else:
             send = self.networking_receiver.clone_sender()
         router = TopicRouter[T](topic, send)
+        if self._tg is not None:
+            self._tg.start_soon(router.run)
         self.topic_routers[topic.topic] = cast(TopicRouter[CamelCaseModel], router)
         await self._networking_subscribe(str(topic.topic))
 
@@ -148,14 +151,18 @@ class Router:
     async def run(self):
         logger.debug("Starting Router")
         try:
+
+            async def _peer_run():
+                await self._peer.run()
+
             async with create_task_group() as tg:
                 self._tg = tg
                 for topic in self.topic_routers:
                     router = self.topic_routers[topic]
                     tg.start_soon(router.run)
                 tg.start_soon(self._networking_recv)
-                tg.start_soon(self._networking_recv_connection_messages)
                 tg.start_soon(self._networking_publish)
+                tg.start_soon(_peer_run)
                 # Router only shuts down if you cancel it.
                 await sleep_forever()
         finally:
@@ -170,47 +177,58 @@ class Router:
         self._tg.cancel_scope.cancel()
 
     async def _networking_subscribe(self, topic: str):
-        await self._net.gossipsub_subscribe(topic)
+        await self._peer.subscribe(topic)
         logger.info(f"Subscribed to {topic}")
 
     async def _networking_unsubscribe(self, topic: str):
-        await self._net.gossipsub_unsubscribe(topic)
+        await self._peer.unsubscribe(topic)
         logger.info(f"Unsubscribed from {topic}")
 
     async def _networking_recv(self):
         while True:
-            topic, data = await self._net.gossipsub_recv()
-            logger.trace(f"Received message on {topic} with payload {data}")
+            try:
+                swarm_event = await self._peer.recv()
+            except ValueError:
+                logger.error("Message too large for gossipsub, dropped")
+                continue
+            except ConnectionError:
+                logger.error("All peer queues full, network overloaded")
+                continue
+            except RuntimeError:
+                break
+
+            cm = None
+            if (peer_id := swarm_event.downcast_discovered()) is not None:
+                cm = ConnectionMessage(node_id=NodeId(peer_id), expired=False)
+            if (peer_id := swarm_event.downcast_expired()) is not None:
+                cm = ConnectionMessage(node_id=NodeId(peer_id), expired=True)
+
+            if cm is not None:
+                if CONNECTION_MESSAGES.topic in self.topic_routers:
+                    router = self.topic_routers[CONNECTION_MESSAGES.topic]
+                    assert router.topic.model_type == ConnectionMessage
+                    router = cast(TopicRouter[ConnectionMessage], router)
+                    await router.publish(cm)
+                continue
+
+            assert (msg := swarm_event.downcast_message()) is not None
+            _origin, topic, payload = msg
+            logger.debug(f"Received message on {topic} with payload {payload}")
             if topic not in self.topic_routers:
                 logger.warning(f"Received message on unknown or inactive topic {topic}")
                 continue
 
             router = self.topic_routers[topic]
-            await router.publish_bytes(data)
-
-    async def _networking_recv_connection_messages(self):
-        while True:
-            update = await self._net.connection_update_recv()
-            message = ConnectionMessage.from_update(update)
-            logger.trace(
-                f"Received message on connection_messages with payload {message}"
-            )
-            if CONNECTION_MESSAGES.topic in self.topic_routers:
-                router = self.topic_routers[CONNECTION_MESSAGES.topic]
-                assert router.topic.model_type == ConnectionMessage
-                router = cast(TopicRouter[ConnectionMessage], router)
-                await router.publish(message)
+            await router.publish_bytes(payload)
 
     async def _networking_publish(self):
         with self.networking_receiver as networked_items:
             async for topic, data in networked_items:
                 try:
                     logger.trace(f"Sending message on {topic} with payload {data}")
-                    await self._net.gossipsub_publish(topic, data)
-                except NoPeersSubscribedToTopicError:
-                    pass
-                except AllQueuesFullError:
-                    logger.warning(f"All peer queues full, dropping message on {topic}")
+                    await self._peer.send(topic, data)
+                except RuntimeError:
+                    break
 
 
 def get_node_id_keypair(
@@ -221,7 +239,7 @@ def get_node_id_keypair(
     Obtain the :class:`PeerId` by from it.
     """
     # TODO(evan): bring back node id persistence once we figure out how to deal with duplicates
-    return Keypair.generate_ed25519()
+    return Keypair.generate()
 
     def lock_path(path: str | bytes | PathLike[str] | PathLike[bytes]) -> Path:
         return Path(str(path) + ".lock")
