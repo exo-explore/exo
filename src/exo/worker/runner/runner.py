@@ -94,21 +94,15 @@ from exo.worker.runner.bootstrap import logger
 def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:
     """Check if this node is the primary output node for image generation.
 
-    For CFG models: the node with cfg_rank == 0 and is_pipeline_last.
-    For non-CFG models: the node with device_rank == world_size - 1.
+    For CFG models: the last pipeline stage in CFG group 0 (positive prompt).
+    For non-CFG models: the last pipeline stage.
     """
     if isinstance(shard_metadata, CfgShardMetadata):
-        pipeline_world_size = shard_metadata.world_size // shard_metadata.cfg_world_size
-        # Ring topology: CFG group 0 at positions [0..pipeline_world_size-1]
-        #                CFG group 1 at positions [world_size-1..pipeline_world_size] (reversed)
-        if shard_metadata.cfg_rank == 0:
-            pipeline_rank = shard_metadata.device_rank
-        else:
-            pipeline_rank = shard_metadata.world_size - 1 - shard_metadata.device_rank
-        is_pipeline_last = pipeline_rank == pipeline_world_size - 1
+        is_pipeline_last = (
+            shard_metadata.pipeline_rank == shard_metadata.pipeline_world_size - 1
+        )
         return is_pipeline_last and shard_metadata.cfg_rank == 0
     elif isinstance(shard_metadata, PipelineShardMetadata):
-        # For pipeline metadata: device_rank == world_size - 1 means last stage
         return shard_metadata.device_rank == shard_metadata.world_size - 1
     return False
 
@@ -393,11 +387,8 @@ def main(
                     )
 
                     try:
-                        # Generate images using the image generation backend
-                        # Track image_index for final images only
                         image_index = 0
                         for response in generate_image(model=model, task=task_params):
-                            # Only the primary output node (last pipeline stage, CFG rank 0) sends results
                             is_primary_output = _is_primary_output_node(shard_metadata)
 
                             if is_primary_output:

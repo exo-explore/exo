@@ -64,14 +64,14 @@ class PipelineShardMetadata(BaseShardMetadata):
 
 @final
 class CfgShardMetadata(BaseShardMetadata):
-    """
-    Shard metadata for CFG-enabled models.
-
-    Effectively two separate instances of pipeline parallel
-    """
+    """Shard metadata for CFG-parallel image generation models."""
 
     cfg_rank: int  # 0 = positive branch, 1 = negative branch
     cfg_world_size: int = 2
+
+    # Pipeline-relative coordinates (computed at placement time)
+    pipeline_rank: int  # rank within the pipeline group (0, 1, 2, ...)
+    pipeline_world_size: int  # number of nodes per pipeline group
 
 
 @final

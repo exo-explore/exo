@@ -549,6 +549,9 @@ class TestCfgParallelPlacement:
             assert shard.start_layer == 0
             assert shard.end_layer == 60
             assert shard.cfg_world_size == 2
+            # Each node is the only stage in its pipeline group
+            assert shard.pipeline_world_size == 1
+            assert shard.pipeline_rank == 0
 
         cfg_ranks = sorted(
             s.cfg_rank for s in shards if isinstance(s, CfgShardMetadata)
@@ -586,7 +589,8 @@ class TestCfgParallelPlacement:
         for shard in shards:
             assert isinstance(shard, CfgShardMetadata)
             assert shard.cfg_world_size == 2
-            assert shard.world_size // shard.cfg_world_size == 2
+            assert shard.pipeline_world_size == 2
+            assert shard.pipeline_rank in [0, 1]
 
         # Check we have 2 nodes in each CFG group
         cfg_0_shards = [

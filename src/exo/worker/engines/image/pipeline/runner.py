@@ -108,105 +108,91 @@ class DiffusionRunner:
     ) -> None:
         """Initialize CFG and pipeline topology from shard metadata.
 
-        Handles both CfgShardMetadata (for CFG-enabled models) and
-        PipelineShardMetadata (for non-CFG models with sequential CFG).
+        Both CfgShardMetadata and PipelineShardMetadata represent pipeline parallel
+        execution. CFG adds a second parallel pipeline for negative prompt processing,
+        but within each pipeline group the communication pattern is identical.
         """
         if self.group is None:
+            # Single node - no distributed communication
             self.rank = 0
             self.world_size = 1
             self.start_layer = 0
             self.end_layer = self.config.total_blocks
-
             self.cfg_rank = 0
             self.cfg_world_size = 1
             self.cfg_parallel = False
-
-            self.pipeline_world_size = 1
             self.pipeline_rank = 0
-
+            self.pipeline_world_size = 1
             self.next_pipeline_rank: int | None = None
             self.prev_pipeline_rank: int | None = None
             self.cfg_peer_rank: int | None = None
             self.first_pipeline_rank: int = 0
             self.last_pipeline_rank: int = 0
-        elif isinstance(shard_metadata, CfgShardMetadata):
-            self.rank = shard_metadata.device_rank
-            self.world_size = shard_metadata.world_size
-            self.start_layer = shard_metadata.start_layer
-            self.end_layer = shard_metadata.end_layer
+            return
+
+        # Common fields from base metadata
+        self.rank = shard_metadata.device_rank
+        self.world_size = shard_metadata.world_size
+        self.start_layer = shard_metadata.start_layer
+        self.end_layer = shard_metadata.end_layer
+
+        if isinstance(shard_metadata, CfgShardMetadata):
+            # CFG parallel: two independent pipelines
             self.cfg_rank = shard_metadata.cfg_rank
             self.cfg_world_size = shard_metadata.cfg_world_size
-
-            self.cfg_parallel = self.cfg_world_size > 1
-            self.pipeline_world_size = self.world_size // self.cfg_world_size
-
-            # Ring topology: CFG group 0 at positions [0..pipeline_world_size-1]
-            #                CFG group 1 at positions [world_size-1..pipeline_world_size] (reversed)
-            if self.cfg_rank == 0:
-                self.pipeline_rank = self.rank
-            else:
-                self.pipeline_rank = self.world_size - 1 - self.rank
-
-            is_first = self.pipeline_rank == 0
-            is_last = self.pipeline_rank == self.pipeline_world_size - 1
-
-            position_to_cfg_pipeline = [
-                (0, r) for r in range(self.pipeline_world_size)
-            ] + [(1, r) for r in reversed(range(self.pipeline_world_size))]
-            cfg_pipeline_to_device: dict[tuple[int, int], int] = {
-                (cfg_r, pipe_r): i
-                for i, (cfg_r, pipe_r) in enumerate(position_to_cfg_pipeline)
-            }
-
-            if is_last:
-                self.next_pipeline_rank = None
-            else:
-                self.next_pipeline_rank = cfg_pipeline_to_device[
-                    (self.cfg_rank, self.pipeline_rank + 1)
-                ]
-
-            if is_first:
-                self.prev_pipeline_rank = None
-            else:
-                self.prev_pipeline_rank = cfg_pipeline_to_device[
-                    (self.cfg_rank, self.pipeline_rank - 1)
-                ]
-
-            if is_last:
-                other_cfg_rank = 1 - self.cfg_rank
-                self.cfg_peer_rank = cfg_pipeline_to_device[
-                    (other_cfg_rank, self.pipeline_rank)
-                ]
-            else:
-                self.cfg_peer_rank = None
-
-            if self.cfg_rank == 0:
-                self.first_pipeline_rank = 0
-                self.last_pipeline_rank = self.pipeline_world_size - 1
-            else:
-                self.first_pipeline_rank = self.world_size - 1
-                self.last_pipeline_rank = self.pipeline_world_size
+            self.cfg_parallel = True
+            self.pipeline_rank = shard_metadata.pipeline_rank
+            self.pipeline_world_size = shard_metadata.pipeline_world_size
         else:
-            self.rank = shard_metadata.device_rank
-            self.world_size = shard_metadata.world_size
-            self.start_layer = shard_metadata.start_layer
-            self.end_layer = shard_metadata.end_layer
-
+            # Pure pipeline: single pipeline group, sequential CFG
             self.cfg_rank = 0
             self.cfg_world_size = 1
             self.cfg_parallel = False
+            self.pipeline_rank = shard_metadata.device_rank
+            self.pipeline_world_size = shard_metadata.world_size
 
-            self.pipeline_world_size = self.world_size
-            self.pipeline_rank = self.rank
+        # Pipeline neighbor computation (same logic for both types)
+        is_first = self.pipeline_rank == 0
+        is_last = self.pipeline_rank == self.pipeline_world_size - 1
 
-            is_first = self.pipeline_rank == 0
-            is_last = self.pipeline_rank == self.pipeline_world_size - 1
-            self.next_pipeline_rank = None if is_last else self.pipeline_rank + 1
-            self.prev_pipeline_rank = None if is_first else self.pipeline_rank - 1
+        self.next_pipeline_rank = (
+            None
+            if is_last
+            else self._device_rank_for(self.cfg_rank, self.pipeline_rank + 1)
+        )
+        self.prev_pipeline_rank = (
+            None
+            if is_first
+            else self._device_rank_for(self.cfg_rank, self.pipeline_rank - 1)
+        )
+
+        # CFG peer is the corresponding last stage in the other CFG group
+        if self.cfg_parallel and is_last:
+            other_cfg_rank = 1 - self.cfg_rank
+            self.cfg_peer_rank = self._device_rank_for(
+                other_cfg_rank, self.pipeline_rank
+            )
+        else:
             self.cfg_peer_rank = None
 
-            self.first_pipeline_rank = 0
-            self.last_pipeline_rank = self.pipeline_world_size - 1
+        # First/last pipeline ranks for ring communication (latent broadcast)
+        self.first_pipeline_rank = self._device_rank_for(self.cfg_rank, 0)
+        self.last_pipeline_rank = self._device_rank_for(
+            self.cfg_rank, self.pipeline_world_size - 1
+        )
+
+    def _device_rank_for(self, cfg_rank: int, pipeline_rank: int) -> int:
+        """Convert (cfg_rank, pipeline_rank) to device_rank in the ring topology.
+
+        Ring layout: [cfg0_pipe0, cfg0_pipe1, ..., cfg1_pipeN-1, cfg1_pipeN-2, ..., cfg1_pipe0]
+        Group 0 is in ascending order, group 1 is reversed so last stages are neighbors.
+        """
+        if not self.cfg_parallel:
+            return pipeline_rank
+        if cfg_rank == 0:
+            return pipeline_rank
+        else:
+            return self.world_size - 1 - pipeline_rank
 
     def _compute_assigned_blocks(self) -> None:
         """Determine which joint/single blocks this stage owns."""
