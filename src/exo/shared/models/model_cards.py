@@ -18,14 +18,19 @@ from pydantic import (
 )
 from tomlkit.exceptions import TOMLKitError
 
-from exo.shared.constants import EXO_ENABLE_IMAGE_MODELS, RESOURCES_DIR
+from exo.shared.constants import (
+    EXO_CUSTOM_MODEL_CARDS_DIR,
+    EXO_ENABLE_IMAGE_MODELS,
+    RESOURCES_DIR,
+)
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.utils.pydantic_ext import CamelCaseModel
 
 # kinda ugly...
 # TODO: load search path from config.toml
-_csp = [Path(RESOURCES_DIR) / "inference_model_cards"]
+_custom_cards_dir = Path(str(EXO_CUSTOM_MODEL_CARDS_DIR))
+_csp = [Path(RESOURCES_DIR) / "inference_model_cards", _custom_cards_dir]
 if EXO_ENABLE_IMAGE_MODELS:
     _csp.append(Path(RESOURCES_DIR) / "image_model_cards")
 
@@ -85,8 +90,9 @@ class ModelCard(CamelCaseModel):
             data = tomlkit.dumps(py)  # pyright: ignore[reportUnknownMemberType]
             await f.write(data)
 
-    async def save_to_default_path(self):
-        await self.save(Path(RESOURCES_DIR) / (self.model_id.normalize() + ".toml"))
+    async def save_to_custom_dir(self) -> None:
+        await aios.makedirs(str(_custom_cards_dir), exist_ok=True)
+        await self.save(_custom_cards_dir / (self.model_id.normalize() + ".toml"))
 
     @staticmethod
     async def load_from_path(path: Path) -> "ModelCard":
@@ -120,9 +126,29 @@ class ModelCard(CamelCaseModel):
             supports_tensor=config_data.supports_tensor,
             tasks=[ModelTask.TextGeneration],
         )
-        await mc.save_to_default_path()
+        await mc.save_to_custom_dir()
         _card_cache[model_id] = mc
         return mc
+
+
+async def delete_custom_card(model_id: ModelId) -> bool:
+    """Delete a user-added custom model card. Returns True if deleted."""
+    card_path = _custom_cards_dir / (ModelId(model_id).normalize() + ".toml")
+    if await card_path.exists():
+        await card_path.unlink()
+        _card_cache.pop(model_id, None)
+        return True
+    return False
+
+
+def is_custom_card(model_id: ModelId) -> bool:
+    """Check if a model card exists in the custom cards directory."""
+    import os
+
+    card_path = Path(str(EXO_CUSTOM_MODEL_CARDS_DIR)) / (
+        ModelId(model_id).normalize() + ".toml"
+    )
+    return os.path.isfile(str(card_path))
 
 
 # TODO: quantizing and dynamically creating model cards

@@ -100,6 +100,7 @@
       storage_size_megabytes?: number;
       tasks?: string[];
       hugging_face_id?: string;
+      is_custom?: boolean;
     }>
   >([]);
 
@@ -214,6 +215,11 @@
   // Custom dropdown state
   let isModelDropdownOpen = $state(false);
   let modelDropdownSearch = $state("");
+
+  // Custom model add state
+  let customModelInput = $state("");
+  let isAddingCustomModel = $state(false);
+  let customModelError = $state("");
 
   // Slider dragging state
   let isDraggingSlider = $state(false);
@@ -527,6 +533,57 @@
       }
     } catch (error) {
       console.error("Failed to fetch models:", error);
+    }
+  }
+
+  async function addCustomModel() {
+    const modelId = customModelInput.trim();
+    if (!modelId) return;
+
+    isAddingCustomModel = true;
+    customModelError = "";
+
+    try {
+      const response = await fetch("/models/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model_id: modelId }),
+      });
+
+      if (!response.ok) {
+        try {
+          const err = await response.json();
+          customModelError =
+            err.detail || `Failed to add model (${response.status})`;
+        } catch {
+          customModelError = `Failed to add model (${response.status}: ${response.statusText})`;
+        }
+        return;
+      }
+
+      const added = await response.json();
+      customModelInput = "";
+      await fetchModels();
+      selectPreviewModel(added.id);
+      isModelDropdownOpen = false;
+    } catch {
+      customModelError = "Network error";
+    } finally {
+      isAddingCustomModel = false;
+    }
+  }
+
+  async function deleteCustomModel(modelId: string) {
+    try {
+      const response = await fetch(
+        `/models/custom/${encodeURIComponent(modelId)}`,
+        { method: "DELETE" },
+      );
+      if (response.ok) {
+        await fetchModels();
+      }
+    } catch {
+      console.error("Failed to delete custom model");
     }
   }
 
@@ -2475,7 +2532,7 @@
                 >
                   <!-- Search within dropdown -->
                   <div
-                    class="sticky top-0 bg-exo-dark-gray border-b border-exo-medium-gray/30 p-2"
+                    class="sticky top-0 bg-exo-dark-gray border-b border-exo-medium-gray/30 p-2 space-y-2"
                   >
                     <input
                       type="text"
@@ -2483,6 +2540,34 @@
                       bind:value={modelDropdownSearch}
                       class="w-full bg-exo-dark-gray/60 border border-exo-medium-gray/30 rounded px-2 py-1.5 text-xs font-mono text-white/80 placeholder:text-white/40 focus:outline-none focus:border-exo-yellow/50"
                     />
+                    <!-- Add custom model -->
+                    <form
+                      onsubmit={(e) => {
+                        e.preventDefault();
+                        addCustomModel();
+                      }}
+                      class="flex gap-1.5"
+                    >
+                      <input
+                        type="text"
+                        placeholder="org/model-name"
+                        bind:value={customModelInput}
+                        class="flex-1 bg-exo-dark-gray/60 border border-exo-medium-gray/30 rounded px-2 py-1.5 text-xs font-mono text-white/80 placeholder:text-white/40 focus:outline-none focus:border-exo-yellow/50"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!customModelInput.trim() ||
+                          isAddingCustomModel}
+                        class="px-2 py-1.5 text-xs font-mono bg-exo-yellow/20 text-exo-yellow border border-exo-yellow/30 rounded hover:bg-exo-yellow/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {isAddingCustomModel ? "..." : "+ ADD"}
+                      </button>
+                    </form>
+                    {#if customModelError}
+                      <div class="text-xs text-red-400 font-mono">
+                        {customModelError}
+                      </div>
+                    {/if}
                   </div>
 
                   <!-- Options -->
@@ -2557,14 +2642,37 @@
                           {/if}
                           <span class="truncate">{model.name || model.id}</span>
                         </span>
-                        <span
-                          class="flex-shrink-0 text-xs {modelCanFit
-                            ? 'text-white/50'
-                            : 'text-red-400/60'}"
-                        >
-                          {sizeGB >= 1
-                            ? sizeGB.toFixed(0)
-                            : sizeGB.toFixed(1)}GB
+                        <span class="flex items-center gap-1.5 flex-shrink-0">
+                          <span
+                            class="text-xs {modelCanFit
+                              ? 'text-white/50'
+                              : 'text-red-400/60'}"
+                          >
+                            {sizeGB >= 1
+                              ? sizeGB.toFixed(0)
+                              : sizeGB.toFixed(1)}GB
+                          </span>
+                          {#if model.is_custom}
+                            <button
+                              type="button"
+                              onclick={(e) => {
+                                e.stopPropagation();
+                                deleteCustomModel(model.id);
+                              }}
+                              class="text-white/30 hover:text-red-400 transition-colors p-0.5"
+                              title="Remove custom model"
+                            >
+                              <svg
+                                class="w-3 h-3"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                                stroke-width="2"
+                              >
+                                <path d="M18 6L6 18M6 6l12 12" />
+                              </svg>
+                            </button>
+                          {/if}
                         </span>
                       </button>
                     {:else}
