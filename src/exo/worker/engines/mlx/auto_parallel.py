@@ -164,6 +164,12 @@ def _inner_model(model: nn.Module) -> nn.Module:
     if isinstance(inner, nn.Module):
         return inner
 
+    inner = getattr(model, "language_model", None)
+    if isinstance(inner, nn.Module):
+        inner_inner = getattr(inner, "model", None)
+        if isinstance(inner_inner, nn.Module):
+            return inner_inner
+
     raise ValueError("Model must either have a 'model' or 'transformer' attribute")
 
 
