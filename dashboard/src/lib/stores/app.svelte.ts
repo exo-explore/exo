@@ -495,7 +495,9 @@ class AppStore {
   // Image editing state
   editingImage = $state<EditingImage | null>(null);
 
-  private fetchInterval: ReturnType<typeof setInterval> | null = null;
+  private pollTimeout: ReturnType<typeof setTimeout> | null = null;
+  private pollInFlight = false;
+  private visibilityListenerRegistered = false;
   private previewsInterval: ReturnType<typeof setInterval> | null = null;
   private lastConversationPersistTs = 0;
   private previousNodeIds: Set<string> = new Set();
@@ -1132,16 +1134,76 @@ class AppStore {
   }
 
   startPolling() {
-    this.fetchState();
-    this.fetchInterval = setInterval(() => this.fetchState(), 1000);
+    // Avoid duplicate timers / event listeners
+    if (this.pollTimeout) {
+      clearTimeout(this.pollTimeout);
+      this.pollTimeout = null;
+    }
+
+    if (!this.visibilityListenerRegistered) {
+      document.addEventListener("visibilitychange", this.handleVisibilityChange);
+      this.visibilityListenerRegistered = true;
+    }
+
+    // Kick off immediately
+    this.scheduleNextPoll(0);
   }
 
   stopPolling() {
-    if (this.fetchInterval) {
-      clearInterval(this.fetchInterval);
-      this.fetchInterval = null;
+    if (this.pollTimeout) {
+      clearTimeout(this.pollTimeout);
+      this.pollTimeout = null;
+    }
+    if (this.visibilityListenerRegistered) {
+      document.removeEventListener(
+        "visibilitychange",
+        this.handleVisibilityChange,
+      );
+      this.visibilityListenerRegistered = false;
     }
     this.stopPreviewsPolling();
+  }
+
+  private handleVisibilityChange = () => {
+    // When tab becomes visible again, refresh immediately.
+    if (document.visibilityState === "visible") {
+      this.scheduleNextPoll(0);
+    }
+  };
+
+  private scheduleNextPoll(delayMs: number) {
+    if (this.pollTimeout) clearTimeout(this.pollTimeout);
+    this.pollTimeout = setTimeout(() => {
+      void this.pollLoop();
+    }, delayMs);
+  }
+
+  private computePollIntervalMs(): number {
+    // Back off when tab is hidden to reduce unnecessary work.
+    if (document.visibilityState === "hidden") {
+      return 10_000;
+    }
+
+    // Poll faster when something is active (instances or downloads).
+    const hasDownloads = Object.keys(this.downloads).length > 0;
+    const hasInstances = Object.keys(this.instances).length > 0;
+    return hasDownloads || hasInstances ? 1_000 : 3_000;
+  }
+
+  private async pollLoop(): Promise<void> {
+    if (this.pollInFlight) {
+      this.scheduleNextPoll(250);
+      return;
+    }
+
+    this.pollInFlight = true;
+    try {
+      await this.fetchState();
+    } finally {
+      this.pollInFlight = false;
+    }
+
+    this.scheduleNextPoll(this.computePollIntervalMs());
   }
 
   async fetchState() {
