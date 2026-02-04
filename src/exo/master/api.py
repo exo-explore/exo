@@ -50,10 +50,13 @@ from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
+    delete_custom_card,
     get_model_cards,
+    is_custom_card,
 )
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.api import (
+    AddCustomModelParams,
     AdvancedImageParams,
     BenchChatCompletionRequest,
     BenchChatCompletionResponse,
@@ -257,6 +260,8 @@ class API:
         self.app.delete("/instance/{instance_id}")(self.delete_instance)
         self.app.get("/models")(self.get_models)
         self.app.get("/v1/models")(self.get_models)
+        self.app.post("/models/add")(self.add_custom_model)
+        self.app.delete("/models/custom/{model_id:path}")(self.delete_custom_model)
         self.app.post("/v1/chat/completions", response_model=None)(
             self.chat_completions
         )
@@ -1216,9 +1221,40 @@ class API:
                     storage_size_megabytes=int(card.storage_size.in_mb),
                     supports_tensor=card.supports_tensor,
                     tasks=[task.value for task in card.tasks],
+                    is_custom=is_custom_card(card.model_id),
                 )
                 for card in await get_model_cards()
             ]
+        )
+
+    async def add_custom_model(self, payload: AddCustomModelParams) -> ModelListModel:
+        """Fetch a model from HuggingFace and save as a custom model card."""
+        try:
+            card = await ModelCard.fetch_from_hf(payload.model_id)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Failed to fetch model: {exc}"
+            ) from exc
+
+        return ModelListModel(
+            id=card.model_id,
+            hugging_face_id=card.model_id,
+            name=card.model_id.short(),
+            description="",
+            tags=[],
+            storage_size_megabytes=int(card.storage_size.in_mb),
+            supports_tensor=card.supports_tensor,
+            tasks=[task.value for task in card.tasks],
+            is_custom=True,
+        )
+
+    async def delete_custom_model(self, model_id: ModelId) -> JSONResponse:
+        """Delete a user-added custom model card."""
+        deleted = await delete_custom_card(model_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Custom model card not found")
+        return JSONResponse(
+            {"message": "Model card deleted", "model_id": str(model_id)}
         )
 
     async def run(self):

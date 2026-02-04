@@ -42,6 +42,7 @@ class ModelListModel(BaseModel):
     storage_size_megabytes: int = Field(default=0)
     supports_tensor: bool = Field(default=False)
     tasks: list[str] = Field(default=[])
+    is_custom: bool = Field(default=False)
 
 
 class ModelList(BaseModel):
@@ -199,6 +200,10 @@ class ChatCompletionRequest(BaseModel):
 
 class BenchChatCompletionRequest(ChatCompletionRequest):
     pass
+
+
+class AddCustomModelParams(BaseModel):
+    model_id: ModelId
 
 
 class PlaceInstanceParams(BaseModel):
