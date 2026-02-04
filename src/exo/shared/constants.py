@@ -39,7 +39,7 @@ RESOURCES_DIR = (
 )
 _DASHBOARD_DIR_ENV = os.environ.get("EXO_DASHBOARD_DIR", None)
 DASHBOARD_DIR = (
-    find_dashboard() if _RESOURCES_DIR_ENV is None else Path.home() / _RESOURCES_DIR_ENV
+    find_dashboard() if _DASHBOARD_DIR_ENV is None else Path.home() / _DASHBOARD_DIR_ENV
 )
 
 # Log files (data/logs or cache)
