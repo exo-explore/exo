@@ -306,7 +306,9 @@ def run_planning_phase(
             break
 
     if not model_bytes:
-        logger.warning(f"Could not determine size for {full_model_id}, skipping disk check")
+        logger.warning(
+            f"Could not determine size for {full_model_id}, skipping disk check"
+        )
         return
 
     # Get nodes from preview
@@ -329,8 +331,11 @@ def run_planning_phase(
 
         # Check if model already downloaded on this node
         already_downloaded = any(
-            "DownloadCompleted" in p and
-            unwrap_instance(p["DownloadCompleted"]["shardMetadata"])["modelCard"]["modelId"] == full_model_id
+            "DownloadCompleted" in p
+            and unwrap_instance(p["DownloadCompleted"]["shardMetadata"])["modelCard"][
+                "modelId"
+            ]
+            == full_model_id
             for p in node_downloads
         )
         if already_downloaded:
@@ -341,7 +346,9 @@ def run_planning_phase(
         backoff = _SETTLE_INITIAL_BACKOFF_S
         while not disk_info and settle_deadline and time.monotonic() < settle_deadline:
             remaining = settle_deadline - time.monotonic()
-            logger.info(f"Waiting for disk info on {node_id} ({remaining:.0f}s remaining)...")
+            logger.info(
+                f"Waiting for disk info on {node_id} ({remaining:.0f}s remaining)..."
+            )
             time.sleep(min(backoff, remaining))
             backoff = min(backoff * _SETTLE_BACKOFF_MULTIPLIER, _SETTLE_MAX_BACKOFF_S)
             state = client.request_json("GET", "/state")
@@ -364,9 +371,14 @@ def run_planning_phase(
 
         # Delete from smallest to largest
         completed = [
-            (unwrap_instance(p["DownloadCompleted"]["shardMetadata"])["modelCard"]["modelId"],
-             p["DownloadCompleted"]["totalBytes"]["inBytes"])
-            for p in node_downloads if "DownloadCompleted" in p
+            (
+                unwrap_instance(p["DownloadCompleted"]["shardMetadata"])["modelCard"][
+                    "modelId"
+                ],
+                p["DownloadCompleted"]["totalBytes"]["inBytes"],
+            )
+            for p in node_downloads
+            if "DownloadCompleted" in p
         ]
         for del_model, size in sorted(completed, key=lambda x: x[1]):
             if del_model == full_model_id or del_model in in_use:
@@ -384,10 +396,14 @@ def run_planning_phase(
     for node_id in node_ids:
         runner_id = inner["shardAssignments"]["nodeToRunner"][node_id]
         shard = runner_to_shard[runner_id]
-        client.request_json("POST", "/download/start", body={
-            "targetNodeId": node_id,
-            "shardMetadata": shard,
-        })
+        client.request_json(
+            "POST",
+            "/download/start",
+            body={
+                "targetNodeId": node_id,
+                "shardMetadata": shard,
+            },
+        )
         logger.info(f"Started download on {node_id}")
 
     # Wait for downloads
@@ -398,15 +414,21 @@ def run_planning_phase(
         all_done = True
         for node_id in node_ids:
             done = any(
-                "DownloadCompleted" in p and
-                unwrap_instance(p["DownloadCompleted"]["shardMetadata"])["modelCard"]["modelId"] == full_model_id
+                "DownloadCompleted" in p
+                and unwrap_instance(p["DownloadCompleted"]["shardMetadata"])[
+                    "modelCard"
+                ]["modelId"]
+                == full_model_id
                 for p in downloads.get(node_id, [])
             )
             failed = [
                 p["DownloadFailed"]["errorMessage"]
                 for p in downloads.get(node_id, [])
-                if "DownloadFailed" in p and
-                unwrap_instance(p["DownloadFailed"]["shardMetadata"])["modelCard"]["modelId"] == full_model_id
+                if "DownloadFailed" in p
+                and unwrap_instance(p["DownloadFailed"]["shardMetadata"])["modelCard"][
+                    "modelId"
+                ]
+                == full_model_id
             ]
             if failed:
                 raise RuntimeError(f"Download failed on {node_id}: {failed[0]}")
@@ -705,7 +727,9 @@ def main() -> int:
         logger.error("[exo-bench] tokenizer usable but prompt sizing failed")
         raise
 
-    settle_deadline = time.monotonic() + args.settle_timeout if args.settle_timeout > 0 else None
+    settle_deadline = (
+        time.monotonic() + args.settle_timeout if args.settle_timeout > 0 else None
+    )
 
     selected = fetch_and_filter_placements(client, full_model_id, args)
 
@@ -746,7 +770,12 @@ def main() -> int:
 
     logger.info("Planning phase: checking downloads...")
     run_planning_phase(
-        client, full_model_id, selected[0], args.danger_delete_downloads, args.timeout, settle_deadline
+        client,
+        full_model_id,
+        selected[0],
+        args.danger_delete_downloads,
+        args.timeout,
+        settle_deadline,
     )
 
     all_rows: list[dict[str, Any]] = []
