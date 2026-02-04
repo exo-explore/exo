@@ -94,10 +94,10 @@ def prefill(
     ):
         break  # Stop after first iteration - cache is now filled
 
-    pre_gen = snapshots[-1]
     # stream_generate added 1 extra generated token to the cache, so we should trim ti.
+    pre_gen = snapshots[-1] if has_ssm else None
     for i, c in enumerate(cache):
-        if isinstance(c, ArraysCache):
+        if has_ssm and isinstance(c, ArraysCache):
             if pre_gen.states[i] is not None:
                 c.state = deepcopy(pre_gen.states[i])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
         else:
