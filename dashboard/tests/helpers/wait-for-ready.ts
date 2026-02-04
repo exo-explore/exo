@@ -33,6 +33,21 @@ export async function waitForModelCards(page: Page): Promise<void> {
   });
 }
 
+export async function selectModelFromLaunchDropdown(
+  page: Page,
+  modelPattern: RegExp | string,
+): Promise<void> {
+  // Click the model dropdown in the Launch Instance panel
+  const dropdown = page.locator('button:has-text("SELECT MODEL")');
+  await expect(dropdown).toBeVisible({ timeout: 30000 });
+  await dropdown.click();
+
+  // Wait for dropdown menu to appear and select the model
+  const modelOption = page.locator("button").filter({ hasText: modelPattern });
+  await expect(modelOption.first()).toBeVisible({ timeout: 10000 });
+  await modelOption.first().click();
+}
+
 export async function waitForChatReady(page: Page): Promise<void> {
   await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
     timeout: 10000,

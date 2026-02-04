@@ -25,6 +25,11 @@ export default defineConfig({
     url: "http://localhost:52415/node_id",
     reuseExistingServer: !process.env.CI,
     timeout: 300000, // 5 minutes - CI needs time to install dependencies
+    env: {
+      ...process.env,
+      // Ensure macmon and system tools are accessible
+      PATH: `/usr/sbin:/usr/bin:/opt/homebrew/bin:${process.env.PATH}`,
+    },
   },
   expect: {
     toHaveScreenshot: {

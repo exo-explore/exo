@@ -5,6 +5,7 @@ import {
   waitForChatReady,
   waitForAssistantMessage,
   sendChatMessage,
+  selectModelFromLaunchDropdown,
 } from "../helpers/wait-for-ready";
 
 test.describe("Chat Message", () => {
@@ -14,13 +15,15 @@ test.describe("Chat Message", () => {
 
     await page.goto("/");
     await waitForTopologyLoaded(page);
+
+    // First select the model from the dropdown (model cards appear after selection)
+    await selectModelFromLaunchDropdown(page, /qwen.*0\.6b/i);
+
+    // Now wait for model cards to appear
     await waitForModelCards(page);
 
-    // Find and click on Qwen3-0.6B-4bit model card to launch it
-    const modelCard = page
-      .locator('[data-testid="model-card"]')
-      .filter({ hasText: /qwen.*0\.6b.*4bit/i })
-      .first();
+    // Find and click on the model card (should already be filtered to Qwen)
+    const modelCard = page.locator('[data-testid="model-card"]').first();
     await expect(modelCard).toBeVisible({ timeout: 10000 });
 
     // Click the launch button
