@@ -167,6 +167,9 @@ def mlx_generate(
     if task.seed is not None:
         mx.random.seed(task.seed)
 
+    # TODO: re-enable prefix caching after testing
+    kv_prefix_cache = None
+
     # Do not use the prefix cache if we are trying to do benchmarks.
     is_bench = task.bench
     if is_bench:
