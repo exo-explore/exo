@@ -201,6 +201,9 @@ jobs:
 
           nix build .#mlx
 
+      - name: Install macmon for hardware monitoring
+        run: brew install macmon
+
       - name: Load nix develop environment
         run: nix run github:nicknovitski/nix-develop/v1
 
