@@ -34,6 +34,7 @@
   interface FilterState {
     capabilities: string[];
     sizeRange: { min: number; max: number } | null;
+    downloadedOnly: boolean;
   }
 
   interface HuggingFaceModel {
@@ -93,7 +94,11 @@
   let selectedFamily = $state<string | null>(null);
   let expandedGroups = $state<Set<string>>(new Set());
   let showFilters = $state(false);
-  let filters = $state<FilterState>({ capabilities: [], sizeRange: null });
+  let filters = $state<FilterState>({
+    capabilities: [],
+    sizeRange: null,
+    downloadedOnly: false,
+  });
   let infoGroup = $state<ModelGroup | null>(null);
 
   // Download availability per model group
@@ -410,6 +415,16 @@
       });
     }
 
+    // Filter to downloaded models only
+    if (filters.downloadedOnly) {
+      result = result.filter((g) =>
+        g.variants.some((v) => {
+          const avail = modelDownloadAvailability.get(v.id);
+          return avail && avail.nodeIds.length > 0;
+        }),
+      );
+    }
+
     // Sort: models that fit first, then by size (largest first)
     result.sort((a, b) => {
       const aFits = a.variants.some((v) => canModelFit(v.id));
@@ -456,11 +471,13 @@
   }
 
   function clearFilters() {
-    filters = { capabilities: [], sizeRange: null };
+    filters = { capabilities: [], sizeRange: null, downloadedOnly: false };
   }
 
   const hasActiveFilters = $derived(
-    filters.capabilities.length > 0 || filters.sizeRange !== null,
+    filters.capabilities.length > 0 ||
+      filters.sizeRange !== null ||
+      filters.downloadedOnly,
   );
 </script>
 
@@ -745,6 +762,11 @@
             >{cap}</span
           >
         {/each}
+        {#if filters.downloadedOnly}
+          <span class="px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded"
+            >Downloaded</span
+          >
+        {/if}
         {#if filters.sizeRange}
           <span class="px-1.5 py-0.5 bg-exo-yellow/20 text-exo-yellow rounded">
             {filters.sizeRange.min}GB - {filters.sizeRange.max}GB
