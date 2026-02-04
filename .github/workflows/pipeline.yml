@@ -233,10 +233,13 @@ jobs:
         run: |
           echo "PATH: $PATH"
           which macmon || echo "macmon not in PATH"
-          /opt/homebrew/bin/macmon --version || echo "macmon not at /opt/homebrew/bin"
-          # Test macmon actually works
-          echo "Testing macmon pipe output..."
-          timeout 3 macmon pipe --interval 1000 || echo "macmon pipe test done"
+          macmon --version
+          # Test macmon actually works - capture stderr too
+          echo "Testing macmon pipe output (with stderr)..."
+          timeout 5 macmon pipe --interval 1000 2>&1 || echo "macmon pipe exit code: $?"
+          # Try running macmon raw (not pipe mode)
+          echo "Testing macmon raw output..."
+          macmon raw 2>&1 | head -5 || echo "macmon raw failed"
 
       - name: Verify Python can find macmon
         run: |
