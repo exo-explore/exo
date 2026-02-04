@@ -7,7 +7,9 @@ test.describe("Homepage", () => {
     await waitForTopologyLoaded(page);
 
     // Verify key UI elements are present
-    await expect(page.locator('[data-testid="topology-graph"]').first()).toBeVisible();
+    await expect(
+      page.locator('[data-testid="topology-graph"]').first(),
+    ).toBeVisible();
     await expect(page.locator('[data-testid="chat-input"]')).toBeVisible();
     await expect(page.locator('[data-testid="send-button"]')).toBeVisible();
   });
