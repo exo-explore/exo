@@ -551,13 +551,21 @@
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        customModelError = err.detail || "Failed to add model";
+        try {
+          const err = await response.json();
+          customModelError =
+            err.detail || `Failed to add model (${response.status})`;
+        } catch {
+          customModelError = `Failed to add model (${response.status}: ${response.statusText})`;
+        }
         return;
       }
 
+      const added = await response.json();
       customModelInput = "";
       await fetchModels();
+      selectPreviewModel(added.id);
+      isModelDropdownOpen = false;
     } catch {
       customModelError = "Network error";
     } finally {
