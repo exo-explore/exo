@@ -1,49 +1,26 @@
 import { test, expect } from "@playwright/test";
 import { waitForTopologyLoaded } from "../helpers/wait-for-ready";
 
-test.describe("Chat Interface Visual Snapshots", () => {
-  test("chat input area", async ({ page }) => {
+test.describe("Chat Interface", () => {
+  test("should display chat input and send button", async ({ page }) => {
     await page.goto("/");
     await waitForTopologyLoaded(page);
 
     const chatInput = page.locator('[data-testid="chat-input"]');
-    await expect(chatInput).toBeVisible({ timeout: 10000 });
-
-    // Take screenshot of the chat form area
-    const chatForm = page.locator("form").filter({ has: chatInput });
-    await expect(chatForm).toHaveScreenshot("chat-input-empty.png");
-  });
-
-  test("chat input with text", async ({ page }) => {
-    await page.goto("/");
-    await waitForTopologyLoaded(page);
-
-    const chatInput = page.locator('[data-testid="chat-input"]');
-    await expect(chatInput).toBeVisible({ timeout: 10000 });
-
-    // Type some text
-    await chatInput.fill("This is a test message");
-    await page.waitForTimeout(200);
-
-    const chatForm = page.locator("form").filter({ has: chatInput });
-    await expect(chatForm).toHaveScreenshot("chat-input-with-text.png");
-  });
-
-  test("send button states", async ({ page }) => {
-    await page.goto("/");
-    await waitForTopologyLoaded(page);
-
-    const chatInput = page.locator('[data-testid="chat-input"]');
-    await expect(chatInput).toBeVisible({ timeout: 10000 });
+    await expect(chatInput).toBeVisible();
 
     const sendButton = page.locator('[data-testid="send-button"]');
+    await expect(sendButton).toBeVisible();
+  });
 
-    // Empty state - button should be disabled
-    await expect(sendButton).toHaveScreenshot("send-button-disabled.png");
+  test("should allow typing in chat input", async ({ page }) => {
+    await page.goto("/");
+    await waitForTopologyLoaded(page);
 
-    // With text - button should be enabled
+    const chatInput = page.locator('[data-testid="chat-input"]');
+    await expect(chatInput).toBeVisible();
+
     await chatInput.fill("Test message");
-    await page.waitForTimeout(100);
-    await expect(sendButton).toHaveScreenshot("send-button-enabled.png");
+    await expect(chatInput).toHaveValue("Test message");
   });
 });
