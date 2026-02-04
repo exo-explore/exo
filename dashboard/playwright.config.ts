@@ -29,6 +29,9 @@ export default defineConfig({
       ...process.env,
       // Ensure macmon and system tools are accessible
       PATH: `/usr/sbin:/usr/bin:/opt/homebrew/bin:${process.env.PATH}`,
+      // Override memory detection for CI (macmon may not work on CI runners)
+      // 24GB is typical for GitHub Actions macos-26 runners
+      ...(process.env.CI ? { OVERRIDE_MEMORY_MB: "24000" } : {}),
     },
   },
   expect: {
