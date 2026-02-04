@@ -18,12 +18,13 @@ from exo.download.download_utils import (
 )
 from exo.shared.models.model_cards import ModelCard, ModelId, get_model_cards
 from exo.worker.engines.mlx.utils_mlx import (
-    get_eos_token_ids_for_model,
     load_tokenizer_for_model_id,
 )
+from exo.worker.engines.mlx.tokenizer_patches import GLM_EOS_TOKENS, try_resolve_token_id
 
 # Files needed for tokenizer functionality
 TOKENIZER_FILE_PATTERNS = [
+    "config.json",
     "tokenizer.json",
     "tokenizer_config.json",
     "special_tokens_map.json",
@@ -186,7 +187,6 @@ async def test_tokenizer_has_required_attributes(model_card: ModelCard) -> None:
         pytest.skip(f"Required tokenizer files not found for {model_id}")
 
     tokenizer = load_tokenizer_for_model_id(model_id, model_path)
-    eos_token_ids = get_eos_token_ids_for_model(model_id)
 
     # Check for vocabulary size
     empty_vocab: dict[str, int] = {}
@@ -197,7 +197,7 @@ async def test_tokenizer_has_required_attributes(model_card: ModelCard) -> None:
 
     # Check for EOS token (either from tokenizer or explicitly provided)
     has_eos = (
-        eos_token_ids is not None
+        getattr(tokenizer, "eos_token_ids", None) is not None
         or getattr(tokenizer, "eos_token_id", None) is not None
         or getattr(tokenizer, "eos_token", None) is not None
     )
@@ -312,7 +312,6 @@ async def test_kimi_tokenizer_specifically():
         pytest.skip("tokenization_kimi.py not found")
 
     tokenizer = load_tokenizer_for_model_id(model_id, model_path)
-    eos_token_ids = get_eos_token_ids_for_model(model_id)
 
     # Test encode/decode cycle
     test_text = "Hello, world!"
@@ -335,7 +334,9 @@ async def test_kimi_tokenizer_specifically():
     )
 
     # Verify EOS token is set
-    assert eos_token_ids == [163586], "Kimi EOS token should be [163586]"
+    assert getattr(tokenizer, "eos_token_ids", None) == [163586], (
+        "Kimi EOS token should be [163586]"
+    )
 
 
 # Test GLM tokenizer since it also has special handling
@@ -361,7 +362,6 @@ async def test_glm_tokenizer_specifically():
         pytest.skip("GLM tokenizer files not found")
 
     tokenizer = load_tokenizer_for_model_id(model_id, model_path)
-    eos_token_ids = get_eos_token_ids_for_model(model_id)
 
     # Test encode/decode
     test_text = "Hello, world!"
@@ -371,9 +371,16 @@ async def test_glm_tokenizer_specifically():
     assert len(encoded) > 0, "GLM tokenizer should encode text"
     assert isinstance(decoded, str), "GLM tokenizer should decode to string"
 
-    # Verify EOS tokens
-    assert eos_token_ids == [
-        151336,
-        151329,
-        151338,
-    ], "GLM EOS tokens should be correct"
+    # Verify our EOS patching logic includes the ids for the known GLM special tokens,
+    # when those tokens are present in the tokenizer vocabulary.
+    resolved = [try_resolve_token_id(tokenizer, t) for t in GLM_EOS_TOKENS]
+    resolved_ids = [t for t in resolved if t is not None]
+    if not resolved_ids:
+        pytest.skip("Could not resolve GLM special token ids from tokenizer")
+
+    eos_ids = getattr(tokenizer, "eos_token_ids", None)
+    assert isinstance(eos_ids, (list, tuple)) and eos_ids, (
+        "GLM tokenizer should have eos_token_ids after patching"
+    )
+    for tid in resolved_ids:
+        assert tid in eos_ids, f"Expected {tid} in eos_token_ids for {model_id}"

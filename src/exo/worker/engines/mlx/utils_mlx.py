@@ -26,6 +26,19 @@ from exo.shared.models.model_cards import ModelId
 from exo.worker.engines.mlx.constants import (
     TRUST_REMOTE_CODE,
 )
+from exo.worker.engines.mlx.model_fingerprint import (
+    is_gemma3,
+    is_glm,
+    is_kimi_tokenizer_repo,
+    load_model_fingerprint,
+)
+from exo.worker.engines.mlx.tokenizer_patches import (
+    GEMMA_END_OF_TURN_TOKEN,
+    GLM_EOS_TOKENS,
+    extend_eos_token_ids,
+    extend_eos_token_ids_by_token_strings,
+    try_resolve_token_id,
+)
 
 try:
     from mlx_lm.tokenizer_utils import load_tokenizer
@@ -298,27 +311,17 @@ def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerW
     return load_tokenizer_for_model_id(shard_metadata.model_card.model_id, model_path)
 
 
-def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
+def get_eos_token_ids_for_model(
+    model_id: ModelId, *, model_path: Path | None = None
+) -> list[int] | None:
+    """Return explicit EOS token ids for models that need them.
+
+    Prefer local `config.json`/repo-structure detection when `model_path` is provided.
     """
-    Get the EOS token IDs for a model based on its ID.
 
-    Some models require explicit EOS token configuration that isn't in their
-    tokenizer config. This function returns the known EOS token IDs for such models.
-
-    Args:
-        model_id: The HuggingFace model ID
-
-    Returns:
-        List of EOS token IDs, or None if the model uses standard tokenizer config
-    """
-    model_id_lower = model_id.lower()
-    if "kimi-k2" in model_id_lower:
+    if model_path is not None and is_kimi_tokenizer_repo(model_path):
+        # Kimi uses a custom tokenizer; keep explicit EOS config.
         return [163586]
-    elif "glm-4.7-flash" in model_id_lower:
-        # 154820: <|endoftext|>, 154827: <|user|>, 154829: <|observation|>
-        return [154820, 154827, 154829]
-    elif "glm" in model_id_lower:
-        return [151336, 151329, 151338]
     return None
 
 
@@ -338,11 +341,11 @@ def load_tokenizer_for_model_id(
     Returns:
         TokenizerWrapper instance configured for the model
     """
-    model_id_lower = model_id.lower()
-    eos_token_ids = get_eos_token_ids_for_model(model_id)
+    fingerprint = load_model_fingerprint(model_path)
+    eos_token_ids = get_eos_token_ids_for_model(model_id, model_path=model_path)
 
     # Kimi uses a custom TikTokenTokenizer that transformers 5.x can't load via AutoTokenizer
-    if "kimi-k2" in model_id_lower:
+    if is_kimi_tokenizer_repo(model_path):
         import importlib.util
         import types
 
@@ -382,7 +385,8 @@ def load_tokenizer_for_model_id(
             return list(hf_tokenizer.model.encode(text, allowed_special="all"))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
         hf_tokenizer.encode = _patched_encode
-        return TokenizerWrapper(hf_tokenizer, eos_token_ids=eos_token_ids)
+        tokenizer = TokenizerWrapper(hf_tokenizer, eos_token_ids=eos_token_ids)
+        return tokenizer
 
     tokenizer = load_tokenizer(
         model_path,
@@ -390,16 +394,18 @@ def load_tokenizer_for_model_id(
         eos_token_ids=eos_token_ids,
     )
 
-    if "gemma-3" in model_id_lower:
-        gemma_3_eos_id = 1
-        gemma_3_end_of_turn_id = 106
-        if tokenizer.eos_token_ids is not None:
-            if gemma_3_end_of_turn_id not in tokenizer.eos_token_ids:
-                tokenizer.eos_token_ids = list(tokenizer.eos_token_ids) + [
-                    gemma_3_end_of_turn_id
-                ]
-        else:
-            tokenizer.eos_token_ids = [gemma_3_eos_id, gemma_3_end_of_turn_id]
+    if is_glm(fingerprint):
+        # GLM variants may require explicit EOS configuration. Prefer resolving
+        # special token ids from the tokenizer itself to avoid hardcoding model-id-specific ids.
+        extend_eos_token_ids_by_token_strings(tokenizer, GLM_EOS_TOKENS)
+
+    if is_gemma3(fingerprint):
+        # Gemma 3 requires treating <end_of_turn> as an EOS token.
+        eot_id = try_resolve_token_id(tokenizer, GEMMA_END_OF_TURN_TOKEN)
+        # Fall back to the known id if resolution fails (older tokenizers / missing vocab).
+        if eot_id is None:
+            eot_id = 106
+        extend_eos_token_ids(tokenizer, [eot_id])
 
     return tokenizer
 
