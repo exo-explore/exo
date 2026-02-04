@@ -10,6 +10,7 @@ from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
 from exo.shared.types.topology import Cycle, RDMAConnection, SocketConnection
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import (
+    CfgShardMetadata,
     PipelineShardMetadata,
     Sharding,
     ShardMetadata,
@@ -79,6 +80,27 @@ def get_shard_assignments_for_pipeline_parallel(
     cycle: Cycle,
     node_memory: Mapping[NodeId, MemoryUsage],
 ):
+    """Create shard assignments for pipeline parallel execution.
+
+    Routes to CFG-aware or standard pipeline placement based on model_card.uses_cfg.
+    """
+    # Determine CFG parallelism topology
+    # CFG parallel only for even node counts with CFG models (2+ nodes)
+    world_size = len(cycle)
+    use_cfg_parallel = model_card.uses_cfg and world_size >= 2 and world_size % 2 == 0
+
+    if use_cfg_parallel:
+        return _get_shard_assignments_for_cfg_parallel(model_card, cycle, node_memory)
+    else:
+        return _get_shard_assignments_for_pure_pipeline(model_card, cycle, node_memory)
+
+
+def _get_shard_assignments_for_cfg_parallel(
+    model_card: ModelCard,
+    cycle: Cycle,
+    node_memory: Mapping[NodeId, MemoryUsage],
+) -> ShardAssignments:
+    """Create shard assignments for CFG parallel execution (returns CfgShardMetadata)."""
     if not cycle.node_ids:
         raise ValueError("Cannot create shard assignments for empty node cycle")
 
@@ -94,10 +116,7 @@ def get_shard_assignments_for_pipeline_parallel(
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
 
-    # Determine CFG parallelism topology
-    # CFG parallel only for even node counts with CFG models (2+ nodes)
-    use_cfg_parallel = model_card.uses_cfg and world_size >= 2 and world_size % 2 == 0
-    cfg_world_size = 2 if use_cfg_parallel else 1
+    cfg_world_size = 2
     pipeline_world_size = world_size // cfg_world_size
 
     # For CFG parallel, we only need to allocate layers for one pipeline group
@@ -138,35 +157,80 @@ def get_shard_assignments_for_pipeline_parallel(
         (1, r) for r in reversed(range(pipeline_world_size))
     ]
 
-    cfg_pipeline_to_device: dict[tuple[int, int], int] = {
-        (cfg_rank, pipeline_rank): i
-        for i, (cfg_rank, pipeline_rank) in enumerate(position_to_cfg_pipeline)
-    }
-
     for i, node_id in enumerate(cycle.node_ids):
         cfg_rank, pipeline_rank = position_to_cfg_pipeline[i]
 
         layers_before = sum(layer_allocations[:pipeline_rank])
         node_layers = layer_allocations[pipeline_rank]
 
-        is_first_stage = pipeline_rank == 0
-        is_last_stage = pipeline_rank == pipeline_world_size - 1
+        runner_id = RunnerId()
 
-        if is_last_stage:
-            next_pipeline_device = None
-        else:
-            next_pipeline_device = cfg_pipeline_to_device[(cfg_rank, pipeline_rank + 1)]
+        shard = CfgShardMetadata(
+            model_card=model_card,
+            device_rank=i,
+            world_size=world_size,
+            start_layer=layers_before,
+            end_layer=layers_before + node_layers,
+            n_layers=total_layers,
+            cfg_rank=cfg_rank,
+            cfg_world_size=cfg_world_size,
+        )
 
-        if is_first_stage:
-            prev_pipeline_device = None
-        else:
-            prev_pipeline_device = cfg_pipeline_to_device[(cfg_rank, pipeline_rank - 1)]
+        runner_to_shard[runner_id] = shard
+        node_to_runner[node_id] = runner_id
 
-        if is_last_stage and use_cfg_parallel:
-            other_cfg_rank = 1 - cfg_rank
-            cfg_peer_device = cfg_pipeline_to_device[(other_cfg_rank, pipeline_rank)]
-        else:
-            cfg_peer_device = None
+    return ShardAssignments(
+        model_id=model_card.model_id,
+        runner_to_shard=runner_to_shard,
+        node_to_runner=node_to_runner,
+    )
+
+
+def _get_shard_assignments_for_pure_pipeline(
+    model_card: ModelCard,
+    cycle: Cycle,
+    node_memory: Mapping[NodeId, MemoryUsage],
+) -> ShardAssignments:
+    """Create shard assignments for pure pipeline execution (returns PipelineShardMetadata)."""
+    if not cycle.node_ids:
+        raise ValueError("Cannot create shard assignments for empty node cycle")
+
+    cycle_memory = sum(
+        (node_memory[node_id].ram_available for node_id in cycle.node_ids),
+        start=Memory(),
+    )
+    if cycle_memory.in_bytes == 0:
+        raise ValueError("Cannot create shard assignments: total available memory is 0")
+
+    total_layers = model_card.n_layers
+    world_size = len(cycle)
+    runner_to_shard: dict[RunnerId, ShardMetadata] = {}
+    node_to_runner: dict[NodeId, RunnerId] = {}
+
+    layer_allocations = allocate_layers_proportionally(
+        total_layers=total_layers,
+        memory_fractions=[
+            node_memory[node_id].ram_available.in_bytes / cycle_memory.in_bytes
+            for node_id in cycle.node_ids
+        ],
+    )
+
+    # Validate each node has sufficient memory for its assigned layers
+    total_storage_bytes = model_card.storage_size.in_bytes
+    for i, node_id in enumerate(cycle.node_ids):
+        node_layers = layer_allocations[i]
+        required_memory = (total_storage_bytes * node_layers) // total_layers
+        available_memory = node_memory[node_id].ram_available.in_bytes
+        if required_memory > available_memory:
+            raise ValueError(
+                f"Node {i} ({node_id}) has insufficient memory: "
+                f"requires {required_memory / (1024**3):.2f} GB for {node_layers} layers, "
+                f"but only has {available_memory / (1024**3):.2f} GB available"
+            )
+
+    for i, node_id in enumerate(cycle.node_ids):
+        layers_before = sum(layer_allocations[:i])
+        node_layers = layer_allocations[i]
 
         runner_id = RunnerId()
 
@@ -177,24 +241,16 @@ def get_shard_assignments_for_pipeline_parallel(
             start_layer=layers_before,
             end_layer=layers_before + node_layers,
             n_layers=total_layers,
-            cfg_rank=cfg_rank,
-            cfg_world_size=cfg_world_size,
-            pipeline_rank=pipeline_rank,
-            next_device=next_pipeline_device,
-            prev_device=prev_pipeline_device,
-            cfg_peer_device=cfg_peer_device,
         )
 
         runner_to_shard[runner_id] = shard
         node_to_runner[node_id] = runner_id
 
-    shard_assignments = ShardAssignments(
+    return ShardAssignments(
         model_id=model_card.model_id,
         runner_to_shard=runner_to_shard,
         node_to_runner=node_to_runner,
     )
-
-    return shard_assignments
 
 
 def get_shard_assignments_for_tensor_parallel(

@@ -21,7 +21,11 @@ from exo.shared.types.profiling import (
     NodeNetworkInfo,
 )
 from exo.shared.types.topology import Connection, SocketConnection
-from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
+from exo.shared.types.worker.shards import (
+    CfgShardMetadata,
+    PipelineShardMetadata,
+    Sharding,
+)
 
 
 def test_filter_cycles_by_memory():
@@ -538,15 +542,16 @@ class TestCfgParallelPlacement:
         shards = list(assignments.runner_to_shard.values())
         assert len(shards) == 2
 
-        # Both nodes should have all layers (no pipeline split)
+        # CFG models should get CfgShardMetadata
         for shard in shards:
-            assert isinstance(shard, PipelineShardMetadata)
+            assert isinstance(shard, CfgShardMetadata)
+            # Both nodes should have all layers (no pipeline split)
             assert shard.start_layer == 0
             assert shard.end_layer == 60
             assert shard.cfg_world_size == 2
 
         cfg_ranks = sorted(
-            s.cfg_rank for s in shards if isinstance(s, PipelineShardMetadata)
+            s.cfg_rank for s in shards if isinstance(s, CfgShardMetadata)
         )
         assert cfg_ranks == [0, 1]
 
@@ -577,21 +582,18 @@ class TestCfgParallelPlacement:
         shards = list(assignments.runner_to_shard.values())
         assert len(shards) == 4
 
+        # CFG models should get CfgShardMetadata
         for shard in shards:
-            assert isinstance(shard, PipelineShardMetadata)
+            assert isinstance(shard, CfgShardMetadata)
             assert shard.cfg_world_size == 2
-            assert shard.pipeline_world_size == 2
+            assert shard.world_size // shard.cfg_world_size == 2
 
         # Check we have 2 nodes in each CFG group
         cfg_0_shards = [
-            s
-            for s in shards
-            if isinstance(s, PipelineShardMetadata) and s.cfg_rank == 0
+            s for s in shards if isinstance(s, CfgShardMetadata) and s.cfg_rank == 0
         ]
         cfg_1_shards = [
-            s
-            for s in shards
-            if isinstance(s, PipelineShardMetadata) and s.cfg_rank == 1
+            s for s in shards if isinstance(s, CfgShardMetadata) and s.cfg_rank == 1
         ]
         assert len(cfg_0_shards) == 2
         assert len(cfg_1_shards) == 2
@@ -602,7 +604,7 @@ class TestCfgParallelPlacement:
         assert sorted(cfg_0_layers) == sorted(cfg_1_layers)
 
     def test_three_nodes_cfg_model_uses_sequential_cfg(self):
-        """Three nodes (odd) with CFG model should use sequential CFG."""
+        """Three nodes (odd) with CFG model should use sequential CFG (PipelineShardMetadata)."""
         nodes = [NodeId() for _ in range(3)]
 
         topology = self._create_ring_topology(nodes)
@@ -628,14 +630,12 @@ class TestCfgParallelPlacement:
         shards = list(assignments.runner_to_shard.values())
         assert len(shards) == 3
 
+        # Odd node count with CFG model falls back to PipelineShardMetadata (sequential CFG)
         for shard in shards:
             assert isinstance(shard, PipelineShardMetadata)
-            # cfg_world_size = 1 means sequential CFG
-            assert shard.cfg_world_size == 1
-            assert shard.cfg_rank == 0
 
     def test_two_nodes_non_cfg_model_uses_pipeline(self):
-        """Two nodes with non-CFG model should use pure pipeline."""
+        """Two nodes with non-CFG model should use pure pipeline (PipelineShardMetadata)."""
         node_a = NodeId()
         node_b = NodeId()
 
@@ -665,11 +665,9 @@ class TestCfgParallelPlacement:
         shards = list(assignments.runner_to_shard.values())
         assert len(shards) == 2
 
+        # Non-CFG models should get PipelineShardMetadata
         for shard in shards:
             assert isinstance(shard, PipelineShardMetadata)
-            # cfg_world_size = 1 means no CFG parallel
-            assert shard.cfg_world_size == 1
-            assert shard.cfg_rank == 0
 
         # Should have actual layer sharding (pipeline)
         layer_ranges = sorted(

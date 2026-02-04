@@ -9,7 +9,7 @@ from PIL import Image
 from exo.download.download_utils import build_model_path
 from exo.shared.types.api import AdvancedImageParams
 from exo.shared.types.worker.instances import BoundInstance
-from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.shared.types.worker.shards import CfgShardMetadata, PipelineShardMetadata
 from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.models import (
     create_adapter_for_model,
@@ -30,7 +30,7 @@ class DistributedImageModel:
         self,
         model_id: str,
         local_path: Path,
-        shard_metadata: PipelineShardMetadata,
+        shard_metadata: PipelineShardMetadata | CfgShardMetadata,
         group: Optional[mx.distributed.Group] = None,
         quantize: int | None = None,
     ):
@@ -80,8 +80,10 @@ class DistributedImageModel:
         model_path = build_model_path(model_id)
 
         shard_metadata = bound_instance.bound_shard
-        if not isinstance(shard_metadata, PipelineShardMetadata):
-            raise ValueError("Expected PipelineShardMetadata for image generation")
+        if not isinstance(shard_metadata, (PipelineShardMetadata, CfgShardMetadata)):
+            raise ValueError(
+                "Expected PipelineShardMetadata or CfgShardMetadata for image generation"
+            )
 
         is_distributed = (
             len(bound_instance.instance.shard_assignments.node_to_runner) > 1
