@@ -54,28 +54,6 @@
     return `${mb}MB`;
   }
 
-  // Get capability icon
-  function getCapabilityIcon(cap: string): string {
-    switch (cap) {
-      case "thinking":
-        return "&#129504;"; // brain
-      case "code":
-        return "&#128187;"; // laptop
-      case "vision":
-        return "&#128248;"; // camera
-      case "image_gen":
-        return "&#127912;"; // art palette
-      default:
-        return "";
-    }
-  }
-
-  // Check if model name includes "Thinking"
-  const isThinkingModel = $derived(
-    group.name.toLowerCase().includes("thinking") ||
-      group.capabilities.includes("thinking"),
-  );
-
   // Check if any variant can fit
   const anyVariantFits = $derived(
     group.variants.some((v) => canModelFit(v.id)),
@@ -139,14 +117,68 @@
         <span class="font-mono text-sm text-white truncate">
           {group.name}
         </span>
-        {#if isThinkingModel}
-          <span class="text-xs text-purple-400 font-mono">(Thinking)</span>
-        {/if}
-        <!-- Capability badges -->
+        <!-- Capability icons -->
         {#each group.capabilities.filter((c) => c !== "text") as cap}
-          <span class="text-xs text-white/40" title={cap}>
-            {@html getCapabilityIcon(cap)}
-          </span>
+          {#if cap === "thinking"}
+            <svg
+              class="w-3.5 h-3.5 text-white/40 flex-shrink-0"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              title="Thinking"
+            >
+              <path
+                d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7zM9 20h6M10 22h4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          {:else if cap === "code"}
+            <svg
+              class="w-3.5 h-3.5 text-white/40 flex-shrink-0"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              title="Code"
+            >
+              <path
+                d="M16 18l6-6-6-6M8 6l-6 6 6 6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          {:else if cap === "vision"}
+            <svg
+              class="w-3.5 h-3.5 text-white/40 flex-shrink-0"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              title="Vision"
+            >
+              <path
+                d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          {:else if cap === "image_gen"}
+            <svg
+              class="w-3.5 h-3.5 text-white/40 flex-shrink-0"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              title="Image generation"
+            >
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <path d="M21 15l-5-5L5 21" />
+            </svg>
+          {/if}
         {/each}
       </div>
     </div>
