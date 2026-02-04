@@ -4,6 +4,7 @@ from typing import Callable, Generator, cast, get_args
 
 import mlx.core as mx
 from mlx_lm.generate import stream_generate
+from mlx_lm.models.cache import ArraysCache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
@@ -22,8 +23,6 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
 from exo.worker.engines.mlx import Model
-from mlx_lm.models.cache import ArraysCache
-
 from exo.worker.engines.mlx.cache import (
     KVPrefixCache,
     SSMSnapshot,
@@ -35,6 +34,7 @@ from exo.worker.engines.mlx.cache import (
 from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
+    fix_unmatched_think_end_tokens,
     mx_barrier,
 )
 from exo.worker.runner.bootstrap import logger
@@ -98,11 +98,12 @@ def prefill(
     pre_gen = snapshots[-1] if has_ssm else None
     for i, c in enumerate(cache):
         if has_ssm and isinstance(c, ArraysCache):
+            assert pre_gen is not None
             if pre_gen.states[i] is not None:
-                c.state = deepcopy(pre_gen.states[i])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+                c.state = deepcopy(pre_gen.states[i])
         else:
+            assert not isinstance(c, ArraysCache)
             c.trim(1)  # pyright: ignore[reportUnknownMemberType]
-
 
     elapsed = time.perf_counter() - start_time
     tokens_per_sec = num_tokens / elapsed if elapsed > 0 else 0.0
@@ -190,6 +191,10 @@ def mlx_generate(
     if task.seed is not None:
         mx.random.seed(task.seed)
 
+    # Encode prompt once at the top and fix unmatched think tags
+    all_prompt_tokens = encode_prompt(tokenizer, prompt)
+    all_prompt_tokens = fix_unmatched_think_end_tokens(all_prompt_tokens, tokenizer)
+
     # Do not use the prefix cache if we are trying to do benchmarks.
     is_bench = task.bench
     if is_bench:
@@ -200,12 +205,11 @@ def mlx_generate(
     matched_index: int | None = None
     if kv_prefix_cache is None:
         caches = make_kv_cache(model=model)
-        prompt_tokens = encode_prompt(tokenizer, prompt)
+        prompt_tokens = all_prompt_tokens
     else:
         caches, prompt_tokens, matched_index = kv_prefix_cache.get_kv_cache(
-            model, prompt
+            model, all_prompt_tokens
         )
-        all_prompt_tokens = encode_prompt(tokenizer, prompt)
         prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
 
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = []
@@ -241,7 +245,7 @@ def mlx_generate(
     ssm_snapshots: list[SSMSnapshot] | None = ssm_snapshots_list or None
 
     # stream_generate starts from the last token
-    last_token = prompt_tokens[:-1]
+    last_token = prompt_tokens[-1:]
 
     max_tokens = task.max_output_tokens or MAX_TOKENS
     accumulated_text = ""
@@ -342,20 +346,29 @@ def mlx_generate(
                 f"{generation_tps:.1f} tok/s"
             )
             if kv_prefix_cache is not None:
-                full_prompt = prompt + "".join(generated_text_parts)
+                generated_tokens_array = mx.array(
+                    tokenizer.encode(
+                        "".join(generated_text_parts), add_special_tokens=False
+                    )
+                )
+                full_prompt_tokens = mx.concatenate(
+                    [all_prompt_tokens, generated_tokens_array]
+                )
                 if (
                     matched_index is not None
                     and prefix_hit_length >= _MIN_PREFIX_HIT_TO_UPDATE
                 ):
                     kv_prefix_cache.update_kv_cache(
                         matched_index,
-                        full_prompt,
+                        full_prompt_tokens,
                         caches,
                         ssm_snapshots,
                         restore_pos=prefix_hit_length,
                     )
                 else:
-                    kv_prefix_cache.add_kv_cache(full_prompt, caches, ssm_snapshots)
+                    kv_prefix_cache.add_kv_cache(
+                        full_prompt_tokens, caches, ssm_snapshots
+                    )
 
         yield GenerationResponse(
             text=text,

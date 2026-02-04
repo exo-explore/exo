@@ -464,6 +464,30 @@ def detect_thinking_prompt_suffix(prompt: str, tokenizer: TokenizerWrapper) -> b
     return think_token is not None and prompt.rstrip().endswith(think_token)
 
 
+def fix_unmatched_think_end_tokens(
+    tokens: mx.array, tokenizer: TokenizerWrapper
+) -> mx.array:
+    if not tokenizer.has_thinking:
+        return tokens
+    assert tokenizer.think_start_id
+    assert tokenizer.think_end_id
+    think_start_id: int = tokenizer.think_start_id
+    think_end_id: int = tokenizer.think_end_id
+    token_list: list[int] = cast(list[int], tokens.tolist())
+    result: list[int] = []
+    depth = 0
+    for token in token_list:
+        if token == think_start_id:
+            depth += 1
+        elif token == think_end_id:
+            if depth == 0:
+                result.append(think_start_id)
+            else:
+                depth -= 1
+        result.append(token)
+    return mx.array(result)
+
+
 class NullKVCache(KVCache):
     """
     A KVCache that pretends to exist but holds zero tokens.

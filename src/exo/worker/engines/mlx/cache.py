@@ -9,8 +9,6 @@ from mlx_lm.models.cache import (
     QuantizedKVCache,
     RotatingKVCache,
 )
-from mlx_lm.models.gpt_oss import Model as GptOssModel
-from mlx_lm.models.qwen3_next import Model as Qwen3NextModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.memory import Memory
@@ -84,24 +82,23 @@ class KVPrefixCache:
 
     def add_kv_cache(
         self,
-        prompt: str,
+        prompt_tokens: mx.array,
         cache: KVCacheType,
         ssm_snapshots: list[SSMSnapshot] | None = None,
     ):
         """Add a new cache entry. Evicts LRU entries if memory is high."""
         self._evict_if_needed()
-        tokenized_prompt = encode_prompt(self._tokenizer, prompt)
-        self.prompts.append(tokenized_prompt)
+        self.prompts.append(prompt_tokens)
         self.caches.append(deepcopy(cache))
         self._ssm_snapshots.append(ssm_snapshots)
         self._access_counter += 1
         self._last_used.append(self._access_counter)
-        logger.info(f"KV cache added: {len(tokenized_prompt)} tokens")
+        logger.info(f"KV cache added: {len(prompt_tokens)} tokens")
 
     def update_kv_cache(
         self,
         index: int,
-        prompt: str,
+        prompt_tokens: mx.array,
         cache: KVCacheType,
         ssm_snapshots: list[SSMSnapshot] | None,
         restore_pos: int,
@@ -114,13 +111,12 @@ class KVPrefixCache:
         if ssm_snapshots:
             merged.extend(ssm_snapshots)
 
-        tokenized_prompt = encode_prompt(self._tokenizer, prompt)
-        self.prompts[index] = tokenized_prompt
+        self.prompts[index] = prompt_tokens
         self.caches[index] = deepcopy(cache)
         self._ssm_snapshots[index] = merged or None
         self._access_counter += 1
         self._last_used[index] = self._access_counter
-        logger.info(f"KV cache updated (index {index}): {len(tokenized_prompt)} tokens")
+        logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
 
     def _get_snapshot(
         self, entry_index: int, target_token_count: int
@@ -141,7 +137,7 @@ class KVPrefixCache:
     def get_kv_cache(
         self,
         model: Model,
-        prompt: str,
+        prompt_tokens: mx.array,
     ) -> tuple[KVCacheType, mx.array, int | None]:
         """Get KV cache for prompt, returning remaining tokens to prefill.
 
@@ -154,8 +150,7 @@ class KVPrefixCache:
         For models with SSM layers (which are ArraysCache in mlx), the cache is trimmed to the
         nearest SSM snapshot position at or before the match point for correctness.
         """
-        tokenized_prompt = encode_prompt(self._tokenizer, prompt)
-        max_length = len(tokenized_prompt)
+        max_length = len(prompt_tokens)
 
         best_index: int | None = None
         best_length = 0
@@ -163,7 +158,7 @@ class KVPrefixCache:
 
         # Find best cache
         for i, cached_prompt in enumerate(self.prompts):
-            length = get_prefix_length(tokenized_prompt, cached_prompt)
+            length = get_prefix_length(prompt_tokens, cached_prompt)
             if length > best_length:
                 best_index, best_length = i, length
             if length == max_length:
@@ -178,7 +173,7 @@ class KVPrefixCache:
                 logger.info(
                     f"KV cache no prefix match, need to prefill {max_length} tokens"
                 )
-            return make_kv_cache(model), tokenized_prompt, None
+            return make_kv_cache(model), prompt_tokens, None
 
         # For exact match we trim to max_length-1
         target = (max_length - 1) if is_exact else best_length
@@ -199,7 +194,7 @@ class KVPrefixCache:
                 f"KV cache {match_kind} but no SSM snapshot, "
                 f"need to prefill {max_length} tokens"
             )
-            return make_kv_cache(model), tokenized_prompt, None
+            return make_kv_cache(model), prompt_tokens, None
 
         prompt_cache = deepcopy(self.caches[best_index])
         cached_length = cache_length(self.caches[best_index])
@@ -209,7 +204,7 @@ class KVPrefixCache:
 
         self._access_counter += 1
         self._last_used[best_index] = self._access_counter
-        remaining = tokenized_prompt[restore_pos:]
+        remaining = prompt_tokens[restore_pos:]
 
         if is_exact:
             logger.info(
@@ -230,8 +225,8 @@ class KVPrefixCache:
 
         # Evict LRU entries until below threshold
         while (
-            len(self.caches) > 0 and
-            self.get_memory_used_percentage() > _MEMORY_THRESHOLD
+            len(self.caches) > 0
+            and self.get_memory_used_percentage() > _MEMORY_THRESHOLD
         ):
             lru_index = self._last_used.index(min(self._last_used))
             evicted_tokens = len(self.prompts[lru_index])
@@ -258,28 +253,6 @@ class KVPrefixCache:
         return max_pressure
 
 
-def _fix_unmatched_think_end_tokens(tokens: mx.array, tokenizer: TokenizerWrapper) -> mx.array:
-    if not tokenizer.has_thinking:
-        return tokens
-    think_start_id: int = tokenizer.think_start_id  # type: ignore[attr-defined]
-    think_end_id: int = tokenizer.think_end_id  # type: ignore[attr-defined]
-    token_list: list[int] = cast(list[int], tokens.tolist())
-    result: list[int] = []
-    depth = 0
-    for token in token_list:
-        if token == think_start_id:
-            depth += 1
-        elif token == think_end_id:
-            if depth == 0:
-                result.append(think_start_id)
-            else:
-                depth -= 1
-        result.append(token)
-    if len(result) == len(token_list):
-        return tokens
-    return mx.array(result)
-
-
 def trim_cache(
     cache: KVCacheType,
     num_tokens: int,
@@ -303,9 +276,8 @@ def encode_prompt(tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
     that would corrupt the prompt structure.
     """
     # Chat templates define their own structure - don't add BOS/EOS
-    tokenized_prompt = tokenizer.encode(prompt, add_special_tokens=False)
-    tokens = mx.array(tokenized_prompt)
-    return _fix_unmatched_think_end_tokens(tokens, tokenizer)
+    prompt_tokens = tokenizer.encode(prompt, add_special_tokens=False)
+    return mx.array(prompt_tokens)
 
 
 def cache_length(cache: KVCacheType) -> int:

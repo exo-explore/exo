@@ -162,7 +162,7 @@ class TestKVPrefixCacheWithModel:
         prefill(model, tokenizer, make_sampler(0.0), tokens, cache)
 
         kv_prefix_cache = KVPrefixCache(tokenizer)
-        kv_prefix_cache.add_kv_cache(prompt, cache)
+        kv_prefix_cache.add_kv_cache(tokens, cache)
 
         assert len(kv_prefix_cache.prompts) == 1
         stored_length = cache_length(kv_prefix_cache.caches[0])
@@ -170,7 +170,7 @@ class TestKVPrefixCacheWithModel:
 
         # Retrieve with same prompt: exact match
         result_cache, remaining_tokens, matched_index = kv_prefix_cache.get_kv_cache(
-            model, prompt
+            model, tokens
         )
         assert matched_index == 0
 
@@ -194,7 +194,7 @@ class TestKVPrefixCacheWithModel:
         prefill(model, tokenizer, make_sampler(0.0), short_tokens, cache)
 
         kv_prefix_cache = KVPrefixCache(tokenizer)
-        kv_prefix_cache.add_kv_cache(short_prompt, cache)
+        kv_prefix_cache.add_kv_cache(short_tokens, cache)
 
         # Query with longer prompt that shares the chat template prefix
         long_task = TextGenerationTaskParams(
@@ -212,7 +212,7 @@ class TestKVPrefixCacheWithModel:
         )
 
         result_cache, remaining_tokens, matched_index = kv_prefix_cache.get_kv_cache(
-            model, long_prompt
+            model, long_tokens
         )
         assert matched_index == 0
 
@@ -238,12 +238,12 @@ class TestKVPrefixCacheWithModel:
         prefill(model, tokenizer, make_sampler(0.0), tokens, cache)
 
         kv_prefix_cache = KVPrefixCache(tokenizer)
-        kv_prefix_cache.add_kv_cache(prompt, cache)
+        kv_prefix_cache.add_kv_cache(tokens, cache)
 
         stored_length = cache_length(kv_prefix_cache.caches[0])
 
         # Get cache and mutate it (simulating what generation does)
-        result_cache, _, matched_index = kv_prefix_cache.get_kv_cache(model, prompt)
+        result_cache, _, matched_index = kv_prefix_cache.get_kv_cache(model, tokens)
         assert matched_index == 0
 
         # Simulate generation: feed many additional tokens through the cache
@@ -276,12 +276,12 @@ class TestKVPrefixCacheWithModel:
         prefill(model, tokenizer, make_sampler(0.0), tokens, cache)
 
         kv_prefix_cache = KVPrefixCache(tokenizer)
-        kv_prefix_cache.add_kv_cache(prompt, cache)
+        kv_prefix_cache.add_kv_cache(tokens, cache)
 
         stored_length = cache_length(kv_prefix_cache.caches[0])
 
         for i in range(3):
-            result_cache, _, _ = kv_prefix_cache.get_kv_cache(model, prompt)
+            result_cache, _, _ = kv_prefix_cache.get_kv_cache(model, tokens)
 
             head_dim = result_cache[0].keys.shape[-1]
             num_heads = result_cache[0].keys.shape[1]
@@ -352,7 +352,7 @@ class TestKVPrefixCacheWithModel:
         # Second call should find a prefix match (the stored cache contains
         # prompt + generated tokens, which shares the prompt prefix)
         result_cache, remaining_tokens, matched_index = kv_prefix_cache.get_kv_cache(
-            model, prompt
+            model, prompt_tokens
         )
         # The stored cache is longer than the prompt (it includes generated tokens),
         # so this is a prefix match where our prompt is fully contained
@@ -495,7 +495,7 @@ class TestKVPrefixCacheWithModel:
             tokens = encode_prompt(tokenizer, prompt)
             cache = make_kv_cache(model)
             prefill(model, tokenizer, make_sampler(0.0), tokens, cache)
-            kv_prefix_cache.add_kv_cache(prompt, cache)
+            kv_prefix_cache.add_kv_cache(tokens, cache)
             # Stagger _last_used so LRU order is deterministic
             kv_prefix_cache._last_used[i] = float(i)
 
@@ -520,14 +520,11 @@ class TestKVPrefixCacheWithModel:
             tokens = encode_prompt(tokenizer, prompt)
             cache = make_kv_cache(model)
             prefill(model, tokenizer, make_sampler(0.0), tokens, cache)
-            kv_prefix_cache.add_kv_cache(prompt, cache)
+            kv_prefix_cache.add_kv_cache(tokens, cache)
 
         # LRU entries should have been evicted (entries 0, 1, 2 in order of _last_used)
         # Since fake_active stays above threshold after each eviction (we don't change it),
         # all old entries get evicted, leaving only the newly added one
         assert len(kv_prefix_cache.prompts) == 1
         # The surviving entry should be the newly added one
-        new_tokens = encode_prompt(tokenizer, prompt)
-        assert get_prefix_length(kv_prefix_cache.prompts[0], new_tokens) == len(
-            new_tokens
-        )
+        assert get_prefix_length(kv_prefix_cache.prompts[0], tokens) == len(tokens)
