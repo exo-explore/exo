@@ -65,9 +65,9 @@ class ComponentInfo(CamelCaseModel):
     component_name: str
     component_path: str
     storage_size: Memory
-    n_layers: PositiveInt | None
+    n_layers: PositiveInt | None = None
     can_shard: bool
-    safetensors_index_filename: str | None
+    safetensors_index_filename: str | None = None
 
 
 class ModelCard(CamelCaseModel):
@@ -82,6 +82,7 @@ class ModelCard(CamelCaseModel):
     quantization: str = ""
     base_model: str = ""
     capabilities: list[str] = []
+    uses_cfg: bool = False
 
     @field_validator("tasks", mode="before")
     @classmethod
@@ -153,87 +154,6 @@ def is_custom_card(model_id: ModelId) -> bool:
         ModelId(model_id).normalize() + ".toml"
     )
     return os.path.isfile(str(card_path))
-
-
-# TODO: quantizing and dynamically creating model cards
-def _generate_image_model_quant_variants(  # pyright: ignore[reportUnusedFunction]
-    base_name: str,
-    base_card: ModelCard,
-) -> dict[str, ModelCard]:
-    """Create quantized variants of an image model card.
-
-    Only the transformer component is quantized; text encoders stay at bf16.
-    Sizes are calculated exactly from the base card's component sizes.
-    """
-    if base_card.components is None:
-        raise ValueError(f"Image model {base_name} must have components defined")
-
-    # quantizations = [8, 6, 5, 4, 3]
-    quantizations = [8, 4]
-
-    num_transformer_bytes = next(
-        c.storage_size.in_bytes
-        for c in base_card.components
-        if c.component_name == "transformer"
-    )
-
-    transformer_bytes = Memory.from_bytes(num_transformer_bytes)
-
-    remaining_bytes = Memory.from_bytes(
-        sum(
-            c.storage_size.in_bytes
-            for c in base_card.components
-            if c.component_name != "transformer"
-        )
-    )
-
-    def with_transformer_size(new_size: Memory) -> list[ComponentInfo]:
-        assert base_card.components is not None
-        return [
-            ComponentInfo(
-                component_name=c.component_name,
-                component_path=c.component_path,
-                storage_size=new_size
-                if c.component_name == "transformer"
-                else c.storage_size,
-                n_layers=c.n_layers,
-                can_shard=c.can_shard,
-                safetensors_index_filename=c.safetensors_index_filename,
-            )
-            for c in base_card.components
-        ]
-
-    variants = {
-        base_name: ModelCard(
-            model_id=base_card.model_id,
-            storage_size=transformer_bytes + remaining_bytes,
-            n_layers=base_card.n_layers,
-            hidden_size=base_card.hidden_size,
-            supports_tensor=base_card.supports_tensor,
-            tasks=base_card.tasks,
-            components=with_transformer_size(transformer_bytes),
-        )
-    }
-
-    for quant in quantizations:
-        quant_transformer_bytes = Memory.from_bytes(
-            (num_transformer_bytes * quant) // 16
-        )
-        total_bytes = remaining_bytes + quant_transformer_bytes
-
-        model_id = ModelId(base_card.model_id + f"-{quant}bit")
-
-        variants[f"{base_name}-{quant}bit"] = ModelCard(
-            model_id=model_id,
-            storage_size=total_bytes,
-            n_layers=base_card.n_layers,
-            hidden_size=base_card.hidden_size,
-            supports_tensor=base_card.supports_tensor,
-            tasks=base_card.tasks,
-            components=with_transformer_size(quant_transformer_bytes),
-        )
-
-    return variants
 
 
 class ConfigData(BaseModel):
