@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 struct InstanceRowView: View {
@@ -45,6 +46,15 @@ struct InstanceRowView: View {
                 Text(instance.sharding ?? "")
                     .font(.caption2)
                     .foregroundColor(.secondary)
+            }
+            if instance.state == .failed,
+                let reason = instance.failureReason,
+                !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                Text(reason)
+                    .font(.caption2)
+                    .foregroundColor(.red)
+                    .lineLimit(3)
             }
             if !instance.chatTasks.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
