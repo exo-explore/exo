@@ -21,6 +21,12 @@
     hasMultipleVariants: boolean;
   }
 
+  type DownloadAvailability = {
+    available: boolean;
+    nodeNames: string[];
+    nodeIds: string[];
+  };
+
   type ModelPickerGroupProps = {
     group: ModelGroup;
     isExpanded: boolean;
@@ -31,6 +37,7 @@
     onSelectModel: (modelId: string) => void;
     onToggleFavorite: (baseModelId: string) => void;
     onShowInfo: (group: ModelGroup) => void;
+    downloadStatusMap?: Map<string, DownloadAvailability>;
   };
 
   let {
@@ -43,7 +50,18 @@
     onSelectModel,
     onToggleFavorite,
     onShowInfo,
+    downloadStatusMap,
   }: ModelPickerGroupProps = $props();
+
+  // Group-level download status: show if any variant is downloaded
+  const groupDownloadStatus = $derived.by(() => {
+    if (!downloadStatusMap || downloadStatusMap.size === 0) return undefined;
+    // Return the first available entry (prefer "available" ones)
+    for (const avail of downloadStatusMap.values()) {
+      if (avail.available) return avail;
+    }
+    return downloadStatusMap.values().next().value;
+  });
 
   // Format storage size
   function formatSize(mb: number | undefined): string {
@@ -198,10 +216,42 @@
       </span>
     {/if}
 
-    <!-- Variant count -->
+    <!-- Variant count with size range -->
     {#if group.hasMultipleVariants}
+      {@const sizes = group.variants
+        .map((v) => v.storage_size_megabytes || 0)
+        .filter((s) => s > 0)
+        .sort((a, b) => a - b)}
       <span class="text-xs font-mono text-white/30 flex-shrink-0">
-        {group.variants.length} variants
+        {group.variants.length} variants{#if sizes.length >= 2}{" "}({formatSize(
+            sizes[0],
+          )}-{formatSize(sizes[sizes.length - 1])}){/if}
+      </span>
+    {/if}
+
+    <!-- Download availability indicator -->
+    {#if groupDownloadStatus && groupDownloadStatus.nodeIds.length > 0}
+      <span
+        class="flex-shrink-0"
+        title={groupDownloadStatus.available
+          ? `Ready — downloaded on ${groupDownloadStatus.nodeNames.join(", ")}`
+          : `Downloaded on ${groupDownloadStatus.nodeNames.join(", ")} (may need more nodes)`}
+      >
+        <svg
+          class="w-4 h-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path
+            class="text-white/40"
+            d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+          />
+          <path class="text-green-400" d="m9 13 2 2 4-4" />
+        </svg>
       </span>
     {/if}
 
@@ -304,6 +354,33 @@
           <span class="text-xs font-mono text-white/40 flex-1">
             {formatSize(variant.storage_size_megabytes)}
           </span>
+
+          <!-- Download indicator for this variant -->
+          {#if downloadStatusMap?.get(variant.id)}
+            {@const variantDl = downloadStatusMap.get(variant.id)}
+            {#if variantDl}
+              <span
+                class="flex-shrink-0"
+                title={`Downloaded on ${variantDl.nodeNames.join(", ")}`}
+              >
+                <svg
+                  class="w-3.5 h-3.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    class="text-white/40"
+                    d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+                  />
+                  <path class="text-green-400" d="m9 13 2 2 4-4" />
+                </svg>
+              </span>
+            {/if}
+          {/if}
 
           <!-- Check mark if selected -->
           {#if isSelected}
