@@ -5,7 +5,13 @@
     ChatMessages,
     ChatSidebar,
     ModelCard,
+    ModelPickerModal,
   } from "$lib/components";
+  import {
+    favorites,
+    toggleFavorite,
+    getFavoritesSet,
+  } from "$lib/stores/favorites.svelte";
   import {
     hasStartedChat,
     isTopologyMinimized,
@@ -101,6 +107,10 @@
       tasks?: string[];
       hugging_face_id?: string;
       is_custom?: boolean;
+      family?: string;
+      quantization?: string;
+      base_model?: string;
+      capabilities?: string[];
     }>
   >([]);
 
@@ -212,14 +222,11 @@
   let launchingModelId = $state<string | null>(null);
   let instanceDownloadExpandedNodes = $state<Set<string>>(new Set());
 
-  // Custom dropdown state
-  let isModelDropdownOpen = $state(false);
-  let modelDropdownSearch = $state("");
+  // Model picker modal state
+  let isModelPickerOpen = $state(false);
 
-  // Custom model add state
-  let customModelInput = $state("");
-  let isAddingCustomModel = $state(false);
-  let customModelError = $state("");
+  // Favorites state (reactive)
+  const favoritesSet = $derived(getFavoritesSet());
 
   // Slider dragging state
   let isDraggingSlider = $state(false);
@@ -536,41 +543,25 @@
     }
   }
 
-  async function addCustomModel() {
-    const modelId = customModelInput.trim();
-    if (!modelId) return;
+  async function addModelFromPicker(modelId: string) {
+    const response = await fetch("/models/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model_id: modelId }),
+    });
 
-    isAddingCustomModel = true;
-    customModelError = "";
-
-    try {
-      const response = await fetch("/models/add", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model_id: modelId }),
-      });
-
-      if (!response.ok) {
-        try {
-          const err = await response.json();
-          customModelError =
-            err.detail || `Failed to add model (${response.status})`;
-        } catch {
-          customModelError = `Failed to add model (${response.status}: ${response.statusText})`;
-        }
-        return;
+    if (!response.ok) {
+      let message = `Failed to add model (${response.status}: ${response.statusText})`;
+      try {
+        const err = await response.json();
+        if (err.detail) message = err.detail;
+      } catch {
+        // use default message
       }
-
-      const added = await response.json();
-      customModelInput = "";
-      await fetchModels();
-      selectPreviewModel(added.id);
-      isModelDropdownOpen = false;
-    } catch {
-      customModelError = "Network error";
-    } finally {
-      isAddingCustomModel = false;
+      throw new Error(message);
     }
+
+    await fetchModels();
   }
 
   async function deleteCustomModel(modelId: string) {
@@ -585,6 +576,12 @@
     } catch {
       console.error("Failed to delete custom model");
     }
+  }
+
+  function handleModelPickerSelect(modelId: string) {
+    selectPreviewModel(modelId);
+    saveLaunchDefaults();
+    isModelPickerOpen = false;
   }
 
   async function launchInstance(
@@ -2417,14 +2414,12 @@
               >
             </div>
 
-            <!-- Model Dropdown (Custom) -->
-            <div class="flex-shrink-0 mb-3 relative">
+            <!-- Model Picker Button -->
+            <div class="flex-shrink-0 mb-3">
               <button
                 type="button"
-                onclick={() => (isModelDropdownOpen = !isModelDropdownOpen)}
-                class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-2.5 text-sm font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 {isModelDropdownOpen
-                  ? 'border-exo-yellow/70'
-                  : ''}"
+                onclick={() => (isModelPickerOpen = true)}
+                class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-2.5 text-sm font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 relative"
               >
                 {#if selectedModelId}
                   {@const foundModel = models.find(
@@ -2432,54 +2427,12 @@
                   )}
                   {#if foundModel}
                     {@const sizeGB = getModelSizeGB(foundModel)}
-                    {@const isImageModel = modelSupportsImageGeneration(
-                      foundModel.id,
-                    )}
-                    {@const isImageEditModel = modelSupportsImageEditing(
-                      foundModel.id,
-                    )}
                     <span
                       class="flex items-center justify-between gap-2 w-full pr-4"
                     >
                       <span
                         class="flex items-center gap-2 text-exo-light-gray truncate"
                       >
-                        {#if isImageModel}
-                          <svg
-                            class="w-4 h-4 flex-shrink-0 text-exo-yellow"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            stroke-width="2"
-                          >
-                            <rect
-                              x="3"
-                              y="3"
-                              width="18"
-                              height="18"
-                              rx="2"
-                              ry="2"
-                            />
-                            <circle cx="8.5" cy="8.5" r="1.5" />
-                            <polyline points="21 15 16 10 5 21" />
-                          </svg>
-                        {/if}
-                        {#if isImageEditModel}
-                          <svg
-                            class="w-4 h-4 flex-shrink-0 text-exo-yellow"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            stroke-width="2"
-                          >
-                            <path
-                              d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
-                            />
-                            <path
-                              d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
-                            />
-                          </svg>
-                        {/if}
                         <span class="truncate"
                           >{foundModel.name || foundModel.id}</span
                         >
@@ -2496,193 +2449,24 @@
                 {:else}
                   <span class="text-white/50">— SELECT MODEL —</span>
                 {/if}
-              </button>
-              <div
-                class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-200 {isModelDropdownOpen
-                  ? 'rotate-180'
-                  : ''}"
-              >
-                <svg
-                  class="w-4 h-4 text-exo-yellow/60"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M19 9l-7 7-7-7"
-                  />
-                </svg>
-              </div>
-
-              {#if isModelDropdownOpen}
-                <!-- Backdrop to close dropdown -->
-                <button
-                  type="button"
-                  class="fixed inset-0 z-40 cursor-default"
-                  onclick={() => (isModelDropdownOpen = false)}
-                  aria-label="Close dropdown"
-                ></button>
-
-                <!-- Dropdown Panel -->
                 <div
-                  class="absolute top-full left-0 right-0 mt-1 bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-50 max-h-64 overflow-y-auto"
+                  class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
                 >
-                  <!-- Search within dropdown -->
-                  <div
-                    class="sticky top-0 bg-exo-dark-gray border-b border-exo-medium-gray/30 p-2 space-y-2"
+                  <svg
+                    class="w-4 h-4 text-exo-yellow/60"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
                   >
-                    <input
-                      type="text"
-                      placeholder="Search models..."
-                      bind:value={modelDropdownSearch}
-                      class="w-full bg-exo-dark-gray/60 border border-exo-medium-gray/30 rounded px-2 py-1.5 text-xs font-mono text-white/80 placeholder:text-white/40 focus:outline-none focus:border-exo-yellow/50"
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M19 9l-7 7-7-7"
                     />
-                    <!-- Add custom model -->
-                    <form
-                      onsubmit={(e) => {
-                        e.preventDefault();
-                        addCustomModel();
-                      }}
-                      class="flex gap-1.5"
-                    >
-                      <input
-                        type="text"
-                        placeholder="org/model-name"
-                        bind:value={customModelInput}
-                        class="flex-1 bg-exo-dark-gray/60 border border-exo-medium-gray/30 rounded px-2 py-1.5 text-xs font-mono text-white/80 placeholder:text-white/40 focus:outline-none focus:border-exo-yellow/50"
-                      />
-                      <button
-                        type="submit"
-                        disabled={!customModelInput.trim() ||
-                          isAddingCustomModel}
-                        class="px-2 py-1.5 text-xs font-mono bg-exo-yellow/20 text-exo-yellow border border-exo-yellow/30 rounded hover:bg-exo-yellow/30 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        {isAddingCustomModel ? "..." : "+ ADD"}
-                      </button>
-                    </form>
-                    {#if customModelError}
-                      <div class="text-xs text-red-400 font-mono">
-                        {customModelError}
-                      </div>
-                    {/if}
-                  </div>
-
-                  <!-- Options -->
-                  <div class="py-1">
-                    {#each sortedModels().filter((m) => !modelDropdownSearch || (m.name || m.id)
-                          .toLowerCase()
-                          .includes(modelDropdownSearch.toLowerCase())) as model}
-                      {@const sizeGB = getModelSizeGB(model)}
-                      {@const modelCanFit = hasEnoughMemory(model)}
-                      {@const isImageModel = modelSupportsImageGeneration(
-                        model.id,
-                      )}
-                      {@const isImageEditModel = modelSupportsImageEditing(
-                        model.id,
-                      )}
-                      <button
-                        type="button"
-                        onclick={() => {
-                          if (modelCanFit) {
-                            selectPreviewModel(model.id);
-                            saveLaunchDefaults();
-                            isModelDropdownOpen = false;
-                            modelDropdownSearch = "";
-                          }
-                        }}
-                        disabled={!modelCanFit}
-                        class="w-full px-3 py-2 text-left text-sm font-mono tracking-wide transition-colors duration-100 flex items-center justify-between gap-2 {selectedModelId ===
-                        model.id
-                          ? 'bg-transparent text-exo-yellow cursor-pointer'
-                          : modelCanFit
-                            ? 'text-white/80 hover:text-exo-yellow cursor-pointer'
-                            : 'text-white/30 cursor-default'}"
-                      >
-                        <span class="flex items-center gap-2 truncate flex-1">
-                          {#if isImageModel}
-                            <svg
-                              class="w-4 h-4 flex-shrink-0 text-exo-yellow"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              stroke-width="2"
-                              aria-label="Image generation model"
-                            >
-                              <rect
-                                x="3"
-                                y="3"
-                                width="18"
-                                height="18"
-                                rx="2"
-                                ry="2"
-                              />
-                              <circle cx="8.5" cy="8.5" r="1.5" />
-                              <polyline points="21 15 16 10 5 21" />
-                            </svg>
-                          {/if}
-                          {#if isImageEditModel}
-                            <svg
-                              class="w-4 h-4 flex-shrink-0 text-exo-yellow"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              stroke-width="2"
-                              aria-label="Image editing model"
-                            >
-                              <path
-                                d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
-                              />
-                              <path
-                                d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
-                              />
-                            </svg>
-                          {/if}
-                          <span class="truncate">{model.name || model.id}</span>
-                        </span>
-                        <span class="flex items-center gap-1.5 flex-shrink-0">
-                          <span
-                            class="text-xs {modelCanFit
-                              ? 'text-white/50'
-                              : 'text-red-400/60'}"
-                          >
-                            {sizeGB >= 1
-                              ? sizeGB.toFixed(0)
-                              : sizeGB.toFixed(1)}GB
-                          </span>
-                          {#if model.is_custom}
-                            <button
-                              type="button"
-                              onclick={(e) => {
-                                e.stopPropagation();
-                                deleteCustomModel(model.id);
-                              }}
-                              class="text-white/30 hover:text-red-400 transition-colors p-0.5"
-                              title="Remove custom model"
-                            >
-                              <svg
-                                class="w-3 h-3"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke="currentColor"
-                                stroke-width="2"
-                              >
-                                <path d="M18 6L6 18M6 6l12 12" />
-                              </svg>
-                            </button>
-                          {/if}
-                        </span>
-                      </button>
-                    {:else}
-                      <div class="px-3 py-2 text-xs text-white/50 font-mono">
-                        No models found
-                      </div>
-                    {/each}
-                  </div>
+                  </svg>
                 </div>
-              {/if}
+              </button>
             </div>
 
             <!-- Configuration Options -->
@@ -3462,3 +3246,17 @@
     {/if}
   </main>
 </div>
+
+<ModelPickerModal
+  isOpen={isModelPickerOpen}
+  {models}
+  {selectedModelId}
+  favorites={favoritesSet}
+  existingModelIds={new Set(models.map((m) => m.id))}
+  canModelFit={hasEnoughMemory}
+  onSelect={handleModelPickerSelect}
+  onClose={() => (isModelPickerOpen = false)}
+  onToggleFavorite={toggleFavorite}
+  onAddModel={addModelFromPicker}
+  onDeleteModel={deleteCustomModel}
+/>

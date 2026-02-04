@@ -78,6 +78,10 @@ class ModelCard(CamelCaseModel):
     supports_tensor: bool
     tasks: list[ModelTask]
     components: list[ComponentInfo] | None = None
+    family: str = ""
+    quantization: str = ""
+    base_model: str = ""
+    capabilities: list[str] = []
 
     @field_validator("tasks", mode="before")
     @classmethod

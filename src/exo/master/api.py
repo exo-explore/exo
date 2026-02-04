@@ -74,6 +74,7 @@ from exo.shared.types.api import (
     ErrorResponse,
     FinishReason,
     GenerationStats,
+    HuggingFaceSearchResult,
     ImageData,
     ImageEditsTaskParams,
     ImageGenerationResponse,
@@ -262,6 +263,7 @@ class API:
         self.app.get("/v1/models")(self.get_models)
         self.app.post("/models/add")(self.add_custom_model)
         self.app.delete("/models/custom/{model_id:path}")(self.delete_custom_model)
+        self.app.get("/models/search")(self.search_models)
         self.app.post("/v1/chat/completions", response_model=None)(
             self.chat_completions
         )
@@ -1222,6 +1224,10 @@ class API:
                     supports_tensor=card.supports_tensor,
                     tasks=[task.value for task in card.tasks],
                     is_custom=is_custom_card(card.model_id),
+                    family=card.family,
+                    quantization=card.quantization,
+                    base_model=card.base_model,
+                    capabilities=card.capabilities,
                 )
                 for card in await get_model_cards()
             ]
@@ -1256,6 +1262,30 @@ class API:
         return JSONResponse(
             {"message": "Model card deleted", "model_id": str(model_id)}
         )
+
+    async def search_models(
+        self, query: str = "", limit: int = 20
+    ) -> list[HuggingFaceSearchResult]:
+        """Search HuggingFace Hub for mlx-community models."""
+        from huggingface_hub import list_models
+
+        results = list_models(
+            search=query or None,
+            author="mlx-community",
+            sort="downloads",
+            limit=limit,
+        )
+        return [
+            HuggingFaceSearchResult(
+                id=m.id,
+                author=m.author or "",
+                downloads=m.downloads or 0,
+                likes=m.likes or 0,
+                last_modified=str(m.last_modified or ""),
+                tags=list(m.tags or []),
+            )
+            for m in results
+        ]
 
     async def run(self):
         cfg = Config()
