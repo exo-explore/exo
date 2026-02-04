@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
@@ -23,7 +24,7 @@ export default defineConfig({
     command: "cd .. && uv run exo",
     url: "http://localhost:52415/node_id",
     reuseExistingServer: !process.env.CI,
-    timeout: 120000,
+    timeout: 300000, // 5 minutes - CI needs time to install dependencies
   },
   expect: {
     toHaveScreenshot: {
