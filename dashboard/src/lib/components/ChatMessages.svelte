@@ -237,6 +237,9 @@
       class="group flex {message.role === 'user'
         ? 'justify-end'
         : 'justify-start'}"
+      data-testid={message.role === "user"
+        ? "user-message"
+        : "assistant-message"}
     >
       <div
         class={message.role === "user"

@@ -977,6 +977,7 @@
 
     <!-- Launch Button -->
     <button
+      data-testid="launch-button"
       onclick={onLaunch}
       disabled={isLaunching || !canFit}
       class="w-full py-2 text-sm font-mono tracking-wider uppercase border transition-all duration-200

@@ -407,6 +407,7 @@
           <!-- Custom dropdown -->
           <div class="relative flex-1 max-w-xs">
             <button
+              data-testid="chat-model-selector"
               bind:this={dropdownButtonRef}
               type="button"
               onclick={() => (isModelDropdownOpen = !isModelDropdownOpen)}
@@ -587,6 +588,7 @@
       >
 
       <textarea
+        data-testid="chat-input"
         bind:this={textareaRef}
         bind:value={message}
         onkeydown={handleKeydown}
@@ -606,6 +608,7 @@
       ></textarea>
 
       <button
+        data-testid="send-button"
         type="submit"
         disabled={!canSend || loading || isEditOnlyWithoutImage}
         class="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-xs tracking-[0.1em] sm:tracking-[0.15em] uppercase font-medium transition-all duration-200 whitespace-nowrap

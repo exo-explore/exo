@@ -29,5 +29,12 @@ dashboard/build/
 dashboard/node_modules/
 dashboard/.svelte-kit/
 
+# playwright
+dashboard/test-results/
+dashboard/playwright-report/
+dashboard/playwright/.cache/
+dashboard/tests/**/*-snapshots/*-actual.png
+dashboard/tests/**/*-snapshots/*-diff.png
+
 # host config snapshots
 hosts_*.json

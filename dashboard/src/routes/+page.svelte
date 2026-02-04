@@ -1663,12 +1663,14 @@
         <div
           class="flex-1 relative bg-exo-dark-gray/40 rounded-lg overflow-hidden"
         >
-          <TopologyGraph
-            class="w-full h-full"
-            highlightedNodes={highlightedNodes()}
-            filteredNodes={nodeFilter}
-            onNodeClick={togglePreviewNodeFilter}
-          />
+          <div data-testid="topology-graph" class="w-full h-full">
+            <TopologyGraph
+              class="w-full h-full"
+              highlightedNodes={highlightedNodes()}
+              filteredNodes={nodeFilter}
+              onNodeClick={togglePreviewNodeFilter}
+            />
+          </div>
 
           <!-- Thunderbolt Bridge Cycle Warning -->
           {#if tbBridgeCycles.length > 0}
@@ -1782,12 +1784,14 @@
             class="flex-1 relative bg-exo-dark-gray/40 mx-4 mb-4 rounded-lg overflow-hidden"
           >
             <!-- The main topology graph - full container -->
-            <TopologyGraph
-              class="w-full h-full"
-              highlightedNodes={highlightedNodes()}
-              filteredNodes={nodeFilter}
-              onNodeClick={togglePreviewNodeFilter}
-            />
+            <div data-testid="topology-graph" class="w-full h-full">
+              <TopologyGraph
+                class="w-full h-full"
+                highlightedNodes={highlightedNodes()}
+                filteredNodes={nodeFilter}
+                onNodeClick={togglePreviewNodeFilter}
+              />
+            </div>
 
             <!-- Thunderbolt Bridge Cycle Warning -->
             {#if tbBridgeCycles.length > 0}
@@ -2363,6 +2367,7 @@
             <!-- Model Dropdown (Custom) -->
             <div class="flex-shrink-0 mb-3 relative">
               <button
+                data-testid="model-dropdown"
                 type="button"
                 onclick={() => (isModelDropdownOpen = !isModelDropdownOpen)}
                 class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-2.5 text-sm font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 {isModelDropdownOpen
@@ -2499,6 +2504,7 @@
                         model.id,
                       )}
                       <button
+                        data-testid="model-option"
                         type="button"
                         onclick={() => {
                           if (modelCanFit) {
@@ -2777,6 +2783,7 @@
                     {#each allPreviews as apiPreview, i}
                       <div
                         role="group"
+                        data-testid="model-card"
                         onmouseenter={() => {
                           if (apiPreview.memory_delta_by_node) {
                             hoveredPreviewNodes = new Set(

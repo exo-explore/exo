@@ -143,3 +143,139 @@ jobs:
           export HOME="$RUNNER_TEMP"
           export EXO_TESTS=1
           EXO_RESOURCES_DIR="$PWD/resources" $TEST_ENV/bin/python -m pytest src -m "not slow" --import-mode=importlib
+
+  dashboard-tests:
+    name: Dashboard E2E Tests
+    runs-on: macos-26
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - uses: cachix/cachix-action@v14
+        name: Configure Cachix
+        with:
+          name: exo
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+
+      - name: Build Metal packages
+        run: |
+          if nix build .#metal-toolchain 2>/dev/null; then
+            echo "metal-toolchain built successfully (likely cache hit)"
+          else
+            echo "metal-toolchain build failed, extracting from Xcode..."
+
+            NAR_HASH="sha256-ayR5mXN4sZAddwKEG2OszGRF93k9ZFc7H0yi2xbylQw="
+            NAR_NAME="metal-toolchain-17C48.nar"
+
+            WORK_DIR="${RUNNER_TEMP}/metal-work"
+            mkdir -p "$WORK_DIR"
+
+            xcodebuild -downloadComponent MetalToolchain
+
+            DMG_PATH=$(find /System/Library/AssetsV2/com_apple_MobileAsset_MetalToolchain -name '*.dmg' 2>/dev/null | head -1)
+            if [ -z "$DMG_PATH" ]; then
+              echo "Error: Could not find Metal toolchain DMG"
+              exit 1
+            fi
+
+            echo "Found DMG at: $DMG_PATH"
+            hdiutil attach "$DMG_PATH" -mountpoint "${WORK_DIR}/metal-dmg"
+
+            cp -R "${WORK_DIR}/metal-dmg/Metal.xctoolchain" "${WORK_DIR}/metal-export"
+            hdiutil detach "${WORK_DIR}/metal-dmg"
+
+            nix nar pack "${WORK_DIR}/metal-export" > "${WORK_DIR}/${NAR_NAME}"
+            STORE_PATH=$(nix store add --mode flat "${WORK_DIR}/${NAR_NAME}")
+            echo "Added NAR to store: $STORE_PATH"
+
+            rm -rf "$WORK_DIR"
+
+            nix build .#metal-toolchain
+          fi
+
+          nix build .#mlx
+
+      - name: Install macmon for hardware monitoring
+        run: brew install macmon
+
+      - name: Load nix develop environment
+        run: nix run github:nicknovitski/nix-develop/v1
+
+      - name: Sync Python dependencies
+        run: uv sync --all-packages
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: dashboard
+        run: npx playwright install chromium --with-deps
+
+      - name: Build dashboard
+        working-directory: dashboard
+        run: npm run build
+
+      - name: Verify macmon is accessible
+        run: |
+          echo "PATH: $PATH"
+          which macmon || echo "macmon not in PATH"
+          macmon --version
+          # Test macmon actually works - capture stderr too
+          echo "Testing macmon pipe output (with stderr)..."
+          timeout 5 macmon pipe --interval 1000 2>&1 || echo "macmon pipe exit code: $?"
+          # Try running macmon raw (not pipe mode)
+          echo "Testing macmon raw output..."
+          macmon raw 2>&1 | head -5 || echo "macmon raw failed"
+
+      - name: Verify Python can find macmon
+        run: |
+          echo "Testing shutil.which from uv run python..."
+          uv run python -c "import shutil; print('Python shutil.which macmon:', shutil.which('macmon'))"
+
+      - name: Run Playwright tests
+        working-directory: dashboard
+        run: |
+          export PATH="/usr/sbin:/usr/bin:/opt/homebrew/bin:$PATH"
+          echo "Effective PATH: $PATH"
+          which macmon && echo "macmon found at $(which macmon)"
+          npm test
+        env:
+          CI: true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: dashboard/playwright-report/
+          retention-days: 30
+
+      - name: Upload video recordings
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-videos
+          path: dashboard/test-results/
+          retention-days: 30
+
+      - name: Upload snapshot diffs
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: snapshot-diffs
+          path: dashboard/tests/**/*-snapshots/*-diff.png
+          retention-days: 30
