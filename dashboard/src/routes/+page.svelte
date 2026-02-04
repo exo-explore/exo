@@ -39,9 +39,11 @@
     toggleChatSidebarVisible,
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
+    startDownload,
     type DownloadProgress,
     type PlacementPreview,
   } from "$lib/stores/app.svelte";
+  import { getShardMetadataForModel } from "$lib/utils/downloads";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
   import { fade, fly } from "svelte/transition";
   import { cubicInOut } from "svelte/easing";
@@ -582,6 +584,17 @@
     selectPreviewModel(modelId);
     saveLaunchDefaults();
     isModelPickerOpen = false;
+  }
+
+  async function handleTopologyDownload(nodeId: string) {
+    if (!selectedModelId) return;
+    const shardMeta = getShardMetadataForModel(
+      downloadsData ?? {},
+      selectedModelId,
+    );
+    if (shardMeta) {
+      await startDownload(nodeId, shardMeta);
+    }
   }
 
   async function launchInstance(
@@ -1722,6 +1735,9 @@
             highlightedNodes={highlightedNodes()}
             filteredNodes={nodeFilter}
             onNodeClick={togglePreviewNodeFilter}
+            {downloadsData}
+            activeModelId={selectedModelId}
+            onDownloadToNode={handleTopologyDownload}
           />
 
           <!-- Thunderbolt Bridge Cycle Warning -->
@@ -2771,6 +2787,9 @@
                   highlightedNodes={highlightedNodes()}
                   filteredNodes={nodeFilter}
                   onNodeClick={togglePreviewNodeFilter}
+                  {downloadsData}
+                  activeModelId={selectedModelId}
+                  onDownloadToNode={handleTopologyDownload}
                 />
 
                 <!-- Thunderbolt Bridge Cycle Warning (compact) -->

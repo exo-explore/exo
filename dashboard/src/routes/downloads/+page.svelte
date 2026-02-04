@@ -10,6 +10,11 @@
     deleteDownload,
   } from "$lib/stores/app.svelte";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
+  import {
+    extractModelIdFromDownload,
+    extractShardMetadata,
+    getDownloadTag,
+  } from "$lib/utils/downloads";
 
   type FileProgress = {
     name: string;
@@ -98,26 +103,7 @@
     return Math.min(100, Math.max(0, value as number));
   }
 
-  function extractModelIdFromDownload(
-    downloadPayload: Record<string, unknown>,
-  ): string | null {
-    const shardMetadata =
-      downloadPayload.shard_metadata ?? downloadPayload.shardMetadata;
-    if (!shardMetadata || typeof shardMetadata !== "object") return null;
-
-    const shardObj = shardMetadata as Record<string, unknown>;
-    const shardKeys = Object.keys(shardObj);
-    if (shardKeys.length !== 1) return null;
-
-    const shardData = shardObj[shardKeys[0]] as Record<string, unknown>;
-    if (!shardData) return null;
-
-    const modelMeta = shardData.model_card ?? shardData.modelCard;
-    if (!modelMeta || typeof modelMeta !== "object") return null;
-
-    const meta = modelMeta as Record<string, unknown>;
-    return (meta.model_id as string) ?? (meta.modelId as string) ?? null;
-  }
+  // extractModelIdFromDownload imported from $lib/utils/downloads
 
   function parseDownloadProgress(
     payload: Record<string, unknown>,
@@ -197,14 +183,10 @@
         for (const downloadWrapped of nodeEntries) {
           if (!downloadWrapped || typeof downloadWrapped !== "object") continue;
 
-          const keys = Object.keys(downloadWrapped as Record<string, unknown>);
-          if (keys.length !== 1) continue;
+          const tagged = getDownloadTag(downloadWrapped);
+          if (!tagged) continue;
 
-          const downloadKind = keys[0];
-          const downloadPayload = (downloadWrapped as Record<string, unknown>)[
-            downloadKind
-          ] as Record<string, unknown>;
-          if (!downloadPayload) continue;
+          const [downloadKind, downloadPayload] = tagged;
 
           const modelId =
             extractModelIdFromDownload(downloadPayload) ?? "unknown-model";
@@ -273,10 +255,7 @@
           }
 
           // Extract shard_metadata for use with download actions
-          const shardMetadata = (downloadPayload.shard_metadata ??
-            downloadPayload.shardMetadata) as
-            | Record<string, unknown>
-            | undefined;
+          const shardMetadata = extractShardMetadata(downloadPayload);
 
           const entry: ModelEntry = {
             modelId,

@@ -8,12 +8,16 @@
     nodeThunderboltBridge,
     type NodeInfo,
   } from "$lib/stores/app.svelte";
+  import { getModelDownloadStatus } from "$lib/utils/downloads";
 
   interface Props {
     class?: string;
     highlightedNodes?: Set<string>;
     filteredNodes?: Set<string>;
     onNodeClick?: (nodeId: string) => void;
+    downloadsData?: Record<string, unknown[]>;
+    activeModelId?: string | null;
+    onDownloadToNode?: (nodeId: string) => void;
   }
 
   let {
@@ -21,6 +25,9 @@
     highlightedNodes = new Set(),
     filteredNodes = new Set(),
     onNodeClick,
+    downloadsData,
+    activeModelId = null,
+    onDownloadToNode,
   }: Props = $props();
 
   let svgContainer: SVGSVGElement | undefined = $state();
@@ -907,6 +914,95 @@
           .attr("stroke-width", strokeWidth);
       }
 
+      // --- Download Status Indicator (top-right of device icon) ---
+      if (activeModelId && downloadsData) {
+        const dlStatus = getModelDownloadStatus(
+          downloadsData,
+          nodeInfo.id,
+          activeModelId,
+        );
+
+        if (dlStatus) {
+          const indicatorSize = isMinimized ? 8 : 12;
+          const indicatorX =
+            nodeInfo.x + iconBaseWidth / 2 - indicatorSize * 0.3;
+          const indicatorY =
+            nodeInfo.y - iconBaseHeight / 2 - indicatorSize * 0.3;
+
+          if (dlStatus === "DownloadCompleted") {
+            // Green circle with white checkmark
+            const dlG = nodeG.append("g").attr("class", "download-indicator");
+            dlG.append("title").text("Downloaded on this node");
+            dlG
+              .append("circle")
+              .attr("cx", indicatorX)
+              .attr("cy", indicatorY)
+              .attr("r", indicatorSize)
+              .attr("fill", "#22c55e")
+              .attr("stroke", "#15803d")
+              .attr("stroke-width", 1);
+            // Checkmark path
+            const checkScale = indicatorSize / 12;
+            dlG
+              .append("path")
+              .attr(
+                "d",
+                `M${indicatorX - 4 * checkScale},${indicatorY} L${indicatorX - 1 * checkScale},${indicatorY + 3.5 * checkScale} L${indicatorX + 5 * checkScale},${indicatorY - 3.5 * checkScale}`,
+              )
+              .attr("stroke", "white")
+              .attr("stroke-width", 2 * checkScale)
+              .attr("fill", "none")
+              .attr("stroke-linecap", "round")
+              .attr("stroke-linejoin", "round");
+          } else if (onDownloadToNode) {
+            // Download arrow icon (not completed — pending/ongoing/failed)
+            const dlG = nodeG
+              .append("g")
+              .attr("class", "download-indicator")
+              .style("cursor", "pointer");
+            dlG.append("title").text("Download to this node");
+            dlG
+              .append("circle")
+              .attr("cx", indicatorX)
+              .attr("cy", indicatorY)
+              .attr("r", indicatorSize)
+              .attr("fill", "rgba(80, 80, 90, 0.9)")
+              .attr("stroke", "rgba(255,215,0,0.5)")
+              .attr("stroke-width", 1);
+            // Arrow-down path
+            const arrowScale = indicatorSize / 12;
+            dlG
+              .append("path")
+              .attr(
+                "d",
+                `M${indicatorX},${indicatorY - 4 * arrowScale} L${indicatorX},${indicatorY + 1.5 * arrowScale} M${indicatorX - 3 * arrowScale},${indicatorY - 1 * arrowScale} L${indicatorX},${indicatorY + 1.5 * arrowScale} L${indicatorX + 3 * arrowScale},${indicatorY - 1 * arrowScale} M${indicatorX - 4 * arrowScale},${indicatorY + 4 * arrowScale} L${indicatorX + 4 * arrowScale},${indicatorY + 4 * arrowScale}`,
+              )
+              .attr("stroke", "rgba(255,215,0,0.8)")
+              .attr("stroke-width", 1.5 * arrowScale)
+              .attr("fill", "none")
+              .attr("stroke-linecap", "round")
+              .attr("stroke-linejoin", "round");
+            dlG.on("click", (event: MouseEvent) => {
+              event.stopPropagation();
+              onDownloadToNode(nodeInfo.id);
+            });
+            dlG
+              .on("mouseenter", function () {
+                d3.select(this)
+                  .select("circle")
+                  .attr("stroke", "rgba(255,215,0,1)")
+                  .attr("fill", "rgba(100, 100, 110, 0.9)");
+              })
+              .on("mouseleave", function () {
+                d3.select(this)
+                  .select("circle")
+                  .attr("stroke", "rgba(255,215,0,0.5)")
+                  .attr("fill", "rgba(80, 80, 90, 0.9)");
+              });
+          }
+        }
+      }
+
       // --- Vertical GPU Bar (right side of icon) ---
       // Show in both full mode and minimized mode (scaled appropriately)
       if (showFullLabels || isMinimized) {
@@ -1153,6 +1249,8 @@
     const _hoveredNodeId = hoveredNodeId;
     const _filteredNodes = filteredNodes;
     const _highlightedNodes = highlightedNodes;
+    const _downloadsData = downloadsData;
+    const _activeModelId = activeModelId;
     if (_data) {
       renderGraph();
     }
