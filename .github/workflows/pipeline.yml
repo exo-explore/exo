@@ -229,11 +229,18 @@ jobs:
         working-directory: dashboard
         run: npm run build
 
+      - name: Verify macmon is accessible
+        run: |
+          echo "PATH: $PATH"
+          which macmon || echo "macmon not in PATH"
+          /opt/homebrew/bin/macmon --version || echo "macmon not at /opt/homebrew/bin"
+
       - name: Run Playwright tests
         working-directory: dashboard
         run: npm test
         env:
           CI: true
+          PATH: /opt/homebrew/bin:$PATH
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
