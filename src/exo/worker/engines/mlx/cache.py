@@ -11,6 +11,7 @@ from mlx_lm.models.cache import (
     trim_prompt_cache,
 )
 from mlx_lm.models.gpt_oss import Model as GptOssModel
+from mlx_lm.models.qwen3_next import Model as Qwen3NextModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.memory import Memory
@@ -183,8 +184,9 @@ def encode_prompt(tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
 
 def cache_length(cache: KVCacheType) -> int:
     """Get the number of tokens in a KV cache."""
-    # Use .offset attribute which all cache types have (len() not implemented in older QuantizedKVCache)
-    return max(c.offset for c in cache)
+    # Use .offset attribute which KVCache types have (len() not implemented in older QuantizedKVCache).
+    # For those that do not have an offset, such as MambaCache, default to 0.
+    return max(getattr(c, "offset", 0) for c in cache)
 
 
 def get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
@@ -215,7 +217,7 @@ def make_kv_cache(
     assert hasattr(model, "layers")
 
     # TODO: Do this for all models
-    if hasattr(model, "make_cache") and isinstance(model, GptOssModel):
+    if hasattr(model, "make_cache") and isinstance(model, (GptOssModel, Qwen3NextModel)):
         logger.info("Using MLX LM's make cache")
         return model.make_cache()  # type: ignore
 
