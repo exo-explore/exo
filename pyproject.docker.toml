@@ -15,11 +15,10 @@ dependencies = [
     "huggingface-hub>=0.33.4",
     "psutil>=7.0.0",
     "loguru>=0.7.3",
-    "exo_pyo3_bindings", # rust bindings
     "anyio==4.11.0",
     "mlx==0.30.4; sys_platform == 'darwin'",
-    "mlx-lm",
     "mlx[cuda13]==0.30.4; sys_platform == 'linux'",
+    "mlx-lm",
     "tiktoken>=0.12.0", # required for kimi k2 tokenizer
     "hypercorn>=0.18.0",
     "openai-harmony>=0.0.8",
@@ -51,22 +50,6 @@ dev = [
 # cuda = [
 #     "mlx[cuda]==0.26.3",
 # ]
-
-###
-# workspace configuration
-###
-
-[tool.uv.workspace]
-members = [
-    "rust/exo_pyo3_bindings",
-]
-
-[tool.uv.sources]
-exo_pyo3_bindings = { workspace = true }
-mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", branch = "main" }
-# Uncomment to use local mlx/mlx-lm development versions:
-# mlx = { path = "/Users/Shared/mlx", editable=true }
-# mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }
 
 [build-system]
 requires = ["uv_build>=0.8.9,<0.9.0"]
@@ -120,6 +103,9 @@ extend-exclude = ["shared/protobufs/**", "*mlx_typings/**", "rust/exo_pyo3_bindi
 
 [tool.ruff.lint]
 extend-select = ["I", "N", "B", "A", "PIE", "SIM"]
+
+[tool.uv.sources]
+mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", branch = "main" }
 
 [tool.pytest.ini_options]
 pythonpath = "."
