@@ -3253,7 +3253,10 @@
   {selectedModelId}
   favorites={favoritesSet}
   existingModelIds={new Set(models.map((m) => m.id))}
-  canModelFit={hasEnoughMemory}
+  canModelFit={(modelId) => {
+    const model = models.find((m) => m.id === modelId);
+    return model ? hasEnoughMemory(model) : false;
+  }}
   onSelect={handleModelPickerSelect}
   onClose={() => (isModelPickerOpen = false)}
   onToggleFavorite={toggleFavorite}
