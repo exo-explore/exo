@@ -54,7 +54,7 @@
     </div>
     <div class="flex items-center gap-3 mt-0.5 text-xs text-white/40">
       <span class="truncate">{model.author}</span>
-      <span class="flex items-center gap-1 shrink-0" title="Downloads">
+      <span class="flex items-center gap-1 shrink-0" title="Downloads in the last 30 days">
         <svg
           class="w-3 h-3"
           fill="none"
@@ -70,7 +70,7 @@
         </svg>
         {formatNumber(model.downloads)}
       </span>
-      <span class="flex items-center gap-1 shrink-0" title="Likes">
+      <span class="flex items-center gap-1 shrink-0" title="Community likes on Hugging Face">
         <svg
           class="w-3 h-3"
           fill="none"
@@ -94,7 +94,7 @@
       <button
         type="button"
         onclick={onSelect}
-        class="px-3 py-1.5 text-xs font-mono tracking-wider uppercase bg-exo-yellow/10 text-exo-yellow border border-exo-yellow/30 hover:bg-exo-yellow/20 transition-colors rounded"
+        class="px-3 py-1.5 text-xs font-mono tracking-wider uppercase bg-exo-yellow/10 text-exo-yellow border border-exo-yellow/30 hover:bg-exo-yellow/20 transition-colors rounded cursor-pointer"
       >
         Select
       </button>
@@ -103,7 +103,7 @@
         type="button"
         onclick={onAdd}
         disabled={isAdding}
-        class="px-3 py-1.5 text-xs font-mono tracking-wider uppercase bg-orange-500/10 text-orange-400 border border-orange-400/30 hover:bg-orange-500/20 transition-colors rounded disabled:opacity-50 disabled:cursor-not-allowed"
+        class="px-3 py-1.5 text-xs font-mono tracking-wider uppercase bg-orange-500/10 text-orange-400 border border-orange-400/30 hover:bg-orange-500/20 transition-colors rounded cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {#if isAdding}
           <span class="flex items-center gap-1.5">

@@ -18,7 +18,7 @@
     llama: "Meta",
     qwen: "Qwen",
     deepseek: "DeepSeek",
-    "gpt-oss": "GPT-OSS",
+    "gpt-oss": "OpenAI",
     glm: "GLM",
     minimax: "MiniMax",
     kimi: "Kimi",
@@ -32,13 +32,13 @@
 </script>
 
 <div
-  class="flex flex-col gap-1 py-2 px-1 border-r border-white/10 bg-exo-medium-gray/30 min-w-[56px]"
+  class="flex flex-col gap-1 py-2 px-1 border-r border-exo-yellow/10 bg-exo-medium-gray/30 min-w-[64px]"
 >
   <!-- All models (no filter) -->
   <button
     type="button"
     onclick={() => onSelect(null)}
-    class="group flex flex-col items-center justify-center p-2 rounded transition-all duration-200 {selectedFamily ===
+    class="group flex flex-col items-center justify-center p-2 rounded transition-all duration-200 cursor-pointer {selectedFamily ===
     null
       ? 'bg-exo-yellow/20 border-l-2 border-exo-yellow'
       : 'hover:bg-white/5 border-l-2 border-transparent'}"
@@ -67,11 +67,11 @@
     <button
       type="button"
       onclick={() => onSelect("favorites")}
-      class="group flex flex-col items-center justify-center p-2 rounded transition-all duration-200 {selectedFamily ===
+      class="group flex flex-col items-center justify-center p-2 rounded transition-all duration-200 cursor-pointer {selectedFamily ===
       'favorites'
         ? 'bg-exo-yellow/20 border-l-2 border-exo-yellow'
         : 'hover:bg-white/5 border-l-2 border-transparent'}"
-      title="Favorites"
+      title="Show favorited models"
     >
       <FamilyLogos
         family="favorites"
@@ -91,11 +91,11 @@
   <button
     type="button"
     onclick={() => onSelect("huggingface")}
-    class="group flex flex-col items-center justify-center p-2 rounded transition-all duration-200 {selectedFamily ===
+    class="group flex flex-col items-center justify-center p-2 rounded transition-all duration-200 cursor-pointer {selectedFamily ===
     'huggingface'
       ? 'bg-orange-500/20 border-l-2 border-orange-400'
       : 'hover:bg-white/5 border-l-2 border-transparent'}"
-    title="HuggingFace Hub"
+    title="Browse and add models from Hugging Face"
   >
     <FamilyLogos
       family="huggingface"
@@ -110,14 +110,14 @@
     >
   </button>
 
-  <div class="h-px bg-white/10 my-1"></div>
+  <div class="h-px bg-exo-yellow/10 my-1"></div>
 
   <!-- Model families -->
   {#each families as family}
     <button
       type="button"
       onclick={() => onSelect(family)}
-      class="group flex flex-col items-center justify-center p-2 rounded transition-all duration-200 {selectedFamily ===
+      class="group flex flex-col items-center justify-center p-2 rounded transition-all duration-200 cursor-pointer {selectedFamily ===
       family
         ? 'bg-exo-yellow/20 border-l-2 border-exo-yellow'
         : 'hover:bg-white/5 border-l-2 border-transparent'}"
@@ -130,12 +130,12 @@
           : "text-white/50 group-hover:text-white/70"}
       />
       <span
-        class="text-[9px] font-mono mt-0.5 truncate max-w-[48px] {selectedFamily ===
+        class="text-[9px] font-mono mt-0.5 truncate max-w-full {selectedFamily ===
         family
           ? 'text-exo-yellow'
           : 'text-white/40 group-hover:text-white/60'}"
       >
-        {getFamilyName(family).slice(0, 6)}
+        {getFamilyName(family)}
       </span>
     </button>
   {/each}

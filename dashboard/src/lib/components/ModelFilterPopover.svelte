@@ -19,10 +19,10 @@
 
   // Available capabilities
   const availableCapabilities = [
-    { id: "text", label: "Text", icon: "&#128172;" }, // speech bubble
-    { id: "thinking", label: "Thinking", icon: "&#129504;" }, // brain
-    { id: "code", label: "Code", icon: "&#128187;" }, // laptop
-    { id: "vision", label: "Vision", icon: "&#128248;" }, // camera
+    { id: "text", label: "Text" },
+    { id: "thinking", label: "Thinking" },
+    { id: "code", label: "Code" },
+    { id: "vision", label: "Vision" },
   ];
 
   // Size ranges
@@ -56,7 +56,7 @@
 
   function handleClickOutside(e: MouseEvent) {
     const target = e.target as HTMLElement;
-    if (!target.closest(".filter-popover")) {
+    if (!target.closest(".filter-popover") && !target.closest(".filter-toggle")) {
       onClose();
     }
   }
@@ -66,7 +66,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  class="filter-popover absolute right-0 top-full mt-2 w-64 bg-exo-dark-gray border border-white/10 rounded-lg shadow-xl z-10"
+  class="filter-popover absolute right-0 top-full mt-2 w-64 bg-exo-dark-gray border border-exo-yellow/10 rounded-lg shadow-xl z-10"
   transition:fly={{ y: -10, duration: 200, easing: cubicOut }}
   onclick={(e) => e.stopPropagation()}
   role="dialog"
@@ -86,7 +86,15 @@
               : 'bg-white/5 text-white/60 hover:bg-white/10 border border-transparent'}"
             onclick={() => toggleCapability(cap.id)}
           >
-            <span>{@html cap.icon}</span>
+            {#if cap.id === "text"}
+              <svg class="w-3.5 h-3.5 inline-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            {:else if cap.id === "thinking"}
+              <svg class="w-3.5 h-3.5 inline-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7zM9 20h6M10 22h4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            {:else if cap.id === "code"}
+              <svg class="w-3.5 h-3.5 inline-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            {:else if cap.id === "vision"}
+              <svg class="w-3.5 h-3.5 inline-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3"/></svg>
+            {/if}
             <span class="ml-1">{cap.label}</span>
           </button>
         {/each}

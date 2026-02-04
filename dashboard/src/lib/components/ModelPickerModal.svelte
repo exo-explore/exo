@@ -56,6 +56,8 @@
     onToggleFavorite: (baseModelId: string) => void;
     onAddModel: (modelId: string) => Promise<void>;
     onDeleteModel: (modelId: string) => Promise<void>;
+    totalMemoryGB: number;
+    usedMemoryGB: number;
   };
 
   let {
@@ -70,6 +72,8 @@
     onToggleFavorite,
     onAddModel,
     onDeleteModel,
+    totalMemoryGB,
+    usedMemoryGB,
   }: ModelPickerModalProps = $props();
 
   // Local state
@@ -210,9 +214,6 @@
     const groups = new Map<string, ModelGroup>();
 
     for (const model of models) {
-      // Skip custom models - they go in the Hub tab
-      if (model.is_custom) continue;
-
       const groupId = model.base_model || model.id;
       const groupName = model.base_model || model.name || model.id;
 
@@ -270,9 +271,6 @@
     });
   });
 
-  // Custom models (shown in Hub tab)
-  const customModels = $derived(models.filter((m) => m.is_custom));
-
   // Get unique families
   const uniqueFamilies = $derived.by((): string[] => {
     const families = new Set<string>();
@@ -282,13 +280,13 @@
       }
     }
     const familyOrder = [
-      "llama",
+      "kimi",
       "qwen",
-      "deepseek",
-      "gpt-oss",
       "glm",
       "minimax",
-      "kimi",
+      "deepseek",
+      "gpt-oss",
+      "llama",
     ];
     return Array.from(families).sort((a, b) => {
       const aIdx = familyOrder.indexOf(a);
@@ -408,7 +406,7 @@
 
   <!-- Modal -->
   <div
-    class="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(90vw,600px)] h-[min(80vh,700px)] bg-exo-dark-gray border border-white/10 rounded-lg shadow-2xl overflow-hidden flex flex-col"
+    class="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(90vw,600px)] h-[min(80vh,700px)] bg-exo-dark-gray border border-exo-yellow/10 rounded-lg shadow-2xl overflow-hidden flex flex-col"
     transition:fly={{ y: 20, duration: 300, easing: cubicOut }}
     role="dialog"
     aria-modal="true"
@@ -416,7 +414,7 @@
   >
     <!-- Header with search -->
     <div
-      class="flex items-center gap-2 p-3 border-b border-white/10 bg-exo-medium-gray/30"
+      class="flex items-center gap-2 p-3 border-b border-exo-yellow/10 bg-exo-medium-gray/30"
     >
       {#if selectedFamily === "huggingface"}
         <!-- HuggingFace search -->
@@ -462,15 +460,17 @@
           placeholder="Search models..."
           bind:value={searchQuery}
         />
+        <!-- Cluster memory -->
+        <span class="text-xs font-mono flex-shrink-0" title="Cluster memory usage"><span class="text-exo-yellow">{Math.round(usedMemoryGB)}GB</span><span class="text-white/40">/{Math.round(totalMemoryGB)}GB</span></span>
         <!-- Filter button -->
-        <div class="relative">
+        <div class="relative filter-toggle">
           <button
             type="button"
             class="p-1.5 rounded hover:bg-white/10 transition-colors {hasActiveFilters
               ? 'text-exo-yellow'
               : 'text-white/50'}"
             onclick={() => (showFilters = !showFilters)}
-            title="Filters"
+            title="Filter by capability or size"
           >
             <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
               <path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z" />
@@ -491,7 +491,7 @@
         type="button"
         class="p-1.5 rounded hover:bg-white/10 transition-colors text-white/50 hover:text-white/70"
         onclick={onClose}
-        title="Close"
+        title="Close model picker"
       >
         <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
           <path
@@ -516,62 +516,9 @@
         {#if selectedFamily === "huggingface"}
           <!-- HuggingFace Hub view -->
           <div class="flex-1 flex flex-col min-h-0">
-            <!-- Custom models section -->
-            {#if customModels.length > 0}
-              <div class="border-b border-white/10">
-                <div
-                  class="sticky top-0 z-10 px-3 py-2 bg-exo-dark-gray/95 border-b border-white/5"
-                >
-                  <span class="text-xs font-mono text-white/40"
-                    >Custom models ({customModels.length})</span
-                  >
-                </div>
-                {#each customModels as model}
-                  {@const modelCanFit = canModelFit(model.id)}
-                  <div
-                    class="flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-white/5 transition-colors border-b border-white/5 last:border-b-0"
-                  >
-                    <button
-                      type="button"
-                      class="flex-1 min-w-0 text-left"
-                      disabled={!modelCanFit}
-                      onclick={() => {
-                        if (modelCanFit) handleSelect(model.id);
-                      }}
-                    >
-                      <span
-                        class="text-sm font-mono text-white truncate block {!modelCanFit
-                          ? 'opacity-50'
-                          : ''}"
-                        title={model.id}
-                      >
-                        {model.name || model.id}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onclick={() => onDeleteModel(model.id)}
-                      class="text-white/30 hover:text-red-400 transition-colors p-1 rounded hover:bg-white/10 flex-shrink-0"
-                      title="Remove custom model"
-                    >
-                      <svg
-                        class="w-3.5 h-3.5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <path d="M18 6L6 18M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                {/each}
-              </div>
-            {/if}
-
             <!-- Section header -->
             <div
-              class="sticky top-0 z-10 px-3 py-2 bg-exo-dark-gray/95 border-b border-white/10"
+              class="sticky top-0 z-10 px-3 py-2 bg-exo-dark-gray/95 border-b border-exo-yellow/10"
             >
               <span class="text-xs font-mono text-white/40">
                 {#if hfSearchQuery.length >= 2}
@@ -630,7 +577,7 @@
 
             <!-- Manual input footer -->
             <div
-              class="sticky bottom-0 border-t border-white/10 bg-exo-dark-gray p-3"
+              class="sticky bottom-0 border-t border-exo-yellow/10 bg-exo-dark-gray p-3"
             >
               {#if addModelError}
                 <div
@@ -644,7 +591,7 @@
               <div class="flex gap-2">
                 <input
                   type="text"
-                  class="flex-1 bg-exo-black/60 border border-white/10 rounded px-3 py-1.5 text-xs font-mono text-white placeholder-white/30 focus:outline-none focus:border-orange-400/50"
+                  class="flex-1 bg-exo-black/60 border border-exo-yellow/30 rounded px-3 py-1.5 text-xs font-mono text-white placeholder-white/30 focus:outline-none focus:border-exo-yellow/50"
                   placeholder="Or paste model ID directly..."
                   bind:value={manualModelId}
                   onkeydown={(e) => {
@@ -706,7 +653,7 @@
     <!-- Footer with active filters indicator -->
     {#if hasActiveFilters}
       <div
-        class="flex items-center gap-2 px-3 py-2 border-t border-white/10 bg-exo-medium-gray/20 text-xs font-mono text-white/50"
+        class="flex items-center gap-2 px-3 py-2 border-t border-exo-yellow/10 bg-exo-medium-gray/20 text-xs font-mono text-white/50"
       >
         <span>Filters:</span>
         {#each filters.capabilities as cap}
@@ -739,7 +686,7 @@
       role="presentation"
     ></div>
     <div
-      class="fixed z-[60] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(80vw,400px)] bg-exo-dark-gray border border-white/10 rounded-lg shadow-2xl p-4"
+      class="fixed z-[60] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(80vw,400px)] bg-exo-dark-gray border border-exo-yellow/10 rounded-lg shadow-2xl p-4"
       transition:fly={{ y: 10, duration: 200, easing: cubicOut }}
       role="dialog"
       aria-modal="true"
@@ -750,7 +697,7 @@
           type="button"
           class="p-1 rounded hover:bg-white/10 transition-colors text-white/50"
           onclick={() => (infoGroup = null)}
-          title="Close"
+          title="Close model details"
           aria-label="Close info dialog"
         >
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
@@ -774,7 +721,7 @@
           <span class="text-white/70">{infoGroup.variants.length}</span>
         </div>
         {#if infoGroup.variants.length > 0}
-          <div class="mt-3 pt-3 border-t border-white/10">
+          <div class="mt-3 pt-3 border-t border-exo-yellow/10">
             <span class="text-white/40">Available quantizations:</span>
             <div class="flex flex-wrap gap-1 mt-1">
               {#each infoGroup.variants as variant}

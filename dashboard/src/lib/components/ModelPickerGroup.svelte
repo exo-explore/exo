@@ -58,6 +58,11 @@
   const anyVariantFits = $derived(
     group.variants.some((v) => canModelFit(v.id)),
   );
+
+  // Check if this group's model is currently selected (for single-variant groups)
+  const isMainSelected = $derived(
+    !group.hasMultipleVariants && group.variants.some((v) => v.id === selectedModelId),
+  );
 </script>
 
 <div
@@ -69,7 +74,9 @@
   <div
     class="flex items-center gap-2 px-3 py-2.5 transition-colors {anyVariantFits
       ? 'hover:bg-white/5 cursor-pointer'
-      : 'cursor-not-allowed'}"
+      : 'cursor-not-allowed'} {isMainSelected
+      ? 'bg-exo-yellow/10 border-l-2 border-exo-yellow'
+      : 'border-l-2 border-transparent'}"
     onclick={() => {
       if (group.hasMultipleVariants) {
         onToggleExpand();
@@ -126,7 +133,7 @@
               fill="none"
               stroke="currentColor"
               stroke-width="1.5"
-              title="Thinking"
+              title="Supports Thinking"
             >
               <path
                 d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7zM9 20h6M10 22h4"
@@ -141,7 +148,7 @@
               fill="none"
               stroke="currentColor"
               stroke-width="1.5"
-              title="Code"
+              title="Supports code generation"
             >
               <path
                 d="M16 18l6-6-6-6M8 6l-6 6 6 6"
@@ -156,7 +163,7 @@
               fill="none"
               stroke="currentColor"
               stroke-width="1.5"
-              title="Vision"
+              title="Supports image input"
             >
               <path
                 d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
@@ -172,7 +179,7 @@
               fill="none"
               stroke="currentColor"
               stroke-width="1.5"
-              title="Image generation"
+              title="Supports image generation"
             >
               <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
               <circle cx="8.5" cy="8.5" r="1.5" />
@@ -197,11 +204,17 @@
       </span>
     {/if}
 
-    <!-- Too large indicator -->
-    {#if !anyVariantFits}
-      <span class="text-xs font-mono text-red-400/70 flex-shrink-0"
-        >Too large</span
+    <!-- Check mark if selected (single-variant) -->
+    {#if isMainSelected}
+      <svg
+        class="w-4 h-4 text-exo-yellow flex-shrink-0"
+        viewBox="0 0 24 24"
+        fill="currentColor"
       >
+        <path
+          d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"
+        />
+      </svg>
     {/if}
 
     <!-- Favorite star -->
@@ -247,7 +260,7 @@
         e.stopPropagation();
         onShowInfo(group);
       }}
-      title="Model info"
+      title="View model details"
     >
       <svg
         class="w-4 h-4 text-white/30 hover:text-white/50"
@@ -271,7 +284,7 @@
           type="button"
           class="w-full flex items-center gap-3 px-3 py-2 pl-10 hover:bg-white/5 transition-colors text-left {!modelCanFit
             ? 'opacity-50 cursor-not-allowed'
-            : ''} {isSelected
+            : 'cursor-pointer'} {isSelected
             ? 'bg-exo-yellow/10 border-l-2 border-exo-yellow'
             : 'border-l-2 border-transparent'}"
           disabled={!modelCanFit}
