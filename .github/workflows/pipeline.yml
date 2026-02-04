@@ -237,10 +237,13 @@ jobs:
 
       - name: Run Playwright tests
         working-directory: dashboard
-        run: npm test
+        run: |
+          export PATH="/usr/sbin:/usr/bin:/opt/homebrew/bin:$PATH"
+          echo "Effective PATH: $PATH"
+          which macmon && echo "macmon found at $(which macmon)"
+          npm test
         env:
           CI: true
-          PATH: /usr/sbin:/usr/bin:/opt/homebrew/bin:$PATH
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
