@@ -69,7 +69,6 @@
         ./dashboard/parts.nix
         ./rust/parts.nix
         ./python/parts.nix
-        ./resources/parts.nix
       ];
 
       perSystem =
