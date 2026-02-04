@@ -108,6 +108,7 @@ class TokenizerWrapper:
     _tokenizer: PreTrainedTokenizerFast
     eos_token_id: int | None
     eos_token: str | None
+    eos_token_ids: list[int] | None
     bos_token_id: int | None
     bos_token: str | None
     vocab_size: int
