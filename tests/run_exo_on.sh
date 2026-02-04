@@ -22,7 +22,7 @@ echo "Deploying $commit to $# hosts..."
 hosts=("$@")
 cleanup() {
   for host in "${hosts[@]}"; do
-    ssh -T -o BatchMode=yes "$host@$host" "pkill -SIGINT -of exo-env" &
+    ssh -T -o BatchMode=yes "$host@$host" "pkill -f bin/exo" &
   done
   wait
   jobs -pr | xargs -r kill 2>/dev/null || true
@@ -34,21 +34,13 @@ reset=$'\e[0m'
 i=0
 for host; do
   colour=${colours[i++ % 4]}
-  {
-    ssh -T -o BatchMode=yes -o ServerAliveInterval=30 "$host@$host" \
-      "/nix/var/nix/profiles/default/bin/nix shell nixpkgs#git -c bash -s -- '$commit'" \
-      2>&1 | awk -v p="${colour}[${host}]${reset}" '{ print p $0; fflush() }' &
-  } <<'EOF'
-        set -euo pipefail
-        cd exo
-        git fetch -q origin
-        git checkout -q "$1"
-        EXO_LIBP2P_NAMESPACE="$1" /nix/var/nix/profiles/default/bin/nix run .#exo
-EOF
+  ssh -T -o BatchMode=yes -o ServerAliveInterval=30 "$host@$host" \
+    "/nix/var/nix/profiles/default/bin/nix run github:exo-explore/exo/$commit" |&
+    awk -v p="${colour}[${host}]${reset}" '{ print p $0; fflush() }' &
 done
 
 for host; do
   echo "Waiting for $host..."
-  until curl -sf "http://$host:52415/models"; do sleep 1; done
+  until curl -sf "http://$host:52415/models" &>/dev/null; do sleep 1; done
 done
 wait

@@ -86,28 +86,29 @@ class Election:
 
     async def run(self):
         logger.info("Starting Election")
-        async with create_task_group() as tg:
-            self._tg = tg
-            tg.start_soon(self._election_receiver)
-            tg.start_soon(self._connection_receiver)
-            tg.start_soon(self._command_counter)
+        try:
+            async with create_task_group() as tg:
+                self._tg = tg
+                tg.start_soon(self._election_receiver)
+                tg.start_soon(self._connection_receiver)
+                tg.start_soon(self._command_counter)
 
-            # And start an election immediately, that instantly resolves
-            candidates: list[ElectionMessage] = []
-            logger.debug("Starting initial campaign")
-            self._candidates = candidates
-            await self._campaign(candidates, campaign_timeout=0.0)
-            logger.debug("Initial campaign finished")
-
-        # Cancel and wait for the last election to end
-        if self._campaign_cancel_scope is not None:
-            logger.debug("Cancelling campaign")
-            self._campaign_cancel_scope.cancel()
-        if self._campaign_done is not None:
-            logger.debug("Waiting for campaign to finish")
-            await self._campaign_done.wait()
-        logger.debug("Campaign cancelled and finished")
-        logger.info("Election finished")
+                # And start an election immediately, that instantly resolves
+                candidates: list[ElectionMessage] = []
+                logger.debug("Starting initial campaign")
+                self._candidates = candidates
+                await self._campaign(candidates, campaign_timeout=0.0)
+                logger.debug("Initial campaign finished")
+        finally:
+            # Cancel and wait for the last election to end
+            if self._campaign_cancel_scope is not None:
+                logger.debug("Cancelling campaign")
+                self._campaign_cancel_scope.cancel()
+            if self._campaign_done is not None:
+                logger.debug("Waiting for campaign to finish")
+                await self._campaign_done.wait()
+            logger.debug("Campaign cancelled and finished")
+            logger.info("Election shutdown")
 
     async def elect(self, em: ElectionMessage) -> None:
         logger.debug(f"Electing: {em}")
