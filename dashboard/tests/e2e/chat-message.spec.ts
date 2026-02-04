@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { test, expect } from "@playwright/test";
 import { waitForTopologyLoaded } from "../helpers/wait-for-ready";
 
@@ -8,7 +9,8 @@ test.describe("Chat Message Flow", () => {
   test("should send a chat message and receive a response", async ({
     page,
   }) => {
-    // This test may need to launch an instance, so give it plenty of time
+    // Skip in CI - requires launching an instance and downloading a model
+    test.skip(!!process.env.CI, "Skipped in CI - requires model download");
     test.setTimeout(600000); // 10 minutes
 
     await page.goto("/");
