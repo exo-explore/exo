@@ -461,7 +461,13 @@
           bind:value={searchQuery}
         />
         <!-- Cluster memory -->
-        <span class="text-xs font-mono flex-shrink-0" title="Cluster memory usage"><span class="text-exo-yellow">{Math.round(usedMemoryGB)}GB</span><span class="text-white/40">/{Math.round(totalMemoryGB)}GB</span></span>
+        <span
+          class="text-xs font-mono flex-shrink-0"
+          title="Cluster memory usage"
+          ><span class="text-exo-yellow">{Math.round(usedMemoryGB)}GB</span
+          ><span class="text-white/40">/{Math.round(totalMemoryGB)}GB</span
+          ></span
+        >
         <!-- Filter button -->
         <div class="relative filter-toggle">
           <button

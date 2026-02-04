@@ -54,7 +54,10 @@
     </div>
     <div class="flex items-center gap-3 mt-0.5 text-xs text-white/40">
       <span class="truncate">{model.author}</span>
-      <span class="flex items-center gap-1 shrink-0" title="Downloads in the last 30 days">
+      <span
+        class="flex items-center gap-1 shrink-0"
+        title="Downloads in the last 30 days"
+      >
         <svg
           class="w-3 h-3"
           fill="none"
@@ -70,7 +73,10 @@
         </svg>
         {formatNumber(model.downloads)}
       </span>
-      <span class="flex items-center gap-1 shrink-0" title="Community likes on Hugging Face">
+      <span
+        class="flex items-center gap-1 shrink-0"
+        title="Community likes on Hugging Face"
+      >
         <svg
           class="w-3 h-3"
           fill="none"

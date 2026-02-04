@@ -61,7 +61,8 @@
 
   // Check if this group's model is currently selected (for single-variant groups)
   const isMainSelected = $derived(
-    !group.hasMultipleVariants && group.variants.some((v) => v.id === selectedModelId),
+    !group.hasMultipleVariants &&
+      group.variants.some((v) => v.id === selectedModelId),
   );
 </script>
 
@@ -211,9 +212,7 @@
         viewBox="0 0 24 24"
         fill="currentColor"
       >
-        <path
-          d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"
-        />
+        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z" />
       </svg>
     {/if}
 
