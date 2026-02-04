@@ -799,6 +799,16 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
                 self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
+                if hasattr(layer.mlp, "shared_expert"):
+                    self.all_to_sharded_linear_in_place(
+                        layer.mlp.shared_expert.gate_proj
+                    )
+                    self.sharded_to_all_linear_in_place(
+                        layer.mlp.shared_expert.down_proj
+                    )
+                    self.all_to_sharded_linear_in_place(
+                        layer.mlp.shared_expert.up_proj
+                    )
                 layer.mlp = ShardedQwenMoE(layer.mlp)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
                 layer.mlp.sharding_group = self.group
 

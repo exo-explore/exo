@@ -505,19 +505,10 @@ class TestKVPrefixCacheWithModel:
         kv_prefix_cache._last_used[2] = 100.0
         # Entry 0 (_last_used=0.0) is LRU, entry 1 (_last_used=1.0) is next
 
-        # Simulate memory pressure: active memory exceeds threshold
-        fake_limit = 1000
-        fake_active = int(fake_limit * 0.90)  # Above _MEMORY_THRESHOLD (0.85)
-
-        with (
-            patch(
-                "exo.worker.engines.mlx.cache.mx.metal.get_active_memory",
-                return_value=fake_active,
-            ),
-            patch(
-                "exo.worker.engines.mlx.cache.mx.metal.device_info",
-                return_value={"max_recommended_working_set_size": fake_limit},
-            ),
+        # Simulate memory pressure: return usage above _MEMORY_THRESHOLD (0.9)
+        with patch(
+            "exo.worker.engines.mlx.cache.get_memory_used_percentage",
+            return_value=0.95,
         ):
             # Trigger eviction by adding a new entry
             task = TextGenerationTaskParams(
