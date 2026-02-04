@@ -773,8 +773,52 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
             else:
                 assert isinstance(layer, Qwen3NextDecoderLayer)
                 if hasattr(layer, "linear_attn"):
-                    # These layers are fast so we don't shard. This may change in future.
-                    pass
+                    linear_attn = layer.linear_attn
+
+                    linear_attn.in_proj_qkvz = self.all_to_sharded_linear(
+                        linear_attn.in_proj_qkvz
+                    )
+                    linear_attn.in_proj_ba = self.all_to_sharded_linear(
+                        linear_attn.in_proj_ba
+                    )
+                    linear_attn.out_proj = self.sharded_to_all_linear(
+                        linear_attn.out_proj
+                    )
+
+                    # Shard conv1d: depthwise conv with non-contiguous channel slicing.
+                    # Channel layout is [q(key_dim), k(key_dim), v(value_dim)].
+                    # Each rank takes its head-slice from each of the three sections.
+                    rank = self.group.rank()
+                    key_dim = linear_attn.key_dim
+                    value_dim = linear_attn.value_dim
+                    key_dim_shard = key_dim // self.N
+                    value_dim_shard = value_dim // self.N
+
+                    q_idx = mx.arange(rank * key_dim_shard, (rank + 1) * key_dim_shard)
+                    k_idx = mx.arange(
+                        key_dim + rank * key_dim_shard,
+                        key_dim + (rank + 1) * key_dim_shard,
+                    )
+                    v_idx = mx.arange(
+                        2 * key_dim + rank * value_dim_shard,
+                        2 * key_dim + (rank + 1) * value_dim_shard,
+                    )
+                    conv_indices = mx.concatenate([q_idx, k_idx, v_idx])
+                    linear_attn.conv1d.weight = linear_attn.conv1d.weight[conv_indices]
+                    new_conv_dim = key_dim_shard * 2 + value_dim_shard
+                    linear_attn.conv1d.groups = new_conv_dim
+
+                    num_v_shard = linear_attn.num_v_heads // self.N
+                    v_start = rank * num_v_shard
+                    v_end = v_start + num_v_shard
+                    linear_attn.A_log = linear_attn.A_log[v_start:v_end]
+                    linear_attn.dt_bias = linear_attn.dt_bias[v_start:v_end]
+
+                    linear_attn.num_k_heads //= self.N
+                    linear_attn.num_v_heads //= self.N
+                    linear_attn.key_dim = linear_attn.head_k_dim * linear_attn.num_k_heads
+                    linear_attn.value_dim = linear_attn.head_v_dim * linear_attn.num_v_heads
+                    linear_attn.conv_dim = linear_attn.key_dim * 2 + linear_attn.value_dim
                 else:
                     layer.self_attn.q_proj = self.all_to_sharded_linear(
                         layer.self_attn.q_proj
