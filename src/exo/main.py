@@ -137,6 +137,7 @@ class Node:
     async def run(self):
         async with self._tg as tg:
             signal.signal(signal.SIGINT, lambda _, __: self.shutdown())
+            signal.signal(signal.SIGTERM, lambda _, __: self.shutdown())
             tg.start_soon(self.router.run)
             tg.start_soon(self.election.run)
             if self.download_coordinator:
