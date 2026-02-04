@@ -1,4 +1,5 @@
 import argparse
+import importlib.metadata
 import itertools
 import multiprocessing as mp
 import os
@@ -44,9 +45,9 @@ class Node:
     @classmethod
     async def create(cls, args: "Args") -> "Self":
         keypair = get_node_id_keypair()
-        node_id = NodeId(keypair.to_peer_id().to_base58())
+        node_id = NodeId(keypair.to_string())
         session_id = SessionId(master_node_id=node_id, election_clock=0)
-        router = Router.create(keypair)
+        router = Router.create(keypair, namespace=args.namespace)
         await router.register_topic(topics.GLOBAL_EVENTS)
         await router.register_topic(topics.LOCAL_EVENTS)
         await router.register_topic(topics.COMMANDS)
@@ -72,7 +73,7 @@ class Node:
         else:
             download_coordinator = None
 
-        if args.spawn_api:
+        if not args.no_api:
             api = API(
                 node_id,
                 session_id,
@@ -258,7 +259,7 @@ def main():
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
     logger.info("Starting EXO")
-    logger.info(f"EXO_LIBP2P_NAMESPACE: {os.getenv('EXO_LIBP2P_NAMESPACE')}")
+    logger.info(f"Namespace: {args.namespace}")
 
     # Set FAST_SYNCH override env var for runner subprocesses
     if args.fast_synch is True:
@@ -275,13 +276,13 @@ def main():
 
 
 class Args(CamelCaseModel):
-    verbosity: int = 0
-    force_master: bool = False
-    spawn_api: bool = False
-    api_port: PositiveInt = 52415
-    tb_only: bool = False
+    verbosity: int
+    force_master: bool
+    no_api: bool
+    api_port: PositiveInt
     no_worker: bool = False
     no_downloads: bool = False
+    namespace: str
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
 
     @classmethod
@@ -311,14 +312,15 @@ class Args(CamelCaseModel):
         )
         parser.add_argument(
             "--no-api",
-            action="store_false",
-            dest="spawn_api",
+            action="store_true",
+            help="Disable the API server for this node",
         )
         parser.add_argument(
             "--api-port",
             type=int,
             dest="api_port",
             default=52415,
+            help="Which port the API server will be available on",
         )
         parser.add_argument(
             "--no-worker",
@@ -328,6 +330,11 @@ class Args(CamelCaseModel):
             "--no-downloads",
             action="store_true",
             help="Disable the download coordinator (node won't download models)",
+        )
+        parser.add_argument(
+            "--namespace",
+            default=importlib.metadata.version("exo"),
+            help="Set the EXO namespace to run multiple isolated clusters",
         )
         fast_synch_group = parser.add_mutually_exclusive_group()
         fast_synch_group.add_argument(
