@@ -635,7 +635,7 @@ class WrappedMiniMaxAttention(CustomMlxLayer):
         self,
         x: mx.array,
         mask: mx.array | None = None,
-        cache: Cache | None = None,
+        cache: "Cache | None" = None,
     ) -> mx.array:
         batch_dim, seq_dim, _ = x.shape
 
