@@ -234,6 +234,14 @@ jobs:
           echo "PATH: $PATH"
           which macmon || echo "macmon not in PATH"
           /opt/homebrew/bin/macmon --version || echo "macmon not at /opt/homebrew/bin"
+          # Test macmon actually works
+          echo "Testing macmon pipe output..."
+          timeout 3 macmon pipe --interval 1000 || echo "macmon pipe test done"
+
+      - name: Verify Python can find macmon
+        run: |
+          echo "Testing shutil.which from uv run python..."
+          uv run python -c "import shutil; print('Python shutil.which macmon:', shutil.which('macmon'))"
 
       - name: Run Playwright tests
         working-directory: dashboard
