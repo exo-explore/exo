@@ -431,6 +431,20 @@ GGUF_MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=40,
         ),
     ),
+    # Qwen3-Coder-Next - 80B MoE coding model (3B active), for distributed inference
+    "qwen3-coder-next-gguf": ModelCard(
+        short_id="qwen3-coder-next-gguf",
+        model_id=ModelId("unsloth/Qwen3-Coder-Next-GGUF"),
+        name="Qwen3 Coder Next 80B (GGUF IQ2_XXS)",
+        description="""Qwen3-Coder-Next - 80B MoE coding model with only 3B active params. Requires 3+ phones with 12GB RAM for distributed inference. Best for agentic coding tasks.""",
+        tags=["gguf", "distributed", "coding", "moe", "agent"],
+        metadata=ModelMetadata(
+            model_id=ModelId("unsloth/Qwen3-Coder-Next-GGUF"),
+            pretty_name="Qwen3 Coder Next (GGUF)",
+            storage_size=Memory.from_gb(26),
+            n_layers=48,
+        ),
+    ),
 }
 
 # Combined model cards - currently GGUF only for Android focus

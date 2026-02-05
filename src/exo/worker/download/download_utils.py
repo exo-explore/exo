@@ -468,26 +468,60 @@ async def get_weight_map(repo_id: str, revision: str = "main") -> dict[str, str]
     return index_data.weight_map
 
 
-async def resolve_allow_patterns_for_gguf(repo_id: str, revision: str = "main") -> list[str]:
+async def resolve_allow_patterns_for_gguf(
+    repo_id: str, revision: str = "main", preferred_quant: str | None = None
+) -> list[str]:
     """Resolve allow patterns for GGUF models by finding .gguf files in the repo."""
     file_list = await fetch_file_list_with_cache(repo_id, revision, recursive=True)
-    gguf_files = [f.path for f in file_list if f.path.endswith(".gguf")]
+    gguf_entries = [f for f in file_list if f.path.endswith(".gguf")]
+    gguf_files = [f.path for f in gguf_entries]
     if not gguf_files:
         logger.warning(f"No .gguf files found in {repo_id}, allowing all")
         return ["*"]
-    # Prefer Q4_K_M or similar common quantization, else take the first .gguf
+
     preferred = None
-    for pattern in ["q4_k_m", "q4_k", "q5_k_m", "q5_k", "q8_0"]:
+
+    # If a specific quant was requested, try that first
+    if preferred_quant:
         for f in gguf_files:
-            if pattern in f.lower():
+            if preferred_quant.lower() in f.lower():
                 preferred = f
                 break
-        if preferred:
-            break
+
+    # Detect if this is a large model by checking smallest file size
+    # Large models (>15GB even at smallest quant) need small quant preferences
+    if not preferred:
+        smallest_size = min((f.size or 0) for f in gguf_entries) if gguf_entries else 0
+        is_large_model = smallest_size > 15 * 1024 * 1024 * 1024  # >15GB
+
+        if is_large_model:
+            # For large MoE models, prefer smaller quants for distributed inference
+            large_model_patterns = ["iq2_xxs", "tq1_0", "iq1_s", "iq1_m", "q2_k"]
+            for pattern in large_model_patterns:
+                for f in gguf_files:
+                    if pattern in f.lower():
+                        preferred = f
+                        logger.info(f"Large model detected - selected small quant: {f}")
+                        break
+                if preferred:
+                    break
+
+    # Standard preference for normal-sized models
+    if not preferred:
+        standard_patterns = ["q4_k_m", "q4_k", "q5_k_m", "q5_k", "q8_0"]
+        for pattern in standard_patterns:
+            for f in gguf_files:
+                if pattern in f.lower():
+                    preferred = f
+                    break
+            if preferred:
+                break
+
+    # Fallback to first available file
     if not preferred:
         preferred = gguf_files[0]
+
     logger.info(f"Selected GGUF file for {repo_id}: {preferred}")
-    # Include common config files plus the selected GGUF
     return ["*.json", "*.txt", "tokenizer.model", preferred]
 
 
