@@ -598,8 +598,8 @@
           <input
             type="range"
             min="1"
-            max="50"
-            value={params.numSyncSteps ?? 4}
+            max="100"
+            value={params.numSyncSteps ?? 1}
             oninput={handleNumSyncStepsChange}
             class="flex-1 h-1 bg-exo-medium-gray/50 rounded appearance-none cursor-pointer accent-exo-yellow"
           />
