@@ -811,6 +811,10 @@ class Step3p5ShardingStrategy(TensorParallelShardingStrategy):
             layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
             layer.self_attn.num_heads //= self.N  # pyright: ignore[reportUnknownMemberType]
             layer.self_attn.num_kv_heads //= self.N  # pyright: ignore[reportUnknownMemberType]
+            if layer.self_attn.use_head_wise_attn_gate:
+                layer.self_attn.g_proj = self.all_to_sharded_linear(
+                    layer.self_attn.g_proj
+                )
 
             if isinstance(layer.mlp, Step3p5MLP):
                 # Dense MLP layer
