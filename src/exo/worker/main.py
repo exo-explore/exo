@@ -98,21 +98,23 @@ class Worker:
         info_send, info_recv = channel[GatheredInfo]()
         info_gatherer: InfoGatherer = InfoGatherer(info_send)
 
-        async with self._tg as tg:
-            tg.start_soon(info_gatherer.run)
-            tg.start_soon(self._forward_info, info_recv)
-            tg.start_soon(self.plan_step)
-            tg.start_soon(self._resend_out_for_delivery)
-            tg.start_soon(self._event_applier)
-            tg.start_soon(self._forward_events)
-            tg.start_soon(self._poll_connection_updates)
-
-        # Actual shutdown code - waits for all tasks to complete before executing.
-        self.local_event_sender.close()
-        self.command_sender.close()
-        self.download_command_sender.close()
-        for runner in self.runners.values():
-            runner.shutdown()
+        try:
+            async with self._tg as tg:
+                tg.start_soon(info_gatherer.run)
+                tg.start_soon(self._forward_info, info_recv)
+                tg.start_soon(self.plan_step)
+                tg.start_soon(self._resend_out_for_delivery)
+                tg.start_soon(self._event_applier)
+                tg.start_soon(self._forward_events)
+                tg.start_soon(self._poll_connection_updates)
+        finally:
+            # Actual shutdown code - waits for all tasks to complete before executing.
+            logger.info("Stopping Worker")
+            self.local_event_sender.close()
+            self.command_sender.close()
+            self.download_command_sender.close()
+            for runner in self.runners.values():
+                runner.shutdown()
 
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
