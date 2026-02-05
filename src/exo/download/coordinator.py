@@ -1,4 +1,5 @@
 import asyncio
+import socket
 from dataclasses import dataclass, field
 from typing import Iterator
 
@@ -60,10 +61,37 @@ class DownloadCoordinator:
 
     async def run(self) -> None:
         logger.info("Starting DownloadCoordinator")
+        self._test_internet_connection()
         async with self._tg as tg:
             tg.start_soon(self._command_processor)
             tg.start_soon(self._forward_events)
             tg.start_soon(self._emit_existing_download_progress)
+            tg.start_soon(self._check_internet_connection)
+
+    def _test_internet_connection(self) -> None:
+        try:
+            socket.create_connection(("1.1.1.1", 443), timeout=3).close()
+            self.shard_downloader.set_internet_connection(True)
+        except OSError:
+            self.shard_downloader.set_internet_connection(False)
+        logger.debug(
+            f"Internet connectivity: {self.shard_downloader.internet_connection}"
+        )
+
+    async def _check_internet_connection(self) -> None:
+        first_connection = True
+        while True:
+            await asyncio.sleep(10)
+
+            # Assume that internet connection is set to False on 443 errors.
+            if self.shard_downloader.internet_connection:
+                continue
+
+            self._test_internet_connection()
+
+            if first_connection and self.shard_downloader.internet_connection:
+                first_connection = False
+                self._tg.start_soon(self._emit_existing_download_progress)
 
     def shutdown(self) -> None:
         self._tg.cancel_scope.cancel()
@@ -241,7 +269,7 @@ class DownloadCoordinator:
     async def _emit_existing_download_progress(self) -> None:
         try:
             while True:
-                logger.info(
+                logger.debug(
                     "DownloadCoordinator: Fetching and emitting existing download progress..."
                 )
                 async for (
@@ -274,10 +302,10 @@ class DownloadCoordinator:
                     await self.event_sender.send(
                         NodeDownloadProgress(download_progress=status)
                     )
-                logger.info(
+                logger.debug(
                     "DownloadCoordinator: Done emitting existing download progress."
                 )
-                await anyio.sleep(5 * 60)  # 5 minutes
+                await anyio.sleep(60)
         except Exception as e:
             logger.error(
                 f"DownloadCoordinator: Error emitting existing download progress: {e}"

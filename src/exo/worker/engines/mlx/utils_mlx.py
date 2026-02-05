@@ -48,6 +48,7 @@ from exo.shared.types.worker.instances import (
     MlxRingInstance,
 )
 from exo.shared.types.worker.shards import (
+    CfgShardMetadata,
     PipelineShardMetadata,
     ShardMetadata,
     TensorShardMetadata,
@@ -274,6 +275,11 @@ def shard_and_load(
             logger.info(f"loading model from {model_path} with pipeline parallelism")
             model = pipeline_auto_parallel(model, group, shard_metadata)
             eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
+        case CfgShardMetadata():
+            raise ValueError(
+                "CfgShardMetadata is not supported for text model loading - "
+                "this metadata type is only for image generation models"
+            )
 
     # TODO: Do we need this?
     mx.eval(model)
@@ -383,6 +389,17 @@ def load_tokenizer_for_model_id(
         tokenizer_config_extra={"trust_remote_code": TRUST_REMOTE_CODE},
         eos_token_ids=eos_token_ids,
     )
+
+    if "gemma-3" in model_id_lower:
+        gemma_3_eos_id = 1
+        gemma_3_end_of_turn_id = 106
+        if tokenizer.eos_token_ids is not None:
+            if gemma_3_end_of_turn_id not in tokenizer.eos_token_ids:
+                tokenizer.eos_token_ids = list(tokenizer.eos_token_ids) + [
+                    gemma_3_end_of_turn_id
+                ]
+        else:
+            tokenizer.eos_token_ids = [gemma_3_eos_id, gemma_3_end_of_turn_id]
 
     return tokenizer
 
