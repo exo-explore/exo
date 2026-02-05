@@ -14,6 +14,8 @@ from exo.shared.types.api import (
     ErrorInfo,
     ErrorResponse,
     FinishReason,
+    Logprobs,
+    LogprobsContentItem,
     StreamingChoiceResponse,
     ToolCall,
 )
@@ -66,7 +68,9 @@ def chat_request_to_text_generation(
 
     return TextGenerationTaskParams(
         model=request.model,
-        input=input_messages if input_messages else "",
+        input=input_messages
+        if input_messages
+        else [InputMessage(role="user", content="")],
         instructions=instructions,
         max_output_tokens=request.max_tokens,
         temperature=request.temperature,
@@ -79,6 +83,8 @@ def chat_request_to_text_generation(
         chat_template_messages=chat_template_messages
         if chat_template_messages
         else None,
+        logprobs=request.logprobs or False,
+        top_logprobs=request.top_logprobs,
     )
 
 
@@ -86,6 +92,19 @@ def chunk_to_response(
     chunk: TokenChunk, command_id: CommandId
 ) -> ChatCompletionResponse:
     """Convert a TokenChunk to a streaming ChatCompletionResponse."""
+    # Build logprobs if available
+    logprobs: Logprobs | None = None
+    if chunk.logprob is not None:
+        logprobs = Logprobs(
+            content=[
+                LogprobsContentItem(
+                    token=chunk.text,
+                    logprob=chunk.logprob,
+                    top_logprobs=chunk.top_logprobs or [],
+                )
+            ]
+        )
+
     return ChatCompletionResponse(
         id=command_id,
         created=int(time.time()),
@@ -94,6 +113,7 @@ def chunk_to_response(
             StreamingChoiceResponse(
                 index=0,
                 delta=ChatCompletionMessage(role="assistant", content=chunk.text),
+                logprobs=logprobs,
                 finish_reason=chunk.finish_reason,
             )
         ],
@@ -160,6 +180,7 @@ async def collect_chat_response(
     """Collect all token chunks and return a single ChatCompletionResponse."""
     text_parts: list[str] = []
     tool_calls: list[ToolCall] = []
+    logprobs_content: list[LogprobsContentItem] = []
     model: str | None = None
     finish_reason: FinishReason | None = None
     error_message: str | None = None
@@ -174,6 +195,14 @@ async def collect_chat_response(
 
         if isinstance(chunk, TokenChunk):
             text_parts.append(chunk.text)
+            if chunk.logprob is not None:
+                logprobs_content.append(
+                    LogprobsContentItem(
+                        token=chunk.text,
+                        logprob=chunk.logprob,
+                        top_logprobs=chunk.top_logprobs or [],
+                    )
+                )
 
         if isinstance(chunk, ToolCallChunk):
             tool_calls.extend(
@@ -206,6 +235,9 @@ async def collect_chat_response(
                     content=combined_text,
                     tool_calls=tool_calls if tool_calls else None,
                 ),
+                logprobs=Logprobs(content=logprobs_content)
+                if logprobs_content
+                else None,
                 finish_reason=finish_reason,
             )
         ],

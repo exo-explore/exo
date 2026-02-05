@@ -66,7 +66,11 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
-from exo.shared.types.worker.shards import ShardMetadata
+from exo.shared.types.worker.shards import (
+    CfgShardMetadata,
+    PipelineShardMetadata,
+    ShardMetadata,
+)
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.image import (
     DistributedImageModel,
@@ -85,6 +89,22 @@ from exo.worker.engines.mlx.utils_mlx import (
     mlx_force_oom,
 )
 from exo.worker.runner.bootstrap import logger
+
+
+def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:
+    """Check if this node is the primary output node for image generation.
+
+    For CFG models: the last pipeline stage in CFG group 0 (positive prompt).
+    For non-CFG models: the last pipeline stage.
+    """
+    if isinstance(shard_metadata, CfgShardMetadata):
+        is_pipeline_last = (
+            shard_metadata.pipeline_rank == shard_metadata.pipeline_world_size - 1
+        )
+        return is_pipeline_last and shard_metadata.cfg_rank == 0
+    elif isinstance(shard_metadata, PipelineShardMetadata):
+        return shard_metadata.device_rank == shard_metadata.world_size - 1
+    return False
 
 
 def main(
@@ -125,7 +145,6 @@ def main(
             event_sender.send(
                 TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Running)
             )
-            event_sender.send(TaskAcknowledged(task_id=task.task_id))
             match task:
                 case ConnectToGroup() if isinstance(
                     current_status, (RunnerIdle, RunnerFailed)
@@ -137,6 +156,7 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
+                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
                     group = initialize_mlx(bound_instance)
 
                     logger.info("runner connected")
@@ -153,6 +173,7 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
+                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
                     def on_model_load_timeout() -> None:
                         event_sender.send(
@@ -195,6 +216,7 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
+                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
                     logger.info(f"warming up inference for instance: {instance}")
                     if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
@@ -234,6 +256,8 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
+                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
+
                     assert model and not isinstance(model, DistributedImageModel)
                     assert tokenizer
 
@@ -320,6 +344,8 @@ def main(
                                                     usage=response.usage,
                                                     finish_reason=response.finish_reason,
                                                     stats=response.stats,
+                                                    logprob=response.logprob,
+                                                    top_logprobs=response.top_logprobs,
                                                 ),
                                             )
                                         )
@@ -365,16 +391,14 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
+                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
                     try:
-                        # Generate images using the image generation backend
-                        # Track image_index for final images only
                         image_index = 0
                         for response in generate_image(model=model, task=task_params):
-                            if (
-                                shard_metadata.device_rank
-                                == shard_metadata.world_size - 1
-                            ):
+                            is_primary_output = _is_primary_output_node(shard_metadata)
+
+                            if is_primary_output:
                                 match response:
                                     case PartialImageResponse():
                                         logger.info(
@@ -399,7 +423,7 @@ def main(
                                         image_index += 1
                     # can we make this more explicit?
                     except Exception as e:
-                        if shard_metadata.device_rank == shard_metadata.world_size - 1:
+                        if _is_primary_output_node(shard_metadata):
                             event_sender.send(
                                 ChunkGenerated(
                                     command_id=command_id,
@@ -430,14 +454,12 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
+                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
                     try:
                         image_index = 0
                         for response in generate_image(model=model, task=task_params):
-                            if (
-                                shard_metadata.device_rank
-                                == shard_metadata.world_size - 1
-                            ):
+                            if _is_primary_output_node(shard_metadata):
                                 match response:
                                     case PartialImageResponse():
                                         logger.info(
@@ -461,7 +483,7 @@ def main(
                                         )
                                         image_index += 1
                     except Exception as e:
-                        if shard_metadata.device_rank == shard_metadata.world_size - 1:
+                        if _is_primary_output_node(shard_metadata):
                             event_sender.send(
                                 ChunkGenerated(
                                     command_id=command_id,
@@ -488,6 +510,8 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
+                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
+
                     current_status = RunnerShutdown()
                 case _:
                     raise ValueError(
@@ -918,15 +942,10 @@ def _check_for_debug_prompts(task_params: TextGenerationTaskParams) -> None:
 
     Extracts the first user input text and checks for debug triggers.
     """
-    prompt: str
-    if isinstance(task_params.input, str):
-        prompt = task_params.input
-    else:
-        # List of InputMessage - get first message content
-        if len(task_params.input) == 0:
-            logger.debug("Empty message list in debug prompt check")
-            return
-        prompt = task_params.input[0].content
+    if len(task_params.input) == 0:
+        logger.debug("Empty message list in debug prompt check")
+        return
+    prompt = task_params.input[0].content
 
     if not prompt:
         return

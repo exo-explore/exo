@@ -3,6 +3,10 @@ n_layers = 94
 hidden_size = 4096
 supports_tensor = true
 tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "4bit"
+base_model = "Qwen3 235B"
+capabilities = ["text", "thinking"]
 
 [storage_size]
 in_bytes = 141733920768

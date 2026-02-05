@@ -3,6 +3,7 @@ n_layers = 60
 hidden_size = 1
 supports_tensor = false
 tasks = ["ImageToImage"]
+uses_cfg = true
 
 [storage_size]
 in_bytes = 37014734400

@@ -18,14 +18,19 @@ from pydantic import (
 )
 from tomlkit.exceptions import TOMLKitError
 
-from exo.shared.constants import EXO_ENABLE_IMAGE_MODELS, RESOURCES_DIR
+from exo.shared.constants import (
+    EXO_CUSTOM_MODEL_CARDS_DIR,
+    EXO_ENABLE_IMAGE_MODELS,
+    RESOURCES_DIR,
+)
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.utils.pydantic_ext import CamelCaseModel
 
 # kinda ugly...
 # TODO: load search path from config.toml
-_csp = [Path(RESOURCES_DIR) / "inference_model_cards"]
+_custom_cards_dir = Path(str(EXO_CUSTOM_MODEL_CARDS_DIR))
+_csp = [Path(RESOURCES_DIR) / "inference_model_cards", _custom_cards_dir]
 if EXO_ENABLE_IMAGE_MODELS:
     _csp.append(Path(RESOURCES_DIR) / "image_model_cards")
 
@@ -60,9 +65,9 @@ class ComponentInfo(CamelCaseModel):
     component_name: str
     component_path: str
     storage_size: Memory
-    n_layers: PositiveInt | None
+    n_layers: PositiveInt | None = None
     can_shard: bool
-    safetensors_index_filename: str | None
+    safetensors_index_filename: str | None = None
 
 
 class ModelCard(CamelCaseModel):
@@ -73,6 +78,11 @@ class ModelCard(CamelCaseModel):
     supports_tensor: bool
     tasks: list[ModelTask]
     components: list[ComponentInfo] | None = None
+    family: str = ""
+    quantization: str = ""
+    base_model: str = ""
+    capabilities: list[str] = []
+    uses_cfg: bool = False
 
     @field_validator("tasks", mode="before")
     @classmethod
@@ -85,8 +95,9 @@ class ModelCard(CamelCaseModel):
             data = tomlkit.dumps(py)  # pyright: ignore[reportUnknownMemberType]
             await f.write(data)
 
-    async def save_to_default_path(self):
-        await self.save(Path(RESOURCES_DIR) / (self.model_id.normalize() + ".toml"))
+    async def save_to_custom_dir(self) -> None:
+        await aios.makedirs(str(_custom_cards_dir), exist_ok=True)
+        await self.save(_custom_cards_dir / (self.model_id.normalize() + ".toml"))
 
     @staticmethod
     async def load_from_path(path: Path) -> "ModelCard":
@@ -108,9 +119,9 @@ class ModelCard(CamelCaseModel):
     async def fetch_from_hf(model_id: ModelId) -> "ModelCard":
         """Fetches storage size and number of layers for a Hugging Face model, returns Pydantic ModelMeta."""
         # TODO: failure if files do not exist
-        config_data = await get_config_data(model_id)
+        config_data = await fetch_config_data(model_id)
         num_layers = config_data.layer_count
-        mem_size_bytes = await get_safetensors_size(model_id)
+        mem_size_bytes = await fetch_safetensors_size(model_id)
 
         mc = ModelCard(
             model_id=ModelId(model_id),
@@ -120,90 +131,29 @@ class ModelCard(CamelCaseModel):
             supports_tensor=config_data.supports_tensor,
             tasks=[ModelTask.TextGeneration],
         )
-        await mc.save_to_default_path()
+        await mc.save_to_custom_dir()
         _card_cache[model_id] = mc
         return mc
 
 
-# TODO: quantizing and dynamically creating model cards
-def _generate_image_model_quant_variants(  # pyright: ignore[reportUnusedFunction]
-    base_name: str,
-    base_card: ModelCard,
-) -> dict[str, ModelCard]:
-    """Create quantized variants of an image model card.
+async def delete_custom_card(model_id: ModelId) -> bool:
+    """Delete a user-added custom model card. Returns True if deleted."""
+    card_path = _custom_cards_dir / (ModelId(model_id).normalize() + ".toml")
+    if await card_path.exists():
+        await card_path.unlink()
+        _card_cache.pop(model_id, None)
+        return True
+    return False
 
-    Only the transformer component is quantized; text encoders stay at bf16.
-    Sizes are calculated exactly from the base card's component sizes.
-    """
-    if base_card.components is None:
-        raise ValueError(f"Image model {base_name} must have components defined")
 
-    # quantizations = [8, 6, 5, 4, 3]
-    quantizations = [8, 4]
+def is_custom_card(model_id: ModelId) -> bool:
+    """Check if a model card exists in the custom cards directory."""
+    import os
 
-    num_transformer_bytes = next(
-        c.storage_size.in_bytes
-        for c in base_card.components
-        if c.component_name == "transformer"
+    card_path = Path(str(EXO_CUSTOM_MODEL_CARDS_DIR)) / (
+        ModelId(model_id).normalize() + ".toml"
     )
-
-    transformer_bytes = Memory.from_bytes(num_transformer_bytes)
-
-    remaining_bytes = Memory.from_bytes(
-        sum(
-            c.storage_size.in_bytes
-            for c in base_card.components
-            if c.component_name != "transformer"
-        )
-    )
-
-    def with_transformer_size(new_size: Memory) -> list[ComponentInfo]:
-        assert base_card.components is not None
-        return [
-            ComponentInfo(
-                component_name=c.component_name,
-                component_path=c.component_path,
-                storage_size=new_size
-                if c.component_name == "transformer"
-                else c.storage_size,
-                n_layers=c.n_layers,
-                can_shard=c.can_shard,
-                safetensors_index_filename=c.safetensors_index_filename,
-            )
-            for c in base_card.components
-        ]
-
-    variants = {
-        base_name: ModelCard(
-            model_id=base_card.model_id,
-            storage_size=transformer_bytes + remaining_bytes,
-            n_layers=base_card.n_layers,
-            hidden_size=base_card.hidden_size,
-            supports_tensor=base_card.supports_tensor,
-            tasks=base_card.tasks,
-            components=with_transformer_size(transformer_bytes),
-        )
-    }
-
-    for quant in quantizations:
-        quant_transformer_bytes = Memory.from_bytes(
-            (num_transformer_bytes * quant) // 16
-        )
-        total_bytes = remaining_bytes + quant_transformer_bytes
-
-        model_id = ModelId(base_card.model_id + f"-{quant}bit")
-
-        variants[f"{base_name}-{quant}bit"] = ModelCard(
-            model_id=model_id,
-            storage_size=total_bytes,
-            n_layers=base_card.n_layers,
-            hidden_size=base_card.hidden_size,
-            supports_tensor=base_card.supports_tensor,
-            tasks=base_card.tasks,
-            components=with_transformer_size(quant_transformer_bytes),
-        )
-
-    return variants
+    return os.path.isfile(str(card_path))
 
 
 class ConfigData(BaseModel):
@@ -259,7 +209,7 @@ class ConfigData(BaseModel):
         return data
 
 
-async def get_config_data(model_id: ModelId) -> ConfigData:
+async def fetch_config_data(model_id: ModelId) -> ConfigData:
     """Downloads and parses config.json for a model."""
     from exo.download.download_utils import (
         download_file_with_retry,
@@ -281,7 +231,7 @@ async def get_config_data(model_id: ModelId) -> ConfigData:
         return ConfigData.model_validate_json(await f.read())
 
 
-async def get_safetensors_size(model_id: ModelId) -> Memory:
+async def fetch_safetensors_size(model_id: ModelId) -> Memory:
     """Gets model size from safetensors index or falls back to HF API."""
     from exo.download.download_utils import (
         download_file_with_retry,

@@ -28,7 +28,7 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     """
 
     model: ModelId
-    input: str | list[InputMessage]
+    input: list[InputMessage]
     instructions: str | None = None
     max_output_tokens: int | None = None
     temperature: float | None = None
@@ -40,3 +40,5 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     stop: str | list[str] | None = None
     seed: int | None = None
     chat_template_messages: list[dict[str, Any]] | None = None
+    logprobs: bool = False
+    top_logprobs: int | None = None

@@ -6,11 +6,13 @@
     deleteMessage,
     editAndRegenerate,
     regenerateLastResponse,
+    regenerateFromToken,
     setEditingImage,
   } from "$lib/stores/app.svelte";
   import type { Message } from "$lib/stores/app.svelte";
   import type { MessageAttachment } from "$lib/stores/app.svelte";
   import MarkdownContent from "./MarkdownContent.svelte";
+  import TokenHeatmap from "./TokenHeatmap.svelte";
 
   interface Props {
     class?: string;
@@ -98,6 +100,23 @@
   // Copied state for feedback
   let copiedMessageId = $state<string | null>(null);
   let expandedThinkingMessageIds = $state<Set<string>>(new Set());
+
+  // Uncertainty heatmap toggle
+  let heatmapMessageIds = $state<Set<string>>(new Set());
+
+  function toggleHeatmap(messageId: string) {
+    const next = new Set(heatmapMessageIds);
+    if (next.has(messageId)) {
+      next.delete(messageId);
+    } else {
+      next.add(messageId);
+    }
+    heatmapMessageIds = next;
+  }
+
+  function isHeatmapVisible(messageId: string): boolean {
+    return heatmapMessageIds.has(messageId);
+  }
 
   function formatTimestamp(timestamp: number): string {
     return new Date(timestamp).toLocaleTimeString("en-US", {
@@ -548,13 +567,23 @@
                       >
                     </div>
                   {:else if message.content || (loading && !message.attachments?.some((a) => a.type === "generated-image"))}
-                    <MarkdownContent
-                      content={message.content || (loading ? response : "")}
-                    />
-                    {#if loading && !message.content}
-                      <span
-                        class="inline-block w-2 h-4 bg-exo-yellow/70 ml-1 cursor-blink"
-                      ></span>
+                    {#if isHeatmapVisible(message.id) && message.tokens && message.tokens.length > 0}
+                      <TokenHeatmap
+                        tokens={message.tokens}
+                        isGenerating={loading &&
+                          isLastAssistantMessage(message.id)}
+                        onRegenerateFrom={(tokenIndex) =>
+                          regenerateFromToken(message.id, tokenIndex)}
+                      />
+                    {:else}
+                      <MarkdownContent
+                        content={message.content || (loading ? response : "")}
+                      />
+                      {#if loading && !message.content}
+                        <span
+                          class="inline-block w-2 h-4 bg-exo-yellow/70 ml-1 cursor-blink"
+                        ></span>
+                      {/if}
                     {/if}
                   {/if}
                 </div>
@@ -624,6 +653,35 @@
                     stroke-linejoin="round"
                     stroke-width="2"
                     d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                  />
+                </svg>
+              </button>
+            {/if}
+
+            <!-- Uncertainty heatmap toggle (assistant messages with tokens) -->
+            {#if message.role === "assistant" && message.tokens && message.tokens.length > 0}
+              <button
+                onclick={() => toggleHeatmap(message.id)}
+                class="p-1.5 transition-colors rounded cursor-pointer {isHeatmapVisible(
+                  message.id,
+                )
+                  ? 'text-exo-yellow'
+                  : 'text-exo-light-gray hover:text-exo-yellow'}"
+                title={isHeatmapVisible(message.id)
+                  ? "Hide uncertainty heatmap"
+                  : "Show uncertainty heatmap"}
+              >
+                <svg
+                  class="w-3.5 h-3.5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
                   />
                 </svg>
               </button>

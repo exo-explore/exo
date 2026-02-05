@@ -22,7 +22,7 @@ from exo.shared.types.tasks import (
     TaskStatus,
     TextGeneration,
 )
-from exo.shared.types.text_generation import TextGenerationTaskParams
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.shared.types.worker.runners import (
     RunnerConnected,
@@ -86,7 +86,7 @@ SHUTDOWN_TASK = Shutdown(
 
 CHAT_PARAMS = TextGenerationTaskParams(
     model=MODEL_A_ID,
-    input="hello",
+    input=[InputMessage(role="user", content="hello")],
     stream=True,
     max_output_tokens=4,
     temperature=0.0,
@@ -201,29 +201,29 @@ def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
             TaskStatusUpdated(
                 task_id=INITIALIZATION_TASK_ID, task_status=TaskStatus.Running
             ),
-            TaskAcknowledged(task_id=INITIALIZATION_TASK_ID),
             RunnerStatusUpdated(
                 runner_id=RUNNER_1_ID, runner_status=RunnerConnecting()
             ),
+            TaskAcknowledged(task_id=INITIALIZATION_TASK_ID),
             TaskStatusUpdated(
                 task_id=INITIALIZATION_TASK_ID, task_status=TaskStatus.Complete
             ),
             RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerConnected()),
             TaskStatusUpdated(task_id=LOAD_TASK_ID, task_status=TaskStatus.Running),
-            TaskAcknowledged(task_id=LOAD_TASK_ID),
             RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerLoading()),
+            TaskAcknowledged(task_id=LOAD_TASK_ID),
             TaskStatusUpdated(task_id=LOAD_TASK_ID, task_status=TaskStatus.Complete),
             RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerLoaded()),
             TaskStatusUpdated(task_id=WARMUP_TASK_ID, task_status=TaskStatus.Running),
-            TaskAcknowledged(task_id=WARMUP_TASK_ID),
             RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerWarmingUp()),
+            TaskAcknowledged(task_id=WARMUP_TASK_ID),
             TaskStatusUpdated(task_id=WARMUP_TASK_ID, task_status=TaskStatus.Complete),
             RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerReady()),
             TaskStatusUpdated(
                 task_id=CHAT_COMPLETION_TASK_ID, task_status=TaskStatus.Running
             ),
-            TaskAcknowledged(task_id=CHAT_COMPLETION_TASK_ID),
             RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerRunning()),
+            TaskAcknowledged(task_id=CHAT_COMPLETION_TASK_ID),
             expected_chunk,
             TaskStatusUpdated(
                 task_id=CHAT_COMPLETION_TASK_ID, task_status=TaskStatus.Complete
@@ -231,10 +231,10 @@ def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
             # CHAT COMPLETION TASK SHOULD COMPLETE BEFORE RUNNER READY
             RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerReady()),
             TaskStatusUpdated(task_id=SHUTDOWN_TASK_ID, task_status=TaskStatus.Running),
-            TaskAcknowledged(task_id=SHUTDOWN_TASK_ID),
             RunnerStatusUpdated(
                 runner_id=RUNNER_1_ID, runner_status=RunnerShuttingDown()
             ),
+            TaskAcknowledged(task_id=SHUTDOWN_TASK_ID),
             TaskStatusUpdated(
                 task_id=SHUTDOWN_TASK_ID, task_status=TaskStatus.Complete
             ),
