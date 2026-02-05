@@ -376,6 +376,8 @@ def main(
                                                     usage=response.usage,
                                                     finish_reason=response.finish_reason,
                                                     stats=response.stats,
+                                                    logprob=response.logprob,
+                                                    top_logprobs=response.top_logprobs,
                                                 ),
                                             )
                                         )

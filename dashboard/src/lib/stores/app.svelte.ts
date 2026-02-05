@@ -242,6 +242,19 @@ export interface MessageAttachment {
   mimeType?: string;
 }
 
+export interface TopLogprob {
+  token: string;
+  logprob: number;
+  bytes: number[] | null;
+}
+
+export interface TokenData {
+  token: string;
+  logprob: number;
+  probability: number;
+  topLogprobs: TopLogprob[];
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant" | "system";
@@ -253,6 +266,7 @@ export interface Message {
   tps?: number; // Tokens per second (for assistant messages)
   requestType?: "chat" | "image-generation" | "image-editing";
   sourceImageDataUrl?: string; // For image editing regeneration
+  tokens?: TokenData[];
 }
 
 export interface Conversation {
@@ -541,7 +555,18 @@ class AppStore {
    */
   private saveConversationsToStorage() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.conversations));
+      // Strip tokens from messages before saving to avoid bloating localStorage
+      const stripped = this.conversations.map((conv) => ({
+        ...conv,
+        messages: conv.messages.map((msg) => {
+          if (msg.tokens) {
+            const { tokens: _, ...rest } = msg;
+            return rest;
+          }
+          return msg;
+        }),
+      }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stripped));
     } catch (error) {
       console.error("Failed to save conversations:", error);
     }
@@ -1447,6 +1472,213 @@ class AppStore {
   }
 
   /**
+   * Regenerate response from a specific token index.
+   * Truncates the assistant message at the given token and re-generates from there.
+   */
+  async regenerateFromToken(
+    messageId: string,
+    tokenIndex: number,
+  ): Promise<void> {
+    if (this.isLoading) return;
+
+    const targetConversationId = this.activeConversationId;
+    if (!targetConversationId) return;
+
+    const msgIndex = this.messages.findIndex((m) => m.id === messageId);
+    if (msgIndex === -1) return;
+
+    const msg = this.messages[msgIndex];
+    if (
+      msg.role !== "assistant" ||
+      !msg.tokens ||
+      tokenIndex >= msg.tokens.length
+    )
+      return;
+
+    // Keep tokens up to (not including) the specified index
+    const tokensToKeep = msg.tokens.slice(0, tokenIndex);
+    const prefixText = tokensToKeep.map((t) => t.token).join("");
+
+    // Remove all messages after this assistant message
+    this.messages = this.messages.slice(0, msgIndex + 1);
+
+    // Update the message to show the prefix
+    this.messages[msgIndex].content = prefixText;
+    this.messages[msgIndex].tokens = tokensToKeep;
+    this.updateActiveConversation();
+
+    // Set up for continuation - modify the existing message in place
+    this.isLoading = true;
+    this.currentResponse = prefixText;
+    this.ttftMs = null;
+    this.tps = null;
+    this.totalTokens = tokensToKeep.length;
+
+    try {
+      // Build messages for API - include the partial assistant message
+      const systemPrompt = {
+        role: "system" as const,
+        content:
+          "You are a helpful AI assistant. Respond directly and concisely. Do not show your reasoning or thought process.",
+      };
+
+      const apiMessages = [
+        systemPrompt,
+        ...this.messages.map((m) => {
+          let msgContent = m.content;
+          if (m.attachments) {
+            for (const attachment of m.attachments) {
+              if (attachment.type === "text" && attachment.content) {
+                msgContent += `\n\n[File: ${attachment.name}]\n\`\`\`\n${attachment.content}\n\`\`\``;
+              }
+            }
+          }
+          return { role: m.role, content: msgContent };
+        }),
+      ];
+
+      const modelToUse = this.getModelForRequest();
+      if (!modelToUse) {
+        throw new Error("No model available");
+      }
+
+      const requestStartTime = performance.now();
+      let firstTokenTime: number | null = null;
+      let tokenCount = tokensToKeep.length;
+
+      const response = await fetch("/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: modelToUse,
+          messages: apiMessages,
+          stream: true,
+          logprobs: true,
+          top_logprobs: 5,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API error: ${response.status} - ${errorText}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No response body");
+
+      let fullContent = prefixText;
+      const collectedTokens: TokenData[] = [...tokensToKeep];
+
+      interface ChatCompletionChunk {
+        choices?: Array<{
+          delta?: { content?: string };
+          logprobs?: {
+            content?: Array<{
+              token: string;
+              logprob: number;
+              top_logprobs?: Array<{
+                token: string;
+                logprob: number;
+                bytes: number[] | null;
+              }>;
+            }>;
+          };
+        }>;
+      }
+
+      await this.parseSSEStream<ChatCompletionChunk>(
+        reader,
+        targetConversationId,
+        (parsed) => {
+          const choice = parsed.choices?.[0];
+          const delta = choice?.delta?.content;
+
+          // Collect logprobs data
+          const logprobsContent = choice?.logprobs?.content;
+          if (logprobsContent) {
+            for (const item of logprobsContent) {
+              collectedTokens.push({
+                token: item.token,
+                logprob: item.logprob,
+                probability: Math.exp(item.logprob),
+                topLogprobs: (item.top_logprobs || []).map((t) => ({
+                  token: t.token,
+                  logprob: t.logprob,
+                  bytes: t.bytes,
+                })),
+              });
+            }
+          }
+
+          if (delta) {
+            if (firstTokenTime === null) {
+              firstTokenTime = performance.now();
+              this.ttftMs = firstTokenTime - requestStartTime;
+            }
+
+            tokenCount += 1;
+            this.totalTokens = tokenCount;
+
+            if (firstTokenTime !== null && tokenCount > tokensToKeep.length) {
+              const elapsed = performance.now() - firstTokenTime;
+              this.tps = ((tokenCount - tokensToKeep.length) / elapsed) * 1000;
+            }
+
+            fullContent += delta;
+            const { displayContent, thinkingContent } =
+              this.stripThinkingTags(fullContent);
+
+            if (this.activeConversationId === targetConversationId) {
+              this.currentResponse = displayContent;
+            }
+
+            // Update existing message in place
+            this.updateConversationMessage(
+              targetConversationId,
+              messageId,
+              (m) => {
+                m.content = displayContent;
+                m.thinking = thinkingContent || undefined;
+                m.tokens = [...collectedTokens];
+              },
+            );
+            this.syncActiveMessagesIfNeeded(targetConversationId);
+            this.persistConversation(targetConversationId);
+          }
+        },
+      );
+
+      // Final update
+      if (this.conversationExists(targetConversationId)) {
+        const { displayContent, thinkingContent } =
+          this.stripThinkingTags(fullContent);
+        this.updateConversationMessage(targetConversationId, messageId, (m) => {
+          m.content = displayContent;
+          m.thinking = thinkingContent || undefined;
+          m.tokens = [...collectedTokens];
+          if (this.ttftMs !== null) m.ttftMs = this.ttftMs;
+          if (this.tps !== null) m.tps = this.tps;
+        });
+        this.syncActiveMessagesIfNeeded(targetConversationId);
+        this.persistConversation(targetConversationId);
+      }
+    } catch (error) {
+      console.error("Error regenerating from token:", error);
+      if (this.conversationExists(targetConversationId)) {
+        this.updateConversationMessage(targetConversationId, messageId, (m) => {
+          m.content = `${prefixText}\n\nError: ${error instanceof Error ? error.message : "Unknown error"}`;
+        });
+        this.syncActiveMessagesIfNeeded(targetConversationId);
+        this.persistConversation(targetConversationId);
+      }
+    } finally {
+      this.isLoading = false;
+      this.currentResponse = "";
+      this.saveConversationsToStorage();
+    }
+  }
+
+  /**
    * Helper method to regenerate a chat completion response
    */
   private async regenerateChatCompletion(): Promise<void> {
@@ -1516,6 +1748,8 @@ class AppStore {
           model: modelToUse,
           messages: apiMessages,
           stream: true,
+          logprobs: true,
+          top_logprobs: 5,
         }),
       });
 
@@ -1530,16 +1764,49 @@ class AppStore {
       }
 
       let streamedContent = "";
+      const collectedTokens: TokenData[] = [];
 
       interface ChatCompletionChunk {
-        choices?: Array<{ delta?: { content?: string } }>;
+        choices?: Array<{
+          delta?: { content?: string };
+          logprobs?: {
+            content?: Array<{
+              token: string;
+              logprob: number;
+              top_logprobs?: Array<{
+                token: string;
+                logprob: number;
+                bytes: number[] | null;
+              }>;
+            }>;
+          };
+        }>;
       }
 
       await this.parseSSEStream<ChatCompletionChunk>(
         reader,
         targetConversationId,
         (parsed) => {
-          const delta = parsed.choices?.[0]?.delta?.content;
+          const choice = parsed.choices?.[0];
+          const delta = choice?.delta?.content;
+
+          // Collect logprobs data
+          const logprobsContent = choice?.logprobs?.content;
+          if (logprobsContent) {
+            for (const item of logprobsContent) {
+              collectedTokens.push({
+                token: item.token,
+                logprob: item.logprob,
+                probability: Math.exp(item.logprob),
+                topLogprobs: (item.top_logprobs || []).map((t) => ({
+                  token: t.token,
+                  logprob: t.logprob,
+                  bytes: t.bytes,
+                })),
+              });
+            }
+          }
+
           if (delta) {
             streamedContent += delta;
             const { displayContent, thinkingContent } =
@@ -1557,6 +1824,7 @@ class AppStore {
               (msg) => {
                 msg.content = displayContent;
                 msg.thinking = thinkingContent || undefined;
+                msg.tokens = [...collectedTokens];
               },
             );
             this.syncActiveMessagesIfNeeded(targetConversationId);
@@ -1575,6 +1843,7 @@ class AppStore {
           (msg) => {
             msg.content = displayContent;
             msg.thinking = thinkingContent || undefined;
+            msg.tokens = [...collectedTokens];
           },
         );
         this.syncActiveMessagesIfNeeded(targetConversationId);
@@ -1935,6 +2204,8 @@ class AppStore {
           messages: apiMessages,
           temperature: 0.7,
           stream: true,
+          logprobs: true,
+          top_logprobs: 5,
         }),
       });
 
@@ -1951,14 +2222,48 @@ class AppStore {
       let streamedContent = "";
 
       interface ChatCompletionChunk {
-        choices?: Array<{ delta?: { content?: string } }>;
+        choices?: Array<{
+          delta?: { content?: string };
+          logprobs?: {
+            content?: Array<{
+              token: string;
+              logprob: number;
+              top_logprobs?: Array<{
+                token: string;
+                logprob: number;
+                bytes: number[] | null;
+              }>;
+            }>;
+          };
+        }>;
       }
+
+      const collectedTokens: TokenData[] = [];
 
       await this.parseSSEStream<ChatCompletionChunk>(
         reader,
         targetConversationId,
         (parsed) => {
-          const tokenContent = parsed.choices?.[0]?.delta?.content;
+          const choice = parsed.choices?.[0];
+          const tokenContent = choice?.delta?.content;
+
+          // Collect logprobs data
+          const logprobsContent = choice?.logprobs?.content;
+          if (logprobsContent) {
+            for (const item of logprobsContent) {
+              collectedTokens.push({
+                token: item.token,
+                logprob: item.logprob,
+                probability: Math.exp(item.logprob),
+                topLogprobs: (item.top_logprobs || []).map((t) => ({
+                  token: t.token,
+                  logprob: t.logprob,
+                  bytes: t.bytes,
+                })),
+              });
+            }
+          }
+
           if (tokenContent) {
             // Track first token for TTFT
             if (firstTokenTime === null) {
@@ -1994,6 +2299,7 @@ class AppStore {
               (msg) => {
                 msg.content = displayContent;
                 msg.thinking = thinkingContent || undefined;
+                msg.tokens = [...collectedTokens];
               },
             );
             this.syncActiveMessagesIfNeeded(targetConversationId);
@@ -2018,6 +2324,7 @@ class AppStore {
           (msg) => {
             msg.content = displayContent;
             msg.thinking = thinkingContent || undefined;
+            msg.tokens = [...collectedTokens];
             // Store performance metrics on the message
             if (this.ttftMs !== null) {
               msg.ttftMs = this.ttftMs;
@@ -2722,6 +3029,8 @@ export const editMessage = (messageId: string, newContent: string) =>
 export const editAndRegenerate = (messageId: string, newContent: string) =>
   appStore.editAndRegenerate(messageId, newContent);
 export const regenerateLastResponse = () => appStore.regenerateLastResponse();
+export const regenerateFromToken = (messageId: string, tokenIndex: number) =>
+  appStore.regenerateFromToken(messageId, tokenIndex);
 
 // Conversation actions
 export const conversations = () => appStore.conversations;
