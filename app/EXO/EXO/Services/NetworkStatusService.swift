@@ -153,22 +153,18 @@ private struct NetworkStatusFetcher {
     }
 
     private func readThunderboltBridgeState() -> ThunderboltState? {
-        let result = runCommand(["networksetup", "-getnetworkserviceenabled", "Thunderbolt Bridge"])
-        guard result.exitCode == 0 else {
-            let lower = result.output.lowercased() + result.error.lowercased()
-            if lower.contains("not a recognized network service") {
-                return .deleted
-            }
+        // Dynamically find the Thunderbolt Bridge service (don't assume the name)
+        guard let serviceName = ThunderboltBridgeDetector.findThunderboltBridgeServiceName() else {
+            // No bridge containing Thunderbolt interfaces exists
+            return .deleted
+        }
+
+        guard let isEnabled = ThunderboltBridgeDetector.isServiceEnabled(serviceName: serviceName)
+        else {
             return nil
         }
-        let output = result.output.lowercased()
-        if output.contains("enabled") {
-            return .enabled
-        }
-        if output.contains("disabled") {
-            return .disabled
-        }
-        return nil
+
+        return isEnabled ? .enabled : .disabled
     }
 
     private func readBridgeInactive() -> Bool? {

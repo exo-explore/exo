@@ -3,7 +3,7 @@ from enum import Enum
 
 from exo.routing.connection_message import ConnectionMessage
 from exo.shared.election import ElectionMessage
-from exo.shared.types.commands import ForwarderCommand
+from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
 from exo.shared.types.events import (
     ForwarderEvent,
 )
@@ -44,4 +44,7 @@ ELECTION_MESSAGES = TypedTopic(
 )
 CONNECTION_MESSAGES = TypedTopic(
     "connection_messages", PublishPolicy.Never, ConnectionMessage
+)
+DOWNLOAD_COMMANDS = TypedTopic(
+    "download_commands", PublishPolicy.Always, ForwarderDownloadCommand
 )

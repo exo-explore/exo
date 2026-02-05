@@ -1,0 +1,12 @@
+model_id = "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"
+n_layers = 32
+hidden_size = 4096
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "llama"
+quantization = "4bit"
+base_model = "Llama 3.1 8B"
+capabilities = ["text"]
+
+[storage_size]
+in_bytes = 4637851648

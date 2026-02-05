@@ -28,3 +28,7 @@ target/
 dashboard/build/
 dashboard/node_modules/
 dashboard/.svelte-kit/
+
+# host config snapshots
+hosts_*.json
+.swp

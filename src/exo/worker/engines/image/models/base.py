@@ -86,6 +86,27 @@ class PromptData(ABC):
         """
         ...
 
+    @abstractmethod
+    def get_cfg_branch_data(
+        self, positive: bool
+    ) -> tuple[mx.array, mx.array | None, mx.array | None, mx.array | None]:
+        """Get embeddings for a single CFG branch (positive or negative).
+
+        Used for sequential CFG and CFG parallel modes where we process
+        one branch at a time instead of batching.
+
+        Args:
+            positive: True for positive prompt, False for negative prompt
+
+        Returns:
+            Tuple of:
+            - embeds: [1, seq, hidden] prompt embeddings
+            - mask: [1, seq] attention mask or None
+            - pooled: [1, hidden] pooled embeddings or None
+            - conditioning_latents: [1, latent_seq, latent_dim] or None
+        """
+        ...
+
 
 class ModelAdapter(ABC, Generic[ModelT, TransformerT]):
     _config: ImageModelConfig
