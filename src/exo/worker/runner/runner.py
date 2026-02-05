@@ -425,7 +425,9 @@ def main(
 
                     try:
                         image_index = 0
-                        for response in generate_image(model=image_model, task=task_params):
+                        for response in generate_image(
+                            model=image_model, task=task_params
+                        ):
                             is_primary_output = _is_primary_output_node(shard_metadata)
 
                             if is_primary_output:
@@ -488,7 +490,9 @@ def main(
 
                     try:
                         image_index = 0
-                        for response in generate_image(model=image_model, task=task_params):
+                        for response in generate_image(
+                            model=image_model, task=task_params
+                        ):
                             if _is_primary_output_node(shard_metadata):
                                 match response:
                                     case PartialImageResponse():
