@@ -39,18 +39,12 @@ class StreamingDetokenizer:
     """
 
     __slots__ = ...
-    tokens: list[int]
-    def reset(self) -> None: ...
-    def add_token(self, token: int) -> None: ...
-    def finalize(self) -> None: ...
+    def reset(self): ...
+    def add_token(self, token): ...
+    def finalize(self): ...
     @property
-    def text(self) -> str:
-        """The full text decoded so far."""
-        ...
-    @property
-    def last_segment(self) -> str:
+    def last_segment(self):
         """Return the last segment of readable text since last time this property was accessed."""
-        ...
 
 class NaiveStreamingDetokenizer(StreamingDetokenizer):
     """NaiveStreamingDetokenizer relies on the underlying tokenizer
@@ -114,7 +108,7 @@ class TokenizerWrapper:
     _tokenizer: PreTrainedTokenizerFast
     eos_token_id: int | None
     eos_token: str | None
-    eos_token_ids: list[int] | None
+    eos_token_ids: list[int] | set[int] | None
     bos_token_id: int | None
     bos_token: str | None
     vocab_size: int
@@ -124,7 +118,7 @@ class TokenizerWrapper:
         self,
         tokenizer: Any,
         detokenizer_class: Any = ...,
-        eos_token_ids: list[int] | None = ...,
+        eos_token_ids: list[int] | set[int] | None = ...,
         chat_template: Any = ...,
         tool_parser: Any = ...,
         tool_call_start: str | None = ...,

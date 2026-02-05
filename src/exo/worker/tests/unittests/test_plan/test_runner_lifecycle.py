@@ -47,8 +47,7 @@ def test_plan_kills_runner_when_instance_missing():
 
     result = plan_mod.plan(
         node_id=NODE_A,
-        runners=runners,  # type: ignore
-        download_status={},
+        runners=runners,  # type: ignore[arg-type]
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,
@@ -87,8 +86,7 @@ def test_plan_kills_runner_when_sibling_failed():
 
     result = plan_mod.plan(
         node_id=NODE_A,
-        runners=runners,  # type: ignore
-        download_status={},
+        runners=runners,  # type: ignore[arg-type]
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,
@@ -120,7 +118,6 @@ def test_plan_creates_runner_when_missing_for_node():
     result = plan_mod.plan(
         node_id=NODE_A,
         runners=runners,
-        download_status={},
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,
@@ -158,8 +155,7 @@ def test_plan_does_not_create_runner_when_supervisor_already_present():
 
     result = plan_mod.plan(
         node_id=NODE_A,
-        runners=runners,  # type: ignore
-        download_status={},
+        runners=runners,  # type: ignore[arg-type]
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,
@@ -189,7 +185,6 @@ def test_plan_does_not_create_runner_for_unassigned_node():
     result = plan_mod.plan(
         node_id=NODE_A,
         runners=runners,  # type: ignore
-        download_status={},
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,

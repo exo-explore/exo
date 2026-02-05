@@ -68,7 +68,11 @@ def get_hf_home() -> Path:
 
 
 async def get_hf_token() -> str | None:
-    """Retrieve the Hugging Face token from the user's HF_HOME directory."""
+    """Retrieve the Hugging Face token from HF_TOKEN env var or HF_HOME directory."""
+    # Check environment variable first
+    if token := os.environ.get("HF_TOKEN"):
+        return token
+    # Fall back to file-based token
     token_path = get_hf_home() / "token"
     if await aios.path.exists(token_path):
         async with aiofiles.open(token_path, "r") as f:

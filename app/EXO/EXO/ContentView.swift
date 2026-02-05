@@ -14,6 +14,7 @@ struct ContentView: View {
     @EnvironmentObject private var networkStatusService: NetworkStatusService
     @EnvironmentObject private var localNetworkChecker: LocalNetworkChecker
     @EnvironmentObject private var updater: SparkleUpdater
+    @EnvironmentObject private var thunderboltBridgeService: ThunderboltBridgeService
     @State private var focusedNode: NodeViewModel?
     @State private var deletingInstanceIDs: Set<String> = []
     @State private var showAllNodes = false
@@ -24,6 +25,8 @@ struct ContentView: View {
     @State private var bugReportMessage: String?
     @State private var uninstallInProgress = false
     @State private var pendingNamespace: String = ""
+    @State private var pendingHFToken: String = ""
+    @State private var pendingEnableImageModels = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -303,6 +306,49 @@ struct ContentView: View {
                             .disabled(pendingNamespace == controller.customNamespace)
                         }
                     }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("HuggingFace Token")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        HStack {
+                            SecureField("optional", text: $pendingHFToken)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.caption2)
+                                .onAppear {
+                                    pendingHFToken = controller.hfToken
+                                }
+                            Button("Save & Restart") {
+                                controller.hfToken = pendingHFToken
+                                if controller.status == .running || controller.status == .starting {
+                                    controller.restart()
+                                }
+                            }
+                            .font(.caption2)
+                            .disabled(pendingHFToken == controller.hfToken)
+                        }
+                    }
+                    Divider()
+                    HStack {
+                        Toggle(
+                            "Enable Image Models (experimental)", isOn: $pendingEnableImageModels
+                        )
+                        .toggleStyle(.switch)
+                        .font(.caption2)
+                        .onAppear {
+                            pendingEnableImageModels = controller.enableImageModels
+                        }
+
+                        Spacer()
+
+                        Button("Save & Restart") {
+                            controller.enableImageModels = pendingEnableImageModels
+                            if controller.status == .running || controller.status == .starting {
+                                controller.restart()
+                            }
+                        }
+                        .font(.caption2)
+                        .disabled(pendingEnableImageModels == controller.enableImageModels)
+                    }
                     HoverButton(title: "Check for Updates", small: true) {
                         updater.checkForUpdates()
                     }
@@ -423,6 +469,44 @@ struct ContentView: View {
         }
     }
 
+    /// Shows TB bridge status for all nodes from exo cluster state
+    private var clusterThunderboltBridgeView: some View {
+        let bridgeStatuses = stateService.latestSnapshot?.nodeThunderboltBridge ?? [:]
+        let localNodeId = stateService.localNodeId
+        let nodeProfiles = stateService.latestSnapshot?.nodeProfiles ?? [:]
+
+        return VStack(alignment: .leading, spacing: 1) {
+            if bridgeStatuses.isEmpty {
+                Text("Cluster TB Bridge: No data")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            } else {
+                Text("Cluster TB Bridge Status:")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                ForEach(Array(bridgeStatuses.keys.sorted()), id: \.self) { nodeId in
+                    if let status = bridgeStatuses[nodeId] {
+                        let nodeName =
+                            nodeProfiles[nodeId]?.friendlyName ?? String(nodeId.prefix(8))
+                        let isLocal = nodeId == localNodeId
+                        let prefix = isLocal ? "  \(nodeName) (local):" : "  \(nodeName):"
+                        let statusText =
+                            !status.exists
+                            ? "N/A"
+                            : (status.enabled ? "Enabled" : "Disabled")
+                        let color: Color =
+                            !status.exists
+                            ? .secondary
+                            : (status.enabled ? .red : .green)
+                        Text("\(prefix) \(statusText)")
+                            .font(.caption2)
+                            .foregroundColor(color)
+                    }
+                }
+            }
+        }
+    }
+
     private var interfaceIpList: some View {
         let statuses = networkStatusService.status.interfaceStatuses
         return VStack(alignment: .leading, spacing: 1) {
@@ -465,6 +549,7 @@ struct ContentView: View {
                     Text(thunderboltStatusText)
                         .font(.caption2)
                         .foregroundColor(thunderboltStatusColor)
+                    clusterThunderboltBridgeView
                     interfaceIpList
                     rdmaStatusView
                     sendBugReportButton

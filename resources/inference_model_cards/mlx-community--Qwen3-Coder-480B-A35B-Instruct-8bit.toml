@@ -1,0 +1,12 @@
+model_id = "mlx-community/Qwen3-Coder-480B-A35B-Instruct-8bit"
+n_layers = 62
+hidden_size = 6144
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "8bit"
+base_model = "Qwen3 Coder 480B"
+capabilities = ["text", "code"]
+
+[storage_size]
+in_bytes = 579820584960
