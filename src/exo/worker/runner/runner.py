@@ -145,7 +145,6 @@ def main(
             event_sender.send(
                 TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Running)
             )
-            event_sender.send(TaskAcknowledged(task_id=task.task_id))
             match task:
                 case ConnectToGroup() if isinstance(
                     current_status, (RunnerIdle, RunnerFailed)
@@ -157,6 +156,7 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
+                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
                     group = initialize_mlx(bound_instance)
 
                     logger.info("runner connected")
@@ -173,6 +173,7 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
+                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
                     def on_model_load_timeout() -> None:
                         event_sender.send(
@@ -215,6 +216,7 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
+                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
                     logger.info(f"warming up inference for instance: {instance}")
                     if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
@@ -255,6 +257,8 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
+                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
+
                     assert model and not isinstance(model, DistributedImageModel)
                     assert tokenizer
 
@@ -342,6 +346,8 @@ def main(
                                                     usage=response.usage,
                                                     finish_reason=response.finish_reason,
                                                     stats=response.stats,
+                                                    logprob=response.logprob,
+                                                    top_logprobs=response.top_logprobs,
                                                 ),
                                             )
                                         )
@@ -387,6 +393,7 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
+                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
                     try:
                         image_index = 0
@@ -449,6 +456,7 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
+                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
                     try:
                         image_index = 0
@@ -504,6 +512,8 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
+                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
+
                     current_status = RunnerShutdown()
                 case _:
                     raise ValueError(

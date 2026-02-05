@@ -14,6 +14,7 @@ from exo.shared.types.api import (
     FinishReason,
     GenerationStats,
     PromptTokensDetails,
+    TopLogprobItem,
     Usage,
 )
 from exo.shared.types.common import ModelId
@@ -33,6 +34,12 @@ from exo.worker.engines.mlx.cache import (
     snapshot_ssm_states,
 )
 from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
+from exo.worker.engines.mlx.constants import (
+    DEFAULT_TOP_LOGPROBS,
+    KV_BITS,
+    KV_GROUP_SIZE,
+    MAX_TOKENS,
+)
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     fix_unmatched_think_end_tokens,
@@ -178,6 +185,60 @@ def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
     if eos is None:
         return []
     return eos
+
+
+def extract_top_logprobs(
+    logprobs: mx.array,
+    tokenizer: TokenizerWrapper,
+    top_logprobs: int,
+    selected_token: int,
+) -> tuple[float, list[TopLogprobItem]]:
+    """Extract the selected token's logprob and top alternative tokens.
+
+    Args:
+        logprobs: Full vocabulary logprobs array from MLX
+        tokenizer: Tokenizer for decoding token IDs to strings
+        top_logprobs: Number of top alternatives to return
+        selected_token: The token ID that was actually sampled
+
+    Returns:
+        Tuple of (selected_token_logprob, list of TopLogprobItem for top alternatives)
+    """
+    # Get the logprob of the selected token
+    selected_logprob = float(logprobs[selected_token].item())
+
+    # Get top indices (most probable tokens)
+    # mx.argpartition gives indices that would partition the array
+    # We negate logprobs since argpartition finds smallest, and we want largest
+    top_logprobs = min(top_logprobs, logprobs.shape[0])  # Don't exceed vocab size
+    top_indices = mx.argpartition(-logprobs, top_logprobs)[:top_logprobs]
+
+    # Get the actual logprob values for these indices
+    top_values = logprobs[top_indices]
+
+    # Sort by logprob (descending) for consistent ordering
+    sort_order = mx.argsort(-top_values)
+    top_indices = top_indices[sort_order]
+    top_values = top_values[sort_order]
+
+    # Convert to list of TopLogprobItem
+    top_logprob_items: list[TopLogprobItem] = []
+    for i in range(top_logprobs):
+        token_id = int(top_indices[i].item())
+        token_logprob = float(top_values[i].item())
+        # Decode token ID to string
+        token_str = tokenizer.decode([token_id])
+        # Get byte representation
+        token_bytes = list(token_str.encode("utf-8"))
+        top_logprob_items.append(
+            TopLogprobItem(
+                token=token_str,
+                logprob=token_logprob,
+                bytes=token_bytes,
+            )
+        )
+
+    return selected_logprob, top_logprob_items
 
 
 def mlx_generate(
@@ -342,11 +403,20 @@ def mlx_generate(
                 ),
             )
 
+        # Extract logprobs from the full vocabulary logprobs array
+        logprob: float | None = None
+        top_logprobs: list[TopLogprobItem] | None = None
+        if task.logprobs:
+            logprob, top_logprobs = extract_top_logprobs(
+                logprobs=out.logprobs,
+                tokenizer=tokenizer,
+                top_logprobs=task.top_logprobs or DEFAULT_TOP_LOGPROBS,
+                selected_token=out.token,
+            )
+
+
         if is_done:
-            # Update prefix cache BEFORE yielding the final response.
-            # Consumers typically break on finish_reason, which prevents
-            # the generator from resuming — so any code after yield
-            # would never execute.
+            # Log generation stats
             generation_elapsed = time.perf_counter() - generation_start_time
             generated_tokens = len(generated_text_parts)
             generation_tps = (
@@ -385,6 +455,8 @@ def mlx_generate(
         yield GenerationResponse(
             text=text,
             token=out.token,
+            logprob=logprob,
+            top_logprobs=top_logprobs,
             finish_reason=finish_reason,
             stats=stats,
             usage=usage,

@@ -2,7 +2,12 @@ from collections.abc import Generator
 from typing import Any, Literal
 
 from exo.shared.models.model_cards import ModelId
-from exo.shared.types.api import GenerationStats, ImageGenerationStats, Usage
+from exo.shared.types.api import (
+    GenerationStats,
+    ImageGenerationStats,
+    TopLogprobItem,
+    Usage,
+)
 from exo.utils.pydantic_ext import TaggedModel
 
 from .api import FinishReason
@@ -20,6 +25,8 @@ class TokenChunk(BaseChunk):
     usage: Usage | None
     finish_reason: Literal["stop", "length", "content_filter"] | None = None
     stats: GenerationStats | None = None
+    logprob: float | None = None
+    top_logprobs: list[TopLogprobItem] | None = None
 
 
 class ErrorChunk(BaseChunk):

@@ -11,5 +11,7 @@ QUANTIZE_MODEL_MODE: str | None = "affine"
 CACHE_GROUP_SIZE: int = 64
 KV_CACHE_BITS: int | None = None
 
+DEFAULT_TOP_LOGPROBS: int = 5
+
 # TODO: We should really make this opt-in, but Kimi requires trust_remote_code=True
 TRUST_REMOTE_CODE: bool = True
