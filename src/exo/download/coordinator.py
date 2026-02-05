@@ -53,11 +53,10 @@ class DownloadCoordinator:
     # Internal event channel for forwarding (initialized in __post_init__)
     event_sender: Sender[Event] = field(init=False)
     event_receiver: Receiver[Event] = field(init=False)
-    _tg: TaskGroup = field(init=False)
+    _tg: TaskGroup = field(init=False, default_factory=anyio.create_task_group)
 
     def __post_init__(self) -> None:
         self.event_sender, self.event_receiver = channel[Event]()
-        self._tg = anyio.create_task_group()
 
     async def run(self) -> None:
         logger.info("Starting DownloadCoordinator")

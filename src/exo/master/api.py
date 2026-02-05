@@ -123,6 +123,7 @@ from exo.shared.types.commands import (
     PlaceInstance,
     SendInputChunk,
     StartDownload,
+    TaskCancelled,
     TaskFinished,
     TextGeneration,
 )
@@ -529,16 +530,14 @@ class API:
                         break
 
         except anyio.get_cancelled_exc_class():
-            # TODO: TaskCancelled
-            """
-            self.command_sender.send_nowait(
-                ForwarderCommand(origin=self.node_id, command=command)
-            )
-            """
+            command = TaskCancelled(cancelled_command_id=command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(origin=self.node_id, command=command)
+                )
             raise
         finally:
-            command = TaskFinished(finished_command_id=command_id)
-            await self._send(command)
+            await self._send(TaskFinished(finished_command_id=command_id))
             if command_id in self._text_generation_queues:
                 del self._text_generation_queues[command_id]
 
@@ -633,11 +632,14 @@ class API:
                     "X-Accel-Buffering": "no",
                 },
             )
-
-        return await collect_chat_response(
-            command.command_id,
-            self._token_chunk_stream(command.command_id),
-        )
+        else:
+            return StreamingResponse(
+                collect_chat_response(
+                    command.command_id,
+                    self._token_chunk_stream(command.command_id),
+                ),
+                media_type="application/json",
+            )
 
     async def bench_chat_completions(
         self, payload: BenchChatCompletionRequest
@@ -653,8 +655,7 @@ class API:
         command = TextGeneration(task_params=task_params)
         await self._send(command)
 
-        response = await self._collect_text_generation_with_stats(command.command_id)
-        return response
+        return await self._collect_text_generation_with_stats(command.command_id)
 
     async def _resolve_and_validate_text_model(self, model_id: ModelId) -> ModelId:
         """Validate a text model exists and return the resolved model ID.
@@ -856,6 +857,11 @@ class API:
                         del image_metadata[key]
 
         except anyio.get_cancelled_exc_class():
+            command = TaskCancelled(cancelled_command_id=command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(origin=self.node_id, command=command)
+                )
             raise
         finally:
             await self._send(TaskFinished(finished_command_id=command_id))
@@ -937,6 +943,11 @@ class API:
 
             return (images, stats if capture_stats else None)
         except anyio.get_cancelled_exc_class():
+            command = TaskCancelled(cancelled_command_id=command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(origin=self.node_id, command=command)
+                )
             raise
         finally:
             await self._send(TaskFinished(finished_command_id=command_id))
@@ -1320,28 +1331,39 @@ class API:
         ]
 
     async def run(self):
+        shutdown_ev = anyio.Event()
+
+        try:
+            async with create_task_group() as tg:
+                self._tg = tg
+                logger.info("Starting API")
+                tg.start_soon(self._apply_state)
+                tg.start_soon(self._pause_on_new_election)
+                tg.start_soon(self._cleanup_expired_images)
+                print_startup_banner(self.port)
+                tg.start_soon(self.run_api, shutdown_ev)
+                try:
+                    await anyio.sleep_forever()
+                finally:
+                    with anyio.CancelScope(shield=True):
+                        shutdown_ev.set()
+        finally:
+            self.command_sender.close()
+            self.global_event_receiver.close()
+
+    async def run_api(self, ev: anyio.Event):
         cfg = Config()
-        cfg.bind = f"0.0.0.0:{self.port}"
+        cfg.bind = [f"0.0.0.0:{self.port}"]
         # nb: shared.logging needs updating if any of this changes
         cfg.accesslog = None
         cfg.errorlog = "-"
         cfg.logger_class = InterceptLogger
-
-        async with create_task_group() as tg:
-            self._tg = tg
-            logger.info("Starting API")
-            tg.start_soon(self._apply_state)
-            tg.start_soon(self._pause_on_new_election)
-            tg.start_soon(self._cleanup_expired_images)
-            print_startup_banner(self.port)
+        with anyio.CancelScope(shield=True):
             await serve(
                 cast(ASGIFramework, self.app),
                 cfg,
-                shutdown_trigger=lambda: anyio.sleep_forever(),
+                shutdown_trigger=ev.wait,
             )
-
-        self.command_sender.close()
-        self.global_event_receiver.close()
 
     async def _apply_state(self):
         with self.global_event_receiver as events:

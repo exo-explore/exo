@@ -21,6 +21,7 @@ from exo.shared.types.commands import (
     PlaceInstance,
     RequestEventLog,
     SendInputChunk,
+    TaskCancelled,
     TaskFinished,
     TestCommand,
     TextGeneration,
@@ -36,6 +37,7 @@ from exo.shared.types.events import (
     NodeTimedOut,
     TaskCreated,
     TaskDeleted,
+    TaskStatusUpdated,
     TraceEventData,
     TracesCollected,
     TracesMerged,
@@ -96,16 +98,18 @@ class Master:
     async def run(self):
         logger.info("Starting Master")
 
-        async with self._tg as tg:
-            tg.start_soon(self._event_processor)
-            tg.start_soon(self._command_processor)
-            tg.start_soon(self._loopback_processor)
-            tg.start_soon(self._plan)
-        self.global_event_sender.close()
-        self.local_event_receiver.close()
-        self.command_receiver.close()
-        self._loopback_event_sender.close()
-        self._loopback_event_receiver.close()
+        try:
+            async with self._tg as tg:
+                tg.start_soon(self._event_processor)
+                tg.start_soon(self._command_processor)
+                tg.start_soon(self._loopback_processor)
+                tg.start_soon(self._plan)
+        finally:
+            self.global_event_sender.close()
+            self.local_event_receiver.close()
+            self.command_receiver.close()
+            self._loopback_event_sender.close()
+            self._loopback_event_receiver.close()
 
     async def shutdown(self):
         logger.info("Stopping Master")
@@ -276,7 +280,7 @@ class Master:
                         case DeleteInstance():
                             placement = delete_instance(command, self.state.instances)
                             transition_events = get_transition_events(
-                                self.state.instances, placement
+                                self.state.instances, placement, self.state.tasks
                             )
                             generated_events.extend(transition_events)
                         case PlaceInstance():
@@ -288,7 +292,7 @@ class Master:
                                 self.state.node_network,
                             )
                             transition_events = get_transition_events(
-                                self.state.instances, placement
+                                self.state.instances, placement, self.state.tasks
                             )
                             generated_events.extend(transition_events)
                         case CreateInstance():
@@ -298,7 +302,7 @@ class Master:
                                 self.state.instances,
                             )
                             transition_events = get_transition_events(
-                                self.state.instances, placement
+                                self.state.instances, placement, self.state.tasks
                             )
                             generated_events.extend(transition_events)
                         case SendInputChunk(chunk=chunk):
@@ -308,6 +312,18 @@ class Master:
                                     chunk=chunk,
                                 )
                             )
+                        case TaskCancelled():
+                            if (
+                                task_id := self.command_task_mapping.get(
+                                    command.cancelled_command_id
+                                )
+                            ) is not None:
+                                generated_events.append(
+                                    TaskStatusUpdated(
+                                        task_status=TaskStatus.Cancelled,
+                                        task_id=task_id,
+                                    )
+                                )
                         case TaskFinished():
                             generated_events.append(
                                 TaskDeleted(
@@ -316,10 +332,9 @@ class Master:
                                     ]
                                 )
                             )
-                            if command.finished_command_id in self.command_task_mapping:
-                                del self.command_task_mapping[
-                                    command.finished_command_id
-                                ]
+                            self.command_task_mapping.pop(
+                                command.finished_command_id, None
+                            )
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages
                             for i in range(command.since_idx, len(self._event_log)):

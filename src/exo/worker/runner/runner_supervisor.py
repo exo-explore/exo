@@ -8,10 +8,8 @@ import anyio
 from anyio import (
     BrokenResourceError,
     ClosedResourceError,
-    create_task_group,
     to_thread,
 )
-from anyio.abc import TaskGroup
 from loguru import logger
 
 from exo.shared.types.events import (
@@ -49,10 +47,11 @@ class RunnerSupervisor:
     _ev_recv: MpReceiver[Event]
     _task_sender: MpSender[Task]
     _event_sender: Sender[Event]
-    _tg: TaskGroup | None = field(default=None, init=False)
+    _cancel_sender: MpSender[TaskId]
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
     completed: set[TaskId] = field(default_factory=set, init=False)
+    cancelled: set[TaskId] = field(default_factory=set, init=False)
 
     @classmethod
     def create(
@@ -63,8 +62,8 @@ class RunnerSupervisor:
         initialize_timeout: float = 400,
     ) -> Self:
         ev_send, ev_recv = mp_channel[Event]()
-        # A task is kind of a runner command
         task_sender, task_recv = mp_channel[Task]()
+        cancel_sender, cancel_recv = mp_channel[TaskId]()
 
         runner_process = Process(
             target=entrypoint,
@@ -72,6 +71,7 @@ class RunnerSupervisor:
                 bound_instance,
                 ev_send,
                 task_recv,
+                cancel_recv,
                 logger,
             ),
             daemon=True,
@@ -86,6 +86,7 @@ class RunnerSupervisor:
             initialize_timeout=initialize_timeout,
             _ev_recv=ev_recv,
             _task_sender=task_sender,
+            _cancel_sender=cancel_sender,
             _event_sender=event_sender,
         )
 
@@ -93,38 +94,29 @@ class RunnerSupervisor:
 
     async def run(self):
         self.runner_process.start()
-        async with create_task_group() as tg:
-            self._tg = tg
-            tg.start_soon(self._forward_events)
+        await self._forward_events()
 
+    def shutdown(self):
+        logger.info("Runner supervisor shutting down")
         self._ev_recv.close()
         self._task_sender.close()
         self._event_sender.close()
-        await to_thread.run_sync(self.runner_process.join, 30)
+        self._cancel_sender.send(TaskId("CANCEL_CURRENT_TASK"))
+        self._cancel_sender.close()
+        self.runner_process.join(1)
         if not self.runner_process.is_alive():
+            logger.info("Runner process succesfully terminated")
             return
 
         # This is overkill but it's not technically bad, just unnecessary.
         logger.warning("Runner process didn't shutdown succesfully, terminating")
         self.runner_process.terminate()
-        await to_thread.run_sync(self.runner_process.join, 5)
+        self.runner_process.join(1)
         if not self.runner_process.is_alive():
             return
 
         logger.critical("Runner process didn't respond to SIGTERM, killing")
         self.runner_process.kill()
-
-        await to_thread.run_sync(self.runner_process.join, 5)
-        if not self.runner_process.is_alive():
-            return
-
-        logger.critical(
-            "Runner process didn't respond to SIGKILL. System resources may have leaked"
-        )
-
-    def shutdown(self):
-        assert self._tg
-        self._tg.cancel_scope.cancel()
 
     async def start_task(self, task: Task):
         if task.task_id in self.pending:
@@ -146,6 +138,13 @@ class RunnerSupervisor:
             logger.warning(f"Task {task} dropped, runner closed communication.")
             return
         await event.wait()
+
+    async def cancel_task(self, task_id: TaskId):
+        if task_id in self.completed:
+            logger.info(f"Unable to cancel {task_id} as it has been completed")
+            return
+        self.cancelled.add(task_id)
+        await self._cancel_sender.send_async(task_id)
 
     async def _forward_events(self):
         with self._ev_recv as events:
@@ -211,4 +210,4 @@ class RunnerSupervisor:
                 runner_status=RunnerFailed(error_message=f"Terminated ({cause})"),
             )
         )
-        self.shutdown()
+        await self.shutdown()
