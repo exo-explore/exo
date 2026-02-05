@@ -241,7 +241,7 @@ def trim_cache(
     for i, c in enumerate(cache):
         if isinstance(c, (ArraysCache, RotatingKVCache)):
             if snapshot is not None and snapshot.states[i] is not None:
-                cache[i] = snapshot.states[i]
+                cache[i] = deepcopy(snapshot.states[i])
             else:
                 c.state = [None] * len(c.state)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
         else:

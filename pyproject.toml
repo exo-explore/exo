@@ -63,7 +63,7 @@ members = [
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
-mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", branch = "main" }
+mlx-lm = { git = "https://github.com/davidmcc73/mlx-lm", branch = "stable" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }
 # mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }
