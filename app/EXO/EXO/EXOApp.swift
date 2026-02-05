@@ -14,7 +14,6 @@ import SwiftUI
 import UserNotifications
 import os.log
 
-@main
 struct EXOApp: App {
     @StateObject private var controller: ExoProcessController
     @StateObject private var stateService: ClusterStateService

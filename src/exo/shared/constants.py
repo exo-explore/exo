@@ -39,7 +39,7 @@ RESOURCES_DIR = (
 )
 _DASHBOARD_DIR_ENV = os.environ.get("EXO_DASHBOARD_DIR", None)
 DASHBOARD_DIR = (
-    find_dashboard() if _RESOURCES_DIR_ENV is None else Path.home() / _RESOURCES_DIR_ENV
+    find_dashboard() if _DASHBOARD_DIR_ENV is None else Path.home() / _DASHBOARD_DIR_ENV
 )
 
 # Log files (data/logs or cache)
@@ -57,6 +57,8 @@ LIBP2P_ELECTION_MESSAGES_TOPIC = "election_message"
 LIBP2P_COMMANDS_TOPIC = "commands"
 
 EXO_MAX_CHUNK_SIZE = 512 * 1024
+
+EXO_CUSTOM_MODEL_CARDS_DIR = EXO_DATA_HOME / "custom_model_cards"
 
 EXO_IMAGE_CACHE_DIR = EXO_CACHE_HOME / "images"
 EXO_TRACING_CACHE_DIR = EXO_CACHE_HOME / "traces"
