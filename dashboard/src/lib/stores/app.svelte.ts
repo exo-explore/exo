@@ -260,6 +260,7 @@ export interface PrefillProgress {
   total: number;
 }
 
+
 export interface Message {
   id: string;
   role: "user" | "assistant" | "system";
