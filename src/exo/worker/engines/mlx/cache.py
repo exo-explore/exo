@@ -26,16 +26,19 @@ _MEMORY_THRESHOLD = float(
 
 class CacheSnapshot:
     """Snapshot of states at a known token position."""
-    def __init__(self, states: list[list[RotatingKVCache | ArraysCache] | None], token_count: int):
+
+    def __init__(
+        self, states: list[RotatingKVCache | ArraysCache | None], token_count: int
+    ):
         self.states = states
         self.token_count = token_count
 
 
 def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
-    states: list[list[object] | None] = []
+    states: list[ArraysCache | RotatingKVCache | None] = []
     for c in cache:
-        if isinstance(c, (ArraysCache, RotatingKVCache)) and c.keys is not None:
-            states.append(deepcopy(c))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        if isinstance(c, (ArraysCache, RotatingKVCache)) and c.keys is not None:  # type: ignore
+            states.append(deepcopy(c))
         else:
             states.append(None)
     token_count = cache_length(cache)
@@ -176,10 +179,7 @@ class KVPrefixCache:
         restore_pos, restore_snap = self._get_snapshot(best_index, target)
 
         # No usable snapshot — need fresh cache
-        if (
-            restore_snap is None
-            and has_non_kv_caches(self.caches[best_index])
-        ):
+        if restore_snap is None and has_non_kv_caches(self.caches[best_index]):
             return make_kv_cache(model), prompt_tokens, None
 
         prompt_cache = deepcopy(self.caches[best_index])
@@ -241,7 +241,7 @@ def trim_cache(
     for i, c in enumerate(cache):
         if isinstance(c, (ArraysCache, RotatingKVCache)):
             if snapshot is not None and snapshot.states[i] is not None:
-                cache[i] = deepcopy(snapshot.states[i])
+                cache[i] = deepcopy(snapshot.states[i])  # type: ignore
             else:
                 c.state = [None] * len(c.state)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
         else:

@@ -1,6 +1,5 @@
 import time
 from copy import deepcopy
-from linecache import cache
 from typing import Callable, Generator, cast, get_args
 
 import mlx.core as mx
@@ -8,6 +7,7 @@ from mlx_lm.generate import stream_generate
 from mlx_lm.models.cache import ArraysCache, RotatingKVCache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
+from transformers.models.gpt_oss.modular_gpt_oss import GptOssModel
 
 from exo.shared.types.api import (
     CompletionTokensDetails,
@@ -26,14 +26,13 @@ from exo.shared.types.worker.runner_response import (
 )
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.cache import (
-    KVPrefixCache,
     CacheSnapshot,
+    KVPrefixCache,
     encode_prompt,
     has_non_kv_caches,
     make_kv_cache,
     snapshot_ssm_states,
 )
-from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
 from exo.worker.engines.mlx.constants import (
     DEFAULT_TOP_LOGPROBS,
     KV_BITS,
@@ -46,7 +45,6 @@ from exo.worker.engines.mlx.utils_mlx import (
     mx_barrier,
 )
 from exo.worker.runner.bootstrap import logger
-from transformers.models.gpt_oss.modular_gpt_oss import GptOssModel
 
 generation_stream = mx.new_stream(mx.default_device())
 
@@ -108,7 +106,7 @@ def prefill(
         if has_ssm and isinstance(c, (ArraysCache, RotatingKVCache)):
             assert pre_gen is not None
             if pre_gen.states[i] is not None:
-                cache[i] = deepcopy(pre_gen.states[i])
+                cache[i] = deepcopy(pre_gen.states[i])  # type: ignore
                 # logger.info(cache[i].meta_state)
         else:
             assert not isinstance(c, (ArraysCache, RotatingKVCache))
@@ -260,8 +258,8 @@ def mlx_generate(
 
     # Do not use the prefix cache if we are trying to do benchmarks.
     is_bench = task.bench
-    if is_bench or isinstance(model.model, GptOssModel):
-    # if is_bench:
+    if is_bench or isinstance(model.model, GptOssModel):  # type: ignore
+        # if is_bench:
         kv_prefix_cache = None
 
     # logger.info(all_prompt_tokens.shape)
@@ -413,7 +411,6 @@ def mlx_generate(
                 top_logprobs=task.top_logprobs or DEFAULT_TOP_LOGPROBS,
                 selected_token=out.token,
             )
-
 
         if is_done:
             # Log generation stats
