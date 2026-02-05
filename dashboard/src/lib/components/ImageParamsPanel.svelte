@@ -64,6 +64,8 @@
     "1024x1024",
     "1024x768",
     "768x1024",
+    "1024x1365",
+    "1365x1024",
   ];
 
   const qualityOptions: ImageGenerationParams["quality"][] = [
