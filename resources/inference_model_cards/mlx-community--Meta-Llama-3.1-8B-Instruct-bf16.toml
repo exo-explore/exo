@@ -1,0 +1,12 @@
+model_id = "mlx-community/Meta-Llama-3.1-8B-Instruct-bf16"
+n_layers = 32
+hidden_size = 4096
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "llama"
+quantization = "bf16"
+base_model = "Llama 3.1 8B"
+capabilities = ["text"]
+
+[storage_size]
+in_bytes = 16882073600

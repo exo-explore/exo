@@ -11,8 +11,8 @@ from exo.master.placement import (
     place_instance,
 )
 from exo.shared.apply import apply
+from exo.shared.constants import EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
-    ChatCompletion,
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
@@ -24,6 +24,7 @@ from exo.shared.types.commands import (
     SetInstanceDraftModel,
     TaskFinished,
     TestCommand,
+    TextGeneration,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
 from exo.shared.types.events import (
@@ -37,11 +38,11 @@ from exo.shared.types.events import (
     NodeTimedOut,
     TaskCreated,
     TaskDeleted,
+    TraceEventData,
+    TracesCollected,
+    TracesMerged,
 )
 from exo.shared.types.state import State
-from exo.shared.types.tasks import (
-    ChatCompletion as ChatCompletionTask,
-)
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
 )
@@ -51,6 +52,9 @@ from exo.shared.types.tasks import (
 from exo.shared.types.tasks import (
     TaskId,
     TaskStatus,
+)
+from exo.shared.types.tasks import (
+    TextGeneration as TextGenerationTask,
 )
 from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, Sender, channel
@@ -88,6 +92,8 @@ class Master:
         self._multi_buffer = MultiSourceBuffer[NodeId, Event]()
         # TODO: not have this
         self._event_log: list[Event] = []
+        self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
+        self._expected_ranks: dict[TaskId, set[int]] = {}
 
     async def run(self):
         logger.info("Starting Master")
@@ -119,11 +125,11 @@ class Master:
                     match command:
                         case TestCommand():
                             pass
-                        case ChatCompletion():
+                        case TextGeneration():
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
-                                    == command.request_params.model
+                                    == command.task_params.model
                                 ):
                                     task_count = sum(
                                         1
@@ -136,7 +142,7 @@ class Master:
 
                             if not instance_task_counts:
                                 raise ValueError(
-                                    f"No instance found for model {command.request_params.model}"
+                                    f"No instance found for model {command.task_params.model}"
                                 )
 
                             available_instance_ids = sorted(
@@ -150,12 +156,12 @@ class Master:
                             generated_events.append(
                                 TaskCreated(
                                     task_id=task_id,
-                                    task=ChatCompletionTask(
+                                    task=TextGenerationTask(
                                         task_id=task_id,
                                         command_id=command.command_id,
                                         instance_id=available_instance_ids[0],
                                         task_status=TaskStatus.Pending,
-                                        task_params=command.request_params,
+                                        task_params=command.task_params,
                                     ),
                                 )
                             )
@@ -165,7 +171,7 @@ class Master:
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
-                                    == command.request_params.model
+                                    == command.task_params.model
                                 ):
                                     task_count = sum(
                                         1
@@ -178,7 +184,7 @@ class Master:
 
                             if not instance_task_counts:
                                 raise ValueError(
-                                    f"No instance found for model {command.request_params.model}"
+                                    f"No instance found for model {command.task_params.model}"
                                 )
 
                             available_instance_ids = sorted(
@@ -189,25 +195,37 @@ class Master:
                             )
 
                             task_id = TaskId()
+                            selected_instance_id = available_instance_ids[0]
                             generated_events.append(
                                 TaskCreated(
                                     task_id=task_id,
                                     task=ImageGenerationTask(
                                         task_id=task_id,
                                         command_id=command.command_id,
-                                        instance_id=available_instance_ids[0],
+                                        instance_id=selected_instance_id,
                                         task_status=TaskStatus.Pending,
-                                        task_params=command.request_params,
+                                        task_params=command.task_params,
                                     ),
                                 )
                             )
 
                             self.command_task_mapping[command.command_id] = task_id
+
+                            if EXO_TRACING_ENABLED:
+                                selected_instance = self.state.instances.get(
+                                    selected_instance_id
+                                )
+                                if selected_instance:
+                                    ranks = set(
+                                        shard.device_rank
+                                        for shard in selected_instance.shard_assignments.runner_to_shard.values()
+                                    )
+                                    self._expected_ranks[task_id] = ranks
                         case ImageEdits():
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
-                                    == command.request_params.model
+                                    == command.task_params.model
                                 ):
                                     task_count = sum(
                                         1
@@ -220,7 +238,7 @@ class Master:
 
                             if not instance_task_counts:
                                 raise ValueError(
-                                    f"No instance found for model {command.request_params.model}"
+                                    f"No instance found for model {command.task_params.model}"
                                 )
 
                             available_instance_ids = sorted(
@@ -231,20 +249,32 @@ class Master:
                             )
 
                             task_id = TaskId()
+                            selected_instance_id = available_instance_ids[0]
                             generated_events.append(
                                 TaskCreated(
                                     task_id=task_id,
                                     task=ImageEditsTask(
                                         task_id=task_id,
                                         command_id=command.command_id,
-                                        instance_id=available_instance_ids[0],
+                                        instance_id=selected_instance_id,
                                         task_status=TaskStatus.Pending,
-                                        task_params=command.request_params,
+                                        task_params=command.task_params,
                                     ),
                                 )
                             )
 
                             self.command_task_mapping[command.command_id] = task_id
+
+                            if EXO_TRACING_ENABLED:
+                                selected_instance = self.state.instances.get(
+                                    selected_instance_id
+                                )
+                                if selected_instance:
+                                    ranks = set(
+                                        shard.device_rank
+                                        for shard in selected_instance.shard_assignments.runner_to_shard.values()
+                                    )
+                                    self._expected_ranks[task_id] = ranks
                         case DeleteInstance():
                             placement = delete_instance(command, self.state.instances)
                             transition_events = get_transition_events(
@@ -345,6 +375,10 @@ class Master:
                     local_event.origin,
                 )
                 for event in self._multi_buffer.drain():
+                    if isinstance(event, TracesCollected):
+                        await self._handle_traces_collected(event)
+                        continue
+
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
                     indexed = IndexedEvent(event=event, idx=len(self._event_log))
                     self.state = apply(self.state, indexed)
@@ -383,3 +417,29 @@ class Master:
                 event=event.event,
             )
         )
+
+    async def _handle_traces_collected(self, event: TracesCollected) -> None:
+        task_id = event.task_id
+        if task_id not in self._pending_traces:
+            self._pending_traces[task_id] = {}
+        self._pending_traces[task_id][event.rank] = event.traces
+
+        if (
+            task_id in self._expected_ranks
+            and set(self._pending_traces[task_id].keys())
+            >= self._expected_ranks[task_id]
+        ):
+            await self._merge_and_save_traces(task_id)
+
+    async def _merge_and_save_traces(self, task_id: TaskId) -> None:
+        all_trace_data: list[TraceEventData] = []
+        for trace_data in self._pending_traces[task_id].values():
+            all_trace_data.extend(trace_data)
+
+        await self.event_sender.send(
+            TracesMerged(task_id=task_id, traces=all_trace_data)
+        )
+
+        del self._pending_traces[task_id]
+        if task_id in self._expected_ranks:
+            del self._expected_ranks[task_id]

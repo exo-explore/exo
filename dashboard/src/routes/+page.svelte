@@ -5,7 +5,13 @@
     ChatMessages,
     ChatSidebar,
     ModelCard,
+    ModelPickerModal,
   } from "$lib/components";
+  import {
+    favorites,
+    toggleFavorite,
+    getFavoritesSet,
+  } from "$lib/stores/favorites.svelte";
   import {
     hasStartedChat,
     isTopologyMinimized,
@@ -19,6 +25,9 @@
     selectedPreviewModelId,
     isLoadingPreviews,
     selectPreviewModel,
+    togglePreviewNodeFilter,
+    clearPreviewNodeFilter,
+    previewNodeFilter,
     createConversation,
     setSelectedChatModel,
     selectedChatModel,
@@ -28,6 +37,8 @@
     toggleTopologyOnlyMode,
     chatSidebarVisible,
     toggleChatSidebarVisible,
+    thunderboltBridgeCycles,
+    nodeThunderboltBridge,
     type DownloadProgress,
     type PlacementPreview,
   } from "$lib/stores/app.svelte";
@@ -49,6 +60,41 @@
   const debugEnabled = $derived(debugMode());
   const topologyOnlyEnabled = $derived(topologyOnlyMode());
   const sidebarVisible = $derived(chatSidebarVisible());
+  const tbBridgeCycles = $derived(thunderboltBridgeCycles());
+  const tbBridgeData = $derived(nodeThunderboltBridge());
+  const nodeFilter = $derived(previewNodeFilter());
+
+  // Helper to get friendly node name from node ID
+  function getNodeName(nodeId: string): string {
+    const node = data?.nodes?.[nodeId];
+    return node?.friendly_name || nodeId.slice(0, 8) + "...";
+  }
+
+  // Helper to get the thunderbolt bridge service name from a cycle
+  function getTbBridgeServiceName(cycle: string[]): string {
+    // Try to find service name from any node in the cycle
+    for (const nodeId of cycle) {
+      const nodeData = tbBridgeData?.[nodeId];
+      if (nodeData?.serviceName) {
+        return nodeData.serviceName;
+      }
+    }
+    return "Thunderbolt Bridge"; // Fallback if no service name found
+  }
+
+  // Copy to clipboard state and function
+  let copiedCommand = $state(false);
+  async function copyToClipboard(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      copiedCommand = true;
+      setTimeout(() => {
+        copiedCommand = false;
+      }, 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  }
 
   let mounted = $state(false);
 
@@ -60,6 +106,11 @@
       storage_size_megabytes?: number;
       tasks?: string[];
       hugging_face_id?: string;
+      is_custom?: boolean;
+      family?: string;
+      quantization?: string;
+      base_model?: string;
+      capabilities?: string[];
     }>
   >([]);
 
@@ -89,6 +140,15 @@
       model.tasks.includes("TextToImage") ||
       model.tasks.includes("ImageToImage")
     );
+  }
+
+  // Helper to check if a model supports image editing
+  function modelSupportsImageEditing(modelId: string): boolean {
+    const model = models.find(
+      (m) => m.id === modelId || m.hugging_face_id === modelId,
+    );
+    if (!model?.tasks) return false;
+    return model.tasks.includes("ImageToImage");
   }
   let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
   type InstanceMeta = "MlxRing" | "MlxIbv" | "MlxJaccl";
@@ -162,15 +222,11 @@
   let launchingModelId = $state<string | null>(null);
   let instanceDownloadExpandedNodes = $state<Set<string>>(new Set());
 
-  // Draft model editing state
-  let editingDraftInstanceId = $state<string | null>(null);
-  let editDraftModel = $state<string | null>(null);
-  let editNumDraftTokens = $state<number>(4);
-  let draftEditDropdownSearch = $state("");
+  // Model picker modal state
+  let isModelPickerOpen = $state(false);
 
-  // Custom dropdown state
-  let isModelDropdownOpen = $state(false);
-  let modelDropdownSearch = $state("");
+  // Favorites state (reactive)
+  const favoritesSet = $derived(getFavoritesSet());
 
   // Slider dragging state
   let isDraggingSlider = $state(false);
@@ -186,6 +242,9 @@
 
   // Preview card hover state for highlighting nodes in topology
   let hoveredPreviewNodes = $state<Set<string>>(new Set());
+
+  // Computed: Check if filter is active (from store)
+  const isFilterActive = $derived(() => nodeFilter.size > 0);
 
   // Helper to unwrap tagged instance for hover highlighting
   function unwrapInstanceNodes(instanceWrapped: unknown): Set<string> {
@@ -484,6 +543,47 @@
     }
   }
 
+  async function addModelFromPicker(modelId: string) {
+    const response = await fetch("/models/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model_id: modelId }),
+    });
+
+    if (!response.ok) {
+      let message = `Failed to add model (${response.status}: ${response.statusText})`;
+      try {
+        const err = await response.json();
+        if (err.detail) message = err.detail;
+      } catch {
+        // use default message
+      }
+      throw new Error(message);
+    }
+
+    await fetchModels();
+  }
+
+  async function deleteCustomModel(modelId: string) {
+    try {
+      const response = await fetch(
+        `/models/custom/${encodeURIComponent(modelId)}`,
+        { method: "DELETE" },
+      );
+      if (response.ok) {
+        await fetchModels();
+      }
+    } catch {
+      console.error("Failed to delete custom model");
+    }
+  }
+
+  function handleModelPickerSelect(modelId: string) {
+    selectPreviewModel(modelId);
+    saveLaunchDefaults();
+    isModelPickerOpen = false;
+  }
+
   async function launchInstance(
     modelId: string,
     specificPreview?: PlacementPreview | null,
@@ -738,6 +838,8 @@
     instanceWrapped: unknown,
   ): {
     isDownloading: boolean;
+    isFailed: boolean;
+    errorMessage: string | null;
     progress: DownloadProgress | null;
     statusText: string;
     perNode: Array<{
@@ -749,6 +851,8 @@
     if (!downloadsData || Object.keys(downloadsData).length === 0) {
       return {
         isDownloading: false,
+        isFailed: false,
+        errorMessage: null,
         progress: null,
         statusText: "RUNNING",
         perNode: [],
@@ -760,6 +864,8 @@
     if (!instance || typeof instance !== "object") {
       return {
         isDownloading: false,
+        isFailed: false,
+        errorMessage: null,
         progress: null,
         statusText: "PREPARING",
         perNode: [],
@@ -815,6 +921,26 @@
           downloadKind
         ] as Record<string, unknown>;
 
+        // Handle DownloadFailed - return immediately with error info
+        if (downloadKind === "DownloadFailed") {
+          const downloadModelId = extractModelIdFromDownload(downloadPayload);
+          if (
+            instanceModelId &&
+            downloadModelId &&
+            downloadModelId === instanceModelId
+          ) {
+            return {
+              isDownloading: false,
+              isFailed: true,
+              errorMessage:
+                (downloadPayload.errorMessage as string) || "Download failed",
+              progress: null,
+              statusText: "FAILED",
+              perNode: [],
+            };
+          }
+        }
+
         if (downloadKind !== "DownloadOngoing") continue;
         if (!downloadPayload) continue;
 
@@ -850,6 +976,8 @@
       const statusInfo = deriveInstanceStatus(instanceWrapped);
       return {
         isDownloading: false,
+        isFailed: statusInfo.statusText === "FAILED",
+        errorMessage: null,
         progress: null,
         statusText: statusInfo.statusText,
         perNode: [],
@@ -862,6 +990,8 @@
 
     return {
       isDownloading: true,
+      isFailed: false,
+      errorMessage: null,
       progress: {
         totalBytes,
         downloadedBytes,
@@ -1018,53 +1148,6 @@
     }
   }
 
-  // Open draft model edit modal for an instance
-  function openDraftModelEdit(
-    instanceId: string,
-    currentDraftModel: string | null,
-    currentNumTokens: number | null,
-  ): void {
-    editingDraftInstanceId = instanceId;
-    editDraftModel = currentDraftModel;
-    editNumDraftTokens = currentNumTokens ?? 4;
-    draftEditDropdownSearch = "";
-  }
-
-  // Close draft model edit modal
-  function closeDraftModelEdit(): void {
-    editingDraftInstanceId = null;
-    editDraftModel = null;
-    editNumDraftTokens = 4;
-    draftEditDropdownSearch = "";
-  }
-
-  // Save draft model settings for an instance
-  async function saveDraftModel(): Promise<void> {
-    if (!editingDraftInstanceId) return;
-
-    try {
-      const response = await fetch(
-        `/instance/${editingDraftInstanceId}/draft_model`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            draft_model: editDraftModel,
-            num_draft_tokens: editNumDraftTokens,
-          }),
-        },
-      );
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("Failed to set draft model:", errorText);
-      }
-    } catch (error) {
-      console.error("Error setting draft model:", error);
-    } finally {
-      closeDraftModelEdit();
-    }
-  }
-
   // Helper to unwrap tagged unions like { MlxRingInstance: {...} }
   function getTagged(obj: unknown): [string | null, unknown] {
     if (!obj || typeof obj !== "object") return [null, null];
@@ -1090,8 +1173,6 @@
     nodeNames: string[];
     nodeIds: string[];
     nodeCount: number;
-    draftModel: string | null;
-    numDraftTokens: number | null;
   } {
     const [instanceTag, instance] = getTagged(instanceWrapped);
     if (!instance || typeof instance !== "object") {
@@ -1101,8 +1182,6 @@
         nodeNames: [],
         nodeIds: [],
         nodeCount: 0,
-        draftModel: null,
-        numDraftTokens: null,
       };
     }
 
@@ -1120,8 +1199,6 @@
         nodeToRunner?: Record<string, string>;
         runnerToShard?: Record<string, unknown>;
       };
-      draftModel?: string;
-      numDraftTokens?: number;
     };
 
     // Sharding strategy from first shard
@@ -1144,18 +1221,12 @@
       return node?.friendly_name || nodeId.slice(0, 8);
     });
 
-    // Draft model for speculative decoding
-    const draftModel = inst.draftModel ?? null;
-    const numDraftTokens = inst.numDraftTokens ?? null;
-
     return {
       instanceType,
       sharding,
       nodeNames,
       nodeIds,
       nodeCount: nodeIds.length,
-      draftModel,
-      numDraftTokens,
     };
   }
 
@@ -1516,7 +1587,7 @@
 
   // Get ALL filtered previews based on current settings (matching minimum nodes)
   // Note: previewsData already contains previews for the selected model (fetched via API)
-  // We filter by sharding/instance type and min nodes, returning ALL eligible previews
+  // Backend handles node_ids filtering, we filter by sharding/instance type and min nodes
   const filteredPreviews = $derived(() => {
     if (!selectedModelId || previewsData.length === 0) return [];
 
@@ -1649,7 +1720,86 @@
           <TopologyGraph
             class="w-full h-full"
             highlightedNodes={highlightedNodes()}
+            filteredNodes={nodeFilter}
+            onNodeClick={togglePreviewNodeFilter}
           />
+
+          <!-- Thunderbolt Bridge Cycle Warning -->
+          {#if tbBridgeCycles.length > 0}
+            {@const cycle = tbBridgeCycles[0]}
+            {@const serviceName = getTbBridgeServiceName(cycle)}
+            {@const disableCmd = `sudo networksetup -setnetworkserviceenabled "${serviceName}" off`}
+            <div class="absolute top-4 left-4 group" role="alert">
+              <div
+                class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
+              >
+                <svg
+                  class="w-5 h-5 text-yellow-400 flex-shrink-0"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  />
+                </svg>
+                <span class="text-sm font-mono text-yellow-200">
+                  THUNDERBOLT BRIDGE CYCLE DETECTED
+                </span>
+              </div>
+
+              <!-- Tooltip on hover -->
+              <div
+                class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+              >
+                <p class="text-xs text-white/80 mb-2">
+                  A network routing cycle was detected between nodes connected
+                  via Thunderbolt Bridge. This can cause connectivity issues.
+                </p>
+                <p class="text-xs text-white/60 mb-2">
+                  <span class="text-yellow-300">Affected nodes:</span>
+                  {cycle.map(getNodeName).join(" → ")}
+                </p>
+                <p class="text-xs text-white/60 mb-1">
+                  <span class="text-yellow-300">To fix:</span> Disable the Thunderbolt
+                  Bridge on one of the affected nodes:
+                </p>
+                <button
+                  type="button"
+                  onclick={() => copyToClipboard(disableCmd)}
+                  class="w-full flex items-center gap-2 text-[10px] font-mono bg-exo-black/60 px-2 py-1.5 rounded text-exo-yellow break-all text-left hover:bg-exo-black/80 transition-colors cursor-pointer group/copy"
+                  title="Click to copy"
+                >
+                  <span class="flex-1">{disableCmd}</span>
+                  <svg
+                    class="w-3.5 h-3.5 flex-shrink-0 text-white/40 group-hover/copy:text-exo-yellow transition-colors"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    {#if copiedCommand}
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M5 13l4 4L19 7"
+                      />
+                    {:else}
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                      />
+                    {/if}
+                  </svg>
+                </button>
+              </div>
+            </div>
+          {/if}
+
           <!-- Exit topology-only mode button -->
           <button
             type="button"
@@ -1689,7 +1839,111 @@
             <TopologyGraph
               class="w-full h-full"
               highlightedNodes={highlightedNodes()}
+              filteredNodes={nodeFilter}
+              onNodeClick={togglePreviewNodeFilter}
             />
+
+            <!-- Thunderbolt Bridge Cycle Warning -->
+            {#if tbBridgeCycles.length > 0}
+              {@const cycle = tbBridgeCycles[0]}
+              {@const serviceName = getTbBridgeServiceName(cycle)}
+              {@const disableCmd = `sudo networksetup -setnetworkserviceenabled "${serviceName}" off`}
+              <div class="absolute top-4 left-4 group" role="alert">
+                <div
+                  class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
+                >
+                  <svg
+                    class="w-5 h-5 text-yellow-400 flex-shrink-0"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    />
+                  </svg>
+                  <span class="text-sm font-mono text-yellow-200">
+                    THUNDERBOLT BRIDGE CYCLE DETECTED
+                  </span>
+                </div>
+
+                <!-- Tooltip on hover -->
+                <div
+                  class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+                >
+                  <p class="text-xs text-white/80 mb-2">
+                    A network routing cycle was detected between nodes connected
+                    via Thunderbolt Bridge. This can cause connectivity issues.
+                  </p>
+                  <p class="text-xs text-white/60 mb-2">
+                    <span class="text-yellow-300">Affected nodes:</span>
+                    {cycle.map(getNodeName).join(" → ")}
+                  </p>
+                  <p class="text-xs text-white/60 mb-1">
+                    <span class="text-yellow-300">To fix:</span> Disable the Thunderbolt
+                    Bridge on one of the affected nodes:
+                  </p>
+                  <button
+                    type="button"
+                    onclick={() => copyToClipboard(disableCmd)}
+                    class="w-full flex items-center gap-2 text-[10px] font-mono bg-exo-black/60 px-2 py-1.5 rounded text-exo-yellow break-all text-left hover:bg-exo-black/80 transition-colors cursor-pointer group/copy"
+                    title="Click to copy"
+                  >
+                    <span class="flex-1">{disableCmd}</span>
+                    <svg
+                      class="w-3.5 h-3.5 flex-shrink-0 text-white/40 group-hover/copy:text-exo-yellow transition-colors"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      {#if copiedCommand}
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="M5 13l4 4L19 7"
+                        />
+                      {:else}
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                        />
+                      {/if}
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            {/if}
+
+            <!-- Node Filter Indicator (top-right corner) -->
+            {#if isFilterActive()}
+              <button
+                onclick={clearPreviewNodeFilter}
+                class="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 bg-exo-dark-gray/80 border border-exo-yellow/40 rounded text-exo-yellow hover:border-exo-yellow/60 transition-colors cursor-pointer backdrop-blur-sm"
+                title="Clear filter"
+              >
+                <span class="text-[10px] font-mono tracking-wider">
+                  FILTER: {nodeFilter.size}
+                </span>
+                <svg
+                  class="w-3 h-3"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            {/if}
           </div>
 
           <!-- Chat Input - Below topology -->
@@ -1853,42 +2107,12 @@
                             >{id.slice(0, 8).toUpperCase()}</span
                           >
                         </div>
-                        <div class="flex items-center gap-2">
-                          <button
-                            onclick={() =>
-                              openDraftModelEdit(
-                                id,
-                                instanceInfo.draftModel,
-                                instanceInfo.numDraftTokens,
-                              )}
-                            class="p-1.5 font-mono border transition-all duration-200 cursor-pointer {instanceInfo.draftModel
-                              ? 'border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/20 hover:border-cyan-500'
-                              : 'border-exo-medium-gray/50 text-white/40 hover:text-cyan-400 hover:border-cyan-500/50'}"
-                            title={instanceInfo.draftModel
-                              ? `Draft: ${instanceInfo.draftModel.split("/").pop()} (${instanceInfo.numDraftTokens}t)`
-                              : "Configure speculative decoding"}
-                          >
-                            <svg
-                              class="w-3.5 h-3.5"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              stroke-width="2"
-                            >
-                              <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                d="M13 10V3L4 14h7v7l9-11h-7z"
-                              />
-                            </svg>
-                          </button>
-                          <button
-                            onclick={() => deleteInstance(id)}
-                            class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
-                          >
-                            DELETE
-                          </button>
-                        </div>
+                        <button
+                          onclick={() => deleteInstance(id)}
+                          class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
+                        >
+                          DELETE
+                        </button>
                       </div>
                       <div class="pl-2">
                         <div
@@ -1901,13 +2125,6 @@
                             >{instanceInfo.sharding} ({instanceInfo.instanceType})</span
                           >
                         </div>
-                        {#if instanceInfo.draftModel}
-                          <div class="text-cyan-400/80 text-xs font-mono">
-                            Draft: <span class="text-cyan-400"
-                              >{instanceInfo.draftModel.split("/").pop()} ({instanceInfo.numDraftTokens}t)</span
-                            >
-                          </div>
-                        {/if}
                         {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
                           <a
                             class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
@@ -2163,6 +2380,13 @@
                           >
                             {downloadInfo.statusText}
                           </div>
+                          {#if downloadInfo.isFailed && downloadInfo.errorMessage}
+                            <div
+                              class="text-xs text-red-400/80 font-mono mt-1 break-words"
+                            >
+                              {downloadInfo.errorMessage}
+                            </div>
+                          {/if}
                         {/if}
                       </div>
                     </div>
@@ -2190,14 +2414,12 @@
               >
             </div>
 
-            <!-- Model Dropdown (Custom) -->
-            <div class="flex-shrink-0 mb-3 relative">
+            <!-- Model Picker Button -->
+            <div class="flex-shrink-0 mb-3">
               <button
                 type="button"
-                onclick={() => (isModelDropdownOpen = !isModelDropdownOpen)}
-                class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-2.5 text-sm font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 {isModelDropdownOpen
-                  ? 'border-exo-yellow/70'
-                  : ''}"
+                onclick={() => (isModelPickerOpen = true)}
+                class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-2.5 text-sm font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 relative"
               >
                 {#if selectedModelId}
                   {@const foundModel = models.find(
@@ -2205,35 +2427,12 @@
                   )}
                   {#if foundModel}
                     {@const sizeGB = getModelSizeGB(foundModel)}
-                    {@const isImageModel = modelSupportsImageGeneration(
-                      foundModel.id,
-                    )}
                     <span
                       class="flex items-center justify-between gap-2 w-full pr-4"
                     >
                       <span
                         class="flex items-center gap-2 text-exo-light-gray truncate"
                       >
-                        {#if isImageModel}
-                          <svg
-                            class="w-4 h-4 flex-shrink-0 text-exo-yellow"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            stroke-width="2"
-                          >
-                            <rect
-                              x="3"
-                              y="3"
-                              width="18"
-                              height="18"
-                              rx="2"
-                              ry="2"
-                            />
-                            <circle cx="8.5" cy="8.5" r="1.5" />
-                            <polyline points="21 15 16 10 5 21" />
-                          </svg>
-                        {/if}
                         <span class="truncate"
                           >{foundModel.name || foundModel.id}</span
                         >
@@ -2250,122 +2449,24 @@
                 {:else}
                   <span class="text-white/50">— SELECT MODEL —</span>
                 {/if}
-              </button>
-              <div
-                class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-200 {isModelDropdownOpen
-                  ? 'rotate-180'
-                  : ''}"
-              >
-                <svg
-                  class="w-4 h-4 text-exo-yellow/60"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M19 9l-7 7-7-7"
-                  />
-                </svg>
-              </div>
-
-              {#if isModelDropdownOpen}
-                <!-- Backdrop to close dropdown -->
-                <button
-                  type="button"
-                  class="fixed inset-0 z-40 cursor-default"
-                  onclick={() => (isModelDropdownOpen = false)}
-                  aria-label="Close dropdown"
-                ></button>
-
-                <!-- Dropdown Panel -->
                 <div
-                  class="absolute top-full left-0 right-0 mt-1 bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-50 max-h-64 overflow-y-auto"
+                  class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
                 >
-                  <!-- Search within dropdown -->
-                  <div
-                    class="sticky top-0 bg-exo-dark-gray border-b border-exo-medium-gray/30 p-2"
+                  <svg
+                    class="w-4 h-4 text-exo-yellow/60"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
                   >
-                    <input
-                      type="text"
-                      placeholder="Search models..."
-                      bind:value={modelDropdownSearch}
-                      class="w-full bg-exo-dark-gray/60 border border-exo-medium-gray/30 rounded px-2 py-1.5 text-xs font-mono text-white/80 placeholder:text-white/40 focus:outline-none focus:border-exo-yellow/50"
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M19 9l-7 7-7-7"
                     />
-                  </div>
-
-                  <!-- Options -->
-                  <div class="py-1">
-                    {#each sortedModels().filter((m) => !modelDropdownSearch || (m.name || m.id)
-                          .toLowerCase()
-                          .includes(modelDropdownSearch.toLowerCase())) as model}
-                      {@const sizeGB = getModelSizeGB(model)}
-                      {@const modelCanFit = hasEnoughMemory(model)}
-                      {@const isImageModel = modelSupportsImageGeneration(
-                        model.id,
-                      )}
-                      <button
-                        type="button"
-                        onclick={() => {
-                          if (modelCanFit) {
-                            selectPreviewModel(model.id);
-                            saveLaunchDefaults();
-                            isModelDropdownOpen = false;
-                            modelDropdownSearch = "";
-                          }
-                        }}
-                        disabled={!modelCanFit}
-                        class="w-full px-3 py-2 text-left text-sm font-mono tracking-wide transition-colors duration-100 flex items-center justify-between gap-2 {selectedModelId ===
-                        model.id
-                          ? 'bg-transparent text-exo-yellow cursor-pointer'
-                          : modelCanFit
-                            ? 'text-white/80 hover:text-exo-yellow cursor-pointer'
-                            : 'text-white/30 cursor-default'}"
-                      >
-                        <span class="flex items-center gap-2 truncate flex-1">
-                          {#if isImageModel}
-                            <svg
-                              class="w-4 h-4 flex-shrink-0 text-exo-yellow"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              stroke-width="2"
-                              aria-label="Image generation model"
-                            >
-                              <rect
-                                x="3"
-                                y="3"
-                                width="18"
-                                height="18"
-                                rx="2"
-                                ry="2"
-                              />
-                              <circle cx="8.5" cy="8.5" r="1.5" />
-                              <polyline points="21 15 16 10 5 21" />
-                            </svg>
-                          {/if}
-                          <span class="truncate">{model.name || model.id}</span>
-                        </span>
-                        <span
-                          class="flex-shrink-0 text-xs {modelCanFit
-                            ? 'text-white/50'
-                            : 'text-red-400/60'}"
-                        >
-                          {sizeGB >= 1
-                            ? sizeGB.toFixed(0)
-                            : sizeGB.toFixed(1)}GB
-                        </span>
-                      </button>
-                    {:else}
-                      <div class="px-3 py-2 text-xs text-white/50 font-mono">
-                        No models found
-                      </div>
-                    {/each}
-                  </div>
+                  </svg>
                 </div>
-              {/if}
+              </button>
             </div>
 
             <!-- Configuration Options -->
@@ -2666,7 +2767,36 @@
               <div
                 class="relative aspect-square bg-exo-dark-gray rounded-lg overflow-hidden"
               >
-                <TopologyGraph highlightedNodes={highlightedNodes()} />
+                <TopologyGraph
+                  highlightedNodes={highlightedNodes()}
+                  filteredNodes={nodeFilter}
+                  onNodeClick={togglePreviewNodeFilter}
+                />
+
+                <!-- Thunderbolt Bridge Cycle Warning (compact) -->
+                {#if tbBridgeCycles.length > 0}
+                  <div
+                    class="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm"
+                    title="Thunderbolt Bridge cycle detected - click to view details"
+                  >
+                    <svg
+                      class="w-3.5 h-3.5 text-yellow-400"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                      />
+                    </svg>
+                    <span class="text-[10px] font-mono text-yellow-200"
+                      >TB CYCLE</span
+                    >
+                  </div>
+                {/if}
               </div>
             </button>
 
@@ -2812,42 +2942,12 @@
                               >{id.slice(0, 8).toUpperCase()}</span
                             >
                           </div>
-                          <div class="flex items-center gap-2">
-                            <button
-                              onclick={() =>
-                                openDraftModelEdit(
-                                  id,
-                                  instanceInfo.draftModel,
-                                  instanceInfo.numDraftTokens,
-                                )}
-                              class="p-1.5 font-mono border transition-all duration-200 cursor-pointer {instanceInfo.draftModel
-                                ? 'border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/20 hover:border-cyan-500'
-                                : 'border-exo-medium-gray/50 text-white/40 hover:text-cyan-400 hover:border-cyan-500/50'}"
-                              title={instanceInfo.draftModel
-                                ? `Draft: ${instanceInfo.draftModel.split("/").pop()} (${instanceInfo.numDraftTokens}t)`
-                                : "Configure speculative decoding"}
-                            >
-                              <svg
-                                class="w-3.5 h-3.5"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke="currentColor"
-                                stroke-width="2"
-                              >
-                                <path
-                                  stroke-linecap="round"
-                                  stroke-linejoin="round"
-                                  d="M13 10V3L4 14h7v7l9-11h-7z"
-                                />
-                              </svg>
-                            </button>
-                            <button
-                              onclick={() => deleteInstance(id)}
-                              class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
-                            >
-                              DELETE
-                            </button>
-                          </div>
+                          <button
+                            onclick={() => deleteInstance(id)}
+                            class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
+                          >
+                            DELETE
+                          </button>
                         </div>
                         <div class="pl-2">
                           <div
@@ -2860,13 +2960,6 @@
                               >{instanceInfo.sharding} ({instanceInfo.instanceType})</span
                             >
                           </div>
-                          {#if instanceInfo.draftModel}
-                            <div class="text-cyan-400/80 text-xs font-mono">
-                              Draft: <span class="text-cyan-400"
-                                >{instanceInfo.draftModel.split("/").pop()} ({instanceInfo.numDraftTokens}t)</span
-                              >
-                            </div>
-                          {/if}
                           {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
                             <a
                               class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
@@ -3132,6 +3225,13 @@
                             >
                               {downloadInfo.statusText}
                             </div>
+                            {#if downloadInfo.isFailed && downloadInfo.errorMessage}
+                              <div
+                                class="text-xs text-red-400/80 font-mono mt-1 break-words"
+                              >
+                                {downloadInfo.errorMessage}
+                              </div>
+                            {/if}
                           {/if}
                         </div>
                       </div>
@@ -3144,111 +3244,24 @@
         {/if}
       </div>
     {/if}
-
-    <!-- Draft Model Edit Modal -->
-    {#if editingDraftInstanceId}
-      <div
-        class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center"
-        role="dialog"
-        aria-modal="true"
-        onclick={closeDraftModelEdit}
-        onkeydown={(e) => e.key === "Escape" && closeDraftModelEdit()}
-      >
-        <div
-          class="bg-exo-dark-gray border border-exo-yellow/30 p-6 max-w-md w-full mx-4"
-          onclick={(e) => e.stopPropagation()}
-          onkeydown={(e) => e.stopPropagation()}
-          role="document"
-        >
-          <h3 class="text-exo-yellow font-mono text-lg tracking-wider mb-4">
-            SPECULATIVE DECODING
-          </h3>
-
-          <div class="space-y-4">
-            <!-- Draft Model Selection -->
-            <div>
-              <label
-                class="block text-white/60 text-xs font-mono tracking-wider mb-2"
-                >DRAFT MODEL</label
-              >
-              <div class="relative">
-                <input
-                  type="text"
-                  bind:value={draftEditDropdownSearch}
-                  placeholder={editDraftModel || "Select a draft model..."}
-                  class="w-full bg-exo-dark-gray/60 border border-exo-yellow/30 text-white text-sm font-mono px-3 py-2 focus:outline-none focus:border-exo-yellow/60"
-                />
-                {#if draftEditDropdownSearch}
-                  <div
-                    class="absolute z-10 w-full mt-1 bg-exo-dark-gray border border-exo-yellow/30 max-h-48 overflow-y-auto"
-                  >
-                    {#each models.filter((m) => m.id
-                        .toLowerCase()
-                        .includes(draftEditDropdownSearch.toLowerCase())) as model}
-                      <button
-                        class="w-full text-left px-3 py-2 text-sm font-mono text-white/80 hover:bg-exo-yellow/10 hover:text-exo-yellow cursor-pointer"
-                        onclick={() => {
-                          editDraftModel = model.hugging_face_id || model.id;
-                          draftEditDropdownSearch = "";
-                        }}
-                      >
-                        {model.name || model.id}
-                      </button>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
-              {#if editDraftModel}
-                <div
-                  class="mt-2 flex items-center justify-between text-cyan-400 text-xs font-mono"
-                >
-                  <span>{editDraftModel}</span>
-                  <button
-                    class="text-red-400 hover:text-red-300 cursor-pointer"
-                    onclick={() => (editDraftModel = null)}
-                  >
-                    Clear
-                  </button>
-                </div>
-              {/if}
-            </div>
-
-            <!-- Num Draft Tokens -->
-            <div>
-              <label
-                class="block text-white/60 text-xs font-mono tracking-wider mb-2"
-                >DRAFT TOKENS</label
-              >
-              <input
-                type="number"
-                min="1"
-                max="16"
-                bind:value={editNumDraftTokens}
-                class="w-full bg-exo-dark-gray/60 border border-exo-yellow/30 text-white text-sm font-mono px-3 py-2 focus:outline-none focus:border-exo-yellow/60"
-              />
-              <p class="text-white/40 text-xs font-mono mt-1">
-                Number of tokens to draft per step (1-16)
-              </p>
-            </div>
-          </div>
-
-          <!-- Actions -->
-          <div class="flex justify-end gap-3 mt-6">
-            <button
-              onclick={closeDraftModelEdit}
-              class="px-4 py-2 text-xs font-mono tracking-wider uppercase border border-white/30 text-white/60 hover:bg-white/10 hover:text-white transition-all cursor-pointer"
-            >
-              CANCEL
-            </button>
-            <button
-              onclick={saveDraftModel}
-              class="px-4 py-2 text-xs font-mono tracking-wider uppercase border border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/20 transition-all cursor-pointer"
-            >
-              SAVE
-            </button>
-          </div>
-        </div>
-      </div>
-    {/if}
   </main>
 </div>
+
+<ModelPickerModal
+  isOpen={isModelPickerOpen}
+  {models}
+  {selectedModelId}
+  favorites={favoritesSet}
+  existingModelIds={new Set(models.map((m) => m.id))}
+  canModelFit={(modelId) => {
+    const model = models.find((m) => m.id === modelId);
+    return model ? hasEnoughMemory(model) : false;
+  }}
+  onSelect={handleModelPickerSelect}
+  onClose={() => (isModelPickerOpen = false)}
+  onToggleFavorite={toggleFavorite}
+  onAddModel={addModelFromPicker}
+  onDeleteModel={deleteCustomModel}
+  totalMemoryGB={clusterMemory().total / (1024 * 1024 * 1024)}
+  usedMemoryGB={clusterMemory().used / (1024 * 1024 * 1024)}
+/>

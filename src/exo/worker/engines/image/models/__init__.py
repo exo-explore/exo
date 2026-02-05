@@ -33,6 +33,7 @@ _ADAPTER_REGISTRY: dict[str, AdapterFactory] = {
 # Config registry: maps model ID patterns to configs
 _CONFIG_REGISTRY: dict[str, ImageModelConfig] = {
     "flux.1-schnell": FLUX_SCHNELL_CONFIG,
+    "flux.1-krea-dev": FLUX_DEV_CONFIG,  # Must come before "flux.1-dev" for pattern matching
     "flux.1-dev": FLUX_DEV_CONFIG,
     "qwen-image-edit": QWEN_IMAGE_EDIT_CONFIG,  # Must come before "qwen-image" for pattern matching
     "qwen-image": QWEN_IMAGE_CONFIG,

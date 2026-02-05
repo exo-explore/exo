@@ -1,15 +1,15 @@
 from pydantic import Field
 
-from exo.shared.models.model_cards import ModelCard
+from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.api import (
-    ChatCompletionTaskParams,
-    ImageEditsInternalParams,
+    ImageEditsTaskParams,
     ImageGenerationTaskParams,
 )
 from exo.shared.types.chunks import InputImageChunk
-from exo.shared.types.common import CommandId, ModelId, NodeId
+from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
-from exo.shared.types.worker.shards import Sharding
+from exo.shared.types.worker.shards import Sharding, ShardMetadata
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
@@ -21,16 +21,16 @@ class TestCommand(BaseCommand):
     __test__ = False
 
 
-class ChatCompletion(BaseCommand):
-    request_params: ChatCompletionTaskParams
+class TextGeneration(BaseCommand):
+    task_params: TextGenerationTaskParams
 
 
 class ImageGeneration(BaseCommand):
-    request_params: ImageGenerationTaskParams
+    task_params: ImageGenerationTaskParams
 
 
 class ImageEdits(BaseCommand):
-    request_params: ImageEditsInternalParams
+    task_params: ImageEditsTaskParams
 
 
 class PlaceInstance(BaseCommand):
@@ -38,8 +38,6 @@ class PlaceInstance(BaseCommand):
     sharding: Sharding
     instance_meta: InstanceMeta
     min_nodes: int
-    draft_model: ModelId | None = None  # For speculative decoding
-    num_draft_tokens: int = 4  # Tokens to draft per iteration
 
 
 class CreateInstance(BaseCommand):
@@ -48,14 +46,6 @@ class CreateInstance(BaseCommand):
 
 class DeleteInstance(BaseCommand):
     instance_id: InstanceId
-
-
-class SetInstanceDraftModel(BaseCommand):
-    """Set or update the draft model for an existing instance."""
-
-    instance_id: InstanceId
-    draft_model: ModelId | None  # None to disable speculative decoding
-    num_draft_tokens: int = 4
 
 
 class TaskFinished(BaseCommand):
@@ -72,16 +62,28 @@ class RequestEventLog(BaseCommand):
     since_idx: int
 
 
+class StartDownload(BaseCommand):
+    target_node_id: NodeId
+    shard_metadata: ShardMetadata
+
+
+class DeleteDownload(BaseCommand):
+    target_node_id: NodeId
+    model_id: ModelId
+
+
+DownloadCommand = StartDownload | DeleteDownload
+
+
 Command = (
     TestCommand
     | RequestEventLog
-    | ChatCompletion
+    | TextGeneration
     | ImageGeneration
     | ImageEdits
     | PlaceInstance
     | CreateInstance
     | DeleteInstance
-    | SetInstanceDraftModel
     | TaskFinished
     | SendInputChunk
 )
@@ -90,3 +92,8 @@ Command = (
 class ForwarderCommand(CamelCaseModel):
     origin: NodeId
     command: Command
+
+
+class ForwarderDownloadCommand(CamelCaseModel):
+    origin: NodeId
+    command: DownloadCommand

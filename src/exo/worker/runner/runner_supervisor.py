@@ -127,20 +127,25 @@ class RunnerSupervisor:
         self._tg.cancel_scope.cancel()
 
     async def start_task(self, task: Task):
+        if task.task_id in self.pending:
+            logger.warning(
+                f"Skipping invalid task {task} as it has already been submitted"
+            )
+            return
         if task.task_id in self.completed:
-            logger.info(
+            logger.warning(
                 f"Skipping invalid task {task} as it has already been completed"
             )
+            return
         logger.info(f"Starting task {task}")
         event = anyio.Event()
         self.pending[task.task_id] = event
         try:
-            self._task_sender.send(task)
+            await self._task_sender.send_async(task)
         except ClosedResourceError:
             logger.warning(f"Task {task} dropped, runner closed communication.")
             return
         await event.wait()
-        logger.info(f"Finished task {task}")
 
     async def _forward_events(self):
         with self._ev_recv as events:

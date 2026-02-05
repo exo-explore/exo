@@ -7,6 +7,11 @@ import rustworkx as rx
 from pydantic import BaseModel, ConfigDict
 
 from exo.shared.types.common import NodeId
+from exo.shared.types.profiling import (
+    InterfaceType,
+    NodeNetworkInfo,
+    ThunderboltBridgeStatus,
+)
 from exo.shared.types.topology import (
     Connection,
     Cycle,
@@ -188,24 +193,25 @@ class Topology:
             cycles.append(Cycle(node_ids=[node_id]))
         return cycles
 
-    def get_cycles_tb(self) -> list[Cycle]:
-        tb_edges = [
+    def get_rdma_cycles(self) -> list[Cycle]:
+        rdma_edges = [
             (u, v, conn)
             for u, v, conn in self._graph.weighted_edge_list()
-            if conn.is_thunderbolt()
+            if isinstance(conn, RDMAConnection)
         ]
 
-        tb_graph: rx.PyDiGraph[NodeId, SocketConnection] = rx.PyDiGraph()
-        tb_graph.add_nodes_from(self._graph.nodes())
+        rdma_graph: rx.PyDiGraph[NodeId, SocketConnection | RDMAConnection] = (
+            rx.PyDiGraph()
+        )
+        rdma_graph.add_nodes_from(self._graph.nodes())
 
-        for u, v, conn in tb_edges:
-            if isinstance(conn, SocketConnection):
-                tb_graph.add_edge(u, v, conn)
+        for u, v, conn in rdma_edges:
+            rdma_graph.add_edge(u, v, conn)
 
-        cycle_idxs = rx.simple_cycles(tb_graph)
+        cycle_idxs = rx.simple_cycles(rdma_graph)
         cycles: list[Cycle] = []
         for cycle_idx in cycle_idxs:
-            cycle = Cycle(node_ids=[tb_graph[idx] for idx in cycle_idx])
+            cycle = Cycle(node_ids=[rdma_graph[idx] for idx in cycle_idx])
             cycles.append(cycle)
 
         return cycles
@@ -219,18 +225,83 @@ class Topology:
                 topology.add_connection(connection)
         return topology
 
-    def is_thunderbolt_cycle(self, cycle: Cycle) -> bool:
+    def is_rdma_cycle(self, cycle: Cycle) -> bool:
         node_idxs = [node for node in cycle]
         rx_idxs = [self._vertex_indices[idx] for idx in node_idxs]
         for rid in rx_idxs:
             for neighbor_rid in self._graph.neighbors(rid):
                 if neighbor_rid not in rx_idxs:
                     continue
-                has_tb = False
+                has_rdma = False
                 for edge in self._graph.get_all_edge_data(rid, neighbor_rid):
-                    if edge.is_thunderbolt():
-                        has_tb = True
+                    if isinstance(edge, RDMAConnection):
+                        has_rdma = True
                         break
-                if not has_tb:
+                if not has_rdma:
                     return False
         return True
+
+    def get_thunderbolt_bridge_cycles(
+        self,
+        node_tb_bridge_status: Mapping[NodeId, ThunderboltBridgeStatus],
+        node_network: Mapping[NodeId, NodeNetworkInfo],
+    ) -> list[list[NodeId]]:
+        """
+        Find cycles in the Thunderbolt topology where all nodes have TB bridge enabled.
+        Only returns cycles with >=2 nodes (2+ machines in a loop), as
+        1 node doesn't cause the broadcast storm problem.
+        """
+        enabled_nodes = {
+            node_id
+            for node_id, status in node_tb_bridge_status.items()
+            if status.enabled
+        }
+
+        if len(enabled_nodes) < 2:
+            return []
+
+        thunderbolt_ips = _get_ips_with_interface_type(
+            enabled_nodes, node_network, "thunderbolt"
+        )
+
+        # Build subgraph with only TB bridge enabled nodes and thunderbolt connections
+        graph: rx.PyDiGraph[NodeId, SocketConnection | RDMAConnection] = rx.PyDiGraph()
+        node_to_idx: dict[NodeId, int] = {}
+
+        for node_id in enabled_nodes:
+            if node_id in self._vertex_indices:
+                node_to_idx[node_id] = graph.add_node(node_id)
+
+        for u, v, conn in self._graph.weighted_edge_list():
+            source_id, sink_id = self._graph[u], self._graph[v]
+            if source_id not in node_to_idx or sink_id not in node_to_idx:
+                continue
+            # Include connection if it's over a thunderbolt interface
+            if (
+                isinstance(conn, SocketConnection)
+                and conn.sink_multiaddr.ip_address in thunderbolt_ips
+            ):
+                graph.add_edge(node_to_idx[source_id], node_to_idx[sink_id], conn)
+            if isinstance(conn, RDMAConnection):
+                graph.add_edge(node_to_idx[source_id], node_to_idx[sink_id], conn)
+
+        return [
+            [graph[idx] for idx in cycle]
+            for cycle in rx.simple_cycles(graph)
+            if len(cycle) >= 2
+        ]
+
+
+def _get_ips_with_interface_type(
+    node_ids: set[NodeId],
+    node_network: Mapping[NodeId, NodeNetworkInfo],
+    interface_type: InterfaceType,
+) -> set[str]:
+    """Get all IP addresses on interfaces of the specified type for the given nodes."""
+    ips: set[str] = set()
+    for node_id in node_ids:
+        network_info = node_network.get(node_id, NodeNetworkInfo())
+        for iface in network_info.interfaces:
+            if iface.interface_type == interface_type:
+                ips.add(iface.ip_address)
+    return ips

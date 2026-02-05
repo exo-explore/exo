@@ -24,7 +24,15 @@ from pydantic import (
     TypeAdapter,
 )
 
+from exo.download.huggingface_utils import (
+    filter_repo_objects,
+    get_allow_patterns,
+    get_auth_headers,
+    get_hf_endpoint,
+    get_hf_token,
+)
 from exo.shared.constants import EXO_MODELS_DIR
+from exo.shared.models.model_cards import ModelTask
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import (
@@ -35,12 +43,31 @@ from exo.shared.types.worker.downloads import (
     RepoFileDownloadProgress,
 )
 from exo.shared.types.worker.shards import ShardMetadata
-from exo.worker.download.huggingface_utils import (
-    filter_repo_objects,
-    get_allow_patterns,
-    get_auth_headers,
-    get_hf_endpoint,
-)
+
+
+class HuggingFaceAuthenticationError(Exception):
+    """Raised when HuggingFace returns 401/403 for a model download."""
+
+
+class HuggingFaceRateLimitError(Exception):
+    """429 Huggingface code"""
+
+
+async def _build_auth_error_message(status_code: int, model_id: ModelId) -> str:
+    token = await get_hf_token()
+    if status_code == 401 and token is None:
+        return (
+            f"Model '{model_id}' requires authentication. "
+            f"Set HF_TOKEN in the app's Advanced settings, set the HF_TOKEN environment variable, or run `hf auth login`. "
+            f"Get a token at https://huggingface.co/settings/tokens"
+        )
+    elif status_code == 403:
+        return (
+            f"Access denied to '{model_id}'. "
+            f"Please accept the model terms at https://huggingface.co/{model_id}"
+        )
+    else:
+        return f"Authentication failed for '{model_id}' (HTTP {status_code})"
 
 
 def trim_etag(etag: str) -> str:
@@ -98,11 +125,20 @@ async def ensure_models_dir() -> Path:
 
 
 async def delete_model(model_id: ModelId) -> bool:
-    model_dir = await ensure_models_dir() / model_id.normalize()
-    if not await aios.path.exists(model_dir):
-        return False
-    await asyncio.to_thread(shutil.rmtree, model_dir, ignore_errors=False)
-    return True
+    models_dir = await ensure_models_dir()
+    model_dir = models_dir / model_id.normalize()
+    cache_dir = models_dir / "caches" / model_id.normalize()
+
+    deleted = False
+    if await aios.path.exists(model_dir):
+        await asyncio.to_thread(shutil.rmtree, model_dir, ignore_errors=False)
+        deleted = True
+
+    # Also clear cache
+    if await aios.path.exists(cache_dir):
+        await asyncio.to_thread(shutil.rmtree, cache_dir, ignore_errors=False)
+
+    return deleted
 
 
 async def seed_models(seed_dir: str | Path):
@@ -122,35 +158,76 @@ async def seed_models(seed_dir: str | Path):
                     logger.error(traceback.format_exc())
 
 
+_fetched_file_lists_this_session: set[str] = set()
+
+
 async def fetch_file_list_with_cache(
-    model_id: ModelId, revision: str = "main", recursive: bool = False
+    model_id: ModelId,
+    revision: str = "main",
+    recursive: bool = False,
+    skip_internet: bool = False,
+    on_connection_lost: Callable[[], None] = lambda: None,
 ) -> list[FileListEntry]:
     target_dir = (await ensure_models_dir()) / "caches" / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)
     cache_file = target_dir / f"{model_id.normalize()}--{revision}--file_list.json"
-    if await aios.path.exists(cache_file):
+    cache_key = f"{model_id.normalize()}--{revision}"
+
+    if cache_key in _fetched_file_lists_this_session and await aios.path.exists(
+        cache_file
+    ):
         async with aiofiles.open(cache_file, "r") as f:
             return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
-    file_list = await fetch_file_list_with_retry(
-        model_id, revision, recursive=recursive
-    )
-    await aios.makedirs(cache_file.parent, exist_ok=True)
-    async with aiofiles.open(cache_file, "w") as f:
-        await f.write(TypeAdapter(list[FileListEntry]).dump_json(file_list).decode())
-    return file_list
+
+    if skip_internet:
+        if await aios.path.exists(cache_file):
+            async with aiofiles.open(cache_file, "r") as f:
+                return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
+        raise FileNotFoundError(
+            f"No internet connection and no cached file list for {model_id}"
+        )
+
+    try:
+        file_list = await fetch_file_list_with_retry(
+            model_id,
+            revision,
+            recursive=recursive,
+            on_connection_lost=on_connection_lost,
+        )
+        async with aiofiles.open(cache_file, "w") as f:
+            await f.write(
+                TypeAdapter(list[FileListEntry]).dump_json(file_list).decode()
+            )
+        _fetched_file_lists_this_session.add(cache_key)
+        return file_list
+    except Exception as e:
+        if await aios.path.exists(cache_file):
+            logger.warning(
+                f"Failed to fetch file list for {model_id}, using cached data: {e}"
+            )
+            async with aiofiles.open(cache_file, "r") as f:
+                return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
+        raise FileNotFoundError(f"Failed to fetch file list for {model_id}: {e}") from e
 
 
 async def fetch_file_list_with_retry(
-    model_id: ModelId, revision: str = "main", path: str = "", recursive: bool = False
+    model_id: ModelId,
+    revision: str = "main",
+    path: str = "",
+    recursive: bool = False,
+    on_connection_lost: Callable[[], None] = lambda: None,
 ) -> list[FileListEntry]:
-    n_attempts = 30
+    n_attempts = 3
     for attempt in range(n_attempts):
         try:
             return await _fetch_file_list(model_id, revision, path, recursive)
+        except HuggingFaceAuthenticationError:
+            raise
         except Exception as e:
+            on_connection_lost()
             if attempt == n_attempts - 1:
                 raise e
-            await asyncio.sleep(min(8, 0.1 * float(2.0 ** int(attempt))))
+            await asyncio.sleep(2.0**attempt)
     raise Exception(
         f"Failed to fetch file list for {model_id=} {revision=} {path=} {recursive=}"
     )
@@ -167,7 +244,14 @@ async def _fetch_file_list(
         create_http_session(timeout_profile="short") as session,
         session.get(url, headers=headers) as response,
     ):
-        if response.status == 200:
+        if response.status in [401, 403]:
+            msg = await _build_auth_error_message(response.status, model_id)
+            raise HuggingFaceAuthenticationError(msg)
+        elif response.status == 429:
+            raise HuggingFaceRateLimitError(
+                f"Couldn't download {model_id} because of HuggingFace rate limit."
+            )
+        elif response.status == 200:
             data_json = await response.text()
             data = TypeAdapter(list[FileListEntry]).validate_json(data_json)
             files: list[FileListEntry] = []
@@ -200,7 +284,7 @@ def create_http_session(
     else:
         total_timeout = 1800
         connect_timeout = 60
-        sock_read_timeout = 1800
+        sock_read_timeout = 60
         sock_connect_timeout = 60
 
     ssl_context = ssl.create_default_context(
@@ -256,6 +340,9 @@ async def file_meta(
             # Otherwise, follow the redirect to get authoritative size/hash
             redirected_location = r.headers.get("location")
             return await file_meta(model_id, revision, path, redirected_location)
+        if r.status in [401, 403]:
+            msg = await _build_auth_error_message(r.status, model_id)
+            raise HuggingFaceAuthenticationError(msg)
         content_length = int(
             r.headers.get("x-linked-size") or r.headers.get("content-length") or 0
         )
@@ -272,21 +359,29 @@ async def download_file_with_retry(
     path: str,
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
+    on_connection_lost: Callable[[], None] = lambda: None,
 ) -> Path:
-    n_attempts = 30
+    n_attempts = 3
     for attempt in range(n_attempts):
         try:
             return await _download_file(
                 model_id, revision, path, target_dir, on_progress
             )
-        except Exception as e:
-            if isinstance(e, FileNotFoundError) or attempt == n_attempts - 1:
+        except HuggingFaceAuthenticationError:
+            raise
+        except HuggingFaceRateLimitError as e:
+            if attempt == n_attempts - 1:
                 raise e
             logger.error(
                 f"Download error on attempt {attempt}/{n_attempts} for {model_id=} {revision=} {path=} {target_dir=}"
             )
             logger.error(traceback.format_exc())
-            await asyncio.sleep(min(8, 0.1 * (2.0**attempt)))
+            await asyncio.sleep(2.0**attempt)
+        except Exception as e:
+            on_connection_lost()
+            if attempt == n_attempts - 1:
+                raise e
+            break
     raise Exception(
         f"Failed to download file {model_id=} {revision=} {path=} {target_dir=}"
     )
@@ -299,8 +394,28 @@ async def _download_file(
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
 ) -> Path:
-    if await aios.path.exists(target_dir / path):
-        return target_dir / path
+    target_path = target_dir / path
+
+    if await aios.path.exists(target_path):
+        local_size = (await aios.stat(target_path)).st_size
+
+        # Try to verify against remote, but allow offline operation
+        try:
+            remote_size, _ = await file_meta(model_id, revision, path)
+            if local_size != remote_size:
+                logger.info(
+                    f"File {path} size mismatch (local={local_size}, remote={remote_size}), re-downloading"
+                )
+                await aios.remove(target_path)
+            else:
+                return target_path
+        except Exception as e:
+            # Offline or network error - trust local file
+            logger.debug(
+                f"Could not verify {path} against remote (offline?): {e}, using local file"
+            )
+            return target_path
+
     await aios.makedirs((target_dir / path).parent, exist_ok=True)
     length, etag = await file_meta(model_id, revision, path)
     remote_hash = etag[:-5] if etag.endswith("-gzip") else etag
@@ -322,6 +437,9 @@ async def _download_file(
         ):
             if r.status == 404:
                 raise FileNotFoundError(f"File not found: {url}")
+            if r.status in [401, 403]:
+                msg = await _build_auth_error_message(r.status, model_id)
+                raise HuggingFaceAuthenticationError(msg)
             assert r.status in [200, 206], (
                 f"Failed to download {path} from {url}: {r.status}"
             )
@@ -446,6 +564,11 @@ async def resolve_allow_patterns(shard: ShardMetadata) -> list[str]:
         return ["*"]
 
 
+def is_image_model(shard: ShardMetadata) -> bool:
+    tasks = shard.model_card.tasks
+    return ModelTask.TextToImage in tasks or ModelTask.ImageToImage in tasks
+
+
 async def get_downloaded_size(path: Path) -> int:
     partial_path = path.with_suffix(path.suffix + ".partial")
     if await aios.path.exists(path):
@@ -460,10 +583,12 @@ async def download_shard(
     on_progress: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
     max_parallel_downloads: int = 8,
     skip_download: bool = False,
+    skip_internet: bool = False,
     allow_patterns: list[str] | None = None,
+    on_connection_lost: Callable[[], None] = lambda: None,
 ) -> tuple[Path, RepoDownloadProgress]:
     if not skip_download:
-        logger.info(f"Downloading {shard.model_card.model_id=}")
+        logger.debug(f"Downloading {shard.model_card.model_id=}")
 
     revision = "main"
     target_dir = await ensure_models_dir() / str(shard.model_card.model_id).replace(
@@ -476,33 +601,55 @@ async def download_shard(
         allow_patterns = await resolve_allow_patterns(shard)
 
     if not skip_download:
-        logger.info(f"Downloading {shard.model_card.model_id=} with {allow_patterns=}")
+        logger.debug(f"Downloading {shard.model_card.model_id=} with {allow_patterns=}")
 
     all_start_time = time.time()
     file_list = await fetch_file_list_with_cache(
-        shard.model_card.model_id, revision, recursive=True
+        shard.model_card.model_id,
+        revision,
+        recursive=True,
+        skip_internet=skip_internet,
+        on_connection_lost=on_connection_lost,
     )
     filtered_file_list = list(
         filter_repo_objects(
             file_list, allow_patterns=allow_patterns, key=lambda x: x.path
         )
     )
+
+    # For image models, skip root-level safetensors files since weights
+    # are stored in component subdirectories (e.g., transformer/, vae/)
+    if is_image_model(shard):
+        filtered_file_list = [
+            f
+            for f in filtered_file_list
+            if "/" in f.path or not f.path.endswith(".safetensors")
+        ]
     file_progress: dict[str, RepoFileDownloadProgress] = {}
 
     async def on_progress_wrapper(
         file: FileListEntry, curr_bytes: int, total_bytes: int, is_renamed: bool
     ) -> None:
-        start_time = (
-            file_progress[file.path].start_time
-            if file.path in file_progress
-            else time.time()
+        previous_progress = file_progress.get(file.path)
+
+        # Detect re-download: curr_bytes < previous downloaded means file was deleted and restarted
+        is_redownload = (
+            previous_progress is not None
+            and curr_bytes < previous_progress.downloaded.in_bytes
         )
-        downloaded_this_session = (
-            file_progress[file.path].downloaded_this_session.in_bytes
-            + (curr_bytes - file_progress[file.path].downloaded.in_bytes)
-            if file.path in file_progress
-            else curr_bytes
-        )
+
+        if is_redownload or previous_progress is None:
+            # Fresh download or re-download: reset tracking
+            start_time = time.time()
+            downloaded_this_session = curr_bytes
+        else:
+            # Continuing download: accumulate
+            start_time = previous_progress.start_time
+            downloaded_this_session = (
+                previous_progress.downloaded_this_session.in_bytes
+                + (curr_bytes - previous_progress.downloaded.in_bytes)
+            )
+
         speed = (
             downloaded_this_session / (time.time() - start_time)
             if time.time() - start_time > 0
@@ -572,6 +719,7 @@ async def download_shard(
                 lambda curr_bytes, total_bytes, is_renamed: schedule_progress(
                     file, curr_bytes, total_bytes, is_renamed
                 ),
+                on_connection_lost=on_connection_lost,
             )
 
     if not skip_download:
