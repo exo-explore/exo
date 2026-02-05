@@ -149,6 +149,7 @@ class KVPrefixCache:
 
         For models with SSM layers (which are ArraysCache in mlx), the cache is trimmed to the
         nearest SSM snapshot position at or before the match point for correctness.
+        Same for rotating KV Cache.
         """
         max_length = len(prompt_tokens)
 
@@ -167,15 +168,11 @@ class KVPrefixCache:
                 break
 
         if best_index is None:
-            if len(self.prompts) == 0:
-                logger.info(f"KV cache empty, need to prefill {max_length} tokens")
-            else:
-                logger.info(
-                    f"KV cache no prefix match, need to prefill {max_length} tokens"
-                )
             return make_kv_cache(model), prompt_tokens, None
 
-        # For exact match we trim to max_length-1
+        # For exact match: trim to max_length-1 so remaining has the last token
+        # For partial match: trim to best_length, remaining has suffix to prefill
+        # This ensures stream_generate always has at least one token to start with
         target = (max_length - 1) if is_exact else best_length
         restore_pos, restore_snap = self._get_snapshot(best_index, target)
 
@@ -185,15 +182,6 @@ class KVPrefixCache:
             and restore_snap is None
             and has_ssm_caches(self.caches[best_index])
         ):
-            match_kind = (
-                "exact match"
-                if is_exact
-                else f"prefix match at {best_length}/{max_length}"
-            )
-            logger.info(
-                f"KV cache {match_kind} but no SSM snapshot, "
-                f"need to prefill {max_length} tokens"
-            )
             return make_kv_cache(model), prompt_tokens, None
 
         prompt_cache = deepcopy(self.caches[best_index])
@@ -201,21 +189,15 @@ class KVPrefixCache:
         tokens_to_trim = cached_length - restore_pos
         if tokens_to_trim > 0:
             trim_cache(prompt_cache, tokens_to_trim, restore_snap)
+            # Reset cache offset to match trimmed length
+            for c in prompt_cache:
+                if hasattr(c, "offset"):
+                    c.offset = restore_pos
 
         self._access_counter += 1
         self._last_used[best_index] = self._access_counter
         remaining = prompt_tokens[restore_pos:]
 
-        if is_exact:
-            logger.info(
-                f"KV cache exact match: {max_length} tokens "
-                f"(reusing {restore_pos}, re-processing {len(remaining)})"
-            )
-        else:
-            logger.info(
-                f"KV cache prefix match: {best_length}/{max_length} tokens "
-                f"(restoring to {restore_pos}, need to prefill {len(remaining)})"
-            )
         return prompt_cache, remaining, best_index
 
     def _evict_if_needed(self):
