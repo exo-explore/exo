@@ -459,12 +459,21 @@ def apply_chat_template(
                 continue
             formatted_messages.append({"role": msg.role, "content": msg.content})
 
+    # For assistant prefilling, append content after templating to avoid a closing turn token.
+    partial_assistant_content: str | None = None
+    if formatted_messages and formatted_messages[-1].get("role") == "assistant":
+        partial_assistant_content = cast(str, formatted_messages[-1].get("content", ""))
+        formatted_messages = formatted_messages[:-1]
+
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
         tools=task_params.tools,
     )
+
+    if partial_assistant_content:
+        prompt += partial_assistant_content
 
     logger.info(prompt)
 

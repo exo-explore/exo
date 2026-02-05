@@ -627,6 +627,11 @@ class API:
                     self._token_chunk_stream(command.command_id),
                 ),
                 media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "close",
+                    "X-Accel-Buffering": "no",
+                },
             )
 
         return await collect_chat_response(
@@ -1183,6 +1188,11 @@ class API:
                     self._token_chunk_stream(command.command_id),
                 ),
                 media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "close",
+                    "X-Accel-Buffering": "no",
+                },
             )
 
         return await collect_claude_response(
@@ -1210,6 +1220,11 @@ class API:
                     self._token_chunk_stream(command.command_id),
                 ),
                 media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "close",
+                    "X-Accel-Buffering": "no",
+                },
             )
 
         return await collect_responses_response(
