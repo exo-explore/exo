@@ -115,7 +115,7 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
     monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", nothin)
-    monkeypatch.setattr(mlx_runner, "mx.all_gather", make_nothin(mx.array([1])))
+    monkeypatch.setattr(mx.distributed, "all_gather", make_nothin(mx.array([1])))
     monkeypatch.setattr(mlx_runner, "mx_any", make_nothin(False))
     # Mock apply_chat_template since we're using a fake tokenizer (integer 1).
     # Returns a prompt without thinking tag so detect_thinking_prompt_suffix returns None.
