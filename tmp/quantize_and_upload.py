@@ -17,6 +17,7 @@ Requires:
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -66,21 +67,53 @@ def get_local_path(output_dir: Path, model_name: str, bits: int | None) -> Path:
     return output_dir / f"{base_name}{suffix}"
 
 
-def load_and_save_model(
+def copy_source_repo(
+    source_repo: str,
+    local_path: Path,
+    dry_run: bool = False,
+) -> None:
+    """Copy all files from source repo (replicating original HF structure)."""
+    print(f"\n{'=' * 60}")
+    print(f"Copying full repo from source: {source_repo}")
+    print(f"Output path: {local_path}")
+    print(f"{'=' * 60}")
+
+    if dry_run:
+        print("[DRY RUN] Would download all files from source repo")
+        return
+
+    from huggingface_hub import snapshot_download
+
+    # Download all files to our local path
+    snapshot_download(
+        repo_id=source_repo,
+        local_dir=local_path,
+    )
+
+    # Remove root-level safetensors files (flux.1-dev.safetensors, etc.)
+    # These are redundant with the component directories
+    for f in local_path.glob("*.safetensors"):
+        print(f"Removing root-level safetensors: {f.name}")
+        if not dry_run:
+            f.unlink()
+
+    print(f"Source repo copied to {local_path}")
+
+
+def load_and_save_quantized_model(
     model_name: str,
-    bits: int | None,
+    bits: int,
     output_path: Path,
     dry_run: bool = False,
 ) -> None:
-    """Load a model with optional quantization and save it."""
-    bits_str = f"{bits}-bit" if bits else "base (no quantization)"
+    """Load a model with quantization and save it in mflux format."""
     print(f"\n{'=' * 60}")
-    print(f"Loading {model_name} with {bits_str}...")
+    print(f"Loading {model_name} with {bits}-bit quantization...")
     print(f"Output path: {output_path}")
     print(f"{'=' * 60}")
 
     if dry_run:
-        print("[DRY RUN] Would load and save model")
+        print("[DRY RUN] Would load and save quantized model")
         return
 
     from mflux.models.common.config.model_config import ModelConfig
@@ -127,11 +160,13 @@ def upload_to_huggingface(
     local_path: Path,
     repo_id: str,
     dry_run: bool = False,
+    clean_remote: bool = False,
 ) -> None:
     """Upload a saved model to HuggingFace."""
     print(f"\n{'=' * 60}")
     print(f"Uploading to HuggingFace: {repo_id}")
     print(f"Local path: {local_path}")
+    print(f"Clean remote first: {clean_remote}")
     print(f"{'=' * 60}")
 
     if dry_run:
@@ -145,6 +180,26 @@ def upload_to_huggingface(
     # Create the repo if it doesn't exist
     print(f"Creating/verifying repo: {repo_id}")
     api.create_repo(repo_id=repo_id, repo_type="model", exist_ok=True)
+
+    # Clean remote repo if requested (delete old mflux-format files)
+    if clean_remote:
+        print("Cleaning old mflux-format files from remote...")
+        try:
+            # Pattern for mflux numbered shards: <dir>/<number>.safetensors
+            numbered_pattern = re.compile(r".*/\d+\.safetensors$")
+
+            repo_files = api.list_repo_files(repo_id=repo_id, repo_type="model")
+            for file_path in repo_files:
+                # Delete numbered safetensors (mflux format) and mflux index files
+                if numbered_pattern.match(file_path) or file_path.endswith(
+                    "/model.safetensors.index.json"
+                ):
+                    print(f"  Deleting: {file_path}")
+                    api.delete_file(
+                        path_in_repo=file_path, repo_id=repo_id, repo_type="model"
+                    )
+        except Exception as e:
+            print(f"Warning: Could not clean remote files: {e}")
 
     # Upload the folder
     print("Uploading folder contents...")
@@ -216,6 +271,11 @@ Examples:
         help="Skip 8-bit quantized model",
     )
     parser.add_argument(
+        "--skip-download",
+        action="store_true",
+        help="Skip downloading/processing, only do upload/clean operations",
+    )
+    parser.add_argument(
         "--skip-upload",
         action="store_true",
         help="Only save locally, don't upload to HuggingFace",
@@ -224,6 +284,11 @@ Examples:
         "--clean",
         action="store_true",
         help="Remove local files after upload",
+    )
+    parser.add_argument(
+        "--clean-remote",
+        action="store_true",
+        help="Delete old mflux-format files from remote repo before uploading",
     )
     parser.add_argument(
         "--dry-run",
@@ -264,20 +329,29 @@ Examples:
         local_path = get_local_path(args.output_dir, args.model, bits)
         repo_id = get_repo_name(args.model, bits)
 
-        # Load and save
-        load_and_save_model(
-            model_name=args.model,
-            bits=bits,
-            output_path=local_path,
-            dry_run=args.dry_run,
-        )
+        if not args.skip_download:
+            if bits is None:
+                # Base model: copy original HF repo structure (no mflux conversion)
+                copy_source_repo(
+                    source_repo=args.model,
+                    local_path=local_path,
+                    dry_run=args.dry_run,
+                )
+            else:
+                # Quantized model: load, quantize, and save with mflux
+                load_and_save_quantized_model(
+                    model_name=args.model,
+                    bits=bits,
+                    output_path=local_path,
+                    dry_run=args.dry_run,
+                )
 
-        # Copy metadata from source repo (LICENSE, README, etc.)
-        copy_source_metadata(
-            source_repo=args.model,
-            local_path=local_path,
-            dry_run=args.dry_run,
-        )
+                # Copy metadata from source repo (LICENSE, README, etc.)
+                copy_source_metadata(
+                    source_repo=args.model,
+                    local_path=local_path,
+                    dry_run=args.dry_run,
+                )
 
         # Upload
         if not args.skip_upload:
@@ -285,6 +359,7 @@ Examples:
                 local_path=local_path,
                 repo_id=repo_id,
                 dry_run=args.dry_run,
+                clean_remote=args.clean_remote,
             )
 
             # Clean up if requested
