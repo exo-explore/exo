@@ -133,6 +133,24 @@ class QwenPromptData(PromptData):
 
         return batched_embeds, batched_mask, None, cond_latents
 
+    def get_cfg_branch_data(
+        self, positive: bool
+    ) -> tuple[mx.array, mx.array | None, mx.array | None, mx.array | None]:
+        if positive:
+            return (
+                self._prompt_embeds,
+                self._prompt_mask,
+                None,
+                self.conditioning_latents,
+            )
+        else:
+            return (
+                self._negative_prompt_embeds,
+                self._negative_prompt_mask,
+                None,
+                self.conditioning_latents,
+            )
+
 
 class QwenModelAdapter(ModelAdapter[QwenImage, QwenTransformer]):
     """Adapter for Qwen-Image model.
