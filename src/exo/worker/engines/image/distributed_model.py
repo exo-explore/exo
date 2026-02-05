@@ -150,7 +150,10 @@ class DistributedImageModel:
             guidance=guidance_override if guidance_override is not None else 4.0,
         )
 
-        num_sync_steps = self._config.num_sync_steps
+        if advanced_params is not None and advanced_params.num_sync_steps is not None:
+            num_sync_steps = advanced_params.num_sync_steps
+        else:
+            num_sync_steps = self._config.num_sync_steps
 
         for result in self._runner.generate_image(
             runtime_config=config,

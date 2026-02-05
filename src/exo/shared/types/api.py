@@ -272,6 +272,7 @@ class AdvancedImageParams(BaseModel):
     num_inference_steps: Annotated[int, Field(ge=1, le=100)] | None = None
     guidance: Annotated[float, Field(ge=1.0, le=20.0)] | None = None
     negative_prompt: str | None = None
+    num_sync_steps: Annotated[int, Field(ge=1, le=50)] | None = None
 
 
 class ImageGenerationTaskParams(BaseModel):
