@@ -96,16 +96,18 @@ class Master:
     async def run(self):
         logger.info("Starting Master")
 
-        async with self._tg as tg:
-            tg.start_soon(self._event_processor)
-            tg.start_soon(self._command_processor)
-            tg.start_soon(self._loopback_processor)
-            tg.start_soon(self._plan)
-        self.global_event_sender.close()
-        self.local_event_receiver.close()
-        self.command_receiver.close()
-        self._loopback_event_sender.close()
-        self._loopback_event_receiver.close()
+        try:
+            async with self._tg as tg:
+                tg.start_soon(self._event_processor)
+                tg.start_soon(self._command_processor)
+                tg.start_soon(self._loopback_processor)
+                tg.start_soon(self._plan)
+        finally:
+            self.global_event_sender.close()
+            self.local_event_receiver.close()
+            self.command_receiver.close()
+            self._loopback_event_sender.close()
+            self._loopback_event_receiver.close()
 
     async def shutdown(self):
         logger.info("Stopping Master")
