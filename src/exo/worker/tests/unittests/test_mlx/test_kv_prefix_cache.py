@@ -88,12 +88,12 @@ class TestKVPrefix:
         return tokenizer
 
     def test_starts_empty(self, mock_tokenizer):
-        cache = KVPrefixCache(mock_tokenizer)
+        cache = KVPrefixCache()
         assert len(cache.prompts) == 0
         assert len(cache.caches) == 0
 
     def test_clear_empties_cache(self, mock_tokenizer):
-        cache = KVPrefixCache(mock_tokenizer)
+        cache = KVPrefixCache()
         cache.prompts.append(mx.array([1, 2, 3]))
         cache.caches.append([KVCache()])
         cache.clear()
@@ -101,7 +101,7 @@ class TestKVPrefix:
         assert len(cache.caches) == 0
 
     def test_clear_on_empty_cache(self, mock_tokenizer):
-        cache = KVPrefixCache(mock_tokenizer)
+        cache = KVPrefixCache()
         cache.clear()
         assert len(cache.prompts) == 0
 
@@ -142,10 +142,12 @@ class TestKVPrefixCacheWithModel:
         tokens = encode_prompt(tokenizer, prompt)
         cache = make_kv_cache(model)
 
-        prefill(model, tokenizer, make_sampler(0.0), tokens, cache)
+        _, _, snapshots = prefill(model, tokenizer, make_sampler(0.0), tokens, cache)
 
-        # Cache should now hold the prompt tokens
-        assert cache_length(cache) == len(tokens)
+        # Cache should now hold the prompt tokens minus one
+        assert cache_length(cache) == len(tokens) - 1
+        # Snapshots should be available for models with non-KV caches
+        assert len(snapshots) > 0
 
     def test_add_and_get_exact_match(self, model_and_tokenizer):
         model, tokenizer = model_and_tokenizer
@@ -159,10 +161,10 @@ class TestKVPrefixCacheWithModel:
         tokens = encode_prompt(tokenizer, prompt)
         cache = make_kv_cache(model)
 
-        prefill(model, tokenizer, make_sampler(0.0), tokens, cache)
+        _, _, snapshots = prefill(model, tokenizer, make_sampler(0.0), tokens, cache)
 
-        kv_prefix_cache = KVPrefixCache(tokenizer)
-        kv_prefix_cache.add_kv_cache(tokens, cache)
+        kv_prefix_cache = KVPrefixCache()
+        kv_prefix_cache.add_kv_cache(tokens, cache, snapshots)
 
         assert len(kv_prefix_cache.prompts) == 1
         stored_length = cache_length(kv_prefix_cache.caches[0])
@@ -191,10 +193,12 @@ class TestKVPrefixCacheWithModel:
         short_tokens = encode_prompt(tokenizer, short_prompt)
         cache = make_kv_cache(model)
 
-        prefill(model, tokenizer, make_sampler(0.0), short_tokens, cache)
+        _, _, snapshots = prefill(
+            model, tokenizer, make_sampler(0.0), short_tokens, cache
+        )
 
-        kv_prefix_cache = KVPrefixCache(tokenizer)
-        kv_prefix_cache.add_kv_cache(short_tokens, cache)
+        kv_prefix_cache = KVPrefixCache()
+        kv_prefix_cache.add_kv_cache(short_tokens, cache, snapshots)
 
         # Query with longer prompt that shares the chat template prefix
         long_task = TextGenerationTaskParams(
@@ -216,9 +220,8 @@ class TestKVPrefixCacheWithModel:
         )
         assert matched_index == 0
 
-        # remaining_tokens should be the suffix after the shared prefix
-        assert len(remaining_tokens) == len(long_tokens) - expected_prefix
-        assert mx.array_equal(remaining_tokens, long_tokens[expected_prefix:])
+        # remaining_tokens covers from snapshot restore position to end
+        assert len(remaining_tokens) >= len(long_tokens) - expected_prefix
 
     def test_stored_cache_not_mutated_after_get_and_generation(
         self, model_and_tokenizer
@@ -235,10 +238,10 @@ class TestKVPrefixCacheWithModel:
         tokens = encode_prompt(tokenizer, prompt)
         cache = make_kv_cache(model)
 
-        prefill(model, tokenizer, make_sampler(0.0), tokens, cache)
+        _, _, snapshots = prefill(model, tokenizer, make_sampler(0.0), tokens, cache)
 
-        kv_prefix_cache = KVPrefixCache(tokenizer)
-        kv_prefix_cache.add_kv_cache(tokens, cache)
+        kv_prefix_cache = KVPrefixCache()
+        kv_prefix_cache.add_kv_cache(tokens, cache, snapshots)
 
         stored_length = cache_length(kv_prefix_cache.caches[0])
 
@@ -273,10 +276,10 @@ class TestKVPrefixCacheWithModel:
         tokens = encode_prompt(tokenizer, prompt)
         cache = make_kv_cache(model)
 
-        prefill(model, tokenizer, make_sampler(0.0), tokens, cache)
+        _, _, snapshots = prefill(model, tokenizer, make_sampler(0.0), tokens, cache)
 
-        kv_prefix_cache = KVPrefixCache(tokenizer)
-        kv_prefix_cache.add_kv_cache(tokens, cache)
+        kv_prefix_cache = KVPrefixCache()
+        kv_prefix_cache.add_kv_cache(tokens, cache, snapshots)
 
         stored_length = cache_length(kv_prefix_cache.caches[0])
 
@@ -298,7 +301,7 @@ class TestKVPrefixCacheWithModel:
         """mlx_generate should save the cache after generation completes."""
         model, tokenizer = model_and_tokenizer
 
-        kv_prefix_cache = KVPrefixCache(tokenizer)
+        kv_prefix_cache = KVPrefixCache()
         task = TextGenerationTaskParams(
             model=DEFAULT_GPT_OSS_MODEL_ID,
             input=[InputMessage(role="user", content="Hello")],
@@ -328,7 +331,7 @@ class TestKVPrefixCacheWithModel:
         """Second mlx_generate call with same prompt should get a prefix hit from stored cache."""
         model, tokenizer = model_and_tokenizer
 
-        kv_prefix_cache = KVPrefixCache(tokenizer)
+        kv_prefix_cache = KVPrefixCache()
         task = TextGenerationTaskParams(
             model=DEFAULT_GPT_OSS_MODEL_ID,
             input=[InputMessage(role="user", content="Reuse test")],
@@ -357,15 +360,15 @@ class TestKVPrefixCacheWithModel:
         # The stored cache is longer than the prompt (it includes generated tokens),
         # so this is a prefix match where our prompt is fully contained
         assert matched_index == 0
-        # Exact match: remaining_tokens is just the last token
-        assert len(remaining_tokens) == 1
-        assert mx.array_equal(remaining_tokens, prompt_tokens[-1:])
+        # Exact match: remaining_tokens is just the last token and the one before
+        assert len(remaining_tokens) == 2
+        assert mx.array_equal(remaining_tokens, prompt_tokens[-2:])
 
     def test_mlx_generate_long_prompt_updates_cache_in_place(self, model_and_tokenizer):
         """With a prompt > 1000 tokens, second generation should update the cache entry in-place."""
         model, tokenizer = model_and_tokenizer
 
-        kv_prefix_cache = KVPrefixCache(tokenizer)
+        kv_prefix_cache = KVPrefixCache()
 
         # Build a long user message (> 1000 tokens) to exceed _MIN_PREFIX_HIT_TO_UPDATE
         base_text = "The quick brown fox jumps over the lazy dog. "
@@ -444,7 +447,7 @@ class TestKVPrefixCacheWithModel:
         """After mlx_generate saves a cache, a second generation must not corrupt the stored copy."""
         model, tokenizer = model_and_tokenizer
 
-        kv_prefix_cache = KVPrefixCache(tokenizer)
+        kv_prefix_cache = KVPrefixCache()
         task = TextGenerationTaskParams(
             model=DEFAULT_GPT_OSS_MODEL_ID,
             input=[InputMessage(role="user", content="Immutable test")],
@@ -481,7 +484,7 @@ class TestKVPrefixCacheWithModel:
         """Under memory pressure, adding a new cache entry evicts the least recently used one."""
         model, tokenizer = model_and_tokenizer
 
-        kv_prefix_cache = KVPrefixCache(tokenizer)
+        kv_prefix_cache = KVPrefixCache()
 
         # Add three cache entries with different prompts
         prompts = ["First entry", "Second entry", "Third entry"]

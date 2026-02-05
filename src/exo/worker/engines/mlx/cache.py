@@ -99,7 +99,7 @@ class KVPrefixCache:
         index: int,
         prompt_tokens: mx.array,
         cache: KVCacheType,
-        ssm_snapshots: list[CacheSnapshot] | None,
+        snapshots: list[CacheSnapshot] | None,
         restore_pos: int,
     ):
         """Update an existing cache entry in-place."""
@@ -107,8 +107,8 @@ class KVPrefixCache:
         merged: list[CacheSnapshot] = []
         if old_snapshots:
             merged = [s for s in old_snapshots if s.token_count <= restore_pos]
-        if ssm_snapshots:
-            merged.extend(ssm_snapshots)
+        if snapshots:
+            merged.extend(snapshots)
 
         self.prompts[index] = prompt_tokens
         self.caches[index] = deepcopy(cache)
