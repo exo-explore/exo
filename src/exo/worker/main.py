@@ -230,10 +230,10 @@ class Worker:
                         )
                     finally:
                         await runner.shutdown()
-                case CancelTask(cancelled_task_id=cancelled_task_id):
-                    await self.runners[self._task_to_runner_id(task)].cancel_task(
-                        cancelled_task_id
-                    )
+                case CancelTask(
+                    cancelled_task_id=cancelled_task_id, runner_id=runner_id
+                ):
+                    await self.runners[runner_id].cancel_task(cancelled_task_id)
                 case ImageEdits() if task.task_params.total_input_chunks > 0:
                     # Assemble image from chunks and inject into task
                     cmd_id = task.command_id
@@ -271,18 +271,18 @@ class Worker:
                         del self.input_chunk_buffer[cmd_id]
                     if cmd_id in self.input_chunk_counts:
                         del self.input_chunk_counts[cmd_id]
-                    await self.runners[self._task_to_runner_id(task)].start_task(
-                        modified_task
-                    )
+                    await self._start_runner_task(modified_task)
                 case task:
-                    await self.runners[self._task_to_runner_id(task)].start_task(task)
+                    await self._start_runner_task(task)
 
     def shutdown(self):
         self._tg.cancel_scope.cancel()
 
-    def _task_to_runner_id(self, task: Task):
-        instance = self.state.instances[task.instance_id]
-        return instance.shard_assignments.node_to_runner[self.node_id]
+    async def _start_runner_task(self, task: Task):
+        if (instance := self.state.instances.get(task.instance_id)) is not None:
+            await self.runners[
+                instance.shard_assignments.node_to_runner[self.node_id]
+            ].start_task(task)
 
     async def _nack_request(self, since_idx: int) -> None:
         # We request all events after (and including) the missing index.

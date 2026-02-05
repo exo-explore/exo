@@ -14,6 +14,7 @@
     isAdding: boolean;
     onAdd: () => void;
     onSelect: () => void;
+    downloadedOnNodes?: string[];
   };
 
   let {
@@ -22,6 +23,7 @@
     isAdding,
     onAdd,
     onSelect,
+    downloadedOnNodes = [],
   }: HuggingFaceResultItemProps = $props();
 
   function formatNumber(num: number): string {
@@ -45,6 +47,28 @@
       <span class="text-sm font-mono text-white truncate" title={model.id}
         >{modelName}</span
       >
+      {#if downloadedOnNodes.length > 0}
+        <span
+          class="flex-shrink-0"
+          title={`Downloaded on ${downloadedOnNodes.join(", ")}`}
+        >
+          <svg
+            class="w-4 h-4"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path
+              class="text-white/40"
+              d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+            />
+            <path class="text-green-400" d="m9 13 2 2 4-4" />
+          </svg>
+        </span>
+      {/if}
       {#if isAdded}
         <span
           class="px-1.5 py-0.5 text-[10px] font-mono bg-green-500/20 text-green-400 rounded"

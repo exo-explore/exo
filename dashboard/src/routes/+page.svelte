@@ -3264,4 +3264,6 @@
   onDeleteModel={deleteCustomModel}
   totalMemoryGB={clusterMemory().total / (1024 * 1024 * 1024)}
   usedMemoryGB={clusterMemory().used / (1024 * 1024 * 1024)}
+  {downloadsData}
+  topologyNodes={data?.nodes}
 />

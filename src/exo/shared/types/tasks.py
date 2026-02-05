@@ -63,6 +63,7 @@ class TextGeneration(BaseTask):  # emitted by Master
 
 class CancelTask(BaseTask):
     cancelled_task_id: TaskId
+    runner_id: RunnerId
 
 
 class ImageGeneration(BaseTask):  # emitted by Master

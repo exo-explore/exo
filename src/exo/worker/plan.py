@@ -314,11 +314,13 @@ def _cancel_tasks(
     for task in tasks.values():
         if task.task_status != TaskStatus.Cancelled:
             continue
-        for runner in runners.values():
+        for runner_id, runner in runners.items():
             if task.instance_id != runner.bound_instance.instance.instance_id:
                 continue
             if task.task_id in runner.cancelled:
                 continue
             return CancelTask(
-                instance_id=task.instance_id, cancelled_task_id=task.task_id
+                instance_id=task.instance_id,
+                cancelled_task_id=task.task_id,
+                runner_id=runner_id,
             )
