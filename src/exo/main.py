@@ -105,6 +105,7 @@ class Node:
             global_event_sender=router.sender(topics.GLOBAL_EVENTS),
             local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
             command_receiver=router.receiver(topics.COMMANDS),
+            download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
         )
 
         er_send, er_recv = channel[ElectionResult]()
@@ -188,6 +189,9 @@ class Node:
                         global_event_sender=self.router.sender(topics.GLOBAL_EVENTS),
                         local_event_receiver=self.router.receiver(topics.LOCAL_EVENTS),
                         command_receiver=self.router.receiver(topics.COMMANDS),
+                        download_command_sender=self.router.sender(
+                            topics.DOWNLOAD_COMMANDS
+                        ),
                     )
                     self._tg.start_soon(self.master.run)
                 elif (

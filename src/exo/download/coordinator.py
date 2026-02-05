@@ -16,6 +16,7 @@ from exo.download.download_utils import (
 from exo.download.shard_downloader import ShardDownloader
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
+    CancelDownload,
     DeleteDownload,
     ForwarderDownloadCommand,
     StartDownload,
@@ -107,6 +108,13 @@ class DownloadCoordinator:
                         await self._start_download(shard)
                     case DeleteDownload(model_id=model_id):
                         await self._delete_download(model_id)
+                    case CancelDownload(model_id=model_id):
+                        await self._cancel_download(model_id)
+
+    async def _cancel_download(self, model_id: ModelId) -> None:
+        if model_id in self.active_downloads and model_id in self.download_status:
+            logger.info(f"Cancelling download for {model_id}")
+            self.active_downloads.pop(model_id).cancel()
 
     async def _start_download(self, shard: ShardMetadata) -> None:
         model_id = shard.model_card.model_id
