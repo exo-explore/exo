@@ -511,11 +511,23 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
                 layer.self_attn.q_b_proj = self.all_to_sharded_linear(
                     layer.self_attn.q_b_proj
                 )
-            layer.self_attn.kv_b_proj = self.all_to_sharded_linear(
-                layer.self_attn.kv_b_proj
-            )
+
+            # layer.self_attn.kv_b_proj = self.all_to_sharded_linear(
+            #     layer.self_attn.kv_b_proj
+            # )
             layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
             layer.self_attn.num_heads //= self.N
+
+            # Logic from upstream mlx
+            num_heads = layer.self_attn.num_heads
+            sh = self.group.rank() * num_heads
+            eh = sh + num_heads
+
+            def shard_heads(w: mx.array, sh: int = sh, eh: int = eh) -> mx.array:
+                return w[sh:eh]
+
+            layer.self_attn.embed_q.apply(shard_heads)
+            layer.self_attn.unembed_out.apply(shard_heads)
 
             # Shard the MLP
             if isinstance(layer.mlp, (DeepseekV3MLP, DeepseekV32MLP)):

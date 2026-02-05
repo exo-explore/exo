@@ -249,9 +249,9 @@ def mlx_generate(
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
+    # TODO: Randomise task seed and set in taskparams, instead of hard coding as 42.
     seed = task.seed or 42
-    if seed is not None:
-        mx.random.seed(seed)
+    mx.random.seed(seed)
 
     # Encode prompt once at the top and fix unmatched think tags
     all_prompt_tokens = encode_prompt(tokenizer, prompt)
