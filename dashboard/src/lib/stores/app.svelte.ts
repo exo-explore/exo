@@ -456,6 +456,7 @@ class AppStore {
   messages = $state<Message[]>([]);
   currentResponse = $state("");
   isLoading = $state(false);
+  private currentAbortController: AbortController | null = null;
 
   // Performance metrics
   ttftMs = $state<number | null>(null); // Time to first token in ms
@@ -1506,9 +1507,11 @@ class AppStore {
         return;
       }
 
+      this.currentAbortController = new AbortController();
       const response = await fetch("/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: this.currentAbortController.signal,
         body: JSON.stringify({
           model: modelToUse,
           messages: apiMessages,
@@ -1585,6 +1588,7 @@ class AppStore {
         "Unknown error",
       );
     } finally {
+      this.currentAbortController = null;
       this.isLoading = false;
       this.currentResponse = "";
       this.saveConversationsToStorage();
@@ -1716,6 +1720,10 @@ class AppStore {
     assistantMessageId: string,
     errorPrefix = "Failed to get response",
   ): void {
+    // Don't show error for user-initiated abort (stop button)
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return;
+    }
     if (this.conversationExists(targetConversationId)) {
       this.updateConversationMessage(
         targetConversationId,
@@ -1755,6 +1763,17 @@ class AppStore {
       }
     }
     return null;
+  }
+
+  /**
+   * Stop the current generation by aborting the HTTP connection.
+   * This triggers backend cancellation via the mechanism in PR #1276.
+   */
+  stopGeneration() {
+    if (this.currentAbortController) {
+      this.currentAbortController.abort();
+      this.currentAbortController = null;
+    }
   }
 
   /**
@@ -1904,11 +1923,13 @@ class AppStore {
       let firstTokenTime: number | null = null;
       let tokenCount = 0;
 
+      this.currentAbortController = new AbortController();
       const response = await fetch("/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
+        signal: this.currentAbortController.signal,
         body: JSON.stringify({
           model: modelToUse,
           messages: apiMessages,
@@ -2018,6 +2039,7 @@ class AppStore {
         "Failed to get response",
       );
     } finally {
+      this.currentAbortController = null;
       this.isLoading = false;
       this.currentResponse = "";
       this.saveConversationsToStorage();
@@ -2117,11 +2139,13 @@ class AppStore {
         };
       }
 
+      this.currentAbortController = new AbortController();
       const response = await fetch("/v1/images/generations", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
+        signal: this.currentAbortController.signal,
         body: JSON.stringify(requestBody),
       });
 
@@ -2270,6 +2294,7 @@ class AppStore {
         "Failed to generate image",
       );
     } finally {
+      this.currentAbortController = null;
       this.isLoading = false;
       this.saveConversationsToStorage();
     }
@@ -2398,8 +2423,10 @@ class AppStore {
         );
       }
 
+      this.currentAbortController = new AbortController();
       const apiResponse = await fetch("/v1/images/edits", {
         method: "POST",
+        signal: this.currentAbortController.signal,
         body: formData,
       });
 
@@ -2509,6 +2536,7 @@ class AppStore {
         "Failed to edit image",
       );
     } finally {
+      this.currentAbortController = null;
       this.isLoading = false;
       this.saveConversationsToStorage();
     }
@@ -2637,6 +2665,7 @@ export const hasStartedChat = () => appStore.hasStartedChat;
 export const messages = () => appStore.messages;
 export const currentResponse = () => appStore.currentResponse;
 export const isLoading = () => appStore.isLoading;
+export const stopGeneration = () => appStore.stopGeneration();
 export const ttftMs = () => appStore.ttftMs;
 export const tps = () => appStore.tps;
 export const totalTokens = () => appStore.totalTokens;
