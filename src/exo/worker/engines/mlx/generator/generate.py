@@ -7,7 +7,6 @@ from mlx_lm.generate import stream_generate
 from mlx_lm.models.cache import ArraysCache, RotatingKVCache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
-from transformers.models.gpt_oss.modular_gpt_oss import GptOssModel
 
 from exo.shared.types.api import (
     CompletionTokensDetails,
@@ -101,16 +100,16 @@ def prefill(
         break  # Stop after first iteration - cache is now filled
 
     # stream_generate added 1 extra generated token to the cache, so we should trim it.
+    # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
     pre_gen = deepcopy(snapshots[-2]) if has_ssm else None
     for i, c in enumerate(cache):
         if has_ssm and isinstance(c, (ArraysCache, RotatingKVCache)):
             assert pre_gen is not None
             if pre_gen.states[i] is not None:
                 cache[i] = deepcopy(pre_gen.states[i])  # type: ignore
-                # logger.info(cache[i].meta_state)
         else:
             assert not isinstance(c, (ArraysCache, RotatingKVCache))
-            c.trim(1)  # pyright: ignore[reportUnknownMemberType]
+            c.trim(2)  # pyright: ignore[reportUnknownMemberType]
 
     elapsed = time.perf_counter() - start_time
     tokens_per_sec = num_tokens / elapsed if elapsed > 0 else 0.0
@@ -118,7 +117,8 @@ def prefill(
         f"Prefill complete: {num_tokens} tokens in {elapsed:.2f}s "
         f"({tokens_per_sec:.1f} tok/s)"
     )
-    return tokens_per_sec, num_tokens, snapshots
+    # Exclude the last snapshot
+    return tokens_per_sec, num_tokens, snapshots[:-1] if snapshots else []
 
 
 def warmup_inference(
@@ -258,11 +258,8 @@ def mlx_generate(
 
     # Do not use the prefix cache if we are trying to do benchmarks.
     is_bench = task.bench
-    if is_bench or isinstance(model.model, GptOssModel):  # type: ignore
-        # if is_bench:
+    if is_bench:
         kv_prefix_cache = None
-
-    # logger.info(all_prompt_tokens.shape)
 
     # Use prefix cache if available, otherwise create fresh cache
     prefix_hit_length = 0
@@ -275,8 +272,6 @@ def mlx_generate(
             model, all_prompt_tokens
         )
         prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
-
-        # logger.info(prefix_hit_length)
 
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = []
     if is_bench:
@@ -298,10 +293,6 @@ def mlx_generate(
     )
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
-    # logger.info(prompt_tokens.shape)
-    #
-    # logger.info(caches[0].meta_state)
-
     # Prefill cache with all tokens except the last one
     prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
         model,
@@ -311,12 +302,9 @@ def mlx_generate(
         caches,
     )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
-    # logger.info(caches[0].state)
-    # logger.info(caches[1].state)
-    # logger.info(caches[0].meta_state)
 
     # stream_generate starts from the last token
-    last_token = prompt_tokens[-1:]
+    last_token = prompt_tokens[-2:]
 
     max_tokens = task.max_output_tokens or MAX_TOKENS
     accumulated_text = ""
@@ -344,7 +332,6 @@ def mlx_generate(
         start=1,
     ):
         generated_text_parts.append(out.text)
-        logger.info(out.text)
         accumulated_text += out.text
 
         if think_start is not None and out.text == think_start:

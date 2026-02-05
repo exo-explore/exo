@@ -37,7 +37,7 @@ class CacheSnapshot:
 def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
     states: list[ArraysCache | RotatingKVCache | None] = []
     for c in cache:
-        if isinstance(c, (ArraysCache, RotatingKVCache)) and c.keys is not None:  # type: ignore
+        if isinstance(c, (ArraysCache, RotatingKVCache)):
             states.append(deepcopy(c))
         else:
             states.append(None)
@@ -64,15 +64,12 @@ def has_non_kv_caches(cache: KVCacheType) -> bool:
 
 
 class KVPrefixCache:
-    def __init__(
-        self, tokenizer: TokenizerWrapper, group: mx.distributed.Group | None = None
-    ):
+    def __init__(self, group: mx.distributed.Group | None = None):
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
         self.caches: list[KVCacheType] = []
         self._snapshots: list[list[CacheSnapshot] | None] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
         self._access_counter: int = 0
-        self._tokenizer: TokenizerWrapper = tokenizer
         self._group = group
 
     def clear(self):
