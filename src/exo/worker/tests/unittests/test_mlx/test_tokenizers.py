@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from exo.shared.models.model_cards import MODEL_CARDS, ModelCard
-from exo.worker.download.download_utils import (
+from exo.download.download_utils import (
     download_file_with_retry,
     ensure_models_dir,
     fetch_file_list_with_cache,
 )
+from exo.shared.models.model_cards import ModelCard, ModelId, get_model_cards
 from exo.worker.engines.mlx.utils_mlx import (
     get_eos_token_ids_for_model,
     load_tokenizer_for_model_id,
@@ -50,9 +50,9 @@ def is_tokenizer_file(filename: str) -> bool:
     return False
 
 
-async def download_tokenizer_files(model_id: str) -> Path:
+async def download_tokenizer_files(model_id: ModelId) -> Path:
     """Download only the tokenizer-related files for a model."""
-    target_dir = await ensure_models_dir() / model_id.replace("/", "--")
+    target_dir = await ensure_models_dir() / model_id.normalize()
     target_dir.mkdir(parents=True, exist_ok=True)
 
     file_list = await fetch_file_list_with_cache(model_id, "main", recursive=True)
@@ -72,21 +72,24 @@ async def download_tokenizer_files(model_id: str) -> Path:
 
 
 # Get a sample of models to test (one per family to keep tests fast)
-def get_test_models() -> list[tuple[str, ModelCard]]:
+def get_test_models() -> list[ModelCard]:
     """Get a representative sample of models to test."""
     # Pick one model from each family to test
-    families: dict[str, tuple[str, ModelCard]] = {}
-    for model_id, card in MODEL_CARDS.items():
-        # Use base_model_id as family if available, otherwise extract from model_id
-        family = card.base_model_id if card.base_model_id else model_id.split("/")[-1].split("-")[0].lower()
+    families: dict[str, ModelCard] = {}
+    for card in asyncio.run(get_model_cards()):
+        # Extract family name (e.g., "llama-3.1" from "llama-3.1-8b")
+        parts = card.model_id.short().split("-")
+        family = "-".join(parts[:2]) if len(parts) >= 2 else parts[0]
 
         if family not in families:
-            families[family] = (model_id, card)
+            families[family] = card
 
     return list(families.values())
 
 
-TEST_MODELS: list[tuple[str, ModelCard]] = get_test_models()
+TEST_MODELS: list[ModelCard] = get_test_models()
+
+pytestmark = pytest.mark.slow
 
 
 @pytest.fixture(scope="module")
@@ -98,13 +101,13 @@ def event_loop():
 
 
 @pytest.mark.parametrize(
-    "model_id,model_card",
+    "model_card",
     TEST_MODELS,
-    ids=[m[0] for m in TEST_MODELS],
 )
 @pytest.mark.asyncio
-async def test_tokenizer_encode_decode(model_id: str, model_card: ModelCard) -> None:
+async def test_tokenizer_encode_decode(model_card: ModelCard) -> None:
     """Test that tokenizer can encode and decode text correctly."""
+    model_id = model_card.model_id
 
     # Download tokenizer files
     model_path = await download_tokenizer_files(model_id)
@@ -163,15 +166,13 @@ async def test_tokenizer_encode_decode(model_id: str, model_card: ModelCard) -> 
 
 
 @pytest.mark.parametrize(
-    "model_id,model_card",
+    "model_card",
     TEST_MODELS,
-    ids=[m[0] for m in TEST_MODELS],
 )
 @pytest.mark.asyncio
-async def test_tokenizer_has_required_attributes(
-    model_id: str, model_card: ModelCard
-) -> None:
+async def test_tokenizer_has_required_attributes(model_card: ModelCard) -> None:
     """Test that tokenizer has required attributes for inference."""
+    model_id = model_card.model_id
 
     model_path = await download_tokenizer_files(model_id)
 
@@ -204,18 +205,18 @@ async def test_tokenizer_has_required_attributes(
 
 
 @pytest.mark.parametrize(
-    "model_id,model_card",
+    "model_card",
     TEST_MODELS,
-    ids=[m[0] for m in TEST_MODELS],
 )
 @pytest.mark.asyncio
-async def test_tokenizer_special_tokens(model_id: str, model_card: ModelCard) -> None:
+async def test_tokenizer_special_tokens(model_card: ModelCard) -> None:
     """Test that tokenizer can encode text containing special tokens.
 
     This is critical because the actual inference path uses prompts with
     special tokens from chat templates. If special tokens aren't handled
     correctly, encoding will fail.
     """
+    model_id = model_card.model_id
 
     model_path = await download_tokenizer_files(model_id)
 
@@ -295,15 +296,14 @@ async def test_tokenizer_special_tokens(model_id: str, model_card: ModelCard) ->
 async def test_kimi_tokenizer_specifically():
     """Test Kimi tokenizer with its specific patches and quirks."""
     kimi_models = [
-        (model_id, card)
-        for model_id, card in MODEL_CARDS.items()
-        if "kimi" in model_id.lower()
+        card for card in await get_model_cards() if "kimi" in card.model_id.lower()
     ]
 
     if not kimi_models:
         pytest.skip("No Kimi models found in MODEL_CARDS")
 
-    model_id, _model_card = kimi_models[0]
+    model_card = kimi_models[0]
+    model_id = model_card.model_id
 
     model_path = await download_tokenizer_files(model_id)
 
@@ -342,16 +342,15 @@ async def test_kimi_tokenizer_specifically():
 @pytest.mark.asyncio
 async def test_glm_tokenizer_specifically():
     """Test GLM tokenizer with its specific EOS tokens."""
-    glm_models = [
-        (model_id, card)
-        for model_id, card in MODEL_CARDS.items()
-        if "glm" in model_id.lower()
+    glm_model_cards = [
+        card for card in await get_model_cards() if "glm" in card.model_id.lower()
     ]
 
-    if not glm_models:
+    if not glm_model_cards:
         pytest.skip("No GLM models found in MODEL_CARDS")
 
-    model_id, _model_card = glm_models[0]
+    model_card = glm_model_cards[0]
+    model_id = model_card.model_id
 
     model_path = await download_tokenizer_files(model_id)
 

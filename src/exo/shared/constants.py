@@ -2,6 +2,8 @@ import os
 import sys
 from pathlib import Path
 
+from exo.utils.dashboard_path import find_dashboard, find_resources
+
 _EXO_HOME_ENV = os.environ.get("EXO_HOME", None)
 
 
@@ -31,6 +33,14 @@ EXO_MODELS_DIR = (
     if _EXO_MODELS_DIR_ENV is None
     else Path.home() / _EXO_MODELS_DIR_ENV
 )
+_RESOURCES_DIR_ENV = os.environ.get("EXO_RESOURCES_DIR", None)
+RESOURCES_DIR = (
+    find_resources() if _RESOURCES_DIR_ENV is None else Path.home() / _RESOURCES_DIR_ENV
+)
+_DASHBOARD_DIR_ENV = os.environ.get("EXO_DASHBOARD_DIR", None)
+DASHBOARD_DIR = (
+    find_dashboard() if _DASHBOARD_DIR_ENV is None else Path.home() / _DASHBOARD_DIR_ENV
+)
 
 # Log files (data/logs or cache)
 EXO_LOG = EXO_CACHE_HOME / "exo.log"
@@ -48,3 +58,16 @@ LIBP2P_LOCAL_EVENTS_TOPIC = "worker_events"
 LIBP2P_GLOBAL_EVENTS_TOPIC = "global_events"
 LIBP2P_ELECTION_MESSAGES_TOPIC = "election_message"
 LIBP2P_COMMANDS_TOPIC = "commands"
+
+EXO_MAX_CHUNK_SIZE = 512 * 1024
+
+EXO_CUSTOM_MODEL_CARDS_DIR = EXO_DATA_HOME / "custom_model_cards"
+
+EXO_IMAGE_CACHE_DIR = EXO_CACHE_HOME / "images"
+EXO_TRACING_CACHE_DIR = EXO_CACHE_HOME / "traces"
+
+EXO_ENABLE_IMAGE_MODELS = (
+    os.getenv("EXO_ENABLE_IMAGE_MODELS", "false").lower() == "true"
+)
+
+EXO_TRACING_ENABLED = os.getenv("EXO_TRACING_ENABLED", "false").lower() == "true"

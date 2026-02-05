@@ -1,16 +1,17 @@
 from datetime import datetime
+from typing import final
 
 from pydantic import Field
 
 from exo.shared.topology import Connection
-from exo.shared.types.chunks import GenerationChunk
+from exo.shared.types.chunks import GenerationChunk, InputImageChunk
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo
-from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
+from exo.utils.pydantic_ext import CamelCaseModel, FrozenModel, TaggedModel
 
 
 class EventId(Id):
@@ -96,12 +97,39 @@ class ChunkGenerated(BaseEvent):
     chunk: GenerationChunk
 
 
+class InputChunkReceived(BaseEvent):
+    command_id: CommandId
+    chunk: InputImageChunk
+
+
 class TopologyEdgeCreated(BaseEvent):
     conn: Connection
 
 
 class TopologyEdgeDeleted(BaseEvent):
     conn: Connection
+
+
+@final
+class TraceEventData(FrozenModel):
+    name: str
+    start_us: int
+    duration_us: int
+    rank: int
+    category: str
+
+
+@final
+class TracesCollected(BaseEvent):
+    task_id: TaskId
+    rank: int
+    traces: list[TraceEventData]
+
+
+@final
+class TracesMerged(BaseEvent):
+    task_id: TaskId
+    traces: list[TraceEventData]
 
 
 Event = (
@@ -119,8 +147,11 @@ Event = (
     | NodeGatheredInfo
     | NodeDownloadProgress
     | ChunkGenerated
+    | InputChunkReceived
     | TopologyEdgeCreated
     | TopologyEdgeDeleted
+    | TracesCollected
+    | TracesMerged
 )
 
 

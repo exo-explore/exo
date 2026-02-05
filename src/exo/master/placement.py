@@ -3,8 +3,6 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Sequence
 
-from loguru import logger
-
 from exo.master.placement_utils import (
     Cycle,
     filter_cycles_by_memory,
@@ -14,6 +12,7 @@ from exo.master.placement_utils import (
     get_shard_assignments,
     get_smallest_cycles,
 )
+from exo.shared.models.model_cards import ModelId
 from exo.shared.topology import Topology
 from exo.shared.types.commands import (
     CreateInstance,
@@ -23,7 +22,6 @@ from exo.shared.types.commands import (
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import Event, InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
 from exo.shared.types.worker.instances import (
     Instance,
@@ -37,7 +35,7 @@ from exo.shared.types.worker.shards import Sharding
 
 def random_ephemeral_port() -> int:
     port = random.randint(49153, 65535)
-    return port - 1 if port <= 52415 else 52414
+    return port - 1 if port <= 52415 else port
 
 
 def add_instance_to_placements(
@@ -56,31 +54,40 @@ def place_instance(
     current_instances: Mapping[InstanceId, Instance],
     node_memory: Mapping[NodeId, MemoryUsage],
     node_network: Mapping[NodeId, NodeNetworkInfo],
+    required_nodes: set[NodeId] | None = None,
 ) -> dict[InstanceId, Instance]:
     cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
+
+    # Filter to cycles containing all required nodes (subset matching)
+    if required_nodes:
+        candidate_cycles = [
+            cycle
+            for cycle in candidate_cycles
+            if required_nodes.issubset(cycle.node_ids)
+        ]
     cycles_with_sufficient_memory = filter_cycles_by_memory(
-        candidate_cycles, node_memory, command.model_meta.storage_size
+        candidate_cycles, node_memory, command.model_card.storage_size
     )
     if len(cycles_with_sufficient_memory) == 0:
         raise ValueError("No cycles found with sufficient memory")
 
     if command.sharding == Sharding.Tensor:
-        if not command.model_meta.supports_tensor:
+        if not command.model_card.supports_tensor:
             raise ValueError(
-                f"Requested Tensor sharding but this model does not support tensor parallelism: {command.model_meta.model_id}"
+                f"Requested Tensor sharding but this model does not support tensor parallelism: {command.model_card.model_id}"
             )
         # TODO: the condition here for tensor parallel is not correct, but it works good enough for now.
         cycles_with_sufficient_memory = [
             cycle
             for cycle in cycles_with_sufficient_memory
-            if command.model_meta.hidden_size % len(cycle) == 0
+            if command.model_card.hidden_size % len(cycle) == 0
         ]
         if not cycles_with_sufficient_memory:
             raise ValueError(
-                f"No tensor sharding found for model with hidden_size {command.model_meta.hidden_size} candidate cycles"
+                f"No tensor sharding found for model with hidden_size {command.model_card.hidden_size} candidate cycles"
             )
-    if command.sharding == Sharding.Pipeline and command.model_meta.model_id == ModelId(
+    if command.sharding == Sharding.Pipeline and command.model_card.model_id == ModelId(
         "mlx-community/DeepSeek-V3.1-8bit"
     ):
         raise ValueError(
@@ -89,12 +96,12 @@ def place_instance(
 
     smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
 
-    smallest_tb_cycles = [
-        cycle for cycle in smallest_cycles if topology.is_thunderbolt_cycle(cycle)
+    smallest_rdma_cycles = [
+        cycle for cycle in smallest_cycles if topology.is_rdma_cycle(cycle)
     ]
 
-    if smallest_tb_cycles != []:
-        smallest_cycles = smallest_tb_cycles
+    if command.instance_meta == InstanceMeta.MlxJaccl and smallest_rdma_cycles != []:
+        smallest_cycles = smallest_rdma_cycles
 
     cycles_with_leaf_nodes: list[Cycle] = [
         cycle
@@ -111,7 +118,7 @@ def place_instance(
     )
 
     shard_assignments = get_shard_assignments(
-        command.model_meta, selected_cycle, command.sharding, node_memory
+        command.model_card, selected_cycle, command.sharding, node_memory
     )
 
     cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle.node_ids)
@@ -120,10 +127,6 @@ def place_instance(
     target_instances = dict(deepcopy(current_instances))
 
     if len(selected_cycle) == 1:
-        logger.warning(
-            "You have likely selected jaccl for a single node instance; falling back to MlxRing"
-        )
-
         command.instance_meta = InstanceMeta.MlxRing
 
     # TODO: Single node instances

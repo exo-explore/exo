@@ -55,12 +55,16 @@ struct BugReportService {
         let stateData = try await stateResult
         let eventsData = try await eventsResult
 
+        // Extract cluster TB bridge status from exo state
+        let clusterTbBridgeStatus = extractClusterTbBridgeStatus(from: stateData)
+
         let reportJSON = makeReportJson(
             timestamp: timestamp,
             hostName: hostName,
             ifconfig: ifconfigText,
             debugInfo: debugInfo,
-            isManual: isManual
+            isManual: isManual,
+            clusterTbBridgeStatus: clusterTbBridgeStatus
         )
 
         let uploads: [(path: String, data: Data?)] = [
@@ -178,18 +182,19 @@ struct BugReportService {
     }
 
     private func readThunderboltBridgeDisabled() -> Bool? {
-        let result = runCommand([
-            "/usr/sbin/networksetup", "-getnetworkserviceenabled", "Thunderbolt Bridge",
-        ])
-        guard result.exitCode == 0 else { return nil }
-        let output = result.output.lowercased()
-        if output.contains("enabled") {
-            return false
+        // Dynamically find the Thunderbolt Bridge service (don't assume the name)
+        guard let serviceName = ThunderboltBridgeDetector.findThunderboltBridgeServiceName() else {
+            // No bridge containing Thunderbolt interfaces exists
+            return nil
         }
-        if output.contains("disabled") {
-            return true
+
+        guard let isEnabled = ThunderboltBridgeDetector.isServiceEnabled(serviceName: serviceName)
+        else {
+            return nil
         }
-        return nil
+
+        // Return true if disabled, false if enabled
+        return !isEnabled
     }
 
     private func readInterfaces() -> [DebugInfo.InterfaceStatus] {
@@ -268,11 +273,12 @@ struct BugReportService {
         hostName: String,
         ifconfig: String,
         debugInfo: DebugInfo,
-        isManual: Bool
+        isManual: Bool,
+        clusterTbBridgeStatus: [[String: Any]]?
     ) -> Data? {
         let system = readSystemMetadata()
         let exo = readExoMetadata()
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "timestamp": timestamp,
             "host": hostName,
             "ifconfig": ifconfig,
@@ -282,7 +288,36 @@ struct BugReportService {
             "exo_commit": exo.commit as Any,
             "report_type": isManual ? "manual" : "automated",
         ]
+        if let tbStatus = clusterTbBridgeStatus {
+            payload["cluster_thunderbolt_bridge"] = tbStatus
+        }
         return try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted])
+    }
+
+    /// Extracts cluster-wide Thunderbolt Bridge status from exo state JSON
+    private func extractClusterTbBridgeStatus(from stateData: Data?) -> [[String: Any]]? {
+        guard let data = stateData,
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let nodeThunderboltBridge = json["node_thunderbolt_bridge"] as? [String: [String: Any]]
+        else {
+            return nil
+        }
+
+        var result: [[String: Any]] = []
+        for (nodeId, status) in nodeThunderboltBridge {
+            var entry: [String: Any] = ["node_id": nodeId]
+            if let enabled = status["enabled"] as? Bool {
+                entry["enabled"] = enabled
+            }
+            if let exists = status["exists"] as? Bool {
+                entry["exists"] = exists
+            }
+            if let serviceName = status["service_name"] as? String {
+                entry["service_name"] = serviceName
+            }
+            result.append(entry)
+        }
+        return result.isEmpty ? nil : result
     }
 
     private func readSystemMetadata() -> [String: Any] {

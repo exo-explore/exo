@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
 
+from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.tasks import BaseTask, TaskId
 from exo.shared.types.worker.instances import (
     BoundInstance,
@@ -32,13 +32,13 @@ def get_pipeline_shard_metadata(
     model_id: ModelId, device_rank: int, world_size: int = 1
 ) -> ShardMetadata:
     return PipelineShardMetadata(
-        model_meta=ModelMetadata(
+        model_card=ModelCard(
             model_id=model_id,
-            pretty_name=str(model_id),
             storage_size=Memory.from_mb(100000),
             n_layers=32,
             hidden_size=2048,
             supports_tensor=False,
+            tasks=[ModelTask.TextGeneration],
         ),
         device_rank=device_rank,
         world_size=world_size,

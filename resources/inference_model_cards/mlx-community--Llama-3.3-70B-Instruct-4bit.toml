@@ -1,0 +1,12 @@
+model_id = "mlx-community/Llama-3.3-70B-Instruct-4bit"
+n_layers = 80
+hidden_size = 8192
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "llama"
+quantization = "4bit"
+base_model = "Llama 3.3 70B"
+capabilities = ["text"]
+
+[storage_size]
+in_bytes = 40652242944

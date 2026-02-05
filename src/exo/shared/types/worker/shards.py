@@ -1,8 +1,9 @@
 from enum import Enum
+from typing import TypeAlias, final
 
 from pydantic import Field
 
-from exo.shared.types.models import ModelMetadata
+from exo.shared.models.model_cards import ModelCard
 from exo.utils.pydantic_ext import TaggedModel
 
 
@@ -17,7 +18,7 @@ class BaseShardMetadata(TaggedModel):
     Replaces previous `Shard` object.
     """
 
-    model_meta: ModelMetadata
+    model_card: ModelCard
     device_rank: int
     world_size: int
 
@@ -41,7 +42,7 @@ class BaseShardMetadata(TaggedModel):
     def __hash__(self) -> int:
         return hash(
             (
-                self.model_meta.model_id,
+                self.model_card.model_id,
                 self.start_layer,
                 self.end_layer,
                 self.n_layers,
@@ -51,6 +52,7 @@ class BaseShardMetadata(TaggedModel):
         )
 
 
+@final
 class PipelineShardMetadata(BaseShardMetadata):
     """
     Pipeline parallelism shard meta.
@@ -60,8 +62,23 @@ class PipelineShardMetadata(BaseShardMetadata):
     """
 
 
+@final
+class CfgShardMetadata(BaseShardMetadata):
+    """Shard metadata for CFG-parallel image generation models."""
+
+    cfg_rank: int  # 0 = positive branch, 1 = negative branch
+    cfg_world_size: int = 2
+
+    # Pipeline-relative coordinates (computed at placement time)
+    pipeline_rank: int  # rank within the pipeline group (0, 1, 2, ...)
+    pipeline_world_size: int  # number of nodes per pipeline group
+
+
+@final
 class TensorShardMetadata(BaseShardMetadata):
     pass
 
 
-ShardMetadata = PipelineShardMetadata | TensorShardMetadata
+ShardMetadata: TypeAlias = (
+    PipelineShardMetadata | CfgShardMetadata | TensorShardMetadata
+)

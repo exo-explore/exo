@@ -1,14 +1,16 @@
 import time
-from typing import Any, Literal
+from collections.abc import Generator
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic_core import PydanticUseDefault
 
-from exo.shared.types.common import CommandId
+from exo.shared.models.model_cards import ModelCard, ModelId
+from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
-from exo.shared.types.worker.shards import Sharding
+from exo.shared.types.worker.shards import Sharding, ShardMetadata
+from exo.utils.pydantic_ext import CamelCaseModel
 
 FinishReason = Literal[
     "stop", "length", "tool_calls", "content_filter", "function_call", "error"
@@ -27,26 +29,24 @@ class ErrorResponse(BaseModel):
 
 
 class ModelListModel(BaseModel):
-    id: str  # Full HuggingFace model_id (e.g., "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit")
+    id: str
     object: str = "model"
     created: int = Field(default_factory=lambda: int(time.time()))
     owned_by: str = "exo"
     # openwebui fields
+    hugging_face_id: str = Field(default="")
     name: str = Field(default="")
     description: str = Field(default="")
     context_length: int = Field(default=0)
     tags: list[str] = Field(default=[])
     storage_size_megabytes: int = Field(default=0)
     supports_tensor: bool = Field(default=False)
-    # Grouped model fields (new)
-    base_model: str = Field(default="")  # Base model id (e.g., "llama-3.1-8b")
-    base_model_name: str = Field(default="")  # Display name (e.g., "Llama 3.1 8B")
-    quantization: str = Field(default="")  # Quantization type (e.g., "4bit", "8bit")
-    architecture: str = Field(default="")  # HuggingFace model_type (e.g., "llama")
-    # UI display fields
-    tagline: str = Field(default="")  # Short description (max 60 chars)
-    capabilities: list[str] = Field(default=[])  # e.g., ["text", "thinking", "code"]
-    family: str = Field(default="")  # Model family (e.g., "llama", "qwen")
+    tasks: list[str] = Field(default=[])
+    is_custom: bool = Field(default=False)
+    family: str = Field(default="")
+    quantization: str = Field(default="")
+    base_model: str = Field(default="")
+    capabilities: list[str] = Field(default_factory=list)
 
 
 class ModelList(BaseModel):
@@ -59,6 +59,18 @@ class ChatCompletionMessageText(BaseModel):
     text: str
 
 
+class ToolCallItem(BaseModel):
+    name: str
+    arguments: str
+
+
+class ToolCall(BaseModel):
+    id: str
+    index: int | None = None
+    type: Literal["function"] = "function"
+    function: ToolCallItem
+
+
 class ChatCompletionMessage(BaseModel):
     role: Literal["system", "user", "assistant", "developer", "tool", "function"]
     content: (
@@ -66,7 +78,7 @@ class ChatCompletionMessage(BaseModel):
     ) = None
     thinking: str | None = None  # Added for GPT-OSS harmony format support
     name: str | None = None
-    tool_calls: list[dict[str, Any]] | None = None
+    tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
     function_call: dict[str, Any] | None = None
 
@@ -108,8 +120,8 @@ class Usage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-    prompt_tokens_details: PromptTokensDetails | None = None
-    completion_tokens_details: CompletionTokensDetails | None = None
+    prompt_tokens_details: PromptTokensDetails
+    completion_tokens_details: CompletionTokensDetails
 
 
 class StreamingChoiceResponse(BaseModel):
@@ -145,12 +157,29 @@ class GenerationStats(BaseModel):
     peak_memory_usage: Memory
 
 
+class ImageGenerationStats(BaseModel):
+    seconds_per_step: float
+    total_generation_time: float
+
+    num_inference_steps: int
+    num_images: int
+
+    image_width: int
+    image_height: int
+
+    peak_memory_usage: Memory
+
+
 class BenchChatCompletionResponse(ChatCompletionResponse):
     generation_stats: GenerationStats | None = None
 
 
-class ChatCompletionTaskParams(BaseModel):
-    model: str
+class StreamOptions(BaseModel):
+    include_usage: bool = False
+
+
+class ChatCompletionRequest(BaseModel):
+    model: ModelId
     frequency_penalty: float | None = None
     messages: list[ChatCompletionMessage]
     logit_bias: dict[str, int] | None = None
@@ -163,20 +192,35 @@ class ChatCompletionTaskParams(BaseModel):
     seed: int | None = None
     stop: str | list[str] | None = None
     stream: bool = False
+    stream_options: StreamOptions | None = None
     temperature: float | None = None
     top_p: float | None = None
+    top_k: int | None = None
     tools: list[dict[str, Any]] | None = None
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool | None = None
     user: str | None = None
 
 
-class BenchChatCompletionTaskParams(ChatCompletionTaskParams):
+class BenchChatCompletionRequest(ChatCompletionRequest):
     pass
 
 
+class AddCustomModelParams(BaseModel):
+    model_id: ModelId
+
+
+class HuggingFaceSearchResult(BaseModel):
+    id: str
+    author: str = ""
+    downloads: int = 0
+    likes: int = 0
+    last_modified: str = ""
+    tags: list[str] = Field(default_factory=list)
+
+
 class PlaceInstanceParams(BaseModel):
-    model_id: str
+    model_id: ModelId
     sharding: Sharding = Sharding.Pipeline
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
     min_nodes: int = 1
@@ -214,7 +258,7 @@ class DeleteInstanceTaskParams(BaseModel):
 class CreateInstanceResponse(BaseModel):
     message: str
     command_id: CommandId
-    model_meta: ModelMetadata
+    model_card: ModelCard
 
 
 class DeleteInstanceResponse(BaseModel):
@@ -223,45 +267,146 @@ class DeleteInstanceResponse(BaseModel):
     instance_id: InstanceId
 
 
-class AddCustomModelRequest(BaseModel):
-    """Request body for adding a custom model."""
+class AdvancedImageParams(BaseModel):
+    seed: Annotated[int, Field(ge=0)] | None = None
+    num_inference_steps: Annotated[int, Field(ge=1, le=100)] | None = None
+    guidance: Annotated[float, Field(ge=1.0, le=20.0)] | None = None
+    negative_prompt: str | None = None
 
-    model_id: str  # HuggingFace repo ID (e.g., "mlx-community/Some-Model-4bit")
+
+class ImageGenerationTaskParams(BaseModel):
+    prompt: str
+    background: str | None = None
+    model: str
+    moderation: str | None = None
+    n: int | None = 1
+    output_compression: int | None = None
+    output_format: Literal["png", "jpeg", "webp"] = "png"
+    partial_images: int | None = 0
+    quality: Literal["high", "medium", "low"] | None = "medium"
+    response_format: Literal["url", "b64_json"] | None = "b64_json"
+    size: str | None = "1024x1024"
+    stream: bool | None = False
+    style: str | None = "vivid"
+    user: str | None = None
+    advanced_params: AdvancedImageParams | None = None
+    # Internal flag for benchmark mode - set by API, preserved through serialization
+    bench: bool = False
 
 
-class AddCustomModelResponse(BaseModel):
-    """Response after adding a custom model."""
+class BenchImageGenerationTaskParams(ImageGenerationTaskParams):
+    bench: bool = True
 
-    model_id: str  # Full HuggingFace model_id
+
+class ImageEditsTaskParams(BaseModel):
+    """Internal task params for image-editing requests."""
+
+    image_data: str = ""  # Base64-encoded image (empty when using chunked transfer)
+    total_input_chunks: int = 0
+    prompt: str
+    model: str
+    n: int | None = 1
+    quality: Literal["high", "medium", "low"] | None = "medium"
+    output_format: Literal["png", "jpeg", "webp"] = "png"
+    response_format: Literal["url", "b64_json"] | None = "b64_json"
+    size: str | None = "1024x1024"
+    image_strength: float | None = 0.7
+    stream: bool = False
+    partial_images: int | None = 0
+    advanced_params: AdvancedImageParams | None = None
+    bench: bool = False
+
+    def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
+        for name, value in super().__repr_args__():  # pyright: ignore[reportAny]
+            if name == "image_data":
+                yield name, f"<{len(self.image_data)} chars>"
+            elif name is not None:
+                yield name, value
+
+
+class ImageData(BaseModel):
+    b64_json: str | None = None
+    url: str | None = None
+    revised_prompt: str | None = None
+
+    def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
+        for name, value in super().__repr_args__():  # pyright: ignore[reportAny]
+            if name == "b64_json" and self.b64_json is not None:
+                yield name, f"<{len(self.b64_json)} chars>"
+            elif name is not None:
+                yield name, value
+
+
+class ImageGenerationResponse(BaseModel):
+    created: int = Field(default_factory=lambda: int(time.time()))
+    data: list[ImageData]
+
+
+class BenchImageGenerationResponse(ImageGenerationResponse):
+    generation_stats: ImageGenerationStats | None = None
+
+
+class ImageListItem(BaseModel, frozen=True):
+    image_id: str
+    url: str
+    content_type: str
+    expires_at: float
+
+
+class ImageListResponse(BaseModel, frozen=True):
+    data: list[ImageListItem]
+
+
+class StartDownloadParams(CamelCaseModel):
+    target_node_id: NodeId
+    shard_metadata: ShardMetadata
+
+
+class StartDownloadResponse(CamelCaseModel):
+    command_id: CommandId
+
+
+class DeleteDownloadResponse(CamelCaseModel):
+    command_id: CommandId
+
+
+class TraceEventResponse(CamelCaseModel):
     name: str
-    storage_size_bytes: int
-    n_layers: int
-    hidden_size: int
-    supports_tensor: bool
-    is_user_added: bool
+    start_us: int
+    duration_us: int
+    rank: int
+    category: str
 
 
-class UpdateCustomModelRequest(BaseModel):
-    """Request body for updating a custom model."""
-
-    name: str | None = None
-    description: str | None = None
-    supports_tensor: bool | None = None
+class TraceResponse(CamelCaseModel):
+    task_id: str
+    traces: list[TraceEventResponse]
 
 
-class DeleteCustomModelResponse(BaseModel):
-    """Response after deleting a custom model."""
+class TraceCategoryStats(CamelCaseModel):
+    total_us: int
+    count: int
+    min_us: int
+    max_us: int
+    avg_us: float
 
-    message: str
-    model_id: str  # Full HuggingFace model_id that was deleted
+
+class TraceRankStats(CamelCaseModel):
+    by_category: dict[str, TraceCategoryStats]
 
 
-class HuggingFaceModelInfo(BaseModel):
-    """Search result from HuggingFace Hub."""
+class TraceStatsResponse(CamelCaseModel):
+    task_id: str
+    total_wall_time_us: int
+    by_category: dict[str, TraceCategoryStats]
+    by_rank: dict[int, TraceRankStats]
 
-    id: str  # Full model ID (e.g., "mlx-community/Llama-3.2-1B-Instruct-4bit")
-    author: str
-    downloads: int
-    likes: int
-    last_modified: str
-    tags: list[str]
+
+class TraceListItem(CamelCaseModel):
+    task_id: str
+    created_at: str
+    file_size: int
+
+
+class TraceListResponse(CamelCaseModel):
+    traces: list[TraceListItem]
