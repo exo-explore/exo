@@ -72,6 +72,14 @@ class DeleteDownload(BaseCommand):
     model_id: ModelId
 
 
+class SetInstanceDraftModel(BaseCommand):
+    """Set or update the draft model for an existing instance."""
+
+    instance_id: InstanceId
+    draft_model: ModelId | None  # None to disable speculative decoding
+    num_draft_tokens: int = 4
+
+
 DownloadCommand = StartDownload | DeleteDownload
 
 
@@ -84,6 +92,7 @@ Command = (
     | PlaceInstance
     | CreateInstance
     | DeleteInstance
+    | SetInstanceDraftModel
     | TaskFinished
     | SendInputChunk
 )
