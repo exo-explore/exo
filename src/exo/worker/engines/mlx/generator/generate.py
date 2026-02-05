@@ -143,7 +143,7 @@ def warmup_inference(
     )
 
     # Use a default sampler for warmup
-    sampler = make_sampler(temp=0.7)
+    sampler = make_sampler(temp=0.0)
 
     logger.info("Generating warmup tokens")
     for _r in stream_generate(
@@ -249,8 +249,9 @@ def mlx_generate(
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
-    if task.seed is not None:
-        mx.random.seed(task.seed)
+    seed = task.seed or 42
+    if seed is not None:
+        mx.random.seed(seed)
 
     # Encode prompt once at the top and fix unmatched think tags
     all_prompt_tokens = encode_prompt(tokenizer, prompt)
