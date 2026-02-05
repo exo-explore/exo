@@ -42,6 +42,11 @@ class ModelListModel(BaseModel):
     storage_size_megabytes: int = Field(default=0)
     supports_tensor: bool = Field(default=False)
     tasks: list[str] = Field(default=[])
+    is_custom: bool = Field(default=False)
+    family: str = Field(default="")
+    quantization: str = Field(default="")
+    base_model: str = Field(default="")
+    capabilities: list[str] = Field(default_factory=list)
 
 
 class ModelList(BaseModel):
@@ -199,6 +204,19 @@ class ChatCompletionRequest(BaseModel):
 
 class BenchChatCompletionRequest(ChatCompletionRequest):
     pass
+
+
+class AddCustomModelParams(BaseModel):
+    model_id: ModelId
+
+
+class HuggingFaceSearchResult(BaseModel):
+    id: str
+    author: str = ""
+    downloads: int = 0
+    likes: int = 0
+    last_modified: str = ""
+    tags: list[str] = Field(default_factory=list)
 
 
 class PlaceInstanceParams(BaseModel):
