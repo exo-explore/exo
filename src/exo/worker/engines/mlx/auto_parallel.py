@@ -822,29 +822,15 @@ class Step3p5ShardingStrategy(TensorParallelShardingStrategy):
                 layer.mlp.down_proj = self.sharded_to_all_linear(layer.mlp.down_proj)
                 layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
             else:
-                # MoE layer: shared expert + routed experts
-                self.all_to_sharded_linear_in_place(layer.mlp.share_expert.gate_proj)
-                self.sharded_to_all_linear_in_place(layer.mlp.share_expert.down_proj)
-                self.all_to_sharded_linear_in_place(layer.mlp.share_expert.up_proj)
-                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
-                self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
-                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
-                layer.mlp = ShardedStep3p5MoE(layer.mlp)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
+                # MoE layer: set sharding_group directly on Step3p5MoE
+                # (its __call__ already has sum_gradients/all_sum built in)
                 layer.mlp.sharding_group = self.group  # pyright: ignore[reportAttributeAccessIssue]
+                self.all_to_sharded_linear_in_place(layer.mlp.share_expert.gate_proj)
+                self.all_to_sharded_linear_in_place(layer.mlp.share_expert.up_proj)
+                self.sharded_to_all_linear_in_place(layer.mlp.share_expert.down_proj)
+                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
+                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
+                self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
 
             mx.eval(layer)
         return model
-
-
-class ShardedStep3p5MoE(CustomMlxLayer):
-    def __init__(self, layer: _LayerCallable):
-        super().__init__(layer)
-        self.sharding_group: mx.distributed.Group | None = None
-
-    def __call__(self, x: mx.array) -> mx.array:
-        if self.sharding_group is not None:
-            x = sum_gradients(self.sharding_group)(x)
-        y = self.original_layer.__call__(x)
-        if self.sharding_group is not None:
-            y = mx.distributed.all_sum(y, group=self.sharding_group)
-        return y
