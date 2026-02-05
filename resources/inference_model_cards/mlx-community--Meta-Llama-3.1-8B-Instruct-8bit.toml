@@ -3,6 +3,10 @@ n_layers = 32
 hidden_size = 4096
 supports_tensor = true
 tasks = ["TextGeneration"]
+family = "llama"
+quantization = "8bit"
+base_model = "Llama 3.1 8B"
+capabilities = ["text"]
 
 [storage_size]
 in_bytes = 8954839040

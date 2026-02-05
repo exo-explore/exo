@@ -1,6 +1,7 @@
 import base64
 import contextlib
 import json
+import random
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import datetime, timezone
@@ -50,10 +51,13 @@ from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
+    delete_custom_card,
     get_model_cards,
+    is_custom_card,
 )
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.api import (
+    AddCustomModelParams,
     AdvancedImageParams,
     BenchChatCompletionRequest,
     BenchChatCompletionResponse,
@@ -71,6 +75,7 @@ from exo.shared.types.api import (
     ErrorResponse,
     FinishReason,
     GenerationStats,
+    HuggingFaceSearchResult,
     ImageData,
     ImageEditsTaskParams,
     ImageGenerationResponse,
@@ -146,6 +151,15 @@ from exo.utils.event_buffer import OrderedBuffer
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
     return f"image/{image_format or 'png'}"
+
+
+def _ensure_seed(params: AdvancedImageParams | None) -> AdvancedImageParams:
+    """Ensure advanced params has a seed set for distributed consistency."""
+    if params is None:
+        return AdvancedImageParams(seed=random.randint(0, 2**32 - 1))
+    if params.seed is None:
+        return params.model_copy(update={"seed": random.randint(0, 2**32 - 1)})
+    return params
 
 
 class API:
@@ -260,6 +274,9 @@ class API:
         self.app.delete("/instance/{instance_id}")(self.delete_instance)
         self.app.get("/models")(self.get_models)
         self.app.get("/v1/models")(self.get_models)
+        self.app.post("/models/add")(self.add_custom_model)
+        self.app.delete("/models/custom/{model_id:path}")(self.delete_custom_model)
+        self.app.get("/models/search")(self.search_models)
         self.app.post("/v1/chat/completions", response_model=None)(
             self.chat_completions
         )
@@ -726,6 +743,9 @@ class API:
         with SSE-formatted events for partial and final images.
         """
         payload.model = await self._validate_image_model(ModelId(payload.model))
+        payload = payload.model_copy(
+            update={"advanced_params": _ensure_seed(payload.advanced_params)}
+        )
 
         command = ImageGeneration(
             task_params=payload,
@@ -974,6 +994,9 @@ class API:
 
         payload.stream = False
         payload.partial_images = 0
+        payload = payload.model_copy(
+            update={"advanced_params": _ensure_seed(payload.advanced_params)}
+        )
 
         command = ImageGeneration(
             task_params=payload,
@@ -1005,6 +1028,7 @@ class API:
     ) -> ImageEdits:
         """Prepare and send an image edits command with chunked image upload."""
         resolved_model = await self._validate_image_model(model)
+        advanced_params = _ensure_seed(advanced_params)
 
         image_content = await image.read()
         image_data = base64.b64encode(image_content).decode("utf-8")
@@ -1256,10 +1280,69 @@ class API:
                     storage_size_megabytes=int(card.storage_size.in_mb),
                     supports_tensor=card.supports_tensor,
                     tasks=[task.value for task in card.tasks],
+                    is_custom=is_custom_card(card.model_id),
+                    family=card.family,
+                    quantization=card.quantization,
+                    base_model=card.base_model,
+                    capabilities=card.capabilities,
                 )
                 for card in await get_model_cards()
             ]
         )
+
+    async def add_custom_model(self, payload: AddCustomModelParams) -> ModelListModel:
+        """Fetch a model from HuggingFace and save as a custom model card."""
+        try:
+            card = await ModelCard.fetch_from_hf(payload.model_id)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Failed to fetch model: {exc}"
+            ) from exc
+
+        return ModelListModel(
+            id=card.model_id,
+            hugging_face_id=card.model_id,
+            name=card.model_id.short(),
+            description="",
+            tags=[],
+            storage_size_megabytes=int(card.storage_size.in_mb),
+            supports_tensor=card.supports_tensor,
+            tasks=[task.value for task in card.tasks],
+            is_custom=True,
+        )
+
+    async def delete_custom_model(self, model_id: ModelId) -> JSONResponse:
+        """Delete a user-added custom model card."""
+        deleted = await delete_custom_card(model_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Custom model card not found")
+        return JSONResponse(
+            {"message": "Model card deleted", "model_id": str(model_id)}
+        )
+
+    async def search_models(
+        self, query: str = "", limit: int = 20
+    ) -> list[HuggingFaceSearchResult]:
+        """Search HuggingFace Hub for mlx-community models."""
+        from huggingface_hub import list_models
+
+        results = list_models(
+            search=query or None,
+            author="mlx-community",
+            sort="downloads",
+            limit=limit,
+        )
+        return [
+            HuggingFaceSearchResult(
+                id=m.id,
+                author=m.author or "",
+                downloads=m.downloads or 0,
+                likes=m.likes or 0,
+                last_modified=str(m.last_modified or ""),
+                tags=list(m.tags or []),
+            )
+            for m in results
+        ]
 
     async def run(self):
         cfg = Config()
