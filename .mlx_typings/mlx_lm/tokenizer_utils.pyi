@@ -108,6 +108,7 @@ class TokenizerWrapper:
     _tokenizer: PreTrainedTokenizerFast
     eos_token_id: int | None
     eos_token: str | None
+    eos_token_ids: list[int] | set[int] | None
     bos_token_id: int | None
     bos_token: str | None
     vocab_size: int
@@ -121,7 +122,7 @@ class TokenizerWrapper:
         self,
         tokenizer: Any,
         detokenizer_class: Any = ...,
-        eos_token_ids: list[int] | None = ...,
+        eos_token_ids: list[int] | set[int] | None = ...,
         chat_template: Any = ...,
         tool_parser: Any = ...,
         tool_call_start: str | None = ...,

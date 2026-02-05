@@ -64,6 +64,12 @@ class FluxPromptData(PromptData):
     ) -> tuple[mx.array, mx.array, mx.array | None, mx.array | None] | None:
         return None
 
+    def get_cfg_branch_data(
+        self, positive: bool
+    ) -> tuple[mx.array, mx.array | None, mx.array | None, mx.array | None]:
+        """Flux doesn't use CFG, but we return positive data for compatibility."""
+        return (self._prompt_embeds, None, self._pooled_prompt_embeds, None)
+
 
 class FluxModelAdapter(ModelAdapter[Flux1, Transformer]):
     def __init__(
