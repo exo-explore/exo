@@ -273,6 +273,10 @@ def mlx_generate(
             model, all_prompt_tokens
         )
         prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
+        if prefix_hit_length > 0:
+            logger.info(
+                f"KV cache hit: {prefix_hit_length}/{len(all_prompt_tokens)} tokens cached ({100 * prefix_hit_length / len(all_prompt_tokens):.1f}%)"
+            )
 
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = []
     if is_bench:
