@@ -1,10 +1,11 @@
 import time
 from copy import deepcopy
+from linecache import cache
 from typing import Callable, Generator, cast, get_args
 
 import mlx.core as mx
 from mlx_lm.generate import stream_generate
-from mlx_lm.models.cache import ArraysCache
+from mlx_lm.models.cache import ArraysCache, RotatingKVCache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
@@ -25,9 +26,9 @@ from exo.shared.types.worker.runner_response import (
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.cache import (
     KVPrefixCache,
-    SSMSnapshot,
+    CacheSnapshot,
     encode_prompt,
-    has_ssm_caches,
+    has_non_kv_caches,
     make_kv_cache,
     snapshot_ssm_states,
 )
@@ -38,6 +39,7 @@ from exo.worker.engines.mlx.utils_mlx import (
     mx_barrier,
 )
 from exo.worker.runner.bootstrap import logger
+from transformers.models.gpt_oss.modular_gpt_oss import GptOssModel
 
 generation_stream = mx.new_stream(mx.default_device())
 
@@ -50,8 +52,7 @@ def prefill(
     sampler: Callable[[mx.array], mx.array],
     prompt_tokens: mx.array,
     cache: KVCacheType,
-    capture_ssm_snapshots: bool = False,
-) -> tuple[float, int, list[SSMSnapshot]]:
+) -> tuple[float, int, list[CacheSnapshot]]:
     """Prefill the KV cache with prompt tokens.
 
     This runs the model over the prompt tokens to populate the cache,
@@ -66,8 +67,8 @@ def prefill(
 
     logger.debug(f"Prefilling {num_tokens} tokens...")
     start_time = time.perf_counter()
-    has_ssm = has_ssm_caches(cache)
-    snapshots: list[SSMSnapshot] = []
+    has_ssm = has_non_kv_caches(cache)
+    snapshots: list[CacheSnapshot] = []
 
     def progress_callback(processed: int, total: int) -> None:
         elapsed = time.perf_counter() - start_time
@@ -94,15 +95,16 @@ def prefill(
     ):
         break  # Stop after first iteration - cache is now filled
 
-    # stream_generate added 1 extra generated token to the cache, so we should trim ti.
-    pre_gen = snapshots[-1] if has_ssm else None
+    # stream_generate added 1 extra generated token to the cache, so we should trim it.
+    pre_gen = deepcopy(snapshots[-2]) if has_ssm else None
     for i, c in enumerate(cache):
-        if has_ssm and isinstance(c, ArraysCache):
+        if has_ssm and isinstance(c, (ArraysCache, RotatingKVCache)):
             assert pre_gen is not None
             if pre_gen.states[i] is not None:
-                c.state = deepcopy(pre_gen.states[i])
+                cache[i] = deepcopy(pre_gen.states[i])
+                # logger.info(cache[i].meta_state)
         else:
-            assert not isinstance(c, ArraysCache)
+            assert not isinstance(c, (ArraysCache, RotatingKVCache))
             c.trim(1)  # pyright: ignore[reportUnknownMemberType]
 
     elapsed = time.perf_counter() - start_time
@@ -197,8 +199,11 @@ def mlx_generate(
 
     # Do not use the prefix cache if we are trying to do benchmarks.
     is_bench = task.bench
-    if is_bench:
+    if is_bench or isinstance(model.model, GptOssModel):
+    # if is_bench:
         kv_prefix_cache = None
+
+    # logger.info(all_prompt_tokens.shape)
 
     # Use prefix cache if available, otherwise create fresh cache
     prefix_hit_length = 0
@@ -211,6 +216,8 @@ def mlx_generate(
             model, all_prompt_tokens
         )
         prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
+
+        # logger.info(prefix_hit_length)
 
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = []
     if is_bench:
@@ -232,17 +239,22 @@ def mlx_generate(
     )
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
+    # logger.info(prompt_tokens.shape)
+    #
+    # logger.info(caches[0].meta_state)
+
     # Prefill cache with all tokens except the last one
-    capture_snapshots = has_ssm_caches(caches) and kv_prefix_cache is not None
     prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
         model,
         tokenizer,
         sampler,
         prompt_tokens[:-1],
         caches,
-        capture_ssm_snapshots=capture_snapshots,
     )
-    ssm_snapshots: list[SSMSnapshot] | None = ssm_snapshots_list or None
+    cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
+    # logger.info(caches[0].state)
+    # logger.info(caches[1].state)
+    # logger.info(caches[0].meta_state)
 
     # stream_generate starts from the last token
     last_token = prompt_tokens[-1:]
@@ -362,12 +374,12 @@ def mlx_generate(
                         matched_index,
                         full_prompt_tokens,
                         caches,
-                        ssm_snapshots,
+                        cache_snapshots,
                         restore_pos=prefix_hit_length,
                     )
                 else:
                     kv_prefix_cache.add_kv_cache(
-                        full_prompt_tokens, caches, ssm_snapshots
+                        full_prompt_tokens, caches, cache_snapshots
                     )
 
         yield GenerationResponse(

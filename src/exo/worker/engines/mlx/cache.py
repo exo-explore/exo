@@ -24,30 +24,29 @@ _MEMORY_THRESHOLD = float(
 )
 
 
-class SSMSnapshot:
-    """Snapshot of ArraysCache states at a known token position."""
-
-    def __init__(self, states: list[list[object] | None], token_count: int):
+class CacheSnapshot:
+    """Snapshot of states at a known token position."""
+    def __init__(self, states: list[list[RotatingKVCache | ArraysCache] | None], token_count: int):
         self.states = states
         self.token_count = token_count
 
 
-def snapshot_ssm_states(cache: KVCacheType) -> SSMSnapshot:
+def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
     states: list[list[object] | None] = []
     for c in cache:
-        if isinstance(c, ArraysCache):
-            states.append(deepcopy(c.state))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        if isinstance(c, (ArraysCache, RotatingKVCache)) and c.keys is not None:
+            states.append(deepcopy(c))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
         else:
             states.append(None)
     token_count = cache_length(cache)
-    return SSMSnapshot(states=states, token_count=token_count)
+    return CacheSnapshot(states=states, token_count=token_count)
 
 
 def _find_nearest_snapshot(
-    snapshots: list[SSMSnapshot],
+    snapshots: list[CacheSnapshot],
     target_token_count: int,
-) -> SSMSnapshot | None:
-    best: SSMSnapshot | None = None
+) -> CacheSnapshot | None:
+    best: CacheSnapshot | None = None
     for snap in snapshots:
         if snap.token_count <= target_token_count and (
             best is None or snap.token_count > best.token_count
@@ -56,9 +55,9 @@ def _find_nearest_snapshot(
     return best
 
 
-def has_ssm_caches(cache: KVCacheType) -> bool:
+def has_non_kv_caches(cache: KVCacheType) -> bool:
     """Check if a cache contains any ArraysCache (SSM) entries."""
-    return any(isinstance(c, ArraysCache) for c in cache)
+    return any(isinstance(c, (ArraysCache, RotatingKVCache)) for c in cache)
 
 
 class KVPrefixCache:
@@ -67,7 +66,7 @@ class KVPrefixCache:
     ):
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
         self.caches: list[KVCacheType] = []
-        self._ssm_snapshots: list[list[SSMSnapshot] | None] = []
+        self._snapshots: list[list[CacheSnapshot] | None] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
         self._access_counter: int = 0
         self._tokenizer: TokenizerWrapper = tokenizer
@@ -77,20 +76,20 @@ class KVPrefixCache:
         """Clear all cached prompts and caches."""
         self.prompts.clear()
         self.caches.clear()
-        self._ssm_snapshots.clear()
+        self._snapshots.clear()
         self._last_used.clear()
 
     def add_kv_cache(
         self,
         prompt_tokens: mx.array,
         cache: KVCacheType,
-        ssm_snapshots: list[SSMSnapshot] | None = None,
+        ssm_snapshots: list[CacheSnapshot] | None = None,
     ):
         """Add a new cache entry. Evicts LRU entries if memory is high."""
         self._evict_if_needed()
         self.prompts.append(prompt_tokens)
         self.caches.append(deepcopy(cache))
-        self._ssm_snapshots.append(ssm_snapshots)
+        self._snapshots.append(ssm_snapshots)
         self._access_counter += 1
         self._last_used.append(self._access_counter)
         logger.info(f"KV cache added: {len(prompt_tokens)} tokens")
@@ -100,12 +99,12 @@ class KVPrefixCache:
         index: int,
         prompt_tokens: mx.array,
         cache: KVCacheType,
-        ssm_snapshots: list[SSMSnapshot] | None,
+        ssm_snapshots: list[CacheSnapshot] | None,
         restore_pos: int,
     ):
         """Update an existing cache entry in-place."""
-        old_snapshots = self._ssm_snapshots[index]
-        merged: list[SSMSnapshot] = []
+        old_snapshots = self._snapshots[index]
+        merged: list[CacheSnapshot] = []
         if old_snapshots:
             merged = [s for s in old_snapshots if s.token_count <= restore_pos]
         if ssm_snapshots:
@@ -113,18 +112,18 @@ class KVPrefixCache:
 
         self.prompts[index] = prompt_tokens
         self.caches[index] = deepcopy(cache)
-        self._ssm_snapshots[index] = merged or None
+        self._snapshots[index] = merged or None
         self._access_counter += 1
         self._last_used[index] = self._access_counter
         logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
 
     def _get_snapshot(
         self, entry_index: int, target_token_count: int
-    ) -> tuple[int, SSMSnapshot | None]:
-        if not has_ssm_caches(self.caches[entry_index]):
+    ) -> tuple[int, CacheSnapshot | None]:
+        if not has_non_kv_caches(self.caches[entry_index]):
             return target_token_count, None
 
-        snapshots = self._ssm_snapshots[entry_index]
+        snapshots = self._snapshots[entry_index]
         if not snapshots:
             return 0, None
 
@@ -176,11 +175,10 @@ class KVPrefixCache:
         target = (max_length - 1) if is_exact else best_length
         restore_pos, restore_snap = self._get_snapshot(best_index, target)
 
-        # SSM model with no usable snapshot — need fresh cache
+        # No usable snapshot — need fresh cache
         if (
-            restore_pos == 0
-            and restore_snap is None
-            and has_ssm_caches(self.caches[best_index])
+            restore_snap is None
+            and has_non_kv_caches(self.caches[best_index])
         ):
             return make_kv_cache(model), prompt_tokens, None
 
@@ -214,7 +212,7 @@ class KVPrefixCache:
             evicted_tokens = len(self.prompts[lru_index])
             self.prompts.pop(lru_index)
             self.caches.pop(lru_index)
-            self._ssm_snapshots.pop(lru_index)
+            self._snapshots.pop(lru_index)
             self._last_used.pop(lru_index)
             logger.info(
                 f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory usage"
@@ -238,12 +236,12 @@ class KVPrefixCache:
 def trim_cache(
     cache: KVCacheType,
     num_tokens: int,
-    ssm_snapshot: SSMSnapshot | None = None,
+    snapshot: CacheSnapshot | None = None,
 ) -> None:
     for i, c in enumerate(cache):
-        if isinstance(c, ArraysCache):
-            if ssm_snapshot is not None and ssm_snapshot.states[i] is not None:
-                c.state = deepcopy(ssm_snapshot.states[i])
+        if isinstance(c, (ArraysCache, RotatingKVCache)):
+            if snapshot is not None and snapshot.states[i] is not None:
+                cache[i] = snapshot.states[i]
             else:
                 c.state = [None] * len(c.state)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
         else:
