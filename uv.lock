@@ -415,7 +415,7 @@ requires-dist = [
     { name = "mflux", specifier = "==0.15.4" },
     { name = "mlx", marker = "sys_platform == 'darwin'", specifier = "==0.30.4" },
     { name = "mlx", extras = ["cpu"], marker = "sys_platform == 'linux'", specifier = "==0.30.4" },
-    { name = "mlx-lm", git = "https://github.com/ml-explore/mlx-lm?branch=main" },
+    { name = "mlx-lm", specifier = "==0.30.6" },
     { name = "openai-harmony", specifier = ">=0.0.8" },
     { name = "pillow", specifier = ">=11.0,<12.0" },
     { name = "psutil", specifier = ">=7.0.0" },
@@ -1072,8 +1072,8 @@ wheels = [
 
 [[package]]
 name = "mlx-lm"
-version = "0.30.5"
-source = { git = "https://github.com/ml-explore/mlx-lm?branch=main#96699e6dadb13b82b28285bb131a0741997d19ae" }
+version = "0.30.6"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", marker = "sys_platform == 'darwin'" },
@@ -1082,6 +1082,10 @@ dependencies = [
     { name = "pyyaml", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "sentencepiece", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "transformers", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/76/cb/815deddc8699b1f694d7e1f9cbed52934c03a8b49432c8add72932bb2f0b/mlx_lm-0.30.6.tar.gz", hash = "sha256:807e042d7040268f1b19190b7eaefd8b2efbff5590a65460974ad4225b91dda1", size = 271733 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/20/5f/01d281f1fa8a1521d5936659beb4f5ab1f32b463d059263cf9d4cef969d9/mlx_lm-0.30.6-py3-none-any.whl", hash = "sha256:a7405bd581eacc4bf8209d7a6b7f23629585a0d7c6740c2a97e51fee35b3b0e1", size = 379451 },
 ]
 
 [[package]]
