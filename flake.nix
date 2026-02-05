@@ -118,9 +118,10 @@
             {
               metal-toolchain = pkgs.callPackage ./nix/metal-toolchain.nix { };
               mlx = pkgs.callPackage ./nix/mlx.nix {
-                metal-toolchain = self'.packages.metal-toolchain;
+                inherit (self'.packages) metal-toolchain;
                 inherit uvLockMlxVersion;
               };
+              default = self'.packages.exo;
             }
           );
 
