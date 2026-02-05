@@ -48,6 +48,7 @@ from exo.shared.types.worker.instances import (
     MlxRingInstance,
 )
 from exo.shared.types.worker.shards import (
+    CfgShardMetadata,
     PipelineShardMetadata,
     ShardMetadata,
     TensorShardMetadata,
@@ -274,6 +275,11 @@ def shard_and_load(
             logger.info(f"loading model from {model_path} with pipeline parallelism")
             model = pipeline_auto_parallel(model, group, shard_metadata)
             eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
+        case CfgShardMetadata():
+            raise ValueError(
+                "CfgShardMetadata is not supported for text model loading - "
+                "this metadata type is only for image generation models"
+            )
 
     # TODO: Do we need this?
     mx.eval(model)

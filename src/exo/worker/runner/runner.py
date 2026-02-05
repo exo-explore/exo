@@ -66,7 +66,11 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
-from exo.shared.types.worker.shards import ShardMetadata
+from exo.shared.types.worker.shards import (
+    CfgShardMetadata,
+    PipelineShardMetadata,
+    ShardMetadata,
+)
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.image import (
     DistributedImageModel,
@@ -85,6 +89,22 @@ from exo.worker.engines.mlx.utils_mlx import (
     mlx_force_oom,
 )
 from exo.worker.runner.bootstrap import logger
+
+
+def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:
+    """Check if this node is the primary output node for image generation.
+
+    For CFG models: the last pipeline stage in CFG group 0 (positive prompt).
+    For non-CFG models: the last pipeline stage.
+    """
+    if isinstance(shard_metadata, CfgShardMetadata):
+        is_pipeline_last = (
+            shard_metadata.pipeline_rank == shard_metadata.pipeline_world_size - 1
+        )
+        return is_pipeline_last and shard_metadata.cfg_rank == 0
+    elif isinstance(shard_metadata, PipelineShardMetadata):
+        return shard_metadata.device_rank == shard_metadata.world_size - 1
+    return False
 
 
 def main(
@@ -372,14 +392,11 @@ def main(
                     event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
                     try:
-                        # Generate images using the image generation backend
-                        # Track image_index for final images only
                         image_index = 0
                         for response in generate_image(model=model, task=task_params):
-                            if (
-                                shard_metadata.device_rank
-                                == shard_metadata.world_size - 1
-                            ):
+                            is_primary_output = _is_primary_output_node(shard_metadata)
+
+                            if is_primary_output:
                                 match response:
                                     case PartialImageResponse():
                                         logger.info(
@@ -404,7 +421,7 @@ def main(
                                         image_index += 1
                     # can we make this more explicit?
                     except Exception as e:
-                        if shard_metadata.device_rank == shard_metadata.world_size - 1:
+                        if _is_primary_output_node(shard_metadata):
                             event_sender.send(
                                 ChunkGenerated(
                                     command_id=command_id,
@@ -440,10 +457,7 @@ def main(
                     try:
                         image_index = 0
                         for response in generate_image(model=model, task=task_params):
-                            if (
-                                shard_metadata.device_rank
-                                == shard_metadata.world_size - 1
-                            ):
+                            if _is_primary_output_node(shard_metadata):
                                 match response:
                                     case PartialImageResponse():
                                         logger.info(
@@ -467,7 +481,7 @@ def main(
                                         )
                                         image_index += 1
                     except Exception as e:
-                        if shard_metadata.device_rank == shard_metadata.world_size - 1:
+                        if _is_primary_output_node(shard_metadata):
                             event_sender.send(
                                 ChunkGenerated(
                                     command_id=command_id,
