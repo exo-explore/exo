@@ -32,6 +32,80 @@
   const debugEnabled = $derived(debugMode());
   const tbBridgeData = $derived(nodeThunderboltBridge());
 
+  // The dashboard polls state frequently. A full SVG teardown + rebuild is
+  // expensive and can cause high GPU usage. We re-render on structural changes
+  // (nodes/edges/layout) and otherwise only refresh metrics periodically.
+  const METRICS_RERENDER_INTERVAL_MS = 5_000;
+  let lastStructureKey: string | null = null;
+  let lastFullRenderAt = 0;
+
+  function buildStructureKey(): string {
+    if (!data) return "no-data";
+    const nodeIds = Object.keys(data.nodes || {});
+    const edgeKeys = (data.edges || [])
+      .map((e) => `${e.source}->${e.target}:${e.sendBackIp ?? ""}`)
+      .sort()
+      .join(",");
+    return [
+      isMinimized ? "min" : "full",
+      debugEnabled ? "debug" : "nodebug",
+      `nodes:${nodeIds.join(",")}`,
+      `edges:${edgeKeys}`,
+    ].join("|");
+  }
+
+  function updateInteractionStyles(): void {
+    if (!svgContainer) return;
+
+    d3.select(svgContainer)
+      .selectAll<SVGGElement, unknown>("g.graph-node")
+      .each(function () {
+        const g = d3.select(this);
+        const nodeId = g.attr("data-node-id");
+        if (!nodeId) return;
+
+        const isHighlighted = highlightedNodes.has(nodeId);
+        const isInFilter = filteredNodes.size > 0 && filteredNodes.has(nodeId);
+        const isFilteredOut =
+          filteredNodes.size > 0 && !filteredNodes.has(nodeId);
+        const isHovered =
+          Boolean(onNodeClick) && hoveredNodeId === nodeId && !isInFilter;
+
+        const wireColor = isInFilter
+          ? "rgba(255,215,0,1)"
+          : isHovered
+            ? "rgba(255,215,0,0.7)"
+            : isHighlighted
+              ? "rgba(255,215,0,0.9)"
+              : isFilteredOut
+                ? "rgba(140,140,140,0.6)"
+                : "rgba(179,179,179,0.8)";
+        const fillColor = isInFilter
+          ? "rgba(255,215,0,0.25)"
+          : isHovered
+            ? "rgba(255,215,0,0.12)"
+            : isHighlighted
+              ? "rgba(255,215,0,0.15)"
+              : "rgba(255,215,0,0.08)";
+        const strokeWidth = isInFilter
+          ? 3
+          : isHovered
+            ? 2
+            : isHighlighted
+              ? 2.5
+              : 1.5;
+
+        g.style("opacity", isFilteredOut ? 0.5 : 1);
+
+        g.selectAll<SVGElement, unknown>(".node-outline")
+          .attr("stroke", wireColor)
+          .attr("stroke-width", strokeWidth);
+
+        // Only some node types use dynamic fill; keep others untouched.
+        g.selectAll<SVGElement, unknown>(".dynamic-fill").attr("fill", fillColor);
+      });
+  }
+
   function getNodeLabel(nodeId: string): string {
     const node = data?.nodes?.[nodeId];
     return node?.friendly_name || nodeId.slice(0, 8);
@@ -577,6 +651,7 @@
       const nodeG = nodesGroup
         .append("g")
         .attr("class", "graph-node")
+        .attr("data-node-id", nodeInfo.id)
         .style("cursor", onNodeClick ? "pointer" : "default")
         .style("opacity", isFilteredOut ? 0.5 : 1);
 
@@ -900,7 +975,7 @@
         // Main shape
         nodeG
           .append("polygon")
-          .attr("class", "node-outline")
+          .attr("class", "node-outline dynamic-fill")
           .attr("points", hexPoints)
           .attr("fill", fillColor)
           .attr("stroke", wireColor)
@@ -1145,22 +1220,43 @@
         }
       }
     });
+
+    // Ensure interaction-only styling is applied even when we throttle re-renders.
+    updateInteractionStyles();
   }
 
   $effect(() => {
-    // Track all reactive dependencies that affect rendering
     const _data = data;
+    const _isMinimized = isMinimized;
+    const _debugEnabled = debugEnabled;
+    if (!_data || !svgContainer) return;
+
+    const key = buildStructureKey();
+    const now = performance.now();
+    const shouldRender =
+      key !== lastStructureKey ||
+      now - lastFullRenderAt >= METRICS_RERENDER_INTERVAL_MS;
+
+    if (shouldRender) {
+      lastStructureKey = key;
+      lastFullRenderAt = now;
+      renderGraph();
+    }
+  });
+
+  $effect(() => {
     const _hoveredNodeId = hoveredNodeId;
     const _filteredNodes = filteredNodes;
     const _highlightedNodes = highlightedNodes;
-    if (_data) {
-      renderGraph();
-    }
+    updateInteractionStyles();
   });
 
   onMount(() => {
     if (svgContainer) {
       resizeObserver = new ResizeObserver(() => {
+        // Container size changes require a full re-render.
+        lastStructureKey = null;
+        lastFullRenderAt = performance.now();
         renderGraph();
       });
       resizeObserver.observe(svgContainer);
@@ -1172,7 +1268,10 @@
   });
 </script>
 
-<svg bind:this={svgContainer} class="w-full h-full {className}"></svg>
+<svg
+  bind:this={svgContainer}
+  class="w-full h-full {className} {debugEnabled ? 'animate-links' : ''}"
+></svg>
 
 <style>
   :global(.graph-node) {
@@ -1184,6 +1283,9 @@
     stroke-width: 1px;
     stroke-dasharray: 4, 4;
     opacity: 0.8;
+    animation: none;
+  }
+  :global(svg.animate-links .graph-link) {
     animation: flowAnimation 0.75s linear infinite;
   }
   @keyframes flowAnimation {

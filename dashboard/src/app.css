@@ -320,3 +320,13 @@ input:focus, textarea:focus {
 		transform: translate(400px, 400px);
 	}
 }
+
+@media (prefers-reduced-motion: reduce) {
+	.shooting-star {
+		animation: none !important;
+		opacity: 0.6;
+	}
+	.shooting-star::before {
+		display: none;
+	}
+}
