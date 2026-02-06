@@ -431,7 +431,12 @@ def main() -> int:
     ap.add_argument(
         "--skip-pipeline-jaccl",
         action="store_true",
-        help="Pipeline jaccl is often pointless, skip by default",
+        help="Skip pipeline+jaccl placements.",
+    )
+    ap.add_argument(
+        "--skip-tensor-ring",
+        action="store_true",
+        help="Skip tensor+ring placements.",
     )
     ap.add_argument(
         "--repeat", type=int, default=1, help="Repetitions per (pp,tg) pair."
@@ -530,6 +535,16 @@ def main() -> int:
             and (
                 args.sharding == "both" and "pipeline" in p.get("sharding", "").lower()
             )
+        ):
+            continue
+
+        if (
+            args.skip_tensor_ring
+            and (
+                args.instance_meta == "both"
+                and "ring" in p.get("instance_meta", "").lower()
+            )
+            and (args.sharding == "both" and "tensor" in p.get("sharding", "").lower())
         ):
             continue
 
