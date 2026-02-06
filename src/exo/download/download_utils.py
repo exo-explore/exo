@@ -378,8 +378,8 @@ async def download_file_with_retry(
             logger.error(traceback.format_exc())
             await asyncio.sleep(2.0**attempt)
         except Exception as e:
-            on_connection_lost()
             if attempt == n_attempts - 1:
+                on_connection_lost()
                 raise e
             logger.error(
                 f"Download error on attempt {attempt + 1}/{n_attempts} for {model_id=} {revision=} {path=} {target_dir=}"
