@@ -298,8 +298,8 @@ def mlx_generate(
     )
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
-    logger.info("Ready to prefill")
     mx_barrier(group)
+    logger.info("Ready to prefill")
 
     # Prefill cache with all tokens except the last one
     prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
