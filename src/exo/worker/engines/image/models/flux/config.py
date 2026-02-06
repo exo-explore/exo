@@ -45,6 +45,6 @@ FLUX_KONTEXT_CONFIG = ImageModelConfig(
         ),
     ),
     default_steps={"low": 10, "medium": 25, "high": 50},
-    num_sync_steps_factor=0.125,  # ~3 sync steps for medium (25 steps)
+    num_sync_steps=4,
     guidance_scale=4.0,
 )
