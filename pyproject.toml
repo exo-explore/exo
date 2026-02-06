@@ -103,6 +103,7 @@ root = "src"
 
 # supported platforms for this project
 [tool.uv]
+required-version = ">=0.8.6"
 prerelease = "allow"
 environments = [
     "sys_platform == 'darwin'",
