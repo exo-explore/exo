@@ -34,7 +34,7 @@
 </script>
 
 <div
-  class="flex flex-col gap-1 py-2 px-1 border-r border-exo-yellow/10 bg-exo-medium-gray/30 min-w-[64px]"
+  class="flex flex-col gap-1 py-2 px-1 border-r border-exo-yellow/10 bg-exo-medium-gray/30 min-w-[64px] overflow-y-auto scrollbar-hide"
 >
   <!-- All models (no filter) -->
   <button
