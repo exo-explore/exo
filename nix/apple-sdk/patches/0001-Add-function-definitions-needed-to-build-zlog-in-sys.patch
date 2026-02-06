@@ -1,0 +1,48 @@
+From 6531da946949a94643e6d8424236174ae64fe0ca Mon Sep 17 00:00:00 2001
+From: Randy Eckenrode <randy@largeandhighquality.com>
+Date: Sat, 30 Sep 2023 18:02:39 -0400
+Subject: [PATCH 1/2] Add function definitions needed to build zlog in
+ system_cmds
+
+---
+ CoreSymbolication.h | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/CoreSymbolication.h b/CoreSymbolication.h
+index a413860..f3cf63f 100644
+--- a/CoreSymbolication.h
++++ b/CoreSymbolication.h
+@@ -324,7 +324,9 @@ CSSymbolOwnerEditRelocations
+ CSSymbolOwnerForeachRegion
+ CSSymbolOwnerForeachRegionWithName
+ CSSymbolOwnerForeachSection
+-CSSymbolOwnerForeachSegment
++*/
++void CSSymbolOwnerForeachSegment(CSSymbolOwnerRef owner, void (^block)(CSSegmentRef));
++/*
+ CSSymbolOwnerForeachSourceInfo
+ CSSymbolOwnerForeachSymbol
+  */
+@@ -333,7 +335,9 @@ void CSSymbolOwnerForeachSymbolWithName(CSSymbolOwnerRef owner,  const char *sna
+ /*
+ CSSymbolOwnerGetArchitecture
+ CSSymbolOwnerGetBaseAddress
+-CSSymbolOwnerGetCFUUIDBytes
++*/
++const CFUUIDBytes* CSSymbolOwnerGetCFUUIDBytes(CSSymbolOwnerRef owner);
++/*
+ CSSymbolOwnerGetCompatibilityVersion
+ CSSymbolOwnerGetCurrentVersion
+ CSSymbolOwnerGetDataFlags
+@@ -390,7 +394,7 @@ CSSymbolOwnerSetLoadTimestamp
+ CSSymbolOwnerSetPath
+ CSSymbolOwnerSetRelocationCount
+  */
+-CSSymbolOwnerSetTransientUserData(CSSymbolOwnerRef owner, uint32_t gen);
++void CSSymbolOwnerSetTransientUserData(CSSymbolOwnerRef owner, uint32_t gen);
+  /*
+ CSSymbolOwnerSetUnloadTimestamp
+ */
+-- 
+2.44.1
+

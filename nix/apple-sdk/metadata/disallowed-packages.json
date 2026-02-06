@@ -1,0 +1,533 @@
+[
+  {
+    "package": "apache",
+    "headers": [
+      "apache2"
+    ]
+  },
+  {
+    "package": "apr",
+    "headers": [
+      "apr-1"
+    ],
+    "libraries": [
+      "libapr-1.*",
+      "libaprutil-1.*"
+    ]
+  },
+  {
+    "package": "boringssl",
+    "libraries": [
+      "libboringssl.*"
+    ]
+  },
+  {
+    "package": "bzip2",
+    "headers": [
+      "bzlib.h"
+    ],
+    "libraries": [
+      "libbz2.*"
+    ]
+  },
+  {
+    "package": "corecrypto",
+    "libraries": [
+      "system/libcorecrypto*"
+    ]
+  },
+  {
+    "package": "Csu",
+    "libraries": [
+      "*.o"
+    ]
+  },
+  {
+    "package": "cups",
+    "headers": [
+      "cups"
+    ],
+    "libraries": [
+      "libcups*"
+    ]
+  },
+  {
+    "package": "curl",
+    "headers": [
+      "curl"
+    ],
+    "libraries": [
+      "libcurl.*"
+    ]
+  },
+  {
+    "package": "cyrus_sasl",
+    "headers": [
+      "sasl"
+    ],
+    "libraries": [
+      "libsasl*"
+    ]
+  },
+  {
+    "package": "editline",
+    "headers": [
+      "editline.h",
+      "editline"
+    ],
+    "libraries": [
+      "libedit.*",
+      "libeditline.*"
+    ]
+  },
+  {
+    "package": "html-tidy",
+    "headers": [
+      "tidy*"
+    ],
+    "libraries": [
+      "libtidy.*"
+    ]
+  },
+  {
+    "package": "hunspell",
+    "headers": [
+      "hunspell"
+    ],
+    "libraries": [
+      "libhunspell*"
+    ]
+  },
+  {
+    "package": "icu",
+    "headers": [
+      "unicode"
+    ],
+    "libraries": [
+      "libicucore.*"
+    ]
+  },
+  {
+    "package": "libarchive",
+    "headers": [
+      "archive.h",
+      "archive_entry.h"
+    ],
+    "libraries": [
+      "libarchive.*"
+    ]
+  },
+  {
+    "package": "libc++",
+    "headers": [
+      "c++",
+      "cxxabi.h",
+      "__cxxabi_config.h"
+    ],
+    "libraries": [
+      "libc++*"
+    ]
+  },
+  {
+    "package": "ld64",
+    "libraries": [
+      "libcodedirectory.*",
+      "libcodedirectory_static.*"
+    ]
+  },
+  {
+    "package": "expat",
+    "headers": [
+      "expat.h",
+      "expat_config.h",
+      "expat_external.h"
+    ],
+    "libraries": [
+      "libexpat.*"
+    ]
+  },
+  {
+    "package": "libffi",
+    "headers": [
+      "ffi*"
+    ],
+    "libraries": [
+      "libffi*"
+    ]
+  },
+  {
+    "package": "libgcc",
+    "libraries": [
+      "libgcc*"
+    ]
+  },
+  {
+    "package": "libiconv",
+    "headers": [
+      "iconv.h",
+      "libcharset.h",
+      "localcharset.h"
+    ],
+    "libraries": [
+      "libcharset.*",
+      "libiconv.*",
+      "i18n"
+    ]
+  },
+  {
+    "package": "libiodbc",
+    "libraries": [
+      "libiodbc*"
+    ]
+  },
+  {
+    "package": "libkrb4",
+    "libraries": [
+      "libkrb4.*"
+    ]
+  },
+  {
+    "package": "libkrb5",
+    "headers": [
+      "com_err.h",
+      "gssapi",
+      "gssapi.h",
+      "gssrpc",
+      "kadm5",
+      "kdb.h",
+      "krad.h",
+      "krb5",
+      "krb5.h",
+      "profile.h",
+      "verto-module.h",
+      "verto.h"
+    ],
+    "libraries": [
+      "krb5",
+      "libcom_err.*",
+      "libgssapi_krb5.*",
+      "libgssrpc.*",
+      "libk5crypto.*",
+      "libkadm5clnt.*",
+      "libkadm5clnt_mit.*",
+      "libkadm5srv.*",
+      "libkadm5srv_mit.*",
+      "libkdb5.*",
+      "libkrad.*",
+      "libkrb5*",
+      "libkrb5support.*",
+      "libverto.*"
+    ]
+  },
+  {
+    "package": "libpcap",
+    "headers": [
+      "pcap*"
+    ],
+    "libraries": [
+      "libpcap.*"
+    ]
+  },
+  {
+    "package": "libresolv",
+    "headers": [
+      "arpa/nameser.h",
+      "arpa/nameser_compat.h",
+      "dns.h",
+      "dns_util.h",
+      "nameser.h",
+      "resolv.h"
+    ],
+    "libraries": [
+      "libresolv.*"
+    ]
+  },
+  {
+    "package": "libstdc++",
+    "libraries": [
+      "libstdc++.*"
+    ]
+  },
+  {
+    "package": "libsbuf",
+    "headers": [
+      "usbuf.h"
+    ],
+    "libraries": [
+      "libsbuf.*"
+    ]
+  },
+  {
+    "package": "libtermcap",
+    "headers": [
+      "termcap.h"
+    ],
+    "libraries": [
+      "libtermcap.*"
+    ]
+  },
+  {
+    "package": "libutil",
+    "headers": [
+      "libutil.h"
+    ],
+    "libraries": [
+      "libutil.*",
+      "libutil1.*"
+    ]
+  },
+  {
+    "package": "libxml2",
+    "headers": [
+      "libxml",
+      "libxml2"
+    ],
+    "libraries": [
+      "libxml2.*"
+    ]
+  },
+  {
+    "package": "libxo",
+    "headers": [
+      "libxo"
+    ],
+    "libraries": [
+      "libxo.*"
+    ]
+  },
+  {
+    "package": "libxslt",
+    "headers": [
+      "libexslt",
+      "libxslt"
+    ],
+    "libraries": [
+      "libexslt.*",
+      "libxslt.*"
+    ]
+  },
+  {
+    "package": "liby",
+    "libraries": [
+      "liby.a"
+    ]
+  },
+  {
+    "package": "marisa-trie",
+    "libraries": [
+      "libmarisa.*"
+    ]
+  },
+  {
+    "package": "ncurses",
+    "headers": [
+      "curses*",
+      "cursslk.h",
+      "eti.h",
+      "etip.h",
+      "form.h",
+      "menu.h",
+      "nc_tparm.h",
+      "ncurses*",
+      "panel.h",
+      "term.h",
+      "term_entry.h",
+      "termcap.h",
+      "tic.h",
+      "unctrl.h"
+    ],
+    "libraries": [
+      "libcurses.*",
+      "libform.*",
+      "libformw.*",
+      "libmenu.*",
+      "libmenuw.*",
+      "libncurses.*",
+      "libncursesw.*",
+      "libpanel.*",
+      "libpanelw.*",
+      "libtinfo.*"
+    ]
+  },
+  {
+    "package": "net-snmp",
+    "headers": [
+      "net-snmp"
+    ],
+    "libraries": [
+      "libnetsnmp*"
+    ]
+  },
+  {
+    "package": "nghttp",
+    "libraries": [
+      "lib*nghttp2.*"
+    ]
+  },
+  {
+    "package": "openblas",
+    "headers": [
+      "cblas.h",
+      "f77blas.h",
+      "lapack.h",
+      "lapacke.h",
+      "lapacke_config.h",
+      "lapacke_mangling.h",
+      "lapacke_utils.h",
+      "openblas_config.h"
+    ],
+    "libraries": [
+      "libblas.*",
+      "libcblas.*",
+      "libclapack.*",
+      "libf77lapack.*",
+      "liblapack.*",
+      "liblapacke.*",
+      "libopenblas.*",
+      "libopenblas.*",
+      "libopenblasp*"
+    ]
+  },
+  {
+    "package": "openldap",
+    "libraries": [
+      "liblber.*",
+      "liblber_r.*",
+      "libldap.*",
+      "libldap_r.*"
+    ]
+  },
+  {
+    "package": "openpam",
+    "headers": [
+      "security"
+    ],
+    "libraries": [
+      "libpam.*",
+      "pam_*"
+    ]
+  },
+  {
+    "package": "pcre",
+    "headers": [
+      "pcre.h",
+      "pcreposix.h"
+    ],
+    "libraries": [
+      "libpcre.*",
+      "libpcre2*",
+      "libpcreposix.*"
+    ]
+  },
+  {
+    "package": "php",
+    "headers": [
+      "php"
+    ],
+    "libraries": [
+      "php"
+    ]
+  },
+  {
+    "package": "postgresql",
+    "libraries": [
+      "libecpg*",
+      "libpg*",
+      "libpq*"
+    ]
+  },
+  {
+    "package": "python",
+    "headers": [
+      "python*"
+    ],
+    "frameworks": [
+      "Python.framework"
+    ],
+    "libraries": [
+      "libpython*",
+      "python*"
+    ]
+  },
+  {
+    "package": "readline",
+    "headers": [
+      "readline"
+    ],
+    "libraries": [
+      "libhistory.*",
+      "libreadline.*"
+    ]
+  },
+  {
+    "package": "ruby",
+    "frameworks": [
+      "Ruby.framework"
+    ],
+    "libraries": [
+      "libruby.*",
+      "ruby"
+    ]
+  },
+  {
+    "package": "sqlite3",
+    "headers": [
+      "sqlite3.h",
+      "sqlite3ext.h"
+    ],
+    "libraries": [
+      "libsqlite3.*"
+    ]
+  },
+  {
+    "package": "swift",
+    "libraries": [
+      "swift/shims"
+    ]
+  },
+  {
+    "package": "tcl",
+    "headers": [
+      "tcl*",
+      "tk*"
+    ],
+    "frameworks": [
+      "Tcl.framework",
+      "Tk.framework"
+    ],
+    "libraries": [
+      "libtcl*",
+      "libtk*",
+      "tclConfig.sh",
+      "tkConfig.sh"
+    ]
+  },
+  {
+    "package": "xar",
+    "headers": [
+      "xar"
+    ],
+    "libraries": [
+      "libxar.*"
+    ]
+  },
+  {
+    "package": "xz",
+    "headers": [
+      "lzma*"
+    ],
+    "libraries": [
+      "liblzma.*"
+    ]
+  },
+  {
+    "package": "zlib",
+    "headers": [
+      "zconf.h",
+      "zlib.h"
+    ],
+    "libraries": [
+      "libz.*"
+    ]
+  }
+]

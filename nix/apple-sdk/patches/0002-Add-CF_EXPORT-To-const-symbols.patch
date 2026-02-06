@@ -1,0 +1,45 @@
+From ae7ac6a7043dbae8e63d6ce5e63dfaf02b5977fe Mon Sep 17 00:00:00 2001
+From: Randy Eckenrode <randy@largeandhighquality.com>
+Date: Sat, 30 Sep 2023 18:37:18 -0400
+Subject: [PATCH 2/2] Add CF_EXPORT To const symbols
+
+---
+ CoreSymbolication.h | 15 ++++++++-------
+ 1 file changed, 8 insertions(+), 7 deletions(-)
+
+diff --git a/CoreSymbolication.h b/CoreSymbolication.h
+index f3cf63f..4124a54 100644
+--- a/CoreSymbolication.h
++++ b/CoreSymbolication.h
+@@ -49,6 +49,7 @@
+ 
+ 
+ #include <CoreFoundation/CoreFoundation.h>
++#include <CoreFoundation/CFBase.h>
+ #include <mach/mach.h>
+ 
+ 
+@@ -139,13 +140,13 @@ typedef void (^CSSegmentIterator)(CSSegmentRef segment);
+  * External symbols
+  */
+ 
+-const char* kCSRegionMachHeaderName;
+-const CSDictionaryKeyCallBacks kCSTypeDictionaryKeyCallBacks;
+-const CSDictionaryValueCallBacks kCSTypeDictionaryValueCallBacks;
+-const CSDictionaryKeyCallBacks kCSTypeDictionaryWeakKeyCallBacks;
+-const CSDictionaryValueCallBacks kCSTypeDictionaryWeakValueCallBacks;
+-const CSSetCallBacks kCSTypeSetCallBacks;
+-const CSSetCallBacks kCSTypeSetWeakCallBacks;
++CF_EXPORT const char* kCSRegionMachHeaderName;
++CF_EXPORT const CSDictionaryKeyCallBacks kCSTypeDictionaryKeyCallBacks;
++CF_EXPORT const CSDictionaryValueCallBacks kCSTypeDictionaryValueCallBacks;
++CF_EXPORT const CSDictionaryKeyCallBacks kCSTypeDictionaryWeakKeyCallBacks;
++CF_EXPORT const CSDictionaryValueCallBacks kCSTypeDictionaryWeakValueCallBacks;
++CF_EXPORT const CSSetCallBacks kCSTypeSetCallBacks;
++CF_EXPORT const CSSetCallBacks kCSTypeSetWeakCallBacks;
+ 
+ 
+ /*
+-- 
+2.44.1
+
