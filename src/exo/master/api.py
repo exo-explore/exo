@@ -386,7 +386,12 @@ class API:
         if len(list(self.state.topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
-        model_card = await ModelCard.load(model_id)
+        try:
+            model_card = await ModelCard.load(model_id)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Failed to load model card: {exc}"
+            ) from exc
         instance_combinations: list[tuple[Sharding, InstanceMeta, int]] = []
         for sharding in (Sharding.Pipeline, Sharding.Tensor):
             for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
