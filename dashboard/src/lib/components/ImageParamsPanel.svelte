@@ -148,6 +148,15 @@
     setImageGenerationParams({ guidance: null });
   }
 
+  function handleNumSyncStepsChange(event: Event) {
+    const value = parseInt((event.target as HTMLInputElement).value, 10);
+    setImageGenerationParams({ numSyncSteps: value });
+  }
+
+  function clearNumSyncSteps() {
+    setImageGenerationParams({ numSyncSteps: null });
+  }
+
   function handleReset() {
     resetImageGenerationParams();
     showAdvanced = false;
@@ -157,7 +166,8 @@
     params.seed !== null ||
       params.numInferenceSteps !== null ||
       params.guidance !== null ||
-      (params.negativePrompt !== null && params.negativePrompt.trim() !== ""),
+      (params.negativePrompt !== null && params.negativePrompt.trim() !== "") ||
+      params.numSyncSteps !== null,
   );
 </script>
 
@@ -578,7 +588,50 @@
         </div>
       </div>
 
-      <!-- Row 3: Negative Prompt -->
+      <!-- Row 3: Sync Steps -->
+      <div class="flex items-center gap-1.5">
+        <span
+          class="text-xs text-exo-light-gray uppercase tracking-wider whitespace-nowrap"
+          >SYNC STEPS:</span
+        >
+        <div class="flex items-center gap-2 flex-1 max-w-xs">
+          <input
+            type="range"
+            min="1"
+            max="100"
+            value={params.numSyncSteps ?? 1}
+            oninput={handleNumSyncStepsChange}
+            class="flex-1 h-1 bg-exo-medium-gray/50 rounded appearance-none cursor-pointer accent-exo-yellow"
+          />
+          <span class="text-xs font-mono text-exo-yellow w-8 text-right">
+            {params.numSyncSteps ?? "--"}
+          </span>
+          {#if params.numSyncSteps !== null}
+            <button
+              type="button"
+              onclick={clearNumSyncSteps}
+              class="text-exo-light-gray hover:text-exo-yellow transition-colors"
+              title="Clear"
+            >
+              <svg
+                class="w-3 h-3"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          {/if}
+        </div>
+      </div>
+
+      <!-- Row 4: Negative Prompt -->
       <div class="flex flex-col gap-1.5">
         <span class="text-xs text-exo-light-gray uppercase tracking-wider"
           >NEGATIVE PROMPT:</span
