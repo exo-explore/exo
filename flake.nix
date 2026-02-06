@@ -108,7 +108,10 @@
                 enable = true;
                 package = pkgsSwift.swiftPackages.swift-format;
               };
-              shfmt.enable = true;
+              shfmt = {
+                enable = true;
+                excludes = [ "nix/apple-sdk/**" ];
+              };
             };
           };
 
