@@ -512,9 +512,6 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
                     layer.self_attn.q_b_proj
                 )
 
-            # layer.self_attn.kv_b_proj = self.all_to_sharded_linear(
-            #     layer.self_attn.kv_b_proj
-            # )
             layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
             layer.self_attn.num_heads //= self.N
 
