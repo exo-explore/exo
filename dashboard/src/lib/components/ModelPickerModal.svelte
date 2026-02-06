@@ -363,6 +363,8 @@
       "deepseek",
       "gpt-oss",
       "llama",
+      "flux",
+      "qwen-image",
     ];
     return Array.from(families).sort((a, b) => {
       const aIdx = familyOrder.indexOf(a);

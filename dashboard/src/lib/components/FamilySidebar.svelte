@@ -22,6 +22,8 @@
     glm: "GLM",
     minimax: "MiniMax",
     kimi: "Kimi",
+    flux: "FLUX",
+    "qwen-image": "Qwen Img",
   };
 
   function getFamilyName(family: string): string {
