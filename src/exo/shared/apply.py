@@ -211,66 +211,21 @@ def apply_runner_deleted(event: RunnerDeleted, state: State) -> State:
 def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
     topology = copy.deepcopy(state.topology)
     topology.remove_node(event.node_id)
-    last_seen = {
-        key: value for key, value in state.last_seen.items() if key != event.node_id
-    }
-    downloads = {
-        key: value for key, value in state.downloads.items() if key != event.node_id
-    }
-    # Clean up all granular node mappings
-    node_identities = {
-        key: value
-        for key, value in state.node_identities.items()
-        if key != event.node_id
-    }
-    node_memory = {
-        key: value for key, value in state.node_memory.items() if key != event.node_id
-    }
-    node_disk = {
-        key: value for key, value in state.node_disk.items() if key != event.node_id
-    }
-    node_system = {
-        key: value for key, value in state.node_system.items() if key != event.node_id
-    }
-    node_network = {
-        key: value for key, value in state.node_network.items() if key != event.node_id
-    }
-    node_thunderbolt = {
-        key: value
-        for key, value in state.node_thunderbolt.items()
-        if key != event.node_id
-    }
-    node_thunderbolt_bridge = {
-        key: value
-        for key, value in state.node_thunderbolt_bridge.items()
-        if key != event.node_id
-    }
-    node_rdma_ctl = {
-        key: value for key, value in state.node_rdma_ctl.items() if key != event.node_id
-    }
     # Only recompute cycles if the leaving node had TB bridge enabled
     leaving_node_status = state.node_thunderbolt_bridge.get(event.node_id)
     leaving_node_had_tb_enabled = (
         leaving_node_status is not None and leaving_node_status.enabled
     )
     thunderbolt_bridge_cycles = (
-        topology.get_thunderbolt_bridge_cycles(node_thunderbolt_bridge, node_network)
+        topology.get_thunderbolt_bridge_cycles(
+            state.node_thunderbolt_bridge, state.node_network
+        )
         if leaving_node_had_tb_enabled
         else [list(cycle) for cycle in state.thunderbolt_bridge_cycles]
     )
     return state.model_copy(
         update={
-            "downloads": downloads,
             "topology": topology,
-            "last_seen": last_seen,
-            "node_identities": node_identities,
-            "node_memory": node_memory,
-            "node_disk": node_disk,
-            "node_system": node_system,
-            "node_network": node_network,
-            "node_thunderbolt": node_thunderbolt,
-            "node_thunderbolt_bridge": node_thunderbolt_bridge,
-            "node_rdma_ctl": node_rdma_ctl,
             "thunderbolt_bridge_cycles": thunderbolt_bridge_cycles,
         }
     )
