@@ -431,6 +431,20 @@ GGUF_MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=40,
         ),
     ),
+    # Qwen2.5-Coder-7B - Strong coding model that fits on mobile clusters
+    "qwen2.5-coder-7b-gguf": ModelCard(
+        short_id="qwen2.5-coder-7b-gguf",
+        model_id=ModelId("Qwen/Qwen2.5-Coder-7B-Instruct-GGUF"),
+        name="Qwen 2.5 Coder 7B (GGUF Q4_K_M)",
+        description="""Qwen 2.5 Coder 7B - excellent coding model. Works great on 2-4 phones.""",
+        tags=["gguf", "mobile", "coding", "distributed"],
+        metadata=ModelMetadata(
+            model_id=ModelId("Qwen/Qwen2.5-Coder-7B-Instruct-GGUF"),
+            pretty_name="Qwen 2.5 Coder 7B (GGUF)",
+            storage_size=Memory.from_gb(5),
+            n_layers=28,
+        ),
+    ),
     # Qwen3-Coder-Next - 80B MoE coding model (3B active), for distributed inference
     "qwen3-coder-next-gguf": ModelCard(
         short_id="qwen3-coder-next-gguf",
