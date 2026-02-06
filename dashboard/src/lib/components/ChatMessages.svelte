@@ -317,9 +317,11 @@
           <!-- Delete confirmation -->
           <div class="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
             <p class="text-xs text-red-400 mb-3">
-              Delete this message{message.role === "user"
-                ? " and all responses after it"
-                : ""}?
+              {#if messageList.indexOf(message) === messageList.length - 1}
+                Delete this message?
+              {:else}
+                Delete this message and all messages after it?
+              {/if}
             </p>
             <div class="flex gap-2 justify-end">
               <button
