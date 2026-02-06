@@ -848,7 +848,11 @@ def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
         # the args should be valid json - no need to check against our tools to deserialize
         arg_dct = _deserialize(func_args)  # pyright: ignore[reportAny]
 
-        return dict(id=f"{original_func_name}:{tool_id}", name=func_name, arguments=arg_dct)  # pyright: ignore[reportAny]
+        return dict(
+            id=f"{original_func_name}:{tool_id}",
+            name=func_name,
+            arguments=arg_dct,  # pyright: ignore[reportAny]
+        )
 
     tokenizer._tool_call_start = tool_call_start
     tokenizer._tool_call_end = tool_call_end
