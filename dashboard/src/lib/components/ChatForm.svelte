@@ -215,15 +215,15 @@
 	ondrop={handleDrop}
 >
 	<div 
-		class="relative command-panel rounded overflow-hidden transition-all duration-200 {isDragOver ? 'ring-2 ring-exo-yellow ring-opacity-50' : ''}"
+		class="relative bg-gradient-to-b from-[#131621]/95 to-[#0d1117]/98 border border-white/[0.06] rounded-xl overflow-hidden transition-all duration-200 {isDragOver ? 'ring-2 ring-[#60a5fa] ring-opacity-50' : ''}"
 	>
 		<!-- Top accent line -->
-		<div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-exo-yellow/50 to-transparent"></div>
+		<div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#60a5fa]/50 to-transparent"></div>
 		
 		<!-- Drag overlay -->
 		{#if isDragOver}
-			<div class="absolute inset-0 bg-exo-dark-gray/80 z-10 flex items-center justify-center">
-				<div class="text-exo-yellow text-sm font-mono tracking-wider uppercase">
+			<div class="absolute inset-0 bg-[#131621]/80 z-10 flex items-center justify-center">
+				<div class="text-[#60a5fa] text-sm font-mono tracking-wider uppercase">
 					DROP FILES HERE
 				</div>
 			</div>
@@ -231,27 +231,27 @@
 		
 		<!-- Model selector (when enabled) -->
 		{#if showModelSelector && availableModels().length > 0}
-			<div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-exo-medium-gray/30">
+			<div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-white/[0.06]">
 				<div class="flex items-center gap-2 flex-1">
-					<span class="text-xs text-exo-light-gray uppercase tracking-wider flex-shrink-0">MODEL:</span>
+					<span class="text-xs text-[#9ca3af] uppercase tracking-wider flex-shrink-0">MODEL:</span>
 					<!-- Custom dropdown -->
 					<div class="relative flex-1 max-w-xs">
 						<button
 							bind:this={dropdownButtonRef}
 							type="button"
 							onclick={() => isModelDropdownOpen = !isModelDropdownOpen}
-							class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-1.5 text-xs font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 {isModelDropdownOpen ? 'border-exo-yellow/70' : ''}"
+							class="w-full bg-[#181c27] border border-white/[0.06] rounded-md pl-3 pr-8 py-1.5 text-xs font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-[#60a5fa]/50 focus:outline-none focus:border-[#60a5fa]/70 {isModelDropdownOpen ? 'border-[#60a5fa]/70' : ''}"
 						>
 							{#if availableModels().find(m => m.id === currentModel)}
-								<span class="text-exo-yellow truncate">{availableModels().find(m => m.id === currentModel)?.label}</span>
+								<span class="text-[#60a5fa] truncate">{availableModels().find(m => m.id === currentModel)?.label}</span>
 							{:else if availableModels().length > 0}
-								<span class="text-exo-yellow truncate">{availableModels()[0].label}</span>
+								<span class="text-[#60a5fa] truncate">{availableModels()[0].label}</span>
 							{:else}
-								<span class="text-exo-light-gray/50">— SELECT MODEL —</span>
+								<span class="text-[#9ca3af]/50">— SELECT MODEL —</span>
 							{/if}
 						</button>
 						<div class="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-200 {isModelDropdownOpen ? 'rotate-180' : ''}">
-							<svg class="w-3 h-3 text-exo-yellow/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<svg class="w-3 h-3 text-[#60a5fa]/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
 							</svg>
 						</div>
@@ -268,7 +268,7 @@
 						
 						<!-- Dropdown Panel - fixed positioning to escape overflow:hidden -->
 						<div 
-							class="fixed bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto"
+							class="fixed bg-[#131621] border border-[#60a5fa]/30 rounded-md shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto"
 							style="bottom: calc(100vh - {dropdownPosition().top}px + 4px); left: {dropdownPosition().left}px; width: {dropdownPosition().width}px;"
 						>
 							<div class="py-1">
@@ -281,8 +281,8 @@
 										}}
 										class="w-full px-3 py-2 text-left text-xs font-mono tracking-wide transition-colors duration-100 flex items-center gap-2 {
 											currentModel === model.id 
-											? 'bg-transparent text-exo-yellow' 
-											: 'text-exo-light-gray hover:text-exo-yellow'
+											? 'bg-transparent text-[#60a5fa]' 
+											: 'text-[#9ca3af] hover:text-[#60a5fa]'
 										}"
 									>
 										{#if currentModel === model.id}
@@ -303,13 +303,13 @@
 				{#if currentTtft !== null || currentTps !== null}
 					<div class="flex items-center gap-4 text-xs font-mono flex-shrink-0">
 						{#if currentTtft !== null}
-							<span class="text-exo-light-gray">
-								<span class="text-white/70">TTFT</span> <span class="text-exo-yellow">{currentTtft.toFixed(1)}ms</span>
+							<span class="text-[#9ca3af]">
+								<span class="text-white/70">TTFT</span> <span class="text-[#60a5fa]">{currentTtft.toFixed(1)}ms</span>
 							</span>
 						{/if}
 						{#if currentTps !== null}
-							<span class="text-exo-light-gray">
-								<span class="text-white/70">TPS</span> <span class="text-exo-yellow">{currentTps.toFixed(1)}</span> <span class="text-white/60">tok/s</span>
+							<span class="text-[#9ca3af]">
+								<span class="text-white/70">TPS</span> <span class="text-[#60a5fa]">{currentTps.toFixed(1)}</span> <span class="text-white/60">tok/s</span>
 								<span class="text-white/50">({(1000 / currentTps).toFixed(1)} ms/tok)</span>
 							</span>
 						{/if}
@@ -335,7 +335,7 @@
 				type="button"
 				onclick={openFilePicker}
 				disabled={loading}
-				class="flex items-center justify-center w-7 h-7 rounded text-exo-light-gray hover:text-exo-yellow transition-all disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 cursor-pointer"
+				class="flex items-center justify-center w-7 h-7 rounded-md text-[#9ca3af] hover:text-[#60a5fa] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 cursor-pointer"
 				title="Attach file"
 			>
 				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -344,7 +344,7 @@
 			</button>
 			
 			<!-- Terminal prompt -->
-			<span class="text-exo-yellow text-sm font-bold flex-shrink-0 leading-7">▶</span>
+			<span class="text-[#60a5fa] text-sm font-bold flex-shrink-0 leading-7">▶</span>
 			
 			<textarea
 				bind:this={textareaRef}
@@ -355,17 +355,17 @@
 				{placeholder}
 				disabled={loading}
 				rows={1}
-				class="flex-1 resize-none bg-transparent text-foreground placeholder:text-exo-light-gray/60 placeholder:text-sm placeholder:tracking-[0.15em] placeholder:leading-7 focus:outline-none focus:ring-0 focus:border-none disabled:opacity-50 text-sm leading-7 font-mono"
+				class="flex-1 resize-none bg-transparent text-[#f3f4f6] placeholder:text-[#6b7280] placeholder:text-sm placeholder:tracking-[0.15em] placeholder:leading-7 focus:outline-none focus:ring-0 focus:border-none disabled:opacity-50 text-sm leading-7 font-mono"
 				style="min-height: 28px; max-height: 150px;"
 			></textarea>
 			
 			<button
 				type="submit"
 				disabled={!canSend || loading}
-				class="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-xs tracking-[0.1em] sm:tracking-[0.15em] uppercase font-medium transition-all duration-200 whitespace-nowrap
+				class="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-md text-xs sm:text-xs tracking-[0.1em] sm:tracking-[0.15em] uppercase font-medium transition-all duration-200 whitespace-nowrap
 					{!canSend || loading 
-						? 'bg-exo-medium-gray/50 text-exo-light-gray cursor-not-allowed' 
-						: 'bg-exo-yellow text-exo-black hover:bg-exo-yellow-darker hover:shadow-[0_0_20px_rgba(255,215,0,0.3)]'}"
+						? 'bg-[#1e293b]/50 text-[#9ca3af] cursor-not-allowed' 
+						: 'bg-gradient-to-r from-[#3b82f6]/25 to-[#3b82f6]/35 text-[#93c5fd] border border-[#3b82f6]/50 hover:from-[#3b82f6]/35 hover:to-[#3b82f6]/50 hover:border-[#3b82f6]/70 hover:text-[#dbeafe] hover:shadow-[0_0_15px_rgba(59,130,246,0.3)]'}"
 				aria-label="Send message"
 			>
 				{#if loading}
@@ -381,18 +381,18 @@
 		</div>
 		
 		<!-- Bottom accent line -->
-		<div class="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-exo-yellow/30 to-transparent"></div>
+		<div class="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#60a5fa]/30 to-transparent"></div>
 	</div>
 	
 	{#if showHelperText}
-		<p class="mt-2 sm:mt-3 text-center text-xs sm:text-xs text-exo-light-gray tracking-[0.1em] sm:tracking-[0.15em] uppercase">
-			<kbd class="px-1 sm:px-1.5 py-0.5 rounded bg-exo-medium-gray/30 text-exo-light-gray border border-exo-medium-gray/50">ENTER</kbd>
+		<p class="mt-2 sm:mt-3 text-center text-xs sm:text-xs text-[#9ca3af] tracking-[0.1em] sm:tracking-[0.15em] uppercase">
+			<kbd class="px-1 sm:px-1.5 py-0.5 rounded bg-[#1e293b]/30 text-[#9ca3af] border border-[#1e293b]/50">ENTER</kbd>
 			<span class="mx-0.5 sm:mx-1">TO SEND</span>
-			<span class="text-exo-medium-gray mx-1 sm:mx-2">|</span>
-			<kbd class="px-1 sm:px-1.5 py-0.5 rounded bg-exo-medium-gray/30 text-exo-light-gray border border-exo-medium-gray/50">SHIFT+ENTER</kbd>
+			<span class="text-[#1e293b] mx-1 sm:mx-2">|</span>
+			<kbd class="px-1 sm:px-1.5 py-0.5 rounded bg-[#1e293b]/30 text-[#9ca3af] border border-[#1e293b]/50">SHIFT+ENTER</kbd>
 			<span class="mx-0.5 sm:mx-1">NEW LINE</span>
-			<span class="text-exo-medium-gray mx-1 sm:mx-2">|</span>
-			<span class="text-exo-light-gray">DRAG & DROP OR PASTE FILES</span>
+			<span class="text-[#1e293b] mx-1 sm:mx-2">|</span>
+			<span class="text-[#9ca3af]">DRAG & DROP OR PASTE FILES</span>
 		</p>
 	{/if}
 </form>

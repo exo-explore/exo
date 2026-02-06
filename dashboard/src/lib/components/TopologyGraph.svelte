@@ -171,7 +171,7 @@ function wrapLine(text: string, maxLen: number): string[] {
 				.attr('y', centerY)
 				.attr('text-anchor', 'middle')
 				.attr('dominant-baseline', 'middle')
-				.attr('fill', 'rgba(255,215,0,0.4)')
+				.attr('fill', 'rgba(96, 165, 250, 0.4)')
 				.attr('font-size', isMinimized ? 10 : 12)
 				.attr('font-family', 'SF Mono, monospace')
 				.attr('letter-spacing', '0.1em')
@@ -468,13 +468,13 @@ function wrapLine(text: string, maxLen: number): string[] {
 			// Check if this node should be highlighted (from hovered instance)
 			const isHighlighted = highlightedNodes.has(nodeInfo.id);
 			
-		// Holographic wireframe colors - yellow border when highlighted
-		const wireColor = isHighlighted ? 'rgba(255,215,0,0.9)' : 'rgba(179,179,179,0.8)';
+		// Holographic wireframe colors - blue border when highlighted
+		const wireColor = isHighlighted ? 'rgba(96, 165, 250, 0.9)' : 'rgba(179,179,179,0.8)';
 		const wireColorBright = 'rgba(255,255,255,0.9)';
-		const fillColor = isHighlighted ? 'rgba(255,215,0,0.15)' : 'rgba(255,215,0,0.08)';
+		const fillColor = isHighlighted ? 'rgba(96, 165, 250, 0.15)' : 'rgba(96, 165, 250, 0.08)';
 		const strokeWidth = isHighlighted ? 2.5 : 1.5;
 			const screenFill = 'rgba(0,20,40,0.9)';
-			const glowColor = 'rgba(255,215,0,0.3)';
+			const glowColor = 'rgba(96, 165, 250, 0.3)';
 
 			if (modelLower === 'mac studio') {
 				// Mac Studio - classic cube with memory fill
@@ -516,7 +516,7 @@ function wrapLine(text: string, maxLen: number): string[] {
 						.attr('y', y + topSurfaceHeight + (memFillTotalHeight - memFillActualHeight))
 						.attr('width', iconBaseWidth)
 						.attr('height', memFillActualHeight)
-						.attr('fill', 'rgba(255,215,0,0.75)')
+						.attr('fill', 'rgba(96, 165, 250, 0.75)')
 						.attr('clip-path', `url(#${studioClipId})`);
 				}
 
@@ -589,7 +589,7 @@ function wrapLine(text: string, maxLen: number): string[] {
 						.attr('y', y + topSurfaceHeight + (memFillTotalHeight - memFillActualHeight))
 						.attr('width', iconBaseWidth)
 						.attr('height', memFillActualHeight)
-						.attr('fill', 'rgba(255,215,0,0.75)')
+						.attr('fill', 'rgba(96, 165, 250, 0.75)')
 						.attr('clip-path', `url(#${miniClipId})`);
 				}
 
@@ -664,7 +664,7 @@ function wrapLine(text: string, maxLen: number): string[] {
 						.attr('y', y + screenBezel + (memFillTotalHeight - memFillActualHeight))
 						.attr('width', screenWidth - screenBezel * 2)
 						.attr('height', memFillActualHeight)
-						.attr('fill', 'rgba(255,215,0,0.85)')
+						.attr('fill', 'rgba(96, 165, 250, 0.85)')
 						.attr('clip-path', `url(#${screenClipId})`);
 				}
 
@@ -831,13 +831,13 @@ function wrapLine(text: string, maxLen: number): string[] {
 					.attr('y', nameY)
 					.attr('text-anchor', 'middle')
 					.attr('dominant-baseline', 'middle')
-					.attr('fill', '#FFD700')
+					.attr('fill', '#60a5fa')
 					.attr('font-size', fontSize)
 					.attr('font-weight', 500)
 					.attr('font-family', 'SF Mono, Monaco, monospace')
 					.text(displayName);
 
-				// Memory info below - used in grey, total in yellow
+				// Memory info below - used in blue, total in gray
 				const infoY = nodeInfo.y + iconBaseHeight / 2 + 16;
 				const memText = nodeG.append('text')
 					.attr('x', nodeInfo.x)
@@ -846,7 +846,7 @@ function wrapLine(text: string, maxLen: number): string[] {
 					.attr('font-size', fontSize * 0.85)
 					.attr('font-family', 'SF Mono, Monaco, monospace');
 				memText.append('tspan')
-					.attr('fill', 'rgba(255,215,0,0.9)')
+					.attr('fill', 'rgba(96, 165, 250, 0.9)')
 					.text(`${formatBytes(ramUsed)}`);
 				memText.append('tspan')
 					.attr('fill', 'rgba(179,179,179,0.9)')
@@ -868,7 +868,7 @@ function wrapLine(text: string, maxLen: number): string[] {
 					.attr('x', nodeInfo.x)
 					.attr('y', nameY)
 					.attr('text-anchor', 'middle')
-					.attr('fill', '#FFD700')
+					.attr('fill', '#60a5fa')
 					.attr('font-size', fontSize)
 					.attr('font-family', 'SF Mono, Monaco, monospace')
 					.text(shortName);
@@ -879,7 +879,7 @@ function wrapLine(text: string, maxLen: number): string[] {
 					.attr('x', nodeInfo.x)
 					.attr('y', statsY)
 					.attr('text-anchor', 'middle')
-					.attr('fill', 'rgba(255,215,0,0.7)')
+					.attr('fill', 'rgba(96, 165, 250, 0.7)')
 					.attr('font-size', fontSize * 0.85)
 					.attr('font-family', 'SF Mono, Monaco, monospace')
 					.text(`${ramUsagePercent.toFixed(0)}%${!isNaN(gpuTemp) ? ' ' + gpuTemp.toFixed(0) + '°C' : ''}`);
@@ -897,13 +897,13 @@ function wrapLine(text: string, maxLen: number): string[] {
 					.attr('x', nodeInfo.x)
 					.attr('y', nameY)
 					.attr('text-anchor', 'middle')
-					.attr('fill', '#FFD700')
+					.attr('fill', '#60a5fa')
 					.attr('font-size', fontSize)
 					.attr('font-weight', '500')
 					.attr('font-family', 'SF Mono, Monaco, monospace')
 					.text(shortName);
 
-				// Memory info below icon - used in grey, total in yellow (same as main topology)
+				// Memory info below icon - used in blue, total in gray
 				const infoY = nodeInfo.y + iconBaseHeight / 2 + 10;
 				const memTextMini = nodeG.append('text')
 					.attr('x', nodeInfo.x)
@@ -912,7 +912,7 @@ function wrapLine(text: string, maxLen: number): string[] {
 					.attr('font-size', fontSize * 0.85)
 					.attr('font-family', 'SF Mono, Monaco, monospace');
 				memTextMini.append('tspan')
-					.attr('fill', 'rgba(255,215,0,0.9)')
+					.attr('fill', 'rgba(96, 165, 250, 0.9)')
 					.text(`${formatBytes(ramUsed)}`);
 				memTextMini.append('tspan')
 					.attr('fill', 'rgba(179,179,179,0.9)')
@@ -958,9 +958,9 @@ function wrapLine(text: string, maxLen: number): string[] {
 		filter: brightness(1.1);
 	}
 	:global(.graph-link) {
-		stroke: var(--exo-light-gray, #B3B3B3);
+		stroke: rgba(96, 165, 250, 0.3);
 		stroke-width: 1px;
-		stroke-dasharray: 4, 4;
+		stroke-dasharray: 8, 4;
 		opacity: 0.8;
 		animation: flowAnimation 0.75s linear infinite;
 	}

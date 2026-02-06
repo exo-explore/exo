@@ -149,7 +149,7 @@
 	function getBarGradient(percentage: number): string {
 		if (percentage >= 100) return 'from-green-500 to-green-400';
 		if (percentage <= 0) return 'from-red-500 to-red-400';
-		return 'from-exo-yellow to-exo-yellow/70';
+		return 'from-[#60a5fa] to-[#3b82f6]/70';
 	}
 
 	let downloadOverview = $state<NodeEntry[]>([]);
@@ -298,13 +298,13 @@
 	<div class="max-w-7xl mx-auto px-4 lg:px-8 py-6 space-y-6">
 		<div class="flex items-center justify-between gap-4 flex-wrap">
 			<div>
-				<h1 class="text-2xl font-mono tracking-[0.2em] uppercase text-exo-yellow">Downloads</h1>
+				<h1 class="text-2xl font-mono tracking-[0.2em] uppercase text-[#60a5fa]">Downloads</h1>
 				<p class="text-sm text-exo-light-gray">Overview of models on each node</p>
 			</div>
 			<div class="flex items-center gap-3">
 				<button
 					type="button"
-					class="text-xs font-mono text-exo-light-gray hover:text-exo-yellow transition-colors uppercase border border-exo-medium-gray/40 px-2 py-1 rounded"
+					class="text-xs font-mono text-[#9ca3af] hover:text-[#60a5fa] transition-colors uppercase border border-[#4b5563]/40 px-2 py-1 rounded"
 					onclick={() => refreshState()}
 					title="Force refresh from /state"
 				>
@@ -333,7 +333,7 @@
 								<div class="text-xs text-exo-light-gray font-mono truncate">{node.nodeId}</div>
 							</div>
 							<div class="text-xs font-mono uppercase tracking-wider whitespace-nowrap shrink-0">
-								<span class="text-green-400">{node.models.filter(m => m.status === 'completed').length}</span><span class="text-exo-yellow"> /{node.models.length} models</span>
+								<span class="text-green-400">{node.models.filter(m => m.status === 'completed').length}</span><span class="text-[#60a5fa]"> /{node.models.length} models</span>
 							</div>
 						</div>
 
@@ -354,12 +354,12 @@
 										</div>
 									</div>
 									<div class="flex items-center gap-2">
-										<span class="text-xs font-mono {pct >= 100 ? 'text-green-400' : pct <= 0 ? 'text-red-400' : 'text-exo-yellow'}">
+										<span class="text-xs font-mono {pct >= 100 ? 'text-green-400' : pct <= 0 ? 'text-red-400' : 'text-[#60a5fa]'}">
 											{pct.toFixed(1)}%
 										</span>
 										<button
 											type="button"
-											class="text-exo-light-gray hover:text-exo-yellow transition-colors"
+											class="text-[#9ca3af] hover:text-[#60a5fa] transition-colors"
 											onclick={() => toggleExpand(key)}
 											aria-expanded={isExpanded}
 											title="Toggle file details"
@@ -396,7 +396,7 @@
 												<div class="rounded border border-exo-medium-gray/20 bg-exo-black/40 p-2 space-y-1">
 													<div class="flex items-center justify-between text-[11px] font-mono text-exo-light-gray/90">
 														<span class="truncate pr-2">{f.name}</span>
-														<span class="{fpct >= 100 ? 'text-green-400' : fpct <= 0 ? 'text-red-400' : 'text-exo-yellow'}">{fpct.toFixed(1)}%</span>
+														<span class="{fpct >= 100 ? 'text-green-400' : fpct <= 0 ? 'text-red-400' : 'text-[#60a5fa]'}">{fpct.toFixed(1)}%</span>
 													</div>
 													<div class="relative h-1.5 bg-exo-black/60 rounded-sm overflow-hidden">
 														<div

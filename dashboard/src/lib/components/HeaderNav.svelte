@@ -10,21 +10,24 @@
 			return;
 		}
 		if (browser) {
-			// Hash router: send to root
 			window.location.hash = '/';
 		}
 	}
 </script>
 
-<header class="relative z-20 flex items-center justify-center px-6 pt-8 pb-4 bg-exo-dark-gray">
-	<!-- Center: Logo (clickable to go home) -->
+<header class="relative z-20 flex items-center justify-center px-6 pt-6 pb-4 bg-[#0f1116]/80 backdrop-blur-md border-b border-white/[0.06]">
+	<!-- Center: CellHasher Logo + Branding -->
 	<button
 		onclick={handleHome}
-		class="hover:opacity-80 transition-opacity {showHome ? 'cursor-pointer' : 'cursor-default'}"
+		class="hover:opacity-80 transition-opacity {showHome ? 'cursor-pointer' : 'cursor-default'} flex items-center gap-3"
 		title={showHome ? 'Go to home' : ''}
 		disabled={!showHome}
 	>
-		<img src="/exo-logo.png" alt="EXO" class="h-18 drop-shadow-[0_0_20px_rgba(255,215,0,0.5)]" />
+		<img src="/Cellhasher-logo.svg" alt="CellHasher" class="h-10 w-auto" />
+		<div class="flex flex-col items-start">
+			<span class="text-lg font-bold text-white tracking-tight">CellHasher</span>
+			<span class="text-xs text-[#60a5fa] font-medium tracking-wider uppercase">Distributed AI</span>
+		</div>
 	</button>
 
 	<!-- Right: Home + Downloads -->
@@ -32,7 +35,7 @@
 		{#if showHome}
 			<button
 				onclick={handleHome}
-				class="text-sm text-exo-light-gray hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-2 cursor-pointer"
+				class="text-sm text-[#9ca3af] hover:text-[#60a5fa] transition-colors tracking-wider uppercase flex items-center gap-2 cursor-pointer"
 				title="Back to topology view"
 			>
 				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -43,7 +46,7 @@
 		{/if}
 		<a
 			href="/#/downloads"
-			class="text-sm text-exo-light-gray hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-2 cursor-pointer"
+			class="text-sm text-[#9ca3af] hover:text-[#60a5fa] transition-colors tracking-wider uppercase flex items-center gap-2 cursor-pointer"
 			title="View downloads overview"
 		>
 			<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

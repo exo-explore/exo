@@ -625,7 +625,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			case 'DOWNLOADING': return 'text-blue-400';
 			case 'LOADING': 
 			case 'WARMING UP': 
-			case 'WAITING': return 'text-yellow-400';
+			case 'WAITING': return 'text-amber-400';
 			case 'RUNNING': return 'text-teal-400';
 			case 'READY': 
 			case 'LOADED': return 'text-green-400';
@@ -1117,7 +1117,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	<!-- Main Content -->
 	<main class="flex-1 flex overflow-hidden relative">
 		<!-- Left: Conversation History Sidebar (always visible) -->
-		<div class="w-80 flex-shrink-0 border-r border-exo-yellow/10">
+		<div class="w-80 flex-shrink-0 border-r border-white/[0.06]">
 			<ChatSidebar class="h-full" />
 		</div>
 
@@ -1148,15 +1148,15 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				</div>
 				
 				<!-- Right Sidebar: Instance Controls (wider on welcome page for better visibility) -->
-				<aside class="w-80 border-l border-exo-yellow/10 bg-exo-dark-gray flex flex-col flex-shrink-0">
+				<aside class="w-80 border-l border-white/[0.06] bg-[#0f1116]/60 flex flex-col flex-shrink-0">
 					<!-- Running Instances Panel (only shown when instances exist) - Scrollable -->
 					{#if instanceCount > 0}
 					<div class="p-4 flex-shrink-0">
 						<!-- Panel Header -->
 						<div class="flex items-center gap-2 mb-4">
-							<div class="w-2 h-2 bg-exo-yellow rounded-full shadow-[0_0_8px_rgba(255,215,0,0.6)] animate-pulse"></div>
-							<h3 class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase">Instances</h3>
-							<div class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"></div>
+							<div class="w-2 h-2 bg-[#60a5fa] rounded-full shadow-[0_0_8px_rgba(96,165,250,0.6)] animate-pulse"></div>
+							<h3 class="text-xs text-[#60a5fa] font-mono tracking-[0.2em] uppercase">Instances</h3>
+							<div class="flex-1 h-px bg-gradient-to-r from-[#60a5fa]/30 to-transparent"></div>
 						</div>
 						
 						<div 
@@ -1195,31 +1195,31 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 									}}
 								>
 									<!-- Corner accents -->
-									<div class="absolute -top-px -left-px w-2 h-2 border-l border-t {isDownloading ? 'border-blue-500/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-yellow-500/50' : isReady ? 'border-green-500/50' : 'border-teal-500/50'}"></div>
-									<div class="absolute -top-px -right-px w-2 h-2 border-r border-t {isDownloading ? 'border-blue-500/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-yellow-500/50' : isReady ? 'border-green-500/50' : 'border-teal-500/50'}"></div>
-									<div class="absolute -bottom-px -left-px w-2 h-2 border-l border-b {isDownloading ? 'border-blue-500/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-yellow-500/50' : isReady ? 'border-green-500/50' : 'border-teal-500/50'}"></div>
-									<div class="absolute -bottom-px -right-px w-2 h-2 border-r border-b {isDownloading ? 'border-blue-500/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-yellow-500/50' : isReady ? 'border-green-500/50' : 'border-teal-500/50'}"></div>
+									<div class="absolute -top-px -left-px w-2 h-2 border-l border-t {isDownloading ? 'border-[#60a5fa]/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-amber-500/50' : isReady ? 'border-green-500/50' : 'border-[#60a5fa]/50'}"></div>
+									<div class="absolute -top-px -right-px w-2 h-2 border-r border-t {isDownloading ? 'border-[#60a5fa]/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-amber-500/50' : isReady ? 'border-green-500/50' : 'border-[#60a5fa]/50'}"></div>
+									<div class="absolute -bottom-px -left-px w-2 h-2 border-l border-b {isDownloading ? 'border-[#60a5fa]/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-amber-500/50' : isReady ? 'border-green-500/50' : 'border-[#60a5fa]/50'}"></div>
+									<div class="absolute -bottom-px -right-px w-2 h-2 border-r border-b {isDownloading ? 'border-[#60a5fa]/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-amber-500/50' : isReady ? 'border-green-500/50' : 'border-[#60a5fa]/50'}"></div>
 									
-									<div class="bg-exo-dark-gray/60 border border-l-2 {isDownloading ? 'border-blue-500/30 border-l-blue-400' : isFailed ? 'border-red-500/30 border-l-red-400' : isLoading ? 'border-exo-yellow/30 border-l-yellow-400' : isReady ? 'border-green-500/30 border-l-green-400' : 'border-teal-500/30 border-l-teal-400'} p-3">
+									<div class="bg-gradient-to-br from-[#131621] to-[#181c27] rounded-xl border border-l-2 {isDownloading ? 'border-[#60a5fa]/30 border-l-[#60a5fa]' : isFailed ? 'border-red-500/30 border-l-red-400' : isLoading ? 'border-amber-500/30 border-l-amber-400' : isReady ? 'border-green-500/30 border-l-green-400' : 'border-[#60a5fa]/30 border-l-[#60a5fa]'} p-3">
 										
 										<div class="flex justify-between items-start mb-2 pl-2">
 											<div class="flex items-center gap-2">
-												<div class="w-1.5 h-1.5 {isDownloading ? 'bg-blue-400 animate-pulse' : isFailed ? 'bg-red-400' : isLoading ? 'bg-yellow-400 animate-pulse' : isReady ? 'bg-green-400' : 'bg-teal-400'} rounded-full shadow-[0_0_6px_currentColor]"></div>
-												<span class="text-exo-light-gray font-mono text-sm tracking-wider">{id.slice(0, 8).toUpperCase()}</span>
+												<div class="w-1.5 h-1.5 {isDownloading ? 'bg-[#60a5fa] animate-pulse' : isFailed ? 'bg-red-400' : isLoading ? 'bg-amber-400 animate-pulse' : isReady ? 'bg-green-400' : 'bg-[#60a5fa]'} rounded-full shadow-[0_0_6px_currentColor]"></div>
+												<span class="text-[#9ca3af] font-mono text-sm tracking-wider">{id.slice(0, 8).toUpperCase()}</span>
 											</div>
 											<button 
 												onclick={() => deleteInstance(id)}
-												class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
+												class="text-xs px-2 py-1 rounded-md font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
 											>
 												DELETE
 											</button>
 											</div>
 											<div class="pl-2">
-												<div class="text-exo-yellow text-xs font-mono tracking-wide truncate">{getInstanceModelId(instance)}</div>
+												<div class="text-[#60a5fa] text-xs font-mono tracking-wide truncate">{getInstanceModelId(instance)}</div>
 												<div class="text-white/60 text-xs font-mono">Strategy: <span class="text-white/80">{instanceInfo.sharding} ({instanceInfo.instanceType})</span></div>
 												{#if instanceModelId && instanceModelId !== 'Unknown' && instanceModelId !== 'Unknown Model'}
 													<a
-														class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
+														class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-[#60a5fa] transition-colors mt-1"
 														href={`https://huggingface.co/${instanceModelId}`}
 														target="_blank"
 														rel="noreferrer noopener"
@@ -1312,7 +1312,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 																						</div>
 																						<div class="relative h-1 bg-exo-black/60 rounded-sm overflow-hidden mt-1">
 																							<div 
-																								class="absolute inset-y-0 left-0 bg-gradient-to-r from-exo-yellow to-exo-yellow/70 transition-all duration-300"
+																								class="absolute inset-y-0 left-0 bg-gradient-to-r from-[#60a5fa] to-[#3b82f6]/70 transition-all duration-300"
 																								style="width: {filePercent.toFixed(1)}%"
 																							></div>
 																						</div>
@@ -1345,9 +1345,9 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 					<div class="p-4 flex-1 overflow-y-auto">
 						<!-- Panel Header -->
 						<div class="flex items-center gap-2 mb-3 flex-shrink-0">
-							<div class="w-2 h-2 border border-exo-yellow/60 rotate-45"></div>
-							<h3 class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase">Launch Instance</h3>
-							<div class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"></div>
+							<div class="w-2 h-2 border border-[#60a5fa]/60 rotate-45"></div>
+							<h3 class="text-xs text-[#60a5fa] font-mono tracking-[0.2em] uppercase">Launch Instance</h3>
+							<div class="flex-1 h-px bg-gradient-to-r from-[#60a5fa]/30 to-transparent"></div>
 							<span class="text-sm text-white/70 font-mono">{models.length} models</span>
 						</div>
 						
@@ -1356,25 +1356,25 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 							<button
 								type="button"
 								onclick={() => isModelDropdownOpen = !isModelDropdownOpen}
-								class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-2.5 text-sm font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 {isModelDropdownOpen ? 'border-exo-yellow/70' : ''}"
+								class="w-full bg-[#181c27] border border-white/[0.06] rounded-md pl-3 pr-8 py-2.5 text-sm font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-[#60a5fa]/50 focus:outline-none focus:border-[#60a5fa]/70 {isModelDropdownOpen ? 'border-[#60a5fa]/70' : ''}"
 							>
 								{#if selectedModelId}
 									{@const foundModel = models.find(m => m.id === selectedModelId)}
 									{#if foundModel}
 										{@const sizeGB = getModelSizeGB(foundModel)}
 										<span class="flex items-center justify-between gap-2 w-full pr-4">
-											<span class="text-exo-light-gray truncate">{foundModel.name || foundModel.id}</span>
+											<span class="text-[#9ca3af] truncate">{foundModel.name || foundModel.id}</span>
 											<span class="text-white/50 text-xs flex-shrink-0">{sizeGB >= 1 ? sizeGB.toFixed(0) : sizeGB.toFixed(1)}GB</span>
 										</span>
 									{:else}
-										<span class="text-exo-light-gray">{selectedModelId}</span>
+										<span class="text-[#9ca3af]">{selectedModelId}</span>
 									{/if}
 								{:else}
 									<span class="text-white/50">— SELECT MODEL —</span>
 								{/if}
 							</button>
 							<div class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-200 {isModelDropdownOpen ? 'rotate-180' : ''}">
-								<svg class="w-4 h-4 text-exo-yellow/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<svg class="w-4 h-4 text-[#60a5fa]/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
 								</svg>
 							</div>
@@ -1389,14 +1389,14 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 								></button>
 								
 								<!-- Dropdown Panel -->
-							<div class="absolute top-full left-0 right-0 mt-1 bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-50 max-h-64 overflow-y-auto">
+							<div class="absolute top-full left-0 right-0 mt-1 bg-[#131621] border border-[#60a5fa]/30 rounded-md shadow-lg shadow-black/50 z-50 max-h-64 overflow-y-auto">
 								<!-- Search within dropdown -->
-								<div class="sticky top-0 bg-exo-dark-gray border-b border-exo-medium-gray/30 p-2">
+								<div class="sticky top-0 bg-[#131621] border-b border-white/[0.06] p-2">
 										<input
 											type="text"
 											placeholder="Search models..."
 											bind:value={modelDropdownSearch}
-											class="w-full bg-exo-dark-gray/60 border border-exo-medium-gray/30 rounded px-2 py-1.5 text-xs font-mono text-white/80 placeholder:text-white/40 focus:outline-none focus:border-exo-yellow/50"
+											class="w-full bg-[#0d1117]/60 border border-white/[0.06] rounded-md px-2 py-1.5 text-xs font-mono text-white/80 placeholder:text-white/40 focus:outline-none focus:border-[#60a5fa]/50"
 										/>
 									</div>
 									
@@ -1420,9 +1420,9 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 												disabled={!modelCanFit}
 												class="w-full px-3 py-2 text-left text-sm font-mono tracking-wide transition-colors duration-100 flex items-center justify-between gap-2 {
 													selectedModelId === model.id 
-														? 'bg-transparent text-exo-yellow cursor-pointer' 
+														? 'bg-transparent text-[#60a5fa] cursor-pointer' 
 														: modelCanFit 
-															? 'text-white/80 hover:text-exo-yellow cursor-pointer' 
+															? 'text-white/80 hover:text-[#60a5fa] cursor-pointer' 
 															: 'text-white/30 cursor-default'
 												}"
 											>
@@ -1447,22 +1447,22 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 								<div class="flex gap-2">
 									<button 
 										onclick={() => selectedSharding = 'Pipeline'}
-										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding === 'Pipeline' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded-full transition-all duration-200 cursor-pointer {selectedSharding === 'Pipeline' ? 'bg-[#60a5fa]/15 text-[#60a5fa] border-[#60a5fa]/40 shadow-[0_0_10px_rgba(96,165,250,0.2)]' : 'bg-transparent text-white/70 border-white/10 hover:border-white/20 hover:text-[#d1d5db]'}"
 									>
-										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedSharding === 'Pipeline' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
+										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedSharding === 'Pipeline' ? 'border-[#60a5fa]' : 'border-[#1e293b]'}">
 											{#if selectedSharding === 'Pipeline'}
-												<span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
+												<span class="w-2 h-2 rounded-full bg-[#60a5fa]"></span>
 											{/if}
 										</span>
 										Pipeline
 									</button>
 									<button 
 										onclick={() => selectedSharding = 'Tensor'}
-										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding === 'Tensor' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded-full transition-all duration-200 cursor-pointer {selectedSharding === 'Tensor' ? 'bg-[#60a5fa]/15 text-[#60a5fa] border-[#60a5fa]/40 shadow-[0_0_10px_rgba(96,165,250,0.2)]' : 'bg-transparent text-white/70 border-white/10 hover:border-white/20 hover:text-[#d1d5db]'}"
 									>
-										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedSharding === 'Tensor' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
+										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedSharding === 'Tensor' ? 'border-[#60a5fa]' : 'border-[#1e293b]'}">
 											{#if selectedSharding === 'Tensor'}
-												<span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
+												<span class="w-2 h-2 rounded-full bg-[#60a5fa]"></span>
 											{/if}
 										</span>
 										Tensor
@@ -1478,11 +1478,11 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 									<!-- MLX Ring button (disabled for Android) -->
 									<!-- <button 
 										onclick={() => selectedInstanceType = 'MlxRing'}
-										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'MlxRing' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded-full transition-all duration-200 cursor-pointer {selectedInstanceType === 'MlxRing' ? 'bg-[#60a5fa]/15 text-[#60a5fa] border-[#60a5fa]/40' : 'bg-transparent text-white/70 border-white/10 hover:border-white/20'}"
 									>
-										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'MlxRing' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
+										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'MlxRing' ? 'border-[#60a5fa]' : 'border-[#1e293b]'}">
 											{#if selectedInstanceType === 'MlxRing'}
-												<span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
+												<span class="w-2 h-2 rounded-full bg-[#60a5fa]"></span>
 											{/if}
 										</span>
 										MLX Ring
@@ -1490,11 +1490,11 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 									<!-- MLX RDMA button (disabled for Android) -->
 									<!-- <button 
 										onclick={() => selectedInstanceType = 'MlxIbv'}
-										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'MlxIbv' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded-full transition-all duration-200 cursor-pointer {selectedInstanceType === 'MlxIbv' ? 'bg-[#60a5fa]/15 text-[#60a5fa] border-[#60a5fa]/40' : 'bg-transparent text-white/70 border-white/10 hover:border-white/20'}"
 									>
-										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'MlxIbv' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
+										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'MlxIbv' ? 'border-[#60a5fa]' : 'border-[#1e293b]'}">
 											{#if selectedInstanceType === 'MlxIbv'}
-												<span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
+												<span class="w-2 h-2 rounded-full bg-[#60a5fa]"></span>
 											{/if}
 										</span>
 										MLX RDMA
@@ -1502,11 +1502,11 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 									<!-- llama.cpp is the only option for Android -->
 									<button 
 										onclick={() => selectedInstanceType = 'LlamaCpp'}
-										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'LlamaCpp' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded-full transition-all duration-200 cursor-pointer {selectedInstanceType === 'LlamaCpp' ? 'bg-[#60a5fa]/15 text-[#60a5fa] border-[#60a5fa]/40 shadow-[0_0_10px_rgba(96,165,250,0.2)]' : 'bg-transparent text-white/70 border-white/10 hover:border-white/20 hover:text-[#d1d5db]'}"
 									>
-										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'LlamaCpp' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
+										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'LlamaCpp' ? 'border-[#60a5fa]' : 'border-[#1e293b]'}">
 											{#if selectedInstanceType === 'LlamaCpp'}
-												<span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
+												<span class="w-2 h-2 rounded-full bg-[#60a5fa]"></span>
 											{/if}
 										</span>
 										llama.cpp
@@ -1526,11 +1526,11 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 									ontouchstart={handleSliderTouchStart}
 								>
 									<!-- Track background - extends full width to align with edge dots -->
-									<div class="absolute top-6 left-0 right-0 h-2 bg-exo-medium-gray/50 rounded-full"></div>
+									<div class="absolute top-6 left-0 right-0 h-2 bg-[#1e293b]/50 rounded-full"></div>
 									<!-- Active track (fills up to selected) -->
 									{#if availableMinNodes > 1}
 										<div 
-											class="absolute top-6 left-0 h-2 bg-white/30 rounded-full transition-all pointer-events-none"
+											class="absolute top-6 left-0 h-2 bg-[#60a5fa]/30 rounded-full transition-all pointer-events-none"
 											style="width: {((selectedMinNodes - 1) / (availableMinNodes - 1)) * 100}%"
 										></div>
 									{/if}
@@ -1546,15 +1546,15 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 											<!-- Dot -->
 											<span 
 												class="rounded-full transition-all {isSelected 
-													? 'w-6 h-6 bg-exo-yellow shadow-[0_0_10px_rgba(255,215,0,0.6)]' 
+													? 'w-6 h-6 bg-[#60a5fa] shadow-[0_0_15px_rgba(96,165,250,0.5)]' 
 													: isValid 
-														? 'w-4 h-4 bg-exo-light-gray/70 mt-1' 
-														: 'w-3 h-3 bg-exo-medium-gray/50 mt-1.5'}"
+														? 'w-4 h-4 bg-[#9ca3af]/70 mt-1' 
+														: 'w-3 h-3 bg-[#1e293b]/50 mt-1.5'}"
 											></span>
 											<!-- Number label below dot -->
 											<span 
 												class="text-sm font-mono mt-1.5 tabular-nums transition-colors {isSelected 
-													? 'text-exo-yellow font-bold' 
+													? 'text-[#60a5fa] font-bold' 
 													: isValid 
 														? 'text-white/70' 
 														: 'text-white/30'}"
@@ -1573,7 +1573,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 								</div>
 							{:else if loadingPreviews}
 								<div class="text-center py-8">
-									<div class="text-xs text-exo-yellow font-mono tracking-wider uppercase animate-pulse">Loading preview...</div>
+									<div class="text-xs text-[#60a5fa] font-mono tracking-wider uppercase animate-pulse">Loading preview...</div>
 								</div>
 							{:else}
 								{@const selectedModel = models.find(m => m.id === selectedModelId)}
@@ -1646,18 +1646,18 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				<!-- Right: Mini-Map Sidebar -->
 				{#if minimized}
 					<aside 
-						class="w-80 border-l border-exo-yellow/20 bg-exo-dark-gray flex flex-col flex-shrink-0 overflow-y-auto"
+						class="w-80 border-l border-white/[0.06] bg-[#131621] flex flex-col flex-shrink-0 overflow-y-auto"
 						in:fly={{ x: 100, duration: 400, easing: cubicInOut }}
 					>
 						<!-- Topology Section - clickable to go back to main view -->
 						<button 
-							class="p-4 border-b border-exo-medium-gray/30 w-full text-left cursor-pointer hover:bg-exo-medium-gray/10 transition-colors"
+							class="p-4 border-b border-white/[0.06] w-full text-left cursor-pointer hover:bg-[#60a5fa]/5 transition-colors"
 							onclick={handleGoHome}
 							title="Click to return to main topology view"
 						>
 							<div class="flex items-center justify-between mb-3">
-								<div class="text-xs text-exo-yellow tracking-[0.2em] uppercase flex items-center gap-2">
-									<span class="w-1.5 h-1.5 bg-exo-yellow rounded-full status-pulse"></span>
+								<div class="text-xs text-[#60a5fa] tracking-[0.2em] uppercase flex items-center gap-2">
+									<span class="w-1.5 h-1.5 bg-[#60a5fa] rounded-full status-pulse"></span>
 								TOPOLOGY
 							</div>
 							<span class="text-xs text-white/70 tabular-nums">{nodeCount} {nodeCount === 1 ? 'NODE' : 'NODES'}</span>
@@ -1674,9 +1674,9 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 						<div class="p-4 flex-1">
 							<!-- Panel Header -->
 							<div class="flex items-center gap-2 mb-4">
-								<div class="w-2 h-2 bg-exo-yellow rounded-full shadow-[0_0_8px_rgba(255,215,0,0.6)] animate-pulse"></div>
-								<h3 class="text-sm text-exo-yellow font-mono tracking-[0.2em] uppercase">Instances</h3>
-								<div class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"></div>
+								<div class="w-2 h-2 bg-[#60a5fa] rounded-full shadow-[0_0_8px_rgba(96,165,250,0.6)] animate-pulse"></div>
+								<h3 class="text-sm text-[#60a5fa] font-mono tracking-[0.2em] uppercase">Instances</h3>
+								<div class="flex-1 h-px bg-gradient-to-r from-[#60a5fa]/30 to-transparent"></div>
 							</div>
 								<div class="space-y-3 max-h-72 overflow-y-auto pr-1">
 									{#each Object.entries(instanceData) as [id, instance]}
@@ -1711,17 +1711,17 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 										}}
 									>
 										<!-- Corner accents -->
-										<div class="absolute -top-px -left-px w-2 h-2 border-l border-t {isDownloading ? 'border-blue-500/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-yellow-500/50' : isReady ? 'border-green-500/50' : 'border-teal-500/50'}"></div>
-										<div class="absolute -top-px -right-px w-2 h-2 border-r border-t {isDownloading ? 'border-blue-500/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-yellow-500/50' : isReady ? 'border-green-500/50' : 'border-teal-500/50'}"></div>
-										<div class="absolute -bottom-px -left-px w-2 h-2 border-l border-b {isDownloading ? 'border-blue-500/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-yellow-500/50' : isReady ? 'border-green-500/50' : 'border-teal-500/50'}"></div>
-										<div class="absolute -bottom-px -right-px w-2 h-2 border-r border-b {isDownloading ? 'border-blue-500/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-yellow-500/50' : isReady ? 'border-green-500/50' : 'border-teal-500/50'}"></div>
+										<div class="absolute -top-px -left-px w-2 h-2 border-l border-t {isDownloading ? 'border-[#60a5fa]/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-amber-500/50' : isReady ? 'border-green-500/50' : 'border-[#60a5fa]/50'}"></div>
+										<div class="absolute -top-px -right-px w-2 h-2 border-r border-t {isDownloading ? 'border-[#60a5fa]/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-amber-500/50' : isReady ? 'border-green-500/50' : 'border-[#60a5fa]/50'}"></div>
+										<div class="absolute -bottom-px -left-px w-2 h-2 border-l border-b {isDownloading ? 'border-[#60a5fa]/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-amber-500/50' : isReady ? 'border-green-500/50' : 'border-[#60a5fa]/50'}"></div>
+										<div class="absolute -bottom-px -right-px w-2 h-2 border-r border-b {isDownloading ? 'border-[#60a5fa]/50' : isFailed ? 'border-red-500/50' : isLoading ? 'border-amber-500/50' : isReady ? 'border-green-500/50' : 'border-[#60a5fa]/50'}"></div>
 										
-										<div class="bg-exo-dark-gray/60 border border-l-2 {isDownloading ? 'border-blue-500/30 border-l-blue-400' : isFailed ? 'border-red-500/30 border-l-red-400' : isLoading ? 'border-exo-yellow/30 border-l-yellow-400' : isReady ? 'border-green-500/30 border-l-green-400' : 'border-teal-500/30 border-l-teal-400'} p-3">
+										<div class="bg-gradient-to-br from-[#131621] to-[#181c27] rounded-xl border border-l-2 {isDownloading ? 'border-[#60a5fa]/30 border-l-[#60a5fa]' : isFailed ? 'border-red-500/30 border-l-red-400' : isLoading ? 'border-amber-500/30 border-l-amber-400' : isReady ? 'border-green-500/30 border-l-green-400' : 'border-[#60a5fa]/30 border-l-[#60a5fa]'} p-3">
 											
 											<div class="flex justify-between items-start mb-2 pl-2">
 												<div class="flex items-center gap-2">
-													<div class="w-1.5 h-1.5 {isDownloading ? 'bg-blue-400 animate-pulse' : isFailed ? 'bg-red-400' : isLoading ? 'bg-yellow-400 animate-pulse' : isReady ? 'bg-green-400' : 'bg-teal-400'} rounded-full shadow-[0_0_6px_currentColor]"></div>
-													<span class="text-exo-light-gray font-mono text-xs tracking-wider">{id.slice(0, 8).toUpperCase()}</span>
+													<div class="w-1.5 h-1.5 {isDownloading ? 'bg-[#60a5fa] animate-pulse' : isFailed ? 'bg-red-400' : isLoading ? 'bg-amber-400 animate-pulse' : isReady ? 'bg-green-400' : 'bg-[#60a5fa]'} rounded-full shadow-[0_0_6px_currentColor]"></div>
+													<span class="text-[#9ca3af] font-mono text-xs tracking-wider">{id.slice(0, 8).toUpperCase()}</span>
 												</div>
 												<button 
 													onclick={() => deleteInstance(id)}
@@ -1731,11 +1731,11 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 												</button>
 												</div>
 												<div class="pl-2">
-													<div class="text-exo-yellow text-sm font-mono tracking-wide truncate">{getInstanceModelId(instance)}</div>
+													<div class="text-[#60a5fa] text-sm font-mono tracking-wide truncate">{getInstanceModelId(instance)}</div>
 													<div class="text-white/60 text-xs font-mono">Strategy: <span class="text-white/80">{instanceInfo.sharding} ({instanceInfo.instanceType})</span></div>
 														{#if instanceModelId && instanceModelId !== 'Unknown' && instanceModelId !== 'Unknown Model'}
 															<a
-																class="inline-flex items-center gap-1 text-[10px] text-white/60 hover:text-exo-yellow transition-colors mt-0.5"
+																class="inline-flex items-center gap-1 text-[10px] text-white/60 hover:text-[#60a5fa] transition-colors mt-0.5"
 																href={`https://huggingface.co/${instanceModelId}`}
 																target="_blank"
 																rel="noreferrer noopener"
@@ -1813,7 +1813,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 																						</div>
 																						<div class="relative h-1 bg-exo-black/50 rounded-sm overflow-hidden mt-0.5">
 																							<div 
-																								class="absolute inset-y-0 left-0 bg-gradient-to-r from-exo-yellow to-exo-yellow/70"
+																								class="absolute inset-y-0 left-0 bg-gradient-to-r from-[#60a5fa] to-[#3b82f6]/70"
 																								style="width: {Math.min(100, Math.max(0, f.percentage)).toFixed(1)}%"
 																							></div>
 																						</div>
