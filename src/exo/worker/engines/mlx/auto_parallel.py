@@ -20,6 +20,7 @@ from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
 from mlx_lm.models.deepseek_v32 import DeepseekV32MLP
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
+from mlx_lm.models.glm4_moe import DecoderLayer as Glm4MoeDecoderLayer
 from mlx_lm.models.glm4_moe import Model as Glm4MoeModel
 from mlx_lm.models.glm4_moe import MoE
 from mlx_lm.models.glm4_moe_lite import Glm4MoeLiteDecoderLayer, Glm4MoeLiteMLP
@@ -769,13 +770,13 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
     ) -> nn.Module:
-        model = cast(Qwen3MoeModel | Qwen3NextModel, model)
+        model = cast(Qwen3MoeModel | Qwen3NextModel | Glm4MoeModel, model)
         for layer in model.layers:
             eval_with_timeout(
                 layer.parameters(), timeout_seconds / len(model.layers), on_timeout
             )
             # Shard the self attention
-            if isinstance(layer, Qwen3DecoderLayer):
+            if isinstance(layer, (Qwen3DecoderLayer, Glm4MoeDecoderLayer)):
                 layer.self_attn.q_proj = self.all_to_sharded_linear(
                     layer.self_attn.q_proj
                 )
