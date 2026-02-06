@@ -66,6 +66,19 @@ class PromptData(ABC):
         """
         ...
 
+    @property
+    @abstractmethod
+    def kontext_image_ids(self) -> mx.array | None:
+        """Kontext-style position IDs for image conditioning.
+
+        For FLUX.1-Kontext models, returns position IDs with first_coord=1
+        to distinguish conditioning tokens from generation tokens (first_coord=0).
+
+        Returns:
+            Position IDs array [1, seq_len, 3] for Kontext, None for other models.
+        """
+        ...
+
     @abstractmethod
     def get_batched_cfg_data(
         self,
