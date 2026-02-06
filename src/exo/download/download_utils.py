@@ -158,6 +158,48 @@ async def seed_models(seed_dir: str | Path):
                     logger.error(traceback.format_exc())
 
 
+async def _build_file_list_from_local_directory(
+    model_id: ModelId,
+    recursive: bool = False,
+) -> list[FileListEntry] | None:
+    model_dir = (await ensure_models_dir()) / model_id.normalize()
+    if not await aios.path.exists(model_dir):
+        return None
+
+    def _scan() -> list[FileListEntry]:
+        entries: list[FileListEntry] = []
+        if recursive:
+            for dirpath, _, filenames in os.walk(model_dir):
+                for filename in filenames:
+                    if filename.endswith(".partial"):
+                        continue
+                    full_path = Path(dirpath) / filename
+                    rel_path = full_path.relative_to(model_dir)
+                    entries.append(
+                        FileListEntry(
+                            type="file",
+                            path=str(rel_path),
+                            size=full_path.stat().st_size,
+                        )
+                    )
+        else:
+            for item in model_dir.iterdir():
+                if item.is_file() and not item.name.endswith(".partial"):
+                    entries.append(
+                        FileListEntry(
+                            type="file",
+                            path=item.name,
+                            size=item.stat().st_size,
+                        )
+                    )
+        return entries
+
+    file_list = await asyncio.to_thread(_scan)
+    if not file_list:
+        return None
+    return file_list
+
+
 _fetched_file_lists_this_session: set[str] = set()
 
 
@@ -183,6 +225,12 @@ async def fetch_file_list_with_cache(
         if await aios.path.exists(cache_file):
             async with aiofiles.open(cache_file, "r") as f:
                 return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
+        local_file_list = await _build_file_list_from_local_directory(model_id, recursive)
+        if local_file_list is not None:
+            logger.warning(
+                f"No internet and no cached file list for {model_id}, "
+            )
+            return local_file_list
         raise FileNotFoundError(
             f"No internet connection and no cached file list for {model_id}"
         )
@@ -207,6 +255,12 @@ async def fetch_file_list_with_cache(
             )
             async with aiofiles.open(cache_file, "r") as f:
                 return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
+        local_file_list = await _build_file_list_from_local_directory(model_id, recursive)
+        if local_file_list is not None:
+            logger.warning(
+                f"Failed to fetch file list for {model_id} and no cache exists, "
+            )
+            return local_file_list
         raise FileNotFoundError(f"Failed to fetch file list for {model_id}: {e}") from e
 
 
