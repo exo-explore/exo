@@ -286,7 +286,14 @@ const IMAGE_PARAMS_STORAGE_KEY = "exo-image-generation-params";
 // Image generation params interface matching backend API
 export interface ImageGenerationParams {
   // Basic params
-  size: "512x512" | "768x768" | "1024x1024" | "1024x768" | "768x1024";
+  size:
+    | "512x512"
+    | "768x768"
+    | "1024x1024"
+    | "1024x768"
+    | "768x1024"
+    | "1024x1365"
+    | "1365x1024";
   quality: "low" | "medium" | "high";
   outputFormat: "png" | "jpeg";
   numImages: number;
