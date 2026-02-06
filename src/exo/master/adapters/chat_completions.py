@@ -3,7 +3,6 @@
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
-from uuid import uuid4
 
 from exo.shared.types.api import (
     ChatCompletionChoice,
@@ -141,7 +140,7 @@ async def generate_chat_stream(
         if isinstance(chunk, ToolCallChunk):
             tool_call_deltas = [
                 ToolCall(
-                    id=str(uuid4()),
+                    id=f"call_{tool.id}",
                     index=i,
                     function=tool,
                 )
@@ -207,7 +206,7 @@ async def collect_chat_response(
         if isinstance(chunk, ToolCallChunk):
             tool_calls.extend(
                 ToolCall(
-                    id=str(uuid4()),
+                    id=f"call_{tool.id}",
                     index=i,
                     function=tool,
                 )

@@ -811,7 +811,7 @@ def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
     # kimi has a fixed function naming scheme, with a json formatted arg
     #   functions.multiply:0 <|tool_call_argument_begin|> {"a": 2, "b": 3}
     _func_name_regex = re.compile(
-        r"^\s*(.+):\d+\s*<\|tool_call_argument_begin\|>", re.DOTALL
+        r"^\s*(.+):(\d+)\s*<\|tool_call_argument_begin\|>", re.DOTALL
     )
     _func_arg_regex = re.compile(r"<\|tool_call_argument_begin\|>\s*(.*)\s*", re.DOTALL)
 
@@ -836,6 +836,7 @@ def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
         if func_name_match is None:
             raise ValueError(f"Could not parse function name from tool call: {text!r}")
         func_name = func_name_match.group(1)
+        tool_id = func_name_match.group(2)
         # strip off the `functions.` prefix, if it exists.
         func_name = func_name[func_name.find(".") + 1 :]
 
@@ -846,7 +847,7 @@ def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
         # the args should be valid json - no need to check against our tools to deserialize
         arg_dct = _deserialize(func_args)  # pyright: ignore[reportAny]
 
-        return dict(name=func_name, arguments=arg_dct)  # pyright: ignore[reportAny]
+        return dict(id=tool_id, name=func_name, arguments=arg_dct)  # pyright: ignore[reportAny]
 
     tokenizer._tool_call_start = tool_call_start
     tokenizer._tool_call_end = tool_call_end
@@ -927,9 +928,14 @@ def _validate_single_tool(obj: dict[str, Any]) -> ToolCallItem:
     if (
         ((name := obj.get("name")) is not None)
         and ((args := obj.get("arguments")) is not None)
+        and ((_id := obj.get("id")) is not None)
         and isinstance(name, str)
     ):
-        return ToolCallItem(name=name, arguments=json.dumps(args))
+        return ToolCallItem(
+            id=str(_id),  # type: ignore
+            name=name,
+            arguments=json.dumps(args),
+        )
     else:
         raise ValidationError
 

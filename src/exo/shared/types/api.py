@@ -1,6 +1,7 @@
 import time
 from collections.abc import Generator
 from typing import Annotated, Any, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic_core import PydanticUseDefault
@@ -60,6 +61,7 @@ class ChatCompletionMessageText(BaseModel):
 
 
 class ToolCallItem(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
     name: str
     arguments: str
 
