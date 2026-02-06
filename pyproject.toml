@@ -31,8 +31,6 @@ dependencies = [
 ]
 
 [project.scripts]
-exo-master = "exo.master.main:main"
-exo-worker = "exo.worker.main:main"
 exo = "exo.main:main"
 
 # dependencies only required for development
