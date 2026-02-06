@@ -567,7 +567,7 @@ class ShardedMoE(CustomMlxLayer):
     def __call__(self, x: mx.array) -> mx.array:
         if self.sharding_group is not None:
             x = sum_gradients(self.sharding_group)(x)
-        y = self.original_layer(x)
+        y = self.original_layer.__call__(x)
         if self.sharding_group is not None:
             y = mx.distributed.all_sum(y, group=self.sharding_group)
         return y
