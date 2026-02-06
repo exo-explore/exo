@@ -332,7 +332,11 @@ class Master:
                                 ]
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages
-                            for i in range(command.since_idx, len(self._event_log)):
+                            # rate limit to 1000 at a time
+                            for i in range(
+                                command.since_idx,
+                                min(command.since_idx + 1000, len(self._event_log)),
+                            ):
                                 await self._send_event(
                                     IndexedEvent(idx=i, event=self._event_log[i])
                                 )

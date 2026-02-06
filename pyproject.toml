@@ -57,6 +57,7 @@ dev = [
 [tool.uv.workspace]
 members = [
     "rust/exo_pyo3_bindings",
+    "bench",
 ]
 
 [tool.uv.sources]
