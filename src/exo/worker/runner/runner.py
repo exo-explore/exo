@@ -810,8 +810,9 @@ def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
 
     # kimi has a fixed function naming scheme, with a json formatted arg
     #   functions.multiply:0 <|tool_call_argument_begin|> {"a": 2, "b": 3}
+    #   Also needs to handle tools like call_0<|tool_call_argument_begin|>{"filePath": "..."}
     _func_name_regex = re.compile(
-        r"^\s*(.+):(\d+)\s*<\|tool_call_argument_begin\|>", re.DOTALL
+        r"^\s*(.+)[:_](\d+)\s*<\|tool_call_argument_begin\|>", re.DOTALL
     )
     _func_arg_regex = re.compile(r"<\|tool_call_argument_begin\|>\s*(.*)\s*", re.DOTALL)
 
@@ -928,11 +929,12 @@ def _validate_single_tool(obj: dict[str, Any]) -> ToolCallItem:
     if (
         ((name := obj.get("name")) is not None)
         and ((args := obj.get("arguments")) is not None)
-        and ((_id := obj.get("id")) is not None)
         and isinstance(name, str)
     ):
+        raw_id: object = obj.get("id")
+        extra = {"id": str(raw_id)} if raw_id is not None else {}
         return ToolCallItem(
-            id=str(_id),  # type: ignore
+            **extra,
             name=name,
             arguments=json.dumps(args),
         )
