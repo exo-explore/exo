@@ -59,6 +59,16 @@
         }
       );
 
+      mkPythonScript = name: path: pkgs.writeShellApplication {
+        inherit name;
+        runtimeInputs = [ exoVenv ];
+        runtimeEnv = {
+          EXO_DASHBOARD_DIR = self'.packages.dashboard;
+          EXO_RESOURCES_DIR = inputs.self + /resources;
+        };
+        text = ''python ${path}'';
+      };
+
       exoPackage = pkgs.runCommand "exo"
         {
           nativeBuildInputs = [ pkgs.makeWrapper ];
@@ -66,13 +76,11 @@
         ''
           mkdir -p $out/bin
 
-          # Create wrapper scripts
-          for script in exo exo-master exo-worker; do
-            makeWrapper ${exoVenv}/bin/$script $out/bin/$script \
-              --set EXO_DASHBOARD_DIR ${self'.packages.dashboard} \
-              --set EXO_RESOURCES_DIR ${inputs.self + "/resources"} \
-              ${lib.optionalString pkgs.stdenv.isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
-          done
+          # Create wrapper script
+          makeWrapper ${exoVenv}/bin/exo $out/bin/exo \
+            --set EXO_DASHBOARD_DIR ${self'.packages.dashboard} \
+            --set EXO_RESOURCES_DIR ${inputs.self + /resources} \
+            ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
         '';
     in
     {
@@ -81,13 +89,15 @@
         exo = exoPackage;
         # Test environment for running pytest outside of Nix sandbox (needs GPU access)
         exo-test-env = testVenv;
+        exo-bench = mkPythonScript "exo-bench" (inputs.self + /bench/exo_bench.py);
+        exo-distributed-test = mkPythonScript "exo-distributed-test" (inputs.self + /tests/headless_runner.py);
       };
 
       checks = {
         # Ruff linting (works on all platforms)
         lint = pkgs.runCommand "ruff-lint" { } ''
           export RUFF_CACHE_DIR="$TMPDIR/ruff-cache"
-          ${pkgs.ruff}/bin/ruff check ${inputs.self}/
+          ${pkgs.ruff}/bin/ruff check ${inputs.self}
           touch $out
         '';
       };
