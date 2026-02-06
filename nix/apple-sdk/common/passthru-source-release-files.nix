@@ -2,11 +2,11 @@ let
   lockfile = builtins.fromJSON (builtins.readFile ../metadata/apple-oss-lockfile.json);
 in
 
-{
-  lib,
-  fetchFromGitHub,
-  stdenvNoCC,
-  sdkVersion,
+{ lib
+, fetchFromGitHub
+, stdenvNoCC
+, sdkVersion
+,
 }:
 
 let
@@ -24,12 +24,13 @@ self: super: {
       let
         lockinfo = sdkinfo.${name};
       in
-      fetchFromGitHub {
-        owner = "apple-oss-distributions";
-        repo = name;
-        rev = lockinfo.rev or "${name}-${lockinfo.version}";
-        inherit (lockinfo) hash;
-      }
+      fetchFromGitHub
+        {
+          owner = "apple-oss-distributions";
+          repo = name;
+          rev = lockinfo.rev or "${name}-${lockinfo.version}";
+          inherit (lockinfo) hash;
+        }
       // {
         inherit (lockinfo) version;
       };

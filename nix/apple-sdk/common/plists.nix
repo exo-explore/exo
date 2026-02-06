@@ -1,8 +1,8 @@
-{
-  lib,
-  stdenvNoCC,
-  xcodePlatform,
-  sdkVersion,
+{ lib
+, stdenvNoCC
+, xcodePlatform
+, sdkVersion
+,
 }:
 
 let

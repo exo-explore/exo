@@ -9,9 +9,9 @@ local sdkVersion
 sdkVersion=$(printf "%02d%02d%02d" "${sdkVersionArr[0]-0}" "${sdkVersionArr[1]-0}" "${sdkVersionArr[2]-0}")
 
 if [ "$sdkVersion" -gt "${!sdkVersionVar-000000}" ]; then
-    export "$developerDirVar"='@out@'
-    export "$sdkVersionVar"="$sdkVersion"
-    export "SDKROOT${role_post}"="${!developerDirVar}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+  export "$developerDirVar"='@out@'
+  export "$sdkVersionVar"="$sdkVersion"
+  export "SDKROOT${role_post}"="${!developerDirVar}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
 fi
 
 unset -v role_post developerDirVar sdkVersion sdkVersionArr sdkVersionVar

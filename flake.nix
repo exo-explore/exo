@@ -84,7 +84,7 @@
             inherit system;
             config.allowUnfreePredicate = pkg: (pkg.pname or "") == "metal-toolchain";
             overlays = [
-              (final: _: {apple-sdk_26_2 = final.callPackage ./nix/apple-sdk/package.nix {  }; })
+              (final: _: { apple-sdk_26 = final.callPackage ./nix/apple-sdk/package.nix { darwinSdkMajorVersion = "26"; }; })
             ];
           };
           treefmt = {
@@ -125,6 +125,11 @@
                 inherit uvLockMlxVersion;
               };
               default = self'.packages.exo;
+              sdk-version = pkgs.runCommand "sdk-version" { } ''
+                mkdir -p $out
+                echo ${pkgs.apple-sdk_26.version} > $out/version
+              '';
+
             }
           );
 

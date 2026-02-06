@@ -2,21 +2,18 @@ let
   sdkVersions = builtins.fromJSON (builtins.readFile ./metadata/versions.json);
 in
 
-{
-  lib,
-  stdenv,
-  stdenvNoCC,
-  substitute,
-
-  # Specifies the major version used for the SDK. Uses `hostPlatform.darwinSdkVersion` by default.
-  darwinSdkMajorVersion ? lib.versions.major stdenv.hostPlatform.darwinSdkVersion,
-
-  # Enabling bootstrap disables propagation. Defaults to `false` (meaning to propagate certain packages and `xcrun`)
+{ lib
+, stdenv
+, stdenvNoCC
+, substitute
+, # Specifies the major version used for the SDK. Uses `hostPlatform.darwinSdkVersion` by default.
+  darwinSdkMajorVersion ? lib.versions.major stdenv.hostPlatform.darwinSdkVersion
+, # Enabling bootstrap disables propagation. Defaults to `false` (meaning to propagate certain packages and `xcrun`)
   # except in stage0 of the Darwin stdenv bootstrap.
-  enableBootstrap ? stdenv.name == "bootstrap-stage0-stdenv-darwin",
-
-  # Required by various phases
-  callPackage,
+  enableBootstrap ? stdenv.name == "bootstrap-stage0-stdenv-darwin"
+, # Required by various phases
+  callPackage
+,
 }:
 
 let

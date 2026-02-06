@@ -7,10 +7,10 @@ let
   ];
 in
 
-{
-  lib,
-  jq,
-  llvm,
+{ lib
+, jq
+, llvm
+,
 }:
 
 self: super: {

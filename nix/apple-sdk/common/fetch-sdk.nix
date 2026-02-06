@@ -1,14 +1,14 @@
-{
-  lib,
-  fetchurl,
-  cpio,
-  pbzx,
+{ lib
+, fetchurl
+, cpio
+, pbzx
+,
 }:
 
-{
-  urls,
-  version,
-  hash,
+{ urls
+, version
+, hash
+,
 }:
 
 fetchurl {

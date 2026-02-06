@@ -6,18 +6,18 @@ set -eu -o pipefail
 catalog=${1-}
 
 if [ -z "$catalog" ]; then
-    echo "usage: get-sdks-from-catalog.sh <catalog>"
-    echo " <catalog>   Apple software update catalog (may be gzipped)" >&2
-    exit 1
+  echo "usage: get-sdks-from-catalog.sh <catalog>"
+  echo " <catalog>   Apple software update catalog (may be gzipped)" >&2
+  exit 1
 fi
 
 scratch=$(mktemp)
 trap 'rm -f -- "$scratch"' EXIT
 
 if [[ "$(file "$catalog")" =~ gzip ]]; then
-    gzcat "$catalog" > "$scratch"
+  gzcat "$catalog" >"$scratch"
 else
-    cp --reflink=auto "$catalog" "$scratch"
+  cp --reflink=auto "$catalog" "$scratch"
 fi
 
 # Grab all SDK packages from the catalog
@@ -25,13 +25,13 @@ filter='.Products[].Packages[] | select(.URL | test(".*CLTools_macOSNMOS_SDK.pkg
 
 declare -A package_list
 for package in $(plutil -convert json -o - "$scratch" | jq -r "$filter"); do
-    package_list[${package%%|*}]=${package#*|}
+  package_list[${package%%|*}]=${package#*|}
 done
 
 truncate --size 0 "$scratch"
 for pkg in "${!package_list[@]}"; do
-    ver=$(curl --silent "${package_list[$pkg]}" | xq -r '."pkg-info"."@version"')
-    echo "{\"url\": \"$pkg\", \"version\": \"$(cut -d. -f1-3 <<< "$ver")\", \"long_version\": \"$ver\"}" >> "$scratch"
+  ver=$(curl --silent "${package_list[$pkg]}" | xq -r '."pkg-info"."@version"')
+  echo "{\"url\": \"$pkg\", \"version\": \"$(cut -d. -f1-3 <<<"$ver")\", \"long_version\": \"$ver\"}" >>"$scratch"
 done
 
 jq -r --slurp '

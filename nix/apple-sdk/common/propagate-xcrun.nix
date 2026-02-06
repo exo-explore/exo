@@ -1,9 +1,9 @@
-{
-  lib,
-  pkgsBuildHost,
-  stdenv,
-  stdenvNoCC,
-  sdkVersion,
+{ lib
+, pkgsBuildHost
+, stdenv
+, stdenvNoCC
+, sdkVersion
+,
 }:
 
 let

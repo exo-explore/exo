@@ -1,13 +1,13 @@
-{
-  lib,
-  cups,
-  darwin,
-  db,
-  libiconv,
-  ncurses,
-  stdenv,
-  stdenvNoCC,
-  xcbuild,
+{ lib
+, cups
+, darwin
+, db
+, libiconv
+, ncurses
+, stdenv
+, stdenvNoCC
+, xcbuild
+,
 }:
 
 let

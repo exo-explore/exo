@@ -2,10 +2,10 @@ let
   disallowedPackages = builtins.fromJSON (builtins.readFile ../metadata/disallowed-packages.json);
 in
 
-{
-  lib,
-  jq,
-  stdenv,
+{ lib
+, jq
+, stdenv
+,
 }:
 
 self: super: {
