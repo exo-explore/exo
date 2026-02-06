@@ -193,7 +193,7 @@ def main(
                         logger.info(
                             f"model has_tool_calling={tokenizer.has_tool_calling}"
                         )
-                        kv_prefix_cache = KVPrefixCache(tokenizer, group)
+                        kv_prefix_cache = KVPrefixCache(group)
 
                     elif (
                         ModelTask.TextToImage in shard_metadata.model_card.tasks
@@ -226,6 +226,7 @@ def main(
                         toks = warmup_inference(
                             model=model,
                             tokenizer=tokenizer,
+                            group=group,
                             # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
                         )
                         logger.info(f"warmed up by generating {toks} tokens")
@@ -274,6 +275,7 @@ def main(
                             task=task_params,
                             prompt=prompt,
                             kv_prefix_cache=kv_prefix_cache,
+                            group=group,
                         )
 
                         # For other thinking models (GLM, etc.), check if we need to
@@ -627,7 +629,7 @@ def parse_thinking_models(
             yield response.model_copy(
                 update={
                     "text": tokenizer.think_start,
-                    "token": tokenizer.think_start_id,  # type: ignore
+                    "token": tokenizer.think_start_id,
                 }
             )
         yield response

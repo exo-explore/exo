@@ -1320,28 +1320,39 @@ class API:
         ]
 
     async def run(self):
+        shutdown_ev = anyio.Event()
+
+        try:
+            async with create_task_group() as tg:
+                self._tg = tg
+                logger.info("Starting API")
+                tg.start_soon(self._apply_state)
+                tg.start_soon(self._pause_on_new_election)
+                tg.start_soon(self._cleanup_expired_images)
+                print_startup_banner(self.port)
+                tg.start_soon(self.run_api, shutdown_ev)
+                try:
+                    await anyio.sleep_forever()
+                finally:
+                    with anyio.CancelScope(shield=True):
+                        shutdown_ev.set()
+        finally:
+            self.command_sender.close()
+            self.global_event_receiver.close()
+
+    async def run_api(self, ev: anyio.Event):
         cfg = Config()
-        cfg.bind = f"0.0.0.0:{self.port}"
+        cfg.bind = [f"0.0.0.0:{self.port}"]
         # nb: shared.logging needs updating if any of this changes
         cfg.accesslog = None
         cfg.errorlog = "-"
         cfg.logger_class = InterceptLogger
-
-        async with create_task_group() as tg:
-            self._tg = tg
-            logger.info("Starting API")
-            tg.start_soon(self._apply_state)
-            tg.start_soon(self._pause_on_new_election)
-            tg.start_soon(self._cleanup_expired_images)
-            print_startup_banner(self.port)
+        with anyio.CancelScope(shield=True):
             await serve(
                 cast(ASGIFramework, self.app),
                 cfg,
-                shutdown_trigger=lambda: anyio.sleep_forever(),
+                shutdown_trigger=ev.wait,
             )
-
-        self.command_sender.close()
-        self.global_event_receiver.close()
 
     async def _apply_state(self):
         with self.global_event_receiver as events:

@@ -194,9 +194,10 @@ class MpReceiver[T]:
                 raise EndOfStream from None
             return item
 
-    # nb: this function will not cancel particularly well
     async def receive_async(self) -> T:
-        return await to_thread.run_sync(self.receive, limiter=CapacityLimiter(1))
+        return await to_thread.run_sync(
+            self.receive, limiter=CapacityLimiter(1), abandon_on_cancel=True
+        )
 
     def close(self) -> None:
         if not self._state.closed.is_set():

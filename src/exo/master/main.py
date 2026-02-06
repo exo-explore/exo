@@ -6,6 +6,7 @@ from loguru import logger
 
 from exo.master.placement import (
     add_instance_to_placements,
+    cancel_unnecessary_downloads,
     delete_instance,
     get_transition_events,
     place_instance,
@@ -16,6 +17,7 @@ from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
+    ForwarderDownloadCommand,
     ImageEdits,
     ImageGeneration,
     PlaceInstance,
@@ -66,12 +68,9 @@ class Master:
         session_id: SessionId,
         *,
         command_receiver: Receiver[ForwarderCommand],
-        # Receiving indexed events from the forwarder to be applied to state
-        # Ideally these would be WorkerForwarderEvents but type system says no :(
         local_event_receiver: Receiver[ForwarderEvent],
-        # Send events to the forwarder to be indexed (usually from command processing)
-        # Ideally these would be MasterForwarderEvents but type system says no :(
         global_event_sender: Sender[ForwarderEvent],
+        download_command_sender: Sender[ForwarderDownloadCommand],
     ):
         self.state = State()
         self._tg: TaskGroup = anyio.create_task_group()
@@ -81,6 +80,7 @@ class Master:
         self.command_receiver = command_receiver
         self.local_event_receiver = local_event_receiver
         self.global_event_sender = global_event_sender
+        self.download_command_sender = download_command_sender
         send, recv = channel[Event]()
         self.event_sender: Sender[Event] = send
         self._loopback_event_receiver: Receiver[Event] = recv
@@ -96,16 +96,18 @@ class Master:
     async def run(self):
         logger.info("Starting Master")
 
-        async with self._tg as tg:
-            tg.start_soon(self._event_processor)
-            tg.start_soon(self._command_processor)
-            tg.start_soon(self._loopback_processor)
-            tg.start_soon(self._plan)
-        self.global_event_sender.close()
-        self.local_event_receiver.close()
-        self.command_receiver.close()
-        self._loopback_event_sender.close()
-        self._loopback_event_receiver.close()
+        try:
+            async with self._tg as tg:
+                tg.start_soon(self._event_processor)
+                tg.start_soon(self._command_processor)
+                tg.start_soon(self._loopback_processor)
+                tg.start_soon(self._plan)
+        finally:
+            self.global_event_sender.close()
+            self.local_event_receiver.close()
+            self.command_receiver.close()
+            self._loopback_event_sender.close()
+            self._loopback_event_receiver.close()
 
     async def shutdown(self):
         logger.info("Stopping Master")
@@ -278,6 +280,14 @@ class Master:
                             transition_events = get_transition_events(
                                 self.state.instances, placement
                             )
+                            for cmd in cancel_unnecessary_downloads(
+                                placement, self.state.downloads
+                            ):
+                                await self.download_command_sender.send(
+                                    ForwarderDownloadCommand(
+                                        origin=self.node_id, command=cmd
+                                    )
+                                )
                             generated_events.extend(transition_events)
                         case PlaceInstance():
                             placement = place_instance(
