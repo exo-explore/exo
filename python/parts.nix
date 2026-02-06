@@ -66,7 +66,13 @@
           EXO_DASHBOARD_DIR = self'.packages.dashboard;
           EXO_RESOURCES_DIR = inputs.self + /resources;
         };
-        text = ''python ${path}'';
+        text = ''exec python ${path} "$@"'';
+      };
+
+      mkSimplePythonScript = name: path: pkgs.writeShellApplication {
+        inherit name;
+        runtimeInputs = [ pkgs.python313 ];
+        text = ''exec python ${path} "$@"'';
       };
 
       exoPackage = pkgs.runCommand "exo"
@@ -85,12 +91,14 @@
     in
     {
       # Python package only available on macOS (requires MLX/Metal)
-      packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
-        exo = exoPackage;
-        # Test environment for running pytest outside of Nix sandbox (needs GPU access)
-        exo-test-env = testVenv;
-        exo-bench = mkPythonScript "exo-bench" (inputs.self + /bench/exo_bench.py);
-        exo-distributed-test = mkPythonScript "exo-distributed-test" (inputs.self + /tests/headless_runner.py);
+      packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin
+        {
+          exo = exoPackage;
+          # Test environment for running pytest outside of Nix sandbox (needs GPU access)
+          exo-test-env = testVenv;
+          exo-bench = mkPythonScript "exo-bench" (inputs.self + /bench/exo_bench.py);
+        } // {
+        exo-get-all-models-on-cluster = mkSimplePythonScript "exo-get-all-models-on-cluster" (inputs.self + /tests/get_all_models_on_cluster.py);
       };
 
       checks = {
