@@ -86,6 +86,10 @@ class QwenEditPromptData(PromptData):
         return self._qwen_image_ids
 
     @property
+    def kontext_image_ids(self) -> mx.array | None:
+        return None
+
+    @property
     def is_edit_mode(self) -> bool:
         return True
 
