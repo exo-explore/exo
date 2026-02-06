@@ -40,6 +40,7 @@ from exo.shared.types.tasks import (
     TaskStatus,
 )
 from exo.shared.types.worker.instances import InstanceId
+from exo.shared.types.worker.runners import RunnerReady, RunnerRunning
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import MultiSourceBuffer
 
@@ -109,20 +110,32 @@ class Master:
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
-                                    == command.request_params.model
+                                    != command.request_params.model
                                 ):
-                                    task_count = sum(
-                                        1
-                                        for task in self.state.tasks.values()
-                                        if task.instance_id == instance.instance_id
+                                    continue
+
+                                all_runners_ready = all(
+                                    isinstance(
+                                        self.state.runners.get(runner_id),
+                                        (RunnerReady, RunnerRunning),
                                     )
-                                    instance_task_counts[instance.instance_id] = (
-                                        task_count
-                                    )
+                                    for runner_id in instance.shard_assignments.runner_to_shard
+                                )
+                                if not all_runners_ready:
+                                    continue
+
+                                task_count = sum(
+                                    1
+                                    for task in self.state.tasks.values()
+                                    if task.instance_id == instance.instance_id
+                                )
+                                instance_task_counts[instance.instance_id] = (
+                                    task_count
+                                )
 
                             if not instance_task_counts:
                                 raise ValueError(
-                                    f"No instance found for model {command.request_params.model}"
+                                    f"No ready instance found for model {command.request_params.model}"
                                 )
 
                             available_instance_ids = sorted(

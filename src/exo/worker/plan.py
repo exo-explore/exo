@@ -228,7 +228,7 @@ def _pending_tasks(
                     continue
 
             if isinstance(runner.status, RunnerReady) and all(
-                isinstance(all_runners[global_runner_id], (RunnerReady, RunnerRunning))
+                isinstance(all_runners.get(global_runner_id), (RunnerReady, RunnerRunning))
                 for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
             ):
                 return task
