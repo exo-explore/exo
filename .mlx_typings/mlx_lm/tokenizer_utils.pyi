@@ -113,6 +113,10 @@ class TokenizerWrapper:
     bos_token: str | None
     vocab_size: int
     all_special_tokens: list[str]
+    think_start: str | None
+    think_end: str | None
+    think_start_id: int | None
+    think_end_id: int | None
 
     def __init__(
         self,
