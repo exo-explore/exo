@@ -225,6 +225,7 @@
   }
 
   function handleDeleteClick(messageId: string) {
+    if (loading) return;
     deleteConfirmId = messageId;
   }
 
@@ -255,7 +256,7 @@
 </script>
 
 <div class="flex flex-col gap-4 sm:gap-6 {className}">
-  {#each messageList as message (message.id)}
+  {#each messageList as message, i (message.id)}
     <div
       class="group flex {message.role === 'user'
         ? 'justify-end'
@@ -317,7 +318,7 @@
           <!-- Delete confirmation -->
           <div class="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
             <p class="text-xs text-red-400 mb-3">
-              {#if messageList.indexOf(message) === messageList.length - 1}
+              {#if i === messageList.length - 1}
                 Delete this message?
               {:else}
                 Delete this message and all messages after it?
@@ -753,8 +754,13 @@
             <!-- Delete button -->
             <button
               onclick={() => handleDeleteClick(message.id)}
-              class="p-1.5 text-exo-light-gray hover:text-red-400 transition-colors rounded hover:bg-red-500/10 cursor-pointer"
-              title="Delete message"
+              disabled={loading}
+              class="p-1.5 transition-colors rounded {loading
+                ? 'text-exo-light-gray/30 cursor-not-allowed'
+                : 'text-exo-light-gray hover:text-red-400 hover:bg-red-500/10 cursor-pointer'}"
+              title={loading
+                ? "Cannot delete while generating"
+                : "Delete message"}
             >
               <svg
                 class="w-3.5 h-3.5"
