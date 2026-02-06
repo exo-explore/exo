@@ -386,7 +386,15 @@ def tensor_auto_parallel(
             all_to_sharded_linear_in_place,
             sharded_to_all_linear_in_place,
         )
-    elif isinstance(model, (Qwen3MoeModel, Glm4MoeModel, Qwen3NextModel)):
+    elif isinstance(model, Glm4MoeModel):
+        tensor_parallel_sharding_strategy = Glm4MoeShardingStrategy(
+            group,
+            all_to_sharded_linear,
+            sharded_to_all_linear,
+            all_to_sharded_linear_in_place,
+            sharded_to_all_linear_in_place,
+        )
+    elif isinstance(model, (Qwen3MoeModel, Qwen3NextModel)):
         tensor_parallel_sharding_strategy = QwenShardingStrategy(
             group,
             all_to_sharded_linear,
@@ -512,9 +520,6 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
                     layer.self_attn.q_b_proj
                 )
 
-            # layer.self_attn.kv_b_proj = self.all_to_sharded_linear(
-            #     layer.self_attn.kv_b_proj
-            # )
             layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
             layer.self_attn.num_heads //= self.N
 
@@ -544,7 +549,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
                 self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
-                layer.mlp = ShardedDeepseekV3MoE(layer.mlp)  # type: ignore
+                layer.mlp = ShardedMoE(layer.mlp)  # type: ignore
                 layer.mlp.sharding_group = self.group
 
             mx.eval(layer)
@@ -552,7 +557,9 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
         return model
 
 
-class ShardedDeepseekV3MoE(CustomMlxLayer):
+class ShardedMoE(CustomMlxLayer):
+    """Wraps any MoE layer with distributed sum_gradients / all_sum."""
+
     def __init__(self, layer: _LayerCallable):
         super().__init__(layer)
         self.sharding_group: mx.distributed.Group | None = None
@@ -623,25 +630,11 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
                 self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
-                layer.mlp = ShardedGLM4MoeLiteMoE(layer.mlp)  # type: ignore
+                layer.mlp = ShardedMoE(layer.mlp)  # type: ignore
                 layer.mlp.sharding_group = self.group  # type: ignore
             mx.eval(layer)
 
         return model
-
-
-class ShardedGLM4MoeLiteMoE(CustomMlxLayer):
-    def __init__(self, layer: _LayerCallable):
-        super().__init__(layer)
-        self.sharding_group: mx.distributed.Group | None = None
-
-    def __call__(self, x: mx.array) -> mx.array:
-        if self.sharding_group is not None:
-            x = sum_gradients(self.sharding_group)(x)
-        y = self.original_layer.__call__(x)
-        if self.sharding_group is not None:
-            y = mx.distributed.all_sum(y, group=self.sharding_group)
-        return y
 
 
 class WrappedMiniMaxAttention(CustomMlxLayer):
@@ -756,7 +749,7 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
             self.all_to_sharded_linear_in_place(
                 layer.block_sparse_moe.switch_mlp.up_proj
             )
-            layer.block_sparse_moe = ShardedQwenMoE(layer.block_sparse_moe)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
+            layer.block_sparse_moe = ShardedMoE(layer.block_sparse_moe)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
             layer.block_sparse_moe.sharding_group = self.group  # pyright: ignore[reportAttributeAccessIssue]
             mx.eval(layer)
         return model
@@ -861,9 +854,7 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
 
             # Shard the MoE. Shard in place since the MoE should be responsible
             # for aggregating the results.
-            if isinstance(
-                layer.mlp, (Qwen3MoeSparseMoeBlock, MoE, Qwen3NextSparseMoeBlock)
-            ):
+            if isinstance(layer.mlp, (Qwen3MoeSparseMoeBlock, Qwen3NextSparseMoeBlock)):
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
                 self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
@@ -875,7 +866,7 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                         layer.mlp.shared_expert.down_proj
                     )
                     self.all_to_sharded_linear_in_place(layer.mlp.shared_expert.up_proj)
-                layer.mlp = ShardedQwenMoE(layer.mlp)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
+                layer.mlp = ShardedMoE(layer.mlp)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
                 layer.mlp.sharding_group = self.group
 
             # Shard the MLP
@@ -888,18 +879,50 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
         return model
 
 
-class ShardedQwenMoE(CustomMlxLayer):
-    def __init__(self, layer: _LayerCallable):
-        super().__init__(layer)
-        self.sharding_group: mx.distributed.Group | None = None
+class Glm4MoeShardingStrategy(TensorParallelShardingStrategy):
+    def shard_model(
+        self,
+        model: nn.Module,
+        timeout_seconds: float,
+        on_timeout: TimeoutCallback | None,
+    ) -> nn.Module:
+        model = cast(Glm4MoeModel, model)
+        for layer in model.layers:
+            eval_with_timeout(
+                layer.parameters(), timeout_seconds / len(model.layers), on_timeout
+            )
 
-    def __call__(self, x: mx.array) -> mx.array:
-        if self.sharding_group is not None:
-            x = sum_gradients(self.sharding_group)(x)
-        y = self.original_layer.__call__(x)
-        if self.sharding_group is not None:
-            y = mx.distributed.all_sum(y, group=self.sharding_group)
-        return y
+            layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
+            layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
+            layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
+            layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
+            layer.self_attn.n_heads //= self.N
+            layer.self_attn.n_kv_heads //= self.N
+
+            if isinstance(layer.mlp, MoE):
+                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
+                self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
+                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
+                if getattr(layer.mlp, "shared_experts", None) is not None:
+                    self.all_to_sharded_linear_in_place(
+                        layer.mlp.shared_experts.gate_proj
+                    )
+                    self.sharded_to_all_linear_in_place(
+                        layer.mlp.shared_experts.down_proj
+                    )
+                    self.all_to_sharded_linear_in_place(
+                        layer.mlp.shared_experts.up_proj
+                    )
+                layer.mlp = ShardedMoE(layer.mlp)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
+                layer.mlp.sharding_group = self.group
+
+            else:
+                layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
+                layer.mlp.down_proj = self.sharded_to_all_linear(layer.mlp.down_proj)
+                layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
+
+            mx.eval(layer)
+        return model
 
 
 class GptOssShardingStrategy(TensorParallelShardingStrategy):
@@ -937,21 +960,7 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
             self.sharded_to_all_linear_in_place(layer.mlp.experts.down_proj)
             self.all_to_sharded_linear_in_place(layer.mlp.experts.up_proj)
 
-            layer.mlp = ShardedGptOssMoE(layer.mlp)  # type: ignore
+            layer.mlp = ShardedMoE(layer.mlp)  # type: ignore
             layer.mlp.sharding_group = self.group  # pyright: ignore[reportAttributeAccessIssue]
             mx.eval(layer)
         return model
-
-
-class ShardedGptOssMoE(CustomMlxLayer):
-    def __init__(self, layer: nn.Module):
-        super().__init__(layer)
-        self.sharding_group: mx.distributed.Group | None = None
-
-    def __call__(self, x: mx.array) -> mx.array:
-        if self.sharding_group is not None:
-            x = sum_gradients(self.sharding_group)(x)
-        y = self.original_layer(x)
-        if self.sharding_group is not None:
-            y = mx.distributed.all_sum(y, group=self.sharding_group)
-        return y
