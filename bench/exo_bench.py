@@ -431,12 +431,12 @@ def main() -> int:
     ap.add_argument(
         "--skip-pipeline-jaccl",
         action="store_true",
-        help="Skip pipeline+jaccl placements.",
+        help="Skip pipeline+jaccl placements, as it's often pointless.",
     )
     ap.add_argument(
         "--skip-tensor-ring",
         action="store_true",
-        help="Skip tensor+ring placements.",
+        help="Skip tensor+ring placements, as it's so slow.",
     )
     ap.add_argument(
         "--repeat", type=int, default=1, help="Repetitions per (pp,tg) pair."
