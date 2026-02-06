@@ -255,7 +255,9 @@ async def fetch_file_list_with_cache(
         if await aios.path.exists(cache_file):
             async with aiofiles.open(cache_file, "r") as f:
                 return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
-        local_file_list = await _build_file_list_from_local_directory(model_id, recursive)
+        local_file_list = await _build_file_list_from_local_directory(
+            model_id, recursive
+        )
         if local_file_list is not None:
             logger.warning(
                 f"No internet and no cached file list for {model_id} - using local file list"
@@ -285,7 +287,9 @@ async def fetch_file_list_with_cache(
             )
             async with aiofiles.open(cache_file, "r") as f:
                 return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
-        local_file_list = await _build_file_list_from_local_directory(model_id, recursive)
+        local_file_list = await _build_file_list_from_local_directory(
+            model_id, recursive
+        )
         if local_file_list is not None:
             logger.warning(
                 f"Failed to fetch file list for {model_id} and no cache exists, "
