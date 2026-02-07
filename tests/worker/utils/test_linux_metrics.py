@@ -77,13 +77,16 @@ class TestGetLinuxGpuMetrics:
         mock_result = MagicMock()
         mock_result.stdout = b"75, 150.5, 65, 8192, 4096\n"
 
-        with patch(
-            "exo.utils.info_gatherer.linux_metrics.shutil.which",
-            return_value="/usr/bin/nvidia-smi",
-        ), patch(
-            "exo.utils.info_gatherer.linux_metrics.run_process",
-            new_callable=AsyncMock,
-            return_value=mock_result,
+        with (
+            patch(
+                "exo.utils.info_gatherer.linux_metrics.shutil.which",
+                return_value="/usr/bin/nvidia-smi",
+            ),
+            patch(
+                "exo.utils.info_gatherer.linux_metrics.run_process",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
         ):
             metrics = await get_linux_gpu_metrics()
             assert metrics.gpu_utilization == 75.0
@@ -98,13 +101,16 @@ class TestGetLinuxGpuMetrics:
         mock_result = MagicMock()
         mock_result.stdout = b"80, [N/A], 70, 16384, 8192\n"
 
-        with patch(
-            "exo.utils.info_gatherer.linux_metrics.shutil.which",
-            return_value="/usr/bin/nvidia-smi",
-        ), patch(
-            "exo.utils.info_gatherer.linux_metrics.run_process",
-            new_callable=AsyncMock,
-            return_value=mock_result,
+        with (
+            patch(
+                "exo.utils.info_gatherer.linux_metrics.shutil.which",
+                return_value="/usr/bin/nvidia-smi",
+            ),
+            patch(
+                "exo.utils.info_gatherer.linux_metrics.run_process",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
         ):
             metrics = await get_linux_gpu_metrics()
             assert metrics.gpu_utilization == 80.0
@@ -118,13 +124,16 @@ class TestGetLinuxGpuMetrics:
         mock_result = MagicMock()
         mock_result.stdout = b"[N/A], [N/A], [N/A], [N/A], [N/A]\n"
 
-        with patch(
-            "exo.utils.info_gatherer.linux_metrics.shutil.which",
-            return_value="/usr/bin/nvidia-smi",
-        ), patch(
-            "exo.utils.info_gatherer.linux_metrics.run_process",
-            new_callable=AsyncMock,
-            return_value=mock_result,
+        with (
+            patch(
+                "exo.utils.info_gatherer.linux_metrics.shutil.which",
+                return_value="/usr/bin/nvidia-smi",
+            ),
+            patch(
+                "exo.utils.info_gatherer.linux_metrics.run_process",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
         ):
             metrics = await get_linux_gpu_metrics()
             assert metrics.gpu_utilization == 0.0
@@ -134,13 +143,16 @@ class TestGetLinuxGpuMetrics:
     @pytest.mark.asyncio
     async def test_nvidia_smi_exception(self):
         """Test graceful handling when nvidia-smi throws an exception."""
-        with patch(
-            "exo.utils.info_gatherer.linux_metrics.shutil.which",
-            return_value="/usr/bin/nvidia-smi",
-        ), patch(
-            "exo.utils.info_gatherer.linux_metrics.run_process",
-            new_callable=AsyncMock,
-            side_effect=Exception("Driver error"),
+        with (
+            patch(
+                "exo.utils.info_gatherer.linux_metrics.shutil.which",
+                return_value="/usr/bin/nvidia-smi",
+            ),
+            patch(
+                "exo.utils.info_gatherer.linux_metrics.run_process",
+                new_callable=AsyncMock,
+                side_effect=Exception("Driver error"),
+            ),
         ):
             metrics = await get_linux_gpu_metrics()
             assert metrics.gpu_utilization == 0.0
@@ -152,13 +164,16 @@ class TestGetLinuxGpuMetrics:
         mock_result = MagicMock()
         mock_result.stdout = b""
 
-        with patch(
-            "exo.utils.info_gatherer.linux_metrics.shutil.which",
-            return_value="/usr/bin/nvidia-smi",
-        ), patch(
-            "exo.utils.info_gatherer.linux_metrics.run_process",
-            new_callable=AsyncMock,
-            return_value=mock_result,
+        with (
+            patch(
+                "exo.utils.info_gatherer.linux_metrics.shutil.which",
+                return_value="/usr/bin/nvidia-smi",
+            ),
+            patch(
+                "exo.utils.info_gatherer.linux_metrics.run_process",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
         ):
             metrics = await get_linux_gpu_metrics()
             assert metrics.gpu_utilization == 0.0
@@ -170,13 +185,16 @@ class TestGetLinuxGpuMetrics:
         mock_result = MagicMock()
         mock_result.stdout = b"50, 100, 60, 8192, 4096\n75, 200, 70, 16384, 8192\n"
 
-        with patch(
-            "exo.utils.info_gatherer.linux_metrics.shutil.which",
-            return_value="/usr/bin/nvidia-smi",
-        ), patch(
-            "exo.utils.info_gatherer.linux_metrics.run_process",
-            new_callable=AsyncMock,
-            return_value=mock_result,
+        with (
+            patch(
+                "exo.utils.info_gatherer.linux_metrics.shutil.which",
+                return_value="/usr/bin/nvidia-smi",
+            ),
+            patch(
+                "exo.utils.info_gatherer.linux_metrics.run_process",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
         ):
             metrics = await get_linux_gpu_metrics()
             # Should use first GPU's values

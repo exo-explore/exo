@@ -1,3 +1,13 @@
+"""
+PyTorch inference engine implementation.
+
+This module provides the PytorchEngine class for running inference on NVIDIA GPUs
+using PyTorch and HuggingFace Transformers. It supports:
+- Model loading via AutoModelForCausalLM
+- Pipeline parallelism for distributed inference
+- Tool call parsing (using base class helpers)
+"""
+
 from collections.abc import Generator
 from typing import Any, Tuple, Union
 
@@ -16,6 +26,9 @@ from exo.worker.engines.pytorch.auto_parallel import (
     pipeline_auto_parallel,
 )
 
+# Default max tokens if not specified in request (matches MLX's default)
+MAX_TOKENS: int = 32168
+
 
 class PytorchEngine(Engine):
     """
@@ -23,6 +36,11 @@ class PytorchEngine(Engine):
 
     This engine supports NVIDIA GPUs and can run on Linux systems.
     Pipeline parallelism is supported for distributed inference.
+
+    Note: This is a minimal implementation. For production use, consider:
+    - Streaming with TextIteratorStreamer
+    - KV cache management with past_key_values
+    - Proper tool call support
     """
 
     def __init__(self, bound_instance: BoundInstance):
@@ -30,14 +48,15 @@ class PytorchEngine(Engine):
         self._model_name = bound_instance.instance.shard_assignments.model_id
 
     def initialize_distributed_group(self) -> Any:
-        # For now, we'll just set a mock group.
-        # In a real implementation, this would use torch.distributed.init_process_group
+        """Initialize distributed group (mock for now)."""
+        # TODO: Implement torch.distributed.init_process_group for real parallelism
         self.group = MockDistributedGroup()
         return self.group
 
     def load_model_and_tokenizer(
         self, on_timeout: TimeoutCallback | None = None
     ) -> Tuple[Any, Any]:
+        """Load HuggingFace model and tokenizer."""
         shard_meta = self.shard_metadata
         if not isinstance(shard_meta, PipelineShardMetadata):
             raise TypeError(
@@ -64,31 +83,50 @@ class PytorchEngine(Engine):
 
     def warmup_inference(self) -> int:
         """Warmup not implemented for PyTorch yet."""
+        # TODO: Run a small generation to warm up CUDA kernels
         return 0
 
     def generate(
         self,
         task_params: TextGenerationTaskParams,
     ) -> Generator[Union[GenerationResponse, ToolCallResponse], None, None]:
+        """
+        Generate text using PyTorch.
+
+        Note: This is a basic implementation that generates all tokens at once.
+        For streaming, use TextIteratorStreamer from transformers.
+        """
         if self.model is None or self.tokenizer is None:
             raise RuntimeError("Model not loaded. Call load_model_and_tokenizer first.")
 
-        # Extract the prompt from the input messages
-        if not task_params.input:
+        # Build prompt - use chat template if available
+        if hasattr(self.tokenizer, "apply_chat_template") and task_params.input:
+            messages = [
+                {"role": "user", "content": msg.content} for msg in task_params.input
+            ]
+            prompt = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+        elif task_params.input:
+            prompt = task_params.input[-1].content
+        else:
             raise ValueError("No input messages provided")
-        prompt = task_params.input[-1].content
 
         inputs = self.tokenizer(prompt, return_tensors="pt")
         if torch.cuda.is_available():
             inputs = {k: v.to("cuda") for k, v in inputs.items()}
 
         # Generate (synchronously for now)
+        # TODO: Use TextIteratorStreamer for streaming
+        max_tokens = task_params.max_output_tokens or MAX_TOKENS
         with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs, max_new_tokens=task_params.max_output_tokens or 50
-            )
+            outputs = self.model.generate(**inputs, max_new_tokens=max_tokens)
 
         generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+        # Remove the prompt from the output
+        if generated_text.startswith(prompt):
+            generated_text = generated_text[len(prompt) :]
 
         # Calculate token counts for usage stats
         prompt_tokens = inputs["input_ids"].shape[1]
@@ -103,8 +141,8 @@ class PytorchEngine(Engine):
             completion_tokens_details=CompletionTokensDetails(),
         )
 
-        # Yield a single response for now (since generate is not streaming)
-        # In a real implementation, we'd use a Streamer
+        # Yield a single response (not streaming yet)
+        # TODO: For streaming, yield multiple responses as tokens are generated
         yield GenerationResponse(
             text=generated_text,
             token=0,  # Dummy token ID
@@ -112,3 +150,15 @@ class PytorchEngine(Engine):
             stats=None,
             usage=usage,
         )
+
+    def cleanup(self) -> None:
+        """Clean up PyTorch resources."""
+        if self.model is not None:
+            del self.model
+        if self.tokenizer is not None:
+            del self.tokenizer
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        import gc
+
+        gc.collect()

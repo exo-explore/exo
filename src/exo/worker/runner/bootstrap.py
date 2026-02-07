@@ -66,7 +66,7 @@ async def entrypoint(
 
     # Import main after setting global logger
     try:
-        from exo.worker.runner.runner_engine import main
+        from exo.worker.runner.runner import main
 
         # main() is synchronous
         main(bound_instance, event_sender, task_receiver, engine)

@@ -2,7 +2,7 @@
 from collections.abc import Generator, Iterable
 from typing import Any, Callable, Tuple, Union
 
-import exo.worker.runner.runner_engine as runner_engine
+import exo.worker.runner.runner as runner
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -185,7 +185,7 @@ def _run(tasks: Iterable[Task], engine: Engine):
         task_receiver.close = nothin
         task_receiver.join = nothin
 
-        runner_engine.main(bound_instance, event_sender, task_receiver, engine)  # type: ignore[arg-type]
+        runner.main(bound_instance, event_sender, task_receiver, engine)  # type: ignore[arg-type]
 
         return event_sender.events
 
