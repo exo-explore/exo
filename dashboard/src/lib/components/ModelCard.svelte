@@ -1003,16 +1003,5 @@
 </div>
 
 <style>
-  @keyframes pulse-slow {
-    0%,
-    100% {
-      opacity: 0.8;
-    }
-    50% {
-      opacity: 1;
-    }
-  }
-  .animate-pulse-slow {
-    animation: pulse-slow 1.5s ease-in-out infinite;
-  }
+  /* Styles removed - animations were causing GPU overhead */
 </style>
