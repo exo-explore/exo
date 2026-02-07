@@ -457,6 +457,8 @@ async def download_file_with_retry(
             )
         except HuggingFaceAuthenticationError:
             raise
+        except FileNotFoundError:
+            raise
         except HuggingFaceRateLimitError as e:
             if attempt == n_attempts - 1:
                 raise e
