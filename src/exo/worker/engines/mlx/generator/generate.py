@@ -145,6 +145,8 @@ def warmup_inference(
     # Use a default sampler for warmup
     sampler = make_sampler(temp=0.0)
 
+    mx_barrier(group)
+
     logger.info("Generating warmup tokens")
     for _r in stream_generate(
         model=model,
@@ -297,6 +299,9 @@ def mlx_generate(
         else []
     )
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
+
+    mx_barrier(group)
+    logger.info("Ready to prefill")
 
     # Prefill cache with all tokens except the last one
     prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(

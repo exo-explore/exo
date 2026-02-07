@@ -12,7 +12,7 @@ QWEN_IMAGE_CONFIG = ImageModelConfig(
         ),
     ),
     default_steps={"low": 10, "medium": 25, "high": 50},
-    num_sync_steps_factor=0.25,
+    num_sync_steps=7,
     guidance_scale=3.5,  # Set to None or < 1.0 to disable CFG
 )
 
@@ -24,6 +24,6 @@ QWEN_IMAGE_EDIT_CONFIG = ImageModelConfig(
         ),
     ),
     default_steps={"low": 10, "medium": 25, "high": 50},
-    num_sync_steps_factor=0.25,
+    num_sync_steps=7,
     guidance_scale=3.5,
 )
