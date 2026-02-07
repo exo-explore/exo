@@ -9,6 +9,7 @@ using PyTorch and HuggingFace Transformers. It supports:
 - Tool call parsing (using base class helpers)
 """
 
+import json
 from collections.abc import Generator
 from threading import Thread
 from typing import Any, Tuple, Union
@@ -28,8 +29,45 @@ from exo.worker.engines.pytorch.auto_parallel import (
     pipeline_auto_parallel,
 )
 
+# Standard tool call markers used by most HuggingFace models
+TOOL_CALL_START = "<tool_call>"
+TOOL_CALL_END = "</tool_call>"
+
 # Default max tokens if not specified in request (matches MLX's default)
 MAX_TOKENS: int = 32168
+
+
+def _parse_json_tool_call(text: str) -> dict[str, Any]:
+    """
+    Parse a JSON-formatted tool call.
+
+    Most HuggingFace models emit tool calls as JSON:
+        {"name": "function_name", "arguments": {"arg1": "value1"}}
+
+    Args:
+        text: Raw text between tool call markers.
+
+    Returns:
+        dict with 'name' and 'arguments' keys.
+
+    Raises:
+        ValueError: If JSON parsing fails or required fields are missing.
+    """
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected dict, got {type(data)}")
+
+    # Handle both "name" and "function" keys (different model formats)
+    name = data.get("name") or data.get("function")
+    if not name:
+        raise ValueError("Tool call missing 'name' field")
+
+    # Handle arguments as dict or string
+    arguments = data.get("arguments", {})
+    if isinstance(arguments, str):
+        arguments = json.loads(arguments)
+
+    return {"name": name, "arguments": arguments}
 
 
 class PytorchEngine(Engine):
@@ -89,10 +127,34 @@ class PytorchEngine(Engine):
         task_params: TextGenerationTaskParams,
     ) -> Generator[Union[GenerationResponse, ToolCallResponse], None, None]:
         """
-        Generate text using PyTorch with streaming.
+        Generate text using PyTorch with streaming and tool call support.
 
         Uses TextIteratorStreamer to yield tokens as they are generated,
         providing a responsive streaming experience similar to MLX.
+        Tool calls are parsed using the base engine's `_parse_tool_calls()` method.
+        """
+        # Get raw generation stream
+        raw_stream = self._generate_raw(task_params)
+
+        # Wrap with tool call parsing if tools are provided
+        if task_params.tools:
+            yield from self._parse_tool_calls(
+                raw_stream,
+                TOOL_CALL_START,
+                TOOL_CALL_END,
+                _parse_json_tool_call,
+            )
+        else:
+            yield from raw_stream
+
+    def _generate_raw(
+        self,
+        task_params: TextGenerationTaskParams,
+    ) -> Generator[GenerationResponse, None, None]:
+        """
+        Raw text generation without tool call parsing.
+
+        This is the core generation loop that yields GenerationResponse objects.
         """
         if self.model is None or self.tokenizer is None:
             raise RuntimeError("Model not loaded. Call load_model_and_tokenizer first.")
