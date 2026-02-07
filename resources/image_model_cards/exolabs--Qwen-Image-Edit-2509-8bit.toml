@@ -4,6 +4,10 @@ hidden_size = 1
 supports_tensor = false
 tasks = ["ImageToImage"]
 uses_cfg = true
+family = "qwen-image"
+quantization = "8bit"
+base_model = "Qwen Image Edit"
+capabilities = ["image_edit"]
 
 [storage_size]
 in_bytes = 37014734400
