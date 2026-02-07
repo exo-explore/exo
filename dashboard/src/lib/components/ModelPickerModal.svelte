@@ -363,6 +363,8 @@
       "deepseek",
       "gpt-oss",
       "llama",
+      "flux",
+      "qwen-image",
     ];
     return Array.from(families).sort((a, b) => {
       const aIdx = familyOrder.indexOf(a);
@@ -606,7 +608,7 @@
       />
 
       <!-- Model list -->
-      <div class="flex-1 overflow-y-auto flex flex-col">
+      <div class="flex-1 overflow-y-auto scrollbar-hide flex flex-col">
         {#if selectedFamily === "huggingface"}
           <!-- HuggingFace Hub view -->
           <div class="flex-1 flex flex-col min-h-0">
@@ -624,7 +626,7 @@
             </div>
 
             <!-- Results list -->
-            <div class="flex-1 overflow-y-auto">
+            <div class="flex-1 overflow-y-auto scrollbar-hide">
               {#if hfIsLoadingTrending && hfTrendingModels.length === 0}
                 <div
                   class="flex items-center justify-center py-12 text-white/40"
