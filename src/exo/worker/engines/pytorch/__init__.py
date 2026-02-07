@@ -5,15 +5,17 @@ This module provides the PytorchEngine class for running inference on NVIDIA GPU
 using PyTorch and HuggingFace Transformers. It supports:
 - Model loading via AutoModelForCausalLM
 - Pipeline parallelism for distributed inference
+- Streaming text generation with TextIteratorStreamer
 - Tool call parsing (using base class helpers)
 """
 
 from collections.abc import Generator
+from threading import Thread
 from typing import Any, Tuple, Union
 
 import torch
 from loguru import logger
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 
 from exo.shared.types.api import CompletionTokensDetails, PromptTokensDetails, Usage
 from exo.shared.types.text_generation import TextGenerationTaskParams
@@ -36,11 +38,7 @@ class PytorchEngine(Engine):
 
     This engine supports NVIDIA GPUs and can run on Linux systems.
     Pipeline parallelism is supported for distributed inference.
-
-    Note: This is a minimal implementation. For production use, consider:
-    - Streaming with TextIteratorStreamer
-    - KV cache management with past_key_values
-    - Proper tool call support
+    Streaming is implemented via TextIteratorStreamer.
     """
 
     def __init__(self, bound_instance: BoundInstance):
@@ -91,10 +89,10 @@ class PytorchEngine(Engine):
         task_params: TextGenerationTaskParams,
     ) -> Generator[Union[GenerationResponse, ToolCallResponse], None, None]:
         """
-        Generate text using PyTorch.
+        Generate text using PyTorch with streaming.
 
-        Note: This is a basic implementation that generates all tokens at once.
-        For streaming, use TextIteratorStreamer from transformers.
+        Uses TextIteratorStreamer to yield tokens as they are generated,
+        providing a responsive streaming experience similar to MLX.
         """
         if self.model is None or self.tokenizer is None:
             raise RuntimeError("Model not loaded. Call load_model_and_tokenizer first.")
@@ -102,7 +100,7 @@ class PytorchEngine(Engine):
         # Build prompt - use chat template if available
         if hasattr(self.tokenizer, "apply_chat_template") and task_params.input:
             messages = [
-                {"role": "user", "content": msg.content} for msg in task_params.input
+                {"role": msg.role, "content": msg.content} for msg in task_params.input
             ]
             prompt = self.tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
@@ -116,23 +114,60 @@ class PytorchEngine(Engine):
         if torch.cuda.is_available():
             inputs = {k: v.to("cuda") for k, v in inputs.items()}
 
-        # Generate (synchronously for now)
-        # TODO: Use TextIteratorStreamer for streaming
-        max_tokens = task_params.max_output_tokens or MAX_TOKENS
-        with torch.no_grad():
-            outputs = self.model.generate(**inputs, max_new_tokens=max_tokens)
-
-        generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-        # Remove the prompt from the output
-        if generated_text.startswith(prompt):
-            generated_text = generated_text[len(prompt) :]
-
-        # Calculate token counts for usage stats
         prompt_tokens = inputs["input_ids"].shape[1]
-        completion_tokens = outputs.shape[1] - prompt_tokens
-        total_tokens = prompt_tokens + completion_tokens
 
+        # Create streamer for real-time token output
+        streamer = TextIteratorStreamer(
+            self.tokenizer,
+            skip_prompt=True,
+            skip_special_tokens=True,
+        )
+
+        # Set up generation parameters
+        max_tokens = task_params.max_output_tokens or MAX_TOKENS
+        generation_kwargs = {
+            **inputs,
+            "streamer": streamer,
+            "max_new_tokens": max_tokens,
+            "do_sample": task_params.temperature is not None
+            and task_params.temperature > 0,
+            "pad_token_id": self.tokenizer.eos_token_id,
+        }
+
+        # Add optional parameters if provided
+        if task_params.temperature is not None and task_params.temperature > 0:
+            generation_kwargs["temperature"] = task_params.temperature
+        if task_params.top_p is not None:
+            generation_kwargs["top_p"] = task_params.top_p
+        if task_params.top_k is not None:
+            generation_kwargs["top_k"] = task_params.top_k
+
+        # Run generation in background thread
+        def generate_in_thread() -> None:
+            with torch.no_grad():
+                self.model.generate(**generation_kwargs)
+
+        thread = Thread(target=generate_in_thread)
+        thread.start()
+
+        # Stream tokens as they are generated
+        completion_tokens = 0
+        try:
+            for new_text in streamer:
+                if new_text:  # Skip empty strings
+                    completion_tokens += 1
+                    yield GenerationResponse(
+                        text=new_text,
+                        token=completion_tokens,  # Approximate token count
+                        finish_reason=None,
+                        stats=None,
+                        usage=None,
+                    )
+        finally:
+            thread.join()
+
+        # Final response with usage stats
+        total_tokens = prompt_tokens + completion_tokens
         usage = Usage(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
@@ -141,11 +176,9 @@ class PytorchEngine(Engine):
             completion_tokens_details=CompletionTokensDetails(),
         )
 
-        # Yield a single response (not streaming yet)
-        # TODO: For streaming, yield multiple responses as tokens are generated
         yield GenerationResponse(
-            text=generated_text,
-            token=0,  # Dummy token ID
+            text="",
+            token=0,
             finish_reason="stop",
             stats=None,
             usage=usage,
