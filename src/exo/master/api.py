@@ -144,6 +144,7 @@ from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.compacting_event_log import CompactingEventLog
 from exo.utils.event_buffer import OrderedBuffer
 
 
@@ -175,7 +176,7 @@ class API:
         election_receiver: Receiver[ElectionMessage],
     ) -> None:
         self.state = State()
-        self._event_log: list[Event] = []
+        self._event_log = CompactingEventLog()
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.global_event_receiver = global_event_receiver
@@ -224,6 +225,7 @@ class API:
     def reset(self, new_session_id: SessionId, result_clock: int):
         logger.info("Resetting API State")
         self.state = State()
+        self._event_log = CompactingEventLog()
         self.session_id = new_session_id
         self.event_buffer = OrderedBuffer[Event]()
         self._text_generation_queues = {}
@@ -289,7 +291,7 @@ class API:
         self.app.post("/v1/messages", response_model=None)(self.claude_messages)
         self.app.post("/v1/responses", response_model=None)(self.openai_responses)
         self.app.get("/state")(lambda: self.state)
-        self.app.get("/events")(lambda: self._event_log)
+        self.app.get("/events")(lambda: self._event_log.to_list())
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
         self.app.get("/v1/traces")(self.list_traces)

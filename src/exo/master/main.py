@@ -58,6 +58,7 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.compacting_event_log import CompactingEventLog
 from exo.utils.event_buffer import MultiSourceBuffer
 
 
@@ -88,8 +89,8 @@ class Master:
             local_event_receiver.clone_sender()
         )
         self._multi_buffer = MultiSourceBuffer[NodeId, Event]()
-        # TODO: not have this
-        self._event_log: list[Event] = []
+        # Compacting event log - automatically deduplicates high-frequency events
+        self._event_log = CompactingEventLog()
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
 
@@ -332,14 +333,9 @@ class Master:
                                 ]
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages
-                            # rate limit to 1000 at a time
-                            for i in range(
-                                command.since_idx,
-                                min(command.since_idx + 1000, len(self._event_log)),
-                            ):
-                                await self._send_event(
-                                    IndexedEvent(idx=i, event=self._event_log[i])
-                                )
+                            # rate limit to 1000 at a time, skipping compacted events
+                            for idx, event in self._event_log.iter_from(command.since_idx, limit=1000):
+                                await self._send_event(IndexedEvent(idx=idx, event=event))
                     for event in generated_events:
                         await self.event_sender.send(event)
                 except ValueError as e:

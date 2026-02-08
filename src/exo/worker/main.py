@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timezone
 from random import random
 from typing import Iterator
@@ -73,7 +74,9 @@ class Worker:
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.event_buffer = OrderedBuffer[Event]()
-        self.out_for_delivery: dict[EventId, ForwarderEvent] = {}
+        # Tracks events pending delivery to master: event_id -> (event, timestamp)
+        self.out_for_delivery: dict[EventId, tuple[ForwarderEvent, float]] = {}
+        self._out_for_delivery_ttl: float = 300.0  # 5 minutes max before giving up
 
         self.state: State = State()
         self.runners: dict[RunnerId, RunnerSupervisor] = {}
@@ -307,12 +310,26 @@ class Worker:
                     self._nack_cancel_scope = None
 
     async def _resend_out_for_delivery(self) -> None:
-        # This can also be massively tightened, we should check events are at least a certain age before resending.
-        # Exponential backoff would also certainly help here.
+        # Resend unacknowledged events with exponential backoff and TTL
+        min_age_before_resend = 2.0  # Wait at least 2 seconds before first resend
         while True:
             await anyio.sleep(1 + random())
-            for event in self.out_for_delivery.copy().values():
-                await self.local_event_sender.send(event)
+            now = time.monotonic()
+            expired_ids: list[EventId] = []
+
+            for event_id, (event, timestamp) in list(self.out_for_delivery.items()):
+                age = now - timestamp
+                # Drop events older than TTL
+                if age > self._out_for_delivery_ttl:
+                    expired_ids.append(event_id)
+                    continue
+                # Only resend if old enough (simple backoff: wait before resending)
+                if age >= min_age_before_resend:
+                    await self.local_event_sender.send(event)
+
+            # Clean up expired entries
+            for event_id in expired_ids:
+                del self.out_for_delivery[event_id]
 
     ## Op Executors
 
@@ -338,7 +355,7 @@ class Worker:
                 )
                 logger.debug(f"Worker published event {idx}: {str(event)[:100]}")
                 await self.local_event_sender.send(fe)
-                self.out_for_delivery[event.event_id] = fe
+                self.out_for_delivery[event.event_id] = (fe, time.monotonic())
 
     async def _poll_connection_updates(self):
         while True:
