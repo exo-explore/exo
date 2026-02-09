@@ -125,6 +125,7 @@ class PipelineFirstLayer(CustomMlxLayer):
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
+            mx.eval(x)
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -163,6 +164,9 @@ class PipelineLastLayer(CustomMlxLayer):
             )
             if cache is not None:
                 cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
+            mx.eval(output)
+            if cache is not None:
+                mx.eval(cache.keys)  # type: ignore[reportUnknownMemberType]
 
         if self.all_gather_output:
             output = mx.distributed.all_gather(output, group=self.group)[
