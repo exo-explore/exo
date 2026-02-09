@@ -95,7 +95,7 @@ def prefill(
         max_tokens=1,
         sampler=sampler,
         prompt_cache=cache,
-        prefill_step_size=2048,
+        prefill_step_size=8192,
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
         prompt_progress_callback=progress_callback,
@@ -339,8 +339,7 @@ def mlx_generate(
             sampler=sampler,
             logits_processors=logits_processors,
             prompt_cache=caches,
-            # TODO: Dynamically change prefill step size to be the maximum possible without timing out.
-            prefill_step_size=2048,
+            prefill_step_size=1,
             kv_group_size=KV_GROUP_SIZE,
             kv_bits=KV_BITS,
         ),
