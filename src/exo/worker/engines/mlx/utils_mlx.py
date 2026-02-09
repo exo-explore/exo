@@ -203,14 +203,20 @@ def load_mlx_items(
 ) -> tuple[Model, TokenizerWrapper]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
-        model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
+        model_id = bound_instance.bound_shard.model_card.model_id
+        model_path = build_model_path(model_id)
         if not model_path.exists():
             raise FileNotFoundError(
-                f"Model path does not exist: {model_path}. "
+                f"Model path does not exist: {model_path} (model_id={model_id}). "
                 "Model download may not have completed."
             )
         start_time = time.perf_counter()
-        model, _ = load_model(model_path, strict=True)
+        try:
+            model, _ = load_model(model_path, strict=True)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load model from {model_path} (model_id={model_id}): {e}"
+            ) from e
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
         tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
@@ -236,7 +242,13 @@ def shard_and_load(
     group: Group,
     on_timeout: TimeoutCallback | None = None,
 ) -> tuple[nn.Module, TokenizerWrapper]:
-    model_path = build_model_path(shard_metadata.model_card.model_id)
+    model_id = shard_metadata.model_card.model_id
+    model_path = build_model_path(model_id)
+    if not model_path.exists():
+        raise FileNotFoundError(
+            f"Model path does not exist: {model_path} (model_id={model_id}). "
+            "Model download may not have completed."
+        )
 
     model, _ = load_model(model_path, lazy=True, strict=False)
     logger.debug(model)
