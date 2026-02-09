@@ -34,8 +34,19 @@ class DistributedImageModel:
         group: Optional[mx.distributed.Group] = None,
         quantize: int | None = None,
     ):
+        if not local_path.exists():
+            raise FileNotFoundError(
+                f"Model path does not exist: {local_path} (model_id={model_id}). "
+                "Model download may not have completed."
+            )
+
         config = get_config_for_model(model_id)
-        adapter = create_adapter_for_model(config, model_id, local_path, quantize)
+        try:
+            adapter = create_adapter_for_model(config, model_id, local_path, quantize)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to initialize image model '{model_id}' from {local_path}: {e}"
+            ) from e
 
         has_layer_sharding = (
             shard_metadata.start_layer != 0
