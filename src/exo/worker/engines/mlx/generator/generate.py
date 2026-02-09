@@ -24,7 +24,7 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
 from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.auto_parallel import PipelineLastLayer
+from exo.worker.engines.mlx.auto_parallel import set_pipeline_prefill
 from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
     KVPrefixCache,
@@ -84,7 +84,7 @@ def prefill(
         if has_ssm:
             snapshots.append(snapshot_ssm_states(cache))
 
-    PipelineLastLayer.find_and_set_prefill(model, is_prefill=True)
+    set_pipeline_prefill(model, is_prefill=True)
 
     # Use max_tokens=1 because max_tokens=0 does not work.
     # We just throw away the generated token - we only care about filling the cache
@@ -102,7 +102,7 @@ def prefill(
     ):
         break  # Stop after first iteration - cache is now filled
 
-    PipelineLastLayer.find_and_set_prefill(model, is_prefill=False)
+    set_pipeline_prefill(model, is_prefill=False)
 
     # stream_generate added 1 extra generated token to the cache, so we should trim it.
     # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
