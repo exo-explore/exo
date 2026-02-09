@@ -164,7 +164,7 @@ class PipelineLastLayer(CustomMlxLayer):
             if self.is_prefill:
                 mx.eval(output)
                 if cache is not None:
-                    mx.eval(cache.keys)
+                    mx.eval(cache.keys)  # type: ignore
 
         if not self.is_prefill:
             output = mx.distributed.all_gather(output, group=self.group)[
