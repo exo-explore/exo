@@ -141,6 +141,14 @@ class PipelineLastLayer(CustomMlxLayer):
         self.s: int = s
         self.group = group
         self.original_layer_signature = signature(self.original_layer.__call__)
+        self.all_gather_output = True
+
+    @staticmethod
+    def find_and_set_prefill(model: nn.Module, is_prefill: bool) -> None:
+        for layer in model.layers:
+            if isinstance(layer, PipelineLastLayer):
+                logger.info(f"Setting {is_prefill} for last layer")
+                layer.all_gather_output = not is_prefill
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         cache = self.original_layer_signature.bind_partial(
@@ -156,9 +164,10 @@ class PipelineLastLayer(CustomMlxLayer):
             if cache is not None:
                 cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
 
-        output = mx.distributed.all_gather(output, group=self.group)[
-            -output.shape[0] :
-        ]  # type :ignore
+        if self.all_gather_output:
+            output = mx.distributed.all_gather(output, group=self.group)[
+                -output.shape[0] :
+            ]  # type :ignore
 
         return output
 
