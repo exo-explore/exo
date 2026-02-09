@@ -30,11 +30,11 @@ from exo.utils.pydantic_ext import CamelCaseModel
 # kinda ugly...
 # TODO: load search path from config.toml
 _custom_cards_dir = Path(str(EXO_CUSTOM_MODEL_CARDS_DIR))
-_csp = [Path(RESOURCES_DIR) / "inference_model_cards", _custom_cards_dir]
-if EXO_ENABLE_IMAGE_MODELS:
-    _csp.append(Path(RESOURCES_DIR) / "image_model_cards")
-
-CARD_SEARCH_PATH = _csp
+CARD_SEARCH_PATH = [
+    Path(RESOURCES_DIR) / "inference_model_cards",
+    Path(RESOURCES_DIR) / "image_model_cards",
+    _custom_cards_dir,
+]
 
 _card_cache: dict[ModelId, "ModelCard"] = {}
 
@@ -52,7 +52,17 @@ async def _refresh_card_cache():
 async def get_model_cards() -> list["ModelCard"]:
     if len(_card_cache) == 0:
         await _refresh_card_cache()
-    return list(_card_cache.values())
+
+    cards = list(_card_cache.values())
+    if EXO_ENABLE_IMAGE_MODELS:
+        return cards
+
+    # Image model cards are still loaded so lookups work, but they are hidden from listings.
+    return [
+        card
+        for card in cards
+        if not any(task in ("TextToImage", "ImageToImage") for task in card.tasks)
+    ]
 
 
 class ModelTask(str, Enum):
