@@ -330,6 +330,9 @@ def mlx_generate(
     reasoning_tokens = 0
     think_start = tokenizer.think_start
     think_end = tokenizer.think_end
+
+    mx_barrier(group)
+
     for completion_tokens, out in enumerate(
         stream_generate(
             model=model,
