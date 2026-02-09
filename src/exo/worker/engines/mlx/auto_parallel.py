@@ -124,7 +124,9 @@ class PipelineFirstLayer(CustomMlxLayer):
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
-            x = mx.distributed.recv_like(x, (self.r - 1), group=self.group, stream=mx.default_stream(mx.cpu))
+            x = mx.distributed.recv_like(
+                x, (self.r - 1), group=self.group, stream=mx.default_stream(mx.cpu)
+            )
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -145,7 +147,7 @@ class PipelineLastLayer(CustomMlxLayer):
 
     @staticmethod
     def find_and_set_prefill(model: nn.Module, is_prefill: bool) -> None:
-        for layer in model.layers:
+        for layer in model.layers:  # type: ignore
             if isinstance(layer, PipelineLastLayer):
                 logger.info(f"Setting {is_prefill} for last layer")
                 layer.all_gather_output = not is_prefill
