@@ -204,6 +204,11 @@ def load_mlx_items(
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
+        if not model_path.exists():
+            raise FileNotFoundError(
+                f"Model path does not exist: {model_path}. "
+                "Model download may not have completed."
+            )
         start_time = time.perf_counter()
         model, _ = load_model(model_path, strict=True)
         end_time = time.perf_counter()

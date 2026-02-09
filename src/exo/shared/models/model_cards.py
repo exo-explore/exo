@@ -217,17 +217,24 @@ async def fetch_config_data(model_id: ModelId) -> ConfigData:
 
     target_dir = (await ensure_models_dir()) / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)
-    config_path = await download_file_with_retry(
-        model_id,
-        "main",
-        "config.json",
-        target_dir,
-        lambda curr_bytes, total_bytes, is_renamed: logger.debug(
-            f"Downloading config.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
-        ),
-    )
-    async with aiofiles.open(config_path, "r") as f:
-        return ConfigData.model_validate_json(await f.read())
+
+    try:
+        config_path = await download_file_with_retry(
+            model_id,
+            "main",
+            "config.json",
+            target_dir,
+            lambda curr_bytes, total_bytes, is_renamed: logger.debug(
+                f"Downloading config.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
+            ),
+        )
+        async with aiofiles.open(config_path, "r") as f:
+            return ConfigData.model_validate_json(await f.read())
+    except FileNotFoundError as e:
+        raise ValueError(
+            f"Model '{model_id}' does not contain config.json (cannot infer layer count). "
+            "Add a model card in resources/ or provide a custom model card."
+        ) from e
 
 
 async def fetch_safetensors_size(model_id: ModelId) -> Memory:
@@ -240,21 +247,31 @@ async def fetch_safetensors_size(model_id: ModelId) -> Memory:
 
     target_dir = (await ensure_models_dir()) / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)
-    index_path = await download_file_with_retry(
-        model_id,
-        "main",
-        "model.safetensors.index.json",
-        target_dir,
-        lambda curr_bytes, total_bytes, is_renamed: logger.debug(
-            f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
-        ),
-    )
-    async with aiofiles.open(index_path, "r") as f:
-        index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
 
-    metadata = index_data.metadata
-    if metadata is not None:
-        return Memory.from_bytes(metadata.total_size)
+    try:
+        index_path = await download_file_with_retry(
+            model_id,
+            "main",
+            "model.safetensors.index.json",
+            target_dir,
+            lambda curr_bytes, total_bytes, is_renamed: logger.debug(
+                f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
+            ),
+        )
+        async with aiofiles.open(index_path, "r") as f:
+            index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
+
+        metadata = index_data.metadata
+        if metadata is not None:
+            return Memory.from_bytes(metadata.total_size)
+    except FileNotFoundError:
+        logger.debug(
+            f"No model.safetensors.index.json found for {model_id}, falling back to HuggingFace API"
+        )
+    except Exception as e:
+        logger.debug(
+            f"Failed to read/parse model.safetensors.index.json for {model_id}: {e}, falling back to HuggingFace API"
+        )
 
     info = model_info(model_id)
     if info.safetensors is None:
