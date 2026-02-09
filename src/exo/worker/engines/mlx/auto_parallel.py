@@ -164,6 +164,7 @@ class PipelineLastLayer(CustomMlxLayer):
             output = mx.distributed.send(
                 output, (self.r + 1) % self.s, group=self.group
             )
+            mx.eval(output)
             if cache is not None:
                 cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
 
