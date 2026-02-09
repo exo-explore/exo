@@ -3,7 +3,7 @@ import contextlib
 import json
 import random
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
 from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
@@ -37,15 +37,20 @@ from exo.master.adapters.responses import (
     generate_responses_stream,
     responses_request_to_text_generation,
 )
+from exo.master.event_log import DiskEventLog
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
+    EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
     EXO_TRACING_CACHE_DIR,
 )
+
+_API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
+
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import (
@@ -175,7 +180,7 @@ class API:
         election_receiver: Receiver[ElectionMessage],
     ) -> None:
         self.state = State()
-        self._event_log: list[Event] = []
+        self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.global_event_receiver = global_event_receiver
@@ -223,6 +228,8 @@ class API:
 
     def reset(self, new_session_id: SessionId, result_clock: int):
         logger.info("Resetting API State")
+        self._event_log.close()
+        self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
         self.state = State()
         self.session_id = new_session_id
         self.event_buffer = OrderedBuffer[Event]()
@@ -289,7 +296,7 @@ class API:
         self.app.post("/v1/messages", response_model=None)(self.claude_messages)
         self.app.post("/v1/responses", response_model=None)(self.openai_responses)
         self.app.get("/state")(lambda: self.state)
-        self.app.get("/events")(lambda: self._event_log)
+        self.app.get("/events")(self.stream_events)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
         self.app.get("/v1/traces")(self.list_traces)
@@ -693,6 +700,22 @@ class API:
                 status_code=404, detail=f"No instance found for model {resolved_model}"
             )
         return resolved_model
+
+    def stream_events(self) -> StreamingResponse:
+        def _generate_json_array(events: Iterator[Event]) -> Iterator[str]:
+            yield "["
+            first = True
+            for event in events:
+                if not first:
+                    yield ","
+                first = False
+                yield event.model_dump_json()
+            yield "]"
+
+        return StreamingResponse(
+            _generate_json_array(self._event_log.read_all()),
+            media_type="application/json",
+        )
 
     async def get_image(self, image_id: str) -> FileResponse:
         stored = self._image_store.get(Id(image_id))
@@ -1342,6 +1365,7 @@ class API:
                     with anyio.CancelScope(shield=True):
                         shutdown_ev.set()
         finally:
+            self._event_log.close()
             self.command_sender.close()
             self.global_event_receiver.close()
 
