@@ -6,6 +6,7 @@ from pydantic import Field
 from exo.shared.topology import Connection
 from exo.shared.types.chunks import GenerationChunk, InputImageChunk
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
+from exo.shared.types.meta_instance import MetaInstance, MetaInstanceId
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
@@ -66,6 +67,14 @@ class InstanceCreated(BaseEvent):
 
 class InstanceDeleted(BaseEvent):
     instance_id: InstanceId
+
+
+class MetaInstanceCreated(BaseEvent):
+    meta_instance: MetaInstance
+
+
+class MetaInstanceDeleted(BaseEvent):
+    meta_instance_id: MetaInstanceId
 
 
 class RunnerStatusUpdated(BaseEvent):
@@ -141,6 +150,8 @@ Event = (
     | TaskAcknowledged
     | InstanceCreated
     | InstanceDeleted
+    | MetaInstanceCreated
+    | MetaInstanceDeleted
     | RunnerStatusUpdated
     | RunnerDeleted
     | NodeTimedOut
