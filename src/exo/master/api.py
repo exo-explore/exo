@@ -48,9 +48,6 @@ from exo.shared.constants import (
     EXO_MAX_CHUNK_SIZE,
     EXO_TRACING_CACHE_DIR,
 )
-
-_API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
-
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import (
@@ -150,6 +147,8 @@ from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
+
+_API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
 
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
