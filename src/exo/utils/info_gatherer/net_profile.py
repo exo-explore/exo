@@ -101,27 +101,25 @@ async def check_reachable(
         client: httpx.AsyncClient,
         send: Sender[tuple[str, NodeId]],
     ) -> None:
-        out: defaultdict[NodeId, set[str]] = defaultdict(set)
-        await check_reachability(target_ip, expected_node_id, out, client)
-        if expected_node_id in out:
-            await send.send((target_ip, expected_node_id))
+        async with send:
+            out: defaultdict[NodeId, set[str]] = defaultdict(set)
+            await check_reachability(target_ip, expected_node_id, out, client)
+            if expected_node_id in out:
+                await send.send((target_ip, expected_node_id))
 
-    async def _run_probes() -> None:
-        async with (
-            send,
-            httpx.AsyncClient(timeout=timeout, limits=limits) as client,
-            create_task_group() as tg,
-        ):
-            for node_id in topology.list_nodes():
-                if node_id not in node_network:
-                    continue
-                if node_id == self_node_id:
-                    continue
-                for iface in node_network[node_id].interfaces:
-                    tg.start_soon(_probe, iface.ip_address, node_id, client, send)
+    async with (
+        httpx.AsyncClient(timeout=timeout, limits=limits) as client,
+        create_task_group() as tg,
+    ):
+        for node_id in topology.list_nodes():
+            if node_id not in node_network:
+                continue
+            if node_id == self_node_id:
+                continue
+            for iface in node_network[node_id].interfaces:
+                tg.start_soon(_probe, iface.ip_address, node_id, client, send.clone())
+        send.close()
 
-    async with create_task_group() as tg:
-        tg.start_soon(_run_probes)
         with recv:
             async for item in recv:
                 yield item
