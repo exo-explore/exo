@@ -63,6 +63,7 @@ class NodeIdentity(CamelCaseModel):
     model_id: str = "Unknown"
     chip_id: str = "Unknown"
     friendly_name: str = "Unknown"
+    os_version: str = "Unknown"
 
 
 class NodeNetworkInfo(CamelCaseModel):

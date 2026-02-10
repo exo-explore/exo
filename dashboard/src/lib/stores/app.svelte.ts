@@ -49,6 +49,7 @@ export interface NodeInfo {
   };
   last_macmon_update: number;
   friendly_name?: string;
+  os_version?: string;
 }
 
 export interface TopologyEdge {
@@ -76,6 +77,7 @@ interface RawNodeIdentity {
   modelId?: string;
   chipId?: string;
   friendlyName?: string;
+  osVersion?: string;
 }
 
 interface RawMemoryUsage {
@@ -416,6 +418,7 @@ function transformTopology(
       },
       last_macmon_update: Date.now() / 1000,
       friendly_name: identity?.friendlyName,
+      os_version: identity?.osVersion,
     };
   }
 
@@ -486,6 +489,7 @@ class AppStore {
   isLoadingPreviews = $state(false);
   previewNodeFilter = $state<Set<string>>(new Set());
   lastUpdate = $state<number | null>(null);
+  nodeIdentities = $state<Record<string, RawNodeIdentity>>({});
   thunderboltBridgeCycles = $state<string[][]>([]);
   nodeThunderboltBridge = $state<
     Record<
@@ -1197,6 +1201,8 @@ class AppStore {
       if (data.downloads) {
         this.downloads = data.downloads;
       }
+      // Node identities (for OS version mismatch detection)
+      this.nodeIdentities = data.nodeIdentities ?? {};
       // Thunderbolt bridge cycles
       this.thunderboltBridgeCycles = data.thunderboltBridgeCycles ?? [];
       // Thunderbolt bridge status per node
@@ -3030,6 +3036,9 @@ export const toggleChatSidebarVisible = () =>
 export const setChatSidebarVisible = (visible: boolean) =>
   appStore.setChatSidebarVisible(visible);
 export const refreshState = () => appStore.fetchState();
+
+// Node identities (for OS version mismatch detection)
+export const nodeIdentities = () => appStore.nodeIdentities;
 
 // Thunderbolt bridge status
 export const thunderboltBridgeCycles = () => appStore.thunderboltBridgeCycles;
