@@ -358,7 +358,10 @@ class InfoGatherer:
         if self.misc_poll_interval is None:
             return
         while True:
-            await self.info_sender.send(await MiscData.gather())
+            try:
+                await self.info_sender.send(await MiscData.gather())
+            except Exception as e:
+                logger.warning(f"Error gathering misc data: {e}")
             await anyio.sleep(self.misc_poll_interval)
 
     async def _monitor_system_profiler_thunderbolt_data(self):
@@ -369,15 +372,17 @@ class InfoGatherer:
             return
 
         while True:
-            data = await ThunderboltConnectivity.gather()
-            assert data is not None
+            try:
+                data = await ThunderboltConnectivity.gather()
+                assert data is not None
 
-            idents = [it for i in data if (it := i.ident(iface_map)) is not None]
-            await self.info_sender.send(MacThunderboltIdentifiers(idents=idents))
+                idents = [it for i in data if (it := i.ident(iface_map)) is not None]
+                await self.info_sender.send(MacThunderboltIdentifiers(idents=idents))
 
-            conns = [it for i in data if (it := i.conn()) is not None]
-            await self.info_sender.send(MacThunderboltConnections(conns=conns))
-
+                conns = [it for i in data if (it := i.conn()) is not None]
+                await self.info_sender.send(MacThunderboltConnections(conns=conns))
+            except Exception as e:
+                logger.warning(f"Error gathering Thunderbolt data: {e}")
             await anyio.sleep(self.system_profiler_interval)
 
     async def _monitor_memory_usage(self):
@@ -390,26 +395,35 @@ class InfoGatherer:
         if self.memory_poll_rate is None:
             return
         while True:
-            await self.info_sender.send(
-                MemoryUsage.from_psutil(override_memory=override_memory)
-            )
+            try:
+                await self.info_sender.send(
+                    MemoryUsage.from_psutil(override_memory=override_memory)
+                )
+            except Exception as e:
+                logger.warning(f"Error gathering memory usage: {e}")
             await anyio.sleep(self.memory_poll_rate)
 
     async def _watch_system_info(self):
         if self.interface_watcher_interval is None:
             return
         while True:
-            nics = await get_network_interfaces()
-            await self.info_sender.send(NodeNetworkInterfaces(ifaces=nics))
+            try:
+                nics = await get_network_interfaces()
+                await self.info_sender.send(NodeNetworkInterfaces(ifaces=nics))
+            except Exception as e:
+                logger.warning(f"Error gathering network interfaces: {e}")
             await anyio.sleep(self.interface_watcher_interval)
 
     async def _monitor_thunderbolt_bridge_status(self):
         if self.thunderbolt_bridge_poll_interval is None:
             return
         while True:
-            curr = await ThunderboltBridgeInfo.gather()
-            if curr is not None:
-                await self.info_sender.send(curr)
+            try:
+                curr = await ThunderboltBridgeInfo.gather()
+                if curr is not None:
+                    await self.info_sender.send(curr)
+            except Exception as e:
+                logger.warning(f"Error gathering Thunderbolt Bridge status: {e}")
             await anyio.sleep(self.thunderbolt_bridge_poll_interval)
 
     async def _monitor_macmon(self, macmon_path: str):

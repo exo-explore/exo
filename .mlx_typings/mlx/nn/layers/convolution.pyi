@@ -30,6 +30,9 @@ class Conv1d(Module):
         bias (bool, optional): If ``True`` add a learnable bias to the output.
             Default: ``True``
     """
+
+    weight: mx.array
+    groups: int
     def __init__(
         self,
         in_channels: int,

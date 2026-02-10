@@ -431,7 +431,12 @@ def main() -> int:
     ap.add_argument(
         "--skip-pipeline-jaccl",
         action="store_true",
-        help="Pipeline jaccl is often pointless, skip by default",
+        help="Skip pipeline+jaccl placements, as it's often pointless.",
+    )
+    ap.add_argument(
+        "--skip-tensor-ring",
+        action="store_true",
+        help="Skip tensor+ring placements, as it's so slow.",
     )
     ap.add_argument(
         "--repeat", type=int, default=1, help="Repetitions per (pp,tg) pair."
@@ -450,6 +455,7 @@ def main() -> int:
         default="bench/results.json",
         help="Write raw per-run results JSON to this path.",
     )
+    ap.add_argument("--stdout", action="store_true", help="Write results to stdout")
     ap.add_argument(
         "--dry-run", action="store_true", help="List selected placements and exit."
     )
@@ -530,6 +536,16 @@ def main() -> int:
             and (
                 args.sharding == "both" and "pipeline" in p.get("sharding", "").lower()
             )
+        ):
+            continue
+
+        if (
+            args.skip_tensor_ring
+            and (
+                args.instance_meta == "both"
+                and "ring" in p.get("instance_meta", "").lower()
+            )
+            and (args.sharding == "both" and "tensor" in p.get("sharding", "").lower())
         ):
             continue
 
@@ -652,7 +668,9 @@ def main() -> int:
 
             time.sleep(5)
 
-    if args.json_out:
+    if args.stdout:
+        json.dump(all_rows, sys.stdout, indent=2, ensure_ascii=False)
+    elif args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as f:
             json.dump(all_rows, f, indent=2, ensure_ascii=False)
         logger.debug(f"\nWrote results JSON: {args.json_out}")

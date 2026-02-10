@@ -3,10 +3,11 @@
 from collections.abc import Sequence
 
 from mlx_lm.models.cache import (
+    ArraysCache,
     KVCache,
     QuantizedKVCache,
     RotatingKVCache,
 )
 
 # This list contains one cache entry per transformer layer
-KVCacheType = Sequence[KVCache | RotatingKVCache | QuantizedKVCache]
+KVCacheType = Sequence[KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache]

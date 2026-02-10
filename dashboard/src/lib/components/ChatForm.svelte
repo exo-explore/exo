@@ -599,9 +599,8 @@
             : isImageModel()
               ? "Describe the image you want to generate..."
               : placeholder}
-        disabled={loading}
         rows={1}
-        class="flex-1 resize-none bg-transparent text-foreground placeholder:text-exo-light-gray/60 placeholder:text-sm placeholder:tracking-[0.15em] placeholder:leading-7 focus:outline-none focus:ring-0 focus:border-none disabled:opacity-50 text-sm leading-7 font-mono"
+        class="flex-1 resize-none bg-transparent text-foreground placeholder:text-exo-light-gray/60 placeholder:text-sm placeholder:tracking-[0.15em] placeholder:leading-7 focus:outline-none focus:ring-0 focus:border-none text-sm leading-7 font-mono"
         style="min-height: 28px; max-height: 150px;"
       ></textarea>
 
