@@ -119,3 +119,78 @@ From .cursorrules:
 ## Testing
 
 Tests use pytest-asyncio with `asyncio_mode = "auto"`. Tests are in `tests/` subdirectories alongside the code they test. The `EXO_TESTS=1` env var is set during tests.
+
+## Dashboard UI Testing & Screenshots
+
+### Building and Running the Dashboard
+```bash
+# Build the dashboard (must be done before running exo)
+cd dashboard && npm install && npm run build && cd ..
+
+# Start exo (serves the dashboard at http://localhost:52415)
+uv run exo &
+sleep 8  # Wait for server to start
+```
+
+### Taking Headless Screenshots with Playwright
+Use Playwright with headless Chromium for programmatic screenshots — no manual browser interaction needed.
+
+**Setup (one-time):**
+```bash
+npx --yes playwright install chromium
+cd /tmp && npm init -y && npm install playwright
+```
+
+**Taking screenshots:**
+```javascript
+// Run from /tmp where playwright is installed: cd /tmp && node -e "..."
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  await page.goto('http://localhost:52415', { waitUntil: 'networkidle' });
+  await page.waitForTimeout(2000);
+
+  // Inject test data into localStorage if needed (e.g., recent models)
+  await page.evaluate(() => {
+    localStorage.setItem('exo-recent-models', JSON.stringify([
+      { modelId: 'mlx-community/Qwen3-30B-A3B-4bit', launchedAt: Date.now() },
+    ]));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(2000);
+
+  // Interact with UI elements
+  await page.locator('text=SELECT MODEL').click();
+  await page.waitForTimeout(1000);
+
+  // Take screenshot
+  await page.screenshot({ path: '/tmp/screenshot.png', fullPage: false });
+  await browser.close();
+})();
+```
+
+### Uploading Images to GitHub PRs
+GitHub's API doesn't support direct image upload for PR comments. Workaround:
+
+1. **Commit images to the branch** (temporarily):
+   ```bash
+   cp /tmp/screenshot.png .
+   git add screenshot.png
+   git commit -m "temp: add screenshots for PR"
+   git push origin <branch>
+   COMMIT_SHA=$(git rev-parse HEAD)
+   ```
+
+2. **Post PR comment** referencing the raw image URL (uses permanent commit SHA so images survive deletion):
+   ```bash
+   gh pr comment <PR_NUMBER> --body "![Screenshot](https://raw.githubusercontent.com/exo-explore/exo/${COMMIT_SHA}/screenshot.png)"
+   ```
+
+3. **Remove the images** from the branch:
+   ```bash
+   git rm screenshot.png
+   git commit -m "chore: remove temporary screenshot files"
+   git push origin <branch>
+   ```
+   The images still render in the PR comment because they reference the permanent commit SHA.
