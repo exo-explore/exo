@@ -6,6 +6,7 @@
     isTopologyMinimized,
     debugMode,
     nodeThunderboltBridge,
+    nodeRdmaCtl,
     type NodeInfo,
   } from "$lib/stores/app.svelte";
 
@@ -31,6 +32,7 @@
   const data = $derived(topologyData());
   const debugEnabled = $derived(debugMode());
   const tbBridgeData = $derived(nodeThunderboltBridge());
+  const rdmaCtlData = $derived(nodeRdmaCtl());
 
   function getNodeLabel(nodeId: string): string {
     const node = data?.nodes?.[nodeId];
@@ -1133,15 +1135,17 @@
           .text(` (${ramUsagePercent.toFixed(0)}%)`);
       }
 
-      // Debug mode: Show TB bridge status
+      // Debug mode: Show TB bridge and RDMA status
       if (debugEnabled) {
+        let debugLabelY =
+          nodeInfo.y +
+          iconBaseHeight / 2 +
+          (showFullLabels ? 32 : showCompactLabels ? 26 : 22);
+        const debugFontSize = showFullLabels ? 9 : 7;
+        const debugLineHeight = showFullLabels ? 11 : 9;
+
         const tbStatus = tbBridgeData[nodeInfo.id];
         if (tbStatus) {
-          const tbY =
-            nodeInfo.y +
-            iconBaseHeight / 2 +
-            (showFullLabels ? 32 : showCompactLabels ? 26 : 22);
-          const tbFontSize = showFullLabels ? 9 : 7;
           const tbColor = tbStatus.enabled
             ? "rgba(234,179,8,0.9)"
             : "rgba(100,100,100,0.7)";
@@ -1149,12 +1153,30 @@
           nodeG
             .append("text")
             .attr("x", nodeInfo.x)
-            .attr("y", tbY)
+            .attr("y", debugLabelY)
             .attr("text-anchor", "middle")
             .attr("fill", tbColor)
-            .attr("font-size", tbFontSize)
+            .attr("font-size", debugFontSize)
             .attr("font-family", "SF Mono, Monaco, monospace")
             .text(tbText);
+          debugLabelY += debugLineHeight;
+        }
+
+        const rdmaStatus = rdmaCtlData[nodeInfo.id];
+        if (rdmaStatus !== undefined) {
+          const rdmaColor = rdmaStatus.enabled
+            ? "rgba(74,222,128,0.9)"
+            : "rgba(100,100,100,0.7)";
+          const rdmaText = rdmaStatus.enabled ? "RDMA:ON" : "RDMA:OFF";
+          nodeG
+            .append("text")
+            .attr("x", nodeInfo.x)
+            .attr("y", debugLabelY)
+            .attr("text-anchor", "middle")
+            .attr("fill", rdmaColor)
+            .attr("font-size", debugFontSize)
+            .attr("font-family", "SF Mono, Monaco, monospace")
+            .text(rdmaText);
         }
       }
     });

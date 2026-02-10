@@ -238,6 +238,8 @@ interface RawStateResponse {
       }>;
     }
   >;
+  // RDMA ctl status per node
+  nodeRdmaCtl?: Record<string, { enabled: boolean }>;
   // Thunderbolt bridge status per node
   nodeThunderboltBridge?: Record<
     string,
@@ -536,6 +538,7 @@ class AppStore {
       }
     >
   >({});
+  nodeRdmaCtl = $state<Record<string, { enabled: boolean }>>({});
   nodeThunderboltBridge = $state<
     Record<
       string,
@@ -1248,6 +1251,8 @@ class AppStore {
       }
       // Thunderbolt identifiers per node
       this.nodeThunderbolt = data.nodeThunderbolt ?? {};
+      // RDMA ctl status per node
+      this.nodeRdmaCtl = data.nodeRdmaCtl ?? {};
       // Thunderbolt bridge cycles
       this.thunderboltBridgeCycles = data.thunderboltBridgeCycles ?? [];
       // Thunderbolt bridge status per node
@@ -3080,8 +3085,9 @@ export const setChatSidebarVisible = (visible: boolean) =>
   appStore.setChatSidebarVisible(visible);
 export const refreshState = () => appStore.fetchState();
 
-// Thunderbolt status
+// Thunderbolt & RDMA status
 export const nodeThunderbolt = () => appStore.nodeThunderbolt;
+export const nodeRdmaCtl = () => appStore.nodeRdmaCtl;
 export const thunderboltBridgeCycles = () => appStore.thunderboltBridgeCycles;
 export const nodeThunderboltBridge = () => appStore.nodeThunderboltBridge;
 

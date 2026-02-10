@@ -38,6 +38,7 @@
     chatSidebarVisible,
     toggleChatSidebarVisible,
     nodeThunderbolt,
+    nodeRdmaCtl,
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
     type DownloadProgress,
@@ -64,22 +65,22 @@
   const tbBridgeCycles = $derived(thunderboltBridgeCycles());
   const tbBridgeData = $derived(nodeThunderboltBridge());
   const tbIdentifiers = $derived(nodeThunderbolt());
+  const rdmaCtlData = $derived(nodeRdmaCtl());
   const nodeFilter = $derived(previewNodeFilter());
 
-  // Detect TB5 connections without RDMA (require 2+ exo nodes with TB5)
+  // Detect TB5 nodes where RDMA is not enabled
   const tb5WithoutRdma = $derived.by(() => {
+    const rdmaCtl = rdmaCtlData;
+    if (!rdmaCtl) return false;
     const ids = tbIdentifiers;
     if (!ids) return false;
-    const tb5NodeCount = Object.values(ids).filter((node) =>
-      node.interfaces.some(
-        (iface) =>
-          iface.linkSpeed.includes("80 Gb/s") ||
-          iface.linkSpeed.includes("120 Gb/s"),
-      ),
-    ).length;
-    if (tb5NodeCount < 2) return false;
-    const hasRdma = (data?.edges ?? []).some((e) => e.sourceRdmaIface);
-    return !hasRdma;
+    // Find nodes with TB5 hardware (any TB interface)
+    const tb5NodeIds = Object.entries(ids)
+      .filter(([_, node]) => node.interfaces.length > 0)
+      .map(([id]) => id);
+    if (tb5NodeIds.length < 2) return false;
+    // At least one TB5 node has RDMA disabled
+    return tb5NodeIds.some((id) => rdmaCtl[id]?.enabled !== true);
   });
   let tb5InfoDismissed = $state(false);
 
@@ -2039,12 +2040,27 @@
                   class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-blue-400/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
                 >
                   <p class="text-xs text-white/80 mb-2">
-                    Thunderbolt 5 connection detected. RDMA can be enabled for
-                    significantly faster inter-node communication.
+                    Thunderbolt 5 hardware detected on multiple nodes. Enable
+                    RDMA for significantly faster inter-node communication.
                   </p>
-                  <p class="text-xs text-white/60">
-                    <span class="text-blue-300">To enable:</span> Install and configure
-                    RDMA on the connected nodes.
+                  <p class="text-xs text-white/60 mb-1.5">
+                    <span class="text-blue-300">To enable:</span>
+                  </p>
+                  <ol
+                    class="text-xs text-white/60 list-decimal list-inside space-y-0.5 mb-1.5"
+                  >
+                    <li>Connect nodes with TB5 cables</li>
+                    <li>Boot to Recovery (hold power 10s → Options)</li>
+                    <li>
+                      Run
+                      <code class="text-blue-300 bg-blue-400/10 px-1 rounded"
+                        >rdma_ctl enable</code
+                      >
+                    </li>
+                    <li>Reboot</li>
+                  </ol>
+                  <p class="text-xs text-white/40">
+                    Requires macOS 26.2+, TB5 cables, and matching OS versions.
                   </p>
                 </div>
               </div>
