@@ -9,6 +9,13 @@
 
   let { src, onclose }: Props = $props();
 
+  let lightboxDimensions = $state<{ width: number; height: number } | null>(null);
+
+  $effect(() => {
+    src;
+    lightboxDimensions = null;
+  });
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
       onclose();
@@ -91,6 +98,16 @@
       class="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
       transition:fly={{ y: 20, duration: 300, easing: cubicOut }}
       onclick={(e) => e.stopPropagation()}
+      onload={(e) => {
+        const img = e.target as HTMLImageElement;
+        lightboxDimensions = { width: img.naturalWidth, height: img.naturalHeight };
+      }}
     />
+
+    {#if lightboxDimensions}
+      <div class="absolute bottom-4 left-4 px-2 py-1 rounded bg-black/60 text-xs font-mono text-white/70 z-10">
+        {lightboxDimensions.width}&times;{lightboxDimensions.height}
+      </div>
+    {/if}
   </div>
 {/if}
