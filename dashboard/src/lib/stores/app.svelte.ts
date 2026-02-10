@@ -2210,7 +2210,49 @@ class AppStore {
       const apiMessages = [
         systemPrompt,
         ...targetConversation.messages.slice(0, -1).map((m) => {
-          // Build content including any text file attachments
+          // Check if this message has image attachments
+          const imageAttachments = m.attachments?.filter(
+            (a) => a.type === "image" && a.preview,
+          );
+
+          if (imageAttachments && imageAttachments.length > 0) {
+            // Build multimodal content array (OpenAI vision format)
+            const contentParts: Array<
+              | { type: "text"; text: string }
+              | { type: "image_url"; image_url: { url: string } }
+            > = [];
+
+            // Add image parts first
+            for (const img of imageAttachments) {
+              if (img.preview) {
+                contentParts.push({
+                  type: "image_url",
+                  image_url: { url: img.preview },
+                });
+              }
+            }
+
+            // Build text content including any text file attachments
+            let textContent = m.content;
+            if (m.attachments) {
+              for (const attachment of m.attachments) {
+                if (attachment.type === "text" && attachment.content) {
+                  textContent += `\n\n[File: ${attachment.name}]\n\`\`\`\n${attachment.content}\n\`\`\``;
+                }
+              }
+            }
+
+            if (textContent) {
+              contentParts.push({ type: "text", text: textContent });
+            }
+
+            return {
+              role: m.role,
+              content: contentParts,
+            };
+          }
+
+          // Text-only message (original path)
           let msgContent = m.content;
 
           // Add text attachments as context

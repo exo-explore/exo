@@ -1,12 +1,20 @@
 """OpenAI Chat Completions API adapter for converting requests/responses."""
 
+import base64
+import io
+import re
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from loguru import logger
+from PIL import Image
+
+from exo.download.download_utils import create_http_session
 from exo.shared.types.api import (
     ChatCompletionChoice,
     ChatCompletionMessage,
+    ChatCompletionMessageImageUrl,
     ChatCompletionMessageText,
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -23,16 +31,73 @@ from exo.shared.types.common import CommandId
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 
 
-def chat_request_to_text_generation(
+def _extract_base64_from_data_url(data_url: str) -> str:
+    """Extract raw base64 from a data URL or return raw base64 as-is."""
+    match = re.match(r"data:[^;]+;base64,(.+)", data_url)
+    if match:
+        return match.group(1)
+    return data_url  # Already raw base64
+
+
+# Max pixel budget before resizing — keeps serialized payloads under the
+# gossipsub max_transmit_size (8 MB).  2048×2048 ≈ 4 MP; a JPEG-85 at that
+# resolution is well within budget while preserving plenty of detail for
+# vision models.
+_MAX_IMAGE_PIXELS = 2048 * 2048
+
+
+def _resize_image_if_needed(b64_data: str) -> str:
+    """Resize a base64-encoded image if it exceeds the pixel budget.
+
+    Large images produce multi-MB base64 payloads that must travel through
+    the entire command pipeline (gossipsub serialization, event log, IPC).
+    This caps image size at the API entry point to prevent hangs.
+    """
+    raw = base64.b64decode(b64_data)
+    img = Image.open(io.BytesIO(raw))
+    w, h = img.size
+    if w * h <= _MAX_IMAGE_PIXELS:
+        return b64_data
+
+    scale = (_MAX_IMAGE_PIXELS / (w * h)) ** 0.5
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
+    logger.info(f"Resizing image {w}×{h} → {new_w}×{new_h} for transport")
+
+    img = img.convert("RGB")
+    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+async def _fetch_image_url(url: str) -> str:
+    """Fetch an image from an HTTP(S) URL and return base64-encoded data.
+
+    Uses exo's aiohttp session with proper SSL, proxy, and timeout handling.
+    """
+    async with (
+        create_http_session(timeout_profile="short") as session,
+        session.get(url) as resp,
+    ):
+        resp.raise_for_status()
+        data = await resp.read()
+        return base64.b64encode(data).decode("ascii")
+
+
+async def chat_request_to_text_generation(
     request: ChatCompletionRequest,
 ) -> TextGenerationTaskParams:
     instructions: str | None = None
     input_messages: list[InputMessage] = []
     chat_template_messages: list[dict[str, Any]] = []
+    images: list[str] = []  # base64-encoded image data
 
     for msg in request.messages:
-        # Normalize content to string
+        # Normalize content to string, extracting images from multimodal parts
         content: str
+        has_images = False
         if msg.content is None:
             content = ""
         elif isinstance(msg.content, str):
@@ -40,8 +105,21 @@ def chat_request_to_text_generation(
         elif isinstance(msg.content, ChatCompletionMessageText):
             content = msg.content.text
         else:
-            # List of ChatCompletionMessageText
-            content = "\n".join(item.text for item in msg.content)
+            # List of content parts — may include text and image_url
+            text_parts: list[str] = []
+            for part in msg.content:
+                if isinstance(part, ChatCompletionMessageText):
+                    text_parts.append(part.text)
+                elif isinstance(part, ChatCompletionMessageImageUrl):
+                    url = part.image_url.get("url", "")
+                    if url:
+                        if url.startswith(("http://", "https://")):
+                            b64 = await _fetch_image_url(url)
+                        else:
+                            b64 = _extract_base64_from_data_url(url)
+                        images.append(_resize_image_if_needed(b64))
+                        has_images = True
+            content = "\n".join(text_parts)
 
         # Extract system message as instructions
         if msg.role == "system":
@@ -60,10 +138,24 @@ def chat_request_to_text_generation(
                 input_messages.append(InputMessage(role=msg.role, content=content))
 
             # Build full message dict for chat template (preserves tool_calls etc.)
-            # Normalize content for model_dump
-            msg_copy = msg.model_copy(update={"content": content})
-            dumped: dict[str, Any] = msg_copy.model_dump(exclude_none=True)
-            chat_template_messages.append(dumped)
+            if has_images:
+                # Preserve multimodal content structure for the chat template
+                # so the Jinja template can emit <image> placeholders
+                multimodal_content: list[dict[str, Any]] = []
+                assert isinstance(msg.content, list)
+                for part in msg.content:
+                    if isinstance(part, ChatCompletionMessageText):
+                        multimodal_content.append({"type": "text", "text": part.text})
+                    elif isinstance(part, ChatCompletionMessageImageUrl):
+                        multimodal_content.append({"type": "image"})
+                dumped = msg.model_dump(exclude_none=True)
+                dumped["content"] = multimodal_content
+                chat_template_messages.append(dumped)
+            else:
+                # Normalize content for model_dump
+                msg_copy = msg.model_copy(update={"content": content})
+                dumped = msg_copy.model_dump(exclude_none=True)
+                chat_template_messages.append(dumped)
 
     return TextGenerationTaskParams(
         model=request.model,
@@ -84,6 +176,7 @@ def chat_request_to_text_generation(
         else None,
         logprobs=request.logprobs or False,
         top_logprobs=request.top_logprobs,
+        images=images if images else None,
     )
 
 

@@ -1,0 +1,18 @@
+model_id = "mlx-community/Qwen3-VL-4B-Instruct-4bit"
+n_layers = 36
+hidden_size = 2560
+supports_tensor = false
+tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "4bit"
+base_model = "Qwen3-VL 4B"
+capabilities = ["text", "thinking", "vision"]
+
+[storage_size]
+in_bytes = 3340000000
+
+[vision]
+weights_repo = "mlx-community/Qwen3-VL-4B-Instruct-4bit"
+image_token_id = 151655
+image_token = "<|image_pad|>"
+model_type = "qwen3_vl"

@@ -42,3 +42,4 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     chat_template_messages: list[dict[str, Any]] | None = None
     logprobs: bool = False
     top_logprobs: int | None = None
+    images: list[str] | None = None  # base64-encoded image data for vision models

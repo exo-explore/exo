@@ -8,6 +8,7 @@ from mlx_lm.models.cache import ArraysCache, RotatingKVCache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+from exo.shared.models.model_cards import VisionCardConfig
 from exo.shared.types.api import (
     CompletionTokensDetails,
     FinishReason,
@@ -43,6 +44,12 @@ from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     fix_unmatched_think_end_tokens,
     mx_barrier,
+)
+from exo.worker.engines.mlx.vision import (
+    MediaRegion,
+    VisionResult,
+    prepare_vision,
+    vision_prefill_cached,
 )
 from exo.worker.runner.bootstrap import logger
 
@@ -253,6 +260,7 @@ def mlx_generate(
     prompt: str,
     kv_prefix_cache: KVPrefixCache | None = None,
     group: mx.distributed.Group | None = None,
+    vision_config: VisionCardConfig | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -269,6 +277,20 @@ def mlx_generate(
     if is_bench:
         kv_prefix_cache = None
 
+    # ── Vision path (all logic lives in vision.py) ──
+    vision: VisionResult | None = prepare_vision(
+        images=task.images,
+        chat_template_messages=task.chat_template_messages,
+        vision_config=vision_config,
+        tokenizer=tokenizer,
+        model=model,
+        encode_prompt_fn=encode_prompt,
+        fix_think_fn=fix_unmatched_think_end_tokens,
+    )
+    if vision is not None:
+        all_prompt_tokens = vision.prompt_tokens
+    media_regions: list[MediaRegion] = vision.media_regions if vision else []
+
     # Use prefix cache if available, otherwise create fresh cache
     prefix_hit_length = 0
     matched_index: int | None = None
@@ -277,7 +299,9 @@ def mlx_generate(
         prompt_tokens = all_prompt_tokens
     else:
         caches, prompt_tokens, matched_index = kv_prefix_cache.get_kv_cache(
-            model, all_prompt_tokens
+            model,
+            all_prompt_tokens,
+            media_regions=media_regions,
         )
         prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
         if prefix_hit_length > 0:
@@ -289,7 +313,7 @@ def mlx_generate(
     if is_bench:
         # Only sample length eos tokens
         eos_ids = eos_ids_from_tokenizer(tokenizer)
-        logits_processors = [ban_token_ids(eos_ids)]
+        logits_processors.append(ban_token_ids(eos_ids))
 
     sampler = make_sampler(
         temp=task.temperature if task.temperature is not None else 0.7,
@@ -308,14 +332,23 @@ def mlx_generate(
     mx_barrier(group)
     logger.info("Ready to prefill")
 
-    # Prefill cache with all tokens except the last one
-    prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
-        model,
-        tokenizer,
-        sampler,
-        prompt_tokens[:-1],
-        caches,
-    )
+    # Prefill cache — vision or text path
+    if vision is not None:
+        prefill_tps, prefill_tokens = vision_prefill_cached(
+            model,
+            vision,
+            prefix_hit_length,
+            caches,
+        )
+        ssm_snapshots_list: list[CacheSnapshot] = []
+    else:
+        prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
+            model,
+            tokenizer,
+            sampler,
+            prompt_tokens[:-1],
+            caches,
+        )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 
     # stream_generate starts from the last token
@@ -447,10 +480,14 @@ def mlx_generate(
                         caches,
                         cache_snapshots,
                         restore_pos=prefix_hit_length,
+                        media_regions=media_regions,
                     )
                 else:
                     kv_prefix_cache.add_kv_cache(
-                        full_prompt_tokens, caches, cache_snapshots
+                        full_prompt_tokens,
+                        caches,
+                        cache_snapshots,
+                        media_regions=media_regions,
                     )
 
         yield GenerationResponse(
