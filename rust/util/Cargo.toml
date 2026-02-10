@@ -13,13 +13,4 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-# macro dependencies
 extend = { workspace = true }
-
-# utility dependencies
-thiserror = { workspace = true }
-once_cell = { workspace = true }
-internment = { workspace = true }
-derive_more = { workspace = true }
-bon = { workspace = true }
-recursion = { workspace = true }
