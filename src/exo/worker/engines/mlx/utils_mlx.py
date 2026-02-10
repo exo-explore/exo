@@ -1,6 +1,5 @@
 import json
 import os
-import resource
 import sys
 import time
 from pathlib import Path
@@ -63,9 +62,6 @@ from exo.worker.engines.mlx.auto_parallel import (
 from exo.worker.runner.bootstrap import logger
 
 Group = mx.distributed.Group
-# Needed for 8 bit model
-_soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(_soft, 2048), _hard), _hard))
 
 
 # TODO: Test this
