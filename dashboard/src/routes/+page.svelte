@@ -66,18 +66,18 @@
   const tbIdentifiers = $derived(nodeThunderbolt());
   const nodeFilter = $derived(previewNodeFilter());
 
-  // Detect TB5 connections without RDMA
+  // Detect TB5 connections without RDMA (require 2+ exo nodes with TB5)
   const tb5WithoutRdma = $derived.by(() => {
     const ids = tbIdentifiers;
     if (!ids) return false;
-    const hasTb5 = Object.values(ids).some((node) =>
+    const tb5NodeCount = Object.values(ids).filter((node) =>
       node.interfaces.some(
         (iface) =>
           iface.linkSpeed.includes("80 Gb/s") ||
           iface.linkSpeed.includes("120 Gb/s"),
       ),
-    );
-    if (!hasTb5) return false;
+    ).length;
+    if (tb5NodeCount < 2) return false;
     const hasRdma = (data?.edges ?? []).some((e) => e.sourceRdmaIface);
     return !hasRdma;
   });
