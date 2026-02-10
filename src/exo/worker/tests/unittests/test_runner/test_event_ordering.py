@@ -1,10 +1,8 @@
 # Check tasks are complete before runner is ever ready.
-from collections.abc import Iterable
-from typing import Callable
+from collections.abc import Generator, Iterable
+from typing import Any, Callable, Tuple, Union
 
-import pytest
-
-import exo.worker.runner.runner as mlx_runner
+import exo.worker.runner.runner as runner
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -23,7 +21,7 @@ from exo.shared.types.tasks import (
     TextGeneration,
 )
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
-from exo.shared.types.worker.runner_response import GenerationResponse
+from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.shared.types.worker.runners import (
     RunnerConnected,
     RunnerConnecting,
@@ -37,6 +35,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import mp_channel
+from exo.worker.engines.base_engine import Engine, TimeoutCallback
 
 from ...constants import (
     CHAT_COMPLETION_TASK_ID,
@@ -106,22 +105,34 @@ def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Even
         assert test_event == true_event, f"{test_event} != {true_event}"
 
 
-@pytest.fixture
-def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
-    # initialize_mlx returns a mock group
-    monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(MockGroup()))
-    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
-    monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
-    monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", nothin)
-    # Mock apply_chat_template since we're using a fake tokenizer (integer 1).
-    # Returns a prompt without thinking tag so detect_thinking_prompt_suffix returns None.
-    monkeypatch.setattr(mlx_runner, "apply_chat_template", make_nothin("test prompt"))
-    monkeypatch.setattr(mlx_runner, "detect_thinking_prompt_suffix", make_nothin(False))
+class MockEngine(Engine):
+    """Mock engine for testing the runner state machine."""
 
-    def fake_generate(*_1: object, **_2: object):
+    def initialize_distributed_group(self) -> Any:
+        self.group = MockGroup()
+        return self.group
+
+    def load_model_and_tokenizer(
+        self, on_timeout: TimeoutCallback | None = None
+    ) -> Tuple[Any, Any]:
+        self.model = "mock_model"
+        self.tokenizer = MockTokenizer()
+        return self.model, self.tokenizer
+
+    def warmup_inference(self) -> int:
+        return 1
+
+    def generate(
+        self,
+        task_params: Any,
+    ) -> Generator[Union[GenerationResponse, ToolCallResponse], None, None]:
         yield GenerationResponse(token=0, text="hi", finish_reason="stop", usage=None)
 
-    monkeypatch.setattr(mlx_runner, "mlx_generate", fake_generate)
+    def check_debug_prompts(self, task_params: Any) -> None:
+        pass
+
+    def cleanup(self) -> None:
+        pass
 
 
 # Use a fake event_sender to remove test flakiness.
@@ -154,7 +165,7 @@ class MockGroup:
         return 1
 
 
-def _run(tasks: Iterable[Task]):
+def _run(tasks: Iterable[Task], engine: Engine):
     bound_instance = get_bound_mlx_ring_instance(
         instance_id=INSTANCE_1_ID,
         model_id=MODEL_A_ID,
@@ -174,13 +185,21 @@ def _run(tasks: Iterable[Task]):
         task_receiver.close = nothin
         task_receiver.join = nothin
 
-        mlx_runner.main(bound_instance, event_sender, task_receiver)  # type: ignore[arg-type]
+        runner.main(bound_instance, event_sender, task_receiver, engine)  # type: ignore[arg-type]
 
         return event_sender.events
 
 
-def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
-    events = _run([INIT_TASK, LOAD_TASK, WARMUP_TASK, CHAT_TASK, SHUTDOWN_TASK])
+def test_events_processed_in_correct_order():
+    engine = MockEngine(
+        get_bound_mlx_ring_instance(
+            instance_id=INSTANCE_1_ID,
+            model_id=MODEL_A_ID,
+            runner_id=RUNNER_1_ID,
+            node_id=NODE_A,
+        )
+    )
+    events = _run([INIT_TASK, LOAD_TASK, WARMUP_TASK, CHAT_TASK, SHUTDOWN_TASK], engine)
 
     expected_chunk = ChunkGenerated(
         command_id=COMMAND_1_ID,
