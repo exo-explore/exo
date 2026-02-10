@@ -2366,7 +2366,7 @@ class custom_function:
 def default_device() -> Device:
     """Get the default device."""
 
-def default_stream(device: Device) -> Stream:
+def default_stream(device: Device | DeviceType) -> Stream:
     """Get the device's default stream."""
 
 def degrees(a: array, /, *, stream: Stream | Device | None = ...) -> array:
