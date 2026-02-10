@@ -267,7 +267,6 @@ final class ExoProcessController: ObservableObject {
         let custom = customNamespace.trimmingCharacters(in: .whitespaces)
         return custom.isEmpty ? base : custom
     }
-
 }
 
 struct RuntimeError: LocalizedError {
