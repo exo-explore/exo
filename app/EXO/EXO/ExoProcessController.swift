@@ -2,10 +2,6 @@ import AppKit
 import Combine
 import Foundation
 
-private let customNamespaceKey = "EXOCustomNamespace"
-private let hfTokenKey = "EXOHFToken"
-private let enableImageModelsKey = "EXOEnableImageModels"
-
 @MainActor
 final class ExoProcessController: ObservableObject {
     enum Status: Equatable {
@@ -273,37 +269,12 @@ final class ExoProcessController: ObservableObject {
     }
 
     private static func loadSettings() -> ExoSettings {
-        // Try reading from file first
         if let data = try? Data(contentsOf: settingsFileURL),
             let settings = try? JSONDecoder().decode(ExoSettings.self, from: data)
         {
             return settings
         }
-
-        // Migration: read from UserDefaults if present
-        let defaults = UserDefaults.standard
-        let hasLegacy =
-            defaults.string(forKey: customNamespaceKey) != nil
-            || defaults.string(forKey: hfTokenKey) != nil
-            || defaults.object(forKey: enableImageModelsKey) != nil
-
-        guard hasLegacy else {
-            return ExoSettings()
-        }
-
-        let migrated = ExoSettings(
-            customNamespace: defaults.string(forKey: customNamespaceKey) ?? "",
-            hfToken: defaults.string(forKey: hfTokenKey) ?? "",
-            enableImageModels: defaults.bool(forKey: enableImageModelsKey)
-        )
-
-        saveSettings(migrated)
-
-        defaults.removeObject(forKey: customNamespaceKey)
-        defaults.removeObject(forKey: hfTokenKey)
-        defaults.removeObject(forKey: enableImageModelsKey)
-
-        return migrated
+        return ExoSettings()
     }
 
     private static func saveSettings(_ settings: ExoSettings) {
