@@ -41,7 +41,7 @@ let
 
   mlx = stdenv.mkDerivation rec {
     pname = "mlx";
-    version = let v = "0.30.5"; in
+    version = let v = "0.30.6"; in
       assert v == uvLockMlxVersion || throw "MLX version mismatch: nix/mlx.nix has ${v} but uv.lock has ${uvLockMlxVersion}. Update both the version and hash in nix/mlx.nix.";
       v;
     pyproject = true;
@@ -50,7 +50,7 @@ let
       owner = "ml-explore";
       repo = "mlx";
       tag = "v${version}";
-      hash = "sha256-SV/3MXt+SuJ69XfLfXycold6KgtXSM7OE0KwMSNw+eE=";
+      hash = "sha256-avD5EGhwgmPdXLAyQSqTO6AXk/W3ziH+f6AetjK3Sdo=";
     };
 
     patches = [
@@ -85,6 +85,7 @@ let
         (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_JSON" "${nlohmann_json.src}")
         (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_NANOBIND" "${nanobind}")
         (lib.cmakeBool "FETCHCONTENT_FULLY_DISCONNECTED" true)
+        (lib.cmakeBool "MLX_BUILD_CPU" true)
         (lib.cmakeBool "MLX_BUILD_METAL" true)
         (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_METAL_CPP" "${metal_cpp}")
         (lib.cmakeOptionType "string" "CMAKE_OSX_DEPLOYMENT_TARGET" "${apple-sdk_26.version}")

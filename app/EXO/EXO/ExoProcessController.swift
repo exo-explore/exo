@@ -28,6 +28,10 @@ final class ExoProcessController: ObservableObject {
         }
     }
 
+    static let exoDirectoryURL: URL = {
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".exo")
+    }()
+
     @Published private(set) var status: Status = .stopped
     @Published private(set) var lastError: String?
     @Published private(set) var launchCountdownSeconds: Int?
@@ -78,7 +82,11 @@ final class ExoProcessController: ObservableObject {
 
             let child = Process()
             child.executableURL = executableURL
-            child.currentDirectoryURL = runtimeURL
+            let exoHomeURL = Self.exoDirectoryURL
+            try? FileManager.default.createDirectory(
+                at: exoHomeURL, withIntermediateDirectories: true
+            )
+            child.currentDirectoryURL = exoHomeURL
             child.environment = makeEnvironment(for: runtimeURL)
 
             child.standardOutput = FileHandle.nullDevice
