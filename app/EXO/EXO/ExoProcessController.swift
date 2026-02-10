@@ -32,33 +32,37 @@ final class ExoProcessController: ObservableObject {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".exo")
     }()
 
-    private static let settingsFileURL: URL = {
-        exoDirectoryURL.appendingPathComponent("settings.json")
-    }()
-
     @Published private(set) var status: Status = .stopped
     @Published private(set) var lastError: String?
     @Published private(set) var launchCountdownSeconds: Int?
-    @Published var customNamespace: String = "" {
-        didSet { saveCurrentSettings() }
+    @Published var customNamespace: String = {
+        return UserDefaults.standard.string(forKey: customNamespaceKey) ?? ""
+    }()
+    {
+        didSet {
+            UserDefaults.standard.set(customNamespace, forKey: customNamespaceKey)
+        }
     }
-    @Published var hfToken: String = "" {
-        didSet { saveCurrentSettings() }
+    @Published var hfToken: String = {
+        return UserDefaults.standard.string(forKey: hfTokenKey) ?? ""
+    }()
+    {
+        didSet {
+            UserDefaults.standard.set(hfToken, forKey: hfTokenKey)
+        }
     }
-    @Published var enableImageModels: Bool = false {
-        didSet { saveCurrentSettings() }
+    @Published var enableImageModels: Bool = {
+        return UserDefaults.standard.bool(forKey: enableImageModelsKey)
+    }()
+    {
+        didSet {
+            UserDefaults.standard.set(enableImageModels, forKey: enableImageModelsKey)
+        }
     }
 
     private var process: Process?
     private var runtimeDirectoryURL: URL?
     private var pendingLaunchTask: Task<Void, Never>?
-
-    init() {
-        let settings = Self.loadSettings()
-        self.customNamespace = settings.customNamespace
-        self.hfToken = settings.hfToken
-        self.enableImageModels = settings.enableImageModels
-    }
 
     func launchIfNeeded() {
         guard process?.isRunning != true else { return }
@@ -264,64 +268,6 @@ final class ExoProcessController: ObservableObject {
         return custom.isEmpty ? base : custom
     }
 
-    // MARK: - Settings persistence (~/.exo/settings.json)
-
-    private struct ExoSettings: Codable {
-        var customNamespace: String = ""
-        var hfToken: String = ""
-        var enableImageModels: Bool = false
-    }
-
-    private static func loadSettings() -> ExoSettings {
-        // Try reading from file first
-        if let data = try? Data(contentsOf: settingsFileURL),
-            let settings = try? JSONDecoder().decode(ExoSettings.self, from: data)
-        {
-            return settings
-        }
-
-        // Migration: read from UserDefaults if present
-        let defaults = UserDefaults.standard
-        let hasLegacy =
-            defaults.string(forKey: customNamespaceKey) != nil
-            || defaults.string(forKey: hfTokenKey) != nil
-            || defaults.object(forKey: enableImageModelsKey) != nil
-
-        guard hasLegacy else {
-            return ExoSettings()
-        }
-
-        let migrated = ExoSettings(
-            customNamespace: defaults.string(forKey: customNamespaceKey) ?? "",
-            hfToken: defaults.string(forKey: hfTokenKey) ?? "",
-            enableImageModels: defaults.bool(forKey: enableImageModelsKey)
-        )
-
-        saveSettings(migrated)
-
-        defaults.removeObject(forKey: customNamespaceKey)
-        defaults.removeObject(forKey: hfTokenKey)
-        defaults.removeObject(forKey: enableImageModelsKey)
-
-        return migrated
-    }
-
-    private static func saveSettings(_ settings: ExoSettings) {
-        try? FileManager.default.createDirectory(
-            at: exoDirectoryURL, withIntermediateDirectories: true
-        )
-        guard let data = try? JSONEncoder().encode(settings) else { return }
-        try? data.write(to: settingsFileURL, options: .atomic)
-    }
-
-    private func saveCurrentSettings() {
-        let settings = ExoSettings(
-            customNamespace: customNamespace,
-            hfToken: hfToken,
-            enableImageModels: enableImageModels
-        )
-        Self.saveSettings(settings)
-    }
 }
 
 struct RuntimeError: LocalizedError {
