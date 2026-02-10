@@ -105,6 +105,16 @@
   // Lightbox state
   let expandedImageSrc = $state<string | null>(null);
 
+  // Image dimension tracking for resolution labels
+  let imageDimensions = $state<Record<string, { width: number; height: number }>>(
+    {},
+  );
+
+  function handleImageLoad(key: string, event: Event) {
+    const img = event.target as HTMLImageElement;
+    imageDimensions[key] = { width: img.naturalWidth, height: img.naturalHeight };
+  }
+
   // Uncertainty heatmap toggle
   let heatmapMessageIds = $state<Set<string>>(new Set());
 
@@ -414,6 +424,83 @@
                   </div>
                 {/if}
 
+                <!-- Source image for image editing -->
+                {#if message.requestType === "image-editing" && message.sourceImageDataUrl}
+                  <div class="mb-3">
+                    <div class="relative group/img inline-block">
+                      <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
+                      <img
+                        src={message.sourceImageDataUrl}
+                        alt="Source"
+                        class="max-w-full max-h-[512px] rounded-lg border border-exo-yellow/20 shadow-lg shadow-black/20 cursor-pointer"
+                        onclick={() => {
+                          if (message.sourceImageDataUrl)
+                            expandedImageSrc = message.sourceImageDataUrl;
+                        }}
+                        onload={(e) => handleImageLoad(`source-${message.id}`, e)}
+                      />
+                      {#if imageDimensions[`source-${message.id}`]}
+                        <div class="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/60 text-[10px] font-mono text-white/70">
+                          {imageDimensions[`source-${message.id}`].width}&times;{imageDimensions[`source-${message.id}`].height}
+                        </div>
+                      {/if}
+                      <!-- Expand button overlay -->
+                      <div
+                        class="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity"
+                      >
+                        <button
+                          type="button"
+                          class="p-2 rounded-lg bg-exo-dark-gray/80 border border-exo-yellow/30 text-exo-yellow hover:bg-exo-dark-gray hover:border-exo-yellow/50 cursor-pointer"
+                          onclick={() => {
+                            if (message.sourceImageDataUrl)
+                              expandedImageSrc = message.sourceImageDataUrl;
+                          }}
+                          title="Expand image"
+                        >
+                          <svg
+                            class="w-4 h-4"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"
+                            />
+                          </svg>
+                        </button>
+                        <!-- Edit button -->
+                        <button
+                          type="button"
+                          class="p-2 rounded-lg bg-exo-dark-gray/80 border border-exo-yellow/30 text-exo-yellow hover:bg-exo-dark-gray hover:border-exo-yellow/50 cursor-pointer"
+                          onclick={() => {
+                            if (message.sourceImageDataUrl) {
+                              setEditingImage(message.sourceImageDataUrl, message);
+                            }
+                          }}
+                          title="Edit image"
+                        >
+                          <svg
+                            class="w-4 h-4"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                            />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                {/if}
+
                 {#if message.content}
                   <div
                     class="text-xs text-foreground font-mono tracking-wide whitespace-pre-wrap break-words leading-relaxed"
@@ -473,7 +560,7 @@
                 <!-- Generated Images -->
                 {#if message.attachments?.some((a) => a.type === "generated-image")}
                   <div class="mb-3">
-                    {#each message.attachments.filter((a) => a.type === "generated-image") as attachment}
+                    {#each message.attachments.filter((a) => a.type === "generated-image") as attachment, index}
                       <div class="relative group/img inline-block">
                         <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
                         <img
@@ -484,7 +571,13 @@
                             if (attachment.preview)
                               expandedImageSrc = attachment.preview;
                           }}
+                          onload={(e) => handleImageLoad(`gen-${message.id}-${index}`, e)}
                         />
+                        {#if imageDimensions[`gen-${message.id}-${index}`]}
+                          <div class="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/60 text-[10px] font-mono text-white/70">
+                            {imageDimensions[`gen-${message.id}-${index}`].width}&times;{imageDimensions[`gen-${message.id}-${index}`].height}
+                          </div>
+                        {/if}
                         <!-- Button overlay -->
                         <div
                           class="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity"
