@@ -13,12 +13,14 @@ from exo.master.placement import (
     place_instance,
 )
 from exo.master.reconcile import (
+    find_satisfying_instance,
     find_unsatisfied_meta_instances,
     instance_connections_healthy,
     try_place_for_meta_instance,
 )
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
+from exo.shared.models.model_cards import ModelCard
 from exo.shared.types.commands import (
     CreateInstance,
     CreateMetaInstance,
@@ -43,6 +45,7 @@ from exo.shared.types.events import (
     IndexedEvent,
     InputChunkReceived,
     InstanceDeleted,
+    MetaInstanceBound,
     MetaInstanceCreated,
     MetaInstanceDeleted,
     NodeGatheredInfo,
@@ -296,6 +299,20 @@ class Master:
                             generated_events.append(
                                 MetaInstanceCreated(meta_instance=command.meta_instance)
                             )
+                            # Immediate placement attempt for responsiveness
+                            model_card = await ModelCard.load(
+                                command.meta_instance.model_id
+                            )
+                            generated_events.extend(
+                                try_place_for_meta_instance(
+                                    command.meta_instance,
+                                    model_card,
+                                    self.state.topology,
+                                    self.state.instances,
+                                    self.state.node_memory,
+                                    self.state.node_network,
+                                )
+                            )
                         case DeleteMetaInstance():
                             generated_events.append(
                                 MetaInstanceDeleted(
@@ -404,10 +421,31 @@ class Master:
                 self.state.meta_instances,
                 self.state.instances,
                 self.state.topology,
+                self.state.meta_instance_backing,
             )
+            # Instances already bound by other MetaInstances
+            already_bound = frozenset(self.state.meta_instance_backing.values())
             for meta_instance in unsatisfied:
+                # Try to bind to an existing unbound instance first
+                existing = find_satisfying_instance(
+                    meta_instance,
+                    self.state.instances,
+                    self.state.topology,
+                    exclude=already_bound,
+                )
+                if existing is not None:
+                    await self._apply_and_broadcast(
+                        MetaInstanceBound(
+                            meta_instance_id=meta_instance.meta_instance_id,
+                            instance_id=existing,
+                        )
+                    )
+                    continue
+                # Otherwise, place a new instance
+                model_card = await ModelCard.load(meta_instance.model_id)
                 events = try_place_for_meta_instance(
                     meta_instance,
+                    model_card,
                     self.state.topology,
                     self.state.instances,
                     self.state.node_memory,
