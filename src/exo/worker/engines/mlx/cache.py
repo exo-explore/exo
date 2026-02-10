@@ -290,7 +290,6 @@ def make_kv_cache(
 ) -> KVCacheType:
     assert hasattr(model, "layers")
 
-    # TODO: Do this for all models
     if hasattr(model, "make_cache"):
         logger.info("Using MLX LM's make cache")
         return model.make_cache()  # type: ignore

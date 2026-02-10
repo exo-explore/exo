@@ -24,6 +24,7 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
 from exo.worker.engines.mlx import Model
+from exo.worker.engines.mlx.auto_parallel import set_pipeline_prefill
 from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
     KVPrefixCache,
@@ -83,6 +84,8 @@ def prefill(
         if has_ssm:
             snapshots.append(snapshot_ssm_states(cache))
 
+    set_pipeline_prefill(model, is_prefill=True)
+
     # Use max_tokens=1 because max_tokens=0 does not work.
     # We just throw away the generated token - we only care about filling the cache
     for _ in stream_generate(
@@ -92,12 +95,14 @@ def prefill(
         max_tokens=1,
         sampler=sampler,
         prompt_cache=cache,
-        prefill_step_size=2048,
+        prefill_step_size=8192,
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
         prompt_progress_callback=progress_callback,
     ):
         break  # Stop after first iteration - cache is now filled
+
+    set_pipeline_prefill(model, is_prefill=False)
 
     # stream_generate added 1 extra generated token to the cache, so we should trim it.
     # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
@@ -144,6 +149,8 @@ def warmup_inference(
 
     # Use a default sampler for warmup
     sampler = make_sampler(temp=0.0)
+
+    mx_barrier(group)
 
     logger.info("Generating warmup tokens")
     for _r in stream_generate(
@@ -298,6 +305,9 @@ def mlx_generate(
     )
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
+    mx_barrier(group)
+    logger.info("Ready to prefill")
+
     # Prefill cache with all tokens except the last one
     prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
         model,
@@ -320,6 +330,9 @@ def mlx_generate(
     reasoning_tokens = 0
     think_start = tokenizer.think_start
     think_end = tokenizer.think_end
+
+    mx_barrier(group)
+
     for completion_tokens, out in enumerate(
         stream_generate(
             model=model,
@@ -329,8 +342,7 @@ def mlx_generate(
             sampler=sampler,
             logits_processors=logits_processors,
             prompt_cache=caches,
-            # TODO: Dynamically change prefill step size to be the maximum possible without timing out.
-            prefill_step_size=2048,
+            prefill_step_size=1,
             kv_group_size=KV_GROUP_SIZE,
             kv_bits=KV_BITS,
         ),
