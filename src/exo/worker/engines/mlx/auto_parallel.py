@@ -121,10 +121,15 @@ class PipelineFirstLayer(CustomMlxLayer):
         super().__init__(original_layer)
         self.r: int = r
         self.group = group
+        self.is_prefill: bool = False
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
+            if self.is_prefill:
+                # We want to avoid GPU timeout errors by evalling the distributed operation
+                # so that it stays on CPU, which does not have a timeout.
+                mx.eval(x)
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -141,6 +146,7 @@ class PipelineLastLayer(CustomMlxLayer):
         self.s: int = s
         self.group = group
         self.original_layer_signature = signature(self.original_layer.__call__)
+        self.is_prefill: bool = False
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         cache = self.original_layer_signature.bind_partial(
@@ -155,12 +161,23 @@ class PipelineLastLayer(CustomMlxLayer):
             )
             if cache is not None:
                 cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
+            if self.is_prefill:
+                mx.eval(output)
+                if cache is not None:
+                    mx.eval(cache.keys)  # type: ignore
 
-        output = mx.distributed.all_gather(output, group=self.group)[
-            -output.shape[0] :
-        ]  # type :ignore
+        if not self.is_prefill:
+            output = mx.distributed.all_gather(output, group=self.group)[
+                -output.shape[0] :
+            ]
 
         return output
+
+
+def set_pipeline_prefill(model: nn.Module, is_prefill: bool) -> None:
+    for layer in model.layers:  # type: ignore
+        if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
+            layer.is_prefill = is_prefill
 
 
 def _inner_model(model: nn.Module) -> nn.Module:
