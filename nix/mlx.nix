@@ -85,6 +85,7 @@ let
         (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_JSON" "${nlohmann_json.src}")
         (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_NANOBIND" "${nanobind}")
         (lib.cmakeBool "FETCHCONTENT_FULLY_DISCONNECTED" true)
+        (lib.cmakeBool "MLX_BUILD_CPU" true)
         (lib.cmakeBool "MLX_BUILD_METAL" true)
         (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_METAL_CPP" "${metal_cpp}")
         (lib.cmakeOptionType "string" "CMAKE_OSX_DEPLOYMENT_TARGET" "${apple-sdk_26.version}")
