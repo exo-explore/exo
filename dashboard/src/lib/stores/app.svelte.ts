@@ -227,6 +227,17 @@ interface RawStateResponse {
   nodeMemory?: Record<string, RawMemoryUsage>;
   nodeSystem?: Record<string, RawSystemPerformanceProfile>;
   nodeNetwork?: Record<string, RawNodeNetworkInfo>;
+  // Thunderbolt identifiers per node
+  nodeThunderbolt?: Record<
+    string,
+    {
+      interfaces: Array<{
+        rdmaInterface: string;
+        domainUuid: string;
+        linkSpeed: string;
+      }>;
+    }
+  >;
   // Thunderbolt bridge status per node
   nodeThunderboltBridge?: Record<
     string,
@@ -513,6 +524,18 @@ class AppStore {
   previewNodeFilter = $state<Set<string>>(new Set());
   lastUpdate = $state<number | null>(null);
   thunderboltBridgeCycles = $state<string[][]>([]);
+  nodeThunderbolt = $state<
+    Record<
+      string,
+      {
+        interfaces: Array<{
+          rdmaInterface: string;
+          domainUuid: string;
+          linkSpeed: string;
+        }>;
+      }
+    >
+  >({});
   nodeThunderboltBridge = $state<
     Record<
       string,
@@ -1223,6 +1246,8 @@ class AppStore {
       if (data.downloads) {
         this.downloads = data.downloads;
       }
+      // Thunderbolt identifiers per node
+      this.nodeThunderbolt = data.nodeThunderbolt ?? {};
       // Thunderbolt bridge cycles
       this.thunderboltBridgeCycles = data.thunderboltBridgeCycles ?? [];
       // Thunderbolt bridge status per node
@@ -3055,7 +3080,8 @@ export const setChatSidebarVisible = (visible: boolean) =>
   appStore.setChatSidebarVisible(visible);
 export const refreshState = () => appStore.fetchState();
 
-// Thunderbolt bridge status
+// Thunderbolt status
+export const nodeThunderbolt = () => appStore.nodeThunderbolt;
 export const thunderboltBridgeCycles = () => appStore.thunderboltBridgeCycles;
 export const nodeThunderboltBridge = () => appStore.nodeThunderboltBridge;
 

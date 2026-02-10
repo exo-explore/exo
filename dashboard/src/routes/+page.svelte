@@ -37,6 +37,7 @@
     toggleTopologyOnlyMode,
     chatSidebarVisible,
     toggleChatSidebarVisible,
+    nodeThunderbolt,
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
     type DownloadProgress,
@@ -62,7 +63,25 @@
   const sidebarVisible = $derived(chatSidebarVisible());
   const tbBridgeCycles = $derived(thunderboltBridgeCycles());
   const tbBridgeData = $derived(nodeThunderboltBridge());
+  const tbIdentifiers = $derived(nodeThunderbolt());
   const nodeFilter = $derived(previewNodeFilter());
+
+  // Detect TB5 connections without RDMA
+  const tb5WithoutRdma = $derived.by(() => {
+    const ids = tbIdentifiers;
+    if (!ids) return false;
+    const hasTb5 = Object.values(ids).some((node) =>
+      node.interfaces.some(
+        (iface) =>
+          iface.linkSpeed.includes("80 Gb/s") ||
+          iface.linkSpeed.includes("120 Gb/s"),
+      ),
+    );
+    if (!hasTb5) return false;
+    const hasRdma = (data?.edges ?? []).some((e) => e.sourceRdmaIface);
+    return !hasRdma;
+  });
+  let tb5InfoDismissed = $state(false);
 
   // Helper to get friendly node name from node ID
   function getNodeName(nodeId: string): string {
@@ -1800,6 +1819,53 @@
             </div>
           {/if}
 
+          <!-- TB5 RDMA Available Info -->
+          {#if tb5WithoutRdma && !tb5InfoDismissed}
+            <div
+              class="absolute left-4 flex items-center gap-2 px-3 py-2 rounded border border-blue-400/50 bg-blue-400/10 backdrop-blur-sm"
+              class:top-16={tbBridgeCycles.length > 0}
+              class:top-4={tbBridgeCycles.length === 0}
+              role="status"
+            >
+              <svg
+                class="w-5 h-5 text-blue-400 flex-shrink-0"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              <span class="text-sm font-mono text-blue-200">
+                RDMA AVAILABLE
+              </span>
+              <button
+                type="button"
+                onclick={() => (tb5InfoDismissed = true)}
+                class="ml-1 text-blue-300/60 hover:text-blue-200 transition-colors cursor-pointer"
+                title="Dismiss"
+              >
+                <svg
+                  class="w-4 h-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            </div>
+          {/if}
+
           <!-- Exit topology-only mode button -->
           <button
             type="button"
@@ -1915,6 +1981,71 @@
                       {/if}
                     </svg>
                   </button>
+                </div>
+              </div>
+            {/if}
+
+            <!-- TB5 RDMA Available Info -->
+            {#if tb5WithoutRdma && !tb5InfoDismissed}
+              <div
+                class="absolute left-4 group"
+                class:top-16={tbBridgeCycles.length > 0}
+                class:top-4={tbBridgeCycles.length === 0}
+                role="status"
+              >
+                <div
+                  class="flex items-center gap-2 px-3 py-2 rounded border border-blue-400/50 bg-blue-400/10 backdrop-blur-sm"
+                >
+                  <svg
+                    class="w-5 h-5 text-blue-400 flex-shrink-0"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  <span class="text-sm font-mono text-blue-200">
+                    RDMA AVAILABLE
+                  </span>
+                  <button
+                    type="button"
+                    onclick={() => (tb5InfoDismissed = true)}
+                    class="ml-1 text-blue-300/60 hover:text-blue-200 transition-colors cursor-pointer"
+                    title="Dismiss"
+                  >
+                    <svg
+                      class="w-4 h-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M6 18L18 6M6 6l12 12"
+                      />
+                    </svg>
+                  </button>
+                </div>
+
+                <!-- Tooltip on hover -->
+                <div
+                  class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-blue-400/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+                >
+                  <p class="text-xs text-white/80 mb-2">
+                    Thunderbolt 5 connection detected. RDMA can be enabled for
+                    significantly faster inter-node communication.
+                  </p>
+                  <p class="text-xs text-white/60">
+                    <span class="text-blue-300">To enable:</span> Install and configure
+                    RDMA on the connected nodes.
+                  </p>
                 </div>
               </div>
             {/if}
@@ -2794,6 +2925,33 @@
                     </svg>
                     <span class="text-[10px] font-mono text-yellow-200"
                       >TB CYCLE</span
+                    >
+                  </div>
+                {/if}
+
+                <!-- TB5 RDMA Available (compact) -->
+                {#if tb5WithoutRdma && !tb5InfoDismissed}
+                  <div
+                    class="absolute left-2 flex items-center gap-1.5 px-2 py-1 rounded border border-blue-400/50 bg-blue-400/10 backdrop-blur-sm"
+                    class:top-10={tbBridgeCycles.length > 0}
+                    class:top-2={tbBridgeCycles.length === 0}
+                    title="Thunderbolt 5 detected — RDMA can be enabled for better performance"
+                  >
+                    <svg
+                      class="w-3.5 h-3.5 text-blue-400"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                    <span class="text-[10px] font-mono text-blue-200"
+                      >RDMA AVAILABLE</span
                     >
                   </div>
                 {/if}
