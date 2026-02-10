@@ -286,7 +286,14 @@ const IMAGE_PARAMS_STORAGE_KEY = "exo-image-generation-params";
 // Image generation params interface matching backend API
 export interface ImageGenerationParams {
   // Basic params
-  size: "512x512" | "768x768" | "1024x1024" | "1024x768" | "768x1024";
+  size:
+    | "512x512"
+    | "768x768"
+    | "1024x1024"
+    | "1024x768"
+    | "768x1024"
+    | "1024x1365"
+    | "1365x1024";
   quality: "low" | "medium" | "high";
   outputFormat: "png" | "jpeg";
   numImages: number;
@@ -298,6 +305,7 @@ export interface ImageGenerationParams {
   numInferenceSteps: number | null;
   guidance: number | null;
   negativePrompt: string | null;
+  numSyncSteps: number | null;
   // Edit mode params
   inputFidelity: "low" | "high";
 }
@@ -319,6 +327,7 @@ const DEFAULT_IMAGE_PARAMS: ImageGenerationParams = {
   numInferenceSteps: null,
   guidance: null,
   negativePrompt: null,
+  numSyncSteps: null,
   inputFidelity: "low",
 };
 
@@ -2396,7 +2405,9 @@ class AppStore {
         params.seed !== null ||
         params.numInferenceSteps !== null ||
         params.guidance !== null ||
-        (params.negativePrompt !== null && params.negativePrompt.trim() !== "");
+        (params.negativePrompt !== null &&
+          params.negativePrompt.trim() !== "") ||
+        params.numSyncSteps !== null;
 
       const requestBody: Record<string, unknown> = {
         model,
@@ -2421,6 +2432,9 @@ class AppStore {
             params.negativePrompt.trim() !== "" && {
               negative_prompt: params.negativePrompt,
             }),
+          ...(params.numSyncSteps !== null && {
+            num_sync_steps: params.numSyncSteps,
+          }),
         };
       }
 
@@ -2670,29 +2684,19 @@ class AppStore {
       formData.append("input_fidelity", params.inputFidelity);
 
       // Advanced params
-      if (params.seed !== null) {
-        formData.append(
-          "advanced_params",
-          JSON.stringify({
-            seed: params.seed,
-            ...(params.numInferenceSteps !== null && {
-              num_inference_steps: params.numInferenceSteps,
-            }),
-            ...(params.guidance !== null && { guidance: params.guidance }),
-            ...(params.negativePrompt !== null &&
-              params.negativePrompt.trim() !== "" && {
-                negative_prompt: params.negativePrompt,
-              }),
-          }),
-        );
-      } else if (
+      const hasAdvancedParams =
+        params.seed !== null ||
         params.numInferenceSteps !== null ||
         params.guidance !== null ||
-        (params.negativePrompt !== null && params.negativePrompt.trim() !== "")
-      ) {
+        (params.negativePrompt !== null &&
+          params.negativePrompt.trim() !== "") ||
+        params.numSyncSteps !== null;
+
+      if (hasAdvancedParams) {
         formData.append(
           "advanced_params",
           JSON.stringify({
+            ...(params.seed !== null && { seed: params.seed }),
             ...(params.numInferenceSteps !== null && {
               num_inference_steps: params.numInferenceSteps,
             }),
@@ -2701,6 +2705,9 @@ class AppStore {
               params.negativePrompt.trim() !== "" && {
                 negative_prompt: params.negativePrompt,
               }),
+            ...(params.numSyncSteps !== null && {
+              num_sync_steps: params.numSyncSteps,
+            }),
           }),
         );
       }

@@ -16,6 +16,7 @@ prerelease-mode = "allow"
 [manifest]
 members = [
     "exo",
+    "exo-bench",
     "exo-pyo3-bindings",
 ]
 
@@ -412,7 +413,7 @@ requires-dist = [
     { name = "huggingface-hub", specifier = ">=0.33.4" },
     { name = "hypercorn", specifier = ">=0.18.0" },
     { name = "loguru", specifier = ">=0.7.3" },
-    { name = "mflux", specifier = "==0.15.4" },
+    { name = "mflux", specifier = "==0.15.5" },
     { name = "mlx", marker = "sys_platform == 'darwin'", specifier = "==0.30.5" },
     { name = "mlx", extras = ["cpu"], marker = "sys_platform == 'linux'", specifier = "==0.30.5" },
     { name = "mlx-lm", specifier = "==0.30.6" },
@@ -435,6 +436,27 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
     { name = "pytest-env" },
     { name = "ruff", specifier = ">=0.11.13" },
+]
+
+[[package]]
+name = "exo-bench"
+version = "0.1.0"
+source = { editable = "bench" }
+dependencies = [
+    { name = "huggingface-hub", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "jinja2", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "loguru", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "tiktoken", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "transformers", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "huggingface-hub", specifier = ">=0.33.4" },
+    { name = "jinja2", specifier = ">=3.1.0" },
+    { name = "loguru", specifier = ">=0.7.3" },
+    { name = "tiktoken", specifier = ">=0.12.0" },
+    { name = "transformers", specifier = ">=5.0.0" },
 ]
 
 [[package]]
@@ -987,7 +1009,7 @@ wheels = [
 
 [[package]]
 name = "mflux"
-version = "0.15.4"
+version = "0.15.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1013,9 +1035,9 @@ dependencies = [
     { name = "twine", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "urllib3", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a6/f8/95322db7a865e4df6bad108b1c99aa7fbe211aac3f298f3ad696c2744a39/mflux-0.15.4.tar.gz", hash = "sha256:138e1aedae86e13eafeb8faec017945fcdcca42c3234daabcd81a83c9a202ace", size = 741228, upload-time = "2026-01-20T15:39:26.807Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/35/8e/f20de51bf9dc0a986535d9a825db4ae314163421b3d3ddaa90a2b959b9fd/mflux-0.15.5.tar.gz", hash = "sha256:9a3372bd64d51c4caff4ff9e7d7d698bea5833242fd849c59cbb0c92f7d7aa3b", size = 743700, upload-time = "2026-01-26T12:41:45.272Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8e/be/81cf4ce2d1933b9b210c028a05ac95e958008c0d43e377a5f2757b7f2d4d/mflux-0.15.4-py3-none-any.whl", hash = "sha256:f04d9b1d7c5cd67880f483ab29fb2097648a25459eef9c5ee6480fad46de5e82", size = 987644, upload-time = "2026-01-20T15:39:24.817Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/bb/ef936eae2ae78a47cd92ddffc18fc06ad3fd5f438a0915fb62d8bb9508ec/mflux-0.15.5-py3-none-any.whl", hash = "sha256:c94891d4a518047a818863bb099c755e93af90c524ced358baf5b31502c09e82", size = 990939, upload-time = "2026-01-26T12:41:42.898Z" },
 ]
 
 [[package]]
