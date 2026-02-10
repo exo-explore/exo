@@ -13,4 +13,3 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-extend = { workspace = true }
