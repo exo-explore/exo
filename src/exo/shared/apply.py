@@ -12,6 +12,8 @@ from exo.shared.types.events import (
     InputChunkReceived,
     InstanceCreated,
     InstanceDeleted,
+    MetaInstanceCreated,
+    MetaInstanceDeleted,
     NodeDownloadProgress,
     NodeGatheredInfo,
     NodeTimedOut,
@@ -28,6 +30,7 @@ from exo.shared.types.events import (
     TracesCollected,
     TracesMerged,
 )
+from exo.shared.types.meta_instance import MetaInstance, MetaInstanceId
 from exo.shared.types.profiling import (
     NodeIdentity,
     NodeNetworkInfo,
@@ -69,6 +72,10 @@ def event_apply(event: Event, state: State) -> State:
             return apply_instance_created(event, state)
         case InstanceDeleted():
             return apply_instance_deleted(event, state)
+        case MetaInstanceCreated():
+            return apply_meta_instance_created(event, state)
+        case MetaInstanceDeleted():
+            return apply_meta_instance_deleted(event, state)
         case NodeTimedOut():
             return apply_node_timed_out(event, state)
         case NodeDownloadProgress():
@@ -185,6 +192,23 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
         iid: inst for iid, inst in state.instances.items() if iid != event.instance_id
     }
     return state.model_copy(update={"instances": new_instances})
+
+
+def apply_meta_instance_created(event: MetaInstanceCreated, state: State) -> State:
+    new_meta: Mapping[MetaInstanceId, MetaInstance] = {
+        **state.meta_instances,
+        event.meta_instance.meta_instance_id: event.meta_instance,
+    }
+    return state.model_copy(update={"meta_instances": new_meta})
+
+
+def apply_meta_instance_deleted(event: MetaInstanceDeleted, state: State) -> State:
+    new_meta: Mapping[MetaInstanceId, MetaInstance] = {
+        mid: mi
+        for mid, mi in state.meta_instances.items()
+        if mid != event.meta_instance_id
+    }
+    return state.model_copy(update={"meta_instances": new_meta})
 
 
 def apply_runner_status_updated(event: RunnerStatusUpdated, state: State) -> State:

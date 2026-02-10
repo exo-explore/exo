@@ -7,6 +7,7 @@ from exo.shared.types.api import (
 )
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.meta_instance import MetaInstance, MetaInstanceId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
@@ -46,6 +47,14 @@ class CreateInstance(BaseCommand):
 
 class DeleteInstance(BaseCommand):
     instance_id: InstanceId
+
+
+class CreateMetaInstance(BaseCommand):
+    meta_instance: MetaInstance
+
+
+class DeleteMetaInstance(BaseCommand):
+    meta_instance_id: MetaInstanceId
 
 
 class TaskFinished(BaseCommand):
@@ -89,6 +98,8 @@ Command = (
     | PlaceInstance
     | CreateInstance
     | DeleteInstance
+    | CreateMetaInstance
+    | DeleteMetaInstance
     | TaskFinished
     | SendInputChunk
 )
