@@ -43,7 +43,8 @@ DASHBOARD_DIR = (
 )
 
 # Log files (data/logs or cache)
-EXO_LOG = EXO_CACHE_HOME / "exo.log"
+EXO_LOG_DIR = EXO_CACHE_HOME / "exo_log"
+EXO_LOG = EXO_LOG_DIR / "exo.log"
 EXO_TEST_LOG = EXO_CACHE_HOME / "exo_test.log"
 
 # Identity (config)
