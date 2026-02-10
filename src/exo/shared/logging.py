@@ -3,11 +3,21 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
+import zstandard
 from hypercorn import Config
 from hypercorn.logging import Logger as HypercornLogger
 from loguru import logger
 
 _MAX_LOG_ARCHIVES = 5
+
+
+def _zstd_compress(filepath: str) -> None:
+    source = Path(filepath)
+    dest = source.with_suffix(source.suffix + ".zst")
+    cctx = zstandard.ZstdCompressor()
+    with open(source, "rb") as f_in, open(dest, "wb") as f_out:
+        cctx.copy_stream(f_in, f_out)
+    source.unlink()
 
 
 def _once_then_never() -> Iterator[bool]:
@@ -71,7 +81,7 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
             enqueue=True,
             rotation=lambda _, __: next(rotate_once),
             retention=_MAX_LOG_ARCHIVES,
-            compression="zstd",
+            compression=_zstd_compress,
         )
 
 
