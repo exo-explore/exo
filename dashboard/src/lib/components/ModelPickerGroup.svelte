@@ -98,7 +98,7 @@
       case "fits_now":
         return "text-white/40";
       case "fits_cluster_capacity":
-        return "text-yellow-400/80";
+        return "text-orange-400/80";
       case "too_large":
         return "text-red-400/70";
     }
