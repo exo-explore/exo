@@ -117,6 +117,10 @@
     }
   }
 
+  // Warning icon SVG path (reused across warning snippets)
+  const warningIconPath =
+    "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z";
+
   let mounted = $state(false);
 
   // Instance launch state
@@ -1678,6 +1682,185 @@
   });
 </script>
 
+{#snippet clusterWarnings()}
+  {#if tbBridgeCycles.length > 0 || macosVersionMismatch}
+    <div class="absolute top-4 left-4 flex flex-col gap-2 z-40">
+      {#if tbBridgeCycles.length > 0}
+        {@const cycle = tbBridgeCycles[0]}
+        {@const serviceName = getTbBridgeServiceName(cycle)}
+        {@const disableCmd = `sudo networksetup -setnetworkserviceenabled "${serviceName}" off`}
+        <div class="group relative" role="alert">
+          <div
+            class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
+          >
+            <svg
+              class="w-5 h-5 text-yellow-400 flex-shrink-0"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d={warningIconPath}
+              />
+            </svg>
+            <span class="text-sm font-mono text-yellow-200">
+              THUNDERBOLT BRIDGE CYCLE DETECTED
+            </span>
+          </div>
+
+          <!-- Tooltip on hover -->
+          <div
+            class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+          >
+            <p class="text-xs text-white/80 mb-2">
+              A network routing cycle was detected between nodes connected via
+              Thunderbolt Bridge. This can cause connectivity issues.
+            </p>
+            <p class="text-xs text-white/60 mb-2">
+              <span class="text-yellow-300">Affected nodes:</span>
+              {cycle.map(getNodeName).join(" → ")}
+            </p>
+            <p class="text-xs text-white/60 mb-1">
+              <span class="text-yellow-300">To fix:</span> Disable the Thunderbolt
+              Bridge on one of the affected nodes:
+            </p>
+            <button
+              type="button"
+              onclick={() => copyToClipboard(disableCmd)}
+              class="w-full flex items-center gap-2 text-[10px] font-mono bg-exo-black/60 px-2 py-1.5 rounded text-exo-yellow break-all text-left hover:bg-exo-black/80 transition-colors cursor-pointer group/copy"
+              title="Click to copy"
+            >
+              <span class="flex-1">{disableCmd}</span>
+              <svg
+                class="w-3.5 h-3.5 flex-shrink-0 text-white/40 group-hover/copy:text-exo-yellow transition-colors"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                {#if copiedCommand}
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M5 13l4 4L19 7"
+                  />
+                {:else}
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                  />
+                {/if}
+              </svg>
+            </button>
+          </div>
+        </div>
+      {/if}
+
+      {#if macosVersionMismatch}
+        <div class="group relative" role="alert">
+          <div
+            class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
+          >
+            <svg
+              class="w-5 h-5 text-yellow-400 flex-shrink-0"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d={warningIconPath}
+              />
+            </svg>
+            <span class="text-sm font-mono text-yellow-200">
+              INCOMPATIBLE macOS VERSIONS
+            </span>
+          </div>
+
+          <!-- Tooltip on hover -->
+          <div
+            class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+          >
+            <p class="text-xs text-white/80 mb-2">
+              Nodes in this cluster are running different macOS versions. This
+              may cause inference compatibility issues.
+            </p>
+            <div class="text-xs text-white/60 mb-2">
+              <span class="text-yellow-300">Node versions:</span>
+              {#each macosVersionMismatch as node}
+                <div class="ml-2">
+                  {node.friendlyName} — macOS {node.version}
+                </div>
+              {/each}
+            </div>
+            <p class="text-xs text-white/60">
+              <span class="text-yellow-300">Suggested action:</span> Update all nodes
+              to the same macOS version for best compatibility.
+            </p>
+          </div>
+        </div>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet clusterWarningsCompact()}
+  {#if tbBridgeCycles.length > 0 || macosVersionMismatch}
+    <div class="absolute top-2 left-2 flex flex-col gap-1">
+      {#if tbBridgeCycles.length > 0}
+        <div
+          class="flex items-center gap-1.5 px-2 py-1 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm"
+          title="Thunderbolt Bridge cycle detected"
+        >
+          <svg
+            class="w-3.5 h-3.5 text-yellow-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d={warningIconPath}
+            />
+          </svg>
+          <span class="text-[10px] font-mono text-yellow-200">TB CYCLE</span>
+        </div>
+      {/if}
+      {#if macosVersionMismatch}
+        <div
+          class="flex items-center gap-1.5 px-2 py-1 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm"
+          title="Incompatible macOS versions detected"
+        >
+          <svg
+            class="w-3.5 h-3.5 text-yellow-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d={warningIconPath}
+            />
+          </svg>
+          <span class="text-[10px] font-mono text-yellow-200"
+            >macOS MISMATCH</span
+          >
+        </div>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
 <!-- Global event listeners for slider dragging -->
 <svelte:window
   onmousemove={handleSliderMouseMove}
@@ -1745,133 +1928,7 @@
             onNodeClick={togglePreviewNodeFilter}
           />
 
-          <!-- Cluster Warnings -->
-          {#if tbBridgeCycles.length > 0 || macosVersionMismatch}
-            <div class="absolute top-4 left-4 flex flex-col gap-2 z-40">
-              {#if tbBridgeCycles.length > 0}
-                {@const cycle = tbBridgeCycles[0]}
-                {@const serviceName = getTbBridgeServiceName(cycle)}
-                {@const disableCmd = `sudo networksetup -setnetworkserviceenabled "${serviceName}" off`}
-                <div class="group relative" role="alert">
-                  <div
-                    class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
-                  >
-                    <svg
-                      class="w-5 h-5 text-yellow-400 flex-shrink-0"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      stroke-width="2"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                      />
-                    </svg>
-                    <span class="text-sm font-mono text-yellow-200">
-                      THUNDERBOLT BRIDGE CYCLE DETECTED
-                    </span>
-                  </div>
-
-                  <!-- Tooltip on hover -->
-                  <div
-                    class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
-                  >
-                    <p class="text-xs text-white/80 mb-2">
-                      A network routing cycle was detected between nodes
-                      connected via Thunderbolt Bridge. This can cause
-                      connectivity issues.
-                    </p>
-                    <p class="text-xs text-white/60 mb-2">
-                      <span class="text-yellow-300">Affected nodes:</span>
-                      {cycle.map(getNodeName).join(" → ")}
-                    </p>
-                    <p class="text-xs text-white/60 mb-1">
-                      <span class="text-yellow-300">To fix:</span> Disable the Thunderbolt
-                      Bridge on one of the affected nodes:
-                    </p>
-                    <button
-                      type="button"
-                      onclick={() => copyToClipboard(disableCmd)}
-                      class="w-full flex items-center gap-2 text-[10px] font-mono bg-exo-black/60 px-2 py-1.5 rounded text-exo-yellow break-all text-left hover:bg-exo-black/80 transition-colors cursor-pointer group/copy"
-                      title="Click to copy"
-                    >
-                      <span class="flex-1">{disableCmd}</span>
-                      <svg
-                        class="w-3.5 h-3.5 flex-shrink-0 text-white/40 group-hover/copy:text-exo-yellow transition-colors"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        {#if copiedCommand}
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            d="M5 13l4 4L19 7"
-                          />
-                        {:else}
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                          />
-                        {/if}
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              {/if}
-
-              {#if macosVersionMismatch}
-                <div class="group relative" role="alert">
-                  <div
-                    class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
-                  >
-                    <svg
-                      class="w-5 h-5 text-yellow-400 flex-shrink-0"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      stroke-width="2"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                      />
-                    </svg>
-                    <span class="text-sm font-mono text-yellow-200">
-                      INCOMPATIBLE macOS VERSIONS
-                    </span>
-                  </div>
-
-                  <!-- Tooltip on hover -->
-                  <div
-                    class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
-                  >
-                    <p class="text-xs text-white/80 mb-2">
-                      Nodes in this cluster are running different macOS
-                      versions. This may cause inference compatibility issues.
-                    </p>
-                    <div class="text-xs text-white/60 mb-2">
-                      <span class="text-yellow-300">Node versions:</span>
-                      {#each macosVersionMismatch as node}
-                        <div class="ml-2">
-                          {node.friendlyName} — macOS {node.version}
-                        </div>
-                      {/each}
-                    </div>
-                    <p class="text-xs text-white/60">
-                      <span class="text-yellow-300">Suggested action:</span> Update
-                      all nodes to the same macOS version for best compatibility.
-                    </p>
-                  </div>
-                </div>
-              {/if}
-            </div>
-          {/if}
+          {@render clusterWarnings()}
 
           <!-- Exit topology-only mode button -->
           <button
@@ -1916,133 +1973,7 @@
               onNodeClick={togglePreviewNodeFilter}
             />
 
-            <!-- Cluster Warnings -->
-            {#if tbBridgeCycles.length > 0 || macosVersionMismatch}
-              <div class="absolute top-4 left-4 flex flex-col gap-2 z-40">
-                {#if tbBridgeCycles.length > 0}
-                  {@const cycle = tbBridgeCycles[0]}
-                  {@const serviceName = getTbBridgeServiceName(cycle)}
-                  {@const disableCmd = `sudo networksetup -setnetworkserviceenabled "${serviceName}" off`}
-                  <div class="group relative" role="alert">
-                    <div
-                      class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
-                    >
-                      <svg
-                        class="w-5 h-5 text-yellow-400 flex-shrink-0"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                        />
-                      </svg>
-                      <span class="text-sm font-mono text-yellow-200">
-                        THUNDERBOLT BRIDGE CYCLE DETECTED
-                      </span>
-                    </div>
-
-                    <!-- Tooltip on hover -->
-                    <div
-                      class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
-                    >
-                      <p class="text-xs text-white/80 mb-2">
-                        A network routing cycle was detected between nodes
-                        connected via Thunderbolt Bridge. This can cause
-                        connectivity issues.
-                      </p>
-                      <p class="text-xs text-white/60 mb-2">
-                        <span class="text-yellow-300">Affected nodes:</span>
-                        {cycle.map(getNodeName).join(" → ")}
-                      </p>
-                      <p class="text-xs text-white/60 mb-1">
-                        <span class="text-yellow-300">To fix:</span> Disable the Thunderbolt
-                        Bridge on one of the affected nodes:
-                      </p>
-                      <button
-                        type="button"
-                        onclick={() => copyToClipboard(disableCmd)}
-                        class="w-full flex items-center gap-2 text-[10px] font-mono bg-exo-black/60 px-2 py-1.5 rounded text-exo-yellow break-all text-left hover:bg-exo-black/80 transition-colors cursor-pointer group/copy"
-                        title="Click to copy"
-                      >
-                        <span class="flex-1">{disableCmd}</span>
-                        <svg
-                          class="w-3.5 h-3.5 flex-shrink-0 text-white/40 group-hover/copy:text-exo-yellow transition-colors"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                          stroke-width="2"
-                        >
-                          {#if copiedCommand}
-                            <path
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              d="M5 13l4 4L19 7"
-                            />
-                          {:else}
-                            <path
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                            />
-                          {/if}
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                {/if}
-
-                {#if macosVersionMismatch}
-                  <div class="group relative" role="alert">
-                    <div
-                      class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
-                    >
-                      <svg
-                        class="w-5 h-5 text-yellow-400 flex-shrink-0"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                        />
-                      </svg>
-                      <span class="text-sm font-mono text-yellow-200">
-                        INCOMPATIBLE macOS VERSIONS
-                      </span>
-                    </div>
-
-                    <!-- Tooltip on hover -->
-                    <div
-                      class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
-                    >
-                      <p class="text-xs text-white/80 mb-2">
-                        Nodes in this cluster are running different macOS
-                        versions. This may cause inference compatibility issues.
-                      </p>
-                      <div class="text-xs text-white/60 mb-2">
-                        <span class="text-yellow-300">Node versions:</span>
-                        {#each macosVersionMismatch as node}
-                          <div class="ml-2">
-                            {node.friendlyName} — macOS {node.version}
-                          </div>
-                        {/each}
-                      </div>
-                      <p class="text-xs text-white/60">
-                        <span class="text-yellow-300">Suggested action:</span> Update
-                        all nodes to the same macOS version for best compatibility.
-                      </p>
-                    </div>
-                  </div>
-                {/if}
-              </div>
-            {/if}
+            {@render clusterWarnings()}
 
             <!-- Node Filter Indicator (top-right corner) -->
             {#if isFilterActive()}
@@ -2898,57 +2829,7 @@
                   onNodeClick={togglePreviewNodeFilter}
                 />
 
-                <!-- Cluster Warnings (compact) -->
-                {#if tbBridgeCycles.length > 0 || macosVersionMismatch}
-                  <div class="absolute top-2 left-2 flex flex-col gap-1">
-                    {#if tbBridgeCycles.length > 0}
-                      <div
-                        class="flex items-center gap-1.5 px-2 py-1 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm"
-                        title="Thunderbolt Bridge cycle detected"
-                      >
-                        <svg
-                          class="w-3.5 h-3.5 text-yellow-400"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                          stroke-width="2"
-                        >
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                          />
-                        </svg>
-                        <span class="text-[10px] font-mono text-yellow-200"
-                          >TB CYCLE</span
-                        >
-                      </div>
-                    {/if}
-                    {#if macosVersionMismatch}
-                      <div
-                        class="flex items-center gap-1.5 px-2 py-1 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm"
-                        title="Incompatible macOS versions detected"
-                      >
-                        <svg
-                          class="w-3.5 h-3.5 text-yellow-400"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                          stroke-width="2"
-                        >
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                          />
-                        </svg>
-                        <span class="text-[10px] font-mono text-yellow-200"
-                          >macOS MISMATCH</span
-                        >
-                      </div>
-                    {/if}
-                  </div>
-                {/if}
+                {@render clusterWarningsCompact()}
               </div>
             </button>
 
