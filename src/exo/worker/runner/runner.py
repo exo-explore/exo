@@ -1,5 +1,6 @@
 import base64
 import json
+import resource
 import time
 from collections.abc import Generator
 from functools import cache
@@ -112,6 +113,9 @@ def main(
     event_sender: MpSender[Event],
     task_receiver: MpReceiver[Task],
 ):
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
+
     instance, runner_id, shard_metadata = (
         bound_instance.instance,
         bound_instance.bound_runner_id,
