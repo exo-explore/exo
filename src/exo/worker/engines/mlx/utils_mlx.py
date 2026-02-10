@@ -64,7 +64,8 @@ from exo.worker.runner.bootstrap import logger
 
 Group = mx.distributed.Group
 # Needed for 8 bit model
-resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 4096))
+_soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(_soft, 2048), _hard), _hard))
 
 
 # TODO: Test this
