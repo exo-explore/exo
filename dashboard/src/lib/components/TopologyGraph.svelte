@@ -333,14 +333,27 @@
       if (edge.source === a) entry.aToB = true;
       else entry.bToA = true;
 
-      const ip = edge.sendBackIp || "?";
-      const ifaceInfo = getInterfaceLabel(edge.source, ip);
+      let ip: string;
+      let ifaceLabel: string;
+      let missingIface: boolean;
+
+      if (edge.sourceRdmaIface || edge.sinkRdmaIface) {
+        ip = "RDMA";
+        ifaceLabel = `${edge.sourceRdmaIface || "?"} \u2192 ${edge.sinkRdmaIface || "?"}`;
+        missingIface = false;
+      } else {
+        ip = edge.sendBackIp || "?";
+        const ifaceInfo = getInterfaceLabel(edge.source, ip);
+        ifaceLabel = ifaceInfo.label;
+        missingIface = ifaceInfo.missing;
+      }
+
       entry.connections.push({
         from: edge.source,
         to: edge.target,
         ip,
-        ifaceLabel: ifaceInfo.label,
-        missingIface: ifaceInfo.missing,
+        ifaceLabel,
+        missingIface,
       });
       pairMap.set(key, entry);
     });

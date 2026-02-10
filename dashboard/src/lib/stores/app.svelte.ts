@@ -56,6 +56,8 @@ export interface TopologyEdge {
   target: string;
   sendBackIp?: string;
   sendBackInterface?: string;
+  sourceRdmaIface?: string;
+  sinkRdmaIface?: string;
 }
 
 export interface TopologyData {
@@ -437,6 +439,8 @@ function transformTopology(
         if (!Array.isArray(edgeList)) continue;
         for (const edge of edgeList) {
           let sendBackIp: string | undefined;
+          let sourceRdmaIface: string | undefined;
+          let sinkRdmaIface: string | undefined;
           if (edge && typeof edge === "object" && "sinkMultiaddr" in edge) {
             const multiaddr = edge.sinkMultiaddr;
             if (multiaddr) {
@@ -444,10 +448,23 @@ function transformTopology(
                 multiaddr.ip_address ||
                 extractIpFromMultiaddr(multiaddr.address);
             }
+          } else if (
+            edge &&
+            typeof edge === "object" &&
+            "sourceRdmaIface" in edge
+          ) {
+            sourceRdmaIface = edge.sourceRdmaIface;
+            sinkRdmaIface = edge.sinkRdmaIface;
           }
 
           if (nodes[source] && nodes[sink] && source !== sink) {
-            edges.push({ source, target: sink, sendBackIp });
+            edges.push({
+              source,
+              target: sink,
+              sendBackIp,
+              sourceRdmaIface,
+              sinkRdmaIface,
+            });
           }
         }
       }
