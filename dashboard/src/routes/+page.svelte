@@ -44,11 +44,14 @@
     toggleChatSidebarVisible,
     nodeThunderbolt,
     nodeRdmaCtl,
+    metaInstances,
+    metaInstanceBacking,
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
     nodeIdentities,
     type DownloadProgress,
     type PlacementPreview,
+    type MetaInstanceData,
   } from "$lib/stores/app.svelte";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
   import { fade, fly } from "svelte/transition";
@@ -68,6 +71,8 @@
   const debugEnabled = $derived(debugMode());
   const topologyOnlyEnabled = $derived(topologyOnlyMode());
   const sidebarVisible = $derived(chatSidebarVisible());
+  const metaInstancesData = $derived(metaInstances());
+  const metaInstanceBackingData = $derived(metaInstanceBacking());
   const tbBridgeCycles = $derived(thunderboltBridgeCycles());
   const tbBridgeData = $derived(nodeThunderboltBridge());
   const identitiesData = $derived(nodeIdentities());
@@ -697,39 +702,22 @@
     launchingModelId = modelId;
 
     try {
-      // Use the specific preview if provided, otherwise fall back to filtered preview
       const preview = specificPreview ?? filteredPreview();
 
-      let instanceData: unknown;
-
-      if (preview?.instance) {
-        // Use the instance from the preview
-        instanceData = preview.instance;
-      } else {
-        // Fallback: GET placement from API
-        const placementResponse = await fetch(
-          `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${selectedSharding}&instance_meta=${selectedInstanceType}&min_nodes=${selectedMinNodes}`,
-        );
-
-        if (!placementResponse.ok) {
-          const errorText = await placementResponse.text();
-          console.error("Failed to get placement:", errorText);
-          return;
-        }
-
-        instanceData = await placementResponse.json();
-      }
-
-      // POST the instance to create it
-      const response = await fetch("/instance", {
+      const response = await fetch("/meta_instance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instance: instanceData }),
+        body: JSON.stringify({
+          model_id: modelId,
+          sharding: preview?.sharding ?? selectedSharding,
+          instance_meta: preview?.instance_meta ?? selectedInstanceType,
+          min_nodes: selectedMinNodes,
+        }),
       });
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("Failed to launch instance:", errorText);
+        console.error("Failed to create meta instance:", errorText);
       } else {
         // Always auto-select the newly launched model so the user chats to what they just launched
         setSelectedChatModel(modelId);
@@ -752,7 +740,7 @@
         setTimeout(scrollToBottom, 1000);
       }
     } catch (error) {
-      console.error("Error launching instance:", error);
+      console.error("Error creating meta instance:", error);
     } finally {
       launchingModelId = null;
     }
@@ -1255,6 +1243,64 @@
     }
   }
 
+  async function deleteMetaInstance(metaInstanceId: string) {
+    const meta = metaInstancesData[metaInstanceId];
+    const modelId = meta?.modelId ?? "unknown";
+    if (!confirm(`Delete model ${modelId}?`)) return;
+
+    const wasSelected = selectedChatModel() === modelId;
+
+    try {
+      const response = await fetch(`/meta_instance/${metaInstanceId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (!response.ok) {
+        console.error("Failed to delete meta instance:", response.status);
+      } else if (wasSelected) {
+        // Switch to another available model or clear selection
+        const remainingInstances = Object.entries(instanceData).filter(
+          ([id]) => id !== getBackingInstanceId(metaInstanceId),
+        );
+        if (remainingInstances.length > 0) {
+          const [, lastInstance] =
+            remainingInstances[remainingInstances.length - 1];
+          const newModelId = getInstanceModelId(lastInstance);
+          if (
+            newModelId &&
+            newModelId !== "Unknown" &&
+            newModelId !== "Unknown Model"
+          ) {
+            setSelectedChatModel(newModelId);
+          } else {
+            setSelectedChatModel("");
+          }
+        } else {
+          setSelectedChatModel("");
+        }
+      }
+    } catch (error) {
+      console.error("Error deleting meta instance:", error);
+    }
+  }
+
+  // Find the backing Instance ID for a MetaInstance via the explicit binding map
+  function getBackingInstanceId(metaInstanceId: string): string | null {
+    return metaInstanceBackingData[metaInstanceId] ?? null;
+  }
+
+  // Get the set of Instance IDs that are backing MetaInstances
+  function getBackedInstanceIds(): Set<string> {
+    return new Set(Object.values(metaInstanceBackingData));
+  }
+
+  // Get orphan Instance IDs (not backing any MetaInstance)
+  function getOrphanInstanceIds(): string[] {
+    const backedIds = getBackedInstanceIds();
+    return Object.keys(instanceData).filter((id) => !backedIds.has(id));
+  }
+
   // Helper to unwrap tagged unions like { MlxRingInstance: {...} }
   function getTagged(obj: unknown): [string | null, unknown] {
     if (!obj || typeof obj !== "object") return [null, null];
@@ -1647,7 +1693,45 @@
   }
 
   const nodeCount = $derived(data ? Object.keys(data.nodes).length : 0);
-  const instanceCount = $derived(Object.keys(instanceData).length);
+  const metaInstanceCount = $derived(Object.keys(metaInstancesData).length);
+  const orphanInstanceIds = $derived(getOrphanInstanceIds());
+  const instanceCount = $derived(metaInstanceCount + orphanInstanceIds.length);
+
+  // Unified display items: MetaInstances first, then orphan Instances
+  interface DisplayItem {
+    id: string; // MetaInstance ID or Instance ID (used as key and displayed)
+    modelId: string;
+    instance: unknown | null; // The backing/orphan instance (tagged union) or null if placing
+    instanceId: string | null; // The actual Instance ID (for topology hover)
+    isMetaInstance: boolean;
+  }
+
+  const unifiedDisplayItems = $derived((): DisplayItem[] => {
+    const items: DisplayItem[] = [];
+    // MetaInstances
+    for (const [metaId, meta] of Object.entries(metaInstancesData)) {
+      const backingId = getBackingInstanceId(metaId);
+      items.push({
+        id: metaId,
+        modelId: meta.modelId,
+        instance: backingId ? instanceData[backingId] : null,
+        instanceId: backingId,
+        isMetaInstance: true,
+      });
+    }
+    // Orphan Instances
+    for (const orphanId of getOrphanInstanceIds()) {
+      const inst = instanceData[orphanId];
+      items.push({
+        id: orphanId,
+        modelId: getInstanceModelId(inst),
+        instance: inst,
+        instanceId: orphanId,
+        isMetaInstance: false,
+      });
+    }
+    return items;
+  });
 
   // Helper to get the number of nodes in a placement preview
   function getPreviewNodeCount(preview: PlacementPreview): number {
@@ -2315,31 +2399,51 @@
                 bind:this={instancesContainerRef}
                 class="max-h-72 xl:max-h-96 space-y-3 overflow-y-auto overflow-x-hidden py-px"
               >
-                {#each Object.entries(instanceData) as [id, instance]}
-                  {@const downloadInfo = getInstanceDownloadStatus(
-                    id,
-                    instance,
-                  )}
+                {#each unifiedDisplayItems() as item (item.id)}
+                  {@const id = item.id}
+                  {@const instance = item.instance}
+                  {@const downloadInfo = instance
+                    ? getInstanceDownloadStatus(item.instanceId ?? id, instance)
+                    : {
+                        statusText: "PLACING",
+                        statusClass: "starting",
+                        isDownloading: false,
+                        isFailed: false,
+                        progress: null,
+                        perNode: [],
+                        errorMessage: null,
+                      }}
                   {@const statusText = downloadInfo.statusText}
                   {@const isDownloading = downloadInfo.isDownloading}
                   {@const isFailed = statusText === "FAILED"}
                   {@const isLoading =
                     statusText === "LOADING" ||
                     statusText === "WARMING UP" ||
-                    statusText === "WAITING"}
+                    statusText === "WAITING" ||
+                    statusText === "PLACING"}
                   {@const isReady =
                     statusText === "READY" || statusText === "LOADED"}
                   {@const isRunning = statusText === "RUNNING"}
                   <!-- Instance Card -->
-                  {@const instanceModelId = getInstanceModelId(instance)}
-                  {@const instanceInfo = getInstanceInfo(instance)}
-                  {@const instanceConnections =
-                    getInstanceConnections(instance)}
+                  {@const instanceModelId = item.modelId}
+                  {@const instanceInfo = instance
+                    ? getInstanceInfo(instance)
+                    : {
+                        instanceType: "Unknown",
+                        sharding: "Unknown",
+                        nodeNames: [],
+                        nodeIds: [],
+                        nodeCount: 0,
+                      }}
+                  {@const instanceConnections = instance
+                    ? getInstanceConnections(instance)
+                    : []}
                   <div
                     class="relative group cursor-pointer"
                     role="button"
                     tabindex="0"
-                    onmouseenter={() => (hoveredInstanceId = id)}
+                    onmouseenter={() =>
+                      (hoveredInstanceId = item.instanceId ?? id)}
                     onmouseleave={() => (hoveredInstanceId = null)}
                     onclick={() => {
                       if (
@@ -2438,7 +2542,10 @@
                           >
                         </div>
                         <button
-                          onclick={() => deleteInstance(id)}
+                          onclick={() =>
+                            item.isMetaInstance
+                              ? deleteMetaInstance(id)
+                              : deleteInstance(id)}
                           class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
                         >
                           DELETE
@@ -2448,7 +2555,7 @@
                         <div
                           class="text-exo-yellow text-xs font-mono tracking-wide truncate"
                         >
-                          {getInstanceModelId(instance)}
+                          {instanceModelId}
                         </div>
                         <div class="text-white/60 text-xs font-mono">
                           Strategy: <span class="text-white/80"
@@ -3128,31 +3235,54 @@
                 <div
                   class="space-y-3 max-h-72 xl:max-h-96 overflow-y-auto overflow-x-hidden py-px pr-1"
                 >
-                  {#each Object.entries(instanceData) as [id, instance]}
-                    {@const downloadInfo = getInstanceDownloadStatus(
-                      id,
-                      instance,
-                    )}
+                  {#each unifiedDisplayItems() as item (item.id)}
+                    {@const id = item.id}
+                    {@const instance = item.instance}
+                    {@const downloadInfo = instance
+                      ? getInstanceDownloadStatus(
+                          item.instanceId ?? id,
+                          instance,
+                        )
+                      : {
+                          statusText: "PLACING",
+                          statusClass: "starting",
+                          isDownloading: false,
+                          isFailed: false,
+                          progress: null,
+                          perNode: [],
+                          errorMessage: null,
+                        }}
                     {@const statusText = downloadInfo.statusText}
                     {@const isDownloading = downloadInfo.isDownloading}
                     {@const isFailed = statusText === "FAILED"}
                     {@const isLoading =
                       statusText === "LOADING" ||
                       statusText === "WARMING UP" ||
-                      statusText === "WAITING"}
+                      statusText === "WAITING" ||
+                      statusText === "PLACING"}
                     {@const isReady =
                       statusText === "READY" || statusText === "LOADED"}
                     {@const isRunning = statusText === "RUNNING"}
                     <!-- Instance Card -->
-                    {@const instanceModelId = getInstanceModelId(instance)}
-                    {@const instanceInfo = getInstanceInfo(instance)}
-                    {@const instanceConnections =
-                      getInstanceConnections(instance)}
+                    {@const instanceModelId = item.modelId}
+                    {@const instanceInfo = instance
+                      ? getInstanceInfo(instance)
+                      : {
+                          instanceType: "Unknown",
+                          sharding: "Unknown",
+                          nodeNames: [],
+                          nodeIds: [],
+                          nodeCount: 0,
+                        }}
+                    {@const instanceConnections = instance
+                      ? getInstanceConnections(instance)
+                      : []}
                     <div
                       class="relative group cursor-pointer"
                       role="button"
                       tabindex="0"
-                      onmouseenter={() => (hoveredInstanceId = id)}
+                      onmouseenter={() =>
+                        (hoveredInstanceId = item.instanceId ?? id)}
                       onmouseleave={() => (hoveredInstanceId = null)}
                       onclick={() => {
                         if (
@@ -3251,7 +3381,10 @@
                             >
                           </div>
                           <button
-                            onclick={() => deleteInstance(id)}
+                            onclick={() =>
+                              item.isMetaInstance
+                                ? deleteMetaInstance(id)
+                                : deleteInstance(id)}
                             class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
                           >
                             DELETE
@@ -3261,7 +3394,7 @@
                           <div
                             class="text-exo-yellow text-xs font-mono tracking-wide truncate"
                           >
-                            {getInstanceModelId(instance)}
+                            {instanceModelId}
                           </div>
                           <div class="text-white/60 text-xs font-mono">
                             Strategy: <span class="text-white/80"
