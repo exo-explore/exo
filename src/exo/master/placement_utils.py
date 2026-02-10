@@ -355,11 +355,11 @@ def _find_ip_prioritised(
         iface.ip_address: iface.interface_type for iface in other_network.interfaces
     }
     priority = {
-        "ethernet": 0,
-        "wifi": 1,
-        "unknown": 2,
-        "maybe_ethernet": 3,
-        "thunderbolt": 4,
+        "thunderbolt": 0,
+        "maybe_ethernet": 1,
+        "ethernet": 2,
+        "wifi": 3,
+        "unknown": 4,
     }
     return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2))
 
