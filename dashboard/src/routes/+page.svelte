@@ -13,6 +13,11 @@
     getFavoritesSet,
   } from "$lib/stores/favorites.svelte";
   import {
+    hasRecents,
+    getRecentModelIds,
+    recordRecentLaunch,
+  } from "$lib/stores/recents.svelte";
+  import {
     hasStartedChat,
     isTopologyMinimized,
     topologyData,
@@ -227,6 +232,10 @@
 
   // Favorites state (reactive)
   const favoritesSet = $derived(getFavoritesSet());
+
+  // Recent models state (reactive)
+  const recentModelIds = $derived(getRecentModelIds());
+  const showRecentsTab = $derived(hasRecents());
 
   // Slider dragging state
   let isDraggingSlider = $state(false);
@@ -629,6 +638,9 @@
       } else {
         // Always auto-select the newly launched model so the user chats to what they just launched
         setSelectedChatModel(modelId);
+
+        // Record the launch in recent models history
+        recordRecentLaunch(modelId);
 
         // Scroll to the bottom of instances container to show the new instance
         // Use multiple attempts to ensure DOM has updated with the new instance
@@ -3252,6 +3264,8 @@
   {models}
   {selectedModelId}
   favorites={favoritesSet}
+  {recentModelIds}
+  hasRecents={showRecentsTab}
   existingModelIds={new Set(models.map((m) => m.id))}
   canModelFit={(modelId) => {
     const model = models.find((m) => m.id === modelId);
