@@ -30,11 +30,11 @@ from exo.utils.pydantic_ext import CamelCaseModel
 # kinda ugly...
 # TODO: load search path from config.toml
 _custom_cards_dir = Path(str(EXO_CUSTOM_MODEL_CARDS_DIR))
-_csp = [Path(RESOURCES_DIR) / "inference_model_cards", _custom_cards_dir]
-if EXO_ENABLE_IMAGE_MODELS:
-    _csp.append(Path(RESOURCES_DIR) / "image_model_cards")
-
-CARD_SEARCH_PATH = _csp
+CARD_SEARCH_PATH = [
+    Path(RESOURCES_DIR) / "inference_model_cards",
+    Path(RESOURCES_DIR) / "image_model_cards",
+    _custom_cards_dir,
+]
 
 _card_cache: dict[ModelId, "ModelCard"] = {}
 
@@ -49,10 +49,16 @@ async def _refresh_card_cache():
                 pass
 
 
+def _is_image_card(card: "ModelCard") -> bool:
+    return any(t in (ModelTask.TextToImage, ModelTask.ImageToImage) for t in card.tasks)
+
+
 async def get_model_cards() -> list["ModelCard"]:
     if len(_card_cache) == 0:
         await _refresh_card_cache()
-    return list(_card_cache.values())
+    if EXO_ENABLE_IMAGE_MODELS:
+        return list(_card_cache.values())
+    return [c for c in _card_cache.values() if not _is_image_card(c)]
 
 
 class ModelTask(str, Enum):
