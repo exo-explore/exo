@@ -50,7 +50,7 @@ let
       owner = "ml-explore";
       repo = "mlx";
       tag = "v${version}";
-      hash = lib.fakeHash;
+      hash = "sha256-avD5EGhwgmPdXLAyQSqTO6AXk/W3ziH+f6AetjK3Sdo=";
     };
 
     patches = [
