@@ -566,6 +566,8 @@ struct ContentView: View {
         let rdmaStatuses = stateService.latestSnapshot?.nodeRdmaCtl ?? [:]
         let localNodeId = stateService.localNodeId
         let nodeProfiles = stateService.latestSnapshot?.nodeProfiles ?? [:]
+        let localDevices = networkStatusService.status.localRdmaDevices
+        let localPorts = networkStatusService.status.localRdmaActivePorts
 
         return VStack(alignment: .leading, spacing: 1) {
             if rdmaStatuses.isEmpty {
@@ -588,6 +590,21 @@ struct ContentView: View {
                             .font(.caption2)
                             .foregroundColor(color)
                     }
+                }
+            }
+            if !localDevices.isEmpty {
+                Text("  Local Devices: \(localDevices.joined(separator: ", "))")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            if !localPorts.isEmpty {
+                Text("  Local Active Ports:")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                ForEach(localPorts, id: \.device) { port in
+                    Text("    \(port.device) port \(port.port): \(port.state)")
+                        .font(.caption2)
+                        .foregroundColor(.green)
                 }
             }
         }
