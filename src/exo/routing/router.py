@@ -207,10 +207,10 @@ class Router:
                 try:
                     logger.trace(f"Sending message on {topic} with payload {data}")
                     await self._net.gossipsub_publish(topic, data)
-                # As a hack, this also catches AllQueuesFull
-                # Need to fix that ASAP.
-                except (NoPeersSubscribedToTopicError, AllQueuesFullError):
+                except NoPeersSubscribedToTopicError:
                     pass
+                except AllQueuesFullError:
+                    logger.warning(f"All peer queues full, dropping message on {topic}")
 
 
 def get_node_id_keypair(
