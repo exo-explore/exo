@@ -6,6 +6,7 @@
   import ModelFilterPopover from "./ModelFilterPopover.svelte";
   import HuggingFaceResultItem from "./HuggingFaceResultItem.svelte";
   import { getNodesWithModelDownloaded } from "$lib/utils/downloads";
+  import { getRecentEntries } from "$lib/stores/recents.svelte";
 
   interface ModelInfo {
     id: string;
@@ -455,6 +456,11 @@
   // Check if any favorites exist
   const hasFavorites = $derived(favorites.size > 0);
 
+  // Timestamp lookup for recent models
+  const recentTimestamps = $derived(
+    new Map(getRecentEntries().map((e) => [e.modelId, e.launchedAt])),
+  );
+
   // Recent models: single-variant ModelGroups in launch order
   const recentGroups = $derived.by((): ModelGroup[] => {
     if (!recentModelIds || recentModelIds.length === 0) return [];
@@ -791,6 +797,7 @@
                 {onToggleFavorite}
                 onShowInfo={(g) => (infoGroup = g)}
                 downloadStatusMap={getVariantDownloadMap(group)}
+                launchedAt={recentTimestamps.get(group.variants[0]?.id ?? "")}
               />
             {/each}
           {/if}

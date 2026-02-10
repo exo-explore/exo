@@ -69,6 +69,7 @@ export const recentsStore = new RecentsStore();
 
 export const hasRecents = () => recentsStore.hasAny();
 export const getRecentModelIds = () => recentsStore.getRecentModelIds();
+export const getRecentEntries = () => recentsStore.recents;
 export const recordRecentLaunch = (modelId: string) =>
   recentsStore.recordLaunch(modelId);
 export const clearRecents = () => recentsStore.clearAll();
