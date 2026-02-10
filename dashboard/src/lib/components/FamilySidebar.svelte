@@ -9,8 +9,13 @@
     onSelect: (family: string | null) => void;
   };
 
-  let { families, selectedFamily, hasFavorites, hasRecents, onSelect }: FamilySidebarProps =
-    $props();
+  let {
+    families,
+    selectedFamily,
+    hasFavorites,
+    hasRecents,
+    onSelect,
+  }: FamilySidebarProps = $props();
 
   // Family display names
   const familyNames: Record<string, string> = {
