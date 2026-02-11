@@ -13,7 +13,6 @@ from exo.master.placement import (
     place_instance,
 )
 from exo.master.reconcile import (
-    find_satisfying_instance,
     find_unsatisfied_meta_instances,
     instance_connections_healthy,
     try_place_for_meta_instance,
@@ -45,7 +44,6 @@ from exo.shared.types.events import (
     IndexedEvent,
     InputChunkReceived,
     InstanceDeleted,
-    MetaInstanceBound,
     MetaInstanceCreated,
     MetaInstanceDeleted,
     NodeGatheredInfo,
@@ -421,27 +419,8 @@ class Master:
                 self.state.meta_instances,
                 self.state.instances,
                 self.state.topology,
-                self.state.meta_instance_backing,
             )
-            # Instances already bound by other MetaInstances
-            already_bound = frozenset(self.state.meta_instance_backing.values())
             for meta_instance in unsatisfied:
-                # Try to bind to an existing unbound instance first
-                existing = find_satisfying_instance(
-                    meta_instance,
-                    self.state.instances,
-                    self.state.topology,
-                    exclude=already_bound,
-                )
-                if existing is not None:
-                    await self._apply_and_broadcast(
-                        MetaInstanceBound(
-                            meta_instance_id=meta_instance.meta_instance_id,
-                            instance_id=existing,
-                        )
-                    )
-                    continue
-                # Otherwise, place a new instance
                 model_card = await ModelCard.load(meta_instance.model_id)
                 events = try_place_for_meta_instance(
                     meta_instance,

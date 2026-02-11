@@ -3,14 +3,10 @@ from typing import final
 from pydantic import Field
 
 from exo.shared.models.model_cards import ModelId
-from exo.shared.types.common import Id, NodeId
+from exo.shared.types.common import MetaInstanceId, NodeId
 from exo.shared.types.worker.instances import InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.pydantic_ext import FrozenModel
-
-
-class MetaInstanceId(Id):
-    """Identifier for a MetaInstance."""
 
 
 @final

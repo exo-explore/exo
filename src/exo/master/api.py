@@ -134,7 +134,7 @@ from exo.shared.types.commands import (
     TaskFinished,
     TextGeneration,
 )
-from exo.shared.types.common import CommandId, Id, NodeId, SessionId
+from exo.shared.types.common import CommandId, Id, MetaInstanceId, NodeId, SessionId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -143,7 +143,7 @@ from exo.shared.types.events import (
     TracesMerged,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.meta_instance import MetaInstance, MetaInstanceId
+from exo.shared.types.meta_instance import MetaInstance
 from exo.shared.types.openai_responses import (
     ResponsesRequest,
     ResponsesResponse,
@@ -555,13 +555,15 @@ class API:
         if not meta:
             raise HTTPException(status_code=404, detail="MetaInstance not found")
 
-        # Delete the explicitly bound backing instance
-        backing_id = self.state.meta_instance_backing.get(meta_instance_id)
-        if backing_id:
-            await self._send(DeleteInstance(instance_id=backing_id))
-
+        # Delete MetaInstance first to prevent reconciler from re-placing
         command = DeleteMetaInstance(meta_instance_id=meta_instance_id)
         await self._send(command)
+
+        # Then cascade-delete any backing instances
+        for instance_id, instance in self.state.instances.items():
+            if instance.meta_instance_id == meta_instance_id:
+                await self._send(DeleteInstance(instance_id=instance_id))
+
         return DeleteMetaInstanceResponse(
             message="Command received.",
             command_id=command.command_id,
