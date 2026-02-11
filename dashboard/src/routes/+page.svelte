@@ -2576,8 +2576,9 @@
                   {@const downloadInfo = instance
                     ? getInstanceDownloadStatus(item.instanceId ?? id, instance)
                     : getMetaInstancePlacingStatus(id)}
-                  {@const retryError = item.isMetaInstance && !downloadInfo.isFailed
-                    ? metaInstanceFailureInfoData[id]?.lastError
+                  {@const failureInfo = item.isMetaInstance ? metaInstanceFailureInfoData[id] : null}
+                  {@const retryError = failureInfo?.lastError && !downloadInfo.isFailed
+                    ? `(${((failureInfo.consecutiveFailures - 1) % 3) + 1}/3) ${failureInfo.lastError}`
                     : null}
                   {@const statusText = downloadInfo.statusText}
                   {@const isDownloading = downloadInfo.isDownloading}
@@ -3442,8 +3443,9 @@
                           instance,
                         )
                       : getMetaInstancePlacingStatus(id)}
-                    {@const retryError = item.isMetaInstance && !downloadInfo.isFailed
-                      ? metaInstanceFailureInfoData[id]?.lastError
+                    {@const failureInfo = item.isMetaInstance ? metaInstanceFailureInfoData[id] : null}
+                    {@const retryError = failureInfo?.lastError && !downloadInfo.isFailed
+                      ? `(${((failureInfo.consecutiveFailures - 1) % 3) + 1}/3) ${failureInfo.lastError}`
                       : null}
                     {@const statusText = downloadInfo.statusText}
                     {@const isDownloading = downloadInfo.isDownloading}
