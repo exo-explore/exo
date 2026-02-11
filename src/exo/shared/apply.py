@@ -48,6 +48,7 @@ from exo.utils.info_gatherer.info_gatherer import (
     MemoryUsage,
     MiscData,
     NodeConfig,
+    NodeDiskUsage,
     NodeNetworkInterfaces,
     RdmaCtlStatus,
     StaticNodeInformation,
@@ -225,6 +226,9 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
     node_memory = {
         key: value for key, value in state.node_memory.items() if key != event.node_id
     }
+    node_disk = {
+        key: value for key, value in state.node_disk.items() if key != event.node_id
+    }
     node_system = {
         key: value for key, value in state.node_system.items() if key != event.node_id
     }
@@ -261,6 +265,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
             "last_seen": last_seen,
             "node_identities": node_identities,
             "node_memory": node_memory,
+            "node_disk": node_disk,
             "node_system": node_system,
             "node_network": node_network,
             "node_thunderbolt": node_thunderbolt,
@@ -294,6 +299,8 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             update["node_memory"] = {**state.node_memory, event.node_id: info.memory}
         case MemoryUsage():
             update["node_memory"] = {**state.node_memory, event.node_id: info}
+        case NodeDiskUsage():
+            update["node_disk"] = {**state.node_disk, event.node_id: info.disk_usage}
         case NodeConfig():
             pass
         case MiscData():
