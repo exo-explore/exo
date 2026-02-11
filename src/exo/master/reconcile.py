@@ -115,7 +115,7 @@ def instance_runners_failed(
         return False, None
 
     has_any_failed = False
-    error_message: str | None = None
+    error_messages: list[str] = []
 
     for runner_id in instance_runner_ids:
         status = runners.get(runner_id)
@@ -125,7 +125,7 @@ def instance_runners_failed(
         if isinstance(status, RunnerFailed):
             has_any_failed = True
             if status.error_message:
-                error_message = status.error_message
+                error_messages.append(status.error_message)
         elif isinstance(status, RunnerShutdown):
             pass  # Terminal but not a failure indicator on its own
         else:
@@ -133,7 +133,7 @@ def instance_runners_failed(
             return False, None
 
     if has_any_failed:
-        return True, error_message or "Runner failed"
+        return True, "; ".join(error_messages) if error_messages else "Runner failed"
 
     # All runners are Shutdown but none Failed — graceful shutdown, not a failure
     return False, None

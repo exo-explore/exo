@@ -1157,7 +1157,7 @@
     // Build per-node status and extract error messages from RunnerFailed
     const perNodeStatus: PerNodeRunnerStatus[] = [];
     const statuses: string[] = [];
-    let failedErrorMessage: string | null = null;
+    const failedErrors: string[] = [];
     for (const [nodeId, runnerId] of Object.entries(nodeToRunner)) {
       const r = runnersData[runnerId];
       let status: string | null = null;
@@ -1171,7 +1171,7 @@
           typeof runnerData === "object"
         ) {
           const rd = runnerData as { errorMessage?: string };
-          if (rd.errorMessage) failedErrorMessage = rd.errorMessage;
+          if (rd.errorMessage) failedErrors.push(rd.errorMessage);
         }
       }
       if (status) {
@@ -1199,7 +1199,7 @@
         statusText: "FAILED",
         statusClass: "failed",
         perNodeStatus,
-        errorMessage: failedErrorMessage,
+        errorMessage: failedErrors.length > 0 ? failedErrors.join("; ") : null,
       };
     if (has("Shutdown"))
       return { statusText: "SHUTDOWN", statusClass: "inactive", perNodeStatus, errorMessage: null };
