@@ -546,7 +546,6 @@ def test_apply_instance_deleted_tracks_failure():
     mi = new_state.meta_instances[meta.meta_instance_id]
     assert mi.consecutive_failures == 1
     assert mi.last_failure_error == "Runner OOM"
-    assert mi.last_failure_at is not None
 
 
 def test_apply_instance_deleted_increments_failure():

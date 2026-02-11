@@ -1,6 +1,6 @@
 import copy
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import datetime
 
 from loguru import logger
 
@@ -232,7 +232,6 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
                 update={
                     "consecutive_failures": mi.consecutive_failures + 1,
                     "last_failure_error": event.failure_error,
-                    "last_failure_at": datetime.now(tz=UTC),
                 }
             ),
         }
