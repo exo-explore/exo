@@ -524,6 +524,12 @@ class AppStore {
   instances = $state<Record<string, unknown>>({});
   runners = $state<Record<string, unknown>>({});
   downloads = $state<Record<string, unknown[]>>({});
+  nodeDisk = $state<
+    Record<
+      string,
+      { total: { inBytes: number }; available: { inBytes: number } }
+    >
+  >({});
   placementPreviews = $state<PlacementPreview[]>([]);
   selectedPreviewModelId = $state<string | null>(null);
   isLoadingPreviews = $state(false);
@@ -1253,6 +1259,9 @@ class AppStore {
       }
       if (data.downloads) {
         this.downloads = data.downloads;
+      }
+      if (data.nodeDisk) {
+        this.nodeDisk = data.nodeDisk;
       }
       // Node identities (for OS version mismatch detection)
       this.nodeIdentities = data.nodeIdentities ?? {};
@@ -3012,6 +3021,7 @@ export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
 export const runners = () => appStore.runners;
 export const downloads = () => appStore.downloads;
+export const nodeDisk = () => appStore.nodeDisk;
 export const placementPreviews = () => appStore.placementPreviews;
 export const selectedPreviewModelId = () => appStore.selectedPreviewModelId;
 export const isLoadingPreviews = () => appStore.isLoadingPreviews;
