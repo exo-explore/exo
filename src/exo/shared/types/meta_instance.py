@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import final
 
 from pydantic import Field
@@ -19,3 +20,8 @@ class MetaInstance(FrozenModel):
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
     min_nodes: int = 1
     node_ids: list[NodeId] | None = None
+    # Failure tracking
+    placement_error: str | None = None
+    consecutive_failures: int = 0
+    last_failure_error: str | None = None
+    last_failure_at: datetime | None = None

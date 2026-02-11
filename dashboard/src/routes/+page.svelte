@@ -38,8 +38,6 @@
     chatSidebarVisible,
     toggleChatSidebarVisible,
     metaInstances,
-    metaInstanceErrors,
-    metaInstanceFailureInfo,
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
     type DownloadProgress,
@@ -65,16 +63,16 @@
   const topologyOnlyEnabled = $derived(topologyOnlyMode());
   const sidebarVisible = $derived(chatSidebarVisible());
   const metaInstancesData = $derived(metaInstances());
-  const metaInstanceErrorsData = $derived(metaInstanceErrors());
-  const metaInstanceFailureInfoData = $derived(metaInstanceFailureInfo());
   const tbBridgeCycles = $derived(thunderboltBridgeCycles());
 
   // Get status for a MetaInstance that has no backing instance yet
   function getMetaInstancePlacingStatus(metaInstanceId: string) {
-    const error = metaInstanceErrorsData[metaInstanceId];
-    const failureInfo = metaInstanceFailureInfoData[metaInstanceId];
+    const meta = metaInstancesData[metaInstanceId];
+    const placementError = meta?.placementError;
+    const failures = meta?.consecutiveFailures ?? 0;
+    const lastError = meta?.lastFailureError;
 
-    if (error) {
+    if (placementError) {
       return {
         statusText: "PLACEMENT FAILED",
         statusClass: "failed",
@@ -87,13 +85,13 @@
           progress: DownloadProgress;
         }>,
         perNodeStatus: [] as PerNodeRunnerStatus[],
-        errorMessage: error,
+        errorMessage: placementError,
       };
     }
 
-    if (failureInfo && failureInfo.consecutiveFailures > 0) {
-      const retryPosition = ((failureInfo.consecutiveFailures - 1) % 3) + 1;
-      const isRecreated = failureInfo.consecutiveFailures % 3 === 0;
+    if (failures > 0) {
+      const retryPosition = ((failures - 1) % 3) + 1;
+      const isRecreated = failures % 3 === 0;
       return {
         statusText: isRecreated ? "PLACING" : `RETRYING (${retryPosition}/3)`,
         statusClass: "starting",
@@ -107,9 +105,9 @@
         }>,
         perNodeStatus: [] as PerNodeRunnerStatus[],
         errorMessage: isRecreated
-          ? `Instance re-created due to failure: ${failureInfo.lastError}`
-          : failureInfo.lastError
-            ? `Previous failure: ${failureInfo.lastError}`
+          ? `Instance re-created due to failure: ${lastError}`
+          : lastError
+            ? `Previous failure: ${lastError}`
             : null,
       };
     }
@@ -2246,9 +2244,9 @@
                   {@const downloadInfo = instance
                     ? getInstanceDownloadStatus(item.instanceId ?? id, instance)
                     : getMetaInstancePlacingStatus(id)}
-                  {@const failureInfo = item.isMetaInstance ? metaInstanceFailureInfoData[id] : null}
-                  {@const retryError = failureInfo?.lastError && !downloadInfo.isFailed
-                    ? `(${((failureInfo.consecutiveFailures - 1) % 3) + 1}/3) ${failureInfo.lastError}`
+                  {@const metaData = item.isMetaInstance ? metaInstancesData[id] : null}
+                  {@const retryError = metaData?.lastFailureError && !downloadInfo.isFailed
+                    ? `(${((metaData.consecutiveFailures - 1) % 3) + 1}/3) ${metaData.lastFailureError}`
                     : null}
                   {@const statusText = downloadInfo.statusText}
                   {@const isDownloading = downloadInfo.isDownloading}
@@ -3135,9 +3133,9 @@
                           instance,
                         )
                       : getMetaInstancePlacingStatus(id)}
-                    {@const failureInfo = item.isMetaInstance ? metaInstanceFailureInfoData[id] : null}
-                    {@const retryError = failureInfo?.lastError && !downloadInfo.isFailed
-                      ? `(${((failureInfo.consecutiveFailures - 1) % 3) + 1}/3) ${failureInfo.lastError}`
+                    {@const metaData = item.isMetaInstance ? metaInstancesData[id] : null}
+                    {@const retryError = metaData?.lastFailureError && !downloadInfo.isFailed
+                      ? `(${((metaData.consecutiveFailures - 1) % 3) + 1}/3) ${metaData.lastFailureError}`
                       : null}
                     {@const statusText = downloadInfo.statusText}
                     {@const isDownloading = downloadInfo.isDownloading}

@@ -1,6 +1,6 @@
 import copy
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 
 from loguru import logger
 
@@ -38,7 +38,7 @@ from exo.shared.types.profiling import (
     NodeThunderboltInfo,
     ThunderboltBridgeStatus,
 )
-from exo.shared.types.state import InstanceFailureInfo, State
+from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
@@ -181,6 +181,13 @@ def apply_task_failed(event: TaskFailed, state: State) -> State:
     return state.model_copy(update={"tasks": new_tasks})
 
 
+def _update_meta_instance(
+    state: State, mid: MetaInstanceId, **fields: object
+) -> Mapping[MetaInstanceId, MetaInstance]:
+    mi = state.meta_instances[mid]
+    return {**state.meta_instances, mid: mi.model_copy(update=fields)}
+
+
 def apply_instance_created(event: InstanceCreated, state: State) -> State:
     instance = event.instance
     new_instances: Mapping[InstanceId, Instance] = {
@@ -191,13 +198,12 @@ def apply_instance_created(event: InstanceCreated, state: State) -> State:
     # Clear placement error when an instance is created for a meta-instance
     if (
         instance.meta_instance_id
-        and instance.meta_instance_id in state.meta_instance_errors
+        and instance.meta_instance_id in state.meta_instances
+        and state.meta_instances[instance.meta_instance_id].placement_error is not None
     ):
-        update["meta_instance_errors"] = {
-            mid: err
-            for mid, err in state.meta_instance_errors.items()
-            if mid != instance.meta_instance_id
-        }
+        update["meta_instances"] = _update_meta_instance(
+            state, instance.meta_instance_id, placement_error=None
+        )
     return state.model_copy(update=update)
 
 
@@ -208,23 +214,24 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
     }
     update: dict[str, object] = {"instances": new_instances}
 
-    # Track failure for meta-bound instances
+    # Track failure on the MetaInstance itself
     if (
         event.failure_error
         and deleted_instance
         and deleted_instance.meta_instance_id
+        and deleted_instance.meta_instance_id in state.meta_instances
     ):
         mid = deleted_instance.meta_instance_id
-        current = state.meta_instance_failure_info.get(
-            mid, InstanceFailureInfo()
-        )
-        new_info = InstanceFailureInfo(
-            consecutive_failures=current.consecutive_failures + 1,
-            last_error=event.failure_error,
-        )
-        update["meta_instance_failure_info"] = {
-            **state.meta_instance_failure_info,
-            mid: new_info,
+        mi = state.meta_instances[mid]
+        update["meta_instances"] = {
+            **state.meta_instances,
+            mid: mi.model_copy(
+                update={
+                    "consecutive_failures": mi.consecutive_failures + 1,
+                    "last_failure_error": event.failure_error,
+                    "last_failure_at": datetime.now(tz=UTC),
+                }
+            ),
         }
 
     return state.model_copy(update=update)
@@ -244,33 +251,21 @@ def apply_meta_instance_deleted(event: MetaInstanceDeleted, state: State) -> Sta
         for mid, mi in state.meta_instances.items()
         if mid != event.meta_instance_id
     }
-    new_errors: Mapping[MetaInstanceId, str] = {
-        mid: err
-        for mid, err in state.meta_instance_errors.items()
-        if mid != event.meta_instance_id
-    }
-    new_failure_info: Mapping[MetaInstanceId, InstanceFailureInfo] = {
-        mid: info
-        for mid, info in state.meta_instance_failure_info.items()
-        if mid != event.meta_instance_id
-    }
-    return state.model_copy(
-        update={
-            "meta_instances": new_meta,
-            "meta_instance_errors": new_errors,
-            "meta_instance_failure_info": new_failure_info,
-        }
-    )
+    return state.model_copy(update={"meta_instances": new_meta})
 
 
 def apply_meta_instance_placement_failed(
     event: MetaInstancePlacementFailed, state: State
 ) -> State:
-    new_errors: Mapping[MetaInstanceId, str] = {
-        **state.meta_instance_errors,
-        event.meta_instance_id: event.reason,
-    }
-    return state.model_copy(update={"meta_instance_errors": new_errors})
+    if event.meta_instance_id not in state.meta_instances:
+        return state
+    return state.model_copy(
+        update={
+            "meta_instances": _update_meta_instance(
+                state, event.meta_instance_id, placement_error=event.reason
+            )
+        }
+    )
 
 
 def apply_runner_status_updated(event: RunnerStatusUpdated, state: State) -> State:
