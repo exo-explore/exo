@@ -4,7 +4,7 @@ from datetime import datetime
 
 from loguru import logger
 
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import MetaInstanceId, NodeId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -12,7 +12,6 @@ from exo.shared.types.events import (
     InputChunkReceived,
     InstanceCreated,
     InstanceDeleted,
-    MetaInstanceBound,
     MetaInstanceCreated,
     MetaInstanceDeleted,
     NodeDownloadProgress,
@@ -31,7 +30,7 @@ from exo.shared.types.events import (
     TracesCollected,
     TracesMerged,
 )
-from exo.shared.types.meta_instance import MetaInstance, MetaInstanceId
+from exo.shared.types.meta_instance import MetaInstance
 from exo.shared.types.profiling import (
     NodeIdentity,
     NodeNetworkInfo,
@@ -80,8 +79,6 @@ def event_apply(event: Event, state: State) -> State:
             return apply_meta_instance_created(event, state)
         case MetaInstanceDeleted():
             return apply_meta_instance_deleted(event, state)
-        case MetaInstanceBound():
-            return apply_meta_instance_bound(event, state)
         case NodeTimedOut():
             return apply_node_timed_out(event, state)
         case NodeDownloadProgress():
@@ -197,14 +194,7 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
     new_instances: Mapping[InstanceId, Instance] = {
         iid: inst for iid, inst in state.instances.items() if iid != event.instance_id
     }
-    new_backing: Mapping[MetaInstanceId, InstanceId] = {
-        mid: iid
-        for mid, iid in state.meta_instance_backing.items()
-        if iid != event.instance_id
-    }
-    return state.model_copy(
-        update={"instances": new_instances, "meta_instance_backing": new_backing}
-    )
+    return state.model_copy(update={"instances": new_instances})
 
 
 def apply_meta_instance_created(event: MetaInstanceCreated, state: State) -> State:
@@ -221,22 +211,7 @@ def apply_meta_instance_deleted(event: MetaInstanceDeleted, state: State) -> Sta
         for mid, mi in state.meta_instances.items()
         if mid != event.meta_instance_id
     }
-    new_backing: Mapping[MetaInstanceId, InstanceId] = {
-        mid: iid
-        for mid, iid in state.meta_instance_backing.items()
-        if mid != event.meta_instance_id
-    }
-    return state.model_copy(
-        update={"meta_instances": new_meta, "meta_instance_backing": new_backing}
-    )
-
-
-def apply_meta_instance_bound(event: MetaInstanceBound, state: State) -> State:
-    new_backing: Mapping[MetaInstanceId, InstanceId] = {
-        **state.meta_instance_backing,
-        event.meta_instance_id: event.instance_id,
-    }
-    return state.model_copy(update={"meta_instance_backing": new_backing})
+    return state.model_copy(update={"meta_instances": new_meta})
 
 
 def apply_runner_status_updated(event: RunnerStatusUpdated, state: State) -> State:

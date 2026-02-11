@@ -1,5 +1,4 @@
 from exo.master.reconcile import (
-    find_satisfying_instance,
     find_unsatisfied_meta_instances,
     instance_connections_healthy,
     instance_satisfies_meta_instance,
@@ -7,15 +6,14 @@ from exo.master.reconcile import (
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
-from exo.shared.types.common import Host, NodeId
+from exo.shared.types.common import Host, MetaInstanceId, NodeId
 from exo.shared.types.events import (
     IndexedEvent,
-    InstanceCreated,
     MetaInstanceCreated,
     MetaInstanceDeleted,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.meta_instance import MetaInstance, MetaInstanceId
+from exo.shared.types.meta_instance import MetaInstance
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
 from exo.shared.types.topology import Connection, SocketConnection
@@ -95,6 +93,7 @@ def _instance(
     model_id: str = "test-org/test-model",
     node_ids: list[str] | None = None,
     instance_id: InstanceId | None = None,
+    meta_instance_id: MetaInstanceId | None = None,
 ) -> tuple[InstanceId, MlxRingInstance]:
     """Create a test instance with hosts_by_node matching ``_topology()`` IPs."""
     iid = instance_id or InstanceId()
@@ -136,6 +135,7 @@ def _instance(
         ),
         hosts_by_node=hosts_by_node,
         ephemeral_port=ephemeral_port,
+        meta_instance_id=meta_instance_id,
     )
 
 
@@ -308,52 +308,22 @@ def test_healthy_extra_nodes_in_topology():
     assert instance_connections_healthy(inst, topology) is True
 
 
-# --- find_satisfying_instance ---
-
-
-def test_find_no_instances():
-    meta = _meta_instance()
-    topology = _topology("node-a")
-    assert find_satisfying_instance(meta, {}, topology) is None
-
-
-def test_find_one_match_among_several():
-    meta = _meta_instance("test-org/model-a")
-    id_a, inst_a = _instance("test-org/model-a")
-    id_b, inst_b = _instance("test-org/model-b")
-    instances = {id_a: inst_a, id_b: inst_b}
-    topology = _topology("node-a")
-    assert find_satisfying_instance(meta, instances, topology) == id_a
-
-
-def test_find_multiple_could_match():
-    meta = _meta_instance()
-    id_a, inst_a = _instance()
-    id_b, inst_b = _instance()
-    instances = {id_a: inst_a, id_b: inst_b}
-    topology = _topology("node-a")
-    result = find_satisfying_instance(meta, instances, topology)
-    assert result in {id_a, id_b}
-
-
 # --- find_unsatisfied_meta_instances ---
 
 
 def test_unsatisfied_no_meta_instances():
-    result = find_unsatisfied_meta_instances({}, {}, Topology(), {})
+    result = find_unsatisfied_meta_instances({}, {}, Topology())
     assert list(result) == []
 
 
 def test_unsatisfied_one_satisfied():
     meta = _meta_instance()
-    id_a, inst_a = _instance()
+    id_a, inst_a = _instance(meta_instance_id=meta.meta_instance_id)
     topology = _topology("node-a")
-    # Bound via backing map
     result = find_unsatisfied_meta_instances(
         {meta.meta_instance_id: meta},
         {id_a: inst_a},
         topology,
-        {meta.meta_instance_id: id_a},
     )
     assert list(result) == []
 
@@ -363,7 +333,7 @@ def test_unsatisfied_one_not_satisfied():
     id_a, inst_a = _instance("test-org/model-y")
     topology = _topology("node-a")
     result = find_unsatisfied_meta_instances(
-        {meta.meta_instance_id: meta}, {id_a: inst_a}, topology, {}
+        {meta.meta_instance_id: meta}, {id_a: inst_a}, topology
     )
     assert list(result) == [meta]
 
@@ -371,7 +341,9 @@ def test_unsatisfied_one_not_satisfied():
 def test_unsatisfied_mix():
     meta_satisfied = _meta_instance("test-org/model-a")
     meta_unsatisfied = _meta_instance("test-org/model-b")
-    id_a, inst_a = _instance("test-org/model-a")
+    id_a, inst_a = _instance(
+        "test-org/model-a", meta_instance_id=meta_satisfied.meta_instance_id
+    )
     topology = _topology("node-a")
     result = find_unsatisfied_meta_instances(
         {
@@ -380,20 +352,20 @@ def test_unsatisfied_mix():
         },
         {id_a: inst_a},
         topology,
-        {meta_satisfied.meta_instance_id: id_a},
     )
     assert list(result) == [meta_unsatisfied]
 
 
 def test_unsatisfied_node_disconnect():
     meta = _meta_instance()
-    id_a, inst_a = _instance(node_ids=["node-a", "node-b"])
+    id_a, inst_a = _instance(
+        node_ids=["node-a", "node-b"], meta_instance_id=meta.meta_instance_id
+    )
     topology = _topology("node-a")  # node-b disconnected
     result = find_unsatisfied_meta_instances(
         {meta.meta_instance_id: meta},
         {id_a: inst_a},
         topology,
-        {meta.meta_instance_id: id_a},
     )
     assert list(result) == [meta]
 
@@ -401,13 +373,14 @@ def test_unsatisfied_node_disconnect():
 def test_unsatisfied_edge_break():
     """Instance exists but its connections broke — meta-instance becomes unsatisfied."""
     meta = _meta_instance()
-    id_a, inst_a = _instance(node_ids=["node-a", "node-b"])
+    id_a, inst_a = _instance(
+        node_ids=["node-a", "node-b"], meta_instance_id=meta.meta_instance_id
+    )
     topology = _topology("node-a", "node-b", connect=False)  # nodes present, no edges
     result = find_unsatisfied_meta_instances(
         {meta.meta_instance_id: meta},
         {id_a: inst_a},
         topology,
-        {meta.meta_instance_id: id_a},
     )
     assert list(result) == [meta]
 
@@ -418,22 +391,22 @@ def test_unsatisfied_idempotent():
     meta_instances = {meta.meta_instance_id: meta}
     instances: dict[InstanceId, MlxRingInstance] = {}
     result_1 = list(
-        find_unsatisfied_meta_instances(meta_instances, instances, topology, {})
+        find_unsatisfied_meta_instances(meta_instances, instances, topology)
     )
     result_2 = list(
-        find_unsatisfied_meta_instances(meta_instances, instances, topology, {})
+        find_unsatisfied_meta_instances(meta_instances, instances, topology)
     )
     assert result_1 == result_2
 
 
 def test_unsatisfied_exclusive_binding():
-    """Two MetaInstances for the same model: one is bound, the other is unsatisfied."""
+    """Two MetaInstances for the same model: one is bound via meta_instance_id, the other is unsatisfied."""
     meta_a = _meta_instance("test-org/model-x")
     meta_b = _meta_instance("test-org/model-x")
-    id_inst, inst = _instance("test-org/model-x")
+    id_inst, inst = _instance(
+        "test-org/model-x", meta_instance_id=meta_a.meta_instance_id
+    )
     topology = _topology("node-a")
-    # meta_a is bound to the only instance → meta_b is unsatisfied
-    backing = {meta_a.meta_instance_id: id_inst}
     result = find_unsatisfied_meta_instances(
         {
             meta_a.meta_instance_id: meta_a,
@@ -441,127 +414,8 @@ def test_unsatisfied_exclusive_binding():
         },
         {id_inst: inst},
         topology,
-        backing,
     )
     assert list(result) == [meta_b]
-
-
-def test_find_satisfying_instance_exclude():
-    """find_satisfying_instance should skip instances in the exclude set."""
-    meta = _meta_instance()
-    id_a, inst_a = _instance()
-    id_b, inst_b = _instance()
-    topology = _topology("node-a")
-    # Without exclude, first match returned
-    result = find_satisfying_instance(meta, {id_a: inst_a, id_b: inst_b}, topology)
-    assert result is not None
-    # Exclude the first result → should get the other one
-    result2 = find_satisfying_instance(
-        meta, {id_a: inst_a, id_b: inst_b}, topology, exclude=frozenset({result})
-    )
-    assert result2 is not None
-    assert result2 != result
-    # Exclude both → nothing found
-    result3 = find_satisfying_instance(
-        meta, {id_a: inst_a, id_b: inst_b}, topology, exclude=frozenset({id_a, id_b})
-    )
-    assert result3 is None
-
-
-def test_apply_meta_instance_bound():
-    """MetaInstanceBound event should populate the backing map."""
-    from exo.shared.types.events import MetaInstanceBound
-
-    state = State()
-    meta = _meta_instance()
-    id_a, inst_a = _instance()
-    # First, create meta instance and instance in state
-    state = apply(
-        state,
-        IndexedEvent(idx=0, event=MetaInstanceCreated(meta_instance=meta)),
-    )
-    state = apply(
-        state,
-        IndexedEvent(idx=1, event=InstanceCreated(instance=inst_a)),
-    )
-    # Bind them
-    state = apply(
-        state,
-        IndexedEvent(
-            idx=2,
-            event=MetaInstanceBound(
-                meta_instance_id=meta.meta_instance_id, instance_id=id_a
-            ),
-        ),
-    )
-    assert state.meta_instance_backing[meta.meta_instance_id] == id_a
-
-
-def test_apply_instance_deleted_clears_backing():
-    """Deleting an instance should remove it from the backing map."""
-    from exo.shared.types.events import InstanceDeleted, MetaInstanceBound
-
-    state = State()
-    meta = _meta_instance()
-    id_a, inst_a = _instance()
-    state = apply(
-        state,
-        IndexedEvent(idx=0, event=MetaInstanceCreated(meta_instance=meta)),
-    )
-    state = apply(
-        state,
-        IndexedEvent(idx=1, event=InstanceCreated(instance=inst_a)),
-    )
-    state = apply(
-        state,
-        IndexedEvent(
-            idx=2,
-            event=MetaInstanceBound(
-                meta_instance_id=meta.meta_instance_id, instance_id=id_a
-            ),
-        ),
-    )
-    assert meta.meta_instance_id in state.meta_instance_backing
-    # Delete the instance
-    state = apply(
-        state,
-        IndexedEvent(idx=3, event=InstanceDeleted(instance_id=id_a)),
-    )
-    assert meta.meta_instance_id not in state.meta_instance_backing
-
-
-def test_apply_meta_instance_deleted_clears_backing():
-    """Deleting a MetaInstance should remove its entry from the backing map."""
-    from exo.shared.types.events import MetaInstanceBound
-
-    state = State()
-    meta = _meta_instance()
-    id_a, inst_a = _instance()
-    state = apply(
-        state,
-        IndexedEvent(idx=0, event=MetaInstanceCreated(meta_instance=meta)),
-    )
-    state = apply(
-        state,
-        IndexedEvent(idx=1, event=InstanceCreated(instance=inst_a)),
-    )
-    state = apply(
-        state,
-        IndexedEvent(
-            idx=2,
-            event=MetaInstanceBound(
-                meta_instance_id=meta.meta_instance_id, instance_id=id_a
-            ),
-        ),
-    )
-    # Delete the meta instance
-    state = apply(
-        state,
-        IndexedEvent(
-            idx=3, event=MetaInstanceDeleted(meta_instance_id=meta.meta_instance_id)
-        ),
-    )
-    assert meta.meta_instance_id not in state.meta_instance_backing
 
 
 # --- apply handlers ---
