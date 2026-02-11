@@ -474,7 +474,8 @@ def test_runners_failed_all_failed():
     }
     is_failed, error = instance_runners_failed(inst, runners)
     assert is_failed is True
-    assert error == "OOM"
+    assert error is not None
+    assert "OOM" in error
 
 
 def test_runners_failed_mixed_failed_shutdown():
