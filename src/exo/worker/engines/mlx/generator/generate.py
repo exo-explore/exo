@@ -57,6 +57,7 @@ def prefill(
     sampler: Callable[[mx.array], mx.array],
     prompt_tokens: mx.array,
     cache: KVCacheType,
+    group: mx.distributed.Group | None = None,
 ) -> tuple[float, int, list[CacheSnapshot]]:
     """Prefill the KV cache with prompt tokens.
 
@@ -85,6 +86,9 @@ def prefill(
             snapshots.append(snapshot_ssm_states(cache))
 
     set_pipeline_prefill(model, is_prefill=True)
+
+    mx_barrier(group)
+    logger.info("Ready to prefill")
 
     # Use max_tokens=1 because max_tokens=0 does not work.
     # We just throw away the generated token - we only care about filling the cache
@@ -305,16 +309,9 @@ def mlx_generate(
     )
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
-    mx_barrier(group)
-    logger.info("Ready to prefill")
-
     # Prefill cache with all tokens except the last one
     prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
-        model,
-        tokenizer,
-        sampler,
-        prompt_tokens[:-1],
-        caches,
+        model, tokenizer, sampler, prompt_tokens[:-1], caches, group
     )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 
