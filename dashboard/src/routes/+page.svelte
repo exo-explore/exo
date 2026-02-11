@@ -1877,7 +1877,10 @@
       {/if}
 
       {#if tb5WithoutRdma && !tb5InfoDismissed}
-        <div class="flex items-center gap-2 px-3 py-2 rounded border border-blue-400/50 bg-blue-400/10 backdrop-blur-sm" role="status">
+        <div
+          class="flex items-center gap-2 px-3 py-2 rounded border border-blue-400/50 bg-blue-400/10 backdrop-blur-sm"
+          role="status"
+        >
           <svg
             class="w-5 h-5 text-blue-400 flex-shrink-0"
             fill="none"
@@ -1891,9 +1894,7 @@
               d={infoIconPath}
             />
           </svg>
-          <span class="text-sm font-mono text-blue-200">
-            RDMA AVAILABLE
-          </span>
+          <span class="text-sm font-mono text-blue-200"> RDMA AVAILABLE </span>
           <button
             type="button"
             onclick={() => (tb5InfoDismissed = true)}
@@ -1985,8 +1986,7 @@
               d={infoIconPath}
             />
           </svg>
-          <span class="text-[10px] font-mono text-blue-200"
-            >RDMA AVAILABLE</span
+          <span class="text-[10px] font-mono text-blue-200">RDMA AVAILABLE</span
           >
         </div>
       {/if}
