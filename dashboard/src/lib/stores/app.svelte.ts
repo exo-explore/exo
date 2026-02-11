@@ -235,6 +235,8 @@ interface RawStateResponse {
   metaInstances?: Record<string, MetaInstanceData>;
   // MetaInstance placement errors
   metaInstanceErrors?: Record<string, string>;
+  // MetaInstance failure tracking
+  metaInstanceFailureInfo?: Record<string, { consecutiveFailures: number; lastError: string | null }>;
 }
 
 export interface MetaInstanceData {
@@ -509,6 +511,7 @@ class AppStore {
   lastUpdate = $state<number | null>(null);
   metaInstances = $state<Record<string, MetaInstanceData>>({});
   metaInstanceErrors = $state<Record<string, string>>({});
+  metaInstanceFailureInfo = $state<Record<string, { consecutiveFailures: number; lastError: string | null }>>({});
   thunderboltBridgeCycles = $state<string[][]>([]);
   nodeThunderboltBridge = $state<
     Record<
@@ -1219,6 +1222,7 @@ class AppStore {
       // MetaInstances
       this.metaInstances = data.metaInstances ?? {};
       this.metaInstanceErrors = data.metaInstanceErrors ?? {};
+      this.metaInstanceFailureInfo = data.metaInstanceFailureInfo ?? {};
       // Thunderbolt bridge cycles
       this.thunderboltBridgeCycles = data.thunderboltBridgeCycles ?? [];
       // Thunderbolt bridge status per node
@@ -2971,6 +2975,7 @@ export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
 export const metaInstances = () => appStore.metaInstances;
 export const metaInstanceErrors = () => appStore.metaInstanceErrors;
+export const metaInstanceFailureInfo = () => appStore.metaInstanceFailureInfo;
 export const runners = () => appStore.runners;
 export const downloads = () => appStore.downloads;
 export const placementPreviews = () => appStore.placementPreviews;

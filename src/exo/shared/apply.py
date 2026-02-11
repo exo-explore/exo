@@ -38,7 +38,7 @@ from exo.shared.types.profiling import (
     NodeThunderboltInfo,
     ThunderboltBridgeStatus,
 )
-from exo.shared.types.state import State
+from exo.shared.types.state import InstanceFailureInfo, State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
@@ -202,10 +202,32 @@ def apply_instance_created(event: InstanceCreated, state: State) -> State:
 
 
 def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
+    deleted_instance = state.instances.get(event.instance_id)
     new_instances: Mapping[InstanceId, Instance] = {
         iid: inst for iid, inst in state.instances.items() if iid != event.instance_id
     }
-    return state.model_copy(update={"instances": new_instances})
+    update: dict[str, object] = {"instances": new_instances}
+
+    # Track failure for meta-bound instances
+    if (
+        event.failure_error
+        and deleted_instance
+        and deleted_instance.meta_instance_id
+    ):
+        mid = deleted_instance.meta_instance_id
+        current = state.meta_instance_failure_info.get(
+            mid, InstanceFailureInfo()
+        )
+        new_info = InstanceFailureInfo(
+            consecutive_failures=current.consecutive_failures + 1,
+            last_error=event.failure_error,
+        )
+        update["meta_instance_failure_info"] = {
+            **state.meta_instance_failure_info,
+            mid: new_info,
+        }
+
+    return state.model_copy(update=update)
 
 
 def apply_meta_instance_created(event: MetaInstanceCreated, state: State) -> State:
@@ -227,8 +249,17 @@ def apply_meta_instance_deleted(event: MetaInstanceDeleted, state: State) -> Sta
         for mid, err in state.meta_instance_errors.items()
         if mid != event.meta_instance_id
     }
+    new_failure_info: Mapping[MetaInstanceId, InstanceFailureInfo] = {
+        mid: info
+        for mid, info in state.meta_instance_failure_info.items()
+        if mid != event.meta_instance_id
+    }
     return state.model_copy(
-        update={"meta_instances": new_meta, "meta_instance_errors": new_errors}
+        update={
+            "meta_instances": new_meta,
+            "meta_instance_errors": new_errors,
+            "meta_instance_failure_info": new_failure_info,
+        }
     )
 
 
