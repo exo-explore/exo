@@ -643,7 +643,7 @@
           model_id: modelId,
           sharding: preview?.sharding ?? selectedSharding,
           instance_meta: preview?.instance_meta ?? selectedInstanceType,
-          min_nodes: selectedMinNodes,
+          min_nodes: Math.max(selectedMinNodes, nodeFilter.size),
           node_ids: nodeFilter.size > 0 ? Array.from(nodeFilter) : undefined,
         }),
       });
