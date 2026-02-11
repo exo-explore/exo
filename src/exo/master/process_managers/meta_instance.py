@@ -27,24 +27,6 @@ class MetaInstanceReconciler:
             state.topology,
         )
         for meta_instance in unsatisfied:
-            # Skip placement if we've exhausted retries (3 consecutive failures)
-            failure_info = state.meta_instance_failure_info.get(
-                meta_instance.meta_instance_id
-            )
-            if failure_info and failure_info.consecutive_failures >= 3:
-                existing_error = state.meta_instance_errors.get(
-                    meta_instance.meta_instance_id
-                )
-                error_msg = f"Exceeded retry limit ({failure_info.consecutive_failures}/3): {failure_info.last_error}"
-                if existing_error != error_msg:
-                    all_events.append(
-                        MetaInstancePlacementFailed(
-                            meta_instance_id=meta_instance.meta_instance_id,
-                            reason=error_msg,
-                        )
-                    )
-                continue
-
             model_card = await ModelCard.load(meta_instance.model_id)
             result = try_place_for_meta_instance(
                 meta_instance,
