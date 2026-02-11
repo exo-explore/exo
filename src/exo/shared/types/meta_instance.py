@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import final
 
 from pydantic import Field
@@ -24,4 +23,3 @@ class MetaInstance(FrozenModel):
     placement_error: str | None = None
     consecutive_failures: int = 0
     last_failure_error: str | None = None
-    last_failure_at: datetime | None = None
