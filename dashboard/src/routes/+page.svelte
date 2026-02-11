@@ -76,13 +76,6 @@
     errorMessage: null,
   } as const;
 
-  const UNKNOWN_INSTANCE_INFO = {
-    instanceType: "Unknown",
-    sharding: "Unknown",
-    nodeNames: [] as string[],
-    nodeIds: [] as string[],
-    nodeCount: 0,
-  } as const;
   const tbBridgeData = $derived(nodeThunderboltBridge());
   const nodeFilter = $derived(previewNodeFilter());
 
@@ -1621,6 +1614,8 @@
     instance: unknown | null; // The backing/orphan instance (tagged union) or null if placing
     instanceId: string | null; // The actual Instance ID (for topology hover)
     isMetaInstance: boolean;
+    sharding: string | null; // From MetaInstance constraints (used when instance is null)
+    instanceMeta: string | null; // From MetaInstance constraints (used when instance is null)
   }
 
   const unifiedDisplayItems = $derived((): DisplayItem[] => {
@@ -1634,6 +1629,8 @@
         instance: backingId ? instanceData[backingId] : null,
         instanceId: backingId,
         isMetaInstance: true,
+        sharding: meta.sharding,
+        instanceMeta: meta.instanceMeta,
       });
     }
     // Orphan Instances
@@ -1645,6 +1642,8 @@
         instance: inst,
         instanceId: orphanId,
         isMetaInstance: false,
+        sharding: null,
+        instanceMeta: null,
       });
     }
     return items;
@@ -2114,7 +2113,13 @@
                   {@const instanceModelId = item.modelId}
                   {@const instanceInfo = instance
                     ? getInstanceInfo(instance)
-                    : UNKNOWN_INSTANCE_INFO}
+                    : {
+                        instanceType: item.instanceMeta === "MlxRing" ? "MLX Ring" : item.instanceMeta === "MlxJaccl" ? "MLX RDMA" : "Unknown",
+                        sharding: item.sharding ?? "Unknown",
+                        nodeNames: [] as string[],
+                        nodeIds: [] as string[],
+                        nodeCount: 0,
+                      }}
                   {@const instanceConnections = instance
                     ? getInstanceConnections(instance)
                     : []}
@@ -2961,7 +2966,13 @@
                     {@const instanceModelId = item.modelId}
                     {@const instanceInfo = instance
                       ? getInstanceInfo(instance)
-                      : UNKNOWN_INSTANCE_INFO}
+                      : {
+                          instanceType: item.instanceMeta === "MlxRing" ? "MLX Ring" : item.instanceMeta === "MlxJaccl" ? "MLX RDMA" : "Unknown",
+                          sharding: item.sharding ?? "Unknown",
+                          nodeNames: [] as string[],
+                          nodeIds: [] as string[],
+                          nodeCount: 0,
+                        }}
                     {@const instanceConnections = instance
                       ? getInstanceConnections(instance)
                       : []}
