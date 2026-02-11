@@ -45,7 +45,6 @@
     nodeThunderbolt,
     nodeRdmaCtl,
     metaInstances,
-    metaInstanceBacking,
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
     nodeIdentities,
@@ -72,8 +71,26 @@
   const topologyOnlyEnabled = $derived(topologyOnlyMode());
   const sidebarVisible = $derived(chatSidebarVisible());
   const metaInstancesData = $derived(metaInstances());
-  const metaInstanceBackingData = $derived(metaInstanceBacking());
   const tbBridgeCycles = $derived(thunderboltBridgeCycles());
+
+  // Shared fallback objects for MetaInstances without a backing instance yet
+  const PLACING_STATUS = {
+    statusText: "PLACING",
+    statusClass: "starting",
+    isDownloading: false,
+    isFailed: false,
+    progress: null,
+    perNode: [],
+    errorMessage: null,
+  } as const;
+
+  const UNKNOWN_INSTANCE_INFO = {
+    instanceType: "Unknown",
+    sharding: "Unknown",
+    nodeNames: [] as string[],
+    nodeIds: [] as string[],
+    nodeCount: 0,
+  } as const;
   const tbBridgeData = $derived(nodeThunderboltBridge());
   const identitiesData = $derived(nodeIdentities());
   const tbIdentifiers = $derived(nodeThunderbolt());
@@ -1285,20 +1302,31 @@
     }
   }
 
-  // Find the backing Instance ID for a MetaInstance via the explicit binding map
+  // Find the backing Instance ID for a MetaInstance by scanning instances
   function getBackingInstanceId(metaInstanceId: string): string | null {
-    return metaInstanceBackingData[metaInstanceId] ?? null;
-  }
-
-  // Get the set of Instance IDs that are backing MetaInstances
-  function getBackedInstanceIds(): Set<string> {
-    return new Set(Object.values(metaInstanceBackingData));
+    for (const [id, inst] of Object.entries(instanceData)) {
+      const [, inner] = getTagged(inst);
+      if (
+        inner &&
+        typeof inner === "object" &&
+        (inner as Record<string, unknown>).metaInstanceId === metaInstanceId
+      ) {
+        return id;
+      }
+    }
+    return null;
   }
 
   // Get orphan Instance IDs (not backing any MetaInstance)
   function getOrphanInstanceIds(): string[] {
-    const backedIds = getBackedInstanceIds();
-    return Object.keys(instanceData).filter((id) => !backedIds.has(id));
+    return Object.keys(instanceData).filter((id) => {
+      const [, inner] = getTagged(instanceData[id]);
+      return (
+        !inner ||
+        typeof inner !== "object" ||
+        !(inner as Record<string, unknown>).metaInstanceId
+      );
+    });
   }
 
   // Helper to unwrap tagged unions like { MlxRingInstance: {...} }
@@ -2404,15 +2432,7 @@
                   {@const instance = item.instance}
                   {@const downloadInfo = instance
                     ? getInstanceDownloadStatus(item.instanceId ?? id, instance)
-                    : {
-                        statusText: "PLACING",
-                        statusClass: "starting",
-                        isDownloading: false,
-                        isFailed: false,
-                        progress: null,
-                        perNode: [],
-                        errorMessage: null,
-                      }}
+                    : PLACING_STATUS}
                   {@const statusText = downloadInfo.statusText}
                   {@const isDownloading = downloadInfo.isDownloading}
                   {@const isFailed = statusText === "FAILED"}
@@ -2428,13 +2448,7 @@
                   {@const instanceModelId = item.modelId}
                   {@const instanceInfo = instance
                     ? getInstanceInfo(instance)
-                    : {
-                        instanceType: "Unknown",
-                        sharding: "Unknown",
-                        nodeNames: [],
-                        nodeIds: [],
-                        nodeCount: 0,
-                      }}
+                    : UNKNOWN_INSTANCE_INFO}
                   {@const instanceConnections = instance
                     ? getInstanceConnections(instance)
                     : []}
@@ -3243,15 +3257,7 @@
                           item.instanceId ?? id,
                           instance,
                         )
-                      : {
-                          statusText: "PLACING",
-                          statusClass: "starting",
-                          isDownloading: false,
-                          isFailed: false,
-                          progress: null,
-                          perNode: [],
-                          errorMessage: null,
-                        }}
+                      : PLACING_STATUS}
                     {@const statusText = downloadInfo.statusText}
                     {@const isDownloading = downloadInfo.isDownloading}
                     {@const isFailed = statusText === "FAILED"}
@@ -3267,13 +3273,7 @@
                     {@const instanceModelId = item.modelId}
                     {@const instanceInfo = instance
                       ? getInstanceInfo(instance)
-                      : {
-                          instanceType: "Unknown",
-                          sharding: "Unknown",
-                          nodeNames: [],
-                          nodeIds: [],
-                          nodeCount: 0,
-                        }}
+                      : UNKNOWN_INSTANCE_INFO}
                     {@const instanceConnections = instance
                       ? getInstanceConnections(instance)
                       : []}

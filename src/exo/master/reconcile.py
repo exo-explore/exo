@@ -6,9 +6,9 @@ from exo.master.placement import get_transition_events, place_instance
 from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Topology
 from exo.shared.types.commands import PlaceInstance
-from exo.shared.types.common import NodeId
-from exo.shared.types.events import Event, MetaInstanceBound
-from exo.shared.types.meta_instance import MetaInstance, MetaInstanceId
+from exo.shared.types.common import MetaInstanceId, NodeId
+from exo.shared.types.events import Event
+from exo.shared.types.meta_instance import MetaInstance
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
 from exo.shared.types.topology import RDMAConnection, SocketConnection
 from exo.shared.types.worker.instances import (
@@ -105,41 +105,21 @@ def instance_satisfies_meta_instance(
     )
 
 
-def find_satisfying_instance(
-    meta_instance: MetaInstance,
-    instances: Mapping[InstanceId, Instance],
-    topology: Topology,
-    *,
-    exclude: frozenset[InstanceId] = frozenset(),
-) -> InstanceId | None:
-    """Find an existing instance that is healthy and satisfies a meta-instance's constraints."""
-    for instance_id, instance in instances.items():
-        if instance_id in exclude:
-            continue
-        if instance_connections_healthy(
-            instance, topology
-        ) and instance_satisfies_meta_instance(meta_instance, instance):
-            return instance_id
-    return None
-
-
 def find_unsatisfied_meta_instances(
     meta_instances: Mapping[MetaInstanceId, MetaInstance],
     instances: Mapping[InstanceId, Instance],
     topology: Topology,
-    meta_instance_backing: Mapping[MetaInstanceId, InstanceId],
 ) -> Sequence[MetaInstance]:
-    """Return meta-instances whose bound backing instance is missing or unhealthy."""
+    """Return meta-instances that have no healthy backing instance."""
     unsatisfied: list[MetaInstance] = []
     for meta_id, meta_instance in meta_instances.items():
-        bound_id = meta_instance_backing.get(meta_id)
-        if bound_id is not None:
-            bound_instance = instances.get(bound_id)
-            if bound_instance is not None and instance_connections_healthy(
-                bound_instance, topology
-            ):
-                continue  # bound and healthy
-        unsatisfied.append(meta_instance)
+        has_healthy_backing = any(
+            instance.meta_instance_id == meta_id
+            and instance_connections_healthy(instance, topology)
+            for instance in instances.values()
+        )
+        if not has_healthy_backing:
+            unsatisfied.append(meta_instance)
     return unsatisfied
 
 
@@ -153,7 +133,8 @@ def try_place_for_meta_instance(
 ) -> Sequence[Event]:
     """Try to place an instance satisfying the meta-instance constraints.
 
-    Returns InstanceCreated + MetaInstanceBound events on success, empty sequence on failure.
+    Returns InstanceCreated events on success, empty sequence on failure.
+    The new instance carries ``meta_instance_id`` so the binding is implicit.
     """
     command = PlaceInstance(
         model_card=model_card,
@@ -172,20 +153,14 @@ def try_place_for_meta_instance(
                 set(meta_instance.node_ids) if meta_instance.node_ids else None
             ),
         )
-        events: list[Event] = list(
-            get_transition_events(current_instances, target_instances)
-        )
-        # Find the newly created instance and bind it
+        # Tag the new instance with meta_instance_id
         new_instance_ids = set(target_instances.keys()) - set(current_instances.keys())
         if new_instance_ids:
             new_id = next(iter(new_instance_ids))
-            events.append(
-                MetaInstanceBound(
-                    meta_instance_id=meta_instance.meta_instance_id,
-                    instance_id=new_id,
-                )
+            target_instances[new_id] = target_instances[new_id].model_copy(
+                update={"meta_instance_id": meta_instance.meta_instance_id}
             )
-        return events
+        return list(get_transition_events(current_instances, target_instances))
     except ValueError as e:
         logger.debug(
             f"MetaInstance placement not possible for {meta_instance.model_id}: {e}"

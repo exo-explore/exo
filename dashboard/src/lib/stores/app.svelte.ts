@@ -252,8 +252,6 @@ interface RawStateResponse {
   thunderboltBridgeCycles?: string[][];
   // MetaInstances (declarative instance constraints)
   metaInstances?: Record<string, MetaInstanceData>;
-  // Explicit MetaInstance → Instance binding
-  metaInstanceBacking?: Record<string, string>;
 }
 
 export interface MetaInstanceData {
@@ -551,7 +549,6 @@ class AppStore {
   lastUpdate = $state<number | null>(null);
   nodeIdentities = $state<Record<string, RawNodeIdentity>>({});
   metaInstances = $state<Record<string, MetaInstanceData>>({});
-  metaInstanceBacking = $state<Record<string, string>>({});
   thunderboltBridgeCycles = $state<string[][]>([]);
   nodeThunderbolt = $state<
     Record<
@@ -1290,7 +1287,6 @@ class AppStore {
       this.nodeRdmaCtl = data.nodeRdmaCtl ?? {};
       // MetaInstances
       this.metaInstances = data.metaInstances ?? {};
-      this.metaInstanceBacking = data.metaInstanceBacking ?? {};
       // Thunderbolt bridge cycles
       this.thunderboltBridgeCycles = data.thunderboltBridgeCycles ?? [];
       // Thunderbolt bridge status per node
@@ -3063,7 +3059,6 @@ export const totalTokens = () => appStore.totalTokens;
 export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
 export const metaInstances = () => appStore.metaInstances;
-export const metaInstanceBacking = () => appStore.metaInstanceBacking;
 export const runners = () => appStore.runners;
 export const downloads = () => appStore.downloads;
 export const nodeDisk = () => appStore.nodeDisk;
