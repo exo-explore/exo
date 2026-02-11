@@ -12,6 +12,7 @@ from exo.shared.types.events import (
     InputChunkReceived,
     InstanceCreated,
     InstanceDeleted,
+    InstanceRetrying,
     MetaInstanceCreated,
     MetaInstanceDeleted,
     MetaInstancePlacementFailed,
@@ -73,6 +74,8 @@ def event_apply(event: Event, state: State) -> State:
             return apply_instance_created(event, state)
         case InstanceDeleted():
             return apply_instance_deleted(event, state)
+        case InstanceRetrying():
+            return apply_instance_retrying(event, state)
         case MetaInstanceCreated():
             return apply_meta_instance_created(event, state)
         case MetaInstanceDeleted():
@@ -195,15 +198,17 @@ def apply_instance_created(event: InstanceCreated, state: State) -> State:
         instance.instance_id: instance,
     }
     update: dict[str, object] = {"instances": new_instances}
-    # Clear placement error when an instance is created for a meta-instance
-    if (
-        instance.meta_instance_id
-        and instance.meta_instance_id in state.meta_instances
-        and state.meta_instances[instance.meta_instance_id].placement_error is not None
-    ):
-        update["meta_instances"] = _update_meta_instance(
-            state, instance.meta_instance_id, placement_error=None
-        )
+    # Reset failure tracking when a new instance is created for a meta-instance
+    if instance.meta_instance_id and instance.meta_instance_id in state.meta_instances:
+        mi = state.meta_instances[instance.meta_instance_id]
+        if mi.placement_error is not None or mi.consecutive_failures > 0:
+            update["meta_instances"] = _update_meta_instance(
+                state,
+                instance.meta_instance_id,
+                placement_error=None,
+                consecutive_failures=0,
+                last_failure_error=None,
+            )
     return state.model_copy(update=update)
 
 
@@ -232,6 +237,34 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
                 }
             ),
         }
+
+    return state.model_copy(update=update)
+
+
+def apply_instance_retrying(event: InstanceRetrying, state: State) -> State:
+    """Runners failed but retry limit not reached — remove runners, keep instance."""
+    instance = state.instances.get(event.instance_id)
+    if instance is None:
+        return state
+
+    # Remove all runners belonging to this instance from state
+    runner_ids_to_remove = set(instance.shard_assignments.node_to_runner.values())
+    new_runners: Mapping[RunnerId, RunnerStatus] = {
+        rid: rs
+        for rid, rs in state.runners.items()
+        if rid not in runner_ids_to_remove
+    }
+
+    update: dict[str, object] = {"runners": new_runners}
+
+    # Increment failure count on the MetaInstance
+    if event.meta_instance_id in state.meta_instances:
+        update["meta_instances"] = _update_meta_instance(
+            state,
+            event.meta_instance_id,
+            consecutive_failures=state.meta_instances[event.meta_instance_id].consecutive_failures + 1,
+            last_failure_error=event.failure_error,
+        )
 
     return state.model_copy(update=update)
 
