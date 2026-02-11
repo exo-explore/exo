@@ -67,6 +67,7 @@ class InstanceCreated(BaseEvent):
 
 class InstanceDeleted(BaseEvent):
     instance_id: InstanceId
+    failure_error: str | None = None
 
 
 class MetaInstanceCreated(BaseEvent):

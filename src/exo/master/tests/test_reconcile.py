@@ -1,6 +1,7 @@
 from exo.master.reconcile import (
     find_unsatisfied_meta_instances,
     instance_connections_healthy,
+    instance_runners_failed,
     instance_satisfies_meta_instance,
 )
 from exo.shared.apply import apply
@@ -9,19 +10,27 @@ from exo.shared.topology import Topology
 from exo.shared.types.common import Host, MetaInstanceId, NodeId
 from exo.shared.types.events import (
     IndexedEvent,
+    InstanceDeleted,
     MetaInstanceCreated,
     MetaInstanceDeleted,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.meta_instance import MetaInstance
 from exo.shared.types.multiaddr import Multiaddr
-from exo.shared.types.state import State
+from exo.shared.types.state import InstanceFailureInfo, State
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.instances import (
     InstanceId,
     MlxRingInstance,
 )
-from exo.shared.types.worker.runners import RunnerId, ShardAssignments
+from exo.shared.types.worker.runners import (
+    RunnerFailed,
+    RunnerId,
+    RunnerLoading,
+    RunnerReady,
+    RunnerShutdown,
+    ShardAssignments,
+)
 from exo.shared.types.worker.shards import PipelineShardMetadata
 
 
@@ -436,3 +445,153 @@ def test_apply_meta_instance_deleted():
     event = MetaInstanceDeleted(meta_instance_id=meta.meta_instance_id)
     new_state = apply(state, IndexedEvent(idx=0, event=event))
     assert meta.meta_instance_id not in new_state.meta_instances
+
+
+def test_apply_meta_instance_deleted_clears_failure_info():
+    meta = _meta_instance()
+    state = State(
+        meta_instances={meta.meta_instance_id: meta},
+        meta_instance_failure_info={
+            meta.meta_instance_id: InstanceFailureInfo(
+                consecutive_failures=2, last_error="OOM"
+            )
+        },
+    )
+    event = MetaInstanceDeleted(meta_instance_id=meta.meta_instance_id)
+    new_state = apply(state, IndexedEvent(idx=0, event=event))
+    assert meta.meta_instance_id not in new_state.meta_instance_failure_info
+
+
+# --- instance_runners_failed ---
+
+
+def test_runners_failed_all_failed():
+    """All runners in RunnerFailed -> instance is failed."""
+    _, inst = _instance(node_ids=["node-a", "node-b"])
+    runners = {
+        rid: RunnerFailed(error_message="OOM")
+        for rid in inst.shard_assignments.node_to_runner.values()
+    }
+    is_failed, error = instance_runners_failed(inst, runners)
+    assert is_failed is True
+    assert error == "OOM"
+
+
+def test_runners_failed_mixed_failed_shutdown():
+    """One Failed + one Shutdown = failed."""
+    _, inst = _instance(node_ids=["node-a", "node-b"])
+    runner_ids = list(inst.shard_assignments.node_to_runner.values())
+    runners = {
+        runner_ids[0]: RunnerFailed(error_message="crash"),
+        runner_ids[1]: RunnerShutdown(),
+    }
+    is_failed, error = instance_runners_failed(inst, runners)
+    assert is_failed is True
+    assert error == "crash"
+
+
+def test_runners_not_failed_all_shutdown():
+    """All Shutdown (graceful) = not a failure."""
+    _, inst = _instance(node_ids=["node-a"])
+    runners = {
+        rid: RunnerShutdown()
+        for rid in inst.shard_assignments.node_to_runner.values()
+    }
+    is_failed, _ = instance_runners_failed(inst, runners)
+    assert is_failed is False
+
+
+def test_runners_not_failed_still_active():
+    """Some runners still active = not failed yet."""
+    _, inst = _instance(node_ids=["node-a", "node-b"])
+    runner_ids = list(inst.shard_assignments.node_to_runner.values())
+    runners = {
+        runner_ids[0]: RunnerFailed(error_message="OOM"),
+        runner_ids[1]: RunnerLoading(),
+    }
+    is_failed, _ = instance_runners_failed(inst, runners)
+    assert is_failed is False
+
+
+def test_runners_not_failed_no_status():
+    """Runner not yet reported = not failed."""
+    _, inst = _instance(node_ids=["node-a"])
+    is_failed, _ = instance_runners_failed(inst, {})
+    assert is_failed is False
+
+
+def test_runners_not_failed_healthy():
+    """Runners in Ready state = not failed."""
+    _, inst = _instance(node_ids=["node-a"])
+    runners = {
+        rid: RunnerReady()
+        for rid in inst.shard_assignments.node_to_runner.values()
+    }
+    is_failed, _ = instance_runners_failed(inst, runners)
+    assert is_failed is False
+
+
+# --- failure tracking in apply_instance_deleted ---
+
+
+def test_apply_instance_deleted_tracks_failure():
+    """InstanceDeleted with failure_error increments meta instance failure count."""
+    meta = _meta_instance()
+    iid, inst = _instance(
+        node_ids=["node-a"], meta_instance_id=meta.meta_instance_id
+    )
+    state = State(
+        meta_instances={meta.meta_instance_id: meta},
+        instances={iid: inst},
+    )
+    event = InstanceDeleted(instance_id=iid, failure_error="Runner OOM")
+    new_state = apply(state, IndexedEvent(idx=0, event=event))
+    info = new_state.meta_instance_failure_info[meta.meta_instance_id]
+    assert info.consecutive_failures == 1
+    assert info.last_error == "Runner OOM"
+
+
+def test_apply_instance_deleted_increments_failure():
+    """Subsequent failures increment the counter."""
+    meta = _meta_instance()
+    iid, inst = _instance(
+        node_ids=["node-a"], meta_instance_id=meta.meta_instance_id
+    )
+    state = State(
+        meta_instances={meta.meta_instance_id: meta},
+        instances={iid: inst},
+        meta_instance_failure_info={
+            meta.meta_instance_id: InstanceFailureInfo(
+                consecutive_failures=2, last_error="previous error"
+            )
+        },
+    )
+    event = InstanceDeleted(instance_id=iid, failure_error="new error")
+    new_state = apply(state, IndexedEvent(idx=0, event=event))
+    info = new_state.meta_instance_failure_info[meta.meta_instance_id]
+    assert info.consecutive_failures == 3
+    assert info.last_error == "new error"
+
+
+def test_apply_instance_deleted_no_failure_no_tracking():
+    """InstanceDeleted without failure_error does not track."""
+    meta = _meta_instance()
+    iid, inst = _instance(
+        node_ids=["node-a"], meta_instance_id=meta.meta_instance_id
+    )
+    state = State(
+        meta_instances={meta.meta_instance_id: meta},
+        instances={iid: inst},
+    )
+    event = InstanceDeleted(instance_id=iid)
+    new_state = apply(state, IndexedEvent(idx=0, event=event))
+    assert meta.meta_instance_id not in new_state.meta_instance_failure_info
+
+
+def test_apply_instance_deleted_orphan_no_tracking():
+    """InstanceDeleted for orphan instance (no meta_instance_id) does not track."""
+    iid, inst = _instance(node_ids=["node-a"])
+    state = State(instances={iid: inst})
+    event = InstanceDeleted(instance_id=iid, failure_error="crash")
+    new_state = apply(state, IndexedEvent(idx=0, event=event))
+    assert len(new_state.meta_instance_failure_info) == 0

@@ -46,6 +46,7 @@
     nodeRdmaCtl,
     metaInstances,
     metaInstanceErrors,
+    metaInstanceFailureInfo,
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
     nodeIdentities,
@@ -73,11 +74,14 @@
   const sidebarVisible = $derived(chatSidebarVisible());
   const metaInstancesData = $derived(metaInstances());
   const metaInstanceErrorsData = $derived(metaInstanceErrors());
+  const metaInstanceFailureInfoData = $derived(metaInstanceFailureInfo());
   const tbBridgeCycles = $derived(thunderboltBridgeCycles());
 
   // Get status for a MetaInstance that has no backing instance yet
   function getMetaInstancePlacingStatus(metaInstanceId: string) {
     const error = metaInstanceErrorsData[metaInstanceId];
+    const failureInfo = metaInstanceFailureInfoData[metaInstanceId];
+
     if (error) {
       return {
         statusText: "PLACEMENT FAILED",
@@ -94,6 +98,30 @@
         errorMessage: error,
       };
     }
+
+    if (failureInfo && failureInfo.consecutiveFailures > 0) {
+      const retryPosition = ((failureInfo.consecutiveFailures - 1) % 3) + 1;
+      const isRecreated = failureInfo.consecutiveFailures % 3 === 0;
+      return {
+        statusText: isRecreated ? "PLACING" : `RETRYING (${retryPosition}/3)`,
+        statusClass: "starting",
+        isDownloading: false as const,
+        isFailed: false,
+        progress: null,
+        perNode: [] as Array<{
+          nodeId: string;
+          nodeName: string;
+          progress: DownloadProgress;
+        }>,
+        perNodeStatus: [] as PerNodeRunnerStatus[],
+        errorMessage: isRecreated
+          ? `Instance re-created due to failure: ${failureInfo.lastError}`
+          : failureInfo.lastError
+            ? `Previous failure: ${failureInfo.lastError}`
+            : null,
+      };
+    }
+
     return {
       statusText: "PLACING",
       statusClass: "starting",
@@ -992,8 +1020,8 @@
       const statusInfo = deriveInstanceStatus(instanceWrapped);
       return {
         isDownloading: false,
-        isFailed: false,
-        errorMessage: null,
+        isFailed: statusInfo.statusText === "FAILED",
+        errorMessage: statusInfo.errorMessage,
         progress: null,
         statusText: statusInfo.statusText,
         perNode: [],
@@ -1121,7 +1149,7 @@
       return {
         isDownloading: false,
         isFailed: statusInfo.statusText === "FAILED",
-        errorMessage: null,
+        errorMessage: statusInfo.errorMessage,
         progress: null,
         statusText: statusInfo.statusText,
         perNode: [],
@@ -1158,6 +1186,7 @@
   function getStatusColor(statusText: string): string {
     if (statusText === "FAILED" || statusText === "PLACEMENT FAILED")
       return "text-red-400";
+    if (statusText.startsWith("RETRYING")) return "text-orange-400";
     if (statusText === "SHUTDOWN") return "text-gray-400";
     if (statusText === "DOWNLOADING") return "text-blue-400";
     if (
@@ -1210,6 +1239,7 @@
     statusText: string;
     statusClass: string;
     perNodeStatus: PerNodeRunnerStatus[];
+    errorMessage: string | null;
   } {
     const [, instance] = getTagged(instanceWrapped);
     if (!instance || typeof instance !== "object") {
@@ -1217,6 +1247,7 @@
         statusText: "PREPARING",
         statusClass: "inactive",
         perNodeStatus: [],
+        errorMessage: null,
       };
     }
 
@@ -1230,15 +1261,25 @@
     const runnerIds = Object.keys(inst.shardAssignments?.runnerToShard || {});
     const totalNodes = runnerIds.length;
 
-    // Build per-node status
+    // Build per-node status and extract error messages from RunnerFailed
     const perNodeStatus: PerNodeRunnerStatus[] = [];
     const statuses: string[] = [];
+    let failedErrorMessage: string | null = null;
     for (const [nodeId, runnerId] of Object.entries(nodeToRunner)) {
       const r = runnersData[runnerId];
       let status: string | null = null;
       if (r) {
-        const [kind] = getTagged(r);
+        const [kind, runnerData] = getTagged(r);
         status = kind ? RUNNER_STATUS_MAP[kind] || null : null;
+        // Extract error message from RunnerFailed
+        if (
+          kind === "RunnerFailed" &&
+          runnerData &&
+          typeof runnerData === "object"
+        ) {
+          const rd = runnerData as { errorMessage?: string };
+          if (rd.errorMessage) failedErrorMessage = rd.errorMessage;
+        }
       }
       if (status) {
         statuses.push(status);
@@ -1258,11 +1299,17 @@
         statusText: "PREPARING",
         statusClass: "inactive",
         perNodeStatus,
+        errorMessage: null,
       };
     if (has("Failed"))
-      return { statusText: "FAILED", statusClass: "failed", perNodeStatus };
+      return {
+        statusText: "FAILED",
+        statusClass: "failed",
+        perNodeStatus,
+        errorMessage: failedErrorMessage,
+      };
     if (has("Shutdown"))
-      return { statusText: "SHUTDOWN", statusClass: "inactive", perNodeStatus };
+      return { statusText: "SHUTDOWN", statusClass: "inactive", perNodeStatus, errorMessage: null };
 
     // For loading/warming states, show node progress when multi-node
     if (has("Loading")) {
@@ -1271,7 +1318,7 @@
         totalNodes > 1
           ? `LOADING (${readyCount}/${totalNodes} nodes ready)`
           : "LOADING";
-      return { statusText, statusClass: "starting", perNodeStatus };
+      return { statusText, statusClass: "starting", perNodeStatus, errorMessage: null };
     }
     if (has("WarmingUp")) {
       const readyCount = count("Ready") + count("Running");
@@ -1279,31 +1326,23 @@
         totalNodes > 1
           ? `WARMING UP (${readyCount}/${totalNodes} nodes ready)`
           : "WARMING UP";
-      return { statusText, statusClass: "starting", perNodeStatus };
+      return { statusText, statusClass: "starting", perNodeStatus, errorMessage: null };
     }
 
     if (has("Running"))
-      return { statusText: "RUNNING", statusClass: "running", perNodeStatus };
+      return { statusText: "RUNNING", statusClass: "running", perNodeStatus, errorMessage: null };
     if (has("Ready"))
-      return { statusText: "READY", statusClass: "loaded", perNodeStatus };
+      return { statusText: "READY", statusClass: "loaded", perNodeStatus, errorMessage: null };
     if (has("Loaded"))
-      return { statusText: "LOADED", statusClass: "loaded", perNodeStatus };
+      return { statusText: "LOADED", statusClass: "loaded", perNodeStatus, errorMessage: null };
     if (has("WaitingForModel"))
-      return { statusText: "WAITING", statusClass: "starting", perNodeStatus };
+      return { statusText: "WAITING", statusClass: "starting", perNodeStatus, errorMessage: null };
     if (has("InitializingBackend"))
-      return {
-        statusText: "INITIALIZING",
-        statusClass: "starting",
-        perNodeStatus,
-      };
+      return { statusText: "INITIALIZING", statusClass: "starting", perNodeStatus, errorMessage: null };
     if (has("WaitingForInitialization"))
-      return {
-        statusText: "INITIALIZING",
-        statusClass: "starting",
-        perNodeStatus,
-      };
+      return { statusText: "INITIALIZING", statusClass: "starting", perNodeStatus, errorMessage: null };
 
-    return { statusText: "RUNNING", statusClass: "active", perNodeStatus };
+    return { statusText: "RUNNING", statusClass: "active", perNodeStatus, errorMessage: null };
   }
 
   function getBytes(value: unknown): number {
@@ -2546,7 +2585,8 @@
                     statusText.startsWith("LOADING") ||
                     statusText.startsWith("WARMING UP") ||
                     statusText === "WAITING" ||
-                    statusText === "PLACING"}
+                    statusText === "PLACING" ||
+                    statusText.startsWith("RETRYING")}
                   {@const isReady =
                     statusText === "READY" || statusText === "LOADED"}
                   {@const isRunning = statusText === "RUNNING"}
@@ -3402,7 +3442,8 @@
                       statusText.startsWith("LOADING") ||
                       statusText.startsWith("WARMING UP") ||
                       statusText === "WAITING" ||
-                      statusText === "PLACING"}
+                      statusText === "PLACING" ||
+                    statusText.startsWith("RETRYING")}
                     {@const isReady =
                       statusText === "READY" || statusText === "LOADED"}
                     {@const isRunning = statusText === "RUNNING"}
