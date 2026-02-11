@@ -4,7 +4,8 @@ import sys
 import tomllib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Self
+from subprocess import CalledProcessError
+from typing import Self, cast
 
 import anyio
 from anyio import create_task_group, fail_after, open_process
@@ -486,6 +487,18 @@ class InfoGatherer:
                         BufferedByteReceiveStream(p.stdout)
                     ):
                         await self.info_sender.send(MacmonMetrics.from_raw_json(text))
+            except CalledProcessError as e:
+                stderr_msg = "no stderr"
+                stderr_output = cast(bytes | str | None, e.stderr)
+                if stderr_output is not None:
+                    stderr_msg = (
+                        stderr_output.decode()
+                        if isinstance(stderr_output, bytes)
+                        else str(stderr_output)
+                    )
+                logger.warning(
+                    f"MacMon failed with return code {e.returncode}: {stderr_msg}"
+                )
             except Exception as e:
                 logger.warning(f"Error in macmon monitor: {e}")
             await anyio.sleep(self.macmon_interval)
