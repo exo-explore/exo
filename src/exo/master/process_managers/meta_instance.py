@@ -35,7 +35,7 @@ class MetaInstanceReconciler:
                 existing_error = state.meta_instance_errors.get(
                     meta_instance.meta_instance_id
                 )
-                error_msg = f"Exceeded retry limit: {failure_info.last_error}"
+                error_msg = f"Exceeded retry limit ({failure_info.consecutive_failures}/3): {failure_info.last_error}"
                 if existing_error != error_msg:
                     all_events.append(
                         MetaInstancePlacementFailed(
