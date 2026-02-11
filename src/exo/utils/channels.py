@@ -141,6 +141,9 @@ class MpSender[T]:
         )
         self._state.buffer.join_thread()
 
+    def cancel_join(self) -> None:
+        self._state.buffer.cancel_join_thread()
+
     # == context manager support ==
     def __enter__(self) -> Self:
         return self
@@ -211,6 +214,9 @@ class MpReceiver[T]:
             "Mp channels must be closed before being joined"
         )
         self._state.buffer.join_thread()
+
+    def cancel_join(self) -> None:
+        self._state.buffer.cancel_join_thread()
 
     # == iterator support ==
     def __iter__(self) -> Self:
