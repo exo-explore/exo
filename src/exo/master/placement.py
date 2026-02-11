@@ -69,7 +69,14 @@ def place_instance(
     required_nodes: set[NodeId] | None = None,
 ) -> dict[InstanceId, Instance]:
     cycles = topology.get_cycles()
-    candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
+    # RDMA (MlxJaccl) requires at least 2 nodes
+    effective_min_nodes = max(
+        command.min_nodes,
+        2 if command.instance_meta == InstanceMeta.MlxJaccl else 1,
+    )
+    candidate_cycles = list(
+        filter(lambda it: len(it) >= effective_min_nodes, cycles)
+    )
 
     # Filter to cycles containing all required nodes (subset matching)
     if required_nodes:
