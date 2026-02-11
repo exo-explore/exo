@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta, timezone
+from collections.abc import Sequence
+from datetime import datetime, timezone
 
 import anyio
 from anyio.abc import TaskGroup
@@ -12,11 +13,11 @@ from exo.master.placement import (
     get_transition_events,
     place_instance,
 )
-from exo.master.reconcile import (
-    find_unsatisfied_meta_instances,
-    instance_connections_healthy,
-    try_place_for_meta_instance,
-)
+from exo.master.process_managers import ProcessManager
+from exo.master.process_managers.instance_health import InstanceHealthReconciler
+from exo.master.process_managers.meta_instance import MetaInstanceReconciler
+from exo.master.process_managers.node_timeout import NodeTimeoutReconciler
+from exo.master.reconcile import try_place_for_meta_instance
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.models.model_cards import ModelCard
@@ -42,11 +43,9 @@ from exo.shared.types.events import (
     ForwarderEvent,
     IndexedEvent,
     InputChunkReceived,
-    InstanceDeleted,
     MetaInstanceCreated,
     MetaInstanceDeleted,
     NodeGatheredInfo,
-    NodeTimedOut,
     TaskCreated,
     TaskDeleted,
     TraceEventData,
@@ -96,6 +95,11 @@ class Master:
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
+        self._process_managers: Sequence[ProcessManager] = [
+            InstanceHealthReconciler(),
+            NodeTimeoutReconciler(),
+            MetaInstanceReconciler(),
+        ]
 
     async def run(self):
         logger.info("Starting Master")
@@ -104,7 +108,7 @@ class Master:
             async with self._tg as tg:
                 tg.start_soon(self._event_processor)
                 tg.start_soon(self._command_processor)
-                tg.start_soon(self._plan)
+                tg.start_soon(self._reconcile)
         finally:
             self._event_log.close()
             self.global_event_sender.close()
@@ -385,42 +389,13 @@ class Master:
         self._event_log.append(event)
         await self._send_event(indexed)
 
-    async def _plan(self) -> None:
+    async def _reconcile(self) -> None:
         while True:
-            # kill broken instances (node disconnected or connections changed)
-            for instance_id, instance in list(self.state.instances.items()):
-                if not instance_connections_healthy(instance, self.state.topology):
-                    await self._apply_and_broadcast(
-                        InstanceDeleted(instance_id=instance_id)
-                    )
-
-            # time out dead nodes
-            for node_id, time in self.state.last_seen.items():
-                now = datetime.now(tz=timezone.utc)
-                if now - time > timedelta(seconds=30):
-                    logger.info(f"Manually removing node {node_id} due to inactivity")
-                    await self._apply_and_broadcast(NodeTimedOut(node_id=node_id))
-
-            # reconcile meta-instances
-            unsatisfied = find_unsatisfied_meta_instances(
-                self.state.meta_instances,
-                self.state.instances,
-                self.state.topology,
-            )
-            for meta_instance in unsatisfied:
-                model_card = await ModelCard.load(meta_instance.model_id)
-                events = try_place_for_meta_instance(
-                    meta_instance,
-                    model_card,
-                    self.state.topology,
-                    self.state.instances,
-                    self.state.node_memory,
-                    self.state.node_network,
-                )
+            for pm in self._process_managers:
+                events = await pm.reconcile(self.state)
                 for event in events:
                     await self._apply_and_broadcast(event)
-
-            await anyio.sleep(10)
+            await anyio.sleep(1)
 
     async def _event_processor(self) -> None:
         with self.local_event_receiver as local_events:
