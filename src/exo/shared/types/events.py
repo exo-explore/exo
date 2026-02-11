@@ -84,6 +84,15 @@ class MetaInstancePlacementFailed(BaseEvent):
     reason: str
 
 
+@final
+class InstanceRetrying(BaseEvent):
+    """Runners failed but retry count is below the limit — restart runners, keep instance."""
+
+    instance_id: InstanceId
+    meta_instance_id: MetaInstanceId
+    failure_error: str
+
+
 class RunnerStatusUpdated(BaseEvent):
     runner_id: RunnerId
     runner_status: RunnerStatus
@@ -157,6 +166,7 @@ Event = (
     | TaskAcknowledged
     | InstanceCreated
     | InstanceDeleted
+    | InstanceRetrying
     | MetaInstanceCreated
     | MetaInstanceDeleted
     | MetaInstancePlacementFailed
