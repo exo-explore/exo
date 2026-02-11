@@ -1278,7 +1278,7 @@
           typeof runnerData === "object"
         ) {
           const rd = runnerData as { errorMessage?: string };
-          if (rd.errorMessage) failedErrors.push(rd.errorMessage);
+          if (rd.errorMessage) failedErrors.push(`${getNodeName(nodeId)}: ${rd.errorMessage}`);
         }
       }
       if (status) {

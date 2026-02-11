@@ -472,7 +472,7 @@ def test_runners_failed_all_failed():
         rid: RunnerFailed(error_message="OOM")
         for rid in inst.shard_assignments.node_to_runner.values()
     }
-    is_failed, error = instance_runners_failed(inst, runners)
+    is_failed, error = instance_runners_failed(inst, runners, {})
     assert is_failed is True
     assert error is not None
     assert "OOM" in error
@@ -486,9 +486,10 @@ def test_runners_failed_mixed_failed_shutdown():
         runner_ids[0]: RunnerFailed(error_message="crash"),
         runner_ids[1]: RunnerShutdown(),
     }
-    is_failed, error = instance_runners_failed(inst, runners)
+    is_failed, error = instance_runners_failed(inst, runners, {})
     assert is_failed is True
-    assert error == "crash"
+    assert error is not None
+    assert "crash" in error
 
 
 def test_runners_not_failed_all_shutdown():
@@ -498,7 +499,7 @@ def test_runners_not_failed_all_shutdown():
         rid: RunnerShutdown()
         for rid in inst.shard_assignments.node_to_runner.values()
     }
-    is_failed, _ = instance_runners_failed(inst, runners)
+    is_failed, _ = instance_runners_failed(inst, runners, {})
     assert is_failed is False
 
 
@@ -510,14 +511,14 @@ def test_runners_not_failed_still_active():
         runner_ids[0]: RunnerFailed(error_message="OOM"),
         runner_ids[1]: RunnerLoading(),
     }
-    is_failed, _ = instance_runners_failed(inst, runners)
+    is_failed, _ = instance_runners_failed(inst, runners, {})
     assert is_failed is False
 
 
 def test_runners_not_failed_no_status():
     """Runner not yet reported = not failed."""
     _, inst = _instance(node_ids=["node-a"])
-    is_failed, _ = instance_runners_failed(inst, {})
+    is_failed, _ = instance_runners_failed(inst, {}, {})
     assert is_failed is False
 
 
@@ -528,7 +529,7 @@ def test_runners_not_failed_healthy():
         rid: RunnerReady()
         for rid in inst.shard_assignments.node_to_runner.values()
     }
-    is_failed, _ = instance_runners_failed(inst, runners)
+    is_failed, _ = instance_runners_failed(inst, runners, {})
     assert is_failed is False
 
 
