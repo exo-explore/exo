@@ -2576,6 +2576,9 @@
                   {@const downloadInfo = instance
                     ? getInstanceDownloadStatus(item.instanceId ?? id, instance)
                     : getMetaInstancePlacingStatus(id)}
+                  {@const retryError = item.isMetaInstance && !downloadInfo.isFailed
+                    ? metaInstanceFailureInfoData[id]?.lastError
+                    : null}
                   {@const statusText = downloadInfo.statusText}
                   {@const isDownloading = downloadInfo.isDownloading}
                   {@const isFailed =
@@ -2993,6 +2996,12 @@
                               class="text-xs text-red-400/80 font-mono mt-1 break-words"
                             >
                               {downloadInfo.errorMessage}
+                            </div>
+                          {:else if retryError}
+                            <div
+                              class="text-xs text-orange-400/80 font-mono mt-1 break-words"
+                            >
+                              Retrying after error: {retryError}
                             </div>
                           {/if}
                           {#if downloadInfo.perNodeStatus.length > 1 && (statusText.startsWith("LOADING") || statusText.startsWith("WARMING UP") || statusText === "WAITING" || statusText === "INITIALIZING")}
@@ -3433,6 +3442,9 @@
                           instance,
                         )
                       : getMetaInstancePlacingStatus(id)}
+                    {@const retryError = item.isMetaInstance && !downloadInfo.isFailed
+                      ? metaInstanceFailureInfoData[id]?.lastError
+                      : null}
                     {@const statusText = downloadInfo.statusText}
                     {@const isDownloading = downloadInfo.isDownloading}
                     {@const isFailed =
@@ -3860,6 +3872,12 @@
                                 class="text-xs text-red-400/80 font-mono mt-1 break-words"
                               >
                                 {downloadInfo.errorMessage}
+                              </div>
+                            {:else if retryError}
+                              <div
+                                class="text-xs text-orange-400/80 font-mono mt-1 break-words"
+                              >
+                                Retrying after error: {retryError}
                               </div>
                             {/if}
                             {#if downloadInfo.perNodeStatus.length > 1 && (statusText.startsWith("LOADING") || statusText.startsWith("WARMING UP") || statusText === "WAITING" || statusText === "INITIALIZING")}
