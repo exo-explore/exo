@@ -41,6 +41,7 @@ class State(CamelCaseModel):
     )
     instances: Mapping[InstanceId, Instance] = {}
     meta_instances: Mapping[MetaInstanceId, MetaInstance] = {}
+    meta_instance_errors: Mapping[MetaInstanceId, str] = {}
     runners: Mapping[RunnerId, RunnerStatus] = {}
     downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {}
     tasks: Mapping[TaskId, Task] = {}

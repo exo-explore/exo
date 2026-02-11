@@ -303,16 +303,15 @@ class Master:
                             model_card = await ModelCard.load(
                                 command.meta_instance.model_id
                             )
-                            generated_events.extend(
-                                try_place_for_meta_instance(
-                                    command.meta_instance,
-                                    model_card,
-                                    self.state.topology,
-                                    self.state.instances,
-                                    self.state.node_memory,
-                                    self.state.node_network,
-                                )
+                            result = try_place_for_meta_instance(
+                                command.meta_instance,
+                                model_card,
+                                self.state.topology,
+                                self.state.instances,
+                                self.state.node_memory,
+                                self.state.node_network,
                             )
+                            generated_events.extend(result.events)
                         case DeleteMetaInstance():
                             generated_events.append(
                                 MetaInstanceDeleted(

@@ -14,6 +14,7 @@ from exo.shared.types.events import (
     InstanceDeleted,
     MetaInstanceCreated,
     MetaInstanceDeleted,
+    MetaInstancePlacementFailed,
     NodeDownloadProgress,
     NodeGatheredInfo,
     NodeTimedOut,
@@ -76,6 +77,8 @@ def event_apply(event: Event, state: State) -> State:
             return apply_meta_instance_created(event, state)
         case MetaInstanceDeleted():
             return apply_meta_instance_deleted(event, state)
+        case MetaInstancePlacementFailed():
+            return apply_meta_instance_placement_failed(event, state)
         case NodeTimedOut():
             return apply_node_timed_out(event, state)
         case NodeDownloadProgress():
@@ -184,7 +187,18 @@ def apply_instance_created(event: InstanceCreated, state: State) -> State:
         **state.instances,
         instance.instance_id: instance,
     }
-    return state.model_copy(update={"instances": new_instances})
+    update: dict[str, object] = {"instances": new_instances}
+    # Clear placement error when an instance is created for a meta-instance
+    if (
+        instance.meta_instance_id
+        and instance.meta_instance_id in state.meta_instance_errors
+    ):
+        update["meta_instance_errors"] = {
+            mid: err
+            for mid, err in state.meta_instance_errors.items()
+            if mid != instance.meta_instance_id
+        }
+    return state.model_copy(update=update)
 
 
 def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
@@ -208,7 +222,24 @@ def apply_meta_instance_deleted(event: MetaInstanceDeleted, state: State) -> Sta
         for mid, mi in state.meta_instances.items()
         if mid != event.meta_instance_id
     }
-    return state.model_copy(update={"meta_instances": new_meta})
+    new_errors: Mapping[MetaInstanceId, str] = {
+        mid: err
+        for mid, err in state.meta_instance_errors.items()
+        if mid != event.meta_instance_id
+    }
+    return state.model_copy(
+        update={"meta_instances": new_meta, "meta_instance_errors": new_errors}
+    )
+
+
+def apply_meta_instance_placement_failed(
+    event: MetaInstancePlacementFailed, state: State
+) -> State:
+    new_errors: Mapping[MetaInstanceId, str] = {
+        **state.meta_instance_errors,
+        event.meta_instance_id: event.reason,
+    }
+    return state.model_copy(update={"meta_instance_errors": new_errors})
 
 
 def apply_runner_status_updated(event: RunnerStatusUpdated, state: State) -> State:
