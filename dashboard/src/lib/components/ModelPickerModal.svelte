@@ -6,6 +6,7 @@
   import ModelFilterPopover from "./ModelFilterPopover.svelte";
   import HuggingFaceResultItem from "./HuggingFaceResultItem.svelte";
   import { getNodesWithModelDownloaded } from "$lib/utils/downloads";
+  import { getRecentEntries } from "$lib/stores/recents.svelte";
 
   interface ModelInfo {
     id: string;
@@ -53,6 +54,8 @@
     models: ModelInfo[];
     selectedModelId: string | null;
     favorites: Set<string>;
+    recentModelIds?: string[];
+    hasRecents?: boolean;
     existingModelIds: Set<string>;
     canModelFit: (modelId: string) => boolean;
     getModelFitStatus: (modelId: string) => ModelFitStatus;
@@ -79,6 +82,8 @@
     models,
     selectedModelId,
     favorites,
+    recentModelIds = [],
+    hasRecents: hasRecentsTab = false,
     existingModelIds,
     canModelFit,
     getModelFitStatus,
@@ -387,7 +392,11 @@
     // Filter by family
     if (selectedFamily === "favorites") {
       result = result.filter((g) => favorites.has(g.id));
-    } else if (selectedFamily && selectedFamily !== "huggingface") {
+    } else if (
+      selectedFamily &&
+      selectedFamily !== "huggingface" &&
+      selectedFamily !== "recents"
+    ) {
       result = result.filter((g) => g.family === selectedFamily);
     }
 
@@ -460,6 +469,48 @@
 
   // Check if any favorites exist
   const hasFavorites = $derived(favorites.size > 0);
+
+  // Timestamp lookup for recent models
+  const recentTimestamps = $derived(
+    new Map(getRecentEntries().map((e) => [e.modelId, e.launchedAt])),
+  );
+
+  // Recent models: single-variant ModelGroups in launch order
+  const recentGroups = $derived.by((): ModelGroup[] => {
+    if (!recentModelIds || recentModelIds.length === 0) return [];
+    const result: ModelGroup[] = [];
+    for (const id of recentModelIds) {
+      const model = models.find((m) => m.id === id);
+      if (model) {
+        result.push({
+          id: model.base_model || model.id,
+          name: model.name || model.id,
+          capabilities: model.capabilities || ["text"],
+          family: model.family || "",
+          variants: [model],
+          smallestVariant: model,
+          hasMultipleVariants: false,
+        });
+      }
+    }
+    return result;
+  });
+
+  // Filtered recent groups (apply search query)
+  const filteredRecentGroups = $derived.by((): ModelGroup[] => {
+    if (!searchQuery.trim()) return recentGroups;
+    const query = searchQuery.toLowerCase().trim();
+    return recentGroups.filter(
+      (g) =>
+        g.name.toLowerCase().includes(query) ||
+        g.variants.some(
+          (v) =>
+            v.id.toLowerCase().includes(query) ||
+            (v.name || "").toLowerCase().includes(query) ||
+            (v.quantization || "").toLowerCase().includes(query),
+        ),
+    );
+  });
 
   function toggleGroupExpanded(groupId: string) {
     const next = new Set(expandedGroups);
@@ -618,6 +669,7 @@
         families={uniqueFamilies}
         {selectedFamily}
         {hasFavorites}
+        hasRecents={hasRecentsTab}
         onSelect={(family) => (selectedFamily = family)}
       />
 
@@ -725,6 +777,44 @@
               </div>
             </div>
           </div>
+        {:else if selectedFamily === "recents"}
+          <!-- Recent models view -->
+          {#if filteredRecentGroups.length === 0}
+            <div
+              class="flex flex-col items-center justify-center h-full text-white/40 p-8"
+            >
+              <svg
+                class="w-12 h-12 mb-3"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <path
+                  d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"
+                />
+              </svg>
+              <p class="font-mono text-sm">
+                {searchQuery
+                  ? "No matching recent models"
+                  : "No recently launched models"}
+              </p>
+            </div>
+          {:else}
+            {#each filteredRecentGroups as group}
+              <ModelPickerGroup
+                {group}
+                isExpanded={expandedGroups.has(group.id)}
+                isFavorite={favorites.has(group.id)}
+                {selectedModelId}
+                {canModelFit}
+                onToggleExpand={() => toggleGroupExpanded(group.id)}
+                onSelectModel={handleSelect}
+                {onToggleFavorite}
+                onShowInfo={(g) => (infoGroup = g)}
+                downloadStatusMap={getVariantDownloadMap(group)}
+                launchedAt={recentTimestamps.get(group.variants[0]?.id ?? "")}
+              />
+            {/each}
+          {/if}
         {:else if filteredGroups.length === 0}
           <div
             class="flex flex-col items-center justify-center h-full text-white/40 p-8"
