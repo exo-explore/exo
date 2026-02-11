@@ -44,16 +44,12 @@ struct BugReportService {
         let dayPrefix = Self.dayPrefixString(now)
         let prefix = "reports/\(dayPrefix)/\(timestamp)/"
 
-        let logData = readLog()
+        let logFiles = readAllLogs()
         let ifconfigText = try await captureIfconfig()
         let hostName = Host.current().localizedName ?? "unknown"
         let debugInfo = readDebugInfo()
 
-        async let stateResult = fetch(url: baseURL.appendingPathComponent("state"))
-        async let eventsResult = fetch(url: baseURL.appendingPathComponent("events"))
-
-        let stateData = try await stateResult
-        let eventsData = try await eventsResult
+        let stateData = try await fetch(url: baseURL.appendingPathComponent("state"))
 
         // Extract cluster TB bridge status from exo state
         let clusterTbBridgeStatus = extractClusterTbBridgeStatus(from: stateData)
@@ -67,12 +63,19 @@ struct BugReportService {
             clusterTbBridgeStatus: clusterTbBridgeStatus
         )
 
-        let uploads: [(path: String, data: Data?)] = [
-            ("\(prefix)exo.log", logData),
+        let eventLogFiles = readAllEventLogs()
+
+        var uploads: [(path: String, data: Data?)] = logFiles.map { (path, data) in
+            ("\(prefix)\(path)", data)
+        }
+        uploads.append(
+            contentsOf: eventLogFiles.map { (path, data) in
+                ("\(prefix)\(path)", data as Data?)
+            })
+        uploads.append(contentsOf: [
             ("\(prefix)state.json", stateData),
-            ("\(prefix)events.json", eventsData),
             ("\(prefix)report.json", reportJSON),
-        ]
+        ])
 
         let uploadItems: [(key: String, body: Data)] = uploads.compactMap { item in
             guard let body = item.data else { return nil }
@@ -149,11 +152,40 @@ struct BugReportService {
         return decoded.urls
     }
 
-    private func readLog() -> Data? {
-        let logURL = URL(fileURLWithPath: NSHomeDirectory())
+    private func readAllLogs() -> [(path: String, data: Data)] {
+        let dir = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(".exo")
-            .appendingPathComponent("exo.log")
-        return try? Data(contentsOf: logURL)
+            .appendingPathComponent("exo_log")
+        var results: [(path: String, data: Data)] = []
+
+        let contents = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        for name in contents {
+            if let data = try? Data(contentsOf: dir.appendingPathComponent(name)) {
+                results.append(("exo_log/\(name)", data))
+            }
+        }
+
+        return results
+    }
+
+    private func readAllEventLogs() -> [(path: String, data: Data)] {
+        let eventLogDir = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".exo")
+            .appendingPathComponent("event_log")
+        var results: [(path: String, data: Data)] = []
+
+        for subdir in ["master", "api"] {
+            let dir = eventLogDir.appendingPathComponent(subdir)
+            let contents =
+                (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+            for name in contents where name.hasPrefix("events.") {
+                if let data = try? Data(contentsOf: dir.appendingPathComponent(name)) {
+                    results.append(("event_log/\(subdir)/\(name)", data))
+                }
+            }
+        }
+
+        return results
     }
 
     private func captureIfconfig() async throws -> String {
