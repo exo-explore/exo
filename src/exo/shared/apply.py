@@ -308,7 +308,12 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
         case StaticNodeInformation():
             current_identity = state.node_identities.get(event.node_id, NodeIdentity())
             new_identity = current_identity.model_copy(
-                update={"model_id": info.model, "chip_id": info.chip}
+                update={
+                    "model_id": info.model,
+                    "chip_id": info.chip,
+                    "os_version": info.os_version,
+                    "os_build_version": info.os_build_version,
+                }
             )
             update["node_identities"] = {
                 **state.node_identities,

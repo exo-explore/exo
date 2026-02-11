@@ -8,7 +8,7 @@ from subprocess import CalledProcessError
 from typing import Self, cast
 
 import anyio
-from anyio import create_task_group, open_process
+from anyio import create_task_group, fail_after, open_process
 from anyio.abc import TaskGroup
 from anyio.streams.buffered import BufferedByteReceiveStream
 from anyio.streams.text import TextReceiveStream
@@ -31,7 +31,13 @@ from exo.utils.channels import Sender
 from exo.utils.pydantic_ext import TaggedModel
 
 from .macmon import MacmonMetrics
-from .system_info import get_friendly_name, get_model_and_chip, get_network_interfaces
+from .system_info import (
+    get_friendly_name,
+    get_model_and_chip,
+    get_network_interfaces,
+    get_os_build_version,
+    get_os_version,
+)
 
 IS_DARWIN = sys.platform == "darwin"
 
@@ -177,11 +183,18 @@ class StaticNodeInformation(TaggedModel):
 
     model: str
     chip: str
+    os_version: str
+    os_build_version: str
 
     @classmethod
     async def gather(cls) -> Self:
         model, chip = await get_model_and_chip()
-        return cls(model=model, chip=chip)
+        return cls(
+            model=model,
+            chip=chip,
+            os_version=get_os_version(),
+            os_build_version=await get_os_build_version(),
+        )
 
 
 class NodeNetworkInterfaces(TaggedModel):
@@ -349,6 +362,7 @@ class InfoGatherer:
     memory_poll_rate: float | None = None if IS_DARWIN else 1
     macmon_interval: float | None = 1 if IS_DARWIN else None
     thunderbolt_bridge_poll_interval: float | None = 10 if IS_DARWIN else None
+    static_info_poll_interval: float | None = 60
     rdma_ctl_poll_interval: float | None = 10 if IS_DARWIN else None
     _tg: TaskGroup = field(init=False, default_factory=create_task_group)
 
@@ -363,15 +377,25 @@ class InfoGatherer:
             tg.start_soon(self._watch_system_info)
             tg.start_soon(self._monitor_memory_usage)
             tg.start_soon(self._monitor_misc)
+            tg.start_soon(self._monitor_static_info)
 
             nc = await NodeConfig.gather()
             if nc is not None:
                 await self.info_sender.send(nc)
-            sni = await StaticNodeInformation.gather()
-            await self.info_sender.send(sni)
 
     def shutdown(self):
         self._tg.cancel_scope.cancel()
+
+    async def _monitor_static_info(self):
+        if self.static_info_poll_interval is None:
+            return
+        while True:
+            try:
+                with fail_after(30):
+                    await self.info_sender.send(await StaticNodeInformation.gather())
+            except Exception as e:
+                logger.warning(f"Error gathering static node info: {e}")
+            await anyio.sleep(self.static_info_poll_interval)
 
     async def _monitor_misc(self):
         if self.misc_poll_interval is None:
