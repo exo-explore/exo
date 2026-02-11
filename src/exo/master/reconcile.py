@@ -19,6 +19,12 @@ from exo.shared.types.worker.instances import (
     MlxJacclInstance,
     MlxRingInstance,
 )
+from exo.shared.types.worker.runners import (
+    RunnerFailed,
+    RunnerId,
+    RunnerShutdown,
+    RunnerStatus,
+)
 
 
 class PlacementResult(NamedTuple):
@@ -89,6 +95,48 @@ def instance_connections_healthy(instance: Instance, topology: Topology) -> bool
             return _ring_connections_healthy(instance, topology)
         case MlxJacclInstance():
             return _jaccl_connections_healthy(instance, topology)
+
+
+def instance_runners_failed(
+    instance: Instance,
+    runners: Mapping[RunnerId, RunnerStatus],
+) -> tuple[bool, str | None]:
+    """Check if an instance's runners have all reached terminal failure states.
+
+    Returns ``(True, error_message)`` when ALL runners are terminal
+    (``RunnerFailed`` or ``RunnerShutdown``) and at least one is ``RunnerFailed``.
+
+    Returns ``(False, None)`` when runners are still active, haven't reported
+    yet, or all gracefully shut down (no ``RunnerFailed``).
+    """
+    instance_runner_ids = set(instance.shard_assignments.node_to_runner.values())
+
+    if not instance_runner_ids:
+        return False, None
+
+    has_any_failed = False
+    error_message: str | None = None
+
+    for runner_id in instance_runner_ids:
+        status = runners.get(runner_id)
+        if status is None:
+            # Runner hasn't reported yet — instance is still starting
+            return False, None
+        if isinstance(status, RunnerFailed):
+            has_any_failed = True
+            if status.error_message:
+                error_message = status.error_message
+        elif isinstance(status, RunnerShutdown):
+            pass  # Terminal but not a failure indicator on its own
+        else:
+            # Runner is still active (connecting, loading, running, etc.)
+            return False, None
+
+    if has_any_failed:
+        return True, error_message or "Runner failed"
+
+    # All runners are Shutdown but none Failed — graceful shutdown, not a failure
+    return False, None
 
 
 def instance_satisfies_meta_instance(
