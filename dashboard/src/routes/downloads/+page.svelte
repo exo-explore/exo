@@ -3,6 +3,7 @@
   import {
     topologyData,
     downloads,
+    nodeDisk,
     type DownloadProgress,
     refreshState,
     lastUpdate as lastUpdateStore,
@@ -37,10 +38,13 @@
     nodeId: string;
     nodeName: string;
     models: ModelEntry[];
+    diskAvailable?: number;
+    diskTotal?: number;
   };
 
   const data = $derived(topologyData());
   const downloadsData = $derived(downloads());
+  const nodeDiskData = $derived(nodeDisk());
 
   function getNodeLabel(nodeId: string): string {
     const node = data?.nodes?.[nodeId];
@@ -327,10 +331,17 @@
           ];
         }
 
+        // Get disk info for this node
+        const diskInfo = nodeDiskData?.[nodeId];
+        const diskAvailable = diskInfo?.available?.inBytes;
+        const diskTotal = diskInfo?.total?.inBytes;
+
         built.push({
           nodeId,
           nodeName: getNodeLabel(nodeId),
           models,
+          diskAvailable,
+          diskTotal,
         });
       }
 
@@ -417,6 +428,14 @@
                 <div class="text-xs text-exo-light-gray font-mono truncate">
                   {node.nodeId}
                 </div>
+                <div class="text-xs text-exo-light-gray font-mono mt-1">
+                  {formatBytes(
+                    node.models
+                      .filter((m) => m.status === "completed")
+                      .reduce((sum, m) => sum + m.totalBytes, 0),
+                  )} models{#if node.diskAvailable != null}
+                    - {formatBytes(node.diskAvailable)} free{/if}
+                </div>
               </div>
               <div
                 class="text-xs font-mono uppercase tracking-wider whitespace-nowrap shrink-0 text-right"
@@ -428,13 +447,6 @@
                   ><span class="text-exo-yellow">
                     / {node.models.length} models</span
                   >
-                </div>
-                <div class="text-exo-light-gray normal-case tracking-normal">
-                  {formatBytes(
-                    node.models
-                      .filter((m) => m.status === "completed")
-                      .reduce((sum, m) => sum + m.totalBytes, 0),
-                  )} on disk
                 </div>
               </div>
             </div>

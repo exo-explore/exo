@@ -8,16 +8,17 @@ from subprocess import CalledProcessError
 from typing import Self, cast
 
 import anyio
-from anyio import create_task_group, fail_after, open_process
+from anyio import create_task_group, fail_after, open_process, to_thread
 from anyio.abc import TaskGroup
 from anyio.streams.buffered import BufferedByteReceiveStream
 from anyio.streams.text import TextReceiveStream
 from loguru import logger
 from pydantic import ValidationError
 
-from exo.shared.constants import EXO_CONFIG_FILE
+from exo.shared.constants import EXO_CONFIG_FILE, EXO_MODELS_DIR
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
+    DiskUsage,
     MemoryUsage,
     NetworkInterfaceInfo,
     ThunderboltBridgeStatus,
@@ -31,7 +32,13 @@ from exo.utils.channels import Sender
 from exo.utils.pydantic_ext import TaggedModel
 
 from .macmon import MacmonMetrics
-from .system_info import get_friendly_name, get_model_and_chip, get_network_interfaces
+from .system_info import (
+    get_friendly_name,
+    get_model_and_chip,
+    get_network_interfaces,
+    get_os_build_version,
+    get_os_version,
+)
 
 IS_DARWIN = sys.platform == "darwin"
 
@@ -177,11 +184,18 @@ class StaticNodeInformation(TaggedModel):
 
     model: str
     chip: str
+    os_version: str
+    os_build_version: str
 
     @classmethod
     async def gather(cls) -> Self:
         model, chip = await get_model_and_chip()
-        return cls(model=model, chip=chip)
+        return cls(
+            model=model,
+            chip=chip,
+            os_version=get_os_version(),
+            os_build_version=await get_os_build_version(),
+        )
 
 
 class NodeNetworkInterfaces(TaggedModel):
@@ -306,6 +320,20 @@ class MiscData(TaggedModel):
         return cls(friendly_name=await get_friendly_name())
 
 
+class NodeDiskUsage(TaggedModel):
+    """Disk space information for the models directory."""
+
+    disk_usage: DiskUsage
+
+    @classmethod
+    async def gather(cls) -> Self:
+        return cls(
+            disk_usage=await to_thread.run_sync(
+                lambda: DiskUsage.from_path(EXO_MODELS_DIR)
+            )
+        )
+
+
 async def _gather_iface_map() -> dict[str, str] | None:
     proc = await anyio.run_process(
         ["networksetup", "-listallhardwareports"], check=False
@@ -337,6 +365,7 @@ GatheredInfo = (
     | NodeConfig
     | MiscData
     | StaticNodeInformation
+    | NodeDiskUsage
 )
 
 
@@ -349,7 +378,9 @@ class InfoGatherer:
     memory_poll_rate: float | None = None if IS_DARWIN else 1
     macmon_interval: float | None = 1 if IS_DARWIN else None
     thunderbolt_bridge_poll_interval: float | None = 10 if IS_DARWIN else None
+    static_info_poll_interval: float | None = 60
     rdma_ctl_poll_interval: float | None = 10 if IS_DARWIN else None
+    disk_poll_interval: float | None = 30
     _tg: TaskGroup = field(init=False, default_factory=create_task_group)
 
     async def run(self):
@@ -363,15 +394,26 @@ class InfoGatherer:
             tg.start_soon(self._watch_system_info)
             tg.start_soon(self._monitor_memory_usage)
             tg.start_soon(self._monitor_misc)
+            tg.start_soon(self._monitor_static_info)
+            tg.start_soon(self._monitor_disk_usage)
 
             nc = await NodeConfig.gather()
             if nc is not None:
                 await self.info_sender.send(nc)
-            sni = await StaticNodeInformation.gather()
-            await self.info_sender.send(sni)
 
     def shutdown(self):
         self._tg.cancel_scope.cancel()
+
+    async def _monitor_static_info(self):
+        if self.static_info_poll_interval is None:
+            return
+        while True:
+            try:
+                with fail_after(30):
+                    await self.info_sender.send(await StaticNodeInformation.gather())
+            except Exception as e:
+                logger.warning(f"Error gathering static node info: {e}")
+            await anyio.sleep(self.static_info_poll_interval)
 
     async def _monitor_misc(self):
         if self.misc_poll_interval is None:
@@ -465,6 +507,17 @@ class InfoGatherer:
             except Exception as e:
                 logger.warning(f"Error gathering RDMA ctl status: {e}")
             await anyio.sleep(self.rdma_ctl_poll_interval)
+
+    async def _monitor_disk_usage(self):
+        if self.disk_poll_interval is None:
+            return
+        while True:
+            try:
+                with fail_after(5):
+                    await self.info_sender.send(await NodeDiskUsage.gather())
+            except Exception as e:
+                logger.warning(f"Error gathering disk usage: {e}")
+            await anyio.sleep(self.disk_poll_interval)
 
     async def _monitor_macmon(self, macmon_path: str):
         if self.macmon_interval is None:

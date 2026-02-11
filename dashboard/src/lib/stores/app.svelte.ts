@@ -49,6 +49,7 @@ export interface NodeInfo {
   };
   last_macmon_update: number;
   friendly_name?: string;
+  os_version?: string;
 }
 
 export interface TopologyEdge {
@@ -78,6 +79,8 @@ interface RawNodeIdentity {
   modelId?: string;
   chipId?: string;
   friendlyName?: string;
+  osVersion?: string;
+  osBuildVersion?: string;
 }
 
 interface RawMemoryUsage {
@@ -440,6 +443,7 @@ function transformTopology(
       },
       last_macmon_update: Date.now() / 1000,
       friendly_name: identity?.friendlyName,
+      os_version: identity?.osVersion,
     };
   }
 
@@ -520,11 +524,18 @@ class AppStore {
   instances = $state<Record<string, unknown>>({});
   runners = $state<Record<string, unknown>>({});
   downloads = $state<Record<string, unknown[]>>({});
+  nodeDisk = $state<
+    Record<
+      string,
+      { total: { inBytes: number }; available: { inBytes: number } }
+    >
+  >({});
   placementPreviews = $state<PlacementPreview[]>([]);
   selectedPreviewModelId = $state<string | null>(null);
   isLoadingPreviews = $state(false);
   previewNodeFilter = $state<Set<string>>(new Set());
   lastUpdate = $state<number | null>(null);
+  nodeIdentities = $state<Record<string, RawNodeIdentity>>({});
   thunderboltBridgeCycles = $state<string[][]>([]);
   nodeThunderbolt = $state<
     Record<
@@ -1249,6 +1260,11 @@ class AppStore {
       if (data.downloads) {
         this.downloads = data.downloads;
       }
+      if (data.nodeDisk) {
+        this.nodeDisk = data.nodeDisk;
+      }
+      // Node identities (for OS version mismatch detection)
+      this.nodeIdentities = data.nodeIdentities ?? {};
       // Thunderbolt identifiers per node
       this.nodeThunderbolt = data.nodeThunderbolt ?? {};
       // RDMA ctl status per node
@@ -3005,6 +3021,7 @@ export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
 export const runners = () => appStore.runners;
 export const downloads = () => appStore.downloads;
+export const nodeDisk = () => appStore.nodeDisk;
 export const placementPreviews = () => appStore.placementPreviews;
 export const selectedPreviewModelId = () => appStore.selectedPreviewModelId;
 export const isLoadingPreviews = () => appStore.isLoadingPreviews;
@@ -3084,6 +3101,9 @@ export const toggleChatSidebarVisible = () =>
 export const setChatSidebarVisible = (visible: boolean) =>
   appStore.setChatSidebarVisible(visible);
 export const refreshState = () => appStore.fetchState();
+
+// Node identities (for OS version mismatch detection)
+export const nodeIdentities = () => appStore.nodeIdentities;
 
 // Thunderbolt & RDMA status
 export const nodeThunderbolt = () => appStore.nodeThunderbolt;
