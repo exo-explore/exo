@@ -21,6 +21,22 @@ def get_os_version() -> str:
     return platform.system() or "Unknown"
 
 
+async def get_os_build_version() -> str:
+    """Return the macOS build version string (e.g. ``"24D5055b"``).
+
+    On non-macOS platforms, returns ``"Unknown"``.
+    """
+    if sys.platform != "darwin":
+        return "Unknown"
+
+    try:
+        process = await run_process(["sw_vers", "-buildVersion"])
+    except CalledProcessError:
+        return "Unknown"
+
+    return process.stdout.decode("utf-8", errors="replace").strip() or "Unknown"
+
+
 async def get_friendly_name() -> str:
     """
     Asynchronously gets the 'Computer Name' (friendly name) of a Mac.

@@ -35,6 +35,7 @@ from .system_info import (
     get_friendly_name,
     get_model_and_chip,
     get_network_interfaces,
+    get_os_build_version,
     get_os_version,
 )
 
@@ -183,11 +184,17 @@ class StaticNodeInformation(TaggedModel):
     model: str
     chip: str
     os_version: str
+    os_build_version: str
 
     @classmethod
     async def gather(cls) -> Self:
         model, chip = await get_model_and_chip()
-        return cls(model=model, chip=chip, os_version=get_os_version())
+        return cls(
+            model=model,
+            chip=chip,
+            os_version=get_os_version(),
+            os_build_version=await get_os_build_version(),
+        )
 
 
 class NodeNetworkInterfaces(TaggedModel):

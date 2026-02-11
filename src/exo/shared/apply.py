@@ -306,6 +306,7 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                     "model_id": info.model,
                     "chip_id": info.chip,
                     "os_version": info.os_version,
+                    "os_build_version": info.os_build_version,
                 }
             )
             update["node_identities"] = {

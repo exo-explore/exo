@@ -78,6 +78,7 @@ interface RawNodeIdentity {
   chipId?: string;
   friendlyName?: string;
   osVersion?: string;
+  osBuildVersion?: string;
 }
 
 interface RawMemoryUsage {

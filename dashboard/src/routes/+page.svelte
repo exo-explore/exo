@@ -76,12 +76,16 @@
       return v && v !== "Unknown" && /^\d/.test(v);
     });
     if (macosNodes.length < 2) return null;
-    const versions = new Set(macosNodes.map(([_, id]) => id.osVersion));
-    if (versions.size <= 1) return null;
+    // Compare on buildVersion for precise mismatch detection
+    const buildVersions = new Set(
+      macosNodes.map(([_, id]) => id.osBuildVersion ?? id.osVersion),
+    );
+    if (buildVersions.size <= 1) return null;
     return macosNodes.map(([nodeId, id]) => ({
       nodeId,
       friendlyName: getNodeName(nodeId),
       version: id.osVersion!,
+      buildVersion: id.osBuildVersion ?? "Unknown",
     }));
   });
 
@@ -1795,7 +1799,7 @@
               <span class="text-yellow-300">Node versions:</span>
               {#each macosVersionMismatch as node}
                 <div class="ml-2">
-                  {node.friendlyName} — macOS {node.version}
+                  {node.friendlyName} — macOS {node.version} ({node.buildVersion})
                 </div>
               {/each}
             </div>
