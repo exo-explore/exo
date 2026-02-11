@@ -8,6 +8,7 @@ from pydantic.alias_generators import to_camel
 from exo.shared.topology import Topology, TopologySnapshot
 from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import (
+    DiskUsage,
     MemoryUsage,
     NodeIdentity,
     NodeNetworkInfo,
@@ -50,6 +51,7 @@ class State(CamelCaseModel):
     # Granular node state mappings (update independently at different frequencies)
     node_identities: Mapping[NodeId, NodeIdentity] = {}
     node_memory: Mapping[NodeId, MemoryUsage] = {}
+    node_disk: Mapping[NodeId, DiskUsage] = {}
     node_system: Mapping[NodeId, SystemPerformanceProfile] = {}
     node_network: Mapping[NodeId, NodeNetworkInfo] = {}
     node_thunderbolt: Mapping[NodeId, NodeThunderboltInfo] = {}

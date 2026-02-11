@@ -1,4 +1,6 @@
+import shutil
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Literal, Self
 
 import psutil
@@ -35,6 +37,22 @@ class MemoryUsage(CamelCaseModel):
             ram_available=vm.available if override_memory is None else override_memory,
             swap_total=sm.total,
             swap_available=sm.free,
+        )
+
+
+class DiskUsage(CamelCaseModel):
+    """Disk space usage for the models directory."""
+
+    total: Memory
+    available: Memory
+
+    @classmethod
+    def from_path(cls, path: Path) -> Self:
+        """Get disk usage stats for the partition containing path."""
+        total, _used, free = shutil.disk_usage(path)
+        return cls(
+            total=Memory.from_bytes(total),
+            available=Memory.from_bytes(free),
         )
 
 
