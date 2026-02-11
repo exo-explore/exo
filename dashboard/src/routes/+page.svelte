@@ -13,6 +13,11 @@
     getFavoritesSet,
   } from "$lib/stores/favorites.svelte";
   import {
+    hasRecents,
+    getRecentModelIds,
+    recordRecentLaunch,
+  } from "$lib/stores/recents.svelte";
+  import {
     hasStartedChat,
     isTopologyMinimized,
     topologyData,
@@ -37,6 +42,8 @@
     toggleTopologyOnlyMode,
     chatSidebarVisible,
     toggleChatSidebarVisible,
+    nodeThunderbolt,
+    nodeRdmaCtl,
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
     nodeIdentities,
@@ -64,6 +71,8 @@
   const tbBridgeCycles = $derived(thunderboltBridgeCycles());
   const tbBridgeData = $derived(nodeThunderboltBridge());
   const identitiesData = $derived(nodeIdentities());
+  const tbIdentifiers = $derived(nodeThunderbolt());
+  const rdmaCtlData = $derived(nodeRdmaCtl());
   const nodeFilter = $derived(previewNodeFilter());
 
   // Detect macOS version mismatches across cluster nodes
@@ -88,6 +97,22 @@
       buildVersion: id.osBuildVersion ?? "Unknown",
     }));
   });
+
+  // Detect TB5 nodes where RDMA is not enabled
+  const tb5WithoutRdma = $derived.by(() => {
+    const rdmaCtl = rdmaCtlData;
+    if (!rdmaCtl) return false;
+    const ids = tbIdentifiers;
+    if (!ids) return false;
+    // Find nodes with TB5 hardware (any TB interface)
+    const tb5NodeIds = Object.entries(ids)
+      .filter(([_, node]) => node.interfaces.length > 0)
+      .map(([id]) => id);
+    if (tb5NodeIds.length < 2) return false;
+    // At least one TB5 node has RDMA disabled
+    return tb5NodeIds.some((id) => rdmaCtl[id]?.enabled !== true);
+  });
+  let tb5InfoDismissed = $state(false);
 
   // Helper to get friendly node name from node ID
   function getNodeName(nodeId: string): string {
@@ -124,6 +149,8 @@
   // Warning icon SVG path (reused across warning snippets)
   const warningIconPath =
     "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z";
+  const infoIconPath =
+    "M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z";
 
   let mounted = $state(false);
 
@@ -142,6 +169,10 @@
       capabilities?: string[];
     }>
   >([]);
+  type ModelMemoryFitStatus =
+    | "fits_now"
+    | "fits_cluster_capacity"
+    | "too_large";
 
   // Model tasks lookup for ChatForm - maps both short IDs and full HuggingFace IDs
   const modelTasks = $derived(() => {
@@ -256,6 +287,10 @@
 
   // Favorites state (reactive)
   const favoritesSet = $derived(getFavoritesSet());
+
+  // Recent models state (reactive)
+  const recentModelIds = $derived(getRecentModelIds());
+  const showRecentsTab = $derived(hasRecents());
 
   // Slider dragging state
   let isDraggingSlider = $state(false);
@@ -479,14 +514,41 @@
     );
   });
 
+  // Calculate total memory in the cluster (in GB)
+  const clusterTotalMemoryGB = $derived(() => {
+    if (!data) return 0;
+    return (
+      Object.values(data.nodes).reduce((acc, n) => {
+        const total =
+          n.macmon_info?.memory?.ram_total ?? n.system_info?.memory ?? 0;
+        return acc + total;
+      }, 0) /
+      (1024 * 1024 * 1024)
+    );
+  });
+
+  function getModelMemoryFitStatus(model: {
+    id: string;
+    name?: string;
+    storage_size_megabytes?: number;
+  }): ModelMemoryFitStatus {
+    const modelSizeGB = getModelSizeGB(model);
+    if (modelSizeGB <= availableMemoryGB()) {
+      return "fits_now";
+    }
+    if (modelSizeGB <= clusterTotalMemoryGB()) {
+      return "fits_cluster_capacity";
+    }
+    return "too_large";
+  }
+
   // Check if a model has enough memory to run
   function hasEnoughMemory(model: {
     id: string;
     name?: string;
     storage_size_megabytes?: number;
   }): boolean {
-    const modelSizeGB = getModelSizeGB(model);
-    return modelSizeGB <= availableMemoryGB();
+    return getModelMemoryFitStatus(model) === "fits_now";
   }
 
   // Sorted models for dropdown - biggest first, unrunnable at the end
@@ -658,6 +720,9 @@
       } else {
         // Always auto-select the newly launched model so the user chats to what they just launched
         setSelectedChatModel(modelId);
+
+        // Record the launch in recent models history
+        recordRecentLaunch(modelId);
 
         // Scroll to the bottom of instances container to show the new instance
         // Use multiple attempts to ensure DOM has updated with the new instance
@@ -1687,7 +1752,7 @@
 </script>
 
 {#snippet clusterWarnings()}
-  {#if tbBridgeCycles.length > 0 || macosVersionMismatch}
+  {#if tbBridgeCycles.length > 0 || macosVersionMismatch || (tb5WithoutRdma && !tb5InfoDismissed)}
     <div class="absolute top-4 left-4 flex flex-col gap-2 z-40">
       {#if tbBridgeCycles.length > 0}
         {@const cycle = tbBridgeCycles[0]}
@@ -1810,12 +1875,53 @@
           </div>
         </div>
       {/if}
+
+      {#if tb5WithoutRdma && !tb5InfoDismissed}
+        <div class="flex items-center gap-2 px-3 py-2 rounded border border-blue-400/50 bg-blue-400/10 backdrop-blur-sm" role="status">
+          <svg
+            class="w-5 h-5 text-blue-400 flex-shrink-0"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d={infoIconPath}
+            />
+          </svg>
+          <span class="text-sm font-mono text-blue-200">
+            RDMA AVAILABLE
+          </span>
+          <button
+            type="button"
+            onclick={() => (tb5InfoDismissed = true)}
+            class="ml-1 text-blue-300/60 hover:text-blue-200 transition-colors cursor-pointer"
+            title="Dismiss"
+          >
+            <svg
+              class="w-4 h-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
+        </div>
+      {/if}
     </div>
   {/if}
 {/snippet}
 
 {#snippet clusterWarningsCompact()}
-  {#if tbBridgeCycles.length > 0 || macosVersionMismatch}
+  {#if tbBridgeCycles.length > 0 || macosVersionMismatch || (tb5WithoutRdma && !tb5InfoDismissed)}
     <div class="absolute top-2 left-2 flex flex-col gap-1">
       {#if tbBridgeCycles.length > 0}
         <div
@@ -1858,6 +1964,29 @@
           </svg>
           <span class="text-[10px] font-mono text-yellow-200"
             >macOS MISMATCH</span
+          >
+        </div>
+      {/if}
+      {#if tb5WithoutRdma && !tb5InfoDismissed}
+        <div
+          class="flex items-center gap-1.5 px-2 py-1 rounded border border-blue-400/50 bg-blue-400/10 backdrop-blur-sm"
+          title="Thunderbolt 5 detected — RDMA can be enabled for better performance"
+        >
+          <svg
+            class="w-3.5 h-3.5 text-blue-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d={infoIconPath}
+            />
+          </svg>
+          <span class="text-[10px] font-mono text-blue-200"
+            >RDMA AVAILABLE</span
           >
         </div>
       {/if}
@@ -1934,6 +2063,53 @@
 
           {@render clusterWarnings()}
 
+          <!-- TB5 RDMA Available Info -->
+          {#if tb5WithoutRdma && !tb5InfoDismissed}
+            <div
+              class="absolute left-4 flex items-center gap-2 px-3 py-2 rounded border border-blue-400/50 bg-blue-400/10 backdrop-blur-sm"
+              class:top-16={tbBridgeCycles.length > 0}
+              class:top-4={tbBridgeCycles.length === 0}
+              role="status"
+            >
+              <svg
+                class="w-5 h-5 text-blue-400 flex-shrink-0"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              <span class="text-sm font-mono text-blue-200">
+                RDMA AVAILABLE
+              </span>
+              <button
+                type="button"
+                onclick={() => (tb5InfoDismissed = true)}
+                class="ml-1 text-blue-300/60 hover:text-blue-200 transition-colors cursor-pointer"
+                title="Dismiss"
+              >
+                <svg
+                  class="w-4 h-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            </div>
+          {/if}
+
           <!-- Exit topology-only mode button -->
           <button
             type="button"
@@ -1978,6 +2154,86 @@
             />
 
             {@render clusterWarnings()}
+
+            <!-- TB5 RDMA Available Info -->
+            {#if tb5WithoutRdma && !tb5InfoDismissed}
+              <div
+                class="absolute left-4 group"
+                class:top-16={tbBridgeCycles.length > 0}
+                class:top-4={tbBridgeCycles.length === 0}
+                role="status"
+              >
+                <div
+                  class="flex items-center gap-2 px-3 py-2 rounded border border-blue-400/50 bg-blue-400/10 backdrop-blur-sm"
+                >
+                  <svg
+                    class="w-5 h-5 text-blue-400 flex-shrink-0"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  <span class="text-sm font-mono text-blue-200">
+                    RDMA AVAILABLE
+                  </span>
+                  <button
+                    type="button"
+                    onclick={() => (tb5InfoDismissed = true)}
+                    class="ml-1 text-blue-300/60 hover:text-blue-200 transition-colors cursor-pointer"
+                    title="Dismiss"
+                  >
+                    <svg
+                      class="w-4 h-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M6 18L18 6M6 6l12 12"
+                      />
+                    </svg>
+                  </button>
+                </div>
+
+                <!-- Tooltip on hover -->
+                <div
+                  class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-blue-400/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+                >
+                  <p class="text-xs text-white/80 mb-2">
+                    Thunderbolt 5 hardware detected on multiple nodes. Enable
+                    RDMA for significantly faster inter-node communication.
+                  </p>
+                  <p class="text-xs text-white/60 mb-1.5">
+                    <span class="text-blue-300">To enable:</span>
+                  </p>
+                  <ol
+                    class="text-xs text-white/60 list-decimal list-inside space-y-0.5 mb-1.5"
+                  >
+                    <li>Connect nodes with TB5 cables</li>
+                    <li>Boot to Recovery (hold power 10s → Options)</li>
+                    <li>
+                      Run
+                      <code class="text-blue-300 bg-blue-400/10 px-1 rounded"
+                        >rdma_ctl enable</code
+                      >
+                    </li>
+                    <li>Reboot</li>
+                  </ol>
+                  <p class="text-xs text-white/40">
+                    Requires macOS 26.2+, TB5 cables, and matching OS versions.
+                  </p>
+                </div>
+              </div>
+            {/if}
 
             <!-- Node Filter Indicator (top-right corner) -->
             {#if isFilterActive()}
@@ -3289,10 +3545,16 @@
   {models}
   {selectedModelId}
   favorites={favoritesSet}
+  {recentModelIds}
+  hasRecents={showRecentsTab}
   existingModelIds={new Set(models.map((m) => m.id))}
   canModelFit={(modelId) => {
     const model = models.find((m) => m.id === modelId);
     return model ? hasEnoughMemory(model) : false;
+  }}
+  getModelFitStatus={(modelId): ModelMemoryFitStatus => {
+    const model = models.find((m) => m.id === modelId);
+    return model ? getModelMemoryFitStatus(model) : "too_large";
   }}
   onSelect={handleModelPickerSelect}
   onClose={() => (isModelPickerOpen = false)}

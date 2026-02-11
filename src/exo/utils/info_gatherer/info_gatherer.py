@@ -209,6 +209,28 @@ class MacThunderboltConnections(TaggedModel):
     conns: Sequence[ThunderboltConnection]
 
 
+class RdmaCtlStatus(TaggedModel):
+    enabled: bool
+
+    @classmethod
+    async def gather(cls) -> Self | None:
+        if not IS_DARWIN or shutil.which("rdma_ctl") is None:
+            return None
+        try:
+            with anyio.fail_after(5):
+                proc = await anyio.run_process(["rdma_ctl", "status"], check=False)
+        except (TimeoutError, OSError):
+            return None
+        if proc.returncode != 0:
+            return None
+        output = proc.stdout.decode("utf-8").lower().strip()
+        if "enabled" in output:
+            return cls(enabled=True)
+        if "disabled" in output:
+            return cls(enabled=False)
+        return None
+
+
 class ThunderboltBridgeInfo(TaggedModel):
     status: ThunderboltBridgeStatus
 
@@ -323,6 +345,7 @@ GatheredInfo = (
     | NodeNetworkInterfaces
     | MacThunderboltIdentifiers
     | MacThunderboltConnections
+    | RdmaCtlStatus
     | ThunderboltBridgeInfo
     | NodeConfig
     | MiscData
@@ -340,6 +363,7 @@ class InfoGatherer:
     macmon_interval: float | None = 1 if IS_DARWIN else None
     thunderbolt_bridge_poll_interval: float | None = 10 if IS_DARWIN else None
     static_info_poll_interval: float | None = 60
+    rdma_ctl_poll_interval: float | None = 10 if IS_DARWIN else None
     _tg: TaskGroup = field(init=False, default_factory=create_task_group)
 
     async def run(self):
@@ -349,6 +373,7 @@ class InfoGatherer:
                     tg.start_soon(self._monitor_macmon, macmon_path)
                 tg.start_soon(self._monitor_system_profiler_thunderbolt_data)
                 tg.start_soon(self._monitor_thunderbolt_bridge_status)
+                tg.start_soon(self._monitor_rdma_ctl_status)
             tg.start_soon(self._watch_system_info)
             tg.start_soon(self._monitor_memory_usage)
             tg.start_soon(self._monitor_misc)
@@ -443,6 +468,18 @@ class InfoGatherer:
             except Exception as e:
                 logger.warning(f"Error gathering Thunderbolt Bridge status: {e}")
             await anyio.sleep(self.thunderbolt_bridge_poll_interval)
+
+    async def _monitor_rdma_ctl_status(self):
+        if self.rdma_ctl_poll_interval is None:
+            return
+        while True:
+            try:
+                curr = await RdmaCtlStatus.gather()
+                if curr is not None:
+                    await self.info_sender.send(curr)
+            except Exception as e:
+                logger.warning(f"Error gathering RDMA ctl status: {e}")
+            await anyio.sleep(self.rdma_ctl_poll_interval)
 
     async def _monitor_macmon(self, macmon_path: str):
         if self.macmon_interval is None:

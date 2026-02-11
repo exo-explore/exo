@@ -35,26 +35,16 @@ struct NetworkStatus: Equatable {
     let thunderboltBridgeState: ThunderboltState?
     let bridgeInactive: Bool?
     let interfaceStatuses: [InterfaceIpStatus]
-    let rdmaStatus: RDMAStatus
+    let localRdmaDevices: [String]
+    let localRdmaActivePorts: [RDMAPort]
 
     static let empty = NetworkStatus(
         thunderboltBridgeState: nil,
         bridgeInactive: nil,
         interfaceStatuses: [],
-        rdmaStatus: .empty
+        localRdmaDevices: [],
+        localRdmaActivePorts: []
     )
-}
-
-struct RDMAStatus: Equatable {
-    let rdmaCtlEnabled: Bool?
-    let devices: [String]
-    let activePorts: [RDMAPort]
-
-    var isAvailable: Bool {
-        rdmaCtlEnabled == true || !devices.isEmpty
-    }
-
-    static let empty = RDMAStatus(rdmaCtlEnabled: nil, devices: [], activePorts: [])
 }
 
 struct RDMAPort: Equatable {
@@ -80,29 +70,9 @@ private struct NetworkStatusFetcher {
             thunderboltBridgeState: readThunderboltBridgeState(),
             bridgeInactive: readBridgeInactive(),
             interfaceStatuses: readInterfaceStatuses(),
-            rdmaStatus: readRDMAStatus()
+            localRdmaDevices: readRDMADevices(),
+            localRdmaActivePorts: readRDMAActivePorts()
         )
-    }
-
-    private func readRDMAStatus() -> RDMAStatus {
-        let rdmaCtlEnabled = readRDMACtlEnabled()
-        let devices = readRDMADevices()
-        let activePorts = readRDMAActivePorts()
-        return RDMAStatus(
-            rdmaCtlEnabled: rdmaCtlEnabled, devices: devices, activePorts: activePorts)
-    }
-
-    private func readRDMACtlEnabled() -> Bool? {
-        let result = runCommand(["rdma_ctl", "status"])
-        guard result.exitCode == 0 else { return nil }
-        let output = result.output.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        if output.contains("enabled") {
-            return true
-        }
-        if output.contains("disabled") {
-            return false
-        }
-        return nil
     }
 
     private func readRDMADevices() -> [String] {
