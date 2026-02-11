@@ -563,48 +563,50 @@ struct ContentView: View {
     }
 
     private var rdmaStatusView: some View {
-        let rdma = networkStatusService.status.rdmaStatus
+        let rdmaStatuses = stateService.latestSnapshot?.nodeRdmaCtl ?? [:]
+        let localNodeId = stateService.localNodeId
+        let nodeProfiles = stateService.latestSnapshot?.nodeProfiles ?? [:]
+        let localDevices = networkStatusService.status.localRdmaDevices
+        let localPorts = networkStatusService.status.localRdmaActivePorts
+
         return VStack(alignment: .leading, spacing: 1) {
-            Text("RDMA: \(rdmaStatusText(rdma))")
-                .font(.caption2)
-                .foregroundColor(rdmaStatusColor(rdma))
-            if !rdma.devices.isEmpty {
-                Text("  Devices: \(rdma.devices.joined(separator: ", "))")
+            if rdmaStatuses.isEmpty {
+                Text("Cluster RDMA: No data")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            } else {
+                Text("Cluster RDMA Status:")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                ForEach(Array(rdmaStatuses.keys.sorted()), id: \.self) { nodeId in
+                    if let status = rdmaStatuses[nodeId] {
+                        let nodeName =
+                            nodeProfiles[nodeId]?.friendlyName ?? String(nodeId.prefix(8))
+                        let isLocal = nodeId == localNodeId
+                        let prefix = isLocal ? "  \(nodeName) (local):" : "  \(nodeName):"
+                        let statusText = status.enabled ? "Enabled" : "Disabled"
+                        let color: Color = status.enabled ? .green : .orange
+                        Text("\(prefix) \(statusText)")
+                            .font(.caption2)
+                            .foregroundColor(color)
+                    }
+                }
+            }
+            if !localDevices.isEmpty {
+                Text("  Local Devices: \(localDevices.joined(separator: ", "))")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
-            if !rdma.activePorts.isEmpty {
-                Text("  Active Ports:")
+            if !localPorts.isEmpty {
+                Text("  Local Active Ports:")
                     .font(.caption2)
                     .foregroundColor(.secondary)
-                ForEach(rdma.activePorts, id: \.device) { port in
+                ForEach(localPorts, id: \.device) { port in
                     Text("    \(port.device) port \(port.port): \(port.state)")
                         .font(.caption2)
                         .foregroundColor(.green)
                 }
             }
-        }
-    }
-
-    private func rdmaStatusText(_ rdma: RDMAStatus) -> String {
-        switch rdma.rdmaCtlEnabled {
-        case .some(true):
-            return "Enabled"
-        case .some(false):
-            return "Disabled"
-        case nil:
-            return rdma.devices.isEmpty ? "Not Available" : "Available"
-        }
-    }
-
-    private func rdmaStatusColor(_ rdma: RDMAStatus) -> Color {
-        switch rdma.rdmaCtlEnabled {
-        case .some(true):
-            return .green
-        case .some(false):
-            return .orange
-        case nil:
-            return rdma.devices.isEmpty ? .secondary : .green
         }
     }
 

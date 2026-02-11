@@ -49,6 +49,7 @@ export interface NodeInfo {
   };
   last_macmon_update: number;
   friendly_name?: string;
+  os_version?: string;
 }
 
 export interface TopologyEdge {
@@ -56,6 +57,8 @@ export interface TopologyEdge {
   target: string;
   sendBackIp?: string;
   sendBackInterface?: string;
+  sourceRdmaIface?: string;
+  sinkRdmaIface?: string;
 }
 
 export interface TopologyData {
@@ -76,6 +79,8 @@ interface RawNodeIdentity {
   modelId?: string;
   chipId?: string;
   friendlyName?: string;
+  osVersion?: string;
+  osBuildVersion?: string;
 }
 
 interface RawMemoryUsage {
@@ -224,6 +229,19 @@ interface RawStateResponse {
   nodeMemory?: Record<string, RawMemoryUsage>;
   nodeSystem?: Record<string, RawSystemPerformanceProfile>;
   nodeNetwork?: Record<string, RawNodeNetworkInfo>;
+  // Thunderbolt identifiers per node
+  nodeThunderbolt?: Record<
+    string,
+    {
+      interfaces: Array<{
+        rdmaInterface: string;
+        domainUuid: string;
+        linkSpeed: string;
+      }>;
+    }
+  >;
+  // RDMA ctl status per node
+  nodeRdmaCtl?: Record<string, { enabled: boolean }>;
   // Thunderbolt bridge status per node
   nodeThunderboltBridge?: Record<
     string,
@@ -438,6 +456,7 @@ function transformTopology(
       },
       last_macmon_update: Date.now() / 1000,
       friendly_name: identity?.friendlyName,
+      os_version: identity?.osVersion,
     };
   }
 
@@ -450,6 +469,8 @@ function transformTopology(
         if (!Array.isArray(edgeList)) continue;
         for (const edge of edgeList) {
           let sendBackIp: string | undefined;
+          let sourceRdmaIface: string | undefined;
+          let sinkRdmaIface: string | undefined;
           if (edge && typeof edge === "object" && "sinkMultiaddr" in edge) {
             const multiaddr = edge.sinkMultiaddr;
             if (multiaddr) {
@@ -457,10 +478,23 @@ function transformTopology(
                 multiaddr.ip_address ||
                 extractIpFromMultiaddr(multiaddr.address);
             }
+          } else if (
+            edge &&
+            typeof edge === "object" &&
+            "sourceRdmaIface" in edge
+          ) {
+            sourceRdmaIface = edge.sourceRdmaIface;
+            sinkRdmaIface = edge.sinkRdmaIface;
           }
 
           if (nodes[source] && nodes[sink] && source !== sink) {
-            edges.push({ source, target: sink, sendBackIp });
+            edges.push({
+              source,
+              target: sink,
+              sendBackIp,
+              sourceRdmaIface,
+              sinkRdmaIface,
+            });
           }
         }
       }
@@ -503,13 +537,33 @@ class AppStore {
   instances = $state<Record<string, unknown>>({});
   runners = $state<Record<string, unknown>>({});
   downloads = $state<Record<string, unknown[]>>({});
+  nodeDisk = $state<
+    Record<
+      string,
+      { total: { inBytes: number }; available: { inBytes: number } }
+    >
+  >({});
   placementPreviews = $state<PlacementPreview[]>([]);
   selectedPreviewModelId = $state<string | null>(null);
   isLoadingPreviews = $state(false);
   previewNodeFilter = $state<Set<string>>(new Set());
   lastUpdate = $state<number | null>(null);
   metaInstances = $state<Record<string, MetaInstanceData>>({});
+  nodeIdentities = $state<Record<string, RawNodeIdentity>>({});
   thunderboltBridgeCycles = $state<string[][]>([]);
+  nodeThunderbolt = $state<
+    Record<
+      string,
+      {
+        interfaces: Array<{
+          rdmaInterface: string;
+          domainUuid: string;
+          linkSpeed: string;
+        }>;
+      }
+    >
+  >({});
+  nodeRdmaCtl = $state<Record<string, { enabled: boolean }>>({});
   nodeThunderboltBridge = $state<
     Record<
       string,
@@ -1218,6 +1272,15 @@ class AppStore {
       }
       // MetaInstances
       this.metaInstances = data.metaInstances ?? {};
+      if (data.nodeDisk) {
+        this.nodeDisk = data.nodeDisk;
+      }
+      // Node identities (for OS version mismatch detection)
+      this.nodeIdentities = data.nodeIdentities ?? {};
+      // Thunderbolt identifiers per node
+      this.nodeThunderbolt = data.nodeThunderbolt ?? {};
+      // RDMA ctl status per node
+      this.nodeRdmaCtl = data.nodeRdmaCtl ?? {};
       // Thunderbolt bridge cycles
       this.thunderboltBridgeCycles = data.thunderboltBridgeCycles ?? [];
       // Thunderbolt bridge status per node
@@ -2971,6 +3034,7 @@ export const instances = () => appStore.instances;
 export const metaInstances = () => appStore.metaInstances;
 export const runners = () => appStore.runners;
 export const downloads = () => appStore.downloads;
+export const nodeDisk = () => appStore.nodeDisk;
 export const placementPreviews = () => appStore.placementPreviews;
 export const selectedPreviewModelId = () => appStore.selectedPreviewModelId;
 export const isLoadingPreviews = () => appStore.isLoadingPreviews;
@@ -3051,7 +3115,12 @@ export const setChatSidebarVisible = (visible: boolean) =>
   appStore.setChatSidebarVisible(visible);
 export const refreshState = () => appStore.fetchState();
 
-// Thunderbolt bridge status
+// Node identities (for OS version mismatch detection)
+export const nodeIdentities = () => appStore.nodeIdentities;
+
+// Thunderbolt & RDMA status
+export const nodeThunderbolt = () => appStore.nodeThunderbolt;
+export const nodeRdmaCtl = () => appStore.nodeRdmaCtl;
 export const thunderboltBridgeCycles = () => appStore.thunderboltBridgeCycles;
 export const nodeThunderboltBridge = () => appStore.nodeThunderboltBridge;
 
