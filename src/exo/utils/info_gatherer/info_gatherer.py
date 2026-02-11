@@ -361,18 +361,14 @@ class InfoGatherer:
     async def _monitor_system_profiler_thunderbolt_data(self):
         if self.system_profiler_interval is None:
             return
-        try:
-            with fail_after(10):
-                iface_map = await _gather_iface_map()
-        except TimeoutError:
-            logger.warning("Timeout gathering interface map for Thunderbolt monitor")
-            return
-        if iface_map is None:
-            return
 
         while True:
             try:
                 with fail_after(30):
+                    iface_map = await _gather_iface_map()
+                    if iface_map is None:
+                        raise ValueError("Failed to gather interface map")
+
                     data = await ThunderboltConnectivity.gather()
                     assert data is not None
 
