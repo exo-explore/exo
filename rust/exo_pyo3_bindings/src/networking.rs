@@ -22,7 +22,6 @@ use pyo3::{Bound, Py, PyErr, PyResult, PyTraverseError, PyVisit, Python, pymetho
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 use std::net::IpAddr;
 use tokio::sync::{Mutex, mpsc, oneshot};
-use util::ext::VecExt as _;
 
 mod exception {
     use pyo3::types::PyTuple;
@@ -532,7 +531,9 @@ impl PyNetworkingHandle {
             .recv_many_py(limit)
             .allow_threads_py() // allow-threads-aware async call
             .await?
-            .map(|(t, d)| (t, d.pybytes())))
+            .into_iter()
+            .map(|(t, d)| (t, d.pybytes()))
+            .collect())
     }
 
     // TODO: rn this blocks main thread if anything else is awaiting the channel (bc its a mutex)

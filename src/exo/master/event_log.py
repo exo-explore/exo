@@ -2,6 +2,7 @@ import contextlib
 import json
 from collections import OrderedDict
 from collections.abc import Iterator
+from datetime import datetime, timezone
 from io import BufferedRandom, BufferedReader
 from pathlib import Path
 
@@ -160,34 +161,25 @@ class DiskEventLog:
             self._active_path.unlink()
 
     @staticmethod
-    def _archive_path(directory: Path, n: int) -> Path:
-        return directory / f"events.{n}.bin.zst"
-
-    @staticmethod
     def _rotate(source: Path, directory: Path) -> None:
-        """Compress source into a numbered archive, shifting older archives.
+        """Compress source into a timestamped archive.
 
-        Keeps at most ``_MAX_ARCHIVES`` compressed copies.  The most recent
-        archive is always ``events.1.bin.zst``; older ones are shifted up
-        (2, 3, …) and the oldest beyond the limit is deleted.
+        Keeps at most ``_MAX_ARCHIVES`` compressed copies.  Oldest beyond
+        the limit are deleted.
         """
         try:
-            # Shift existing archives
-            oldest = DiskEventLog._archive_path(directory, _MAX_ARCHIVES)
-            with contextlib.suppress(FileNotFoundError):
-                oldest.unlink()
-            for i in range(_MAX_ARCHIVES - 1, 0, -1):
-                current = DiskEventLog._archive_path(directory, i)
-                if current.exists():
-                    current.rename(DiskEventLog._archive_path(directory, i + 1))
-
-            # Compress source into slot 1
-            dest = DiskEventLog._archive_path(directory, 1)
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S_%f")
+            dest = directory / f"events.{stamp}.bin.zst"
             compressor = zstandard.ZstdCompressor()
             with open(source, "rb") as f_in, open(dest, "wb") as f_out:
                 compressor.copy_stream(f_in, f_out)
             source.unlink()
             logger.info(f"Rotated event log: {source} -> {dest}")
+
+            # Prune oldest archives beyond the limit
+            archives = sorted(directory.glob("events.*.bin.zst"))
+            for old in archives[:-_MAX_ARCHIVES]:
+                old.unlink()
         except Exception as e:
             logger.opt(exception=e).warning(f"Failed to rotate event log {source}")
             # Clean up the source even if compression fails

@@ -47,6 +47,8 @@
     tags: string[];
   }
 
+  type ModelFitStatus = "fits_now" | "fits_cluster_capacity" | "too_large";
+
   type ModelPickerModalProps = {
     isOpen: boolean;
     models: ModelInfo[];
@@ -56,6 +58,7 @@
     hasRecents?: boolean;
     existingModelIds: Set<string>;
     canModelFit: (modelId: string) => boolean;
+    getModelFitStatus: (modelId: string) => ModelFitStatus;
     onSelect: (modelId: string) => void;
     onClose: () => void;
     onToggleFavorite: (baseModelId: string) => void;
@@ -83,6 +86,7 @@
     hasRecents: hasRecentsTab = false,
     existingModelIds,
     canModelFit,
+    getModelFitStatus,
     onSelect,
     onClose,
     onToggleFavorite,
@@ -436,13 +440,23 @@
       );
     }
 
-    // Sort: models that fit first, then by size (largest first)
+    // Sort: fits-now first, then fits-cluster-capacity, then too-large
     result.sort((a, b) => {
-      const aFits = a.variants.some((v) => canModelFit(v.id));
-      const bFits = b.variants.some((v) => canModelFit(v.id));
+      const getGroupFitRank = (group: ModelGroup): number => {
+        let hasClusterCapacityOnly = false;
+        for (const variant of group.variants) {
+          const fitStatus = getModelFitStatus(variant.id);
+          if (fitStatus === "fits_now") return 0;
+          if (fitStatus === "fits_cluster_capacity") {
+            hasClusterCapacityOnly = true;
+          }
+        }
+        return hasClusterCapacityOnly ? 1 : 2;
+      };
 
-      if (aFits && !bFits) return -1;
-      if (!aFits && bFits) return 1;
+      const aRank = getGroupFitRank(a);
+      const bRank = getGroupFitRank(b);
+      if (aRank !== bRank) return aRank - bRank;
 
       return (
         (b.smallestVariant.storage_size_megabytes || 0) -
@@ -832,6 +846,7 @@
               isFavorite={favorites.has(group.id)}
               {selectedModelId}
               {canModelFit}
+              {getModelFitStatus}
               onToggleExpand={() => toggleGroupExpanded(group.id)}
               onSelectModel={handleSelect}
               {onToggleFavorite}
