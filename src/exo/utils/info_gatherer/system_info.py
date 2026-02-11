@@ -4,7 +4,7 @@ import sys
 from subprocess import CalledProcessError
 
 import psutil
-from anyio import run_process
+from anyio import move_on_after, run_process
 
 from exo.shared.types.profiling import InterfaceType, NetworkInterfaceInfo
 
@@ -29,12 +29,15 @@ async def get_os_build_version() -> str:
     if sys.platform != "darwin":
         return "Unknown"
 
-    try:
-        process = await run_process(["sw_vers", "-buildVersion"])
-    except CalledProcessError:
-        return "Unknown"
+    result = "Unknown"
+    with move_on_after(10):
+        try:
+            process = await run_process(["sw_vers", "-buildVersion"])
+            result = process.stdout.decode("utf-8", errors="replace").strip() or "Unknown"
+        except CalledProcessError:
+            pass
 
-    return process.stdout.decode("utf-8", errors="replace").strip() or "Unknown"
+    return result
 
 
 async def get_friendly_name() -> str:
