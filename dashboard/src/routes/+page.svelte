@@ -636,6 +636,13 @@
     try {
       const preview = specificPreview ?? filteredPreview();
 
+      // Extract node IDs from the preview the user is seeing
+      const previewNodeIds = preview?.memory_delta_by_node
+        ? Object.keys(preview.memory_delta_by_node)
+        : nodeFilter.size > 0
+          ? Array.from(nodeFilter)
+          : undefined;
+
       const response = await fetch("/meta_instance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -643,13 +650,8 @@
           model_id: modelId,
           sharding: preview?.sharding ?? selectedSharding,
           instance_meta: preview?.instance_meta ?? selectedInstanceType,
-          min_nodes: Math.max(
-            selectedMinNodes,
-            nodeFilter.size,
-            // RDMA requires at least 2 nodes
-            (preview?.instance_meta ?? selectedInstanceType) === "MlxJaccl" ? 2 : 1,
-          ),
-          node_ids: nodeFilter.size > 0 ? Array.from(nodeFilter) : undefined,
+          min_nodes: selectedMinNodes,
+          node_ids: previewNodeIds,
         }),
       });
 
