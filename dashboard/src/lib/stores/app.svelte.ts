@@ -263,7 +263,6 @@ export interface MetaInstanceData {
   placementError: string | null;
   consecutiveFailures: number;
   lastFailureError: string | null;
-  lastFailureAt: string | null;
 }
 
 export interface MessageAttachment {

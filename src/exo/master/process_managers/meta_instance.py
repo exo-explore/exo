@@ -1,5 +1,4 @@
 from collections.abc import Sequence
-from datetime import UTC, datetime
 from typing import final
 
 from exo.master.reconcile import (
@@ -10,8 +9,6 @@ from exo.shared.models.model_cards import ModelCard
 from exo.shared.types.events import Event, InstanceCreated, MetaInstancePlacementFailed
 from exo.shared.types.state import State
 from exo.shared.types.worker.instances import Instance, InstanceId
-
-RETRY_COOLDOWN_SECONDS = 5
 
 
 @final
@@ -30,14 +27,6 @@ class MetaInstanceReconciler:
             state.topology,
         )
         for meta_instance in unsatisfied:
-            # Skip placement if the last failure was too recent
-            if (
-                meta_instance.last_failure_at
-                and (datetime.now(tz=UTC) - meta_instance.last_failure_at).total_seconds()
-                < RETRY_COOLDOWN_SECONDS
-            ):
-                continue
-
             model_card = await ModelCard.load(meta_instance.model_id)
             result = try_place_for_meta_instance(
                 meta_instance,
