@@ -184,6 +184,14 @@ class Worker:
             )
             if task is None:
                 continue
+
+            # Gate DownloadModel on backoff BEFORE emitting TaskCreated
+            # to prevent flooding the event log with useless events
+            if isinstance(task, DownloadModel):
+                model_id = task.shard_metadata.model_card.model_id
+                if not self._download_backoff.should_proceed(model_id):
+                    continue
+
             logger.info(f"Worker plan: {task.__class__.__name__}")
             assert task.task_status
             await self.event_sender.send(TaskCreated(task_id=task.task_id, task=task))
@@ -199,9 +207,6 @@ class Worker:
                     )
                 case DownloadModel(shard_metadata=shard):
                     model_id = shard.model_card.model_id
-                    if not self._download_backoff.should_proceed(model_id):
-                        continue
-
                     self._download_backoff.record_attempt(model_id)
 
                     await self.download_command_sender.send(
