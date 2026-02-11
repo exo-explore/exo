@@ -66,26 +66,31 @@ def test_empty_log(log_dir: Path):
     log.close()
 
 
+def _archives(log_dir: Path) -> list[Path]:
+    return sorted(log_dir.glob("events.*.bin.zst"))
+
+
 def test_rotation_on_close(log_dir: Path):
     log = DiskEventLog(log_dir)
     log.append(TestEvent())
     log.close()
 
     active = log_dir / "events.bin"
-    archive = log_dir / "events.1.bin.zst"
     assert not active.exists()
-    assert archive.exists()
-    assert archive.stat().st_size > 0
+
+    archives = _archives(log_dir)
+    assert len(archives) == 1
+    assert archives[0].stat().st_size > 0
 
 
 def test_rotation_on_construction_with_stale_file(log_dir: Path):
     log_dir.mkdir(parents=True, exist_ok=True)
-    active = log_dir / "events.bin"
-    active.write_bytes(b"stale data")
+    (log_dir / "events.bin").write_bytes(b"stale data")
 
     log = DiskEventLog(log_dir)
-    archive = log_dir / "events.1.bin.zst"
-    assert archive.exists()
+    archives = _archives(log_dir)
+    assert len(archives) == 1
+    assert archives[0].exists()
     assert len(log) == 0
 
     log.close()
@@ -97,19 +102,19 @@ def test_empty_log_no_archive(log_dir: Path):
     log.close()
 
     active = log_dir / "events.bin"
-    archive = log_dir / "events.1.bin.zst"
+
     assert not active.exists()
-    assert not archive.exists()
+    assert _archives(log_dir) == []
 
 
 def test_close_is_idempotent(log_dir: Path):
     log = DiskEventLog(log_dir)
     log.append(TestEvent())
     log.close()
+    archive = _archives(log_dir)
     log.close()  # should not raise
 
-    archive = log_dir / "events.1.bin.zst"
-    assert archive.exists()
+    assert _archives(log_dir) == archive
 
 
 def test_successive_sessions(log_dir: Path):
@@ -118,7 +123,7 @@ def test_successive_sessions(log_dir: Path):
     log1.append(TestEvent())
     log1.close()
 
-    assert (log_dir / "events.1.bin.zst").exists()
+    first_archive = _archives(log_dir)[-1]
 
     log2 = DiskEventLog(log_dir)
     log2.append(TestEvent())
@@ -126,18 +131,25 @@ def test_successive_sessions(log_dir: Path):
     log2.close()
 
     # Session 1 archive shifted to slot 2, session 2 in slot 1
-    assert (log_dir / "events.1.bin.zst").exists()
-    assert (log_dir / "events.2.bin.zst").exists()
+    second_archive = _archives(log_dir)[-1]
+    should_be_first_archive = _archives(log_dir)[-2]
+
+    assert first_archive.exists()
+    assert second_archive.exists()
+    assert first_archive != second_archive
+    assert should_be_first_archive == first_archive
 
 
 def test_rotation_keeps_at_most_5_archives(log_dir: Path):
     """After 7 sessions, only the 5 most recent archives should remain."""
+    all_archives: list[Path] = []
     for _ in range(7):
         log = DiskEventLog(log_dir)
         log.append(TestEvent())
         log.close()
+        all_archives.append(_archives(log_dir)[-1])
 
-    for i in range(1, 6):
-        assert (log_dir / f"events.{i}.bin.zst").exists()
-    assert not (log_dir / "events.6.bin.zst").exists()
-    assert not (log_dir / "events.7.bin.zst").exists()
+    for old in all_archives[:2]:
+        assert not old.exists()
+    for recent in all_archives[2:]:
+        assert recent.exists()

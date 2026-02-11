@@ -26,6 +26,7 @@
     nodeNames: string[];
     nodeIds: string[];
   };
+  type ModelFitStatus = "fits_now" | "fits_cluster_capacity" | "too_large";
 
   type ModelPickerGroupProps = {
     group: ModelGroup;
@@ -33,6 +34,7 @@
     isFavorite: boolean;
     selectedModelId: string | null;
     canModelFit: (id: string) => boolean;
+    getModelFitStatus: (id: string) => ModelFitStatus;
     onToggleExpand: () => void;
     onSelectModel: (modelId: string) => void;
     onToggleFavorite: (baseModelId: string) => void;
@@ -46,6 +48,7 @@
     isFavorite,
     selectedModelId,
     canModelFit,
+    getModelFitStatus,
     onToggleExpand,
     onSelectModel,
     onToggleFavorite,
@@ -76,6 +79,30 @@
   const anyVariantFits = $derived(
     group.variants.some((v) => canModelFit(v.id)),
   );
+  const groupFitStatus = $derived.by((): ModelFitStatus => {
+    let hasClusterCapacityOnly = false;
+    for (const variant of group.variants) {
+      const fitStatus = getModelFitStatus(variant.id);
+      if (fitStatus === "fits_now") {
+        return "fits_now";
+      }
+      if (fitStatus === "fits_cluster_capacity") {
+        hasClusterCapacityOnly = true;
+      }
+    }
+    return hasClusterCapacityOnly ? "fits_cluster_capacity" : "too_large";
+  });
+
+  function getSizeClassForFitStatus(fitStatus: ModelFitStatus): string {
+    switch (fitStatus) {
+      case "fits_now":
+        return "text-white/40";
+      case "fits_cluster_capacity":
+        return "text-orange-400/80";
+      case "too_large":
+        return "text-red-400/70";
+    }
+  }
 
   // Check if this group's model is currently selected (for single-variant groups)
   const isMainSelected = $derived(
@@ -244,7 +271,14 @@
 
     <!-- Size indicator (smallest variant) -->
     {#if !group.hasMultipleVariants && group.smallestVariant?.storage_size_megabytes}
-      <span class="text-xs font-mono text-white/30 flex-shrink-0">
+      {@const singleVariantFitStatus = getModelFitStatus(
+        group.smallestVariant.id,
+      )}
+      <span
+        class="text-xs font-mono flex-shrink-0 {getSizeClassForFitStatus(
+          singleVariantFitStatus,
+        )}"
+      >
         {formatSize(group.smallestVariant.storage_size_megabytes)}
       </span>
     {/if}
@@ -255,7 +289,11 @@
         .map((v) => v.storage_size_megabytes || 0)
         .filter((s) => s > 0)
         .sort((a, b) => a - b)}
-      <span class="text-xs font-mono text-white/30 flex-shrink-0">
+      <span
+        class="text-xs font-mono flex-shrink-0 {getSizeClassForFitStatus(
+          groupFitStatus,
+        )}"
+      >
         {group.variants.length} variants{#if sizes.length >= 2}{" "}({formatSize(
             sizes[0],
           )}-{formatSize(sizes[sizes.length - 1])}){/if}
@@ -360,6 +398,7 @@
   {#if isExpanded && group.hasMultipleVariants}
     <div class="bg-black/20 border-t border-white/5">
       {#each group.variants as variant}
+        {@const fitStatus = getModelFitStatus(variant.id)}
         {@const modelCanFit = canModelFit(variant.id)}
         {@const isSelected = selectedModelId === variant.id}
         <button
@@ -384,7 +423,11 @@
           </span>
 
           <!-- Size -->
-          <span class="text-xs font-mono text-white/40 flex-1">
+          <span
+            class="text-xs font-mono flex-1 {getSizeClassForFitStatus(
+              fitStatus,
+            )}"
+          >
             {formatSize(variant.storage_size_megabytes)}
           </span>
 

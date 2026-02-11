@@ -83,6 +83,9 @@
           _module.args.pkgs = import inputs.nixpkgs {
             inherit system;
             config.allowUnfreePredicate = pkg: (pkg.pname or "") == "metal-toolchain";
+            overlays = [
+              (import ./nix/apple-sdk-overlay.nix)
+            ];
           };
           treefmt = {
             projectRootFile = "flake.nix";

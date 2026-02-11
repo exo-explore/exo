@@ -142,6 +142,10 @@
       capabilities?: string[];
     }>
   >([]);
+  type ModelMemoryFitStatus =
+    | "fits_now"
+    | "fits_cluster_capacity"
+    | "too_large";
 
   // Model tasks lookup for ChatForm - maps both short IDs and full HuggingFace IDs
   const modelTasks = $derived(() => {
@@ -479,14 +483,41 @@
     );
   });
 
+  // Calculate total memory in the cluster (in GB)
+  const clusterTotalMemoryGB = $derived(() => {
+    if (!data) return 0;
+    return (
+      Object.values(data.nodes).reduce((acc, n) => {
+        const total =
+          n.macmon_info?.memory?.ram_total ?? n.system_info?.memory ?? 0;
+        return acc + total;
+      }, 0) /
+      (1024 * 1024 * 1024)
+    );
+  });
+
+  function getModelMemoryFitStatus(model: {
+    id: string;
+    name?: string;
+    storage_size_megabytes?: number;
+  }): ModelMemoryFitStatus {
+    const modelSizeGB = getModelSizeGB(model);
+    if (modelSizeGB <= availableMemoryGB()) {
+      return "fits_now";
+    }
+    if (modelSizeGB <= clusterTotalMemoryGB()) {
+      return "fits_cluster_capacity";
+    }
+    return "too_large";
+  }
+
   // Check if a model has enough memory to run
   function hasEnoughMemory(model: {
     id: string;
     name?: string;
     storage_size_megabytes?: number;
   }): boolean {
-    const modelSizeGB = getModelSizeGB(model);
-    return modelSizeGB <= availableMemoryGB();
+    return getModelMemoryFitStatus(model) === "fits_now";
   }
 
   // Sorted models for dropdown - biggest first, unrunnable at the end
@@ -3293,6 +3324,10 @@
   canModelFit={(modelId) => {
     const model = models.find((m) => m.id === modelId);
     return model ? hasEnoughMemory(model) : false;
+  }}
+  getModelFitStatus={(modelId): ModelMemoryFitStatus => {
+    const model = models.find((m) => m.id === modelId);
+    return model ? getModelMemoryFitStatus(model) : "too_large";
   }}
   onSelect={handleModelPickerSelect}
   onClose={() => (isModelPickerOpen = false)}
