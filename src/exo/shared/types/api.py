@@ -7,9 +7,8 @@ from pydantic import BaseModel, Field, field_validator
 from pydantic_core import PydanticUseDefault
 
 from exo.shared.models.model_cards import ModelCard, ModelId
-from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.common import CommandId, MetaInstanceId, NodeId
 from exo.shared.types.memory import Memory
-from exo.shared.types.meta_instance import MetaInstanceId
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
 from exo.utils.pydantic_ext import CamelCaseModel

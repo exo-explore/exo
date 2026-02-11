@@ -42,6 +42,10 @@ class CommandId(Id):
     pass
 
 
+class MetaInstanceId(Id):
+    """Identifier for a MetaInstance."""
+
+
 class Host(CamelCaseModel):
     ip: str
     port: int

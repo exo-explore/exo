@@ -6,8 +6,8 @@ from exo.shared.types.api import (
     ImageGenerationTaskParams,
 )
 from exo.shared.types.chunks import InputImageChunk
-from exo.shared.types.common import CommandId, NodeId
-from exo.shared.types.meta_instance import MetaInstance, MetaInstanceId
+from exo.shared.types.common import CommandId, MetaInstanceId, NodeId
+from exo.shared.types.meta_instance import MetaInstance
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
