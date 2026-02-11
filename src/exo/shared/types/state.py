@@ -1,5 +1,4 @@
 from collections.abc import Mapping, Sequence
-from datetime import datetime
 from typing import Any, cast
 
 from pydantic import ConfigDict, Field, field_serializer, field_validator
@@ -43,7 +42,7 @@ class State(CamelCaseModel):
     runners: Mapping[RunnerId, RunnerStatus] = {}
     downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {}
     tasks: Mapping[TaskId, Task] = {}
-    last_seen: Mapping[NodeId, datetime] = {}
+    last_event_index_by_node: Mapping[NodeId, int] = {}
     topology: Topology = Field(default_factory=Topology)
     last_event_applied_idx: int = Field(default=-1, ge=-1)
 

@@ -1,6 +1,5 @@
 import copy
 from collections.abc import Mapping, Sequence
-from datetime import datetime
 
 from loguru import logger
 
@@ -12,9 +11,9 @@ from exo.shared.types.events import (
     InputChunkReceived,
     InstanceCreated,
     InstanceDeleted,
+    NodeDisconnected,
     NodeDownloadProgress,
     NodeGatheredInfo,
-    NodeTimedOut,
     RunnerDeleted,
     RunnerStatusUpdated,
     TaskAcknowledged,
@@ -71,8 +70,8 @@ def event_apply(event: Event, state: State) -> State:
             return apply_instance_created(event, state)
         case InstanceDeleted():
             return apply_instance_deleted(event, state)
-        case NodeTimedOut():
-            return apply_node_timed_out(event, state)
+        case NodeDisconnected():
+            return apply_node_disconnected(event, state)
         case NodeDownloadProgress():
             return apply_node_download_progress(event, state)
         case NodeGatheredInfo():
@@ -103,7 +102,13 @@ def apply(state: State, event: IndexedEvent) -> State:
         )
     assert state.last_event_applied_idx == event.idx - 1
     new_state: State = event_apply(event.event, state)
-    return new_state.model_copy(update={"last_event_applied_idx": event.idx})
+    update: dict[str, object] = {"last_event_applied_idx": event.idx}
+    if isinstance(event.event, NodeGatheredInfo):
+        update["last_event_index_by_node"] = {
+            **new_state.last_event_index_by_node,
+            event.event.node_id: event.idx,
+        }
+    return new_state.model_copy(update=update)
 
 
 def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> State:
@@ -207,11 +212,13 @@ def apply_runner_deleted(event: RunnerDeleted, state: State) -> State:
     return state.model_copy(update={"runners": new_runners})
 
 
-def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
+def apply_node_disconnected(event: NodeDisconnected, state: State) -> State:
     topology = copy.deepcopy(state.topology)
     topology.remove_node(event.node_id)
-    last_seen = {
-        key: value for key, value in state.last_seen.items() if key != event.node_id
+    last_event_index_by_node = {
+        key: value
+        for key, value in state.last_event_index_by_node.items()
+        if key != event.node_id
     }
     downloads = {
         key: value for key, value in state.downloads.items() if key != event.node_id
@@ -258,7 +265,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
         update={
             "downloads": downloads,
             "topology": topology,
-            "last_seen": last_seen,
+            "last_event_index_by_node": last_event_index_by_node,
             "node_identities": node_identities,
             "node_memory": node_memory,
             "node_system": node_system,
@@ -278,10 +285,6 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
 
     # Build update dict with only the mappings that change
     update: dict[str, object] = {
-        "last_seen": {
-            **state.last_seen,
-            event.node_id: datetime.fromisoformat(event.when),
-        },
         "topology": topology,
     }
 

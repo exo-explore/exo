@@ -1,5 +1,4 @@
 from collections import defaultdict
-from datetime import datetime, timezone
 from random import random
 from typing import Iterator
 
@@ -123,7 +122,6 @@ class Worker:
                 await self.event_sender.send(
                     NodeGatheredInfo(
                         node_id=self.node_id,
-                        when=str(datetime.now(tz=timezone.utc)),
                         info=info,
                     )
                 )

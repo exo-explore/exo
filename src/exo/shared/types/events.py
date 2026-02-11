@@ -77,14 +77,12 @@ class RunnerDeleted(BaseEvent):
     runner_id: RunnerId
 
 
-class NodeTimedOut(BaseEvent):
+class NodeDisconnected(BaseEvent):
     node_id: NodeId
 
 
-# TODO: bikeshed this name
 class NodeGatheredInfo(BaseEvent):
     node_id: NodeId
-    when: str  # this is a manually cast datetime overrode by the master when the event is indexed, rather than the local time on the device
     info: GatheredInfo
 
 
@@ -143,7 +141,7 @@ Event = (
     | InstanceDeleted
     | RunnerStatusUpdated
     | RunnerDeleted
-    | NodeTimedOut
+    | NodeDisconnected
     | NodeGatheredInfo
     | NodeDownloadProgress
     | ChunkGenerated

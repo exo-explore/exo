@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from typing import Sequence
 
 import anyio
@@ -85,7 +84,6 @@ async def test_master():
                 session=session_id,
                 event=(
                     NodeGatheredInfo(
-                        when=str(datetime.now(tz=timezone.utc)),
                         node_id=node_id,
                         info=MemoryUsage(
                             ram_total=Memory.from_bytes(678948 * 1024),
