@@ -284,6 +284,12 @@ class DownloadCoordinator:
                     _,
                     progress,
                 ) in self.shard_downloader.get_shard_download_status():
+                    model_id = progress.shard.model_card.model_id
+
+                    # Active downloads emit progress via the callback — don't overwrite
+                    if model_id in self.active_downloads:
+                        continue
+
                     if progress.status == "complete":
                         status: DownloadProgress = DownloadCompleted(
                             node_id=self.node_id,
