@@ -56,6 +56,8 @@ export interface TopologyEdge {
   target: string;
   sendBackIp?: string;
   sendBackInterface?: string;
+  sourceRdmaIface?: string;
+  sinkRdmaIface?: string;
 }
 
 export interface TopologyData {
@@ -225,6 +227,19 @@ interface RawStateResponse {
   nodeMemory?: Record<string, RawMemoryUsage>;
   nodeSystem?: Record<string, RawSystemPerformanceProfile>;
   nodeNetwork?: Record<string, RawNodeNetworkInfo>;
+  // Thunderbolt identifiers per node
+  nodeThunderbolt?: Record<
+    string,
+    {
+      interfaces: Array<{
+        rdmaInterface: string;
+        domainUuid: string;
+        linkSpeed: string;
+      }>;
+    }
+  >;
+  // RDMA ctl status per node
+  nodeRdmaCtl?: Record<string, { enabled: boolean }>;
   // Thunderbolt bridge status per node
   nodeThunderboltBridge?: Record<
     string,
@@ -437,6 +452,8 @@ function transformTopology(
         if (!Array.isArray(edgeList)) continue;
         for (const edge of edgeList) {
           let sendBackIp: string | undefined;
+          let sourceRdmaIface: string | undefined;
+          let sinkRdmaIface: string | undefined;
           if (edge && typeof edge === "object" && "sinkMultiaddr" in edge) {
             const multiaddr = edge.sinkMultiaddr;
             if (multiaddr) {
@@ -444,10 +461,23 @@ function transformTopology(
                 multiaddr.ip_address ||
                 extractIpFromMultiaddr(multiaddr.address);
             }
+          } else if (
+            edge &&
+            typeof edge === "object" &&
+            "sourceRdmaIface" in edge
+          ) {
+            sourceRdmaIface = edge.sourceRdmaIface;
+            sinkRdmaIface = edge.sinkRdmaIface;
           }
 
           if (nodes[source] && nodes[sink] && source !== sink) {
-            edges.push({ source, target: sink, sendBackIp });
+            edges.push({
+              source,
+              target: sink,
+              sendBackIp,
+              sourceRdmaIface,
+              sinkRdmaIface,
+            });
           }
         }
       }
@@ -496,6 +526,19 @@ class AppStore {
   previewNodeFilter = $state<Set<string>>(new Set());
   lastUpdate = $state<number | null>(null);
   thunderboltBridgeCycles = $state<string[][]>([]);
+  nodeThunderbolt = $state<
+    Record<
+      string,
+      {
+        interfaces: Array<{
+          rdmaInterface: string;
+          domainUuid: string;
+          linkSpeed: string;
+        }>;
+      }
+    >
+  >({});
+  nodeRdmaCtl = $state<Record<string, { enabled: boolean }>>({});
   nodeThunderboltBridge = $state<
     Record<
       string,
@@ -1206,6 +1249,10 @@ class AppStore {
       if (data.downloads) {
         this.downloads = data.downloads;
       }
+      // Thunderbolt identifiers per node
+      this.nodeThunderbolt = data.nodeThunderbolt ?? {};
+      // RDMA ctl status per node
+      this.nodeRdmaCtl = data.nodeRdmaCtl ?? {};
       // Thunderbolt bridge cycles
       this.thunderboltBridgeCycles = data.thunderboltBridgeCycles ?? [];
       // Thunderbolt bridge status per node
@@ -3038,7 +3085,9 @@ export const setChatSidebarVisible = (visible: boolean) =>
   appStore.setChatSidebarVisible(visible);
 export const refreshState = () => appStore.fetchState();
 
-// Thunderbolt bridge status
+// Thunderbolt & RDMA status
+export const nodeThunderbolt = () => appStore.nodeThunderbolt;
+export const nodeRdmaCtl = () => appStore.nodeRdmaCtl;
 export const thunderboltBridgeCycles = () => appStore.thunderboltBridgeCycles;
 export const nodeThunderboltBridge = () => appStore.nodeThunderboltBridge;
 

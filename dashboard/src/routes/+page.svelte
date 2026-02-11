@@ -13,6 +13,11 @@
     getFavoritesSet,
   } from "$lib/stores/favorites.svelte";
   import {
+    hasRecents,
+    getRecentModelIds,
+    recordRecentLaunch,
+  } from "$lib/stores/recents.svelte";
+  import {
     hasStartedChat,
     isTopologyMinimized,
     topologyData,
@@ -37,6 +42,8 @@
     toggleTopologyOnlyMode,
     chatSidebarVisible,
     toggleChatSidebarVisible,
+    nodeThunderbolt,
+    nodeRdmaCtl,
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
     type DownloadProgress,
@@ -62,7 +69,25 @@
   const sidebarVisible = $derived(chatSidebarVisible());
   const tbBridgeCycles = $derived(thunderboltBridgeCycles());
   const tbBridgeData = $derived(nodeThunderboltBridge());
+  const tbIdentifiers = $derived(nodeThunderbolt());
+  const rdmaCtlData = $derived(nodeRdmaCtl());
   const nodeFilter = $derived(previewNodeFilter());
+
+  // Detect TB5 nodes where RDMA is not enabled
+  const tb5WithoutRdma = $derived.by(() => {
+    const rdmaCtl = rdmaCtlData;
+    if (!rdmaCtl) return false;
+    const ids = tbIdentifiers;
+    if (!ids) return false;
+    // Find nodes with TB5 hardware (any TB interface)
+    const tb5NodeIds = Object.entries(ids)
+      .filter(([_, node]) => node.interfaces.length > 0)
+      .map(([id]) => id);
+    if (tb5NodeIds.length < 2) return false;
+    // At least one TB5 node has RDMA disabled
+    return tb5NodeIds.some((id) => rdmaCtl[id]?.enabled !== true);
+  });
+  let tb5InfoDismissed = $state(false);
 
   // Helper to get friendly node name from node ID
   function getNodeName(nodeId: string): string {
@@ -231,6 +256,10 @@
 
   // Favorites state (reactive)
   const favoritesSet = $derived(getFavoritesSet());
+
+  // Recent models state (reactive)
+  const recentModelIds = $derived(getRecentModelIds());
+  const showRecentsTab = $derived(hasRecents());
 
   // Slider dragging state
   let isDraggingSlider = $state(false);
@@ -660,6 +689,9 @@
       } else {
         // Always auto-select the newly launched model so the user chats to what they just launched
         setSelectedChatModel(modelId);
+
+        // Record the launch in recent models history
+        recordRecentLaunch(modelId);
 
         // Scroll to the bottom of instances container to show the new instance
         // Use multiple attempts to ensure DOM has updated with the new instance
@@ -1831,6 +1863,53 @@
             </div>
           {/if}
 
+          <!-- TB5 RDMA Available Info -->
+          {#if tb5WithoutRdma && !tb5InfoDismissed}
+            <div
+              class="absolute left-4 flex items-center gap-2 px-3 py-2 rounded border border-blue-400/50 bg-blue-400/10 backdrop-blur-sm"
+              class:top-16={tbBridgeCycles.length > 0}
+              class:top-4={tbBridgeCycles.length === 0}
+              role="status"
+            >
+              <svg
+                class="w-5 h-5 text-blue-400 flex-shrink-0"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              <span class="text-sm font-mono text-blue-200">
+                RDMA AVAILABLE
+              </span>
+              <button
+                type="button"
+                onclick={() => (tb5InfoDismissed = true)}
+                class="ml-1 text-blue-300/60 hover:text-blue-200 transition-colors cursor-pointer"
+                title="Dismiss"
+              >
+                <svg
+                  class="w-4 h-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            </div>
+          {/if}
+
           <!-- Exit topology-only mode button -->
           <button
             type="button"
@@ -1946,6 +2025,86 @@
                       {/if}
                     </svg>
                   </button>
+                </div>
+              </div>
+            {/if}
+
+            <!-- TB5 RDMA Available Info -->
+            {#if tb5WithoutRdma && !tb5InfoDismissed}
+              <div
+                class="absolute left-4 group"
+                class:top-16={tbBridgeCycles.length > 0}
+                class:top-4={tbBridgeCycles.length === 0}
+                role="status"
+              >
+                <div
+                  class="flex items-center gap-2 px-3 py-2 rounded border border-blue-400/50 bg-blue-400/10 backdrop-blur-sm"
+                >
+                  <svg
+                    class="w-5 h-5 text-blue-400 flex-shrink-0"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  <span class="text-sm font-mono text-blue-200">
+                    RDMA AVAILABLE
+                  </span>
+                  <button
+                    type="button"
+                    onclick={() => (tb5InfoDismissed = true)}
+                    class="ml-1 text-blue-300/60 hover:text-blue-200 transition-colors cursor-pointer"
+                    title="Dismiss"
+                  >
+                    <svg
+                      class="w-4 h-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M6 18L18 6M6 6l12 12"
+                      />
+                    </svg>
+                  </button>
+                </div>
+
+                <!-- Tooltip on hover -->
+                <div
+                  class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-blue-400/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+                >
+                  <p class="text-xs text-white/80 mb-2">
+                    Thunderbolt 5 hardware detected on multiple nodes. Enable
+                    RDMA for significantly faster inter-node communication.
+                  </p>
+                  <p class="text-xs text-white/60 mb-1.5">
+                    <span class="text-blue-300">To enable:</span>
+                  </p>
+                  <ol
+                    class="text-xs text-white/60 list-decimal list-inside space-y-0.5 mb-1.5"
+                  >
+                    <li>Connect nodes with TB5 cables</li>
+                    <li>Boot to Recovery (hold power 10s → Options)</li>
+                    <li>
+                      Run
+                      <code class="text-blue-300 bg-blue-400/10 px-1 rounded"
+                        >rdma_ctl enable</code
+                      >
+                    </li>
+                    <li>Reboot</li>
+                  </ol>
+                  <p class="text-xs text-white/40">
+                    Requires macOS 26.2+, TB5 cables, and matching OS versions.
+                  </p>
                 </div>
               </div>
             {/if}
@@ -2828,6 +2987,33 @@
                     >
                   </div>
                 {/if}
+
+                <!-- TB5 RDMA Available (compact) -->
+                {#if tb5WithoutRdma && !tb5InfoDismissed}
+                  <div
+                    class="absolute left-2 flex items-center gap-1.5 px-2 py-1 rounded border border-blue-400/50 bg-blue-400/10 backdrop-blur-sm"
+                    class:top-10={tbBridgeCycles.length > 0}
+                    class:top-2={tbBridgeCycles.length === 0}
+                    title="Thunderbolt 5 detected — RDMA can be enabled for better performance"
+                  >
+                    <svg
+                      class="w-3.5 h-3.5 text-blue-400"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                    <span class="text-[10px] font-mono text-blue-200"
+                      >RDMA AVAILABLE</span
+                    >
+                  </div>
+                {/if}
               </div>
             </button>
 
@@ -3283,6 +3469,8 @@
   {models}
   {selectedModelId}
   favorites={favoritesSet}
+  {recentModelIds}
+  hasRecents={showRecentsTab}
   existingModelIds={new Set(models.map((m) => m.id))}
   canModelFit={(modelId) => {
     const model = models.find((m) => m.id === modelId);

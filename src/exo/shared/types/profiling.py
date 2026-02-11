@@ -77,6 +77,12 @@ class NodeThunderboltInfo(CamelCaseModel):
     interfaces: Sequence[ThunderboltIdentifier] = []
 
 
+class NodeRdmaCtlStatus(CamelCaseModel):
+    """Whether RDMA is enabled on this node (via rdma_ctl)."""
+
+    enabled: bool
+
+
 class ThunderboltBridgeStatus(CamelCaseModel):
     """Whether the Thunderbolt Bridge network service is enabled on this node."""
 

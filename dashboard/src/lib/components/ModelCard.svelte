@@ -422,9 +422,16 @@
     const bToACandidates: Array<{ ip: string; iface: string | null }> = [];
 
     for (const edge of topology.edges) {
-      const ip = edge.sendBackIp || "?";
-      const iface =
-        edge.sendBackInterface || getInterfaceForIp(edge.source, ip);
+      let ip: string;
+      let iface: string | null;
+
+      if (edge.sourceRdmaIface || edge.sinkRdmaIface) {
+        ip = "RDMA";
+        iface = `${edge.sourceRdmaIface || "?"} \u2192 ${edge.sinkRdmaIface || "?"}`;
+      } else {
+        ip = edge.sendBackIp || "?";
+        iface = edge.sendBackInterface || getInterfaceForIp(edge.source, ip);
+      }
 
       if (edge.source === nodeId1 && edge.target === nodeId2) {
         aToBCandidates.push({ ip, iface });

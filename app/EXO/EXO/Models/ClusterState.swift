@@ -15,6 +15,7 @@ struct ClusterState: Decodable {
     let nodeMemory: [String: MemoryInfo]
     let nodeSystem: [String: SystemInfo]
     let nodeThunderboltBridge: [String: ThunderboltBridgeStatus]
+    let nodeRdmaCtl: [String: NodeRdmaCtlStatus]
 
     /// Computed property for backwards compatibility - merges granular state into NodeProfile
     var nodeProfiles: [String: NodeProfile] {
@@ -65,6 +66,10 @@ struct ClusterState: Decodable {
             try container.decodeIfPresent(
                 [String: ThunderboltBridgeStatus].self, forKey: .nodeThunderboltBridge
             ) ?? [:]
+        self.nodeRdmaCtl =
+            try container.decodeIfPresent(
+                [String: NodeRdmaCtlStatus].self, forKey: .nodeRdmaCtl
+            ) ?? [:]
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -78,6 +83,7 @@ struct ClusterState: Decodable {
         case nodeMemory
         case nodeSystem
         case nodeThunderboltBridge
+        case nodeRdmaCtl
     }
 }
 
@@ -157,6 +163,10 @@ struct ThunderboltBridgeStatus: Decodable {
     let enabled: Bool
     let exists: Bool
     let serviceName: String?
+}
+
+struct NodeRdmaCtlStatus: Decodable {
+    let enabled: Bool
 }
 
 struct MemoryInfo: Decodable {
