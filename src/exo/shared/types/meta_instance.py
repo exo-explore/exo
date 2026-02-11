@@ -18,4 +18,4 @@ class MetaInstance(FrozenModel):
     sharding: Sharding = Sharding.Pipeline
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
     min_nodes: int = 1
-    node_ids: frozenset[NodeId] | None = None
+    node_ids: list[NodeId] | None = None

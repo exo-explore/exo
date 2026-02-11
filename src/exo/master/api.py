@@ -538,7 +538,7 @@ class API:
             sharding=payload.sharding,
             instance_meta=payload.instance_meta,
             min_nodes=payload.min_nodes,
-            node_ids=frozenset(payload.node_ids) if payload.node_ids else None,
+            node_ids=payload.node_ids,
         )
         command = CreateMetaInstance(meta_instance=meta_instance)
         await self._send(command)

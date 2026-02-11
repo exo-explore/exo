@@ -108,7 +108,7 @@ def instance_satisfies_meta_instance(
     if len(instance_nodes) < meta_instance.min_nodes:
         return False
 
-    return meta_instance.node_ids is None or meta_instance.node_ids.issubset(
+    return meta_instance.node_ids is None or set(meta_instance.node_ids).issubset(
         instance_nodes
     )
 
