@@ -22,14 +22,7 @@ from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
-from exo.utils.pydantic_ext import CamelCaseModel, FrozenModel
-
-
-class InstanceFailureInfo(FrozenModel):
-    """Tracks consecutive runner failures for a MetaInstance's backing instances."""
-
-    consecutive_failures: int = 0
-    last_error: str | None = None
+from exo.utils.pydantic_ext import CamelCaseModel
 
 
 class State(CamelCaseModel):
@@ -50,8 +43,6 @@ class State(CamelCaseModel):
     )
     instances: Mapping[InstanceId, Instance] = {}
     meta_instances: Mapping[MetaInstanceId, MetaInstance] = {}
-    meta_instance_errors: Mapping[MetaInstanceId, str] = {}
-    meta_instance_failure_info: Mapping[MetaInstanceId, InstanceFailureInfo] = {}
     runners: Mapping[RunnerId, RunnerStatus] = {}
     downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {}
     tasks: Mapping[TaskId, Task] = {}

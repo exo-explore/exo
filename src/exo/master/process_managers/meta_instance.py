@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import final
 
 from exo.master.reconcile import (
@@ -9,6 +10,8 @@ from exo.shared.models.model_cards import ModelCard
 from exo.shared.types.events import Event, InstanceCreated, MetaInstancePlacementFailed
 from exo.shared.types.state import State
 from exo.shared.types.worker.instances import Instance, InstanceId
+
+RETRY_COOLDOWN_SECONDS = 5
 
 
 @final
@@ -27,6 +30,14 @@ class MetaInstanceReconciler:
             state.topology,
         )
         for meta_instance in unsatisfied:
+            # Skip placement if the last failure was too recent
+            if (
+                meta_instance.last_failure_at
+                and (datetime.now(tz=UTC) - meta_instance.last_failure_at).total_seconds()
+                < RETRY_COOLDOWN_SECONDS
+            ):
+                continue
+
             model_card = await ModelCard.load(meta_instance.model_id)
             result = try_place_for_meta_instance(
                 meta_instance,
@@ -43,15 +54,11 @@ class MetaInstanceReconciler:
             all_events.extend(result.events)
 
             # Emit placement failure if error differs from what's already in state
-            if result.error is not None:
-                existing_error = state.meta_instance_errors.get(
-                    meta_instance.meta_instance_id
-                )
-                if existing_error != result.error:
-                    all_events.append(
-                        MetaInstancePlacementFailed(
-                            meta_instance_id=meta_instance.meta_instance_id,
-                            reason=result.error,
-                        )
+            if result.error is not None and meta_instance.placement_error != result.error:
+                all_events.append(
+                    MetaInstancePlacementFailed(
+                        meta_instance_id=meta_instance.meta_instance_id,
+                        reason=result.error,
                     )
+                )
         return all_events

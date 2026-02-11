@@ -17,7 +17,7 @@ from exo.shared.types.events import (
 from exo.shared.types.memory import Memory
 from exo.shared.types.meta_instance import MetaInstance
 from exo.shared.types.multiaddr import Multiaddr
-from exo.shared.types.state import InstanceFailureInfo, State
+from exo.shared.types.state import State
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.instances import (
     InstanceId,
@@ -448,18 +448,13 @@ def test_apply_meta_instance_deleted():
 
 
 def test_apply_meta_instance_deleted_clears_failure_info():
-    meta = _meta_instance()
-    state = State(
-        meta_instances={meta.meta_instance_id: meta},
-        meta_instance_failure_info={
-            meta.meta_instance_id: InstanceFailureInfo(
-                consecutive_failures=2, last_error="OOM"
-            )
-        },
+    meta = _meta_instance().model_copy(
+        update={"consecutive_failures": 2, "last_failure_error": "OOM"}
     )
+    state = State(meta_instances={meta.meta_instance_id: meta})
     event = MetaInstanceDeleted(meta_instance_id=meta.meta_instance_id)
     new_state = apply(state, IndexedEvent(idx=0, event=event))
-    assert meta.meta_instance_id not in new_state.meta_instance_failure_info
+    assert meta.meta_instance_id not in new_state.meta_instances
 
 
 # --- instance_runners_failed ---
@@ -548,31 +543,29 @@ def test_apply_instance_deleted_tracks_failure():
     )
     event = InstanceDeleted(instance_id=iid, failure_error="Runner OOM")
     new_state = apply(state, IndexedEvent(idx=0, event=event))
-    info = new_state.meta_instance_failure_info[meta.meta_instance_id]
-    assert info.consecutive_failures == 1
-    assert info.last_error == "Runner OOM"
+    mi = new_state.meta_instances[meta.meta_instance_id]
+    assert mi.consecutive_failures == 1
+    assert mi.last_failure_error == "Runner OOM"
+    assert mi.last_failure_at is not None
 
 
 def test_apply_instance_deleted_increments_failure():
     """Subsequent failures increment the counter."""
-    meta = _meta_instance()
+    meta = _meta_instance().model_copy(
+        update={"consecutive_failures": 2, "last_failure_error": "previous error"}
+    )
     iid, inst = _instance(
         node_ids=["node-a"], meta_instance_id=meta.meta_instance_id
     )
     state = State(
         meta_instances={meta.meta_instance_id: meta},
         instances={iid: inst},
-        meta_instance_failure_info={
-            meta.meta_instance_id: InstanceFailureInfo(
-                consecutive_failures=2, last_error="previous error"
-            )
-        },
     )
     event = InstanceDeleted(instance_id=iid, failure_error="new error")
     new_state = apply(state, IndexedEvent(idx=0, event=event))
-    info = new_state.meta_instance_failure_info[meta.meta_instance_id]
-    assert info.consecutive_failures == 3
-    assert info.last_error == "new error"
+    mi = new_state.meta_instances[meta.meta_instance_id]
+    assert mi.consecutive_failures == 3
+    assert mi.last_failure_error == "new error"
 
 
 def test_apply_instance_deleted_no_failure_no_tracking():
@@ -587,7 +580,8 @@ def test_apply_instance_deleted_no_failure_no_tracking():
     )
     event = InstanceDeleted(instance_id=iid)
     new_state = apply(state, IndexedEvent(idx=0, event=event))
-    assert meta.meta_instance_id not in new_state.meta_instance_failure_info
+    mi = new_state.meta_instances[meta.meta_instance_id]
+    assert mi.consecutive_failures == 0
 
 
 def test_apply_instance_deleted_orphan_no_tracking():
@@ -596,4 +590,4 @@ def test_apply_instance_deleted_orphan_no_tracking():
     state = State(instances={iid: inst})
     event = InstanceDeleted(instance_id=iid, failure_error="crash")
     new_state = apply(state, IndexedEvent(idx=0, event=event))
-    assert len(new_state.meta_instance_failure_info) == 0
+    assert len(new_state.meta_instances) == 0

@@ -251,10 +251,6 @@ interface RawStateResponse {
   thunderboltBridgeCycles?: string[][];
   // MetaInstances (declarative instance constraints)
   metaInstances?: Record<string, MetaInstanceData>;
-  // MetaInstance placement errors
-  metaInstanceErrors?: Record<string, string>;
-  // MetaInstance failure tracking
-  metaInstanceFailureInfo?: Record<string, { consecutiveFailures: number; lastError: string | null }>;
 }
 
 export interface MetaInstanceData {
@@ -264,6 +260,10 @@ export interface MetaInstanceData {
   instanceMeta: string;
   minNodes: number;
   nodeIds: string[] | null;
+  placementError: string | null;
+  consecutiveFailures: number;
+  lastFailureError: string | null;
+  lastFailureAt: string | null;
 }
 
 export interface MessageAttachment {
@@ -552,8 +552,6 @@ class AppStore {
   lastUpdate = $state<number | null>(null);
   nodeIdentities = $state<Record<string, RawNodeIdentity>>({});
   metaInstances = $state<Record<string, MetaInstanceData>>({});
-  metaInstanceErrors = $state<Record<string, string>>({});
-  metaInstanceFailureInfo = $state<Record<string, { consecutiveFailures: number; lastError: string | null }>>({});
   thunderboltBridgeCycles = $state<string[][]>([]);
   nodeThunderbolt = $state<
     Record<
@@ -1288,8 +1286,6 @@ class AppStore {
       this.nodeRdmaCtl = data.nodeRdmaCtl ?? {};
       // MetaInstances
       this.metaInstances = data.metaInstances ?? {};
-      this.metaInstanceErrors = data.metaInstanceErrors ?? {};
-      this.metaInstanceFailureInfo = data.metaInstanceFailureInfo ?? {};
       // Thunderbolt bridge cycles
       this.thunderboltBridgeCycles = data.thunderboltBridgeCycles ?? [];
       // Thunderbolt bridge status per node
@@ -3062,8 +3058,6 @@ export const totalTokens = () => appStore.totalTokens;
 export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
 export const metaInstances = () => appStore.metaInstances;
-export const metaInstanceErrors = () => appStore.metaInstanceErrors;
-export const metaInstanceFailureInfo = () => appStore.metaInstanceFailureInfo;
 export const runners = () => appStore.runners;
 export const downloads = () => appStore.downloads;
 export const nodeDisk = () => appStore.nodeDisk;
