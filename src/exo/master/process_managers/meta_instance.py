@@ -6,7 +6,7 @@ from exo.master.reconcile import (
     try_place_for_meta_instance,
 )
 from exo.shared.models.model_cards import ModelCard
-from exo.shared.types.events import Event, InstanceCreated
+from exo.shared.types.events import Event, InstanceCreated, MetaInstancePlacementFailed
 from exo.shared.types.state import State
 from exo.shared.types.worker.instances import Instance, InstanceId
 
@@ -28,7 +28,7 @@ class MetaInstanceReconciler:
         )
         for meta_instance in unsatisfied:
             model_card = await ModelCard.load(meta_instance.model_id)
-            events = try_place_for_meta_instance(
+            result = try_place_for_meta_instance(
                 meta_instance,
                 model_card,
                 state.topology,
@@ -37,8 +37,21 @@ class MetaInstanceReconciler:
                 state.node_network,
             )
             # Update local instance map so next placement sees this one
-            for event in events:
+            for event in result.events:
                 if isinstance(event, InstanceCreated):
                     current_instances[event.instance.instance_id] = event.instance
-            all_events.extend(events)
+            all_events.extend(result.events)
+
+            # Emit placement failure if error differs from what's already in state
+            if result.error is not None:
+                existing_error = state.meta_instance_errors.get(
+                    meta_instance.meta_instance_id
+                )
+                if existing_error != result.error:
+                    all_events.append(
+                        MetaInstancePlacementFailed(
+                            meta_instance_id=meta_instance.meta_instance_id,
+                            reason=result.error,
+                        )
+                    )
         return all_events
