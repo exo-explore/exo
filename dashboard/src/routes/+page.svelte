@@ -643,7 +643,12 @@
           model_id: modelId,
           sharding: preview?.sharding ?? selectedSharding,
           instance_meta: preview?.instance_meta ?? selectedInstanceType,
-          min_nodes: Math.max(selectedMinNodes, nodeFilter.size),
+          min_nodes: Math.max(
+            selectedMinNodes,
+            nodeFilter.size,
+            // RDMA requires at least 2 nodes
+            (preview?.instance_meta ?? selectedInstanceType) === "MlxJaccl" ? 2 : 1,
+          ),
           node_ids: nodeFilter.size > 0 ? Array.from(nodeFilter) : undefined,
         }),
       });
