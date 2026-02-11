@@ -644,6 +644,7 @@
           sharding: preview?.sharding ?? selectedSharding,
           instance_meta: preview?.instance_meta ?? selectedInstanceType,
           min_nodes: selectedMinNodes,
+          node_ids: nodeFilter.size > 0 ? Array.from(nodeFilter) : undefined,
         }),
       });
 
