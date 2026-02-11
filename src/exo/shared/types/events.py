@@ -77,6 +77,12 @@ class MetaInstanceDeleted(BaseEvent):
     meta_instance_id: MetaInstanceId
 
 
+@final
+class MetaInstancePlacementFailed(BaseEvent):
+    meta_instance_id: MetaInstanceId
+    reason: str
+
+
 class RunnerStatusUpdated(BaseEvent):
     runner_id: RunnerId
     runner_status: RunnerStatus
@@ -152,6 +158,7 @@ Event = (
     | InstanceDeleted
     | MetaInstanceCreated
     | MetaInstanceDeleted
+    | MetaInstancePlacementFailed
     | RunnerStatusUpdated
     | RunnerDeleted
     | NodeTimedOut

@@ -1,4 +1,5 @@
 from collections.abc import Mapping, Sequence
+from typing import NamedTuple
 
 from loguru import logger
 
@@ -18,6 +19,13 @@ from exo.shared.types.worker.instances import (
     MlxJacclInstance,
     MlxRingInstance,
 )
+
+
+class PlacementResult(NamedTuple):
+    """Result of a placement attempt: events to apply and optional error reason."""
+
+    events: Sequence[Event]
+    error: str | None
 
 
 def _get_ring_order(instance: BaseInstance) -> list[NodeId]:
@@ -130,11 +138,11 @@ def try_place_for_meta_instance(
     current_instances: Mapping[InstanceId, Instance],
     node_memory: Mapping[NodeId, MemoryUsage],
     node_network: Mapping[NodeId, NodeNetworkInfo],
-) -> Sequence[Event]:
+) -> PlacementResult:
     """Try to place an instance satisfying the meta-instance constraints.
 
-    Returns InstanceCreated events on success, empty sequence on failure.
-    The new instance carries ``meta_instance_id`` so the binding is implicit.
+    Returns a :class:`PlacementResult` with events on success, or an error
+    reason on failure.
     """
     command = PlaceInstance(
         model_card=model_card,
@@ -160,9 +168,12 @@ def try_place_for_meta_instance(
             target_instances[new_id] = target_instances[new_id].model_copy(
                 update={"meta_instance_id": meta_instance.meta_instance_id}
             )
-        return list(get_transition_events(current_instances, target_instances))
+        return PlacementResult(
+            events=list(get_transition_events(current_instances, target_instances)),
+            error=None,
+        )
     except ValueError as e:
         logger.debug(
             f"MetaInstance placement not possible for {meta_instance.model_id}: {e}"
         )
-        return []
+        return PlacementResult(events=[], error=str(e))

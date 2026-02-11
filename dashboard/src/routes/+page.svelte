@@ -45,6 +45,7 @@
     nodeThunderbolt,
     nodeRdmaCtl,
     metaInstances,
+    metaInstanceErrors,
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
     nodeIdentities,
@@ -71,18 +72,43 @@
   const topologyOnlyEnabled = $derived(topologyOnlyMode());
   const sidebarVisible = $derived(chatSidebarVisible());
   const metaInstancesData = $derived(metaInstances());
+  const metaInstanceErrorsData = $derived(metaInstanceErrors());
   const tbBridgeCycles = $derived(thunderboltBridgeCycles());
 
-  // Shared fallback objects for MetaInstances without a backing instance yet
-  const PLACING_STATUS = {
-    statusText: "PLACING",
-    statusClass: "starting",
-    isDownloading: false,
-    isFailed: false,
-    progress: null,
-    perNode: [],
-    errorMessage: null,
-  } as const;
+  // Get status for a MetaInstance that has no backing instance yet
+  function getMetaInstancePlacingStatus(metaInstanceId: string) {
+    const error = metaInstanceErrorsData[metaInstanceId];
+    if (error) {
+      return {
+        statusText: "PLACEMENT FAILED",
+        statusClass: "failed",
+        isDownloading: false as const,
+        isFailed: true,
+        progress: null,
+        perNode: [] as Array<{
+          nodeId: string;
+          nodeName: string;
+          progress: DownloadProgress;
+        }>,
+        perNodeStatus: [] as PerNodeRunnerStatus[],
+        errorMessage: error,
+      };
+    }
+    return {
+      statusText: "PLACING",
+      statusClass: "starting",
+      isDownloading: false as const,
+      isFailed: false,
+      progress: null,
+      perNode: [] as Array<{
+        nodeId: string;
+        nodeName: string;
+        progress: DownloadProgress;
+      }>,
+      perNodeStatus: [] as PerNodeRunnerStatus[],
+      errorMessage: null,
+    };
+  }
 
   const tbBridgeData = $derived(nodeThunderboltBridge());
   const identitiesData = $derived(nodeIdentities());
@@ -952,15 +978,18 @@
       nodeName: string;
       progress: DownloadProgress;
     }>;
+    perNodeStatus: PerNodeRunnerStatus[];
   } {
     if (!downloadsData || Object.keys(downloadsData).length === 0) {
+      const statusInfo = deriveInstanceStatus(instanceWrapped);
       return {
         isDownloading: false,
         isFailed: false,
         errorMessage: null,
         progress: null,
-        statusText: "RUNNING",
+        statusText: statusInfo.statusText,
         perNode: [],
+        perNodeStatus: statusInfo.perNodeStatus,
       };
     }
 
@@ -974,6 +1003,7 @@
         progress: null,
         statusText: "PREPARING",
         perNode: [],
+        perNodeStatus: [],
       };
     }
 
@@ -1042,6 +1072,7 @@
               progress: null,
               statusText: "FAILED",
               perNode: [],
+              perNodeStatus: [],
             };
           }
         }
@@ -1086,6 +1117,7 @@
         progress: null,
         statusText: statusInfo.statusText,
         perNode: [],
+        perNodeStatus: statusInfo.perNodeStatus,
       };
     }
 
@@ -1109,92 +1141,161 @@
       },
       statusText: "DOWNLOADING",
       perNode,
+      perNodeStatus: [],
     };
   }
 
   // Derive instance status from runners
   // Get color class for a status
   function getStatusColor(statusText: string): string {
-    switch (statusText) {
-      case "FAILED":
-        return "text-red-400";
-      case "SHUTDOWN":
-        return "text-gray-400";
-      case "DOWNLOADING":
-        return "text-blue-400";
-      case "LOADING":
-      case "WARMING UP":
-      case "WAITING":
-      case "INITIALIZING":
-        return "text-yellow-400";
-      case "RUNNING":
-        return "text-teal-400";
-      case "READY":
-      case "LOADED":
-        return "text-green-400";
-      default:
-        return "text-exo-light-gray";
-    }
+    if (statusText === "FAILED" || statusText === "PLACEMENT FAILED")
+      return "text-red-400";
+    if (statusText === "SHUTDOWN") return "text-gray-400";
+    if (statusText === "DOWNLOADING") return "text-blue-400";
+    if (
+      statusText.startsWith("LOADING") ||
+      statusText.startsWith("WARMING UP") ||
+      statusText === "WAITING" ||
+      statusText === "INITIALIZING"
+    )
+      return "text-yellow-400";
+    if (statusText === "RUNNING") return "text-teal-400";
+    if (statusText === "READY" || statusText === "LOADED")
+      return "text-green-400";
+    return "text-exo-light-gray";
+  }
+
+  const RUNNER_STATUS_MAP: Record<string, string> = {
+    RunnerWaitingForInitialization: "WaitingForInitialization",
+    RunnerInitializingBackend: "InitializingBackend",
+    RunnerWaitingForModel: "WaitingForModel",
+    RunnerLoading: "Loading",
+    RunnerLoaded: "Loaded",
+    RunnerWarmingUp: "WarmingUp",
+    RunnerReady: "Ready",
+    RunnerRunning: "Running",
+    RunnerShutdown: "Shutdown",
+    RunnerFailed: "Failed",
+  };
+
+  // Friendly labels for display
+  const RUNNER_STATUS_DISPLAY: Record<string, string> = {
+    WaitingForInitialization: "Initializing",
+    InitializingBackend: "Initializing",
+    WaitingForModel: "Waiting",
+    Loading: "Loading",
+    Loaded: "Loaded",
+    WarmingUp: "Warming Up",
+    Ready: "Ready",
+    Running: "Running",
+    Shutdown: "Shutdown",
+    Failed: "Failed",
+  };
+
+  interface PerNodeRunnerStatus {
+    nodeId: string;
+    nodeName: string;
+    status: string; // friendly display status
   }
 
   function deriveInstanceStatus(instanceWrapped: unknown): {
     statusText: string;
     statusClass: string;
+    perNodeStatus: PerNodeRunnerStatus[];
   } {
     const [, instance] = getTagged(instanceWrapped);
     if (!instance || typeof instance !== "object") {
-      return { statusText: "PREPARING", statusClass: "inactive" };
+      return {
+        statusText: "PREPARING",
+        statusClass: "inactive",
+        perNodeStatus: [],
+      };
     }
 
     const inst = instance as {
-      shardAssignments?: { runnerToShard?: Record<string, unknown> };
+      shardAssignments?: {
+        runnerToShard?: Record<string, unknown>;
+        nodeToRunner?: Record<string, string>;
+      };
     };
+    const nodeToRunner = inst.shardAssignments?.nodeToRunner || {};
     const runnerIds = Object.keys(inst.shardAssignments?.runnerToShard || {});
+    const totalNodes = runnerIds.length;
 
-    const statuses = runnerIds
-      .map((rid) => {
-        const r = runnersData[rid];
-        if (!r) return null;
+    // Build per-node status
+    const perNodeStatus: PerNodeRunnerStatus[] = [];
+    const statuses: string[] = [];
+    for (const [nodeId, runnerId] of Object.entries(nodeToRunner)) {
+      const r = runnersData[runnerId];
+      let status: string | null = null;
+      if (r) {
         const [kind] = getTagged(r);
-        const statusMap: Record<string, string> = {
-          RunnerWaitingForInitialization: "WaitingForInitialization",
-          RunnerInitializingBackend: "InitializingBackend",
-          RunnerWaitingForModel: "WaitingForModel",
-          RunnerLoading: "Loading",
-          RunnerLoaded: "Loaded",
-          RunnerWarmingUp: "WarmingUp",
-          RunnerReady: "Ready",
-          RunnerRunning: "Running",
-          RunnerShutdown: "Shutdown",
-          RunnerFailed: "Failed",
-        };
-        return kind ? statusMap[kind] || null : null;
-      })
-      .filter((s): s is string => s !== null);
+        status = kind ? RUNNER_STATUS_MAP[kind] || null : null;
+      }
+      if (status) {
+        statuses.push(status);
+        perNodeStatus.push({
+          nodeId,
+          nodeName: getNodeName(nodeId),
+          status: RUNNER_STATUS_DISPLAY[status] || status,
+        });
+      }
+    }
 
     const has = (s: string) => statuses.includes(s);
+    const count = (s: string) => statuses.filter((v) => v === s).length;
 
     if (statuses.length === 0)
-      return { statusText: "PREPARING", statusClass: "inactive" };
-    if (has("Failed")) return { statusText: "FAILED", statusClass: "failed" };
+      return {
+        statusText: "PREPARING",
+        statusClass: "inactive",
+        perNodeStatus,
+      };
+    if (has("Failed"))
+      return { statusText: "FAILED", statusClass: "failed", perNodeStatus };
     if (has("Shutdown"))
-      return { statusText: "SHUTDOWN", statusClass: "inactive" };
-    if (has("Loading"))
-      return { statusText: "LOADING", statusClass: "starting" };
-    if (has("WarmingUp"))
-      return { statusText: "WARMING UP", statusClass: "starting" };
-    if (has("Running"))
-      return { statusText: "RUNNING", statusClass: "running" };
-    if (has("Ready")) return { statusText: "READY", statusClass: "loaded" };
-    if (has("Loaded")) return { statusText: "LOADED", statusClass: "loaded" };
-    if (has("WaitingForModel"))
-      return { statusText: "WAITING", statusClass: "starting" };
-    if (has("InitializingBackend"))
-      return { statusText: "INITIALIZING", statusClass: "starting" };
-    if (has("WaitingForInitialization"))
-      return { statusText: "INITIALIZING", statusClass: "starting" };
+      return { statusText: "SHUTDOWN", statusClass: "inactive", perNodeStatus };
 
-    return { statusText: "RUNNING", statusClass: "active" };
+    // For loading/warming states, show node progress when multi-node
+    if (has("Loading")) {
+      const readyCount = count("Ready") + count("Running") + count("Loaded");
+      const statusText =
+        totalNodes > 1
+          ? `LOADING (${readyCount}/${totalNodes} nodes ready)`
+          : "LOADING";
+      return { statusText, statusClass: "starting", perNodeStatus };
+    }
+    if (has("WarmingUp")) {
+      const readyCount = count("Ready") + count("Running");
+      const statusText =
+        totalNodes > 1
+          ? `WARMING UP (${readyCount}/${totalNodes} nodes ready)`
+          : "WARMING UP";
+      return { statusText, statusClass: "starting", perNodeStatus };
+    }
+
+    if (has("Running"))
+      return { statusText: "RUNNING", statusClass: "running", perNodeStatus };
+    if (has("Ready"))
+      return { statusText: "READY", statusClass: "loaded", perNodeStatus };
+    if (has("Loaded"))
+      return { statusText: "LOADED", statusClass: "loaded", perNodeStatus };
+    if (has("WaitingForModel"))
+      return { statusText: "WAITING", statusClass: "starting", perNodeStatus };
+    if (has("InitializingBackend"))
+      return {
+        statusText: "INITIALIZING",
+        statusClass: "starting",
+        perNodeStatus,
+      };
+    if (has("WaitingForInitialization"))
+      return {
+        statusText: "INITIALIZING",
+        statusClass: "starting",
+        perNodeStatus,
+      };
+
+    return { statusText: "RUNNING", statusClass: "active", perNodeStatus };
   }
 
   function getBytes(value: unknown): number {
@@ -2427,13 +2528,15 @@
                   {@const instance = item.instance}
                   {@const downloadInfo = instance
                     ? getInstanceDownloadStatus(item.instanceId ?? id, instance)
-                    : PLACING_STATUS}
+                    : getMetaInstancePlacingStatus(id)}
                   {@const statusText = downloadInfo.statusText}
                   {@const isDownloading = downloadInfo.isDownloading}
-                  {@const isFailed = statusText === "FAILED"}
+                  {@const isFailed =
+                    statusText === "FAILED" ||
+                    statusText === "PLACEMENT FAILED"}
                   {@const isLoading =
-                    statusText === "LOADING" ||
-                    statusText === "WARMING UP" ||
+                    statusText.startsWith("LOADING") ||
+                    statusText.startsWith("WARMING UP") ||
                     statusText === "WAITING" ||
                     statusText === "PLACING"}
                   {@const isReady =
@@ -2444,7 +2547,12 @@
                   {@const instanceInfo = instance
                     ? getInstanceInfo(instance)
                     : {
-                        instanceType: item.instanceMeta === "MlxRing" ? "MLX Ring" : item.instanceMeta === "MlxJaccl" ? "MLX RDMA" : "Unknown",
+                        instanceType:
+                          item.instanceMeta === "MlxRing"
+                            ? "MLX Ring"
+                            : item.instanceMeta === "MlxJaccl"
+                              ? "MLX RDMA"
+                              : "Unknown",
                         sharding: item.sharding ?? "Unknown",
                         nodeNames: [] as string[],
                         nodeIds: [] as string[],
@@ -2837,6 +2945,24 @@
                               class="text-xs text-red-400/80 font-mono mt-1 break-words"
                             >
                               {downloadInfo.errorMessage}
+                            </div>
+                          {/if}
+                          {#if downloadInfo.perNodeStatus.length > 1 && (statusText.startsWith("LOADING") || statusText.startsWith("WARMING UP") || statusText === "WAITING" || statusText === "INITIALIZING")}
+                            <div class="mt-1.5 space-y-0.5">
+                              {#each downloadInfo.perNodeStatus as node}
+                                <div
+                                  class="flex items-center justify-between text-[10px] font-mono"
+                                >
+                                  <span class="text-white/60 truncate pr-2"
+                                    >{node.nodeName}</span
+                                  >
+                                  <span
+                                    class={getStatusColor(
+                                      node.status.toUpperCase(),
+                                    )}>{node.status}</span
+                                  >
+                                </div>
+                              {/each}
                             </div>
                           {/if}
                         {/if}
@@ -3258,13 +3384,15 @@
                           item.instanceId ?? id,
                           instance,
                         )
-                      : PLACING_STATUS}
+                      : getMetaInstancePlacingStatus(id)}
                     {@const statusText = downloadInfo.statusText}
                     {@const isDownloading = downloadInfo.isDownloading}
-                    {@const isFailed = statusText === "FAILED"}
+                    {@const isFailed =
+                      statusText === "FAILED" ||
+                      statusText === "PLACEMENT FAILED"}
                     {@const isLoading =
-                      statusText === "LOADING" ||
-                      statusText === "WARMING UP" ||
+                      statusText.startsWith("LOADING") ||
+                      statusText.startsWith("WARMING UP") ||
                       statusText === "WAITING" ||
                       statusText === "PLACING"}
                     {@const isReady =
@@ -3275,7 +3403,12 @@
                     {@const instanceInfo = instance
                       ? getInstanceInfo(instance)
                       : {
-                          instanceType: item.instanceMeta === "MlxRing" ? "MLX Ring" : item.instanceMeta === "MlxJaccl" ? "MLX RDMA" : "Unknown",
+                          instanceType:
+                            item.instanceMeta === "MlxRing"
+                              ? "MLX Ring"
+                              : item.instanceMeta === "MlxJaccl"
+                                ? "MLX RDMA"
+                                : "Unknown",
                           sharding: item.sharding ?? "Unknown",
                           nodeNames: [] as string[],
                           nodeIds: [] as string[],
@@ -3678,6 +3811,24 @@
                                 class="text-xs text-red-400/80 font-mono mt-1 break-words"
                               >
                                 {downloadInfo.errorMessage}
+                              </div>
+                            {/if}
+                            {#if downloadInfo.perNodeStatus.length > 1 && (statusText.startsWith("LOADING") || statusText.startsWith("WARMING UP") || statusText === "WAITING" || statusText === "INITIALIZING")}
+                              <div class="mt-1.5 space-y-0.5">
+                                {#each downloadInfo.perNodeStatus as node}
+                                  <div
+                                    class="flex items-center justify-between text-[10px] font-mono"
+                                  >
+                                    <span class="text-white/60 truncate pr-2"
+                                      >{node.nodeName}</span
+                                    >
+                                    <span
+                                      class={getStatusColor(
+                                        node.status.toUpperCase(),
+                                      )}>{node.status}</span
+                                    >
+                                  </div>
+                                {/each}
                               </div>
                             {/if}
                           {/if}
