@@ -1,3 +1,4 @@
+from exo.master.process_managers.instance_health import InstanceHealthReconciler
 from exo.master.reconcile import (
     find_unsatisfied_meta_instances,
     instance_connections_healthy,
@@ -10,7 +11,9 @@ from exo.shared.topology import Topology
 from exo.shared.types.common import Host, MetaInstanceId, NodeId
 from exo.shared.types.events import (
     IndexedEvent,
+    InstanceCreated,
     InstanceDeleted,
+    InstanceRetrying,
     MetaInstanceCreated,
     MetaInstanceDeleted,
 )
@@ -590,3 +593,158 @@ def test_apply_instance_deleted_orphan_no_tracking():
     event = InstanceDeleted(instance_id=iid, failure_error="crash")
     new_state = apply(state, IndexedEvent(idx=0, event=event))
     assert len(new_state.meta_instances) == 0
+
+
+# --- InstanceRetrying ---
+
+
+def test_apply_instance_retrying_removes_runners():
+    """InstanceRetrying removes the instance's runners from state but keeps the instance."""
+    meta = _meta_instance()
+    iid, inst = _instance(node_ids=["node-a", "node-b"], meta_instance_id=meta.meta_instance_id)
+    runner_ids = list(inst.shard_assignments.node_to_runner.values())
+    runners = {
+        runner_ids[0]: RunnerFailed(error_message="OOM"),
+        runner_ids[1]: RunnerShutdown(),
+    }
+    state = State(
+        meta_instances={meta.meta_instance_id: meta},
+        instances={iid: inst},
+        runners=runners,
+    )
+    event = InstanceRetrying(
+        instance_id=iid,
+        meta_instance_id=meta.meta_instance_id,
+        failure_error="OOM",
+    )
+    new_state = apply(state, IndexedEvent(idx=0, event=event))
+    # Instance still exists
+    assert iid in new_state.instances
+    # Runners removed
+    assert runner_ids[0] not in new_state.runners
+    assert runner_ids[1] not in new_state.runners
+
+
+def test_apply_instance_retrying_increments_failure():
+    """InstanceRetrying increments consecutive_failures on the MetaInstance."""
+    meta = _meta_instance()
+    iid, inst = _instance(node_ids=["node-a"], meta_instance_id=meta.meta_instance_id)
+    state = State(
+        meta_instances={meta.meta_instance_id: meta},
+        instances={iid: inst},
+    )
+    event = InstanceRetrying(
+        instance_id=iid,
+        meta_instance_id=meta.meta_instance_id,
+        failure_error="crash",
+    )
+    new_state = apply(state, IndexedEvent(idx=0, event=event))
+    mi = new_state.meta_instances[meta.meta_instance_id]
+    assert mi.consecutive_failures == 1
+    assert mi.last_failure_error == "crash"
+
+
+def test_apply_instance_retrying_skips_missing_runners():
+    """InstanceRetrying doesn't assert if runners haven't reported yet."""
+    meta = _meta_instance()
+    iid, inst = _instance(node_ids=["node-a"], meta_instance_id=meta.meta_instance_id)
+    # No runners in state at all
+    state = State(
+        meta_instances={meta.meta_instance_id: meta},
+        instances={iid: inst},
+    )
+    event = InstanceRetrying(
+        instance_id=iid,
+        meta_instance_id=meta.meta_instance_id,
+        failure_error="crash",
+    )
+    # Should not raise
+    new_state = apply(state, IndexedEvent(idx=0, event=event))
+    assert iid in new_state.instances
+
+
+def test_apply_instance_created_resets_failure_counter():
+    """InstanceCreated resets consecutive_failures on the MetaInstance."""
+    meta = _meta_instance().model_copy(
+        update={"consecutive_failures": 3, "last_failure_error": "old error"}
+    )
+    _, inst = _instance(node_ids=["node-a"], meta_instance_id=meta.meta_instance_id)
+    state = State(meta_instances={meta.meta_instance_id: meta})
+    event = InstanceCreated(instance=inst)
+    new_state = apply(state, IndexedEvent(idx=0, event=event))
+    mi = new_state.meta_instances[meta.meta_instance_id]
+    assert mi.consecutive_failures == 0
+    assert mi.last_failure_error is None
+    assert mi.placement_error is None
+
+
+# --- InstanceHealthReconciler retry-vs-delete ---
+
+
+async def test_health_reconciler_retries_when_under_limit():
+    """InstanceHealthReconciler emits InstanceRetrying when consecutive_failures < 3."""
+    meta = _meta_instance()
+    iid, inst = _instance(node_ids=["node-a"], meta_instance_id=meta.meta_instance_id)
+    runner_ids = list(inst.shard_assignments.node_to_runner.values())
+    state = State(
+        meta_instances={meta.meta_instance_id: meta},
+        instances={iid: inst},
+        runners={runner_ids[0]: RunnerFailed(error_message="OOM")},
+        topology=_topology("node-a"),
+    )
+    reconciler = InstanceHealthReconciler()
+    events = await reconciler.reconcile(state)
+    assert len(events) == 1
+    assert isinstance(events[0], InstanceRetrying)
+    assert events[0].instance_id == iid
+    assert events[0].meta_instance_id == meta.meta_instance_id
+
+
+async def test_health_reconciler_deletes_when_limit_reached():
+    """InstanceHealthReconciler emits InstanceDeleted when consecutive_failures >= 3."""
+    meta = _meta_instance().model_copy(update={"consecutive_failures": 3})
+    iid, inst = _instance(node_ids=["node-a"], meta_instance_id=meta.meta_instance_id)
+    runner_ids = list(inst.shard_assignments.node_to_runner.values())
+    state = State(
+        meta_instances={meta.meta_instance_id: meta},
+        instances={iid: inst},
+        runners={runner_ids[0]: RunnerFailed(error_message="OOM")},
+        topology=_topology("node-a"),
+    )
+    reconciler = InstanceHealthReconciler()
+    events = await reconciler.reconcile(state)
+    assert len(events) == 1
+    assert isinstance(events[0], InstanceDeleted)
+
+
+async def test_health_reconciler_deletes_without_meta_instance():
+    """Instances without a MetaInstance are deleted immediately on runner failure."""
+    iid, inst = _instance(node_ids=["node-a"])
+    runner_ids = list(inst.shard_assignments.node_to_runner.values())
+    state = State(
+        instances={iid: inst},
+        runners={runner_ids[0]: RunnerFailed(error_message="crash")},
+        topology=_topology("node-a"),
+    )
+    reconciler = InstanceHealthReconciler()
+    events = await reconciler.reconcile(state)
+    assert len(events) == 1
+    assert isinstance(events[0], InstanceDeleted)
+
+
+async def test_health_reconciler_network_failure_always_deletes():
+    """Network failure always triggers InstanceDeleted regardless of retry count."""
+    meta = _meta_instance()
+    iid, inst = _instance(
+        node_ids=["node-a", "node-b"], meta_instance_id=meta.meta_instance_id
+    )
+    state = State(
+        meta_instances={meta.meta_instance_id: meta},
+        instances={iid: inst},
+        topology=_topology("node-a"),  # node-b missing
+    )
+    reconciler = InstanceHealthReconciler()
+    events = await reconciler.reconcile(state)
+    assert len(events) == 1
+    assert isinstance(events[0], InstanceDeleted)
+    assert events[0].failure_error == "Network connection lost"
