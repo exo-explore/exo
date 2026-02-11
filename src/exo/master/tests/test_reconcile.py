@@ -78,7 +78,7 @@ def _meta_instance(
     model_id: str = "test-org/test-model",
     *,
     min_nodes: int = 1,
-    node_ids: frozenset[NodeId] | None = None,
+    node_ids: list[NodeId] | None = None,
     meta_instance_id: MetaInstanceId | None = None,
 ) -> MetaInstance:
     return MetaInstance(
@@ -155,7 +155,7 @@ def test_not_satisfies_wrong_model():
 
 
 def test_not_satisfies_missing_required_node():
-    meta = _meta_instance(node_ids=frozenset({NodeId("node-c")}))
+    meta = _meta_instance(node_ids=[NodeId("node-c")])
     _, inst = _instance(node_ids=["node-a", "node-b"])
     assert instance_satisfies_meta_instance(meta, inst) is False
 
@@ -168,7 +168,7 @@ def test_not_satisfies_fewer_than_min_nodes():
 
 def test_satisfies_with_node_ids_specified():
     meta = _meta_instance(
-        node_ids=frozenset({NodeId("node-a"), NodeId("node-b")}), min_nodes=2
+        node_ids=[NodeId("node-a"), NodeId("node-b")], min_nodes=2
     )
     _, inst = _instance(node_ids=["node-a", "node-b", "node-c"])
     assert instance_satisfies_meta_instance(meta, inst) is True
