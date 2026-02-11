@@ -23,7 +23,7 @@ class InstanceHealthReconciler:
                 continue
 
             is_failed, error_message = instance_runners_failed(
-                instance, state.runners
+                instance, state.runners, state.node_identities
             )
             if is_failed:
                 events.append(

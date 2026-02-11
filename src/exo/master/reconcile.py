@@ -10,7 +10,7 @@ from exo.shared.types.commands import PlaceInstance
 from exo.shared.types.common import MetaInstanceId, NodeId
 from exo.shared.types.events import Event
 from exo.shared.types.meta_instance import MetaInstance
-from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
+from exo.shared.types.profiling import MemoryUsage, NodeIdentity, NodeNetworkInfo
 from exo.shared.types.topology import RDMAConnection, SocketConnection
 from exo.shared.types.worker.instances import (
     BaseInstance,
@@ -100,6 +100,7 @@ def instance_connections_healthy(instance: Instance, topology: Topology) -> bool
 def instance_runners_failed(
     instance: Instance,
     runners: Mapping[RunnerId, RunnerStatus],
+    node_identities: Mapping[NodeId, NodeIdentity],
 ) -> tuple[bool, str | None]:
     """Check if an instance's runners have all reached terminal failure states.
 
@@ -114,6 +115,12 @@ def instance_runners_failed(
     if not instance_runner_ids:
         return False, None
 
+    # Build reverse mapping: runner_id -> node_id
+    runner_to_node: dict[RunnerId, NodeId] = {
+        runner_id: node_id
+        for node_id, runner_id in instance.shard_assignments.node_to_runner.items()
+    }
+
     has_any_failed = False
     error_messages: list[str] = []
 
@@ -125,7 +132,9 @@ def instance_runners_failed(
         if isinstance(status, RunnerFailed):
             has_any_failed = True
             if status.error_message:
-                error_messages.append(status.error_message)
+                node_id = runner_to_node.get(runner_id)
+                name = node_identities[node_id].friendly_name if node_id and node_id in node_identities else node_id or "unknown"
+                error_messages.append(f"{name}: {status.error_message}")
         elif isinstance(status, RunnerShutdown):
             pass  # Terminal but not a failure indicator on its own
         else:
