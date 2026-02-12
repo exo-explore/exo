@@ -1,0 +1,15 @@
+.venv/
+.direnv/
+target/
+.git/
+.idea/
+.pytest_cache/
+.ruff_cache/
+dashboard/node_modules/
+dashboard/.svelte-kit/
+dashboard/build/
+dist/
+*.pdb
+**/__pycache__
+**/.DS_Store
+.mlx_typings/

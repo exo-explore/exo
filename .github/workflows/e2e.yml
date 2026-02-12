@@ -1,0 +1,20 @@
+name: e2e-tests
+
+on:
+  push:
+  pull_request:
+    branches:
+      - staging
+      - main
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Run E2E tests
+        run: python3 e2e/run_all.py

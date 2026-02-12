@@ -1,0 +1,8 @@
+# Block DNS resolution to simulate no internet access.
+# mDNS discovery (multicast 224.0.0.251) still works since it doesn't use DNS.
+# Docker's "internal: true" can't be used here because it also blocks multicast.
+services:
+  exo-node-1:
+    dns: 0.0.0.0
+  exo-node-2:
+    dns: 0.0.0.0
