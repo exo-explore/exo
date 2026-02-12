@@ -59,6 +59,13 @@ from exo.worker.engines.mlx.auto_parallel import (
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
+from exo.worker.engines.mlx.model_transfer import (
+    broadcast_model_weights,
+    coordinate_transfer,
+    has_weight_files,
+    model_path_for_id,
+    transfer_metadata_files,
+)
 from exo.worker.runner.bootstrap import logger
 
 Group = mx.distributed.Group
@@ -202,14 +209,6 @@ def shard_and_load(
     group: Group,
     on_timeout: TimeoutCallback | None = None,
 ) -> tuple[nn.Module, TokenizerWrapper]:
-    from exo.worker.engines.mlx.model_transfer import (
-        broadcast_model_weights,
-        coordinate_transfer,
-        has_weight_files,
-        model_path_for_id,
-        transfer_metadata_files,
-    )
-
     model_id = shard_metadata.model_card.model_id
     model_path = model_path_for_id(model_id)
     has_local_weights = has_weight_files(model_path)
@@ -245,8 +244,6 @@ def shard_and_load(
         # When receiver has no weight files, load_model skips quantization.
         # Apply it explicitly so QuantizedLinear layers match broadcast weight shapes.
         if not has_local_weights:
-            import json
-
             config_path = model_path / "config.json"
             with open(config_path) as f:
                 config = json.load(f)  # pyright: ignore[reportAny]

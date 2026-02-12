@@ -82,6 +82,12 @@ from exo.worker.engines.image import (
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
+from exo.worker.engines.mlx.model_transfer import (
+    coordinate_transfer,
+    has_weight_files,
+    model_path_for_id,
+    transfer_all_files,
+)
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     detect_thinking_prompt_suffix,
@@ -539,13 +545,6 @@ def main(
                 case TransferModelToDisk() if (
                     isinstance(current_status, RunnerConnected) and group is not None
                 ):
-                    from exo.worker.engines.mlx.model_transfer import (
-                        coordinate_transfer,
-                        has_weight_files,
-                        model_path_for_id,
-                        transfer_all_files,
-                    )
-
                     logger.info("starting disk-to-disk model transfer")
                     event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
