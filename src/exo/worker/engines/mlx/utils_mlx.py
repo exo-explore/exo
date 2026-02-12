@@ -220,17 +220,19 @@ def shard_and_load(
 
     # Coordinate: does any rank need a transfer?
     needs_transfer, source_rank = coordinate_transfer(group, has_local_model)
+    is_source = group.rank() == source_rank
 
+    # Step 1: Always ensure all nodes have metadata files (config, tokenizer, etc.).
+    # This is cheap (~20MB, ~1s) and guarantees config.json is present for load_model().
+    transfer_metadata_files(model_path, group, is_source)
+
+    # Step 2: Only broadcast weights if some rank is missing the model
     broadcast_state: WeightBroadcastState | None = None
     if needs_transfer:
-        is_source = group.rank() == source_rank
         logger.info(
             f"Model transfer needed (source_rank={source_rank}, "
             f"is_source={is_source}, local_weights={has_local_model})"
         )
-        # Step 1: Transfer metadata files (config.json, tokenizer, etc.) to disk
-        transfer_metadata_files(model_path, group, is_source)
-        # Step 2: Prepare for layer-by-layer weight broadcast (metadata only)
         broadcast_state = prepare_weight_broadcast(model_path, group, is_source)
 
     # Create model architecture (all ranks have config.json on disk now).
