@@ -197,6 +197,42 @@ def load_mlx_items(
     return cast(Model, model), tokenizer
 
 
+def _debug_compare_weights(
+    model: nn.Module, broadcast_weights: dict[str, mx.array]
+) -> None:
+    """Temporary debug: compare model parameters against broadcast weights."""
+    try:
+        import mlx.utils
+
+        flat: list[tuple[str, object]] = mlx.utils.tree_flatten(  # pyright: ignore[reportAssignmentType, reportUnknownMemberType]
+            model.parameters()
+        )
+        flat_dict = {k: v for k, v in flat if isinstance(v, mx.array)}
+        bw_keys = set(broadcast_weights.keys())
+        mp_keys = set(flat_dict.keys())
+        logger.info(
+            f"Weight comparison: {len(bw_keys)} broadcast, {len(mp_keys)} model params"
+        )
+        only_bw = bw_keys - mp_keys
+        only_mp = mp_keys - bw_keys
+        if only_bw:
+            logger.warning(f"In broadcast but NOT model ({len(only_bw)}): {sorted(only_bw)[:10]}")
+        if only_mp:
+            logger.warning(f"In model but NOT broadcast ({len(only_mp)}): {sorted(only_mp)[:10]}")
+        mismatches = 0
+        for key in sorted(bw_keys & mp_keys):
+            b, m = broadcast_weights[key], flat_dict[key]
+            if b.shape != m.shape:
+                mismatches += 1
+                logger.warning(f"Shape mismatch {key}: broadcast={b.shape}/{b.dtype} model={m.shape}/{m.dtype}")
+        if mismatches == 0:
+            logger.info("All matching weight shapes are identical")
+        else:
+            logger.warning(f"Total shape mismatches: {mismatches}")
+    except Exception as e:
+        logger.warning(f"Debug compare failed: {e}")
+
+
 def shard_and_load(
     shard_metadata: ShardMetadata,
     group: Group,
@@ -247,6 +283,8 @@ def shard_and_load(
         logger.info(
             f"Populating model with {len(broadcast_weights)} broadcast weight tensors"
         )
+        # Debug: compare model params vs broadcast weights
+        _debug_compare_weights(model, broadcast_weights)
         model.load_weights(list(broadcast_weights.items()), strict=False)
 
     tokenizer = get_tokenizer(model_path, shard_metadata)
