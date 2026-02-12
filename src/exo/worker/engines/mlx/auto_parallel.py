@@ -24,6 +24,8 @@ from mlx_lm.models.glm4_moe import Model as Glm4MoeModel
 from mlx_lm.models.glm4_moe import MoE
 from mlx_lm.models.glm4_moe_lite import Glm4MoeLiteDecoderLayer, Glm4MoeLiteMLP
 from mlx_lm.models.glm4_moe_lite import Model as GLM4MoeLiteModel
+from mlx_lm.models.glm_moe_dsa import Glm4MoeLiteMoE as GlmMoeDsaMoE
+from mlx_lm.models.glm_moe_dsa import Model as GlmMoeDsaModel
 from mlx_lm.models.gpt_oss import GptOssMoeModel
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.models.kimi_k25 import Model as KimiK25Model
@@ -160,11 +162,14 @@ class PipelineLastLayer(CustomMlxLayer):
                 output, (self.r + 1) % self.s, group=self.group
             )
             if cache is not None:
-                cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
+                # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
+                # doesn't have .keys directly; access via first sub-cache.
+                dep_cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
+                dep_cache.keys = mx.depends(dep_cache.keys, output)  # type: ignore[reportUnknownMemberType]
             if self.is_prefill:
                 mx.eval(output)
                 if cache is not None:
-                    mx.eval(cache.keys)  # type: ignore
+                    mx.eval(dep_cache.keys)  # type: ignore
 
         if not self.is_prefill:
             output = mx.distributed.all_gather(output, group=self.group)[
@@ -397,6 +402,14 @@ def tensor_auto_parallel(
         )
     elif isinstance(model, GLM4MoeLiteModel):
         tensor_parallel_sharding_strategy = GLM4MoeLiteShardingStrategy(
+            group,
+            all_to_sharded_linear,
+            sharded_to_all_linear,
+            all_to_sharded_linear_in_place,
+            sharded_to_all_linear_in_place,
+        )
+    elif isinstance(model, GlmMoeDsaModel):
+        tensor_parallel_sharding_strategy = GlmMoeDsaShardingStrategy(
             group,
             all_to_sharded_linear,
             sharded_to_all_linear,
@@ -649,6 +662,62 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
                 layer.mlp = ShardedMoE(layer.mlp)  # type: ignore
                 layer.mlp.sharding_group = self.group  # type: ignore
+            mx.eval(layer)
+
+        return model
+
+
+class GlmMoeDsaShardingStrategy(TensorParallelShardingStrategy):
+    def shard_model(
+        self,
+        model: nn.Module,
+        timeout_seconds: float,
+        on_timeout: TimeoutCallback | None,
+    ) -> nn.Module:
+        model = cast(GlmMoeDsaModel, model)
+        for layer in model.layers:
+            eval_with_timeout(
+                layer.parameters(),
+                timeout_seconds / len(model.layers),
+                on_timeout,
+            )
+            layer.self_attn.q_b_proj = self.all_to_sharded_linear(
+                layer.self_attn.q_b_proj
+            )
+            layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
+            layer.self_attn.num_heads //= self.N
+
+            num_heads = layer.self_attn.num_heads
+            sh = self.group.rank() * num_heads
+            eh = sh + num_heads
+
+            def shard_heads(w: mx.array, sh: int = sh, eh: int = eh) -> mx.array:
+                return w[sh:eh]
+
+            layer.self_attn.embed_q.apply(shard_heads)
+            layer.self_attn.unembed_out.apply(shard_heads)
+
+            if isinstance(layer.mlp, Glm4MoeLiteMLP):
+                layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
+                layer.mlp.down_proj = self.sharded_to_all_linear(layer.mlp.down_proj)
+                layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
+            else:
+                moe = cast(GlmMoeDsaMoE, layer.mlp)
+                if moe.shared_experts is not None:
+                    self.all_to_sharded_linear_in_place(
+                        moe.shared_experts.gate_proj
+                    )
+                    self.sharded_to_all_linear_in_place(
+                        moe.shared_experts.down_proj
+                    )
+                    self.all_to_sharded_linear_in_place(
+                        moe.shared_experts.up_proj
+                    )
+                self.all_to_sharded_linear_in_place(moe.switch_mlp.gate_proj)
+                self.sharded_to_all_linear_in_place(moe.switch_mlp.down_proj)
+                self.all_to_sharded_linear_in_place(moe.switch_mlp.up_proj)
+                layer.mlp = ShardedMoE(moe)  # type: ignore
+                layer.mlp.sharding_group = self.group
             mx.eval(layer)
 
         return model
