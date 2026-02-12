@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from mlx_lm.models.cache import Cache
 
 TimeoutCallback = Callable[[], None]
+WeightLoader = Callable[[nn.Module, int], None] | None
 
 
 def eval_with_timeout(
@@ -330,6 +331,7 @@ def tensor_auto_parallel(
     group: mx.distributed.Group,
     timeout_seconds: float = 60.0,
     on_timeout: TimeoutCallback | None = None,
+    weight_loader: WeightLoader = None,
 ) -> nn.Module:
     all_to_sharded_linear = partial(
         shard_linear,
@@ -431,7 +433,7 @@ def tensor_auto_parallel(
         raise ValueError(f"Unsupported model type: {type(model)}")
 
     model = tensor_parallel_sharding_strategy.shard_model(
-        model, timeout_seconds, on_timeout
+        model, timeout_seconds, on_timeout, weight_loader
     )
     return patch_tensor_model(model)
 
@@ -458,6 +460,7 @@ class TensorParallelShardingStrategy(ABC):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
+        weight_loader: WeightLoader = None,
     ) -> nn.Module: ...
 
 
@@ -467,9 +470,12 @@ class LlamaShardingStrategy(TensorParallelShardingStrategy):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
+        weight_loader: WeightLoader = None,
     ) -> nn.Module:
         model = cast(LlamaModel, model)
-        for layer in model.layers:
+        for i, layer in enumerate(model.layers):
+            if weight_loader is not None:
+                weight_loader(model, i)
             # Force load weights before sharding to avoid FAST_SYNCH deadlock
             eval_with_timeout(
                 layer.parameters(), timeout_seconds / len(model.layers), on_timeout
@@ -521,9 +527,12 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
+        weight_loader: WeightLoader = None,
     ) -> nn.Module:
         model = cast(DeepseekV3Model, model)
-        for layer in model.layers:
+        for i, layer in enumerate(model.layers):
+            if weight_loader is not None:
+                weight_loader(model, i)
             eval_with_timeout(
                 layer.parameters(), timeout_seconds / len(model.layers), on_timeout
             )
@@ -596,9 +605,12 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
+        weight_loader: WeightLoader = None,
     ) -> nn.Module:
         model = cast(GLM4MoeLiteModel, model)
-        for layer in model.layers:  # type: ignore
+        for i, layer in enumerate(model.layers):  # type: ignore
+            if weight_loader is not None:
+                weight_loader(model, i)
             layer = cast(Glm4MoeLiteDecoderLayer, layer)
             eval_with_timeout(
                 layer.parameters(),
@@ -738,9 +750,12 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
+        weight_loader: WeightLoader = None,
     ) -> nn.Module:
         model = cast(MiniMaxModel, model)
-        for layer in model.layers:
+        for i, layer in enumerate(model.layers):
+            if weight_loader is not None:
+                weight_loader(model, i)
             eval_with_timeout(
                 layer.parameters(), timeout_seconds / len(model.layers), on_timeout
             )
@@ -778,9 +793,12 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
+        weight_loader: WeightLoader = None,
     ) -> nn.Module:
         model = cast(Qwen3MoeModel | Qwen3NextModel, model)
-        for layer in model.layers:
+        for i, layer in enumerate(model.layers):
+            if weight_loader is not None:
+                weight_loader(model, i)
             eval_with_timeout(
                 layer.parameters(), timeout_seconds / len(model.layers), on_timeout
             )
@@ -902,9 +920,12 @@ class Glm4MoeShardingStrategy(TensorParallelShardingStrategy):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
+        weight_loader: WeightLoader = None,
     ) -> nn.Module:
         model = cast(Glm4MoeModel, model)
-        for layer in model.layers:
+        for i, layer in enumerate(model.layers):
+            if weight_loader is not None:
+                weight_loader(model, i)
             eval_with_timeout(
                 layer.parameters(), timeout_seconds / len(model.layers), on_timeout
             )
@@ -948,10 +969,13 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
+        weight_loader: WeightLoader = None,
     ) -> nn.Module:
         model = cast(GptOssMoeModel, model)
 
-        for layer in model.layers:
+        for i, layer in enumerate(model.layers):
+            if weight_loader is not None:
+                weight_loader(model, i)
             eval_with_timeout(
                 layer.parameters(), timeout_seconds / len(model.layers), on_timeout
             )

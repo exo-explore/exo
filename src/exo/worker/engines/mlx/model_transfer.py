@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 from functools import partial
@@ -31,6 +32,7 @@ from exo.worker.runner.bootstrap import logger
 Group = mx.distributed.Group
 
 CHUNK_SIZE: Final[int] = 100 * 1024 * 1024  # 100 MB
+_LAYER_RE: Final[re.Pattern[str]] = re.compile(r"(?:^|\.)(layers|h)\.(\d+)\.")
 
 def _all_sum_cpu(x: mx.array, group: Group) -> mx.array:
     """all_sum on CPU stream to avoid GPU memory pressure."""
@@ -290,6 +292,148 @@ def _parse_mx_dtype(dtype_str: str) -> mx.Dtype:
     if dtype is None:
         raise ValueError(f"Unknown MLX dtype: {dtype_str}")
     return dtype  # type: ignore[return-value]
+
+
+def _extract_layer_index(name: str) -> int | None:
+    """Extract layer index from a weight name, or None for non-layer weights.
+
+    Matches patterns like ``model.layers.5.self_attn.q_proj.weight``
+    or ``transformer.h.12.mlp.gate_proj.scales``.
+    """
+    m = _LAYER_RE.search(name)
+    return int(m.group(2)) if m else None
+
+
+class WeightBroadcastState:
+    """Holds state for layer-by-layer weight broadcasting.
+
+    Created by :func:`prepare_weight_broadcast`.  Callers stream weights
+    incrementally via :meth:`broadcast_non_layer_weights` and
+    :meth:`broadcast_layer` so that at most one layer's worth of un-sharded
+    weight data is resident at a time.
+    """
+
+    def __init__(
+        self,
+        meta: dict[str, dict[str, Any]],
+        source_weights: dict[str, mx.array] | None,
+        group: Group,
+        is_source: bool,
+    ) -> None:
+        self.meta = meta
+        self.source_weights = source_weights
+        self.group = group
+        self.is_source = is_source
+
+        # Partition weight names into layer vs. non-layer
+        self.layer_names: dict[int, list[str]] = {}
+        self.non_layer_names: list[str] = []
+        for name in sorted(meta.keys()):
+            layer_idx = _extract_layer_index(name)
+            if layer_idx is not None:
+                self.layer_names.setdefault(layer_idx, []).append(name)
+            else:
+                self.non_layer_names.append(name)
+
+        logger.info(
+            f"WeightBroadcastState: {len(self.non_layer_names)} non-layer weights, "
+            f"{len(self.layer_names)} layers"
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _broadcast_names(self, names: list[str]) -> dict[str, mx.array]:
+        """Broadcast a specific set of weight tensors by name."""
+        all_sum = partial(_all_sum_cpu, group=self.group)
+        result: dict[str, mx.array] = {}
+        for name in names:
+            info = self.meta[name]
+            shape = cast(list[int], info["s"])
+            dtype = _parse_mx_dtype(cast(str, info["d"]))
+
+            if self.is_source:
+                assert self.source_weights is not None
+                tensor = self.source_weights.pop(name)
+                mx.eval(tensor)  # loads from disk (lazy)
+            else:
+                tensor = mx.zeros(shape, dtype=dtype)
+
+            broadcasted = all_sum(tensor)
+            mx.eval(broadcasted)
+            result[name] = broadcasted
+        return result
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def broadcast_non_layer_weights(self) -> dict[str, mx.array]:
+        """Broadcast non-layer weights (embeddings, norms, lm_head)."""
+        if not self.non_layer_names:
+            return {}
+        logger.info(
+            f"Broadcasting {len(self.non_layer_names)} non-layer weight tensors"
+        )
+        return self._broadcast_names(self.non_layer_names)
+
+    def broadcast_layer(self, layer_idx: int) -> dict[str, mx.array]:
+        """Broadcast weights for a single transformer layer."""
+        names = self.layer_names.get(layer_idx, [])
+        if not names:
+            return {}
+        return self._broadcast_names(names)
+
+
+def prepare_weight_broadcast(
+    model_path: Path,
+    group: Group,
+    is_source: bool,
+) -> WeightBroadcastState:
+    """Prepare for layer-by-layer weight broadcasting.
+
+    Source loads safetensors lazily and broadcasts weight metadata (names,
+    shapes, dtypes) as JSON.  Returns a :class:`WeightBroadcastState` that
+    can then stream weights incrementally via ``broadcast_layer()``.
+
+    All ranks must call this function (collective operation).
+    """
+    source_weights: dict[str, mx.array] | None = None
+    if is_source:
+        source_weights = {}
+        weight_files = sorted(model_path.glob("*.safetensors"))
+        if not weight_files:
+            weight_files = sorted(model_path.glob("**/*.safetensors"))
+        for wf in weight_files:
+            try:
+                loaded = cast(
+                    dict[str, mx.array], mx.load(str(wf), lazy=True)  # pyright: ignore[reportCallIssue]
+                )
+            except TypeError:
+                loaded = cast(dict[str, mx.array], mx.load(str(wf)))
+            source_weights.update(loaded)
+        logger.info(
+            f"Source loaded {len(source_weights)} weight tensors (lazy) "
+            f"from {len(weight_files)} files"
+        )
+
+    # Broadcast metadata
+    if is_source and source_weights is not None:
+        source_meta: dict[str, dict[str, Any]] = {
+            name: {"s": list(tensor.shape), "d": str(tensor.dtype)}
+            for name, tensor in source_weights.items()
+        }
+    else:
+        source_meta = {}
+
+    meta = cast(
+        dict[str, dict[str, Any]],
+        _broadcast_json(source_meta if is_source else None, group, is_source),
+    )
+
+    logger.info(f"Weight broadcast prepared: {len(meta)} tensors")
+    return WeightBroadcastState(meta, source_weights, group, is_source)
 
 
 def broadcast_model_weights(
