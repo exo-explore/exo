@@ -464,7 +464,10 @@ def apply_chat_template(
 
     extra_kwargs: dict[str, Any] = {}
     if task_params.enable_thinking is not None:
+        # Qwen3 and GLM use "enable_thinking"; DeepSeek uses "thinking".
+        # Jinja ignores unknown variables, so passing both is safe.
         extra_kwargs["enable_thinking"] = task_params.enable_thinking
+        extra_kwargs["thinking"] = task_params.enable_thinking
 
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,
