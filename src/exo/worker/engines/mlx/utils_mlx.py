@@ -279,11 +279,29 @@ def shard_and_load(
     assert isinstance(model, nn.Module)
 
     if broadcast_weights is not None:
+        # When receiver has no weight files, load_model skips quantization.
+        # Apply it explicitly so QuantizedLinear layers match broadcast weight shapes.
+        if not has_local_weights:
+            import json
+
+            config_path = model_path / "config.json"
+            with open(config_path) as f:
+                config = json.load(f)  # pyright: ignore[reportAny]
+            quant_config: dict[str, int] | None = config.get(  # pyright: ignore[reportAny]
+                "quantization", None
+            )
+            if quant_config is not None:
+                logger.info(f"Applying quantization to receiver model: {quant_config}")
+                nn.quantize(  # pyright: ignore[reportUnknownMemberType]
+                    model,
+                    group_size=quant_config.get("group_size", 64),
+                    bits=quant_config.get("bits", 4),
+                )
+
         # Populate model with broadcast weights (replaces default-init or lazy weights)
         logger.info(
             f"Populating model with {len(broadcast_weights)} broadcast weight tensors"
         )
-        # Debug: compare model params vs broadcast weights
         _debug_compare_weights(model, broadcast_weights)
         model.load_weights(list(broadcast_weights.items()), strict=False)
 
