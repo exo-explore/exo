@@ -1,7 +1,8 @@
 """Test: Cluster works without internet access.
 
 Verifies exo functions correctly when containers can talk to each other
-but cannot reach the internet (Docker internal network).
+but cannot reach the internet. Uses iptables to block all outbound traffic
+except private subnets and multicast (for mDNS discovery).
 """
 
 import asyncio
@@ -18,6 +19,18 @@ async def main():
         await cluster.build()
         await cluster.start()
         await cluster.assert_healthy()
+
+        # Verify internet is actually blocked from inside the containers
+        for node in ["exo-node-1", "exo-node-2"]:
+            rc, _ = await cluster.exec(node, "curl", "-sf", "--max-time", "3", "https://huggingface.co", check=False)
+            assert rc != 0, f"{node} should not be able to reach the internet"
+            print(f"  {node}: internet correctly blocked")
+
+        # Verify exo detected no internet connectivity
+        log = await cluster.logs()
+        assert "Internet connectivity: False" in log, "exo should detect no internet"
+        print("  exo correctly detected no internet connectivity")
+
         print("PASSED: no_internet")
 
 

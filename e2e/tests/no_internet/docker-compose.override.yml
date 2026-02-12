@@ -1,8 +1,32 @@
-# Block DNS resolution to simulate no internet access.
-# mDNS discovery (multicast 224.0.0.251) still works since it doesn't use DNS.
-# Docker's "internal: true" can't be used here because it also blocks multicast.
+# Block all outbound internet traffic using iptables while preserving:
+#   - Multicast (224.0.0.0/4) for mDNS peer discovery
+#   - Private subnets (10/8, 172.16/12, 192.168/16) for inter-container communication
+#   - Loopback (127/8)
+# Requires NET_ADMIN capability for iptables.
 services:
   exo-node-1:
-    dns: 0.0.0.0
+    cap_add:
+      - NET_ADMIN
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT
+        iptables -A OUTPUT -d 10.0.0.0/8 -j ACCEPT
+        iptables -A OUTPUT -d 172.16.0.0/12 -j ACCEPT
+        iptables -A OUTPUT -d 192.168.0.0/16 -j ACCEPT
+        iptables -A OUTPUT -d 224.0.0.0/4 -j ACCEPT
+        iptables -A OUTPUT -j REJECT
+        exec .venv/bin/exo -v
   exo-node-2:
-    dns: 0.0.0.0
+    cap_add:
+      - NET_ADMIN
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT
+        iptables -A OUTPUT -d 10.0.0.0/8 -j ACCEPT
+        iptables -A OUTPUT -d 172.16.0.0/12 -j ACCEPT
+        iptables -A OUTPUT -d 192.168.0.0/16 -j ACCEPT
+        iptables -A OUTPUT -d 224.0.0.0/4 -j ACCEPT
+        iptables -A OUTPUT -j REJECT
+        exec .venv/bin/exo -v
