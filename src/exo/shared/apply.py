@@ -210,7 +210,6 @@ def apply_instance_created(event: InstanceCreated, state: State) -> State:
                 instance.meta_instance_id,
                 placement_error=None,
                 consecutive_failures=0,
-                last_failure_error=None,
             )
     return state.model_copy(update=update)
 
