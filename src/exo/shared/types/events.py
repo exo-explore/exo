@@ -1,8 +1,9 @@
+import base64
 from collections.abc import Mapping
 from datetime import datetime
-from typing import final
+from typing import Annotated, final
 
-from pydantic import Field
+from pydantic import BeforeValidator, Field, PlainSerializer
 
 from exo.shared.topology import Connection
 from exo.shared.types.chunks import GenerationChunk, InputImageChunk
@@ -14,6 +15,28 @@ from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo
 from exo.utils.pydantic_ext import CamelCaseModel, FrozenModel, TaggedModel
+
+
+def _decode_base64_bytes(v: bytes | str) -> bytes:
+    if isinstance(v, bytes):
+        return v
+    return base64.b64decode(v)
+
+
+def _encode_base64_bytes(v: bytes) -> str:
+    return base64.b64encode(v).decode("ascii")
+
+
+Base64Bytes = Annotated[
+    bytes,
+    BeforeValidator(_decode_base64_bytes),
+    PlainSerializer(_encode_base64_bytes, return_type=str),
+]
+"""bytes that serialize to/from base64 strings in JSON.
+
+Needed because TaggedModel's wrap validator converts JSON→Python validation
+context, which breaks strict-mode bytes deserialization from JSON strings.
+"""
 
 
 class EventId(Id):
@@ -165,7 +188,7 @@ class JacclSideChannelData(BaseEvent):
     instance_id: InstanceId
     runner_id: RunnerId
     sequence: int
-    data: bytes
+    data: Base64Bytes
 
 
 @final
@@ -174,7 +197,7 @@ class JacclSideChannelGathered(BaseEvent):
 
     instance_id: InstanceId
     sequence: int
-    gathered_data: Mapping[RunnerId, bytes]
+    gathered_data: Mapping[RunnerId, Base64Bytes]
 
 
 Event = (
