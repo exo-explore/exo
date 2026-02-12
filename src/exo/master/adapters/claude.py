@@ -4,7 +4,7 @@ import json
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from exo.shared.types.api import FinishReason
+from exo.shared.types.api import FinishReason, Usage
 from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.claude_api import (
     ClaudeContentBlock,
@@ -166,13 +166,15 @@ async def collect_claude_response(
     text_parts: list[str] = []
     tool_use_blocks: list[ClaudeToolUseBlock] = []
     stop_reason: ClaudeStopReason | None = None
-    last_stats = None
+    last_usage: Usage | None = None
     error_message: str | None = None
 
     async for chunk in chunk_stream:
         if isinstance(chunk, ErrorChunk):
             error_message = chunk.error_message or "Internal server error"
             break
+
+        last_usage = chunk.usage or last_usage
 
         if isinstance(chunk, ToolCallChunk):
             for tool in chunk.tool_calls:
@@ -183,12 +185,10 @@ async def collect_claude_response(
                         input=json.loads(tool.arguments),  # pyright: ignore[reportAny]
                     )
                 )
-            last_stats = chunk.stats or last_stats
             stop_reason = "tool_use"
             continue
 
         text_parts.append(chunk.text)
-        last_stats = chunk.stats or last_stats
 
         if chunk.finish_reason is not None:
             stop_reason = finish_reason_to_claude_stop_reason(chunk.finish_reason)
@@ -208,9 +208,9 @@ async def collect_claude_response(
     if not content:
         content.append(ClaudeTextBlock(text=""))
 
-    # Use actual usage data from stats if available
-    input_tokens = last_stats.prompt_tokens if last_stats else 0
-    output_tokens = last_stats.generation_tokens if last_stats else 0
+    # Use actual usage data if available
+    input_tokens = last_usage.prompt_tokens if last_usage else 0
+    output_tokens = last_usage.completion_tokens if last_usage else 0
 
     return ClaudeMessagesResponse(
         id=f"msg_{command_id}",
@@ -249,7 +249,7 @@ async def generate_claude_stream(
 
     output_tokens = 0
     stop_reason: ClaudeStopReason | None = None
-    last_stats = None
+    last_usage: Usage | None = None
     next_block_index = 1  # text block is 0, tool blocks start at 1
 
     async for chunk in chunk_stream:
@@ -257,8 +257,9 @@ async def generate_claude_stream(
             # Close text block and bail
             break
 
+        last_usage = chunk.usage or last_usage
+
         if isinstance(chunk, ToolCallChunk):
-            last_stats = chunk.stats or last_stats
             stop_reason = "tool_use"
 
             # Emit tool_use content blocks
@@ -290,7 +291,6 @@ async def generate_claude_stream(
             continue
 
         output_tokens += 1  # Count each chunk as one token
-        last_stats = chunk.stats or last_stats
 
         # content_block_delta
         delta_event = ClaudeContentBlockDeltaEvent(
@@ -302,9 +302,9 @@ async def generate_claude_stream(
         if chunk.finish_reason is not None:
             stop_reason = finish_reason_to_claude_stop_reason(chunk.finish_reason)
 
-    # Use actual token count from stats if available
-    if last_stats is not None:
-        output_tokens = last_stats.generation_tokens
+    # Use actual token count from usage if available
+    if last_usage is not None:
+        output_tokens = last_usage.completion_tokens
 
     # content_block_stop for text block
     block_stop = ClaudeContentBlockStopEvent(index=0)
