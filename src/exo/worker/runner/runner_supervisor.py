@@ -2,6 +2,7 @@ import contextlib
 import os
 import signal
 import struct
+import tempfile
 from dataclasses import dataclass, field
 from functools import partial
 from multiprocessing import Process
@@ -76,6 +77,9 @@ class RunnerSupervisor:
     _pipe_read_fd: int | None = None  # Python reads runner's pipe output
     _pipe_write_fd: int | None = None  # Python writes gathered data to runner
     _child_pipe_fds: tuple[int, int] | None = None  # fds to close after fork
+    _fifo_dir: str | None = None  # Temp dir for FIFO files (for cleanup)
+    _fifo_c2p: str | None = None  # FIFO path: C++ writes → Python reads
+    _fifo_p2c: str | None = None  # FIFO path: Python writes → C++ reads
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
     completed: set[TaskId] = field(default_factory=set, init=False)
@@ -96,21 +100,22 @@ class RunnerSupervisor:
         task_sender, task_recv = mp_channel[Task]()
         cancel_sender, cancel_recv = mp_channel[TaskId]()
 
-        # For MlxJaccl instances, create pipe pairs for SideChannel relay.
-        # Pipe pair 1: C++ writes local data → Python reads it
-        # Pipe pair 2: Python writes gathered data → C++ reads it
-        pipe_read_fd: int | None = None
-        pipe_write_fd: int | None = None
-        child_pipe_fds: tuple[int, int] | None = None
-        pipe_fds_for_child: tuple[int, int] | None = None
+        # For MlxJaccl instances, create named pipes (FIFOs) for SideChannel relay.
+        # Named pipes work across multiprocessing.Process spawn (macOS default).
+        # FIFO c2p: C++ writes local data → Python reads it
+        # FIFO p2c: Python writes gathered data → C++ reads it
+        fifo_dir: str | None = None
+        fifo_c2p: str | None = None
+        fifo_p2c: str | None = None
+        pipe_fifo_paths: tuple[str, str] | None = None
 
         if isinstance(bound_instance.instance, MlxJacclInstance):
-            python_reads, mlx_writes = os.pipe()  # C++ → Python
-            mlx_reads, python_writes = os.pipe()  # Python → C++
-            pipe_read_fd = python_reads
-            pipe_write_fd = python_writes
-            child_pipe_fds = (mlx_reads, mlx_writes)
-            pipe_fds_for_child = (mlx_reads, mlx_writes)
+            fifo_dir = tempfile.mkdtemp(prefix="exo_jaccl_")
+            fifo_c2p = os.path.join(fifo_dir, "c2p")  # C++ → Python
+            fifo_p2c = os.path.join(fifo_dir, "p2c")  # Python → C++
+            os.mkfifo(fifo_c2p)
+            os.mkfifo(fifo_p2c)
+            pipe_fifo_paths = (fifo_c2p, fifo_p2c)
 
         runner_process = Process(
             target=entrypoint,
@@ -120,7 +125,7 @@ class RunnerSupervisor:
                 task_recv,
                 cancel_recv,
                 logger,
-                pipe_fds_for_child,
+                pipe_fifo_paths,
             ),
             daemon=True,
         )
@@ -136,9 +141,9 @@ class RunnerSupervisor:
             _task_sender=task_sender,
             _cancel_sender=cancel_sender,
             _event_sender=event_sender,
-            _pipe_read_fd=pipe_read_fd,
-            _pipe_write_fd=pipe_write_fd,
-            _child_pipe_fds=child_pipe_fds,
+            _fifo_dir=fifo_dir,
+            _fifo_c2p=fifo_c2p,
+            _fifo_p2c=fifo_p2c,
         )
 
         return self
@@ -146,13 +151,30 @@ class RunnerSupervisor:
     async def run(self):
         self.runner_process.start()
 
-        # Close the child-side pipe fds in the parent process (child inherited them via fork)
-        if self._child_pipe_fds is not None:
-            for fd in self._child_pipe_fds:
-                os.close(fd)
-            self._child_pipe_fds = None
+        if self._fifo_c2p is not None and self._fifo_p2c is not None:
+            # Open FIFOs from parent side. These block until child opens the other end,
+            # so we run them in threads concurrently to avoid deadlock.
+            fifo_c2p = self._fifo_c2p
+            fifo_p2c = self._fifo_p2c
 
-        if self._pipe_read_fd is not None:
+            async def open_read() -> None:
+                self._pipe_read_fd = await to_thread.run_sync(
+                    partial(os.open, fifo_c2p, os.O_RDONLY)
+                )
+
+            async def open_write() -> None:
+                self._pipe_write_fd = await to_thread.run_sync(
+                    partial(os.open, fifo_p2c, os.O_WRONLY)
+                )
+
+            async with anyio.create_task_group() as open_tg:
+                open_tg.start_soon(open_read)
+                open_tg.start_soon(open_write)
+
+            logger.info(
+                f"JACCL pipe relay: FIFOs opened (read_fd={self._pipe_read_fd}, write_fd={self._pipe_write_fd})"
+            )
+
             async with anyio.create_task_group() as tg:
                 tg.start_soon(self._pipe_relay)
                 tg.start_soon(self._forward_events)
@@ -259,6 +281,19 @@ class RunnerSupervisor:
                 with contextlib.suppress(OSError):
                     os.close(fd)
             self._child_pipe_fds = None
+        # Clean up FIFO files
+        if self._fifo_c2p is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(self._fifo_c2p)
+            self._fifo_c2p = None
+        if self._fifo_p2c is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(self._fifo_p2c)
+            self._fifo_p2c = None
+        if self._fifo_dir is not None:
+            with contextlib.suppress(OSError):
+                os.rmdir(self._fifo_dir)
+            self._fifo_dir = None
 
     async def _pipe_relay(self) -> None:
         """Relay JACCL SideChannel all_gather rounds between runner pipes and exo events."""
