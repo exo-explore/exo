@@ -331,17 +331,20 @@ def broadcast_model_weights(
     """
     all_sum = partial(_all_sum_cpu, group=group)
 
-    # Source lazily loads weights (data stays on disk until mx.eval per tensor)
+    # Source loads weights (lazy if supported, so only one tensor in memory at a time)
     weights: dict[str, mx.array] = {}
     if is_source:
         weight_files = sorted(model_path.glob("*.safetensors"))
         if not weight_files:
             weight_files = sorted(model_path.glob("**/*.safetensors"))
         for wf in weight_files:
-            loaded = cast(dict[str, mx.array], mx.load(str(wf), lazy=True))  # pyright: ignore[reportCallIssue]
+            try:
+                loaded = cast(dict[str, mx.array], mx.load(str(wf), lazy=True))  # pyright: ignore[reportCallIssue]
+            except TypeError:
+                loaded = cast(dict[str, mx.array], mx.load(str(wf)))
             weights.update(loaded)
         logger.info(
-            f"Source mapped {len(weights)} weight tensors from {len(weight_files)} files"
+            f"Source loaded {len(weights)} weight tensors from {len(weight_files)} files"
         )
 
     # Broadcast weight metadata: {name: {shape, dtype}}
