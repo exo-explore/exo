@@ -32,19 +32,6 @@ Group = mx.distributed.Group
 
 CHUNK_SIZE: Final[int] = 100 * 1024 * 1024  # 100 MB
 
-# File extensions that are metadata (not weight data)
-_METADATA_EXTENSIONS: Final[frozenset[str]] = frozenset(
-    {
-        ".json",
-        ".jinja",  # chat_template.jinja (used by transformers for chat formatting)
-        ".txt",
-        ".md",
-        ".model",  # sentencepiece tokenizer.model
-        ".py",
-    }
-)
-
-
 def _all_sum_cpu(x: mx.array, group: Group) -> mx.array:
     """all_sum on CPU stream to avoid GPU memory pressure."""
     return mx.distributed.all_sum(
@@ -53,15 +40,8 @@ def _all_sum_cpu(x: mx.array, group: Group) -> mx.array:
 
 
 def _is_metadata_file(filename: str) -> bool:
-    """Check if a file is a metadata file (not a weight file).
-
-    Excludes safetensors index files (e.g. model.safetensors.index.json) since
-    they reference .safetensors shard files that won't exist on the receiver.
-    """
-    if filename.endswith(".safetensors.index.json"):
-        return False
-    _, ext = os.path.splitext(filename)
-    return ext.lower() in _METADATA_EXTENSIONS
+    """A metadata file is anything that isn't a weight file (.safetensors)."""
+    return not filename.endswith(".safetensors")
 
 
 def has_weight_files(model_path: Path) -> bool:
