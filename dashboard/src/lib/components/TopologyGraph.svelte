@@ -1192,7 +1192,9 @@
             .attr("fill", "rgba(179,179,179,0.7)")
             .attr("font-size", debugFontSize)
             .attr("font-family", "SF Mono, Monaco, monospace")
-            .text(`macOS ${identity.osVersion}${identity.osBuildVersion ? ` (${identity.osBuildVersion})` : ""}`);
+            .text(
+              `macOS ${identity.osVersion}${identity.osBuildVersion ? ` (${identity.osBuildVersion})` : ""}`,
+            );
         }
       }
     });
