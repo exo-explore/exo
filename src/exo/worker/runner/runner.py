@@ -42,6 +42,7 @@ from exo.shared.types.tasks import (
     TaskId,
     TaskStatus,
     TextGeneration,
+    TransferModelToDisk,
 )
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import BoundInstance
@@ -535,6 +536,32 @@ def main(
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
+                case TransferModelToDisk() if (
+                    isinstance(current_status, RunnerConnected) and group is not None
+                ):
+                    from exo.worker.engines.mlx.model_transfer import (
+                        has_weight_files,
+                        model_path_for_id,
+                        transfer_all_files,
+                    )
+
+                    logger.info("starting disk-to-disk model transfer")
+                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
+
+                    model_path = model_path_for_id(
+                        task.shard_metadata.model_card.model_id
+                    )
+                    has_local = has_weight_files(model_path)
+                    transfer_all_files(model_path, group, has_local)
+
+                    logger.info("disk-to-disk model transfer complete")
+                    current_status = RunnerShuttingDown()
+                    event_sender.send(
+                        RunnerStatusUpdated(
+                            runner_id=runner_id, runner_status=current_status
+                        )
+                    )
+                    current_status = RunnerShutdown()
                 case Shutdown():
                     current_status = RunnerShuttingDown()
                     logger.info("runner shutting down")

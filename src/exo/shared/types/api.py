@@ -386,6 +386,15 @@ class DeleteDownloadResponse(CamelCaseModel):
     command_id: CommandId
 
 
+class DistributeModelParams(CamelCaseModel):
+    target_node_ids: list[NodeId] | None = None  # None = all connected nodes
+
+
+class DistributeModelResponse(CamelCaseModel):
+    command_id: CommandId
+    message: str
+
+
 class TraceEventResponse(CamelCaseModel):
     name: str
     start_us: int

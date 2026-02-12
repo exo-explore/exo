@@ -84,6 +84,7 @@ class ShardAssignments(CamelCaseModel):
     model_id: ModelId
     runner_to_shard: Mapping[RunnerId, ShardMetadata]
     node_to_runner: Mapping[NodeId, RunnerId]
+    transfer_only: bool = False
 
     @model_validator(mode="after")
     def validate_runners_exist(self) -> "ShardAssignments":

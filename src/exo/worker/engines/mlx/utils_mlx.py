@@ -202,28 +202,49 @@ def shard_and_load(
     group: Group,
     on_timeout: TimeoutCallback | None = None,
 ) -> tuple[nn.Module, TokenizerWrapper]:
-    model_path = build_model_path(shard_metadata.model_card.model_id)
+    from exo.worker.engines.mlx.model_transfer import (
+        broadcast_model_weights,
+        coordinate_transfer,
+        has_weight_files,
+        model_path_for_id,
+        transfer_metadata_files,
+    )
 
+    model_id = shard_metadata.model_card.model_id
+    model_path = model_path_for_id(model_id)
+    has_local_weights = has_weight_files(model_path)
+
+    # Coordinate: does any rank need a transfer?
+    needs_transfer, source_rank = coordinate_transfer(group, has_local_weights)
+
+    broadcast_weights: dict[str, mx.array] | None = None
+    if needs_transfer:
+        logger.info(
+            f"Model transfer needed (source_rank={source_rank}, "
+            f"local_weights={has_local_weights})"
+        )
+        # Step 1: Transfer metadata files (config.json, tokenizer, etc.) to disk
+        transfer_metadata_files(model_path, group, has_local_weights)
+        # Step 2: Broadcast weight tensors directly into memory
+        broadcast_weights = broadcast_model_weights(
+            model_path, group, has_local_weights
+        )
+
+    # Create model architecture (all ranks have config.json on disk now)
     model, _ = load_model(model_path, lazy=True, strict=False)
     logger.debug(model)
     if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
         pass
         # TODO: See if we should quantize the model.
-        # def is_attention_layer(path: str) -> bool:
-        #     path = path.lower()
-
-        #     return "self_attn" in path and "layernorm" not in path
-
-        # def quant_predicate(path: str, module: nn.Module):
-        #     if not isinstance(module, nn.Linear):
-        #         return False
-
-        #     return is_attention_layer(path)
-        # model, config = quantize_model(
-        #        model, config, group_size=KV_GROUP_SIZE, bits=ATTENTION_KV_BITS, quant_predicate=quant_predicate, mode=QUANTIZE_MODEL_MODE
-        #    )
 
     assert isinstance(model, nn.Module)
+
+    if broadcast_weights is not None:
+        # Populate model with broadcast weights (replaces default-init or lazy weights)
+        logger.info(
+            f"Populating model with {len(broadcast_weights)} broadcast weight tensors"
+        )
+        model.load_weights(list(broadcast_weights.items()), strict=False)
 
     tokenizer = get_tokenizer(model_path, shard_metadata)
 

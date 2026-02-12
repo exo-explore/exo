@@ -90,6 +90,14 @@ class CancelDownload(BaseCommand):
     model_id: ModelId
 
 
+class DistributeModel(BaseCommand):
+    """Distribute model files from one node to others via MLX distributed."""
+
+    model_id: ModelId
+    source_node_id: NodeId
+    target_node_ids: list[NodeId]
+
+
 DownloadCommand = StartDownload | DeleteDownload | CancelDownload
 
 
@@ -107,6 +115,7 @@ Command = (
     | DeleteMetaInstance
     | TaskFinished
     | SendInputChunk
+    | DistributeModel
 )
 
 
