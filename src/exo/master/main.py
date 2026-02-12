@@ -17,6 +17,7 @@ from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
+    DistributeModel,
     ForwarderCommand,
     ForwarderDownloadCommand,
     ImageEdits,
@@ -308,6 +309,37 @@ class Master:
                                 self.state.topology,
                                 self.state.instances,
                             )
+                            transition_events = get_transition_events(
+                                self.state.instances, placement
+                            )
+                            generated_events.extend(transition_events)
+                        case DistributeModel():
+                            from exo.shared.models.model_cards import ModelCard
+                            from exo.shared.types.worker.instances import InstanceMeta
+                            from exo.shared.types.worker.shards import Sharding
+
+                            model_card = await ModelCard.load(command.model_id)
+                            all_node_ids = set(
+                                [command.source_node_id] + list(command.target_node_ids)
+                            )
+                            place_command = PlaceInstance(
+                                model_card=model_card,
+                                sharding=Sharding.Pipeline,
+                                instance_meta=InstanceMeta.MlxRing,
+                                min_nodes=len(all_node_ids),
+                            )
+                            placement = place_instance(
+                                place_command,
+                                self.state.topology,
+                                self.state.instances,
+                                self.state.node_memory,
+                                self.state.node_network,
+                                required_nodes=all_node_ids,
+                            )
+                            # Mark new instances as transfer-only
+                            for instance_id, instance in placement.items():
+                                if instance_id not in self.state.instances:
+                                    instance.shard_assignments.transfer_only = True
                             transition_events = get_transition_events(
                                 self.state.instances, placement
                             )
