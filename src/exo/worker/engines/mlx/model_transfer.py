@@ -36,6 +36,7 @@ CHUNK_SIZE: Final[int] = 100 * 1024 * 1024  # 100 MB
 _METADATA_EXTENSIONS: Final[frozenset[str]] = frozenset(
     {
         ".json",
+        ".jinja",  # chat_template.jinja (used by transformers for chat formatting)
         ".txt",
         ".md",
         ".model",  # sentencepiece tokenizer.model
