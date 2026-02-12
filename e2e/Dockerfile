@@ -39,8 +39,9 @@ COPY resources/ ./resources/
 # Copy built dashboard from stage 1
 COPY --from=dashboard /app/dashboard/build ./dashboard/build/
 
-# Install Python deps and build Rust bindings
-RUN uv sync
+# Install Python deps and build Rust bindings, then clean up build artifacts
+# to keep the layer small (Rust target/ and cargo registry can be 1-2 GB)
+RUN uv sync && rm -rf /app/rust/target /root/.cargo/registry /root/.cargo/git
 
 # Wrap g++ with -fpermissive to fix MLX CPU JIT compilation with GCC 14
 # (GCC 14 treats _Float128/_Float32/_Float64 as built-in types, conflicting with MLX-generated code)
