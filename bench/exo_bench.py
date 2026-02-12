@@ -19,6 +19,11 @@ from urllib.parse import urlencode
 from loguru import logger
 from transformers import AutoTokenizer
 
+# Backoff constants for cluster settling retry
+_SETTLE_INITIAL_BACKOFF_S = 1.0
+_SETTLE_MAX_BACKOFF_S = 60.0
+_SETTLE_BACKOFF_MULTIPLIER = 2.0
+
 # Monkey-patch for transformers 5.x compatibility
 # Kimi's tokenization_kimi.py imports bytes_to_unicode from the old location
 # which was moved in transformers 5.0.0rc2
@@ -388,6 +393,66 @@ class PromptSizer:
         return content, tok
 
 
+def fetch_and_filter_placements(
+    client: ExoClient, full_model_id: str, args: argparse.Namespace
+) -> list[dict[str, Any]]:
+    previews_resp = client.request_json(
+        "GET", "/instance/previews", params={"model_id": full_model_id}
+    )
+    previews = previews_resp.get("previews") or []
+
+    selected: list[dict[str, Any]] = []
+    for p in previews:
+        if p.get("error") is not None:
+            continue
+        if not placement_filter(str(p.get("instance_meta", "")), args.instance_meta):
+            continue
+        if not sharding_filter(str(p.get("sharding", "")), args.sharding):
+            continue
+
+        instance = p.get("instance")
+        if not isinstance(instance, dict):
+            continue
+
+        n = nodes_used_in_instance(instance)
+        # Skip tensor ring single node as it is pointless when pipeline ring
+        if n == 1 and (
+            (args.sharding == "both" and "tensor" in p.get("sharding", "").lower())
+            or (
+                args.instance_meta == "both"
+                and "jaccl" in p.get("instance_meta", "").lower()
+            )
+        ):
+            continue
+
+        if (
+            args.skip_pipeline_jaccl
+            and (
+                args.instance_meta == "both"
+                and "jaccl" in p.get("instance_meta", "").lower()
+            )
+            and (
+                args.sharding == "both" and "pipeline" in p.get("sharding", "").lower()
+            )
+        ):
+            continue
+
+        if (
+            args.skip_tensor_ring
+            and (
+                args.instance_meta == "both"
+                and "ring" in p.get("instance_meta", "").lower()
+            )
+            and (args.sharding == "both" and "tensor" in p.get("sharding", "").lower())
+        ):
+            continue
+
+        if args.min_nodes <= n <= args.max_nodes:
+            selected.append(p)
+
+    return selected
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         prog="exo-bench",
@@ -464,6 +529,12 @@ def main() -> int:
         action="store_true",
         help="Force all pp×tg combinations (cartesian product) even when lists have equal length.",
     )
+    ap.add_argument(
+        "--settle-timeout",
+        type=float,
+        default=0,
+        help="Max seconds to wait for the cluster to produce valid placements (0 = try once).",
+    )
     args = ap.parse_args()
 
     pp_list = parse_int_list(args.pp)
@@ -487,11 +558,6 @@ def main() -> int:
     client = ExoClient(args.host, args.port, timeout_s=args.timeout)
     short_id, full_model_id = resolve_model_short_id(client, args.model)
 
-    previews_resp = client.request_json(
-        "GET", "/instance/previews", params={"model_id": full_model_id}
-    )
-    previews = previews_resp.get("previews") or []
-
     tokenizer = load_tokenizer_for_bench(full_model_id)
     if tokenizer is None:
         raise RuntimeError("[exo-bench] tokenizer load failed")
@@ -503,54 +569,20 @@ def main() -> int:
         logger.error("[exo-bench] tokenizer usable but prompt sizing failed")
         raise
 
-    selected: list[dict[str, Any]] = []
-    for p in previews:
-        if p.get("error") is not None:
-            continue
-        if not placement_filter(str(p.get("instance_meta", "")), args.instance_meta):
-            continue
-        if not sharding_filter(str(p.get("sharding", "")), args.sharding):
-            continue
+    selected = fetch_and_filter_placements(client, full_model_id, args)
 
-        instance = p.get("instance")
-        if not isinstance(instance, dict):
-            continue
-
-        n = nodes_used_in_instance(instance)
-        # Skip tensor ring single node as it is pointless when pipeline ring
-        if n == 1 and (
-            (args.sharding == "both" and "tensor" in p.get("sharding", "").lower())
-            or (
-                args.instance_meta == "both"
-                and "jaccl" in p.get("instance_meta", "").lower()
+    if not selected and args.settle_timeout > 0:
+        backoff = _SETTLE_INITIAL_BACKOFF_S
+        deadline = time.monotonic() + args.settle_timeout
+        while not selected and time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            logger.warning(
+                f"No valid placements yet (cluster may still be settling). "
+                f"Retrying in {backoff:.1f}s ({remaining:.0f}s remaining)..."
             )
-        ):
-            continue
-
-        if (
-            args.skip_pipeline_jaccl
-            and (
-                args.instance_meta == "both"
-                and "jaccl" in p.get("instance_meta", "").lower()
-            )
-            and (
-                args.sharding == "both" and "pipeline" in p.get("sharding", "").lower()
-            )
-        ):
-            continue
-
-        if (
-            args.skip_tensor_ring
-            and (
-                args.instance_meta == "both"
-                and "ring" in p.get("instance_meta", "").lower()
-            )
-            and (args.sharding == "both" and "tensor" in p.get("sharding", "").lower())
-        ):
-            continue
-
-        if args.min_nodes <= n <= args.max_nodes:
-            selected.append(p)
+            time.sleep(min(backoff, remaining))
+            backoff = min(backoff * _SETTLE_BACKOFF_MULTIPLIER, _SETTLE_MAX_BACKOFF_S)
+            selected = fetch_and_filter_placements(client, full_model_id, args)
 
     if not selected:
         logger.error("No valid placements matched your filters.")
