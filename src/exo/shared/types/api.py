@@ -199,6 +199,7 @@ class ChatCompletionRequest(BaseModel):
     top_p: float | None = None
     top_k: int | None = None
     tools: list[dict[str, Any]] | None = None
+    enable_thinking: bool | None = None
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool | None = None
     user: str | None = None
