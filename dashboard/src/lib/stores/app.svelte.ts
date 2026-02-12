@@ -296,6 +296,7 @@ export interface Conversation {
   modelId: string | null;
   sharding: string | null;
   instanceType: string | null;
+  enableThinking: boolean | null;
 }
 
 const STORAGE_KEY = "exo-conversations";
@@ -605,6 +606,7 @@ class AppStore {
           modelId: conversation.modelId ?? null,
           sharding: conversation.sharding ?? null,
           instanceType: conversation.instanceType ?? null,
+          enableThinking: conversation.enableThinking ?? null,
         }));
       }
     } catch (error) {
@@ -794,6 +796,7 @@ class AppStore {
       modelId: derivedModelId,
       sharding: derivedSharding,
       instanceType: derivedInstanceType,
+      enableThinking: null,
     };
 
     this.conversations.unshift(conversation);
@@ -2122,6 +2125,15 @@ class AppStore {
     // Capture the target conversation ID at the start of the request
     const targetConversationId = this.activeConversationId;
     if (!targetConversationId) return;
+
+    // Persist thinking preference on the conversation
+    if (enableThinking != null) {
+      const conv = this.conversations.find((c) => c.id === targetConversationId);
+      if (conv) {
+        conv.enableThinking = enableThinking;
+        this.saveConversationsToStorage();
+      }
+    }
 
     this.isLoading = true;
     this.currentResponse = "";

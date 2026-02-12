@@ -12,6 +12,7 @@
     ttftMs,
     tps,
     totalTokens,
+    getActiveConversation,
   } from "$lib/stores/app.svelte";
   import ChatAttachments from "./ChatAttachments.svelte";
   import ImageParamsPanel from "./ImageParamsPanel.svelte";
@@ -44,6 +45,7 @@
   let uploadedFiles = $state<ChatUploadedFile[]>([]);
   let isDragOver = $state(false);
   let thinkingEnabled = $state(true);
+  const activeConversation = $derived(getActiveConversation());
   let loading = $derived(isLoading());
   const currentModel = $derived(selectedChatModel());
   const instanceData = $derived(instances());
@@ -173,6 +175,19 @@
 
     // Update previous model IDs for next comparison
     previousModelIds = currentModelIds;
+  });
+
+  // Sync thinking toggle with the active conversation's persisted preference
+  let lastConversationId: string | null = null;
+  $effect(() => {
+    const conv = activeConversation;
+    if (conv && conv.id !== lastConversationId) {
+      lastConversationId = conv.id;
+      thinkingEnabled = conv.enableThinking ?? true;
+    } else if (!conv) {
+      lastConversationId = null;
+      thinkingEnabled = true;
+    }
   });
 
   function getInstanceModelId(instanceWrapped: unknown): string {
