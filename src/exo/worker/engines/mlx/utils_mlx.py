@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -60,10 +61,11 @@ from exo.worker.engines.mlx.auto_parallel import (
     tensor_auto_parallel,
 )
 from exo.worker.engines.mlx.model_transfer import (
-    broadcast_model_weights,
+    WeightBroadcastState,
     coordinate_transfer,
     has_weight_files,
     model_path_for_id,
+    prepare_weight_broadcast,
     transfer_metadata_files,
 )
 from exo.worker.runner.bootstrap import logger
@@ -216,7 +218,7 @@ def shard_and_load(
     # Coordinate: does any rank need a transfer?
     needs_transfer, source_rank = coordinate_transfer(group, has_local_weights)
 
-    broadcast_weights: dict[str, mx.array] | None = None
+    broadcast_state: WeightBroadcastState | None = None
     if needs_transfer:
         is_source = group.rank() == source_rank
         logger.info(
@@ -225,16 +227,16 @@ def shard_and_load(
         )
         # Step 1: Transfer metadata files (config.json, tokenizer, etc.) to disk
         transfer_metadata_files(model_path, group, is_source)
-        # Step 2: Broadcast weight tensors directly into memory
-        broadcast_weights = broadcast_model_weights(model_path, group, is_source)
+        # Step 2: Prepare for layer-by-layer weight broadcast (metadata only)
+        broadcast_state = prepare_weight_broadcast(model_path, group, is_source)
 
     # Create model architecture (all ranks have config.json on disk now).
-    # Always use lazy=True when we have broadcast weights: load_model's internal
+    # Always use lazy=True when we have broadcast state: load_model's internal
     # nn.quantize skips quantization when weights dict is empty (no safetensors),
     # leaving the model un-quantized. lazy=False would then mx.eval() the full
     # fp16 model (~72GB for a 36B-param model), causing OOM on the receiver.
     # We handle quantization ourselves below before loading broadcast weights.
-    use_lazy = has_local_weights or broadcast_weights is not None
+    use_lazy = has_local_weights or broadcast_state is not None
     model, _ = load_model(model_path, lazy=use_lazy, strict=False)
     logger.debug(model)
     if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
@@ -243,7 +245,7 @@ def shard_and_load(
 
     assert isinstance(model, nn.Module)
 
-    if broadcast_weights is not None:
+    if broadcast_state is not None:
         # When receiver has no weight files, load_model skips quantization.
         # Apply it explicitly so QuantizedLinear layers match broadcast weight shapes.
         if not has_local_weights:
@@ -261,16 +263,13 @@ def shard_and_load(
                     bits=quant_config.get("bits", 4),
                 )
 
-        # Populate model with broadcast weights (replaces default-init or lazy weights)
-        logger.info(
-            f"Populating model with {len(broadcast_weights)} broadcast weight tensors"
-        )
-        model.load_weights(list(broadcast_weights.items()), strict=False)
-
-    # Free broadcast weight refs before sharding. The model's parameter tree is
-    # now the only holder of these arrays, so they'll be freed as each layer is
-    # replaced with its sharded version in tensor/pipeline_auto_parallel.
-    del broadcast_weights
+        # Broadcast and load non-layer weights (embeddings, norms, lm_head) upfront.
+        # These are small (~600MB) and needed before the sharding loop.
+        non_layer_weights = broadcast_state.broadcast_non_layer_weights()
+        if non_layer_weights:
+            model.load_weights(list(non_layer_weights.items()), strict=False)
+            logger.info(f"Loaded {len(non_layer_weights)} non-layer weight tensors")
+        del non_layer_weights
 
     tokenizer = get_tokenizer(model_path, shard_metadata)
 
@@ -285,12 +284,38 @@ def shard_and_load(
         f"(model size: {model_size_gb:.1f}GB)"
     )
 
+    # Build per-layer weight loader for streaming broadcast during sharding.
+    # Each layer's weights are broadcast via all_sum just before that layer is
+    # sharded, so at most one un-sharded layer is in memory at a time.
+    weight_loader_fn: Callable[[nn.Module, int], None] | None = None
+    if broadcast_state is not None:
+        _state = broadcast_state  # capture for closure
+
+        def _load_layer_weights(mdl: nn.Module, layer_idx: int) -> None:
+            layer_weights = _state.broadcast_layer(layer_idx)
+            if layer_weights:
+                mdl.load_weights(list(layer_weights.items()), strict=False)
+
+        weight_loader_fn = _load_layer_weights
+
     match shard_metadata:
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
-            model = tensor_auto_parallel(model, group, timeout_seconds, on_timeout)
+            model = tensor_auto_parallel(
+                model, group, timeout_seconds, on_timeout, weight_loader_fn
+            )
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
+            # Pipeline doesn't shard per-layer, so broadcast all layer weights
+            # sequentially before pipeline_auto_parallel runs.
+            if broadcast_state is not None:
+                for layer_idx in sorted(broadcast_state.layer_names.keys()):
+                    layer_weights = broadcast_state.broadcast_layer(layer_idx)
+                    if layer_weights:
+                        model.load_weights(
+                            list(layer_weights.items()), strict=False
+                        )
+                    del layer_weights
             model = pipeline_auto_parallel(model, group, shard_metadata)
             eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
         case CfgShardMetadata():
@@ -298,6 +323,8 @@ def shard_and_load(
                 "CfgShardMetadata is not supported for text model loading - "
                 "this metadata type is only for image generation models"
             )
+
+    del broadcast_state
 
     # TODO: Do we need this?
     mx.eval(model)
