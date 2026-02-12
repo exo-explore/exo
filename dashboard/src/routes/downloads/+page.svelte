@@ -19,7 +19,7 @@
   import HeaderNav from "$lib/components/HeaderNav.svelte";
 
   type CellStatus =
-    | { kind: "completed"; totalBytes: number }
+    | { kind: "completed"; totalBytes: number; modelDirectory?: string }
     | {
         kind: "downloading";
         percentage: number;
@@ -27,9 +27,10 @@
         totalBytes: number;
         speed: number;
         etaMs: number;
+        modelDirectory?: string;
       }
-    | { kind: "pending" }
-    | { kind: "failed" }
+    | { kind: "pending"; modelDirectory?: string }
+    | { kind: "failed"; modelDirectory?: string }
     | { kind: "not_present" };
 
   type ModelCardInfo = {
@@ -225,12 +226,13 @@
             row.shardMetadata = extractShardMetadata(payload);
           if (!row.modelCard && card) row.modelCard = card;
 
+          const modelDirectory = ((payload.model_directory ?? payload.modelDirectory) as string) || undefined;
           let cell: CellStatus;
           if (tag === "DownloadCompleted") {
             const totalBytes = getBytes(
               payload.total_bytes ?? payload.totalBytes,
             );
-            cell = { kind: "completed", totalBytes };
+            cell = { kind: "completed", totalBytes, modelDirectory };
           } else if (tag === "DownloadOngoing") {
             const rawProgress =
               payload.download_progress ?? payload.downloadProgress ?? {};
@@ -256,11 +258,12 @@
               totalBytes,
               speed,
               etaMs,
+              modelDirectory,
             };
           } else if (tag === "DownloadFailed") {
-            cell = { kind: "failed" };
+            cell = { kind: "failed", modelDirectory };
           } else {
-            cell = { kind: "pending" };
+            cell = { kind: "pending", modelDirectory };
           }
 
           const existing = row.cells[nodeId];
@@ -438,7 +441,7 @@
                         >
                         <button
                           type="button"
-                          class="text-exo-light-gray/40 hover:text-red-400 transition-colors mt-0.5 opacity-0 group-hover:opacity-100"
+                          class="text-exo-light-gray/40 hover:text-red-400 transition-colors mt-0.5"
                           onclick={() =>
                             deleteDownload(col.nodeId, row.modelId)}
                           title="Delete from this node"
@@ -682,25 +685,35 @@
             </svg>
             <span class="text-white/40">On nodes:</span>
           </div>
-          <div class="flex flex-wrap gap-1 mt-1">
+          <div class="flex flex-col gap-1.5 mt-1">
             {#each nodeColumns as col}
               {@const cellStatus = infoRow?.cells[col.nodeId]}
               {#if cellStatus && cellStatus.kind !== "not_present"}
-                <span
-                  class="px-1.5 py-0.5 rounded text-[10px] {cellStatus.kind ===
-                  'completed'
-                    ? 'bg-green-500/10 text-green-400/80 border border-green-500/20'
-                    : cellStatus.kind === 'downloading'
-                      ? 'bg-exo-yellow/10 text-exo-yellow/80 border border-exo-yellow/20'
-                      : cellStatus.kind === 'failed'
-                        ? 'bg-red-500/10 text-red-400/80 border border-red-500/20'
-                        : 'bg-white/5 text-white/50 border border-white/10'}"
-                >
-                  {col.label}
-                  {#if cellStatus.kind === "downloading" && "percentage" in cellStatus}
-                    ({clampPercent(cellStatus.percentage).toFixed(0)}%)
+                <div class="flex flex-col gap-0.5">
+                  <span
+                    class="inline-block w-fit px-1.5 py-0.5 rounded text-[10px] {cellStatus.kind ===
+                    'completed'
+                      ? 'bg-green-500/10 text-green-400/80 border border-green-500/20'
+                      : cellStatus.kind === 'downloading'
+                        ? 'bg-exo-yellow/10 text-exo-yellow/80 border border-exo-yellow/20'
+                        : cellStatus.kind === 'failed'
+                          ? 'bg-red-500/10 text-red-400/80 border border-red-500/20'
+                          : 'bg-white/5 text-white/50 border border-white/10'}"
+                  >
+                    {col.label}
+                    {#if cellStatus.kind === "downloading" && "percentage" in cellStatus}
+                      ({clampPercent(cellStatus.percentage).toFixed(0)}%)
+                    {/if}
+                  </span>
+                  {#if "modelDirectory" in cellStatus && cellStatus.modelDirectory}
+                    <span
+                      class="text-[9px] text-white/30 break-all pl-1"
+                      title={cellStatus.modelDirectory}
+                    >
+                      {cellStatus.modelDirectory}
+                    </span>
                   {/if}
-                </span>
+                </div>
               {/if}
             {/each}
           </div>
