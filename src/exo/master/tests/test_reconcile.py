@@ -179,9 +179,7 @@ def test_not_satisfies_fewer_than_min_nodes():
 
 
 def test_satisfies_with_node_ids_specified():
-    meta = _meta_instance(
-        node_ids=[NodeId("node-a"), NodeId("node-b")], min_nodes=2
-    )
+    meta = _meta_instance(node_ids=[NodeId("node-a"), NodeId("node-b")], min_nodes=2)
     _, inst = _instance(node_ids=["node-a", "node-b", "node-c"])
     assert instance_satisfies_meta_instance(meta, inst) is True
 
@@ -494,8 +492,7 @@ def test_runners_not_failed_all_shutdown():
     """All Shutdown (graceful) = not a failure."""
     _, inst = _instance(node_ids=["node-a"])
     runners = {
-        rid: RunnerShutdown()
-        for rid in inst.shard_assignments.node_to_runner.values()
+        rid: RunnerShutdown() for rid in inst.shard_assignments.node_to_runner.values()
     }
     is_failed, _ = instance_runners_failed(inst, runners, {})
     assert is_failed is False
@@ -524,8 +521,7 @@ def test_runners_not_failed_healthy():
     """Runners in Ready state = not failed."""
     _, inst = _instance(node_ids=["node-a"])
     runners = {
-        rid: RunnerReady()
-        for rid in inst.shard_assignments.node_to_runner.values()
+        rid: RunnerReady() for rid in inst.shard_assignments.node_to_runner.values()
     }
     is_failed, _ = instance_runners_failed(inst, runners, {})
     assert is_failed is False
@@ -537,9 +533,7 @@ def test_runners_not_failed_healthy():
 def test_apply_instance_deleted_tracks_failure():
     """InstanceDeleted with failure_error increments meta instance failure count."""
     meta = _meta_instance()
-    iid, inst = _instance(
-        node_ids=["node-a"], meta_instance_id=meta.meta_instance_id
-    )
+    iid, inst = _instance(node_ids=["node-a"], meta_instance_id=meta.meta_instance_id)
     state = State(
         meta_instances={meta.meta_instance_id: meta},
         instances={iid: inst},
@@ -556,9 +550,7 @@ def test_apply_instance_deleted_increments_failure():
     meta = _meta_instance().model_copy(
         update={"consecutive_failures": 2, "last_failure_error": "previous error"}
     )
-    iid, inst = _instance(
-        node_ids=["node-a"], meta_instance_id=meta.meta_instance_id
-    )
+    iid, inst = _instance(node_ids=["node-a"], meta_instance_id=meta.meta_instance_id)
     state = State(
         meta_instances={meta.meta_instance_id: meta},
         instances={iid: inst},
@@ -573,9 +565,7 @@ def test_apply_instance_deleted_increments_failure():
 def test_apply_instance_deleted_no_failure_no_tracking():
     """InstanceDeleted without failure_error does not track."""
     meta = _meta_instance()
-    iid, inst = _instance(
-        node_ids=["node-a"], meta_instance_id=meta.meta_instance_id
-    )
+    iid, inst = _instance(node_ids=["node-a"], meta_instance_id=meta.meta_instance_id)
     state = State(
         meta_instances={meta.meta_instance_id: meta},
         instances={iid: inst},
@@ -601,7 +591,9 @@ def test_apply_instance_deleted_orphan_no_tracking():
 def test_apply_instance_retrying_removes_runners():
     """InstanceRetrying removes the instance's runners from state but keeps the instance."""
     meta = _meta_instance()
-    iid, inst = _instance(node_ids=["node-a", "node-b"], meta_instance_id=meta.meta_instance_id)
+    iid, inst = _instance(
+        node_ids=["node-a", "node-b"], meta_instance_id=meta.meta_instance_id
+    )
     runner_ids = list(inst.shard_assignments.node_to_runner.values())
     runners = {
         runner_ids[0]: RunnerFailed(error_message="OOM"),
