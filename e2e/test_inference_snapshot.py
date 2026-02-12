@@ -1,8 +1,12 @@
 """Test: Deterministic inference output (snapshot test).
+slow
 
 Sends a chat completion request with a fixed seed and temperature=0,
 then verifies the output matches a known-good snapshot. This ensures
 inference produces consistent results across runs.
+
+Requires a machine that can run MLX inference at reasonable speed (Apple Silicon).
+Run with: python3 e2e/run_all.py --slow  or  E2E_SLOW=1 python3 e2e/run_all.py
 """
 
 import asyncio
