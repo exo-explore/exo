@@ -295,8 +295,8 @@ def main(
                             patch_kimi_tokenizer(tokenizer)
 
                         # GLM models need patched parser (upstream has bug with None regex match)
-                        elif "glm" in shard_metadata.model_card.model_id.lower():
-                            patch_glm_tokenizer(tokenizer)
+                        elif "glm-4" in shard_metadata.model_card.model_id.lower():
+                            patch_glm4_tokenizer(tokenizer)
 
                         # GPT-OSS specific parsing to match other model formats.
                         elif isinstance(model, GptOssModel):
@@ -863,7 +863,7 @@ def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
     tokenizer._tool_parser = parse_tool_call
 
 
-def patch_glm_tokenizer(tokenizer: TokenizerWrapper):
+def patch_glm4_tokenizer(tokenizer: TokenizerWrapper):
     """
     Fixed version of mlx_lm's glm47 tool parser that handles regex match failures.
     """
