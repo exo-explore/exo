@@ -462,11 +462,16 @@ def apply_chat_template(
         partial_assistant_content = cast(str, formatted_messages[-1].get("content", ""))
         formatted_messages = formatted_messages[:-1]
 
+    extra_kwargs: dict[str, Any] = {}
+    if task_params.enable_thinking is not None:
+        extra_kwargs["enable_thinking"] = task_params.enable_thinking
+
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
         tools=task_params.tools,
+        **extra_kwargs,
     )
 
     if partial_assistant_content:

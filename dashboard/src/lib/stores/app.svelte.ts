@@ -2110,6 +2110,7 @@ class AppStore {
       textContent?: string;
       preview?: string;
     }[],
+    enableThinking?: boolean | null,
   ): Promise<void> {
     if ((!content.trim() && (!files || files.length === 0)) || this.isLoading)
       return;
@@ -2257,6 +2258,9 @@ class AppStore {
           stream: true,
           logprobs: true,
           top_logprobs: 5,
+          ...(enableThinking != null && {
+            enable_thinking: enableThinking,
+          }),
         }),
       });
 
@@ -3043,7 +3047,8 @@ export const sendMessage = (
     textContent?: string;
     preview?: string;
   }[],
-) => appStore.sendMessage(content, files);
+  enableThinking?: boolean | null,
+) => appStore.sendMessage(content, files, enableThinking);
 export const generateImage = (prompt: string, modelId?: string) =>
   appStore.generateImage(prompt, modelId);
 export const editImage = (
