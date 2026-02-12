@@ -229,9 +229,12 @@ def shard_and_load(
         broadcast_weights = broadcast_model_weights(model_path, group, is_source)
 
     # Create model architecture (all ranks have config.json on disk now).
-    # Use lazy=False when receiver has no local weights: lazy=True would create
-    # dangling references to nonexistent safetensors files.
-    use_lazy = has_local_weights or not needs_transfer
+    # Always use lazy=True when we have broadcast weights: load_model's internal
+    # nn.quantize skips quantization when weights dict is empty (no safetensors),
+    # leaving the model un-quantized. lazy=False would then mx.eval() the full
+    # fp16 model (~72GB for a 36B-param model), causing OOM on the receiver.
+    # We handle quantization ourselves below before loading broadcast weights.
+    use_lazy = has_local_weights or broadcast_weights is not None
     model, _ = load_model(model_path, lazy=use_lazy, strict=False)
     logger.debug(model)
     if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
