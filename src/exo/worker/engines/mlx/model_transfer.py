@@ -34,6 +34,7 @@ Group = mx.distributed.Group
 CHUNK_SIZE: Final[int] = 100 * 1024 * 1024  # 100 MB
 _LAYER_RE: Final[re.Pattern[str]] = re.compile(r"(?:^|\.)(layers|h)\.(\d+)\.")
 
+
 def _all_sum_cpu(x: mx.array, group: Group) -> mx.array:
     """all_sum on CPU stream to avoid GPU memory pressure."""
     return mx.distributed.all_sum(
@@ -44,17 +45,6 @@ def _all_sum_cpu(x: mx.array, group: Group) -> mx.array:
 def _is_metadata_file(filename: str) -> bool:
     """A metadata file is anything that isn't a weight file (.safetensors)."""
     return not filename.endswith(".safetensors")
-
-
-def has_weight_files(model_path: Path) -> bool:
-    """Check if model directory has both config and weight files."""
-    if not model_path.exists():
-        return False
-    has_config = (model_path / "config.json").exists()
-    has_weights = any(model_path.glob("*.safetensors")) or any(
-        model_path.glob("**/*.safetensors")
-    )
-    return has_config and has_weights
 
 
 def model_path_for_id(model_id: ModelId) -> Path:
@@ -259,18 +249,14 @@ def _transfer_files_to_disk(
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def transfer_metadata_files(
-    model_path: Path, group: Group, is_source: bool
-) -> None:
+def transfer_metadata_files(model_path: Path, group: Group, is_source: bool) -> None:
     """
     Transfer metadata files (config.json, tokenizer files, etc.) to receivers' disk.
 
     All ranks must call this function (collective operation).
     Only the designated source (is_source=True) should send; all others receive.
     """
-    _transfer_files_to_disk(
-        model_path, group, is_source=is_source, metadata_only=True
-    )
+    _transfer_files_to_disk(model_path, group, is_source=is_source, metadata_only=True)
 
 
 def transfer_all_files(model_path: Path, group: Group, is_source: bool) -> None:
@@ -280,9 +266,7 @@ def transfer_all_files(model_path: Path, group: Group, is_source: bool) -> None:
     All ranks must call this function (collective operation).
     Only the designated source (is_source=True) should send; all others receive.
     """
-    _transfer_files_to_disk(
-        model_path, group, is_source=is_source, metadata_only=False
-    )
+    _transfer_files_to_disk(model_path, group, is_source=is_source, metadata_only=False)
 
 
 def _parse_mx_dtype(dtype_str: str) -> mx.Dtype:
@@ -408,7 +392,8 @@ def prepare_weight_broadcast(
         for wf in weight_files:
             try:
                 loaded = cast(
-                    dict[str, mx.array], mx.load(str(wf), lazy=True)  # pyright: ignore[reportCallIssue]
+                    dict[str, mx.array],
+                    mx.load(str(wf), lazy=True),  # pyright: ignore[reportCallIssue]
                 )
             except TypeError:
                 loaded = cast(dict[str, mx.array], mx.load(str(wf)))

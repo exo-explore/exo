@@ -64,7 +64,7 @@ def plan(
         or _create_runner(node_id, runners, instances, all_runners)
         or _model_needs_download(node_id, runners, global_download_status)
         or _init_distributed_backend(runners, all_runners)
-        or _transfer_model_to_disk(runners, all_runners)
+        or _transfer_model_to_disk(runners, all_runners, global_download_status)
         or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
         or _pending_tasks(runners, tasks, all_runners, input_chunk_buffer or {})
@@ -227,6 +227,7 @@ def _init_distributed_backend(
 def _transfer_model_to_disk(
     runners: Mapping[RunnerId, RunnerSupervisor],
     all_runners: Mapping[RunnerId, RunnerStatus],
+    global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
 ) -> TransferModelToDisk | None:
     """For transfer-only instances: after all ranks are connected, emit TransferModelToDisk."""
     for runner in runners.values():
@@ -246,9 +247,15 @@ def _transfer_model_to_disk(
         )
 
         if is_runner_connected and all_connected_or_further:
+            has_local = _node_has_download(
+                runner.bound_instance.bound_node_id,
+                shard_assignments.model_id,
+                global_download_status,
+            )
             return TransferModelToDisk(
                 instance_id=instance.instance_id,
                 shard_metadata=runner.bound_instance.bound_shard,
+                has_local_model=has_local,
             )
 
     return None
@@ -274,7 +281,7 @@ def _load_model(
             if not _all_downloads_complete(shard_assignments, global_download_status):
                 continue
             if isinstance(runner.status, RunnerIdle):
-                return LoadModel(instance_id=instance.instance_id)
+                return LoadModel(instance_id=instance.instance_id, has_local_model=True)
         else:
             # Multi-node: require at least one node to have the model downloaded.
             # Nodes without the model will receive it via MLX distributed transfer
@@ -292,7 +299,15 @@ def _load_model(
             )
 
             if is_runner_waiting and all_ready_for_model:
-                return LoadModel(instance_id=instance.instance_id)
+                has_local = _node_has_download(
+                    runner.bound_instance.bound_node_id,
+                    shard_assignments.model_id,
+                    global_download_status,
+                )
+                return LoadModel(
+                    instance_id=instance.instance_id,
+                    has_local_model=has_local,
+                )
 
     return None
 

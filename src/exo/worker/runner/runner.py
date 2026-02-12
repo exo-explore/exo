@@ -84,7 +84,6 @@ from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.model_transfer import (
     coordinate_transfer,
-    has_weight_files,
     model_path_for_id,
     transfer_all_files,
 )
@@ -208,7 +207,10 @@ def main(
 
                     if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
                         inference_model, tokenizer = load_mlx_items(
-                            bound_instance, group, on_timeout=on_model_load_timeout
+                            bound_instance,
+                            group,
+                            on_timeout=on_model_load_timeout,
+                            has_local_model=task.has_local_model,
                         )
                         logger.info(
                             f"model has_tool_calling={tokenizer.has_tool_calling} using tokens {tokenizer.tool_call_start}, {tokenizer.tool_call_end}"
@@ -551,8 +553,7 @@ def main(
                     model_path = model_path_for_id(
                         task.shard_metadata.model_card.model_id
                     )
-                    has_local = has_weight_files(model_path)
-                    _, source_rank = coordinate_transfer(group, has_local)
+                    _, source_rank = coordinate_transfer(group, task.has_local_model)
                     is_source = group.rank() == source_rank
                     transfer_all_files(model_path, group, is_source)
 

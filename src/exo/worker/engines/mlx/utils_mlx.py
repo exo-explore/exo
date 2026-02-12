@@ -63,7 +63,6 @@ from exo.worker.engines.mlx.auto_parallel import (
 from exo.worker.engines.mlx.model_transfer import (
     WeightBroadcastState,
     coordinate_transfer,
-    has_weight_files,
     model_path_for_id,
     prepare_weight_broadcast,
     transfer_metadata_files,
@@ -180,6 +179,7 @@ def load_mlx_items(
     bound_instance: BoundInstance,
     group: Group | None,
     on_timeout: TimeoutCallback | None = None,
+    has_local_model: bool = True,
 ) -> tuple[Model, TokenizerWrapper]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
@@ -194,7 +194,10 @@ def load_mlx_items(
         logger.info("Starting distributed init")
         start_time = time.perf_counter()
         model, tokenizer = shard_and_load(
-            bound_instance.bound_shard, group=group, on_timeout=on_timeout
+            bound_instance.bound_shard,
+            group=group,
+            on_timeout=on_timeout,
+            has_local_model=has_local_model,
         )
         end_time = time.perf_counter()
         logger.info(
@@ -210,20 +213,20 @@ def shard_and_load(
     shard_metadata: ShardMetadata,
     group: Group,
     on_timeout: TimeoutCallback | None = None,
+    has_local_model: bool = True,
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_id = shard_metadata.model_card.model_id
     model_path = model_path_for_id(model_id)
-    has_local_weights = has_weight_files(model_path)
 
     # Coordinate: does any rank need a transfer?
-    needs_transfer, source_rank = coordinate_transfer(group, has_local_weights)
+    needs_transfer, source_rank = coordinate_transfer(group, has_local_model)
 
     broadcast_state: WeightBroadcastState | None = None
     if needs_transfer:
         is_source = group.rank() == source_rank
         logger.info(
             f"Model transfer needed (source_rank={source_rank}, "
-            f"is_source={is_source}, local_weights={has_local_weights})"
+            f"is_source={is_source}, local_weights={has_local_model})"
         )
         # Step 1: Transfer metadata files (config.json, tokenizer, etc.) to disk
         transfer_metadata_files(model_path, group, is_source)
@@ -236,7 +239,7 @@ def shard_and_load(
     # leaving the model un-quantized. lazy=False would then mx.eval() the full
     # fp16 model (~72GB for a 36B-param model), causing OOM on the receiver.
     # We handle quantization ourselves below before loading broadcast weights.
-    use_lazy = has_local_weights or broadcast_state is not None
+    use_lazy = has_local_model or broadcast_state is not None
     model, _ = load_model(model_path, lazy=use_lazy, strict=False)
     logger.debug(model)
     if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
@@ -248,7 +251,7 @@ def shard_and_load(
     if broadcast_state is not None:
         # When receiver has no weight files, load_model skips quantization.
         # Apply it explicitly so QuantizedLinear layers match broadcast weight shapes.
-        if not has_local_weights:
+        if not has_local_model:
             config_path = model_path / "config.json"
             with open(config_path) as f:
                 config = json.load(f)  # pyright: ignore[reportAny]
@@ -306,15 +309,20 @@ def shard_and_load(
             )
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
-            # Pipeline doesn't shard per-layer, so broadcast all layer weights
-            # sequentially before pipeline_auto_parallel runs.
+            # Broadcast all layers (all_sum is collective — all ranks must
+            # participate) but only load weights for layers this node will
+            # keep after pipeline slicing.  Out-of-range results are discarded,
+            # keeping peak memory proportional to this node's layer count.
             if broadcast_state is not None:
                 for layer_idx in sorted(broadcast_state.layer_names.keys()):
                     layer_weights = broadcast_state.broadcast_layer(layer_idx)
-                    if layer_weights:
-                        model.load_weights(
-                            list(layer_weights.items()), strict=False
-                        )
+                    if (
+                        shard_metadata.start_layer
+                        <= layer_idx
+                        < shard_metadata.end_layer
+                        and layer_weights
+                    ):
+                        model.load_weights(list(layer_weights.items()), strict=False)
                     del layer_weights
             model = pipeline_auto_parallel(model, group, shard_metadata)
             eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
