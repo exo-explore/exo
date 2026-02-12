@@ -267,6 +267,11 @@ def shard_and_load(
         )
         model.load_weights(list(broadcast_weights.items()), strict=False)
 
+    # Free broadcast weight refs before sharding. The model's parameter tree is
+    # now the only holder of these arrays, so they'll be freed as each layer is
+    # replaced with its sharded version in tensor/pipeline_auto_parallel.
+    del broadcast_weights
+
     tokenizer = get_tokenizer(model_path, shard_metadata)
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
