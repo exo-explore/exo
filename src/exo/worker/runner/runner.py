@@ -540,6 +540,7 @@ def main(
                     isinstance(current_status, RunnerConnected) and group is not None
                 ):
                     from exo.worker.engines.mlx.model_transfer import (
+                        coordinate_transfer,
                         has_weight_files,
                         model_path_for_id,
                         transfer_all_files,
@@ -552,7 +553,9 @@ def main(
                         task.shard_metadata.model_card.model_id
                     )
                     has_local = has_weight_files(model_path)
-                    transfer_all_files(model_path, group, has_local)
+                    _, source_rank = coordinate_transfer(group, has_local)
+                    is_source = group.rank() == source_rank
+                    transfer_all_files(model_path, group, is_source)
 
                     logger.info("disk-to-disk model transfer complete")
                     current_status = RunnerShuttingDown()

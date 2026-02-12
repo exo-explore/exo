@@ -219,16 +219,15 @@ def shard_and_load(
 
     broadcast_weights: dict[str, mx.array] | None = None
     if needs_transfer:
+        is_source = group.rank() == source_rank
         logger.info(
             f"Model transfer needed (source_rank={source_rank}, "
-            f"local_weights={has_local_weights})"
+            f"is_source={is_source}, local_weights={has_local_weights})"
         )
         # Step 1: Transfer metadata files (config.json, tokenizer, etc.) to disk
-        transfer_metadata_files(model_path, group, has_local_weights)
+        transfer_metadata_files(model_path, group, is_source)
         # Step 2: Broadcast weight tensors directly into memory
-        broadcast_weights = broadcast_model_weights(
-            model_path, group, has_local_weights
-        )
+        broadcast_weights = broadcast_model_weights(model_path, group, is_source)
 
     # Create model architecture (all ranks have config.json on disk now).
     # Use lazy=False when receiver has no local weights: lazy=True would create

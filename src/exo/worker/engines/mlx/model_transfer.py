@@ -320,16 +320,16 @@ def _transfer_files_to_disk(
 
 
 def transfer_metadata_files(
-    model_path: Path, group: Group, has_local_model: bool
+    model_path: Path, group: Group, is_source: bool
 ) -> None:
     """
     Transfer metadata files (config.json, tokenizer files, etc.) to receivers' disk.
 
     All ranks must call this function (collective operation).
-    Source broadcasts non-safetensors files. Receivers write to model_path.
+    Only the designated source (is_source=True) should send; all others receive.
     """
     _transfer_files_to_disk(
-        model_path, group, is_source=has_local_model, metadata_only=True
+        model_path, group, is_source=is_source, metadata_only=True
     )
 
 
@@ -338,15 +338,15 @@ def transfer_metadata_files(
 # ---------------------------------------------------------------------------
 
 
-def transfer_all_files(model_path: Path, group: Group, has_local_model: bool) -> None:
+def transfer_all_files(model_path: Path, group: Group, is_source: bool) -> None:
     """
     Transfer ALL model files (including safetensors) to receivers' disk.
 
     All ranks must call this function (collective operation).
-    Used for explicit disk-to-disk model distribution.
+    Only the designated source (is_source=True) should send; all others receive.
     """
     _transfer_files_to_disk(
-        model_path, group, is_source=has_local_model, metadata_only=False
+        model_path, group, is_source=is_source, metadata_only=False
     )
 
 
@@ -368,7 +368,7 @@ def _parse_mx_dtype(dtype_str: str) -> mx.Dtype:
 def broadcast_model_weights(
     model_path: Path,
     group: Group,
-    has_local_weights: bool,
+    is_source: bool,
 ) -> dict[str, mx.array]:
     """
     Broadcast model weight tensors from source rank to all receivers' memory.
@@ -378,28 +378,28 @@ def broadcast_model_weights(
     memory — no disk write for weight data.
 
     All ranks must call this function (collective operation).
+    Only the designated source (is_source=True) should send; all others receive.
 
     Returns:
         dict mapping weight names to mx.arrays (on all ranks).
     """
     all_sum = partial(_all_sum_cpu, group=group)
 
-    # Source loads all weights
+    # Source lazily loads weights (data stays on disk until mx.eval per tensor)
     weights: dict[str, mx.array] = {}
-    if has_local_weights:
+    if is_source:
         weight_files = sorted(model_path.glob("*.safetensors"))
         if not weight_files:
             weight_files = sorted(model_path.glob("**/*.safetensors"))
         for wf in weight_files:
-            loaded = mx.load(str(wf))
-            assert isinstance(loaded, dict)
+            loaded = cast(dict[str, mx.array], mx.load(str(wf), lazy=True))  # pyright: ignore[reportCallIssue]
             weights.update(loaded)
         logger.info(
-            f"Source loaded {len(weights)} weight tensors from {len(weight_files)} files"
+            f"Source mapped {len(weights)} weight tensors from {len(weight_files)} files"
         )
 
     # Broadcast weight metadata: {name: {shape, dtype}}
-    if has_local_weights:
+    if is_source:
         source_meta: dict[str, dict[str, Any]] = {
             name: {"s": list(tensor.shape), "d": str(tensor.dtype)}
             for name, tensor in weights.items()
@@ -408,14 +408,14 @@ def broadcast_model_weights(
         source_meta = {}
     meta = cast(
         dict[str, dict[str, Any]],
-        _broadcast_json(
-            source_meta if has_local_weights else None, group, has_local_weights
-        ),
+        _broadcast_json(source_meta if is_source else None, group, is_source),
     )
 
     logger.info(f"Broadcasting {len(meta)} weight tensors")
 
-    # Broadcast each tensor in sorted order (deterministic across ranks)
+    # Broadcast each tensor in sorted order (deterministic across ranks).
+    # Source loads one tensor at a time from disk (lazy), broadcasts it,
+    # then drops the reference so only one tensor is in flight at a time.
     result: dict[str, mx.array] = {}
     for i, name in enumerate(sorted(meta.keys())):
         info = meta[name]
@@ -423,9 +423,9 @@ def broadcast_model_weights(
         dtype_str = cast(str, info["d"])
         dtype = _parse_mx_dtype(dtype_str)
 
-        if has_local_weights:
-            tensor = weights[name]
-            mx.eval(tensor)  # ensure loaded from lazy
+        if is_source:
+            tensor = weights.pop(name)  # pop to free lazy ref after broadcast
+            mx.eval(tensor)  # loads from disk
         else:
             tensor = mx.zeros(shape, dtype=dtype)
 
