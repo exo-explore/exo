@@ -40,6 +40,7 @@
     onToggleFavorite: (baseModelId: string) => void;
     onShowInfo: (group: ModelGroup) => void;
     downloadStatusMap?: Map<string, DownloadAvailability>;
+    launchedAt?: number;
   };
 
   let {
@@ -54,6 +55,7 @@
     onToggleFavorite,
     onShowInfo,
     downloadStatusMap,
+    launchedAt,
   }: ModelPickerGroupProps = $props();
 
   // Group-level download status: show if any variant is downloaded
@@ -73,6 +75,17 @@
       return `${(mb / 1024).toFixed(0)}GB`;
     }
     return `${mb}MB`;
+  }
+
+  function timeAgo(ts: number): string {
+    const seconds = Math.floor((Date.now() - ts) / 1000);
+    if (seconds < 60) return "just now";
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
   }
 
   // Check if any variant can fit
@@ -297,6 +310,13 @@
         {group.variants.length} variants{#if sizes.length >= 2}{" "}({formatSize(
             sizes[0],
           )}-{formatSize(sizes[sizes.length - 1])}){/if}
+      </span>
+    {/if}
+
+    <!-- Time ago (for recent models) -->
+    {#if launchedAt}
+      <span class="text-xs font-mono text-white/20 flex-shrink-0">
+        {timeAgo(launchedAt)}
       </span>
     {/if}
 
