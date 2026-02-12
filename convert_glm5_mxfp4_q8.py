@@ -1,5 +1,10 @@
 """Convert GLM-5 to MXFP4-Q8: experts use MXFP4, dense layers use 8-bit affine.
 
+Matches the same quantization scheme used for mlx-community/GPT-OSS-MXFP4-Q8:
+- Global default: MXFP4 (bits=4, group_size=32) for expert/switch_mlp weights
+- Per-layer overrides: affine Q8 (bits=8, group_size=64) for attention, embeddings,
+  shared experts, dense MLP, lm_head
+
 Usage:
     python convert_glm5_mxfp4_q8.py \
         --hf-path ~/.exo/models/zai-org--GLM-5 \
@@ -17,7 +22,9 @@ from mlx.utils import tree_map_with_path
 
 from mlx_lm.utils import compute_bits_per_weight, load, save, upload_to_hub
 
+# Global default = MXFP4 for expert weights (switch_mlp)
 MXFP4_PARAMS = {"group_size": 32, "bits": 4, "mode": "mxfp4"}
+# Per-layer override = affine Q8 for everything else
 AFFINE_Q8_PARAMS = {"group_size": 64, "bits": 8, "mode": "affine"}
 
 
@@ -25,16 +32,14 @@ def mxfp4_q8_predicate(path: str, module: nn.Module) -> dict | bool:
     """MXFP4 for expert (switch_mlp) weights, 8-bit affine for everything else."""
     if not hasattr(module, "to_quantized"):
         return False
-    if not hasattr(module, "weight"):
-        return False
 
-    # Expert layers get MXFP4
+    # Expert layers get MXFP4 (global default)
     if "switch_mlp" in path:
         if module.weight.shape[-1] % MXFP4_PARAMS["group_size"] != 0:
             return False
         return MXFP4_PARAMS
 
-    # Dense layers get 8-bit affine
+    # Everything else gets 8-bit affine
     if module.weight.shape[-1] % AFFINE_Q8_PARAMS["group_size"] != 0:
         return False
     return AFFINE_Q8_PARAMS
@@ -72,13 +77,15 @@ def main():
 
         model.update(tree_map_with_path(set_dtype, model.parameters()))
 
-    # Build per-layer quantization config
+    # Build quantization config matching GPT-OSS format:
+    # global default = mxfp4, per-layer overrides for Q8 layers
     quantized_config = copy.deepcopy(config)
-    quantized_config["quantization"] = {}
+    quantized_config["quantization"] = {**MXFP4_PARAMS}
 
     def tracked_predicate(path: str, module: nn.Module) -> dict | bool:
         result = mxfp4_q8_predicate(path, module)
-        if isinstance(result, dict):
+        if isinstance(result, dict) and result is not MXFP4_PARAMS:
+            # Only store overrides for non-default (Q8) layers
             quantized_config["quantization"][path] = result
         return result
 
@@ -87,6 +94,7 @@ def main():
         model,
         class_predicate=tracked_predicate,
     )
+    # Duplicate for HF compat (same as mlx_lm.convert does)
     quantized_config["quantization_config"] = quantized_config["quantization"]
 
     bpw = compute_bits_per_weight(model)
