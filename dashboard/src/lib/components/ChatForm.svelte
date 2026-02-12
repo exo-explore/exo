@@ -12,6 +12,8 @@
     ttftMs,
     tps,
     totalTokens,
+    thinkingEnabled as thinkingEnabledStore,
+    setConversationThinking,
   } from "$lib/stores/app.svelte";
   import ChatAttachments from "./ChatAttachments.svelte";
   import ImageParamsPanel from "./ImageParamsPanel.svelte";
@@ -25,6 +27,7 @@
     autofocus?: boolean;
     showModelSelector?: boolean;
     modelTasks?: Record<string, string[]>;
+    modelCapabilities?: Record<string, string[]>;
   }
 
   let {
@@ -34,6 +37,7 @@
     autofocus = true,
     showModelSelector = false,
     modelTasks = {},
+    modelCapabilities = {},
   }: Props = $props();
 
   let message = $state("");
@@ -41,6 +45,7 @@
   let fileInputRef: HTMLInputElement | undefined = $state();
   let uploadedFiles = $state<ChatUploadedFile[]>([]);
   let isDragOver = $state(false);
+  const thinkingEnabled = $derived(thinkingEnabledStore());
   let loading = $derived(isLoading());
   const currentModel = $derived(selectedChatModel());
   const instanceData = $derived(instances());
@@ -93,6 +98,12 @@
       modelSupportsTextToImage(currentModel) ||
       modelSupportsImageEditing(currentModel)
     );
+  });
+
+  const modelSupportsThinking = $derived(() => {
+    if (!currentModel) return false;
+    const caps = modelCapabilities[currentModel] || [];
+    return caps.includes("thinking") && caps.includes("text");
   });
 
   const isEditOnlyWithoutImage = $derived(
@@ -282,7 +293,11 @@
       // Use image generation for text-to-image models
       generateImage(content);
     } else {
-      sendMessage(content, files);
+      sendMessage(
+        content,
+        files,
+        modelSupportsThinking() ? thinkingEnabled : null,
+      );
     }
 
     // Refocus the textarea after sending
@@ -520,6 +535,35 @@
             </div>
           {/if}
         </div>
+        <!-- Thinking toggle -->
+        {#if modelSupportsThinking()}
+          <button
+            type="button"
+            onclick={() => setConversationThinking(!thinkingEnabled)}
+            class="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-mono tracking-wide transition-all duration-200 flex-shrink-0 cursor-pointer border {thinkingEnabled
+              ? 'bg-exo-yellow/15 border-exo-yellow/40 text-exo-yellow'
+              : 'bg-exo-medium-gray/30 border-exo-medium-gray/50 text-exo-light-gray/60 hover:text-exo-light-gray'}"
+            title={thinkingEnabled
+              ? "Thinking enabled — click to disable"
+              : "Thinking disabled — click to enable"}
+          >
+            <svg
+              class="w-3.5 h-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+            >
+              <path
+                d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7zM9 20h6M10 22h4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span>{thinkingEnabled ? "THINK" : "NO THINK"}</span>
+          </button>
+        {/if}
+
         <!-- Performance stats -->
         {#if currentTtft !== null || currentTps !== null}
           <div class="flex items-center gap-4 text-xs font-mono flex-shrink-0">
