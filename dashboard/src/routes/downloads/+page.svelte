@@ -232,14 +232,13 @@
       }
 
       const rows = Array.from(rowMap.values()).sort((a, b) => {
-        const aHasActive = Object.values(a.cells).some(
-          (c) => c.kind === "downloading",
-        );
-        const bHasActive = Object.values(b.cells).some(
-          (c) => c.kind === "downloading",
-        );
-        if (aHasActive && !bHasActive) return -1;
-        if (!aHasActive && bHasActive) return 1;
+        const aCompleted = Object.values(a.cells).filter(
+          (c) => c.kind === "completed",
+        ).length;
+        const bCompleted = Object.values(b.cells).filter(
+          (c) => c.kind === "completed",
+        ).length;
+        if (aCompleted !== bCompleted) return bCompleted - aCompleted;
         return a.modelId.localeCompare(b.modelId);
       });
 
