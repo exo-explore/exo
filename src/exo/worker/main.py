@@ -24,6 +24,7 @@ from exo.shared.types.events import (
     ForwarderEvent,
     IndexedEvent,
     InputChunkReceived,
+    JacclSideChannelGathered,
     NodeGatheredInfo,
     TaskCreated,
     TaskStatusUpdated,
@@ -157,6 +158,15 @@ class Worker:
 
                 for idx, event in indexed_events:
                     self.state = apply(self.state, IndexedEvent(idx=idx, event=event))
+
+                    # Dispatch JACCL gathered events to the relevant RunnerSupervisor
+                    if isinstance(event, JacclSideChannelGathered):
+                        for runner in self.runners.values():
+                            if (
+                                runner.bound_instance.instance.instance_id
+                                == event.instance_id
+                            ):
+                                runner.notify_gathered(event)
 
                     # Buffer input image chunks for image editing
                     if isinstance(event, InputChunkReceived):

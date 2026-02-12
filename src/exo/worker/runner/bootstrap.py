@@ -16,6 +16,7 @@ def entrypoint(
     event_sender: MpSender[Event],
     task_receiver: MpReceiver[Task],
     _logger: "loguru.Logger",
+    pipe_fds: tuple[int, int] | None = None,
 ) -> None:
     fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
     if fast_synch_override == "on" or (
@@ -28,6 +29,12 @@ def entrypoint(
         os.environ["MLX_METAL_FAST_SYNCH"] = "1"
     else:
         os.environ["MLX_METAL_FAST_SYNCH"] = "0"
+
+    # Set up JACCL pipe-based SideChannel env vars if pipe fds were provided
+    if pipe_fds is not None:
+        mlx_reads, mlx_writes = pipe_fds
+        os.environ["MLX_JACCL_PIPE_IN"] = str(mlx_reads)
+        os.environ["MLX_JACCL_PIPE_OUT"] = str(mlx_writes)
 
     global logger
     logger = _logger

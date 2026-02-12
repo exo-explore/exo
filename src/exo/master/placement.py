@@ -63,9 +63,7 @@ def place_instance(
     required_nodes: set[NodeId] | None = None,
 ) -> dict[InstanceId, Instance]:
     cycles = topology.get_cycles()
-    candidate_cycles = list(
-        filter(lambda it: len(it) >= command.min_nodes, cycles)
-    )
+    candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
 
     # Filter to cycles containing all required nodes (subset matching)
     if required_nodes:

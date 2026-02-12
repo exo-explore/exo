@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from datetime import datetime
 from typing import final
 
@@ -157,6 +158,25 @@ class TracesMerged(BaseEvent):
     traces: list[TraceEventData]
 
 
+@final
+class JacclSideChannelData(BaseEvent):
+    """A runner's local contribution to a JACCL SideChannel all_gather round."""
+
+    instance_id: InstanceId
+    runner_id: RunnerId
+    sequence: int
+    data: bytes
+
+
+@final
+class JacclSideChannelGathered(BaseEvent):
+    """Gathered result of a JACCL SideChannel all_gather round."""
+
+    instance_id: InstanceId
+    sequence: int
+    gathered_data: Mapping[RunnerId, bytes]
+
+
 Event = (
     TestEvent
     | TaskCreated
@@ -181,6 +201,8 @@ Event = (
     | TopologyEdgeDeleted
     | TracesCollected
     | TracesMerged
+    | JacclSideChannelData
+    | JacclSideChannelGathered
 )
 
 

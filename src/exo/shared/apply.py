@@ -13,6 +13,8 @@ from exo.shared.types.events import (
     InstanceCreated,
     InstanceDeleted,
     InstanceRetrying,
+    JacclSideChannelData,
+    JacclSideChannelGathered,
     MetaInstanceCreated,
     MetaInstanceDeleted,
     MetaInstancePlacementFailed,
@@ -71,6 +73,8 @@ def event_apply(event: Event, state: State) -> State:
             | InputChunkReceived()
             | TracesCollected()
             | TracesMerged()
+            | JacclSideChannelData()
+            | JacclSideChannelGathered()
         ):  # Pass-through events that don't modify state
             return state
         case InstanceCreated():
@@ -252,9 +256,7 @@ def apply_instance_retrying(event: InstanceRetrying, state: State) -> State:
     # Remove all runners belonging to this instance from state
     runner_ids_to_remove = set(instance.shard_assignments.node_to_runner.values())
     new_runners: Mapping[RunnerId, RunnerStatus] = {
-        rid: rs
-        for rid, rs in state.runners.items()
-        if rid not in runner_ids_to_remove
+        rid: rs for rid, rs in state.runners.items() if rid not in runner_ids_to_remove
     }
 
     update: dict[str, object] = {"runners": new_runners}
@@ -264,7 +266,10 @@ def apply_instance_retrying(event: InstanceRetrying, state: State) -> State:
         update["meta_instances"] = _update_meta_instance(
             state,
             event.meta_instance_id,
-            consecutive_failures=state.meta_instances[event.meta_instance_id].consecutive_failures + 1,
+            consecutive_failures=state.meta_instances[
+                event.meta_instance_id
+            ].consecutive_failures
+            + 1,
             last_failure_error=event.failure_error,
         )
 

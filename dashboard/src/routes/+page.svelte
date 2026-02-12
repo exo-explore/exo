@@ -1274,7 +1274,8 @@
           typeof runnerData === "object"
         ) {
           const rd = runnerData as { errorMessage?: string };
-          if (rd.errorMessage) failedErrors.push(`${getNodeName(nodeId)}: ${rd.errorMessage}`);
+          if (rd.errorMessage)
+            failedErrors.push(`${getNodeName(nodeId)}: ${rd.errorMessage}`);
         }
       }
       if (status) {
@@ -1305,7 +1306,12 @@
         errorMessage: failedErrors.length > 0 ? failedErrors.join("; ") : null,
       };
     if (has("Shutdown"))
-      return { statusText: "SHUTDOWN", statusClass: "inactive", perNodeStatus, errorMessage: null };
+      return {
+        statusText: "SHUTDOWN",
+        statusClass: "inactive",
+        perNodeStatus,
+        errorMessage: null,
+      };
 
     // For loading/warming states, show node progress when multi-node
     if (has("Loading")) {
@@ -1314,7 +1320,12 @@
         totalNodes > 1
           ? `LOADING (${readyCount}/${totalNodes} nodes ready)`
           : "LOADING";
-      return { statusText, statusClass: "starting", perNodeStatus, errorMessage: null };
+      return {
+        statusText,
+        statusClass: "starting",
+        perNodeStatus,
+        errorMessage: null,
+      };
     }
     if (has("WarmingUp")) {
       const readyCount = count("Ready") + count("Running");
@@ -1322,23 +1333,63 @@
         totalNodes > 1
           ? `WARMING UP (${readyCount}/${totalNodes} nodes ready)`
           : "WARMING UP";
-      return { statusText, statusClass: "starting", perNodeStatus, errorMessage: null };
+      return {
+        statusText,
+        statusClass: "starting",
+        perNodeStatus,
+        errorMessage: null,
+      };
     }
 
     if (has("Running"))
-      return { statusText: "RUNNING", statusClass: "running", perNodeStatus, errorMessage: null };
+      return {
+        statusText: "RUNNING",
+        statusClass: "running",
+        perNodeStatus,
+        errorMessage: null,
+      };
     if (has("Ready"))
-      return { statusText: "READY", statusClass: "loaded", perNodeStatus, errorMessage: null };
+      return {
+        statusText: "READY",
+        statusClass: "loaded",
+        perNodeStatus,
+        errorMessage: null,
+      };
     if (has("Loaded"))
-      return { statusText: "LOADED", statusClass: "loaded", perNodeStatus, errorMessage: null };
+      return {
+        statusText: "LOADED",
+        statusClass: "loaded",
+        perNodeStatus,
+        errorMessage: null,
+      };
     if (has("WaitingForModel"))
-      return { statusText: "WAITING", statusClass: "starting", perNodeStatus, errorMessage: null };
+      return {
+        statusText: "WAITING",
+        statusClass: "starting",
+        perNodeStatus,
+        errorMessage: null,
+      };
     if (has("InitializingBackend"))
-      return { statusText: "INITIALIZING", statusClass: "starting", perNodeStatus, errorMessage: null };
+      return {
+        statusText: "INITIALIZING",
+        statusClass: "starting",
+        perNodeStatus,
+        errorMessage: null,
+      };
     if (has("WaitingForInitialization"))
-      return { statusText: "INITIALIZING", statusClass: "starting", perNodeStatus, errorMessage: null };
+      return {
+        statusText: "INITIALIZING",
+        statusClass: "starting",
+        perNodeStatus,
+        errorMessage: null,
+      };
 
-    return { statusText: "RUNNING", statusClass: "active", perNodeStatus, errorMessage: null };
+    return {
+      statusText: "RUNNING",
+      statusClass: "active",
+      perNodeStatus,
+      errorMessage: null,
+    };
   }
 
   function getBytes(value: unknown): number {
@@ -2066,8 +2117,8 @@
             class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-red-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
           >
             <p class="text-xs text-white/80 mb-2">
-              A macOS RDMA driver error was detected. This is a known issue
-              with the experimental RDMA driver in macOS.
+              A macOS RDMA driver error was detected. This is a known issue with
+              the experimental RDMA driver in macOS.
             </p>
             <p class="text-xs text-white/60 mb-2">
               <span class="text-red-300">Error:</span>
@@ -2655,12 +2706,15 @@
                   {@const downloadInfo = instance
                     ? getInstanceDownloadStatus(item.instanceId ?? id, instance)
                     : getMetaInstancePlacingStatus(id)}
-                  {@const metaData = item.isMetaInstance ? metaInstancesData[id] : null}
-                  {@const retryError = metaData?.lastFailureError && !downloadInfo.isFailed
-                    ? metaData.consecutiveFailures > 0
-                      ? `(${((metaData.consecutiveFailures - 1) % 3) + 1}/3) ${metaData.lastFailureError}`
-                      : metaData.lastFailureError
+                  {@const metaData = item.isMetaInstance
+                    ? metaInstancesData[id]
                     : null}
+                  {@const retryError =
+                    metaData?.lastFailureError && !downloadInfo.isFailed
+                      ? metaData.consecutiveFailures > 0
+                        ? `(${((metaData.consecutiveFailures - 1) % 3) + 1}/3) ${metaData.lastFailureError}`
+                        : metaData.lastFailureError
+                      : null}
                   {@const statusText = downloadInfo.statusText}
                   {@const isDownloading = downloadInfo.isDownloading}
                   {@const isFailed =
@@ -3523,12 +3577,15 @@
                           instance,
                         )
                       : getMetaInstancePlacingStatus(id)}
-                    {@const metaData = item.isMetaInstance ? metaInstancesData[id] : null}
-                    {@const retryError = metaData?.lastFailureError && !downloadInfo.isFailed
-                      ? metaData.consecutiveFailures > 0
-                        ? `(${((metaData.consecutiveFailures - 1) % 3) + 1}/3) ${metaData.lastFailureError}`
-                        : metaData.lastFailureError
+                    {@const metaData = item.isMetaInstance
+                      ? metaInstancesData[id]
                       : null}
+                    {@const retryError =
+                      metaData?.lastFailureError && !downloadInfo.isFailed
+                        ? metaData.consecutiveFailures > 0
+                          ? `(${((metaData.consecutiveFailures - 1) % 3) + 1}/3) ${metaData.lastFailureError}`
+                          : metaData.lastFailureError
+                        : null}
                     {@const statusText = downloadInfo.statusText}
                     {@const isDownloading = downloadInfo.isDownloading}
                     {@const isFailed =
@@ -3539,7 +3596,7 @@
                       statusText.startsWith("WARMING UP") ||
                       statusText === "WAITING" ||
                       statusText === "PLACING" ||
-                    statusText.startsWith("RETRYING")}
+                      statusText.startsWith("RETRYING")}
                     {@const isReady =
                       statusText === "READY" || statusText === "LOADED"}
                     {@const isRunning = statusText === "RUNNING"}
