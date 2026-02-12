@@ -230,8 +230,11 @@ def shard_and_load(
             model_path, group, has_local_weights
         )
 
-    # Create model architecture (all ranks have config.json on disk now)
-    model, _ = load_model(model_path, lazy=True, strict=False)
+    # Create model architecture (all ranks have config.json on disk now).
+    # Use lazy=False when receiver has no local weights: lazy=True would create
+    # dangling references to nonexistent safetensors files.
+    use_lazy = has_local_weights or not needs_transfer
+    model, _ = load_model(model_path, lazy=use_lazy, strict=False)
     logger.debug(model)
     if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
         pass

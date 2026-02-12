@@ -52,7 +52,13 @@ def _all_sum_cpu(x: mx.array, group: Group) -> mx.array:
 
 
 def _is_metadata_file(filename: str) -> bool:
-    """Check if a file is a metadata file (not a weight file)."""
+    """Check if a file is a metadata file (not a weight file).
+
+    Excludes safetensors index files (e.g. model.safetensors.index.json) since
+    they reference .safetensors shard files that won't exist on the receiver.
+    """
+    if filename.endswith(".safetensors.index.json"):
+        return False
     _, ext = os.path.splitext(filename)
     return ext.lower() in _METADATA_EXTENSIONS
 
