@@ -822,6 +822,7 @@ class AppStore {
     this.hasStartedChat = true;
     this.isTopologyMinimized = true;
     this.isSidebarOpen = true; // Auto-open sidebar when chatting
+    this.thinkingEnabled = conversation.enableThinking ?? true;
     this.refreshConversationModelFromInstances();
 
     return true;
@@ -1936,6 +1937,11 @@ class AppStore {
   }
 
   /**
+   * Whether thinking is enabled for the current conversation
+   */
+  thinkingEnabled = $state(true);
+
+  /**
    * Selected model for chat (can be set by the UI)
    */
   selectedChatModel = $state("");
@@ -2125,15 +2131,6 @@ class AppStore {
     // Capture the target conversation ID at the start of the request
     const targetConversationId = this.activeConversationId;
     if (!targetConversationId) return;
-
-    // Persist thinking preference on the conversation
-    if (enableThinking != null) {
-      const conv = this.conversations.find((c) => c.id === targetConversationId);
-      if (conv) {
-        conv.enableThinking = enableThinking;
-        this.saveConversationsToStorage();
-      }
-    }
 
     this.isLoading = true;
     this.currentResponse = "";
@@ -2932,6 +2929,18 @@ class AppStore {
   }
 
   /**
+   * Update the thinking preference for the active conversation
+   */
+  setConversationThinking(enabled: boolean) {
+    this.thinkingEnabled = enabled;
+    const conv = this.getActiveConversation();
+    if (conv) {
+      conv.enableThinking = enabled;
+      this.saveConversationsToStorage();
+    }
+  }
+
+  /**
    * Start a download on a specific node
    */
   async startDownload(nodeId: string, shardMetadata: object): Promise<void> {
@@ -3044,6 +3053,7 @@ export const isLoadingPreviews = () => appStore.isLoadingPreviews;
 export const lastUpdate = () => appStore.lastUpdate;
 export const isTopologyMinimized = () => appStore.isTopologyMinimized;
 export const selectedChatModel = () => appStore.selectedChatModel;
+export const thinkingEnabled = () => appStore.thinkingEnabled;
 export const debugMode = () => appStore.getDebugMode();
 export const topologyOnlyMode = () => appStore.getTopologyOnlyMode();
 export const chatSidebarVisible = () => appStore.getChatSidebarVisible();
@@ -3103,6 +3113,8 @@ export const deleteAllConversations = () => appStore.deleteAllConversations();
 export const renameConversation = (id: string, name: string) =>
   appStore.renameConversation(id, name);
 export const getActiveConversation = () => appStore.getActiveConversation();
+export const setConversationThinking = (enabled: boolean) =>
+  appStore.setConversationThinking(enabled);
 
 // Sidebar actions
 export const isSidebarOpen = () => appStore.isSidebarOpen;

@@ -12,7 +12,8 @@
     ttftMs,
     tps,
     totalTokens,
-    getActiveConversation,
+    thinkingEnabled as thinkingEnabledStore,
+    setConversationThinking,
   } from "$lib/stores/app.svelte";
   import ChatAttachments from "./ChatAttachments.svelte";
   import ImageParamsPanel from "./ImageParamsPanel.svelte";
@@ -44,8 +45,7 @@
   let fileInputRef: HTMLInputElement | undefined = $state();
   let uploadedFiles = $state<ChatUploadedFile[]>([]);
   let isDragOver = $state(false);
-  let thinkingEnabled = $state(true);
-  const activeConversation = $derived(getActiveConversation());
+  const thinkingEnabled = $derived(thinkingEnabledStore());
   let loading = $derived(isLoading());
   const currentModel = $derived(selectedChatModel());
   const instanceData = $derived(instances());
@@ -175,19 +175,6 @@
 
     // Update previous model IDs for next comparison
     previousModelIds = currentModelIds;
-  });
-
-  // Sync thinking toggle with the active conversation's persisted preference
-  let lastConversationId: string | null = null;
-  $effect(() => {
-    const conv = activeConversation;
-    if (conv && conv.id !== lastConversationId) {
-      lastConversationId = conv.id;
-      thinkingEnabled = conv.enableThinking ?? true;
-    } else if (!conv) {
-      lastConversationId = null;
-      thinkingEnabled = true;
-    }
   });
 
   function getInstanceModelId(instanceWrapped: unknown): string {
@@ -552,7 +539,7 @@
         {#if modelSupportsThinking()}
           <button
             type="button"
-            onclick={() => (thinkingEnabled = !thinkingEnabled)}
+            onclick={() => setConversationThinking(!thinkingEnabled)}
             class="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-mono tracking-wide transition-all duration-200 flex-shrink-0 cursor-pointer border {thinkingEnabled
               ? 'bg-exo-yellow/15 border-exo-yellow/40 text-exo-yellow'
               : 'bg-exo-medium-gray/30 border-exo-medium-gray/50 text-exo-light-gray/60 hover:text-exo-light-gray'}"
