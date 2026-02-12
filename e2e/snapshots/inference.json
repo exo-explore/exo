@@ -1,0 +1,8 @@
+{
+  "model": "mlx-community/Qwen3-0.6B-4bit",
+  "seed": 42,
+  "temperature": 0,
+  "prompt": "What is 2+2? Reply with just the number.",
+  "max_tokens": 32,
+  "content": "<think>\nOkay, so I need to figure out what 2+2 is. Let me think. Well, if you add 2 and 2 together"
+}
