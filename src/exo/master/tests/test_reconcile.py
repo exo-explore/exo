@@ -664,7 +664,7 @@ def test_apply_instance_retrying_skips_missing_runners():
 
 
 def test_apply_instance_created_resets_failure_counter():
-    """InstanceCreated resets consecutive_failures on the MetaInstance."""
+    """InstanceCreated resets consecutive_failures but preserves last_failure_error."""
     meta = _meta_instance().model_copy(
         update={"consecutive_failures": 3, "last_failure_error": "old error"}
     )
@@ -674,7 +674,7 @@ def test_apply_instance_created_resets_failure_counter():
     new_state = apply(state, IndexedEvent(idx=0, event=event))
     mi = new_state.meta_instances[meta.meta_instance_id]
     assert mi.consecutive_failures == 0
-    assert mi.last_failure_error is None
+    assert mi.last_failure_error == "old error"
     assert mi.placement_error is None
 
 

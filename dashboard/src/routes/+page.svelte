@@ -2080,7 +2080,7 @@
           >
             <p class="text-xs text-white/80 mb-2">
               A macOS RDMA driver error was detected. This is a known issue
-              with the experimental jaccl driver.
+              with the experimental RDMA driver in macOS.
             </p>
             <p class="text-xs text-white/60 mb-2">
               <span class="text-red-300">Error:</span>
@@ -2671,7 +2671,9 @@
                     : getMetaInstancePlacingStatus(id)}
                   {@const metaData = item.isMetaInstance ? metaInstancesData[id] : null}
                   {@const retryError = metaData?.lastFailureError && !downloadInfo.isFailed
-                    ? `(${((metaData.consecutiveFailures - 1) % 3) + 1}/3) ${metaData.lastFailureError}`
+                    ? metaData.consecutiveFailures > 0
+                      ? `(${((metaData.consecutiveFailures - 1) % 3) + 1}/3) ${metaData.lastFailureError}`
+                      : metaData.lastFailureError
                     : null}
                   {@const statusText = downloadInfo.statusText}
                   {@const isDownloading = downloadInfo.isDownloading}
@@ -3538,7 +3540,9 @@
                       : getMetaInstancePlacingStatus(id)}
                     {@const metaData = item.isMetaInstance ? metaInstancesData[id] : null}
                     {@const retryError = metaData?.lastFailureError && !downloadInfo.isFailed
-                      ? `(${((metaData.consecutiveFailures - 1) % 3) + 1}/3) ${metaData.lastFailureError}`
+                      ? metaData.consecutiveFailures > 0
+                        ? `(${((metaData.consecutiveFailures - 1) % 3) + 1}/3) ${metaData.lastFailureError}`
+                        : metaData.lastFailureError
                       : null}
                     {@const statusText = downloadInfo.statusText}
                     {@const isDownloading = downloadInfo.isDownloading}
