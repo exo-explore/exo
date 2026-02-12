@@ -10,7 +10,14 @@ on:
 jobs:
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
+          docker system prune -af
+          df -h /
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
