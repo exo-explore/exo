@@ -1,10 +1,11 @@
 """Shared E2E test infrastructure for exo cluster tests."""
 
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import urlopen, Request
 from urllib.error import URLError
 
 E2E_DIR = Path(__file__).parent.resolve()
@@ -112,3 +113,47 @@ class Cluster:
         await self.wait_for("Nodes discovered each other", nodes_discovered)
         await self.wait_for("Master election resolved", master_elected)
         await self.wait_for("API responding", api_responding)
+
+    async def _api(self, method: str, path: str, body: dict | None = None, timeout: int = 30) -> dict:
+        """Make an API request to the cluster. Returns parsed JSON."""
+        url = f"http://localhost:52415{path}"
+        data = json.dumps(body).encode() if body else None
+        req = Request(url, data=data, headers={"Content-Type": "application/json"}, method=method)
+        loop = asyncio.get_event_loop()
+        resp_bytes = await loop.run_in_executor(None, lambda: urlopen(req, timeout=timeout).read())
+        return json.loads(resp_bytes)
+
+    async def place_model(self, model: str, timeout: int = 600):
+        """Place a model instance on the cluster (triggers download) and wait until it's ready."""
+        await self._api("POST", "/place_instance", {"model_id": model})
+
+        async def model_ready():
+            try:
+                resp = await self._api("GET", "/v1/models")
+                return any(m.get("id") == model for m in resp.get("data", []))
+            except Exception:
+                return False
+
+        await self.wait_for(f"Model {model} ready", model_ready, timeout=timeout)
+
+    async def chat(self, model: str, messages: list[dict], timeout: int = 600, **kwargs) -> dict:
+        """Send a chat completion request. Retries until model is downloaded and inference completes."""
+        body = json.dumps({"model": model, "messages": messages, **kwargs}).encode()
+        deadline = asyncio.get_event_loop().time() + timeout
+        last_error = None
+
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                req = Request(
+                    "http://localhost:52415/v1/chat/completions",
+                    data=body,
+                    headers={"Content-Type": "application/json"},
+                )
+                loop = asyncio.get_event_loop()
+                resp_bytes = await loop.run_in_executor(None, lambda: urlopen(req, timeout=300).read())
+                return json.loads(resp_bytes)
+            except Exception as e:
+                last_error = e
+                await asyncio.sleep(5)
+
+        raise TimeoutError(f"Chat request failed after {timeout}s: {last_error}")
