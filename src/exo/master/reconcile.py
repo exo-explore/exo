@@ -133,7 +133,11 @@ def instance_runners_failed(
             has_any_failed = True
             if status.error_message:
                 node_id = runner_to_node.get(runner_id)
-                name = node_identities[node_id].friendly_name if node_id and node_id in node_identities else node_id or "unknown"
+                name = (
+                    node_identities[node_id].friendly_name
+                    if node_id and node_id in node_identities
+                    else node_id or "unknown"
+                )
                 error_messages.append(f"{name}: {status.error_message}")
         elif isinstance(status, RunnerShutdown):
             pass  # Terminal but not a failure indicator on its own
