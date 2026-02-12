@@ -297,6 +297,19 @@ def _load_model(
     return None
 
 
+def _node_has_download(
+    nid: NodeId,
+    model_id: ModelId,
+    global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+) -> bool:
+    """Check if a specific node has completed downloading the given model."""
+    return any(
+        isinstance(dp, DownloadCompleted)
+        and dp.shard_metadata.model_card.model_id == model_id
+        for dp in global_download_status.get(nid, [])
+    )
+
+
 def _any_peer_has_model(
     node_id: NodeId,
     model_id: ModelId,
@@ -304,16 +317,11 @@ def _any_peer_has_model(
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
 ) -> bool:
     """Check if any other node in the instance already has the model downloaded."""
-    for peer_nid in instance.shard_assignments.node_to_runner:
-        if peer_nid == node_id:
-            continue
-        for dp in global_download_status.get(peer_nid, []):
-            if (
-                isinstance(dp, DownloadCompleted)
-                and dp.shard_metadata.model_card.model_id == model_id
-            ):
-                return True
-    return False
+    return any(
+        _node_has_download(nid, model_id, global_download_status)
+        for nid in instance.shard_assignments.node_to_runner
+        if nid != node_id
+    )
 
 
 def _all_downloads_complete(
@@ -322,12 +330,7 @@ def _all_downloads_complete(
 ) -> bool:
     """Check if ALL nodes in the instance have completed downloading the model."""
     return all(
-        nid in global_download_status
-        and any(
-            isinstance(dp, DownloadCompleted)
-            and dp.shard_metadata.model_card.model_id == shard_assignments.model_id
-            for dp in global_download_status[nid]
-        )
+        _node_has_download(nid, shard_assignments.model_id, global_download_status)
         for nid in shard_assignments.node_to_runner
     )
 
@@ -338,12 +341,7 @@ def _any_download_complete(
 ) -> bool:
     """Check if at least one node in the instance has completed downloading the model."""
     return any(
-        nid in global_download_status
-        and any(
-            isinstance(dp, DownloadCompleted)
-            and dp.shard_metadata.model_card.model_id == shard_assignments.model_id
-            for dp in global_download_status[nid]
-        )
+        _node_has_download(nid, shard_assignments.model_id, global_download_status)
         for nid in shard_assignments.node_to_runner
     )
 
