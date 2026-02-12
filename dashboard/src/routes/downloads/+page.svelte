@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { fade, fly } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
   import {
     topologyData,
     downloads,
@@ -30,11 +32,22 @@
     | { kind: "failed" }
     | { kind: "not_present" };
 
+  type ModelCardInfo = {
+    family: string;
+    quantization: string;
+    baseModel: string;
+    capabilities: string[];
+    storageSize: number;
+    nLayers: number;
+    supportsTensor: boolean;
+  };
+
   type ModelRow = {
     modelId: string;
     prettyName: string | null;
     cells: Record<string, CellStatus>;
     shardMetadata: Record<string, unknown> | null;
+    modelCard: ModelCardInfo | null;
   };
 
   type NodeColumn = {
@@ -119,8 +132,46 @@
     return CELL_PRIORITY[candidate.kind] > CELL_PRIORITY[existing.kind];
   }
 
+  function extractModelCard(payload: Record<string, unknown>): {
+    prettyName: string | null;
+    card: ModelCardInfo | null;
+  } {
+    const shardMetadata = payload.shard_metadata ?? payload.shardMetadata;
+    if (!shardMetadata || typeof shardMetadata !== "object")
+      return { prettyName: null, card: null };
+    const shardObj = shardMetadata as Record<string, unknown>;
+    const shardKeys = Object.keys(shardObj);
+    if (shardKeys.length !== 1) return { prettyName: null, card: null };
+    const shardData = shardObj[shardKeys[0]] as Record<string, unknown>;
+    const modelMeta = shardData?.model_card ?? shardData?.modelCard;
+    if (!modelMeta || typeof modelMeta !== "object")
+      return { prettyName: null, card: null };
+    const meta = modelMeta as Record<string, unknown>;
+
+    const prettyName = (meta.prettyName as string) ?? null;
+
+    const card: ModelCardInfo = {
+      family: (meta.family as string) ?? "",
+      quantization: (meta.quantization as string) ?? "",
+      baseModel:
+        (meta.base_model as string) ?? (meta.baseModel as string) ?? "",
+      capabilities: Array.isArray(meta.capabilities)
+        ? (meta.capabilities as string[])
+        : [],
+      storageSize: getBytes(meta.storage_size ?? meta.storageSize),
+      nLayers: (meta.n_layers as number) ?? (meta.nLayers as number) ?? 0,
+      supportsTensor:
+        (meta.supports_tensor as boolean) ??
+        (meta.supportsTensor as boolean) ??
+        false,
+    };
+
+    return { prettyName, card };
+  }
+
   let modelRows = $state<ModelRow[]>([]);
   let nodeColumns = $state<NodeColumn[]>([]);
+  let infoRow = $state<ModelRow | null>(null);
 
   $effect(() => {
     try {
@@ -157,21 +208,7 @@
 
           const modelId =
             extractModelIdFromDownload(payload) ?? "unknown-model";
-
-          const prettyName = (() => {
-            const shardMetadata =
-              payload.shard_metadata ?? payload.shardMetadata;
-            if (!shardMetadata || typeof shardMetadata !== "object")
-              return null;
-            const shardObj = shardMetadata as Record<string, unknown>;
-            const shardKeys = Object.keys(shardObj);
-            if (shardKeys.length !== 1) return null;
-            const shardData = shardObj[shardKeys[0]] as Record<string, unknown>;
-            const modelMeta = shardData?.model_card ?? shardData?.modelCard;
-            if (!modelMeta || typeof modelMeta !== "object") return null;
-            const meta = modelMeta as Record<string, unknown>;
-            return (meta.prettyName as string) ?? null;
-          })();
+          const { prettyName, card } = extractModelCard(payload);
 
           if (!rowMap.has(modelId)) {
             rowMap.set(modelId, {
@@ -179,12 +216,14 @@
               prettyName,
               cells: {},
               shardMetadata: extractShardMetadata(payload),
+              modelCard: card,
             });
           }
           const row = rowMap.get(modelId)!;
           if (prettyName && !row.prettyName) row.prettyName = prettyName;
           if (!row.shardMetadata)
             row.shardMetadata = extractShardMetadata(payload);
+          if (!row.modelCard && card) row.modelCard = card;
 
           let cell: CellStatus;
           if (tag === "DownloadCompleted") {
@@ -312,7 +351,7 @@
           <thead>
             <tr class="border-b border-exo-medium-gray/30">
               <th
-                class="sticky left-0 z-10 bg-exo-black px-4 py-3 text-[11px] uppercase tracking-wider text-exo-yellow font-medium whitespace-nowrap"
+                class="sticky left-0 z-10 bg-exo-black px-4 py-3 text-[11px] uppercase tracking-wider text-exo-yellow font-medium whitespace-nowrap border-r border-exo-medium-gray/20"
               >
                 Model
               </th>
@@ -338,29 +377,46 @@
                 class="group border-b border-exo-medium-gray/20 hover:bg-exo-medium-gray/10 transition-colors"
               >
                 <td
-                  class="sticky left-0 z-10 bg-exo-dark-gray group-hover:bg-[oklch(0.18_0_0)] transition-colors px-4 py-3 whitespace-nowrap"
+                  class="sticky left-0 z-10 bg-exo-dark-gray group-hover:bg-[oklch(0.18_0_0)] transition-colors px-4 py-3 whitespace-nowrap border-r border-exo-medium-gray/20"
                 >
-                  <div
-                    class="text-white text-xs truncate max-w-[280px]"
-                    title={row.modelId}
-                  >
-                    {row.prettyName ?? row.modelId}
-                  </div>
-                  {#if row.prettyName}
-                    <div
-                      class="text-[10px] text-exo-light-gray/60 truncate max-w-[280px]"
-                      title={row.modelId}
-                    >
-                      {row.modelId}
+                  <div class="flex items-center gap-2">
+                    <div class="min-w-0">
+                      <div class="text-white text-xs" title={row.modelId}>
+                        {row.prettyName ?? row.modelId}
+                      </div>
+                      {#if row.prettyName}
+                        <div
+                          class="text-[10px] text-exo-light-gray/60"
+                          title={row.modelId}
+                        >
+                          {row.modelId}
+                        </div>
+                      {/if}
                     </div>
-                  {/if}
+                    <button
+                      type="button"
+                      class="p-1 rounded hover:bg-white/10 transition-colors flex-shrink-0 opacity-60 group-hover:opacity-100"
+                      onclick={() => (infoRow = row)}
+                      title="View model details"
+                    >
+                      <svg
+                        class="w-4 h-4 text-white/30 hover:text-white/60"
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                      >
+                        <path
+                          d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
+                        />
+                      </svg>
+                    </button>
+                  </div>
                 </td>
 
                 {#each nodeColumns as col}
                   {@const cell = row.cells[col.nodeId] ?? {
                     kind: "not_present" as const,
                   }}
-                  <td class="px-4 py-3 text-center">
+                  <td class="px-4 py-3 text-center align-middle">
                     {#if cell.kind === "completed"}
                       <div
                         class="flex flex-col items-center gap-0.5"
@@ -518,6 +574,141 @@
     {/if}
   </div>
 </div>
+
+<!-- Info modal -->
+{#if infoRow}
+  <div
+    class="fixed inset-0 z-[60] bg-black/60"
+    transition:fade={{ duration: 150 }}
+    onclick={() => (infoRow = null)}
+    role="presentation"
+  ></div>
+  <div
+    class="fixed z-[60] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(80vw,400px)] bg-exo-dark-gray border border-exo-yellow/10 rounded-lg shadow-2xl p-4"
+    transition:fly={{ y: 10, duration: 200, easing: cubicOut }}
+    role="dialog"
+    aria-modal="true"
+  >
+    <div class="flex items-start justify-between mb-3">
+      <h3 class="font-mono text-lg text-white">
+        {infoRow.prettyName ?? infoRow.modelId}
+      </h3>
+      <button
+        type="button"
+        class="p-1 rounded hover:bg-white/10 transition-colors text-white/50"
+        onclick={() => (infoRow = null)}
+        title="Close model details"
+        aria-label="Close info dialog"
+      >
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+          <path
+            d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"
+          />
+        </svg>
+      </button>
+    </div>
+    <div class="space-y-2 text-xs font-mono">
+      <div class="flex items-center gap-2">
+        <span class="text-white/40">Model ID:</span>
+        <span class="text-white/70">{infoRow.modelId}</span>
+      </div>
+      {#if infoRow.modelCard}
+        {#if infoRow.modelCard.family}
+          <div class="flex items-center gap-2">
+            <span class="text-white/40">Family:</span>
+            <span class="text-white/70">{infoRow.modelCard.family}</span>
+          </div>
+        {/if}
+        {#if infoRow.modelCard.baseModel}
+          <div class="flex items-center gap-2">
+            <span class="text-white/40">Base model:</span>
+            <span class="text-white/70">{infoRow.modelCard.baseModel}</span>
+          </div>
+        {/if}
+        {#if infoRow.modelCard.quantization}
+          <div class="flex items-center gap-2">
+            <span class="text-white/40">Quantization:</span>
+            <span class="text-white/70">{infoRow.modelCard.quantization}</span>
+          </div>
+        {/if}
+        {#if infoRow.modelCard.storageSize > 0}
+          <div class="flex items-center gap-2">
+            <span class="text-white/40">Size:</span>
+            <span class="text-white/70"
+              >{formatBytes(infoRow.modelCard.storageSize)}</span
+            >
+          </div>
+        {/if}
+        {#if infoRow.modelCard.nLayers > 0}
+          <div class="flex items-center gap-2">
+            <span class="text-white/40">Layers:</span>
+            <span class="text-white/70">{infoRow.modelCard.nLayers}</span>
+          </div>
+        {/if}
+        {#if infoRow.modelCard.capabilities.length > 0}
+          <div class="flex items-center gap-2">
+            <span class="text-white/40">Capabilities:</span>
+            <span class="text-white/70"
+              >{infoRow.modelCard.capabilities.join(", ")}</span
+            >
+          </div>
+        {/if}
+        <div class="flex items-center gap-2">
+          <span class="text-white/40">Tensor parallelism:</span>
+          <span class="text-white/70"
+            >{infoRow.modelCard.supportsTensor ? "Yes" : "No"}</span
+          >
+        </div>
+      {/if}
+
+      <!-- Per-node download status -->
+      {#if nodeColumns.filter((col) => (infoRow?.cells[col.nodeId]?.kind ?? "not_present") !== "not_present").length > 0}
+        <div class="mt-3 pt-3 border-t border-exo-yellow/10">
+          <div class="flex items-center gap-2 mb-1">
+            <svg
+              class="w-3.5 h-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                class="text-white/40"
+                d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+              />
+              <path class="text-green-400" d="m9 13 2 2 4-4" />
+            </svg>
+            <span class="text-white/40">On nodes:</span>
+          </div>
+          <div class="flex flex-wrap gap-1 mt-1">
+            {#each nodeColumns as col}
+              {@const cellStatus = infoRow?.cells[col.nodeId]}
+              {#if cellStatus && cellStatus.kind !== "not_present"}
+                <span
+                  class="px-1.5 py-0.5 rounded text-[10px] {cellStatus.kind ===
+                  'completed'
+                    ? 'bg-green-500/10 text-green-400/80 border border-green-500/20'
+                    : cellStatus.kind === 'downloading'
+                      ? 'bg-exo-yellow/10 text-exo-yellow/80 border border-exo-yellow/20'
+                      : cellStatus.kind === 'failed'
+                        ? 'bg-red-500/10 text-red-400/80 border border-red-500/20'
+                        : 'bg-white/5 text-white/50 border border-white/10'}"
+                >
+                  {col.label}
+                  {#if cellStatus.kind === "downloading" && "percentage" in cellStatus}
+                    ({clampPercent(cellStatus.percentage).toFixed(0)}%)
+                  {/if}
+                </span>
+              {/if}
+            {/each}
+          </div>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}
 
 <style>
   table {
