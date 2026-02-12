@@ -43,7 +43,10 @@ class MetaInstanceReconciler:
             all_events.extend(result.events)
 
             # Emit placement failure if error differs from what's already in state
-            if result.error is not None and meta_instance.placement_error != result.error:
+            if (
+                result.error is not None
+                and meta_instance.placement_error != result.error
+            ):
                 all_events.append(
                     MetaInstancePlacementFailed(
                         meta_instance_id=meta_instance.meta_instance_id,
