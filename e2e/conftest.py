@@ -60,6 +60,19 @@ class Cluster:
     async def logs(self) -> str:
         return await self._run("logs", check=False)
 
+    async def exec(self, service: str, *cmd: str, check: bool = True) -> tuple[int, str]:
+        """Run a command inside a running container. Returns (returncode, output)."""
+        proc = await asyncio.create_subprocess_exec(
+            *self._compose_base, "exec", "-T", service, *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await proc.communicate()
+        output = stdout.decode()
+        if check and proc.returncode != 0:
+            raise RuntimeError(f"exec {' '.join(cmd)} in {service} failed (rc={proc.returncode})")
+        return proc.returncode, output
+
     async def wait_for(self, description: str, check_fn, timeout: int = TIMEOUT):
         """Poll check_fn every 2s until it returns True or timeout expires."""
         print(f"  Waiting for {description}...")

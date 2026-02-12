@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     curl \
     protobuf-compiler \
+    iptables \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Rust nightly
