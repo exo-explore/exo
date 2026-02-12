@@ -7,6 +7,7 @@
     debugMode,
     nodeThunderboltBridge,
     nodeRdmaCtl,
+    nodeIdentities,
     type NodeInfo,
   } from "$lib/stores/app.svelte";
 
@@ -33,6 +34,7 @@
   const debugEnabled = $derived(debugMode());
   const tbBridgeData = $derived(nodeThunderboltBridge());
   const rdmaCtlData = $derived(nodeRdmaCtl());
+  const identitiesData = $derived(nodeIdentities());
 
   function getNodeLabel(nodeId: string): string {
     const node = data?.nodes?.[nodeId];
@@ -1177,6 +1179,20 @@
             .attr("font-size", debugFontSize)
             .attr("font-family", "SF Mono, Monaco, monospace")
             .text(rdmaText);
+          debugLabelY += debugLineHeight;
+        }
+
+        const identity = identitiesData[nodeInfo.id];
+        if (identity?.osVersion) {
+          nodeG
+            .append("text")
+            .attr("x", nodeInfo.x)
+            .attr("y", debugLabelY)
+            .attr("text-anchor", "middle")
+            .attr("fill", "rgba(179,179,179,0.7)")
+            .attr("font-size", debugFontSize)
+            .attr("font-family", "SF Mono, Monaco, monospace")
+            .text(identity.osVersion);
         }
       }
     });
