@@ -1,7 +1,7 @@
 """
 Model transfer via MLX distributed all_sum.
 
-Provides two transfer modes:
+Three transfer modes:
 1. Metadata file transfer: broadcast small files (config.json, tokenizer, etc.) to disk
 2. Weight tensor broadcast: stream weight tensors directly into memory via all_sum
 3. Full file transfer: broadcast all files (including safetensors) to disk
@@ -74,19 +74,9 @@ def has_weight_files(model_path: Path) -> bool:
     return has_config and has_weights
 
 
-def has_metadata_files(model_path: Path) -> bool:
-    """Check if model directory has at least config.json."""
-    return model_path.exists() and (model_path / "config.json").exists()
-
-
 def model_path_for_id(model_id: ModelId) -> Path:
     """Get model path without requiring directory to exist (unlike build_model_path)."""
     return EXO_MODELS_DIR / model_id.normalize()
-
-
-# ---------------------------------------------------------------------------
-# Coordination
-# ---------------------------------------------------------------------------
 
 
 def coordinate_transfer(group: Group, has_local_model: bool) -> tuple[bool, int]:
@@ -109,7 +99,6 @@ def coordinate_transfer(group: Group, has_local_model: bool) -> tuple[bool, int]
     summed = all_sum(bitmask)
     mx.eval(summed)
 
-    # Find who has it
     has_model_flags: list[int] = summed.tolist()  # type: ignore[assignment]
     total_have = sum(has_model_flags)
 
@@ -123,7 +112,6 @@ def coordinate_transfer(group: Group, has_local_model: bool) -> tuple[bool, int]
         logger.info("All ranks have model files, no transfer needed")
         return False, 0
 
-    # Source is the lowest rank that has the model
     source_rank = next(i for i, flag in enumerate(has_model_flags) if flag > 0)
     logger.info(
         f"Transfer needed: source_rank={source_rank}, "
@@ -132,50 +120,28 @@ def coordinate_transfer(group: Group, has_local_model: bool) -> tuple[bool, int]
     return True, source_rank
 
 
-# ---------------------------------------------------------------------------
-# Low-level: broadcast bytes via all_sum
-# ---------------------------------------------------------------------------
-
-
-def _broadcast_int(value: int, group: Group, is_source: bool) -> int:
-    """Broadcast a single int from source to all ranks."""
+def _broadcast_json(obj: object, group: Group, is_source: bool) -> object:
+    """Broadcast a JSON-serializable object from source to all ranks."""
     all_sum = partial(_all_sum_cpu, group=group)
-    arr = mx.array([value if is_source else 0], dtype=mx.int64)
-    result = all_sum(arr)
-    mx.eval(result)
-    return int(result.item())
 
-
-def _broadcast_bytes(data: bytes, group: Group, is_source: bool) -> bytes:
-    """Broadcast a byte string from source to all ranks."""
-    all_sum = partial(_all_sum_cpu, group=group)
+    data = json.dumps(obj, separators=(",", ":")).encode("utf-8") if is_source else b""
 
     # Broadcast length
-    length = _broadcast_int(len(data) if is_source else 0, group, is_source)
+    len_arr = mx.array([len(data) if is_source else 0], dtype=mx.int64)
+    len_result = all_sum(len_arr)
+    mx.eval(len_result)
+    length = int(len_result.item())
     if length == 0:
-        return b""
+        return None
 
-    # Broadcast data
+    # Broadcast payload
     if is_source:
         arr = mx.array(list(data), dtype=mx.uint8)
     else:
         arr = mx.zeros(length, dtype=mx.uint8)
     result = all_sum(arr)
     mx.eval(result)
-    return bytes(cast(list[int], result.tolist()))
-
-
-def _broadcast_json(obj: object, group: Group, is_source: bool) -> object:
-    """Broadcast a JSON-serializable object from source to all ranks."""
-    data = json.dumps(obj, separators=(",", ":")).encode("utf-8") if is_source else b""
-    received = _broadcast_bytes(data, group, is_source)
-    result: object = json.loads(received)  # pyright: ignore[reportAny]
-    return result
-
-
-# ---------------------------------------------------------------------------
-# File transfer to disk (used by metadata transfer and full file transfer)
-# ---------------------------------------------------------------------------
+    return json.loads(bytes(cast(list[int], result.tolist())))  # pyright: ignore[reportAny]
 
 
 def _build_manifest(
@@ -218,7 +184,6 @@ def _transfer_file_to_disk(
                 data = f.read(chunk_bytes)
                 if not data:
                     break
-                # Broadcast chunk size then data
                 size_arr = mx.array([len(data)], dtype=mx.int64)
                 mx.eval(all_sum(size_arr))
                 chunk_arr = mx.array(list(data), dtype=mx.uint8)
@@ -254,7 +219,6 @@ def _transfer_files_to_disk(
     Source broadcasts a manifest then each file. Receivers write to a temp dir
     then atomically move files to model_path.
     """
-    # Broadcast manifest
     if is_source:
         source_manifest = _build_manifest(model_path, metadata_only=metadata_only)
     else:
@@ -272,7 +236,6 @@ def _transfer_files_to_disk(
         f"Transferring {len(manifest)} files ({'metadata only' if metadata_only else 'all'})"
     )
 
-    # Receivers write to temp dir for atomic move
     temp_dir: Path | None = None
     if not is_source:
         os.makedirs(model_path.parent, exist_ok=True)
@@ -297,8 +260,7 @@ def _transfer_files_to_disk(
                 dest_path=temp_dir if temp_dir is not None else model_path,
             )
 
-        # Atomic move from temp to final
-        if not is_source and temp_dir is not None:
+        if temp_dir is not None:
             os.makedirs(model_path, exist_ok=True)
             for entry in manifest:
                 rel_path = str(entry["path"])
@@ -312,11 +274,6 @@ def _transfer_files_to_disk(
     finally:
         if temp_dir is not None and temp_dir.exists():
             shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-# ---------------------------------------------------------------------------
-# Public: metadata file transfer (config.json, tokenizer, etc.)
-# ---------------------------------------------------------------------------
 
 
 def transfer_metadata_files(
@@ -333,11 +290,6 @@ def transfer_metadata_files(
     )
 
 
-# ---------------------------------------------------------------------------
-# Public: full file transfer to disk (Feature 1)
-# ---------------------------------------------------------------------------
-
-
 def transfer_all_files(model_path: Path, group: Group, is_source: bool) -> None:
     """
     Transfer ALL model files (including safetensors) to receivers' disk.
@@ -350,14 +302,8 @@ def transfer_all_files(model_path: Path, group: Group, is_source: bool) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Public: weight tensor broadcast to memory (Feature 2)
-# ---------------------------------------------------------------------------
-
-
 def _parse_mx_dtype(dtype_str: str) -> mx.Dtype:
     """Convert a dtype string like 'float16' or 'mlx.core.float16' to mx.Dtype."""
-    # Strip 'mlx.core.' prefix if present
     name = dtype_str.split(".")[-1]
     dtype = getattr(mx, name, None)
     if dtype is None:
