@@ -102,6 +102,12 @@ class InputChunkReceived(BaseEvent):
     chunk: InputImageChunk
 
 
+class PrefillProgress(BaseEvent):
+    command_id: CommandId
+    processed_tokens: int
+    total_tokens: int
+
+
 class TopologyEdgeCreated(BaseEvent):
     conn: Connection
 
@@ -148,6 +154,7 @@ Event = (
     | NodeDownloadProgress
     | ChunkGenerated
     | InputChunkReceived
+    | PrefillProgress
     | TopologyEdgeCreated
     | TopologyEdgeDeleted
     | TracesCollected

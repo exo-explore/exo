@@ -273,6 +273,11 @@ export interface TokenData {
   topLogprobs: TopLogprob[];
 }
 
+export interface PrefillProgress {
+  processed: number;
+  total: number;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant" | "system";

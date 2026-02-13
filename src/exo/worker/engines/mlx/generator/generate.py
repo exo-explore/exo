@@ -160,7 +160,7 @@ def warmup_inference(
         max_tokens=50,
         sampler=sampler,
         prompt_cache=cache,
-        prefill_step_size=2048,
+        prefill_step_size=1024,
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
     ):
@@ -252,6 +252,7 @@ def mlx_generate(
     task: TextGenerationTaskParams,
     prompt: str,
     kv_prefix_cache: KVPrefixCache | None = None,
+    on_prefill_progress: Callable[[int, int], None] | None = None,
     group: mx.distributed.Group | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
@@ -345,6 +346,7 @@ def mlx_generate(
             prefill_step_size=1,
             kv_group_size=KV_GROUP_SIZE,
             kv_bits=KV_BITS,
+            prompt_progress_callback=on_prefill_progress,
         ),
         start=1,
     ):

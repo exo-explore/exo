@@ -26,6 +26,7 @@ from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
+    PrefillProgress,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
@@ -266,6 +267,17 @@ def main(
                     assert model and not isinstance(model, DistributedImageModel)
                     assert tokenizer
 
+                    # Define callback to send prefill progress events directly
+                    def on_prefill_progress(processed: int, total: int) -> None:
+                        if device_rank == 0:
+                            event_sender.send(
+                                PrefillProgress(
+                                    command_id=command_id,
+                                    processed_tokens=processed,
+                                    total_tokens=total,
+                                )
+                            )
+
                     try:
                         _check_for_debug_prompts(task_params)
 
@@ -279,6 +291,7 @@ def main(
                             task=task_params,
                             prompt=prompt,
                             kv_prefix_cache=kv_prefix_cache,
+                            on_prefill_progress=on_prefill_progress,
                             group=group,
                         )
 

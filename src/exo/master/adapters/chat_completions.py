@@ -18,7 +18,12 @@ from exo.shared.types.api import (
     StreamingChoiceResponse,
     ToolCall,
 )
-from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
+from exo.shared.types.chunks import (
+    ErrorChunk,
+    PrefillProgressData,
+    TokenChunk,
+    ToolCallChunk,
+)
 from exo.shared.types.common import CommandId
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 
@@ -122,55 +127,65 @@ def chunk_to_response(
 
 async def generate_chat_stream(
     command_id: CommandId,
-    chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
+    event_stream: AsyncGenerator[
+        PrefillProgressData | ErrorChunk | ToolCallChunk | TokenChunk, None
+    ],
 ) -> AsyncGenerator[str, None]:
-    """Generate Chat Completions API streaming events from chunks."""
-    async for chunk in chunk_stream:
-        if isinstance(chunk, ErrorChunk):
-            error_response = ErrorResponse(
-                error=ErrorInfo(
-                    message=chunk.error_message or "Internal server error",
-                    type="InternalServerError",
-                    code=500,
-                )
-            )
-            yield f"data: {error_response.model_dump_json()}\n\n"
-            yield "data: [DONE]\n\n"
-            return
+    """Generate Chat Completions API streaming events from StreamEvents.
 
-        if isinstance(chunk, ToolCallChunk):
-            tool_call_deltas = [
-                ToolCall(
-                    id=tool.id,
-                    index=i,
-                    function=tool,
-                )
-                for i, tool in enumerate(chunk.tool_calls)
-            ]
-            tool_response = ChatCompletionResponse(
-                id=command_id,
-                created=int(time.time()),
-                model=chunk.model,
-                choices=[
-                    StreamingChoiceResponse(
-                        index=0,
-                        delta=ChatCompletionMessage(
-                            role="assistant",
-                            tool_calls=tool_call_deltas,
-                        ),
-                        finish_reason="tool_calls",
+    Handles PrefillProgressData, ErrorChunk, ToolCallChunk, and TokenChunk.
+    """
+    async for event in event_stream:
+        match event:
+            case PrefillProgressData():
+                yield f"event: prefill_progress\ndata: {event.model_dump_json()}\n\n"
+
+            case ErrorChunk():
+                error_response = ErrorResponse(
+                    error=ErrorInfo(
+                        message=event.error_message or "Internal server error",
+                        type="InternalServerError",
+                        code=500,
                     )
-                ],
-            )
-            yield f"data: {tool_response.model_dump_json()}\n\n"
-            yield "data: [DONE]\n\n"
-            return
+                )
+                yield f"data: {error_response.model_dump_json()}\n\n"
+                yield "data: [DONE]\n\n"
+                return
 
-        chunk_response = chunk_to_response(chunk, command_id)
-        yield f"data: {chunk_response.model_dump_json()}\n\n"
+            case ToolCallChunk():
+                tool_call_deltas = [
+                    ToolCall(
+                        id=tool.id,
+                        index=i,
+                        function=tool,
+                    )
+                    for i, tool in enumerate(event.tool_calls)
+                ]
+                tool_response = ChatCompletionResponse(
+                    id=command_id,
+                    created=int(time.time()),
+                    model=event.model,
+                    choices=[
+                        StreamingChoiceResponse(
+                            index=0,
+                            delta=ChatCompletionMessage(
+                                role="assistant",
+                                tool_calls=tool_call_deltas,
+                            ),
+                            finish_reason="tool_calls",
+                        )
+                    ],
+                )
+                yield f"data: {tool_response.model_dump_json()}\n\n"
+                yield "data: [DONE]\n\n"
+                return
 
-        if chunk.finish_reason is not None:
-            yield "data: [DONE]\n\n"
+            case TokenChunk():
+                chunk_response = chunk_to_response(event, command_id)
+                yield f"data: {chunk_response.model_dump_json()}\n\n"
+
+                if event.finish_reason is not None:
+                    yield "data: [DONE]\n\n"
 
 
 async def collect_chat_response(

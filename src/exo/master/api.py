@@ -105,6 +105,7 @@ from exo.shared.types.chunks import (
     ErrorChunk,
     ImageChunk,
     InputImageChunk,
+    PrefillProgressData,
     TokenChunk,
     ToolCallChunk,
 )
@@ -134,6 +135,7 @@ from exo.shared.types.events import (
     Event,
     ForwarderEvent,
     IndexedEvent,
+    PrefillProgress,
     TracesMerged,
 )
 from exo.shared.types.memory import Memory
@@ -217,7 +219,8 @@ class API:
         )
 
         self._text_generation_queues: dict[
-            CommandId, Sender[TokenChunk | ErrorChunk | ToolCallChunk]
+            CommandId,
+            Sender[TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressData],
         ] = {}
         self._image_generation_queues: dict[
             CommandId, Sender[ImageChunk | ErrorChunk]
@@ -521,22 +524,27 @@ class API:
             instance_id=instance_id,
         )
 
-    async def _token_chunk_stream(
+    async def _stream_events(
         self, command_id: CommandId
-    ) -> AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None]:
-        """Yield chunks for a given command until completion.
+    ) -> AsyncGenerator[
+        TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressData, None
+    ]:
+        """Yield stream events for a command.
 
         This is the internal low-level stream used by all API adapters.
         """
         try:
             self._text_generation_queues[command_id], recv = channel[
-                ErrorChunk | ToolCallChunk | TokenChunk
+                TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressData
             ]()
 
-            with recv as token_chunks:
-                async for chunk in token_chunks:
-                    yield chunk
-                    if chunk.finish_reason is not None:
+            with recv as events:
+                async for event in events:
+                    yield event
+                    if (
+                        isinstance(event, TokenChunk)
+                        and event.finish_reason is not None
+                    ):
                         break
 
         except anyio.get_cancelled_exc_class():
@@ -553,6 +561,14 @@ class API:
             if command_id in self._text_generation_queues:
                 del self._text_generation_queues[command_id]
 
+    async def _chunk_stream(
+        self, command_id: CommandId
+    ) -> AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None]:
+        """Yield chunks, filtering out prefill progress events."""
+        async for event in self._stream_events(command_id):
+            if not isinstance(event, PrefillProgressData):
+                yield event
+
     async def _collect_text_generation_with_stats(
         self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
@@ -563,7 +579,7 @@ class API:
 
         stats: GenerationStats | None = None
 
-        async for chunk in self._token_chunk_stream(command_id):
+        async for chunk in self._chunk_stream(command_id):
             if chunk.finish_reason == "error":
                 raise HTTPException(
                     status_code=500,
@@ -635,7 +651,7 @@ class API:
             return StreamingResponse(
                 generate_chat_stream(
                     command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                    self._stream_events(command.command_id),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -645,10 +661,13 @@ class API:
                 },
             )
 
-        return await collect_chat_response(
-            command.command_id,
-            self._token_chunk_stream(command.command_id),
-        )
+        try:
+            return await collect_chat_response(
+                command.command_id,
+                self._chunk_stream(command.command_id),
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     async def bench_chat_completions(
         self, payload: BenchChatCompletionRequest
@@ -1212,7 +1231,7 @@ class API:
                 generate_claude_stream(
                     command.command_id,
                     payload.model,
-                    self._token_chunk_stream(command.command_id),
+                    self._chunk_stream(command.command_id),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1222,11 +1241,14 @@ class API:
                 },
             )
 
-        return await collect_claude_response(
-            command.command_id,
-            payload.model,
-            self._token_chunk_stream(command.command_id),
-        )
+        try:
+            return await collect_claude_response(
+                command.command_id,
+                payload.model,
+                self._chunk_stream(command.command_id),
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     async def openai_responses(
         self, payload: ResponsesRequest
@@ -1244,7 +1266,7 @@ class API:
                 generate_responses_stream(
                     command.command_id,
                     payload.model,
-                    self._token_chunk_stream(command.command_id),
+                    self._chunk_stream(command.command_id),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1254,11 +1276,14 @@ class API:
                 },
             )
 
-        return await collect_responses_response(
-            command.command_id,
-            payload.model,
-            self._token_chunk_stream(command.command_id),
-        )
+        try:
+            return await collect_responses_response(
+                command.command_id,
+                payload.model,
+                self._chunk_stream(command.command_id),
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
@@ -1409,6 +1434,20 @@ class API:
                             assert not isinstance(event.chunk, ImageChunk)
                             try:
                                 await queue.send(event.chunk)
+                            except BrokenResourceError:
+                                self._text_generation_queues.pop(event.command_id, None)
+
+                    elif isinstance(event, PrefillProgress):
+                        if queue := self._text_generation_queues.get(
+                            event.command_id, None
+                        ):
+                            try:
+                                await queue.send(
+                                    PrefillProgressData(
+                                        processed_tokens=event.processed_tokens,
+                                        total_tokens=event.total_tokens,
+                                    )
+                                )
                             except BrokenResourceError:
                                 self._text_generation_queues.pop(event.command_id, None)
 

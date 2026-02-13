@@ -66,3 +66,8 @@ class ToolCallResponse(BaseRunnerResponse):
 
 class FinishedResponse(BaseRunnerResponse):
     pass
+
+
+class PrefillProgressResponse(BaseRunnerResponse):
+    processed_tokens: int
+    total_tokens: int
