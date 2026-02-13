@@ -9,6 +9,7 @@ from anyio import (
     BrokenResourceError,
     ClosedResourceError,
     create_task_group,
+    move_on_after,
     sleep_forever,
 )
 from anyio.abc import TaskGroup
@@ -146,18 +147,21 @@ class Router:
 
     async def run(self):
         logger.debug("Starting Router")
-        async with create_task_group() as tg:
-            self._tg = tg
-            for topic in self.topic_routers:
-                router = self.topic_routers[topic]
-                tg.start_soon(router.run)
-            tg.start_soon(self._networking_recv)
-            tg.start_soon(self._networking_recv_connection_messages)
-            tg.start_soon(self._networking_publish)
-            # Router only shuts down if you cancel it.
-            await sleep_forever()
-        for topic in self.topic_routers:
-            await self._networking_unsubscribe(str(topic))
+        try:
+            async with create_task_group() as tg:
+                self._tg = tg
+                for topic in self.topic_routers:
+                    router = self.topic_routers[topic]
+                    tg.start_soon(router.run)
+                tg.start_soon(self._networking_recv)
+                tg.start_soon(self._networking_recv_connection_messages)
+                tg.start_soon(self._networking_publish)
+                # Router only shuts down if you cancel it.
+                await sleep_forever()
+        finally:
+            with move_on_after(1, shield=True):
+                for topic in self.topic_routers:
+                    await self._networking_unsubscribe(str(topic))
 
     async def shutdown(self):
         logger.debug("Shutting down Router")
@@ -166,12 +170,12 @@ class Router:
         self._tg.cancel_scope.cancel()
 
     async def _networking_subscribe(self, topic: str):
-        logger.info(f"Subscribing to {topic}")
         await self._net.gossipsub_subscribe(topic)
+        logger.info(f"Subscribed to {topic}")
 
     async def _networking_unsubscribe(self, topic: str):
-        logger.info(f"Unsubscribing from {topic}")
         await self._net.gossipsub_unsubscribe(topic)
+        logger.info(f"Unsubscribed from {topic}")
 
     async def _networking_recv(self):
         while True:
@@ -203,10 +207,10 @@ class Router:
                 try:
                     logger.trace(f"Sending message on {topic} with payload {data}")
                     await self._net.gossipsub_publish(topic, data)
-                # As a hack, this also catches AllQueuesFull
-                # Need to fix that ASAP.
-                except (NoPeersSubscribedToTopicError, AllQueuesFullError):
+                except NoPeersSubscribedToTopicError:
                     pass
+                except AllQueuesFullError:
+                    logger.warning(f"All peer queues full, dropping message on {topic}")
 
 
 def get_node_id_keypair(

@@ -3,7 +3,6 @@
 import json
 from collections.abc import AsyncGenerator
 from typing import Any
-from uuid import uuid4
 
 from exo.shared.types.api import FinishReason
 from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
@@ -179,7 +178,7 @@ async def collect_claude_response(
             for tool in chunk.tool_calls:
                 tool_use_blocks.append(
                     ClaudeToolUseBlock(
-                        id=f"toolu_{uuid4().hex[:24]}",
+                        id=f"toolu_{tool.id}",
                         name=tool.name,
                         input=json.loads(tool.arguments),  # pyright: ignore[reportAny]
                     )
@@ -264,7 +263,7 @@ async def generate_claude_stream(
 
             # Emit tool_use content blocks
             for tool in chunk.tool_calls:
-                tool_id = f"toolu_{uuid4().hex[:24]}"
+                tool_id = f"toolu_{tool.id}"
                 tool_input_json = tool.arguments
 
                 # content_block_start for tool_use

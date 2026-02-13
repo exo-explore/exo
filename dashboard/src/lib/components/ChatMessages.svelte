@@ -13,6 +13,7 @@
   import type { MessageAttachment } from "$lib/stores/app.svelte";
   import MarkdownContent from "./MarkdownContent.svelte";
   import TokenHeatmap from "./TokenHeatmap.svelte";
+  import ImageLightbox from "./ImageLightbox.svelte";
 
   interface Props {
     class?: string;
@@ -100,6 +101,9 @@
   // Copied state for feedback
   let copiedMessageId = $state<string | null>(null);
   let expandedThinkingMessageIds = $state<Set<string>>(new Set());
+
+  // Lightbox state
+  let expandedImageSrc = $state<string | null>(null);
 
   // Uncertainty heatmap toggle
   let heatmapMessageIds = $state<Set<string>>(new Set());
@@ -389,10 +393,15 @@
                         class="flex items-center gap-2 bg-exo-dark-gray/60 border border-exo-yellow/20 rounded px-2 py-1 text-xs font-mono"
                       >
                         {#if attachment.type === "image" && attachment.preview}
+                          <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
                           <img
                             src={attachment.preview}
                             alt={attachment.name}
-                            class="w-12 h-12 object-cover rounded border border-exo-yellow/20"
+                            class="w-12 h-12 object-cover rounded border border-exo-yellow/20 cursor-pointer hover:border-exo-yellow/50 transition-colors"
+                            onclick={() => {
+                              if (attachment.preview)
+                                expandedImageSrc = attachment.preview;
+                            }}
                           />
                         {:else}
                           <span>{getAttachmentIcon(attachment)}</span>
@@ -466,15 +475,44 @@
                   <div class="mb-3">
                     {#each message.attachments.filter((a) => a.type === "generated-image") as attachment}
                       <div class="relative group/img inline-block">
+                        <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
                         <img
                           src={attachment.preview}
                           alt=""
-                          class="max-w-full max-h-[512px] rounded-lg border border-exo-yellow/20 shadow-lg shadow-black/20"
+                          class="max-w-full max-h-[512px] rounded-lg border border-exo-yellow/20 shadow-lg shadow-black/20 cursor-pointer"
+                          onclick={() => {
+                            if (attachment.preview)
+                              expandedImageSrc = attachment.preview;
+                          }}
                         />
                         <!-- Button overlay -->
                         <div
                           class="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity"
                         >
+                          <!-- Expand button -->
+                          <button
+                            type="button"
+                            class="p-2 rounded-lg bg-exo-dark-gray/80 border border-exo-yellow/30 text-exo-yellow hover:bg-exo-dark-gray hover:border-exo-yellow/50 cursor-pointer"
+                            onclick={() => {
+                              if (attachment.preview)
+                                expandedImageSrc = attachment.preview;
+                            }}
+                            title="Expand image"
+                          >
+                            <svg
+                              class="w-4 h-4"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                              stroke-width="2"
+                            >
+                              <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"
+                              />
+                            </svg>
+                          </button>
                           <!-- Edit button -->
                           <button
                             type="button"
@@ -789,3 +827,8 @@
     </button>
   {/if}
 </div>
+
+<ImageLightbox
+  src={expandedImageSrc}
+  onclose={() => (expandedImageSrc = null)}
+/>
