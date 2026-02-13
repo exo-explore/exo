@@ -50,7 +50,9 @@ class RunnerReady(BaseRunnerStatus):
 
 
 class RunnerRunning(BaseRunnerStatus):
-    pass
+    """Runner is processing requests and can accept more (continuous batching)."""
+
+    active_requests: int = 0
 
 
 class RunnerShuttingDown(BaseRunnerStatus):
