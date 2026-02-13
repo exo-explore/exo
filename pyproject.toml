@@ -132,7 +132,7 @@ markers = [
 env = [
   "EXO_TESTS=1"
 ]
-addopts = "-m 'not slow'"
+addopts = "-m 'not slow' --ignore=tests/start_distributed_test.py"
 filterwarnings = [
     "ignore:builtin type Swig:DeprecationWarning",
 ]

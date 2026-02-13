@@ -226,7 +226,9 @@
             row.shardMetadata = extractShardMetadata(payload);
           if (!row.modelCard && card) row.modelCard = card;
 
-          const modelDirectory = ((payload.model_directory ?? payload.modelDirectory) as string) || undefined;
+          const modelDirectory =
+            ((payload.model_directory ?? payload.modelDirectory) as string) ||
+            undefined;
           let cell: CellStatus;
           if (tag === "DownloadCompleted") {
             const totalBytes = getBytes(

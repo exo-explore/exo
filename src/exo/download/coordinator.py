@@ -176,7 +176,11 @@ class DownloadCoordinator:
                 return
 
         # Emit pending status
-        progress = DownloadPending(shard_metadata=shard, node_id=self.node_id, model_directory=self._model_dir(model_id))
+        progress = DownloadPending(
+            shard_metadata=shard,
+            node_id=self.node_id,
+            model_directory=self._model_dir(model_id),
+        )
         self.download_status[model_id] = progress
         await self.event_sender.send(NodeDownloadProgress(download_progress=progress))
 
@@ -305,14 +309,18 @@ class DownloadCoordinator:
                             node_id=self.node_id,
                             shard_metadata=progress.shard,
                             total_bytes=progress.total_bytes,
-                            model_directory=self._model_dir(progress.shard.model_card.model_id),
+                            model_directory=self._model_dir(
+                                progress.shard.model_card.model_id
+                            ),
                         )
                     elif progress.status in ["in_progress", "not_started"]:
                         if progress.downloaded_bytes_this_session.in_bytes == 0:
                             status = DownloadPending(
                                 node_id=self.node_id,
                                 shard_metadata=progress.shard,
-                                model_directory=self._model_dir(progress.shard.model_card.model_id),
+                                model_directory=self._model_dir(
+                                    progress.shard.model_card.model_id
+                                ),
                             )
                         else:
                             status = DownloadOngoing(
@@ -321,7 +329,9 @@ class DownloadCoordinator:
                                 download_progress=map_repo_download_progress_to_download_progress_data(
                                     progress
                                 ),
-                                model_directory=self._model_dir(progress.shard.model_card.model_id),
+                                model_directory=self._model_dir(
+                                    progress.shard.model_card.model_id
+                                ),
                             )
                     else:
                         continue
