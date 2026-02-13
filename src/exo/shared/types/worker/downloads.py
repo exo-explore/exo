@@ -26,6 +26,7 @@ class DownloadProgressData(CamelCaseModel):
 class BaseDownloadProgress(TaggedModel):
     node_id: NodeId
     shard_metadata: ShardMetadata
+    model_directory: str = ""
 
 
 class DownloadPending(BaseDownloadProgress):
