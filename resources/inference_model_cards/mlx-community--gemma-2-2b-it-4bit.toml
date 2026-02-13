@@ -1,0 +1,12 @@
+model_id = "mlx-community/gemma-2-2b-it-4bit"
+n_layers = 26
+hidden_size = 2304
+supports_tensor = false
+tasks = ["TextGeneration"]
+family = "gemma2"
+quantization = "4bit"
+base_model = "Gemma 2 2B"
+capabilities = ["text"]
+
+[storage_size]
+in_bytes = 1492755242
