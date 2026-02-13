@@ -1139,7 +1139,7 @@ class array:
     ) -> array:
         """See :func:`flatten`."""
 
-    def reshape(self, *shape, stream: Stream | Device | None = ...) -> array:
+    def reshape(self, *shape: int, stream: Stream | Device | None = ...) -> array:
         """
         Equivalent to :func:`reshape` but the shape can be passed either as a
         :obj:`tuple` or as separate arguments.
@@ -1222,7 +1222,7 @@ class array:
     ) -> array:
         """See :func:`swapaxes`."""
 
-    def transpose(self, *axes, stream: Stream | Device | None = ...) -> array:
+    def transpose(self, *axes: int, stream: Stream | Device | None = ...) -> array:
         """
         Equivalent to :func:`transpose` but the axes can be passed either as
         a tuple or as separate arguments.
@@ -2366,7 +2366,7 @@ class custom_function:
 def default_device() -> Device:
     """Get the default device."""
 
-def default_stream(device: Device) -> Stream:
+def default_stream(device: Device | DeviceType) -> Stream:
     """Get the device's default stream."""
 
 def degrees(a: array, /, *, stream: Stream | Device | None = ...) -> array:

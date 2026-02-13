@@ -195,6 +195,10 @@ class ResumableShardDownloader(ShardDownloader):
         self, shard: ShardMetadata
     ) -> RepoDownloadProgress:
         _, progress = await download_shard(
-            shard, self.on_progress_wrapper, skip_download=True
+            shard,
+            self.on_progress_wrapper,
+            skip_download=True,
+            skip_internet=not self.internet_connection,
+            on_connection_lost=lambda: self.set_internet_connection(False),
         )
         return progress

@@ -8,10 +8,8 @@ import anyio
 from anyio import (
     BrokenResourceError,
     ClosedResourceError,
-    create_task_group,
     to_thread,
 )
-from anyio.abc import TaskGroup
 from loguru import logger
 
 from exo.shared.types.events import (
@@ -50,7 +48,6 @@ class RunnerSupervisor:
     _task_sender: MpSender[Task]
     _event_sender: Sender[Event]
     _cancel_sender: MpSender[TaskId]
-    _tg: TaskGroup = field(default_factory=create_task_group, init=False)
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
     completed: set[TaskId] = field(default_factory=set, init=False)
@@ -97,42 +94,29 @@ class RunnerSupervisor:
 
     async def run(self):
         self.runner_process.start()
-        async with self._tg as tg:
-            tg.start_soon(self._forward_events)
+        await self._forward_events()
 
-        with anyio.CancelScope(shield=True), contextlib.suppress(ClosedResourceError):
-            await self._cancel_sender.send_async(TaskId("CANCEL_CURRENT_TASK"))
+    def shutdown(self):
+        logger.info("Runner supervisor shutting down")
+        self._ev_recv.close()
+        self._task_sender.close()
+        self._event_sender.close()
+        self._cancel_sender.close()
+        self.runner_process.join(1)
+        if not self.runner_process.is_alive():
+            logger.info("Runner process succesfully terminated")
+            return
 
-            self._ev_recv.close()
-            self._task_sender.close()
-            self._event_sender.close()
-            self._cancel_sender.close()
+        # This is overkill but it's not technically bad, just unnecessary.
+        logger.warning("Runner process didn't shutdown succesfully, terminating")
+        self.runner_process.terminate()
+        self.runner_process.join(1)
+        if not self.runner_process.is_alive():
+            return
 
-            await to_thread.run_sync(self.runner_process.join, 10)
-            if not self.runner_process.is_alive():
-                return
+        logger.critical("Runner process didn't respond to SIGTERM, killing")
+        self.runner_process.kill()
 
-            # This is overkill but it's not technically bad, just unnecessary.
-            logger.warning("Runner process didn't shutdown succesfully, terminating")
-            self.runner_process.terminate()
-            await to_thread.run_sync(self.runner_process.join, 5)
-            if not self.runner_process.is_alive():
-                return
-
-            logger.critical("Runner process didn't respond to SIGTERM, killing")
-            self.runner_process.kill()
-
-            await to_thread.run_sync(self.runner_process.join, 5)
-            if not self.runner_process.is_alive():
-                return
-
-            logger.critical(
-                "Runner process didn't respond to SIGKILL. System resources may have leaked"
-            )
-
-    async def shutdown(self):
-        await self._cancel_sender.send_async(TaskId("CANCEL_CURRENT_TASK"))
-        self._tg.cancel_scope.cancel()
 
     async def start_task(self, task: Task):
         if task.task_id in self.pending:
@@ -226,4 +210,4 @@ class RunnerSupervisor:
                 runner_status=RunnerFailed(error_message=f"Terminated ({cause})"),
             )
         )
-        await self.shutdown()
+        self.shutdown()

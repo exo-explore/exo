@@ -15,8 +15,10 @@ from exo.master.placement_utils import (
 from exo.shared.models.model_cards import ModelId
 from exo.shared.topology import Topology
 from exo.shared.types.commands import (
+    CancelDownload,
     CreateInstance,
     DeleteInstance,
+    DownloadCommand,
     PlaceInstance,
 )
 from exo.shared.types.common import NodeId
@@ -29,6 +31,10 @@ from exo.shared.types.events import (
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
+from exo.shared.types.worker.downloads import (
+    DownloadOngoing,
+    DownloadProgress,
+)
 from exo.shared.types.worker.instances import (
     Instance,
     InstanceId,
@@ -221,3 +227,29 @@ def get_transition_events(
             )
 
     return events
+
+
+def cancel_unnecessary_downloads(
+    instances: Mapping[InstanceId, Instance],
+    download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+) -> Sequence[DownloadCommand]:
+    commands: list[DownloadCommand] = []
+    currently_downloading = [
+        (k, v.shard_metadata.model_card.model_id)
+        for k, vs in download_status.items()
+        for v in vs
+        if isinstance(v, (DownloadOngoing))
+    ]
+    active_models = set(
+        (
+            node_id,
+            instance.shard_assignments.runner_to_shard[runner_id].model_card.model_id,
+        )
+        for instance in instances.values()
+        for node_id, runner_id in instance.shard_assignments.node_to_runner.items()
+    )
+    for pair in currently_downloading:
+        if pair not in active_models:
+            commands.append(CancelDownload(target_node_id=pair[0], model_id=pair[1]))
+
+    return commands

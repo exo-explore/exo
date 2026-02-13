@@ -106,7 +106,6 @@ mod behaviour {
     use crate::{alias, discovery};
     use libp2p::swarm::NetworkBehaviour;
     use libp2p::{gossipsub, identity};
-    use std::time::Duration;
 
     /// Behavior of the Swarm which composes all desired behaviors:
     /// Right now its just [`discovery::Behaviour`] and [`gossipsub::Behaviour`].
@@ -134,7 +133,6 @@ mod behaviour {
         gossipsub::Behaviour::new(
             MessageAuthenticity::Signed(keypair.clone()),
             ConfigBuilder::default()
-                .publish_queue_duration(Duration::from_secs(15))
                 .max_transmit_size(1024 * 1024)
                 .validation_mode(ValidationMode::Strict)
                 .build()

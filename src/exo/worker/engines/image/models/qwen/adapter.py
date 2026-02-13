@@ -69,6 +69,10 @@ class QwenPromptData(PromptData):
     def conditioning_latents(self) -> mx.array | None:
         return None
 
+    @property
+    def kontext_image_ids(self) -> mx.array | None:
+        return None
+
     def get_batched_cfg_data(
         self,
     ) -> tuple[mx.array, mx.array, mx.array | None, mx.array | None] | None:

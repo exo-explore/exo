@@ -1,6 +1,5 @@
 import json
 import os
-import resource
 import sys
 import time
 from pathlib import Path
@@ -63,8 +62,6 @@ from exo.worker.engines.mlx.auto_parallel import (
 from exo.worker.runner.bootstrap import logger
 
 Group = mx.distributed.Group
-# Needed for 8 bit model
-resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 4096))
 
 
 def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
@@ -439,11 +436,19 @@ def apply_chat_template(
         partial_assistant_content = cast(str, formatted_messages[-1].get("content", ""))
         formatted_messages = formatted_messages[:-1]
 
+    extra_kwargs: dict[str, Any] = {}
+    if task_params.enable_thinking is not None:
+        # Qwen3 and GLM use "enable_thinking"; DeepSeek uses "thinking".
+        # Jinja ignores unknown variables, so passing both is safe.
+        extra_kwargs["enable_thinking"] = task_params.enable_thinking
+        extra_kwargs["thinking"] = task_params.enable_thinking
+
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
         tools=task_params.tools,
+        **extra_kwargs,
     )
 
     if partial_assistant_content:
@@ -462,6 +467,30 @@ def detect_thinking_prompt_suffix(prompt: str, tokenizer: TokenizerWrapper) -> b
     think_token = tokenizer.think_start
 
     return think_token is not None and prompt.rstrip().endswith(think_token)
+
+
+def fix_unmatched_think_end_tokens(
+    tokens: mx.array, tokenizer: TokenizerWrapper
+) -> mx.array:
+    if not tokenizer.has_thinking:
+        return tokens
+    assert tokenizer.think_start_id
+    assert tokenizer.think_end_id
+    think_start_id: int = tokenizer.think_start_id
+    think_end_id: int = tokenizer.think_end_id
+    token_list: list[int] = cast(list[int], tokens.tolist())
+    result: list[int] = []
+    depth = 0
+    for token in token_list:
+        if token == think_start_id:
+            depth += 1
+        elif token == think_end_id:
+            if depth == 0:
+                result.append(think_start_id)
+            else:
+                depth -= 1
+        result.append(token)
+    return mx.array(result)
 
 
 class NullKVCache(KVCache):

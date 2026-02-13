@@ -1,6 +1,7 @@
 import base64
 import json
 import math
+import resource
 import time
 from collections.abc import Generator
 from functools import cache
@@ -115,6 +116,9 @@ def main(
     task_receiver: MpReceiver[Task],
     cancel_receiver: MpReceiver[TaskId],
 ):
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
+
     instance, runner_id, shard_metadata = (
         bound_instance.instance,
         bound_instance.bound_runner_id,
@@ -201,7 +205,7 @@ def main(
                         logger.info(
                             f"model has_tool_calling={tokenizer.has_tool_calling}"
                         )
-                        kv_prefix_cache = KVPrefixCache(tokenizer, group)
+                        kv_prefix_cache = KVPrefixCache(group)
 
                     elif (
                         ModelTask.TextToImage in shard_metadata.model_card.tasks
@@ -233,6 +237,7 @@ def main(
                         toks = warmup_inference(
                             model=inference_model,
                             tokenizer=tokenizer,
+                            group=group,
                         )
                         logger.info(f"warmed up by generating {toks} tokens")
                         check_for_cancel_every = min(
@@ -295,6 +300,7 @@ def main(
                             task=task_params,
                             prompt=prompt,
                             kv_prefix_cache=kv_prefix_cache,
+                            group=group,
                         )
 
                         # For other thinking models (GLM, etc.), check if we need to
@@ -663,7 +669,7 @@ def parse_thinking_models(
             yield response.model_copy(
                 update={
                     "text": tokenizer.think_start,
-                    "token": tokenizer.think_start_id,  # type: ignore
+                    "token": tokenizer.think_start_id,
                 }
             )
         yield response
@@ -844,8 +850,9 @@ def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
 
     # kimi has a fixed function naming scheme, with a json formatted arg
     #   functions.multiply:0 <|tool_call_argument_begin|> {"a": 2, "b": 3}
+    #   Also needs to handle tools like call_0<|tool_call_argument_begin|>{"filePath": "..."}
     _func_name_regex = re.compile(
-        r"^\s*(.+):\d+\s*<\|tool_call_argument_begin\|>", re.DOTALL
+        r"^\s*(.+)[:](\d+)\s*<\|tool_call_argument_begin\|>", re.DOTALL
     )
     _func_arg_regex = re.compile(r"<\|tool_call_argument_begin\|>\s*(.*)\s*", re.DOTALL)
 
@@ -869,9 +876,10 @@ def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
         func_name_match = _func_name_regex.search(text)
         if func_name_match is None:
             raise ValueError(f"Could not parse function name from tool call: {text!r}")
-        func_name = func_name_match.group(1)
+        original_func_name = func_name_match.group(1)
+        tool_id = func_name_match.group(2)
         # strip off the `functions.` prefix, if it exists.
-        func_name = func_name[func_name.find(".") + 1 :]
+        func_name = original_func_name[original_func_name.find(".") + 1 :]
 
         func_args_match = _func_arg_regex.search(text)
         if func_args_match is None:
@@ -880,7 +888,11 @@ def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
         # the args should be valid json - no need to check against our tools to deserialize
         arg_dct = _deserialize(func_args)  # pyright: ignore[reportAny]
 
-        return dict(name=func_name, arguments=arg_dct)  # pyright: ignore[reportAny]
+        return dict(
+            id=f"{original_func_name}:{tool_id}",
+            name=func_name,
+            arguments=arg_dct,  # pyright: ignore[reportAny]
+        )
 
     tokenizer._tool_call_start = tool_call_start
     tokenizer._tool_call_end = tool_call_end
@@ -963,7 +975,13 @@ def _validate_single_tool(obj: dict[str, Any]) -> ToolCallItem:
         and ((args := obj.get("arguments")) is not None)
         and isinstance(name, str)
     ):
-        return ToolCallItem(name=name, arguments=json.dumps(args))
+        raw_id: object = obj.get("id")
+        extra = {"id": str(raw_id)} if raw_id is not None else {}
+        return ToolCallItem(
+            **extra,
+            name=name,
+            arguments=json.dumps(args),
+        )
     else:
         raise ValidationError
 
