@@ -65,13 +65,13 @@ def maybe_quantize_kv_cache(
     """Quantize KV cache entries if needed."""
     if kv_bits is None:
         return
-    for e, c in enumerate(prompt_cache):
+    for e, c in enumerate(prompt_cache):  # pyright: ignore[reportAny]
         if (
-            hasattr(c, "to_quantized")
-            and hasattr(c, "offset")
-            and c.offset >= quantized_kv_start
+            hasattr(c, "to_quantized")  # pyright: ignore[reportAny]
+            and hasattr(c, "offset")  # pyright: ignore[reportAny]
+            and c.offset >= quantized_kv_start  # pyright: ignore[reportAny]
         ):
-            prompt_cache[e] = c.to_quantized(group_size=kv_group_size, bits=kv_bits)
+            prompt_cache[e] = c.to_quantized(group_size=kv_group_size, bits=kv_bits)  # pyright: ignore[reportAny]
 
 
 class ModelWithHiddenStates(nn.Module):
@@ -100,9 +100,9 @@ class ModelWithHiddenStates(nn.Module):
             Tuple of (logits, hidden_states)
         """
         # Call the inner model (transformer layers + norm)
-        hidden: mx.array = self._base.model(inputs, model_cache)
+        hidden = cast(mx.array, self._base.model(inputs, model_cache))  # pyright: ignore[reportUnknownMemberType]
         # Get logits from lm_head
-        logits: mx.array = self._base.lm_head(hidden)
+        logits = cast(mx.array, self._base.lm_head(hidden))  # pyright: ignore[reportUnknownMemberType]
         return logits, hidden
 
     def forward(
@@ -179,7 +179,7 @@ def mtp_speculative_generate_step(
     if mtp_cache is None:
         mtp_cache = KVCache()
 
-    final_sampler = (
+    final_sampler: Callable[[mx.array], mx.array] = (
         sampler if sampler is not None else (lambda x: mx.argmax(x, axis=-1))
     )
 
@@ -232,27 +232,6 @@ def mtp_speculative_generate_step(
             sampled, logprobs_result = _process_and_sample(prev_tokens, logits)
             return sampled, logprobs_result.squeeze(0), hidden[:, -1:, :]
 
-    def _main_model_step(
-        input_y: mx.array,
-    ) -> tuple[mx.array, mx.array]:
-        """Run main model step without hidden state."""
-        nonlocal prev_tokens
-
-        with mx.stream(generation_stream):
-            logits = wrapped_model.forward(input_y[None], prompt_cache)
-            logits = logits[:, -1, :]
-            quantize_cache_fn(prompt_cache)
-
-            if logits_processors:
-                prev_tokens = (
-                    mx.concatenate([prev_tokens, input_y])
-                    if prev_tokens is not None
-                    else input_y
-                )
-
-            sampled, logprobs_result = _process_and_sample(prev_tokens, logits)
-            return sampled, logprobs_result.squeeze(0)
-
     def _mtp_draft(
         hidden_state: mx.array,
         draft_token: mx.array,
@@ -274,7 +253,7 @@ def mtp_speculative_generate_step(
         while result_y.size > prefill_step_size:
             _ = wrapped_model.forward(result_y[:prefill_step_size][None], prompt_cache)
             quantize_cache_fn(prompt_cache)
-            mx.eval([c.state for c in prompt_cache])
+            mx.eval([c.state for c in prompt_cache])  # pyright: ignore[reportAny]
             result_y = result_y[prefill_step_size:]
             mx.clear_cache()
         return result_y
@@ -304,7 +283,7 @@ def mtp_speculative_generate_step(
             # Draft phase: use MTP to predict next token
             num_draft = min(max_tokens - ntoks - 1, num_draft_tokens)
 
-            if num_draft > 0 and last_hidden is not None:
+            if num_draft > 0 and last_hidden is not None:  # pyright: ignore[reportUnnecessaryComparison]
                 # Use MTP to draft
                 draft_token, draft_hidden = _mtp_draft(last_hidden, y)
                 mx.eval(draft_token, draft_hidden)
@@ -371,9 +350,7 @@ def mtp_speculative_generate_step(
                         if verify_logprobs.ndim > 1
                         else verify_logprobs
                     )
-                    last_hidden = (
-                        new_hidden[:, :1, :] if new_hidden is not None else None
-                    )
+                    last_hidden = new_hidden[:, :1, :]
             else:
                 # No drafting, just do normal generation
                 ntoks += 1
@@ -430,7 +407,7 @@ def mtp_speculative_generate(
     """
     if not isinstance(prompt, mx.array):
         if isinstance(prompt, str):
-            bos_token = getattr(tokenizer, "bos_token", None)
+            bos_token: str | None = getattr(tokenizer, "bos_token", None)
             add_special_tokens = bos_token is None or not prompt.startswith(
                 str(bos_token)
             )
@@ -441,7 +418,7 @@ def mtp_speculative_generate(
         else:
             prompt = mx.array(prompt)
 
-    detokenizer = tokenizer.detokenizer
+    detokenizer: Any = tokenizer.detokenizer
     eos_token_ids: list[int] = getattr(tokenizer, "eos_token_ids", [])
 
     token_generator = mtp_speculative_generate_step(
@@ -474,12 +451,12 @@ def mtp_speculative_generate(
         if token in eos_token_ids:
             break
 
-        detokenizer.add_token(token)
+        detokenizer.add_token(token)  # pyright: ignore[reportAny]
         if (n + 1) == max_tokens:
             break
 
         yield MTPGenerationResponse(
-            text=str(detokenizer.last_segment),
+            text=str(detokenizer.last_segment),  # pyright: ignore[reportAny]
             token=token,
             logprobs=logprobs,
             from_draft=from_draft,
@@ -491,9 +468,9 @@ def mtp_speculative_generate(
             finish_reason=None,
         )
 
-    detokenizer.finalize()
+    detokenizer.finalize()  # pyright: ignore[reportAny]
     yield MTPGenerationResponse(
-        text=str(detokenizer.last_segment),
+        text=str(detokenizer.last_segment),  # pyright: ignore[reportAny]
         token=token,
         logprobs=logprobs,
         from_draft=from_draft,

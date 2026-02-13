@@ -185,8 +185,8 @@ def load_mtp_weights_into_module(
             parts = dst_name.split(".")
             obj: Any = mtp_module
             for part in parts[:-1]:
-                obj = getattr(obj, part)
-            setattr(obj, parts[-1], mtp_weights[src_name])
+                obj = getattr(obj, part)  # pyright: ignore[reportAny]
+            setattr(obj, parts[-1], mtp_weights[src_name])  # pyright: ignore[reportAny]
 
     # Load transformer block weights (self_attn, mlp, layer norms)
     transformer_prefixes = [
@@ -203,5 +203,5 @@ def load_mtp_weights_into_module(
                 parts = key.split(".")
                 obj = mtp_module.transformer_block
                 for part in parts[:-1]:
-                    obj = getattr(obj, part)
-                setattr(obj, parts[-1], value)
+                    obj = getattr(obj, part)  # pyright: ignore[reportAny]
+                setattr(obj, parts[-1], value)  # pyright: ignore[reportAny]

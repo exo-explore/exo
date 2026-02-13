@@ -75,7 +75,7 @@ _original_deepseek_sanitize: Callable[..., dict[str, Any]] | None = None
 
 def _is_deepseek_v3_model(model: nn.Module) -> bool:
     """Check if the model is DeepSeek V3."""
-    return hasattr(model, "model") and isinstance(model.model, DeepseekV3Model)
+    return hasattr(model, "model") and isinstance(model.model, DeepseekV3Model)  # pyright: ignore[reportUnknownMemberType]
 
 
 def _might_be_deepseek_v3(model_id: str) -> bool:
@@ -106,7 +106,7 @@ def _patch_deepseek_sanitize_for_mtp() -> None:
         original_result: dict[str, Any] = _original_deepseek_sanitize(self, weights)
         mtp_weights = {
             k: v
-            for k, v in weights.items()
+            for k, v in weights.items()  # pyright: ignore[reportAny]
             if k.startswith(f"model.layers.{MTP_LAYER_INDEX}")
         }
         return {**original_result, **mtp_weights}
@@ -131,12 +131,12 @@ def _flatten_params(
 ) -> dict[str, mx.array]:
     """Flatten nested parameter dict to flat dict with dot-separated keys."""
     result: dict[str, mx.array] = {}
-    for key, value in params.items():
+    for key, value in params.items():  # pyright: ignore[reportAny]
         full_key = f"{prefix}.{key}" if prefix else key
         if isinstance(value, mx.array):
             result[full_key] = value
         elif isinstance(value, dict):
-            result.update(_flatten_params(value, full_key))
+            result.update(_flatten_params(cast(dict[str, Any], value), full_key))
     return result
 
 
@@ -149,36 +149,36 @@ def _extract_mtp_module(model: nn.Module) -> Any | None:
     )
 
     try:
-        inner_model = getattr(model, "model", None)
-        if inner_model is None or not hasattr(inner_model, "layers"):
+        inner_model: Any = getattr(model, "model", None)
+        if inner_model is None or not hasattr(inner_model, "layers"):  # pyright: ignore[reportAny]
             logger.debug("Model doesn't have expected structure for MTP extraction")
             return None
 
-        layers: list[nn.Module] = inner_model.layers  # type: ignore[assignment]
+        layers: list[nn.Module] = inner_model.layers  # pyright: ignore[reportAny]
         if len(layers) <= MTP_LAYER_INDEX:
             logger.debug(
                 f"Model has {len(layers)} layers, MTP layer {MTP_LAYER_INDEX} not found"
             )
             return None
 
-        config = getattr(model, "args", None)
+        config: Any = getattr(model, "args", None)
         if config is None:
             logger.debug("Could not get model config for MTP module")
             return None
 
-        embed_tokens = getattr(inner_model, "embed_tokens", None)
-        lm_head = getattr(model, "lm_head", None)
-        norm = getattr(inner_model, "norm", None)
+        embed_tokens: Any = getattr(inner_model, "embed_tokens", None)  # pyright: ignore[reportAny]
+        lm_head: Any = getattr(model, "lm_head", None)
+        norm: Any = getattr(inner_model, "norm", None)  # pyright: ignore[reportAny]
 
         if embed_tokens is None or lm_head is None or norm is None:
             logger.debug("Could not get required model components for MTP")
             return None
 
         mtp_module = MTPModule(
-            config=config,
-            shared_embedding=embed_tokens,
-            shared_lm_head=lm_head,
-            output_norm=norm,
+            config=config,  # pyright: ignore[reportAny]
+            shared_embedding=embed_tokens,  # pyright: ignore[reportAny]
+            shared_lm_head=lm_head,  # pyright: ignore[reportAny]
+            output_norm=norm,  # pyright: ignore[reportAny]
         )
 
         raw_params: dict[str, Any] = dict(model.parameters())  # type: ignore[arg-type]

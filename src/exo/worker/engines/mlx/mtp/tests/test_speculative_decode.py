@@ -26,13 +26,13 @@ class MockModel(nn.Module):
     def __call__(
         self,
         inputs: mx.array,
-        cache: list | None = None,
+        cache: list[object] | None = None,
     ) -> mx.array:
         hidden = self.model(inputs, cache)
         return self.lm_head(hidden)
 
     @property
-    def layers(self) -> list[nn.Module]:
+    def layers(self) -> list[nn.Linear]:
         return self._layers
 
 
@@ -47,7 +47,7 @@ class MockInnerModel(nn.Module):
     def __call__(
         self,
         inputs: mx.array,
-        cache: list | None = None,
+        cache: list[object] | None = None,
     ) -> mx.array:
         # Simple embedding + norm
         embedded = self.embed_tokens(inputs)
@@ -153,7 +153,7 @@ class TestSpeculativeDecodingLogic:
         draft_token = 42
         verify_token = 99
 
-        accepted = draft_token == verify_token
+        accepted = int(draft_token) == int(verify_token)
         assert not accepted
 
 

@@ -1,5 +1,7 @@
 """Unit tests for MTP module components."""
 
+from typing import Any
+
 import mlx.core as mx
 import mlx.nn as nn
 import pytest
@@ -30,7 +32,7 @@ class MockModelArgs:
         v_head_dim: int = 32,
         qk_nope_head_dim: int = 32,
         rope_theta: float = 10000.0,
-        rope_scaling: dict | None = None,
+        rope_scaling: dict[str, Any] | None = None,
         attention_bias: bool = False,
         max_position_embeddings: int = 2048,
     ):
@@ -221,9 +223,9 @@ class TestMTPModule:
         )
 
         # Verify they're the same objects
-        assert mtp._shared_embedding is embedding
-        assert mtp._shared_lm_head is lm_head
-        assert mtp._output_norm is output_norm
+        assert mtp._shared_embedding is embedding  # pyright: ignore[reportPrivateUsage]
+        assert mtp._shared_lm_head is lm_head  # pyright: ignore[reportPrivateUsage]
+        assert mtp._output_norm is output_norm  # pyright: ignore[reportPrivateUsage]
 
 
 class TestLoadMTPWeights:
@@ -263,8 +265,8 @@ class TestLoadMTPWeights:
 
         load_mtp_weights_into_module(mtp, mtp_weights)
 
-        assert mx.allclose(mtp.enorm.weight, test_enorm)
-        assert mx.allclose(mtp.hnorm.weight, test_hnorm)
+        assert mx.allclose(mtp.enorm.weight, test_enorm)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        assert mx.allclose(mtp.hnorm.weight, test_hnorm)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
 
 class TestSanitizePatch:
@@ -273,15 +275,15 @@ class TestSanitizePatch:
     def test_patch_preserves_layer_61(self) -> None:
         """Patching sanitize should preserve layer 61 weights."""
         from exo.worker.engines.mlx.utils_mlx import (
-            _patch_deepseek_sanitize_for_mtp,
-            _restore_deepseek_sanitize,
+            _patch_deepseek_sanitize_for_mtp,  # pyright: ignore[reportPrivateUsage]
+            _restore_deepseek_sanitize,  # pyright: ignore[reportPrivateUsage]
         )
 
-        deepseek_v3 = pytest.importorskip("mlx_lm.models.deepseek_v3")
-        model_cls = deepseek_v3.Model
+        deepseek_v3: Any = pytest.importorskip("mlx_lm.models.deepseek_v3")  # pyright: ignore[reportAny]
+        model_cls: Any = deepseek_v3.Model  # pyright: ignore[reportAny]
 
         # Get original sanitize behavior
-        original_sanitize = model_cls.sanitize
+        original_sanitize: Any = model_cls.sanitize  # pyright: ignore[reportAny]
 
         try:
             # Apply patch
@@ -289,54 +291,54 @@ class TestSanitizePatch:
 
             # Note: we can't easily test the full sanitize without a real model
             # This test verifies the patch is applied
-            assert model_cls.sanitize is not original_sanitize
+            assert model_cls.sanitize is not original_sanitize  # pyright: ignore[reportAny]
 
         finally:
             _restore_deepseek_sanitize()
             # Verify restore worked
-            assert model_cls.sanitize is original_sanitize
+            assert model_cls.sanitize is original_sanitize  # pyright: ignore[reportAny]
 
     def test_restore_sanitize(self) -> None:
         """Restoring sanitize should return to original behavior."""
         from exo.worker.engines.mlx.utils_mlx import (
-            _patch_deepseek_sanitize_for_mtp,
-            _restore_deepseek_sanitize,
+            _patch_deepseek_sanitize_for_mtp,  # pyright: ignore[reportPrivateUsage]
+            _restore_deepseek_sanitize,  # pyright: ignore[reportPrivateUsage]
         )
 
-        deepseek_v3 = pytest.importorskip("mlx_lm.models.deepseek_v3")
-        model_cls = deepseek_v3.Model
+        deepseek_v3: Any = pytest.importorskip("mlx_lm.models.deepseek_v3")  # pyright: ignore[reportAny]
+        model_cls: Any = deepseek_v3.Model  # pyright: ignore[reportAny]
 
-        original_sanitize = model_cls.sanitize
+        original_sanitize: Any = model_cls.sanitize  # pyright: ignore[reportAny]
 
         _patch_deepseek_sanitize_for_mtp()
-        assert model_cls.sanitize is not original_sanitize
+        assert model_cls.sanitize is not original_sanitize  # pyright: ignore[reportAny]
 
         _restore_deepseek_sanitize()
-        assert model_cls.sanitize is original_sanitize
+        assert model_cls.sanitize is original_sanitize  # pyright: ignore[reportAny]
 
     def test_double_patch_is_safe(self) -> None:
         """Calling patch twice should be safe (idempotent)."""
         from exo.worker.engines.mlx.utils_mlx import (
-            _patch_deepseek_sanitize_for_mtp,
-            _restore_deepseek_sanitize,
+            _patch_deepseek_sanitize_for_mtp,  # pyright: ignore[reportPrivateUsage]
+            _restore_deepseek_sanitize,  # pyright: ignore[reportPrivateUsage]
         )
 
-        deepseek_v3 = pytest.importorskip("mlx_lm.models.deepseek_v3")
-        model_cls = deepseek_v3.Model
+        deepseek_v3: Any = pytest.importorskip("mlx_lm.models.deepseek_v3")  # pyright: ignore[reportAny]
+        model_cls: Any = deepseek_v3.Model  # pyright: ignore[reportAny]
 
-        original_sanitize = model_cls.sanitize
+        original_sanitize: Any = model_cls.sanitize  # pyright: ignore[reportAny]
 
         try:
             _patch_deepseek_sanitize_for_mtp()
-            patched_sanitize = model_cls.sanitize
+            patched_sanitize: Any = model_cls.sanitize  # pyright: ignore[reportAny]
 
             # Patch again - should be no-op
             _patch_deepseek_sanitize_for_mtp()
-            assert model_cls.sanitize is patched_sanitize
+            assert model_cls.sanitize is patched_sanitize  # pyright: ignore[reportAny]
 
         finally:
             _restore_deepseek_sanitize()
-            assert model_cls.sanitize is original_sanitize
+            assert model_cls.sanitize is original_sanitize  # pyright: ignore[reportAny]
 
 
 class TestModelIdDetection:
@@ -344,7 +346,9 @@ class TestModelIdDetection:
 
     def test_detects_deepseek_v3(self) -> None:
         """Should detect DeepSeek V3 model IDs."""
-        from exo.worker.engines.mlx.utils_mlx import _might_be_deepseek_v3
+        from exo.worker.engines.mlx.utils_mlx import (
+            _might_be_deepseek_v3,  # pyright: ignore[reportPrivateUsage]
+        )
 
         assert _might_be_deepseek_v3("deepseek-ai/DeepSeek-V3")
         assert _might_be_deepseek_v3("deepseek-ai/deepseek-v3-base")
@@ -352,14 +356,18 @@ class TestModelIdDetection:
 
     def test_detects_deepseek_r1(self) -> None:
         """Should detect DeepSeek R1 model IDs (also uses MTP)."""
-        from exo.worker.engines.mlx.utils_mlx import _might_be_deepseek_v3
+        from exo.worker.engines.mlx.utils_mlx import (
+            _might_be_deepseek_v3,  # pyright: ignore[reportPrivateUsage]
+        )
 
         assert _might_be_deepseek_v3("deepseek-ai/DeepSeek-R1")
         assert _might_be_deepseek_v3("mlx-community/DeepSeek-R1-4bit")
 
     def test_rejects_non_deepseek(self) -> None:
         """Should reject non-DeepSeek model IDs."""
-        from exo.worker.engines.mlx.utils_mlx import _might_be_deepseek_v3
+        from exo.worker.engines.mlx.utils_mlx import (
+            _might_be_deepseek_v3,  # pyright: ignore[reportPrivateUsage]
+        )
 
         assert not _might_be_deepseek_v3("meta-llama/Llama-3-70B")
         assert not _might_be_deepseek_v3("mistralai/Mixtral-8x7B")
@@ -367,7 +375,9 @@ class TestModelIdDetection:
 
     def test_case_insensitive(self) -> None:
         """Detection should be case insensitive."""
-        from exo.worker.engines.mlx.utils_mlx import _might_be_deepseek_v3
+        from exo.worker.engines.mlx.utils_mlx import (
+            _might_be_deepseek_v3,  # pyright: ignore[reportPrivateUsage]
+        )
 
         assert _might_be_deepseek_v3("DEEPSEEK-AI/DEEPSEEK-V3")
         assert _might_be_deepseek_v3("DeepSeek-AI/deepseek-v3")
@@ -378,7 +388,9 @@ class TestFlattenParams:
 
     def test_flattens_nested_dict(self) -> None:
         """Should flatten nested parameter dict."""
-        from exo.worker.engines.mlx.utils_mlx import _flatten_params
+        from exo.worker.engines.mlx.utils_mlx import (
+            _flatten_params,  # pyright: ignore[reportPrivateUsage]
+        )
 
         params = {
             "model": {
@@ -400,7 +412,9 @@ class TestFlattenParams:
 
     def test_handles_flat_dict(self) -> None:
         """Should handle already-flat dict."""
-        from exo.worker.engines.mlx.utils_mlx import _flatten_params
+        from exo.worker.engines.mlx.utils_mlx import (
+            _flatten_params,  # pyright: ignore[reportPrivateUsage]
+        )
 
         params = {
             "weight": mx.zeros((10,)),

@@ -1,6 +1,9 @@
 import time
 from copy import deepcopy
-from typing import Any, Callable, Generator, cast, get_args
+from typing import TYPE_CHECKING, Any, Callable, Generator, cast, get_args
+
+if TYPE_CHECKING:
+    from exo.worker.engines.mlx.mtp.module import MTPModule
 
 import mlx.core as mx
 from mlx_lm.generate import stream_generate
@@ -495,7 +498,6 @@ def mlx_generate(
         if max_stop_len > 0 and len(accumulated_text) > max_stop_len:
             accumulated_text = accumulated_text[-max_stop_len:]
 
-
         # TODO: Do we want an mx_barrier?
 
 
@@ -515,7 +517,7 @@ def _mlx_generate_with_mtp(
     """
     from exo.worker.engines.mlx.mtp.speculative_decode import mtp_speculative_generate
 
-    mtp_module: Any = model.mtp_module  # type: ignore[attr-defined]
+    mtp_module = cast("MTPModule", model.mtp_module)
 
     for out in mtp_speculative_generate(
         model=model,
