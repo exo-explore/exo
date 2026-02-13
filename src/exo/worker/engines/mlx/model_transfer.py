@@ -43,8 +43,16 @@ def _all_sum_cpu(x: mx.array, group: Group) -> mx.array:
 
 
 def _is_metadata_file(filename: str) -> bool:
-    """A metadata file is anything that isn't a weight file (.safetensors)."""
-    return not filename.endswith(".safetensors")
+    """A metadata file is anything that isn't a weight file or weight index.
+
+    Weight indices (.safetensors.index.json) reference safetensors shard paths.
+    Transferring them to a receiver that has no safetensors files is harmless
+    today (load_model's glob doesn't match them), but excluding them avoids
+    stale references and keeps the transfer minimal.
+    """
+    if filename.endswith(".safetensors"):
+        return False
+    return not filename.endswith(".safetensors.index.json")
 
 
 def model_path_for_id(model_id: ModelId) -> Path:
