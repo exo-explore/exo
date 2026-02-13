@@ -41,6 +41,8 @@ def entrypoint(
         main(bound_instance, event_sender, task_receiver)
     except ClosedResourceError:
         logger.warning("Runner communication closed unexpectedly")
+    except KeyboardInterrupt:
+        logger.info("Runner received interrupt, shutting down")
     except Exception as e:
         logger.opt(exception=e).warning(
             f"Runner {bound_instance.bound_runner_id} crashed with critical exception {e}"
@@ -55,7 +57,9 @@ def entrypoint(
         try:
             event_sender.close()
             task_receiver.close()
+        except Exception:
+            pass
         finally:
-            event_sender.join()
-            task_receiver.join()
+            event_sender.cancel_join()
+            task_receiver.cancel_join()
             logger.info("bye from the runner")
