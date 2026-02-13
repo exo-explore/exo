@@ -25,5 +25,18 @@ jobs:
         with:
           lfs: false
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build E2E image with cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: e2e/Dockerfile
+          tags: exo-e2e:latest
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Run E2E tests
         run: python3 e2e/run_all.py
