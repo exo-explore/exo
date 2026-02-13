@@ -189,6 +189,7 @@ class ConfigData(BaseModel):
             ["MiniMaxM2ForCausalLM"],
             ["LlamaForCausalLM"],
             ["GptOssForCausalLM"],
+            ["Step3p5ForCausalLM"],
         ]
 
     @model_validator(mode="before")

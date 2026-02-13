@@ -268,6 +268,19 @@
     return tasks;
   });
 
+  const modelCapabilities = $derived(() => {
+    const caps: Record<string, string[]> = {};
+    for (const model of models) {
+      if (model.capabilities && model.capabilities.length > 0) {
+        caps[model.id] = model.capabilities;
+        if (model.hugging_face_id) {
+          caps[model.hugging_face_id] = model.capabilities;
+        }
+      }
+    }
+    return caps;
+  });
+
   // Helper to check if a model supports image generation
   function modelSupportsImageGeneration(modelId: string): boolean {
     const model = models.find(
@@ -2669,6 +2682,7 @@
                 showHelperText={false}
                 showModelSelector={true}
                 modelTasks={modelTasks()}
+                modelCapabilities={modelCapabilities()}
               />
             </div>
           </div>
@@ -3504,6 +3518,7 @@
                 placeholder="Ask anything"
                 showModelSelector={true}
                 modelTasks={modelTasks()}
+                modelCapabilities={modelCapabilities()}
               />
             </div>
           </div>
