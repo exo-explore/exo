@@ -22,7 +22,9 @@ def is_slow(test_file: Path) -> bool:
             if line.strip().startswith('"""') or line.strip().startswith("'''"):
                 # Read into the docstring
                 for doc_line in f:
-                    if "slow" in doc_line.lower() and doc_line.strip().startswith("slow"):
+                    if "slow" in doc_line.lower() and doc_line.strip().startswith(
+                        "slow"
+                    ):
                         return True
                     if '"""' in doc_line or "'''" in doc_line:
                         break
@@ -60,7 +62,9 @@ def main():
 
     total = passed + failed + skipped
     print("================================")
-    print(f"{passed}/{total} tests passed" + (f", {skipped} skipped" if skipped else ""))
+    print(
+        f"{passed}/{total} tests passed" + (f", {skipped} skipped" if skipped else "")
+    )
 
     if failed:
         print(f"Failed: {' '.join(failures)}")

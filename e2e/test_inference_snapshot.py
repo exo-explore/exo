@@ -13,6 +13,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import Cluster
 
@@ -55,17 +56,23 @@ async def main():
                 f"  Got:      {content!r}\n"
                 f"  Delete {SNAPSHOT_FILE} to regenerate."
             )
-            print(f"  Output matches snapshot")
+            print("  Output matches snapshot")
         else:
             SNAPSHOT_FILE.parent.mkdir(parents=True, exist_ok=True)
-            SNAPSHOT_FILE.write_text(json.dumps({
-                "model": MODEL,
-                "seed": SEED,
-                "temperature": 0,
-                "prompt": PROMPT,
-                "max_tokens": MAX_TOKENS,
-                "content": content,
-            }, indent=2) + "\n")
+            SNAPSHOT_FILE.write_text(
+                json.dumps(
+                    {
+                        "model": MODEL,
+                        "seed": SEED,
+                        "temperature": 0,
+                        "prompt": PROMPT,
+                        "max_tokens": MAX_TOKENS,
+                        "content": content,
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
             print(f"  Snapshot created: {SNAPSHOT_FILE}")
 
         print("PASSED: inference_snapshot")
