@@ -806,6 +806,7 @@
                 isFavorite={favorites.has(group.id)}
                 {selectedModelId}
                 {canModelFit}
+                {getModelFitStatus}
                 onToggleExpand={() => toggleGroupExpanded(group.id)}
                 onSelectModel={handleSelect}
                 {onToggleFavorite}
