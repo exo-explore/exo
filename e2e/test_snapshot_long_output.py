@@ -1,8 +1,6 @@
 """Test: Longer output snapshot.
-slow
 
 Verifies deterministic output with a higher max_tokens (128).
-Run with: python3 e2e/run_all.py --slow  or  E2E_SLOW=1 python3 e2e/run_all.py
 """
 
 import asyncio

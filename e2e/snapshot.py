@@ -3,14 +3,19 @@
 Provides deterministic regression testing by comparing inference output
 against saved snapshots. On first run, snapshots are created automatically.
 Set UPDATE_SNAPSHOTS=1 to regenerate snapshots when output intentionally changes.
+
+Snapshots are stored per-architecture (e.g. snapshots/x86_64/, snapshots/arm64/)
+since floating-point results differ between CPU architectures.
 """
 
 import difflib
 import json
 import os
+import platform
 from pathlib import Path
 
-SNAPSHOTS_DIR = Path(__file__).parent / "snapshots"
+ARCH = platform.machine()
+SNAPSHOTS_DIR = Path(__file__).parent / "snapshots" / ARCH
 
 
 def assert_snapshot(
@@ -21,7 +26,7 @@ def assert_snapshot(
     """Compare content against a saved snapshot, or create one if missing.
 
     Args:
-        name: Snapshot identifier (used as filename: snapshots/{name}.json).
+        name: Snapshot identifier (used as filename: snapshots/{arch}/{name}.json).
         content: The actual inference output to compare.
         metadata: Additional context stored alongside content (model, seed, etc.).
                   Not used for comparison -- purely documentary.
@@ -49,16 +54,16 @@ def assert_snapshot(
                 )
             )
             raise AssertionError(
-                f"Snapshot mismatch for '{name}'!\n\n"
+                f"Snapshot mismatch for '{name}' on {ARCH}!\n\n"
                 f"{diff}\n\n"
                 f"Expected: {expected!r}\n"
                 f"Actual:   {content!r}\n\n"
-                f"To update: UPDATE_SNAPSHOTS=1 python3 e2e/run_all.py --slow"
+                f"To update: UPDATE_SNAPSHOTS=1 python3 e2e/run_all.py"
             )
-        print(f"  Output matches snapshot ({snapshot_file.name})")
+        print(f"  Output matches snapshot ({ARCH}/{snapshot_file.name})")
     else:
         SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
-        snapshot_data = {**metadata, "content": content}
+        snapshot_data = {**metadata, "arch": ARCH, "content": content}
         snapshot_file.write_text(json.dumps(snapshot_data, indent=2) + "\n")
         action = "Updated" if update else "Created"
-        print(f"  {action} snapshot: {snapshot_file}")
+        print(f"  {action} snapshot: {ARCH}/{snapshot_file.name}")
