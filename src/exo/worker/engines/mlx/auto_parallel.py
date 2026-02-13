@@ -1037,6 +1037,7 @@ class Step35ShardingStrategy(TensorParallelShardingStrategy):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
+        weight_loader: WeightLoader = None,
     ) -> nn.Module:
         model = cast(Step35Model, model)
 
