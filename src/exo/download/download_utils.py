@@ -672,6 +672,103 @@ async def get_downloaded_size(path: Path) -> int:
     return 0
 
 
+async def download_repo_files(
+    repo_id: ModelId,
+    allow_patterns: list[str],
+    max_parallel_downloads: int = 8,
+    skip_internet: bool = False,
+    on_connection_lost: Callable[[], None] = lambda: None,
+) -> Path:
+    """Download files from a HF repo into the exo models directory.
+
+    Simplified version of download_shard that takes a repo ID directly,
+    without needing a ShardMetadata. Used for auxiliary repos like vision weights.
+    """
+    target_dir = (await ensure_models_dir()) / repo_id.replace("/", "--")
+    await aios.makedirs(target_dir, exist_ok=True)
+
+    file_list = await fetch_file_list_with_cache(
+        repo_id,
+        "main",
+        recursive=True,
+        skip_internet=skip_internet,
+        on_connection_lost=on_connection_lost,
+    )
+    filtered = list(
+        filter_repo_objects(
+            file_list, allow_patterns=allow_patterns, key=lambda x: x.path
+        )
+    )
+
+    # Skip if all files already downloaded
+    all_present = True
+    for f in filtered:
+        path = target_dir / f.path
+        if (
+            not await aios.path.exists(path)
+            or (await aios.stat(path)).st_size != f.size
+        ):
+            all_present = False
+            break
+    if all_present and filtered:
+        logger.debug(f"All files for {repo_id} already downloaded")
+        return target_dir
+
+    logger.info(f"Downloading {len(filtered)} files for {repo_id}")
+    semaphore = asyncio.Semaphore(max_parallel_downloads)
+
+    async def _download(file: FileListEntry) -> None:
+        async with semaphore:
+            await download_file_with_retry(
+                repo_id,
+                "main",
+                file.path,
+                target_dir,
+                on_connection_lost=on_connection_lost,
+            )
+
+    await asyncio.gather(*[_download(f) for f in filtered])
+    logger.info(f"Finished downloading {repo_id}")
+    return target_dir
+
+
+async def are_repo_files_downloaded(
+    repo_id: ModelId,
+    allow_patterns: list[str],
+    skip_internet: bool = False,
+    on_connection_lost: Callable[[], None] = lambda: None,
+) -> bool:
+    """Check if all matching files from a HF repo are fully downloaded."""
+    target_dir = (await ensure_models_dir()) / repo_id.replace("/", "--")
+    if not await aios.path.exists(target_dir):
+        return False
+
+    try:
+        file_list = await fetch_file_list_with_cache(
+            repo_id,
+            "main",
+            recursive=True,
+            skip_internet=skip_internet,
+            on_connection_lost=on_connection_lost,
+        )
+    except Exception:
+        # If we can't check the file list, assume not downloaded
+        return False
+
+    filtered = list(
+        filter_repo_objects(
+            file_list, allow_patterns=allow_patterns, key=lambda x: x.path
+        )
+    )
+    for f in filtered:
+        path = target_dir / f.path
+        if not await aios.path.exists(path):
+            return False
+        if f.size is not None and (await aios.stat(path)).st_size != f.size:
+            return False
+    return bool(filtered)
+
+
 async def download_shard(
     shard: ShardMetadata,
     on_progress: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],

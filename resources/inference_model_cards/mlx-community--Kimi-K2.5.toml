@@ -6,7 +6,14 @@ tasks = ["TextGeneration"]
 family = "kimi"
 quantization = ""
 base_model = "Kimi K2.5"
-capabilities = ["text", "thinking"]
+capabilities = ["text", "thinking", "vision"]
 
 [storage_size]
-in_bytes = 662498705408
+in_bytes = 663441032792
+
+[vision]
+weights_repo = "davehind/Kimi-K2.5-vision"
+image_token_id = 163605
+image_token = "<|media_pad|>"
+model_type = "kimi_k25"
+processor_repo = "moonshotai/Kimi-K2.5"

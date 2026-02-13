@@ -76,6 +76,18 @@ class ComponentInfo(CamelCaseModel):
     safetensors_index_filename: str | None = None
 
 
+class VisionCardConfig(CamelCaseModel):
+    """Vision encoder configuration from model card TOML [vision] section."""
+
+    weights_repo: str  # HuggingFace repo for vision weights
+    image_token_id: int  # Placeholder token ID to splice vision embeddings at
+    image_token: str  # String representation of the placeholder token
+    model_type: str  # mlx-vlm model directory name (e.g. "kimi_k25")
+    processor_repo: str | None = (
+        None  # HF repo for image processor (if different from weights_repo)
+    )
+
+
 class ModelCard(CamelCaseModel):
     model_id: ModelId
     storage_size: Memory
@@ -89,6 +101,7 @@ class ModelCard(CamelCaseModel):
     base_model: str = ""
     capabilities: list[str] = []
     uses_cfg: bool = False
+    vision: VisionCardConfig | None = None
 
     @field_validator("tasks", mode="before")
     @classmethod
