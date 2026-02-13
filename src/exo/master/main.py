@@ -4,6 +4,7 @@ import anyio
 from anyio.abc import TaskGroup
 from loguru import logger
 
+from exo.master.event_log import DiskEventLog
 from exo.master.placement import (
     add_instance_to_placements,
     cancel_unnecessary_downloads,
@@ -12,7 +13,7 @@ from exo.master.placement import (
     place_instance,
 )
 from exo.shared.apply import apply
-from exo.shared.constants import EXO_TRACING_ENABLED
+from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
@@ -88,8 +89,7 @@ class Master:
             local_event_receiver.clone_sender()
         )
         self._multi_buffer = MultiSourceBuffer[NodeId, Event]()
-        # TODO: not have this
-        self._event_log: list[Event] = []
+        self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
 
@@ -103,6 +103,7 @@ class Master:
                 tg.start_soon(self._loopback_processor)
                 tg.start_soon(self._plan)
         finally:
+            self._event_log.close()
             self.global_event_sender.close()
             self.local_event_receiver.close()
             self.command_receiver.close()
@@ -332,10 +333,13 @@ class Master:
                                 ]
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages
-                            for i in range(command.since_idx, len(self._event_log)):
-                                await self._send_event(
-                                    IndexedEvent(idx=i, event=self._event_log[i])
-                                )
+                            # rate limit to 1000 at a time
+                            end = min(command.since_idx + 1000, len(self._event_log))
+                            for i, event in enumerate(
+                                self._event_log.read_range(command.since_idx, end),
+                                start=command.since_idx,
+                            ):
+                                await self._send_event(IndexedEvent(idx=i, event=event))
                     for event in generated_events:
                         await self.event_sender.send(event)
                 except ValueError as e:

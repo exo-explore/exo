@@ -3,7 +3,6 @@
 from collections.abc import AsyncGenerator
 from itertools import count
 from typing import Any
-from uuid import uuid4
 
 from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
@@ -140,8 +139,8 @@ async def collect_responses_response(
             for tool in chunk.tool_calls:
                 function_call_items.append(
                     ResponseFunctionCallItem(
-                        id=f"fc_{uuid4().hex[:24]}",
-                        call_id=f"call_{uuid4().hex[:24]}",
+                        id=f"fc_{tool.id}",
+                        call_id=f"call_{tool.id}",
                         name=tool.name,
                         arguments=tool.arguments,
                     )
@@ -246,8 +245,8 @@ async def generate_responses_stream(
         if isinstance(chunk, ToolCallChunk):
             last_stats = chunk.stats or last_stats
             for tool in chunk.tool_calls:
-                fc_id = f"fc_{uuid4().hex[:24]}"
-                call_id = f"call_{uuid4().hex[:24]}"
+                fc_id = f"fc_{tool.id}"
+                call_id = f"call_{tool.id}"
 
                 # response.output_item.added for function_call
                 fc_item = ResponseFunctionCallItem(

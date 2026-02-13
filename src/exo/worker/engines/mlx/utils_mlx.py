@@ -1,6 +1,5 @@
 import json
 import os
-import resource
 import sys
 import time
 from pathlib import Path
@@ -63,8 +62,6 @@ from exo.worker.engines.mlx.auto_parallel import (
 from exo.worker.runner.bootstrap import logger
 
 Group = mx.distributed.Group
-# Needed for 8 bit model
-resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 4096))
 
 
 # TODO: Test this
@@ -465,11 +462,19 @@ def apply_chat_template(
         partial_assistant_content = cast(str, formatted_messages[-1].get("content", ""))
         formatted_messages = formatted_messages[:-1]
 
+    extra_kwargs: dict[str, Any] = {}
+    if task_params.enable_thinking is not None:
+        # Qwen3 and GLM use "enable_thinking"; DeepSeek uses "thinking".
+        # Jinja ignores unknown variables, so passing both is safe.
+        extra_kwargs["enable_thinking"] = task_params.enable_thinking
+        extra_kwargs["thinking"] = task_params.enable_thinking
+
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
         tools=task_params.tools,
+        **extra_kwargs,
     )
 
     if partial_assistant_content:

@@ -1,0 +1,16 @@
+[project]
+name = "exo-bench"
+version = "0.1.0"
+description = "Benchmarking tool for exo distributed inference"
+requires-python = ">=3.13"
+dependencies = [
+    "loguru>=0.7.3",
+    "transformers>=5.0.0",
+    "huggingface-hub>=0.33.4",
+    "tiktoken>=0.12.0",
+    "jinja2>=3.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

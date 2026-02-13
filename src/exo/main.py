@@ -256,7 +256,8 @@ class Node:
 def main():
     args = Args.parse()
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, 65535), hard))
+    target = min(max(soft, 65535), hard)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
     mp.set_start_method("spawn")
     # TODO: Refactor the current verbosity system

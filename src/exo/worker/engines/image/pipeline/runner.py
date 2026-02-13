@@ -567,6 +567,7 @@ class DiffusionRunner:
         | list[tuple[int, int, int]]
         | None = None,
         conditioning_latents: mx.array | None = None,
+        kontext_image_ids: mx.array | None = None,
     ) -> mx.array:
         """Run a single forward pass through the transformer.
         Args:
@@ -578,6 +579,7 @@ class DiffusionRunner:
             encoder_hidden_states_mask: Attention mask for text (Qwen)
             cond_image_grid: Conditioning image grid dimensions (Qwen edit)
             conditioning_latents: Conditioning latents for edit mode
+            kontext_image_ids: Position IDs for Kontext conditioning (Flux Kontext)
 
         Returns:
             Noise prediction tensor
@@ -610,6 +612,7 @@ class DiffusionRunner:
             config,
             encoder_hidden_states_mask=encoder_hidden_states_mask,
             cond_image_grid=cond_image_grid,
+            kontext_image_ids=kontext_image_ids,
         )
 
         assert self.joint_block_wrappers is not None
@@ -681,6 +684,7 @@ class DiffusionRunner:
         prompt_data: PromptData,
     ) -> mx.array:
         cond_image_grid = prompt_data.cond_image_grid
+        kontext_image_ids = prompt_data.kontext_image_ids
         results: list[tuple[bool, mx.array]] = []
 
         for branch in self._get_cfg_branches(prompt_data):
@@ -700,6 +704,7 @@ class DiffusionRunner:
                 encoder_hidden_states_mask=branch.mask,
                 cond_image_grid=cond_image_grid,
                 conditioning_latents=branch.cond_latents,
+                kontext_image_ids=kontext_image_ids,
             )
             results.append((branch.positive, noise))
 
@@ -902,10 +907,10 @@ class DiffusionRunner:
         config: Config,
         hidden_states: mx.array,
         prompt_data: PromptData,
-        kontext_image_ids: mx.array | None = None,
     ) -> mx.array:
         prev_latents = hidden_states
         cond_image_grid = prompt_data.cond_image_grid
+        kontext_image_ids = prompt_data.kontext_image_ids
 
         scaled_hidden_states = config.scheduler.scale_model_input(hidden_states, t)  # pyright: ignore[reportAny]
         original_latent_tokens: int = scaled_hidden_states.shape[1]  # pyright: ignore[reportAny]
@@ -979,10 +984,10 @@ class DiffusionRunner:
         latents: mx.array,
         prompt_data: PromptData,
         is_first_async_step: bool,
-        kontext_image_ids: mx.array | None = None,
     ) -> mx.array:
         patch_latents, token_indices = self._create_patches(latents, config)
         cond_image_grid = prompt_data.cond_image_grid
+        kontext_image_ids = prompt_data.kontext_image_ids
 
         prev_patch_latents = [p for p in patch_latents]
 
