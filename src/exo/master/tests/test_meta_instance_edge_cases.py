@@ -176,11 +176,15 @@ def test_meta_instance_created_then_deleted_roundtrip():
     """Create and delete a MetaInstance through apply — state should be clean."""
     state = State()
     meta = _meta_instance()
-    state = apply(state, IndexedEvent(idx=0, event=MetaInstanceCreated(meta_instance=meta)))
+    state = apply(
+        state, IndexedEvent(idx=0, event=MetaInstanceCreated(meta_instance=meta))
+    )
     assert meta.meta_instance_id in state.meta_instances
     state = apply(
         state,
-        IndexedEvent(idx=1, event=MetaInstanceDeleted(meta_instance_id=meta.meta_instance_id)),
+        IndexedEvent(
+            idx=1, event=MetaInstanceDeleted(meta_instance_id=meta.meta_instance_id)
+        ),
     )
     assert meta.meta_instance_id not in state.meta_instances
     assert len(state.meta_instances) == 0
@@ -210,8 +214,12 @@ def test_multiple_meta_instances_for_same_model():
     state = State()
     meta_a = _meta_instance("test-org/model-x")
     meta_b = _meta_instance("test-org/model-x")
-    state = apply(state, IndexedEvent(idx=0, event=MetaInstanceCreated(meta_instance=meta_a)))
-    state = apply(state, IndexedEvent(idx=1, event=MetaInstanceCreated(meta_instance=meta_b)))
+    state = apply(
+        state, IndexedEvent(idx=0, event=MetaInstanceCreated(meta_instance=meta_a))
+    )
+    state = apply(
+        state, IndexedEvent(idx=1, event=MetaInstanceCreated(meta_instance=meta_b))
+    )
     assert len(state.meta_instances) == 2
     assert meta_a.meta_instance_id in state.meta_instances
     assert meta_b.meta_instance_id in state.meta_instances
@@ -443,8 +451,12 @@ async def test_health_reconciler_handles_multiple_failing_instances():
     """Multiple instances failing simultaneously should each get their own event."""
     meta_a = _meta_instance()
     meta_b = _meta_instance()
-    iid_a, inst_a = _instance(node_ids=["node-a"], meta_instance_id=meta_a.meta_instance_id)
-    iid_b, inst_b = _instance(node_ids=["node-b"], meta_instance_id=meta_b.meta_instance_id)
+    iid_a, inst_a = _instance(
+        node_ids=["node-a"], meta_instance_id=meta_a.meta_instance_id
+    )
+    iid_b, inst_b = _instance(
+        node_ids=["node-b"], meta_instance_id=meta_b.meta_instance_id
+    )
     runner_ids_a = list(inst_a.shard_assignments.node_to_runner.values())
     runner_ids_b = list(inst_b.shard_assignments.node_to_runner.values())
     state = State(
