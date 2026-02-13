@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import Cluster
 
@@ -54,8 +55,7 @@ async def main():
         # Verify RunnerFailed was emitted (visible in logs)
         log = await cluster.logs()
         assert "runner process died unexpectedly" in log, (
-            "Expected health check to detect runner death but it didn't.\n"
-            f"Logs:\n{log}"
+            f"Expected health check to detect runner death but it didn't.\nLogs:\n{log}"
         )
 
         print("PASSED: runner_chaos")

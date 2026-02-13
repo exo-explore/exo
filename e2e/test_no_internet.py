@@ -7,6 +7,7 @@ except private subnets and multicast (for mDNS discovery).
 
 import asyncio
 import sys
+
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
 from conftest import Cluster
 
@@ -22,7 +23,15 @@ async def main():
 
         # Verify internet is actually blocked from inside the containers
         for node in ["exo-node-1", "exo-node-2"]:
-            rc, _ = await cluster.exec(node, "curl", "-sf", "--max-time", "3", "https://huggingface.co", check=False)
+            rc, _ = await cluster.exec(
+                node,
+                "curl",
+                "-sf",
+                "--max-time",
+                "3",
+                "https://huggingface.co",
+                check=False,
+            )
             assert rc != 0, f"{node} should not be able to reach the internet"
             print(f"  {node}: internet correctly blocked")
 
