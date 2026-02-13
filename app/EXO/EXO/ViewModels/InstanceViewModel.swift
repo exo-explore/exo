@@ -80,6 +80,7 @@ struct InstanceViewModel: Identifiable, Equatable {
     let state: State
     let chatTasks: [InstanceTaskViewModel]
     let downloadProgress: DownloadProgressViewModel?
+    let failureReason: String?
 
     var nodeSummary: String {
         guard !nodeNames.isEmpty else { return "0 nodes" }
@@ -111,6 +112,12 @@ extension ClusterState {
                 nodeProfiles[$0]?.friendlyName ?? nodeProfiles[$0]?.modelId ?? $0
             }
             let statuses = runnerIds.compactMap { runners[$0]?.status.lowercased() }
+            let failureReason =
+                runnerIds
+                .compactMap {
+                    runners[$0]?.errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                .first(where: { !$0.isEmpty })
             let downloadProgress = aggregateDownloadProgress(for: nodeIds)
             let state = InstanceViewModel.State(
                 statuses: statuses, hasActiveDownload: downloadProgress != nil)
@@ -124,7 +131,8 @@ extension ClusterState {
                 nodeNames: nodeNames,
                 state: state,
                 chatTasks: chatTasks,
-                downloadProgress: downloadProgress
+                downloadProgress: downloadProgress,
+                failureReason: failureReason
             )
         }
         .sorted { $0.modelName < $1.modelName }
