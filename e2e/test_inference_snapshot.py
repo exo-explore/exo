@@ -1,7 +1,7 @@
 """Test: Deterministic inference output (snapshot test).
 slow
 
-Sends a chat completion request with a fixed seed and temperature=0,
+Sends a chat completion request with a fixed seed,
 then verifies the output matches a known-good snapshot. This ensures
 inference produces consistent results across runs.
 
@@ -10,18 +10,18 @@ Run with: python3 e2e/run_all.py --slow  or  E2E_SLOW=1 python3 e2e/run_all.py
 """
 
 import asyncio
-import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+from snapshot import assert_snapshot
+
 from conftest import Cluster
 
 MODEL = "mlx-community/Qwen3-0.6B-4bit"
 SEED = 42
 PROMPT = "What is 2+2? Reply with just the number."
 MAX_TOKENS = 32
-SNAPSHOT_FILE = Path(__file__).parent / "snapshots" / "inference.json"
 
 
 async def main():
@@ -30,50 +30,30 @@ async def main():
         await cluster.start()
         await cluster.assert_healthy()
 
-        # Launch the model instance (triggers download + placement)
         print(f"  Launching model {MODEL}...")
         await cluster.place_model(MODEL)
 
-        print(f"  Sending chat completion (seed={SEED}, temperature=0)...")
+        print(f"  Sending chat completion (seed={SEED})...")
         resp = await cluster.chat(
             model=MODEL,
             messages=[{"role": "user", "content": PROMPT}],
             seed=SEED,
-            temperature=0,
             max_tokens=MAX_TOKENS,
         )
 
         content = resp["choices"][0]["message"]["content"]
         print(f"  Response: {content!r}")
 
-        # Load or create snapshot
-        if SNAPSHOT_FILE.exists():
-            snapshot = json.loads(SNAPSHOT_FILE.read_text())
-            expected = snapshot["content"]
-            assert content == expected, (
-                f"Snapshot mismatch!\n"
-                f"  Expected: {expected!r}\n"
-                f"  Got:      {content!r}\n"
-                f"  Delete {SNAPSHOT_FILE} to regenerate."
-            )
-            print("  Output matches snapshot")
-        else:
-            SNAPSHOT_FILE.parent.mkdir(parents=True, exist_ok=True)
-            SNAPSHOT_FILE.write_text(
-                json.dumps(
-                    {
-                        "model": MODEL,
-                        "seed": SEED,
-                        "temperature": 0,
-                        "prompt": PROMPT,
-                        "max_tokens": MAX_TOKENS,
-                        "content": content,
-                    },
-                    indent=2,
-                )
-                + "\n"
-            )
-            print(f"  Snapshot created: {SNAPSHOT_FILE}")
+        assert_snapshot(
+            name="inference_snapshot",
+            content=content,
+            metadata={
+                "model": MODEL,
+                "seed": SEED,
+                "prompt": PROMPT,
+                "max_tokens": MAX_TOKENS,
+            },
+        )
 
         print("PASSED: inference_snapshot")
 
