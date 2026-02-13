@@ -38,6 +38,8 @@ class PlaceInstance(BaseCommand):
     sharding: Sharding
     instance_meta: InstanceMeta
     min_nodes: int
+    draft_model: ModelId | None = None
+    num_draft_tokens: int = 4
 
 
 class CreateInstance(BaseCommand):
