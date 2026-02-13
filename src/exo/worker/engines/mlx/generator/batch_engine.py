@@ -11,7 +11,8 @@ from mlx_lm.tokenizer_utils import StreamingDetokenizer, TokenizerWrapper
 from exo.shared.types.api import FinishReason, GenerationStats
 from exo.shared.types.common import CommandId
 from exo.shared.types.memory import Memory
-from exo.shared.types.tasks import ChatCompletionTaskParams, TaskId
+from exo.shared.types.tasks import TaskId
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.constants import MAX_TOKENS
@@ -60,7 +61,7 @@ class BatchGenerationEngine:
         self.max_tokens = max_tokens
         self.active_requests: dict[int, ActiveRequest] = {}
         self._pending_inserts: list[
-            tuple[CommandId, TaskId, ChatCompletionTaskParams]
+            tuple[CommandId, TaskId, TextGenerationTaskParams]
         ] = []
         self._pending_completions: list[
             int
@@ -93,7 +94,7 @@ class BatchGenerationEngine:
         self,
         command_id: CommandId,
         task_id: TaskId,
-        task_params: ChatCompletionTaskParams,
+        task_params: TextGenerationTaskParams,
     ) -> None:
         """Queue a request for insertion. Only rank 0 should call this.
 
@@ -117,7 +118,7 @@ class BatchGenerationEngine:
         Batches all pending inserts into a single batch_gen.insert() call for
         efficient prefill batching.
         """
-        inserts_to_process: list[tuple[CommandId, TaskId, ChatCompletionTaskParams]]
+        inserts_to_process: list[tuple[CommandId, TaskId, TextGenerationTaskParams]]
 
         if not self.is_distributed:
             # Non-distributed: just insert directly from pending
@@ -149,7 +150,7 @@ class BatchGenerationEngine:
             tokens: list[int] = self.tokenizer.encode(
                 prompt_str, add_special_tokens=False
             )
-            max_tokens = params.max_tokens or self.max_tokens
+            max_tokens = params.max_output_tokens or self.max_tokens
 
             all_tokens.append(tokens)
             all_max_tokens.append(max_tokens)
@@ -237,7 +238,11 @@ class BatchGenerationEngine:
                     command_id=req.command_id,
                     task_id=req.task_id,
                     response=GenerationResponse(
-                        text=text, token=token, finish_reason=finish_reason, stats=stats
+                        text=text,
+                        token=token,
+                        finish_reason=finish_reason,
+                        stats=stats,
+                        usage=None,
                     ),
                 )
             )

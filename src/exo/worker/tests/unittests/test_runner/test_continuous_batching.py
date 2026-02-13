@@ -11,6 +11,7 @@ NOTE: These tests require the continuous-batching runner architecture
 (BatchGenerationEngine) which is not yet integrated with main.
 """
 
+# ruff: noqa: E402
 # pyright: reportAny=false
 # pyright: reportUnknownArgumentType=false
 # pyright: reportUnknownMemberType=false
@@ -20,7 +21,7 @@ NOTE: These tests require the continuous-batching runner architecture
 import pytest
 
 pytest.skip(
-    "continuous batching runner not yet updated for main branch types",
+    "continuous batching runner not yet integrated with main branch runner",
     allow_module_level=True,
 )
 
@@ -28,7 +29,6 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import exo.worker.runner.runner as mlx_runner
-from exo.shared.types.api import ChatCompletionMessage
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import (
     Event,
@@ -36,8 +36,6 @@ from exo.shared.types.events import (
     TaskStatusUpdated,
 )
 from exo.shared.types.tasks import (
-    ChatCompletion,
-    ChatCompletionTaskParams,
     ConnectToGroup,
     LoadModel,
     Shutdown,
@@ -45,7 +43,9 @@ from exo.shared.types.tasks import (
     Task,
     TaskId,
     TaskStatus,
+    TextGeneration,
 )
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.shared.types.worker.runners import RunnerRunning
 from exo.utils.channels import mp_channel
@@ -74,7 +74,7 @@ class FakeBatchEngineWithTokens:
     def __init__(self, *_args: Any, **_kwargs: Any):
         self._active_requests: dict[int, tuple[CommandId, TaskId, int, int]] = {}
         self._pending_inserts: list[
-            tuple[CommandId, TaskId, ChatCompletionTaskParams]
+            tuple[CommandId, TaskId, TextGenerationTaskParams]
         ] = []
         self._uid_counter = 0
         self._tokens_per_request = 3  # Default: generate 3 tokens before completing
@@ -84,7 +84,7 @@ class FakeBatchEngineWithTokens:
         self,
         command_id: CommandId,
         task_id: TaskId,
-        task_params: ChatCompletionTaskParams,
+        task_params: TextGenerationTaskParams,
     ) -> None:
         """Queue a request for insertion."""
         self._pending_inserts.append((command_id, task_id, task_params))
@@ -106,12 +106,14 @@ class FakeBatchEngineWithTokens:
         self,
         command_id: CommandId,
         task_id: TaskId,
-        task_params: ChatCompletionTaskParams | None,
+        task_params: TextGenerationTaskParams | None,
     ) -> int:
         uid = self._uid_counter
         self._uid_counter += 1
         # Track: (command_id, task_id, tokens_generated, max_tokens)
-        max_tokens = task_params.max_tokens if task_params else self._tokens_per_request
+        max_tokens = (
+            task_params.max_output_tokens if task_params else self._tokens_per_request
+        )
         self._active_requests[uid] = (command_id, task_id, 0, max_tokens or 3)
         return uid
 
@@ -144,6 +146,7 @@ class FakeBatchEngineWithTokens:
                         token=tokens_gen,
                         text=text,
                         finish_reason=finish_reason,
+                        usage=None,
                     ),
                 )
             )
@@ -243,15 +246,15 @@ WARMUP_TASK = StartWarmup(task_id=TaskId("warmup"), instance_id=INSTANCE_1_ID)
 
 def make_chat_task(
     task_id: str, command_id: str, max_tokens: int = 3
-) -> ChatCompletion:
-    return ChatCompletion(
+) -> TextGeneration:
+    return TextGeneration(
         task_id=TaskId(task_id),
         command_id=CommandId(command_id),
-        task_params=ChatCompletionTaskParams(
-            model=str(MODEL_A_ID),
-            messages=[ChatCompletionMessage(role="user", content="hello")],
+        task_params=TextGenerationTaskParams(
+            model=MODEL_A_ID,
+            input=[InputMessage(role="user", content="hello")],
             stream=True,
-            max_tokens=max_tokens,
+            max_output_tokens=max_tokens,
         ),
         instance_id=INSTANCE_1_ID,
     )
