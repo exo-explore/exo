@@ -319,6 +319,7 @@ export interface Conversation {
   modelId: string | null;
   sharding: string | null;
   instanceType: string | null;
+  enableThinking: boolean | null;
 }
 
 const STORAGE_KEY = "exo-conversations";
@@ -640,6 +641,7 @@ class AppStore {
           modelId: conversation.modelId ?? null,
           sharding: conversation.sharding ?? null,
           instanceType: conversation.instanceType ?? null,
+          enableThinking: conversation.enableThinking ?? null,
         }));
       }
     } catch (error) {
@@ -829,6 +831,7 @@ class AppStore {
       modelId: derivedModelId,
       sharding: derivedSharding,
       instanceType: derivedInstanceType,
+      enableThinking: null,
     };
 
     this.conversations.unshift(conversation);
@@ -854,6 +857,7 @@ class AppStore {
     this.hasStartedChat = true;
     this.isTopologyMinimized = true;
     this.isSidebarOpen = true; // Auto-open sidebar when chatting
+    this.thinkingEnabled = conversation.enableThinking ?? true;
     this.refreshConversationModelFromInstances();
 
     return true;
@@ -1968,6 +1972,11 @@ class AppStore {
   }
 
   /**
+   * Whether thinking is enabled for the current conversation
+   */
+  thinkingEnabled = $state(true);
+
+  /**
    * Selected model for chat (can be set by the UI)
    */
   selectedChatModel = $state("");
@@ -2145,6 +2154,7 @@ class AppStore {
       textContent?: string;
       preview?: string;
     }[],
+    enableThinking?: boolean | null,
   ): Promise<void> {
     if ((!content.trim() && (!files || files.length === 0)) || this.isLoading)
       return;
@@ -2292,6 +2302,9 @@ class AppStore {
           stream: true,
           logprobs: true,
           top_logprobs: 5,
+          ...(enableThinking != null && {
+            enable_thinking: enableThinking,
+          }),
         }),
       });
 
@@ -2951,6 +2964,18 @@ class AppStore {
   }
 
   /**
+   * Update the thinking preference for the active conversation
+   */
+  setConversationThinking(enabled: boolean) {
+    this.thinkingEnabled = enabled;
+    const conv = this.getActiveConversation();
+    if (conv) {
+      conv.enableThinking = enabled;
+      this.saveConversationsToStorage();
+    }
+  }
+
+  /**
    * Start a download on a specific node
    */
   async startDownload(nodeId: string, shardMetadata: object): Promise<void> {
@@ -3064,6 +3089,7 @@ export const isLoadingPreviews = () => appStore.isLoadingPreviews;
 export const lastUpdate = () => appStore.lastUpdate;
 export const isTopologyMinimized = () => appStore.isTopologyMinimized;
 export const selectedChatModel = () => appStore.selectedChatModel;
+export const thinkingEnabled = () => appStore.thinkingEnabled;
 export const debugMode = () => appStore.getDebugMode();
 export const topologyOnlyMode = () => appStore.getTopologyOnlyMode();
 export const chatSidebarVisible = () => appStore.getChatSidebarVisible();
@@ -3079,7 +3105,8 @@ export const sendMessage = (
     textContent?: string;
     preview?: string;
   }[],
-) => appStore.sendMessage(content, files);
+  enableThinking?: boolean | null,
+) => appStore.sendMessage(content, files, enableThinking);
 export const generateImage = (prompt: string, modelId?: string) =>
   appStore.generateImage(prompt, modelId);
 export const editImage = (
@@ -3122,6 +3149,8 @@ export const deleteAllConversations = () => appStore.deleteAllConversations();
 export const renameConversation = (id: string, name: string) =>
   appStore.renameConversation(id, name);
 export const getActiveConversation = () => appStore.getActiveConversation();
+export const setConversationThinking = (enabled: boolean) =>
+  appStore.setConversationThinking(enabled);
 
 // Sidebar actions
 export const isSidebarOpen = () => appStore.isSidebarOpen;
