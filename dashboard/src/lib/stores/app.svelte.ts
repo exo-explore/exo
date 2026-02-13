@@ -49,6 +49,7 @@ export interface NodeInfo {
   };
   last_macmon_update: number;
   friendly_name?: string;
+  os_version?: string;
 }
 
 export interface TopologyEdge {
@@ -56,6 +57,8 @@ export interface TopologyEdge {
   target: string;
   sendBackIp?: string;
   sendBackInterface?: string;
+  sourceRdmaIface?: string;
+  sinkRdmaIface?: string;
 }
 
 export interface TopologyData {
@@ -78,6 +81,8 @@ interface RawNodeIdentity {
   modelId?: string;
   chipId?: string;
   friendlyName?: string;
+  osVersion?: string;
+  osBuildVersion?: string;
 }
 
 interface RawMemoryUsage {
@@ -227,6 +232,19 @@ interface RawStateResponse {
   nodeMemory?: Record<string, RawMemoryUsage>;
   nodeSystem?: Record<string, RawSystemPerformanceProfile>;
   nodeNetwork?: Record<string, RawNodeNetworkInfo>;
+  // Thunderbolt identifiers per node
+  nodeThunderbolt?: Record<
+    string,
+    {
+      interfaces: Array<{
+        rdmaInterface: string;
+        domainUuid: string;
+        linkSpeed: string;
+      }>;
+    }
+  >;
+  // RDMA ctl status per node
+  nodeRdmaCtl?: Record<string, { enabled: boolean }>;
   // Thunderbolt bridge status per node
   nodeThunderboltBridge?: Record<
     string,
@@ -280,6 +298,7 @@ export interface Conversation {
   modelId: string | null;
   sharding: string | null;
   instanceType: string | null;
+  enableThinking: boolean | null;
 }
 
 const STORAGE_KEY = "exo-conversations";
@@ -288,7 +307,14 @@ const IMAGE_PARAMS_STORAGE_KEY = "exo-image-generation-params";
 // Image generation params interface matching backend API
 export interface ImageGenerationParams {
   // Basic params
-  size: "512x512" | "768x768" | "1024x1024" | "1024x768" | "768x1024";
+  size:
+    | "512x512"
+    | "768x768"
+    | "1024x1024"
+    | "1024x768"
+    | "768x1024"
+    | "1024x1365"
+    | "1365x1024";
   quality: "low" | "medium" | "high";
   outputFormat: "png" | "jpeg";
   numImages: number;
@@ -300,6 +326,7 @@ export interface ImageGenerationParams {
   numInferenceSteps: number | null;
   guidance: number | null;
   negativePrompt: string | null;
+  numSyncSteps: number | null;
   // Edit mode params
   inputFidelity: "low" | "high";
 }
@@ -321,6 +348,7 @@ const DEFAULT_IMAGE_PARAMS: ImageGenerationParams = {
   numInferenceSteps: null,
   guidance: null,
   negativePrompt: null,
+  numSyncSteps: null,
   inputFidelity: "low",
 };
 
@@ -418,6 +446,7 @@ function transformTopology(
       },
       last_macmon_update: Date.now() / 1000,
       friendly_name: identity?.friendlyName,
+      os_version: identity?.osVersion,
     };
   }
 
@@ -430,6 +459,8 @@ function transformTopology(
         if (!Array.isArray(edgeList)) continue;
         for (const edge of edgeList) {
           let sendBackIp: string | undefined;
+          let sourceRdmaIface: string | undefined;
+          let sinkRdmaIface: string | undefined;
           if (edge && typeof edge === "object" && "sinkMultiaddr" in edge) {
             const multiaddr = edge.sinkMultiaddr;
             if (multiaddr) {
@@ -437,10 +468,23 @@ function transformTopology(
                 multiaddr.ip_address ||
                 extractIpFromMultiaddr(multiaddr.address);
             }
+          } else if (
+            edge &&
+            typeof edge === "object" &&
+            "sourceRdmaIface" in edge
+          ) {
+            sourceRdmaIface = edge.sourceRdmaIface;
+            sinkRdmaIface = edge.sinkRdmaIface;
           }
 
           if (nodes[source] && nodes[sink] && source !== sink) {
-            edges.push({ source, target: sink, sendBackIp });
+            edges.push({
+              source,
+              target: sink,
+              sendBackIp,
+              sourceRdmaIface,
+              sinkRdmaIface,
+            });
           }
         }
       }
@@ -483,12 +527,32 @@ class AppStore {
   instances = $state<Record<string, unknown>>({});
   runners = $state<Record<string, unknown>>({});
   downloads = $state<Record<string, unknown[]>>({});
+  nodeDisk = $state<
+    Record<
+      string,
+      { total: { inBytes: number }; available: { inBytes: number } }
+    >
+  >({});
   placementPreviews = $state<PlacementPreview[]>([]);
   selectedPreviewModelId = $state<string | null>(null);
   isLoadingPreviews = $state(false);
   previewNodeFilter = $state<Set<string>>(new Set());
   lastUpdate = $state<number | null>(null);
+  nodeIdentities = $state<Record<string, RawNodeIdentity>>({});
   thunderboltBridgeCycles = $state<string[][]>([]);
+  nodeThunderbolt = $state<
+    Record<
+      string,
+      {
+        interfaces: Array<{
+          rdmaInterface: string;
+          domainUuid: string;
+          linkSpeed: string;
+        }>;
+      }
+    >
+  >({});
+  nodeRdmaCtl = $state<Record<string, { enabled: boolean }>>({});
   nodeThunderboltBridge = $state<
     Record<
       string,
@@ -544,6 +608,7 @@ class AppStore {
           modelId: conversation.modelId ?? null,
           sharding: conversation.sharding ?? null,
           instanceType: conversation.instanceType ?? null,
+          enableThinking: conversation.enableThinking ?? null,
         }));
       }
     } catch (error) {
@@ -733,6 +798,7 @@ class AppStore {
       modelId: derivedModelId,
       sharding: derivedSharding,
       instanceType: derivedInstanceType,
+      enableThinking: null,
     };
 
     this.conversations.unshift(conversation);
@@ -758,6 +824,7 @@ class AppStore {
     this.hasStartedChat = true;
     this.isTopologyMinimized = true;
     this.isSidebarOpen = true; // Auto-open sidebar when chatting
+    this.thinkingEnabled = conversation.enableThinking ?? true;
     this.refreshConversationModelFromInstances();
 
     return true;
@@ -1199,6 +1266,15 @@ class AppStore {
       if (data.downloads) {
         this.downloads = data.downloads;
       }
+      if (data.nodeDisk) {
+        this.nodeDisk = data.nodeDisk;
+      }
+      // Node identities (for OS version mismatch detection)
+      this.nodeIdentities = data.nodeIdentities ?? {};
+      // Thunderbolt identifiers per node
+      this.nodeThunderbolt = data.nodeThunderbolt ?? {};
+      // RDMA ctl status per node
+      this.nodeRdmaCtl = data.nodeRdmaCtl ?? {};
       // Thunderbolt bridge cycles
       this.thunderboltBridgeCycles = data.thunderboltBridgeCycles ?? [];
       // Thunderbolt bridge status per node
@@ -1863,6 +1939,11 @@ class AppStore {
   }
 
   /**
+   * Whether thinking is enabled for the current conversation
+   */
+  thinkingEnabled = $state(true);
+
+  /**
    * Selected model for chat (can be set by the UI)
    */
   selectedChatModel = $state("");
@@ -2040,6 +2121,7 @@ class AppStore {
       textContent?: string;
       preview?: string;
     }[],
+    enableThinking?: boolean | null,
   ): Promise<void> {
     if ((!content.trim() && (!files || files.length === 0)) || this.isLoading)
       return;
@@ -2187,6 +2269,9 @@ class AppStore {
           stream: true,
           logprobs: true,
           top_logprobs: 5,
+          ...(enableThinking != null && {
+            enable_thinking: enableThinking,
+          }),
         }),
       });
 
@@ -2398,7 +2483,9 @@ class AppStore {
         params.seed !== null ||
         params.numInferenceSteps !== null ||
         params.guidance !== null ||
-        (params.negativePrompt !== null && params.negativePrompt.trim() !== "");
+        (params.negativePrompt !== null &&
+          params.negativePrompt.trim() !== "") ||
+        params.numSyncSteps !== null;
 
       const requestBody: Record<string, unknown> = {
         model,
@@ -2423,6 +2510,9 @@ class AppStore {
             params.negativePrompt.trim() !== "" && {
               negative_prompt: params.negativePrompt,
             }),
+          ...(params.numSyncSteps !== null && {
+            num_sync_steps: params.numSyncSteps,
+          }),
         };
       }
 
@@ -2672,29 +2762,19 @@ class AppStore {
       formData.append("input_fidelity", params.inputFidelity);
 
       // Advanced params
-      if (params.seed !== null) {
-        formData.append(
-          "advanced_params",
-          JSON.stringify({
-            seed: params.seed,
-            ...(params.numInferenceSteps !== null && {
-              num_inference_steps: params.numInferenceSteps,
-            }),
-            ...(params.guidance !== null && { guidance: params.guidance }),
-            ...(params.negativePrompt !== null &&
-              params.negativePrompt.trim() !== "" && {
-                negative_prompt: params.negativePrompt,
-              }),
-          }),
-        );
-      } else if (
+      const hasAdvancedParams =
+        params.seed !== null ||
         params.numInferenceSteps !== null ||
         params.guidance !== null ||
-        (params.negativePrompt !== null && params.negativePrompt.trim() !== "")
-      ) {
+        (params.negativePrompt !== null &&
+          params.negativePrompt.trim() !== "") ||
+        params.numSyncSteps !== null;
+
+      if (hasAdvancedParams) {
         formData.append(
           "advanced_params",
           JSON.stringify({
+            ...(params.seed !== null && { seed: params.seed }),
             ...(params.numInferenceSteps !== null && {
               num_inference_steps: params.numInferenceSteps,
             }),
@@ -2703,6 +2783,9 @@ class AppStore {
               params.negativePrompt.trim() !== "" && {
                 negative_prompt: params.negativePrompt,
               }),
+            ...(params.numSyncSteps !== null && {
+              num_sync_steps: params.numSyncSteps,
+            }),
           }),
         );
       }
@@ -2848,6 +2931,18 @@ class AppStore {
   }
 
   /**
+   * Update the thinking preference for the active conversation
+   */
+  setConversationThinking(enabled: boolean) {
+    this.thinkingEnabled = enabled;
+    const conv = this.getActiveConversation();
+    if (conv) {
+      conv.enableThinking = enabled;
+      this.saveConversationsToStorage();
+    }
+  }
+
+  /**
    * Start a download on a specific node
    */
   async startDownload(nodeId: string, shardMetadata: object): Promise<void> {
@@ -2953,12 +3048,14 @@ export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
 export const runners = () => appStore.runners;
 export const downloads = () => appStore.downloads;
+export const nodeDisk = () => appStore.nodeDisk;
 export const placementPreviews = () => appStore.placementPreviews;
 export const selectedPreviewModelId = () => appStore.selectedPreviewModelId;
 export const isLoadingPreviews = () => appStore.isLoadingPreviews;
 export const lastUpdate = () => appStore.lastUpdate;
 export const isTopologyMinimized = () => appStore.isTopologyMinimized;
 export const selectedChatModel = () => appStore.selectedChatModel;
+export const thinkingEnabled = () => appStore.thinkingEnabled;
 export const debugMode = () => appStore.getDebugMode();
 export const topologyOnlyMode = () => appStore.getTopologyOnlyMode();
 export const chatSidebarVisible = () => appStore.getChatSidebarVisible();
@@ -2974,7 +3071,8 @@ export const sendMessage = (
     textContent?: string;
     preview?: string;
   }[],
-) => appStore.sendMessage(content, files);
+  enableThinking?: boolean | null,
+) => appStore.sendMessage(content, files, enableThinking);
 export const generateImage = (prompt: string, modelId?: string) =>
   appStore.generateImage(prompt, modelId);
 export const editImage = (
@@ -3017,6 +3115,8 @@ export const deleteAllConversations = () => appStore.deleteAllConversations();
 export const renameConversation = (id: string, name: string) =>
   appStore.renameConversation(id, name);
 export const getActiveConversation = () => appStore.getActiveConversation();
+export const setConversationThinking = (enabled: boolean) =>
+  appStore.setConversationThinking(enabled);
 
 // Sidebar actions
 export const isSidebarOpen = () => appStore.isSidebarOpen;
@@ -3033,7 +3133,12 @@ export const setChatSidebarVisible = (visible: boolean) =>
   appStore.setChatSidebarVisible(visible);
 export const refreshState = () => appStore.fetchState();
 
-// Thunderbolt bridge status
+// Node identities (for OS version mismatch detection)
+export const nodeIdentities = () => appStore.nodeIdentities;
+
+// Thunderbolt & RDMA status
+export const nodeThunderbolt = () => appStore.nodeThunderbolt;
+export const nodeRdmaCtl = () => appStore.nodeRdmaCtl;
 export const thunderboltBridgeCycles = () => appStore.thunderboltBridgeCycles;
 export const nodeThunderboltBridge = () => appStore.nodeThunderboltBridge;
 

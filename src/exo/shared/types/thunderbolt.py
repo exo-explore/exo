@@ -12,6 +12,7 @@ class ThunderboltConnection(CamelCaseModel):
 class ThunderboltIdentifier(CamelCaseModel):
     rdma_interface: str
     domain_uuid: str
+    link_speed: str = ""
 
 
 ## Intentionally minimal, only collecting data we care about - there's a lot more
@@ -19,6 +20,7 @@ class ThunderboltIdentifier(CamelCaseModel):
 
 class _ReceptacleTag(BaseModel, extra="ignore"):
     receptacle_id_key: str | None = None
+    current_speed_key: str | None = None
 
 
 class _ConnectivityItem(BaseModel, extra="ignore"):
@@ -42,7 +44,9 @@ class ThunderboltConnectivityData(BaseModel, extra="ignore"):
         # if tag not in ifaces: return None
         iface = f"rdma_{ifaces[tag]}"
         return ThunderboltIdentifier(
-            rdma_interface=iface, domain_uuid=self.domain_uuid_key
+            rdma_interface=iface,
+            domain_uuid=self.domain_uuid_key,
+            link_speed=self.receptacle_1_tag.current_speed_key or "",
         )
 
     def conn(self) -> ThunderboltConnection | None:

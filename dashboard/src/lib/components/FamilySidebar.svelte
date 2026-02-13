@@ -5,15 +5,22 @@
     families: string[];
     selectedFamily: string | null;
     hasFavorites: boolean;
+    hasRecents: boolean;
     onSelect: (family: string | null) => void;
   };
 
-  let { families, selectedFamily, hasFavorites, onSelect }: FamilySidebarProps =
-    $props();
+  let {
+    families,
+    selectedFamily,
+    hasFavorites,
+    hasRecents,
+    onSelect,
+  }: FamilySidebarProps = $props();
 
   // Family display names
   const familyNames: Record<string, string> = {
     favorites: "Favorites",
+    recents: "Recent",
     huggingface: "Hub",
     llama: "Meta",
     qwen: "Qwen",
@@ -22,6 +29,8 @@
     glm: "GLM",
     minimax: "MiniMax",
     kimi: "Kimi",
+    flux: "FLUX",
+    "qwen-image": "Qwen Img",
   };
 
   function getFamilyName(family: string): string {
@@ -32,7 +41,7 @@
 </script>
 
 <div
-  class="flex flex-col gap-1 py-2 px-1 border-r border-exo-yellow/10 bg-exo-medium-gray/30 min-w-[64px]"
+  class="flex flex-col gap-1 py-2 px-1 border-r border-exo-yellow/10 bg-exo-medium-gray/30 min-w-[64px] overflow-y-auto scrollbar-hide"
 >
   <!-- All models (no filter) -->
   <button
@@ -83,6 +92,31 @@
         class="text-[9px] font-mono mt-0.5 {selectedFamily === 'favorites'
           ? 'text-amber-400'
           : 'text-white/40 group-hover:text-white/60'}">Faves</span
+      >
+    </button>
+  {/if}
+
+  <!-- Recent (only show if has recent models) -->
+  {#if hasRecents}
+    <button
+      type="button"
+      onclick={() => onSelect("recents")}
+      class="group flex flex-col items-center justify-center p-2 rounded transition-all duration-200 cursor-pointer {selectedFamily ===
+      'recents'
+        ? 'bg-exo-yellow/20 border-l-2 border-exo-yellow'
+        : 'hover:bg-white/5 border-l-2 border-transparent'}"
+      title="Recently launched models"
+    >
+      <FamilyLogos
+        family="recents"
+        class={selectedFamily === "recents"
+          ? "text-exo-yellow"
+          : "text-white/50 group-hover:text-white/70"}
+      />
+      <span
+        class="text-[9px] font-mono mt-0.5 {selectedFamily === 'recents'
+          ? 'text-exo-yellow'
+          : 'text-white/40 group-hover:text-white/60'}">Recent</span
       >
     </button>
   {/if}

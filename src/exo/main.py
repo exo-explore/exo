@@ -27,7 +27,6 @@ from exo.utils.pydantic_ext import CamelCaseModel
 from exo.worker.main import Worker
 
 
-# I marked this as a dataclass as I want trivial constructors.
 @dataclass
 class Node:
     router: Router
@@ -106,6 +105,7 @@ class Node:
             global_event_sender=router.sender(topics.GLOBAL_EVENTS),
             local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
             command_receiver=router.receiver(topics.COMMANDS),
+            download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
         )
 
         er_send, er_recv = channel[ElectionResult]()
@@ -136,7 +136,6 @@ class Node:
 
     async def run(self):
         async with self._tg as tg:
-            signal.signal(signal.SIGINT, lambda _, __: self.shutdown())
             tg.start_soon(self.router.run)
             tg.start_soon(self.election.run)
             if self.download_coordinator:
@@ -148,6 +147,8 @@ class Node:
             if self.api:
                 tg.start_soon(self.api.run)
             tg.start_soon(self._elect_loop)
+            signal.signal(signal.SIGINT, lambda _, __: self.shutdown())
+            signal.signal(signal.SIGTERM, lambda _, __: self.shutdown())
 
     def shutdown(self):
         # if this is our second call to shutdown, just sys.exit
@@ -188,6 +189,9 @@ class Node:
                         global_event_sender=self.router.sender(topics.GLOBAL_EVENTS),
                         local_event_receiver=self.router.receiver(topics.LOCAL_EVENTS),
                         command_receiver=self.router.receiver(topics.COMMANDS),
+                        download_command_sender=self.router.sender(
+                            topics.DOWNLOAD_COMMANDS
+                        ),
                     )
                     self._tg.start_soon(self.master.run)
                 elif (
@@ -247,7 +251,8 @@ class Node:
 def main():
     args = Args.parse()
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, 65535), hard))
+    target = min(max(soft, 65535), hard)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
     mp.set_start_method("spawn")
     # TODO: Refactor the current verbosity system

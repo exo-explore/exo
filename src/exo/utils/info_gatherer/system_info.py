@@ -1,3 +1,4 @@
+import platform
 import socket
 import sys
 from subprocess import CalledProcessError
@@ -6,6 +7,34 @@ import psutil
 from anyio import run_process
 
 from exo.shared.types.profiling import InterfaceType, NetworkInterfaceInfo
+
+
+def get_os_version() -> str:
+    """Return the OS version string for this node.
+
+    On macOS this is the macOS version (e.g. ``"15.3"``).
+    On other platforms it falls back to the platform name (e.g. ``"Linux"``).
+    """
+    if sys.platform == "darwin":
+        version = platform.mac_ver()[0]
+        return version if version else "Unknown"
+    return platform.system() or "Unknown"
+
+
+async def get_os_build_version() -> str:
+    """Return the macOS build version string (e.g. ``"24D5055b"``).
+
+    On non-macOS platforms, returns ``"Unknown"``.
+    """
+    if sys.platform != "darwin":
+        return "Unknown"
+
+    try:
+        process = await run_process(["sw_vers", "-buildVersion"])
+    except CalledProcessError:
+        return "Unknown"
+
+    return process.stdout.decode("utf-8", errors="replace").strip() or "Unknown"
 
 
 async def get_friendly_name() -> str:

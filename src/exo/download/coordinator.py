@@ -16,6 +16,7 @@ from exo.download.download_utils import (
 from exo.download.shard_downloader import ShardDownloader
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
+    CancelDownload,
     DeleteDownload,
     ForwarderDownloadCommand,
     StartDownload,
@@ -53,11 +54,51 @@ class DownloadCoordinator:
     # Internal event channel for forwarding (initialized in __post_init__)
     event_sender: Sender[Event] = field(init=False)
     event_receiver: Receiver[Event] = field(init=False)
-    _tg: TaskGroup = field(init=False)
+    _tg: TaskGroup = field(init=False, default_factory=anyio.create_task_group)
+
+    # Per-model throttle for download progress events
+    _last_progress_time: dict[ModelId, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.event_sender, self.event_receiver = channel[Event]()
-        self._tg = anyio.create_task_group()
+        self.shard_downloader.on_progress(self._download_progress_callback)
+
+    async def _download_progress_callback(
+        self, callback_shard: ShardMetadata, progress: RepoDownloadProgress
+    ) -> None:
+        model_id = callback_shard.model_card.model_id
+        throttle_interval_secs = 1.0
+
+        if progress.status == "complete":
+            completed = DownloadCompleted(
+                shard_metadata=callback_shard,
+                node_id=self.node_id,
+                total_bytes=progress.total_bytes,
+            )
+            self.download_status[model_id] = completed
+            await self.event_sender.send(
+                NodeDownloadProgress(download_progress=completed)
+            )
+            if model_id in self.active_downloads:
+                del self.active_downloads[model_id]
+            self._last_progress_time.pop(model_id, None)
+        elif (
+            progress.status == "in_progress"
+            and current_time() - self._last_progress_time.get(model_id, 0.0)
+            > throttle_interval_secs
+        ):
+            ongoing = DownloadOngoing(
+                node_id=self.node_id,
+                shard_metadata=callback_shard,
+                download_progress=map_repo_download_progress_to_download_progress_data(
+                    progress
+                ),
+            )
+            self.download_status[model_id] = ongoing
+            await self.event_sender.send(
+                NodeDownloadProgress(download_progress=ongoing)
+            )
+            self._last_progress_time[model_id] = current_time()
 
     async def run(self) -> None:
         logger.info("Starting DownloadCoordinator")
@@ -108,16 +149,23 @@ class DownloadCoordinator:
                         await self._start_download(shard)
                     case DeleteDownload(model_id=model_id):
                         await self._delete_download(model_id)
+                    case CancelDownload(model_id=model_id):
+                        await self._cancel_download(model_id)
+
+    async def _cancel_download(self, model_id: ModelId) -> None:
+        if model_id in self.active_downloads and model_id in self.download_status:
+            logger.info(f"Cancelling download for {model_id}")
+            self.active_downloads.pop(model_id).cancel()
 
     async def _start_download(self, shard: ShardMetadata) -> None:
         model_id = shard.model_card.model_id
 
-        # Check if already downloading or complete
+        # Check if already downloading, complete, or recently failed
         if model_id in self.download_status:
             status = self.download_status[model_id]
-            if isinstance(status, (DownloadOngoing, DownloadCompleted)):
+            if isinstance(status, (DownloadOngoing, DownloadCompleted, DownloadFailed)):
                 logger.debug(
-                    f"Download for {model_id} already in progress or complete, skipping"
+                    f"Download for {model_id} already in progress, complete, or failed, skipping"
                 )
                 return
 
@@ -161,46 +209,6 @@ class DownloadCoordinator:
         )
         self.download_status[model_id] = status
         self.event_sender.send_nowait(NodeDownloadProgress(download_progress=status))
-
-        last_progress_time = 0.0
-        throttle_interval_secs = 1.0
-
-        async def download_progress_callback(
-            callback_shard: ShardMetadata, progress: RepoDownloadProgress
-        ) -> None:
-            nonlocal last_progress_time
-
-            if progress.status == "complete":
-                completed = DownloadCompleted(
-                    shard_metadata=callback_shard,
-                    node_id=self.node_id,
-                    total_bytes=progress.total_bytes,
-                )
-                self.download_status[callback_shard.model_card.model_id] = completed
-                await self.event_sender.send(
-                    NodeDownloadProgress(download_progress=completed)
-                )
-                # Clean up active download tracking
-                if callback_shard.model_card.model_id in self.active_downloads:
-                    del self.active_downloads[callback_shard.model_card.model_id]
-            elif (
-                progress.status == "in_progress"
-                and current_time() - last_progress_time > throttle_interval_secs
-            ):
-                ongoing = DownloadOngoing(
-                    node_id=self.node_id,
-                    shard_metadata=callback_shard,
-                    download_progress=map_repo_download_progress_to_download_progress_data(
-                        progress
-                    ),
-                )
-                self.download_status[callback_shard.model_card.model_id] = ongoing
-                await self.event_sender.send(
-                    NodeDownloadProgress(download_progress=ongoing)
-                )
-                last_progress_time = current_time()
-
-        self.shard_downloader.on_progress(download_progress_callback)
 
         async def download_wrapper() -> None:
             try:
@@ -276,6 +284,12 @@ class DownloadCoordinator:
                     _,
                     progress,
                 ) in self.shard_downloader.get_shard_download_status():
+                    model_id = progress.shard.model_card.model_id
+
+                    # Active downloads emit progress via the callback — don't overwrite
+                    if model_id in self.active_downloads:
+                        continue
+
                     if progress.status == "complete":
                         status: DownloadProgress = DownloadCompleted(
                             node_id=self.node_id,

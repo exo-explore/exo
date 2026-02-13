@@ -80,7 +80,12 @@ class SetInstanceDraftModel(BaseCommand):
     num_draft_tokens: int = 4
 
 
-DownloadCommand = StartDownload | DeleteDownload
+class CancelDownload(BaseCommand):
+    target_node_id: NodeId
+    model_id: ModelId
+
+
+DownloadCommand = StartDownload | DeleteDownload | CancelDownload
 
 
 Command = (

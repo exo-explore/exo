@@ -20,7 +20,7 @@ sync-clean:
 
 rust-rebuild:
     cargo run --bin stub_gen
-    just sync-clean
+    uv sync --reinstall-package exo_pyo3_bindings
 
 build-dashboard:
     #!/usr/bin/env bash

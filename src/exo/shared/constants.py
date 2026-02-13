@@ -43,7 +43,8 @@ DASHBOARD_DIR = (
 )
 
 # Log files (data/logs or cache)
-EXO_LOG = EXO_CACHE_HOME / "exo.log"
+EXO_LOG_DIR = EXO_CACHE_HOME / "exo_log"
+EXO_LOG = EXO_LOG_DIR / "exo.log"
 EXO_TEST_LOG = EXO_CACHE_HOME / "exo_test.log"
 
 # Identity (config)
@@ -60,6 +61,7 @@ EXO_MAX_CHUNK_SIZE = 512 * 1024
 
 EXO_CUSTOM_MODEL_CARDS_DIR = EXO_DATA_HOME / "custom_model_cards"
 
+EXO_EVENT_LOG_DIR = EXO_DATA_HOME / "event_log"
 EXO_IMAGE_CACHE_DIR = EXO_CACHE_HOME / "images"
 EXO_TRACING_CACHE_DIR = EXO_CACHE_HOME / "traces"
 

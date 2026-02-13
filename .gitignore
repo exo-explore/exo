@@ -32,3 +32,9 @@ dashboard/.svelte-kit/
 # host config snapshots
 hosts_*.json
 .swp
+
+# bench files
+bench/**/*.json
+
+# tmp
+tmp/models

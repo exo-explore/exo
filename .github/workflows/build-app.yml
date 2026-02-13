@@ -396,7 +396,7 @@ jobs:
           path: output/EXO-${{ env.RELEASE_VERSION }}.dmg
 
       - name: Upload to S3
-        if: env.SPARKLE_S3_BUCKET != '' && github.ref_type == 'tag'
+        if: env.SPARKLE_S3_BUCKET != ''
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -412,6 +412,12 @@ jobs:
             PREFIX="${PREFIX}/"
           fi
           DMG_NAME="EXO-${RELEASE_VERSION}.dmg"
+
+          if [[ "${{ github.ref_type }}" != "tag" ]]; then
+            aws s3 cp "$DMG_NAME" "s3://${SPARKLE_S3_BUCKET}/${PREFIX}EXO-${GITHUB_SHA}.dmg"
+            exit 0
+          fi
+
           aws s3 cp "$DMG_NAME" "s3://${SPARKLE_S3_BUCKET}/${PREFIX}${DMG_NAME}"
           if [[ "$IS_ALPHA" != "true" ]]; then
             aws s3 cp "$DMG_NAME" "s3://${SPARKLE_S3_BUCKET}/${PREFIX}EXO-latest.dmg"

@@ -3,6 +3,10 @@ n_layers = 57
 hidden_size = 1
 supports_tensor = false
 tasks = ["TextToImage"]
+family = "flux"
+quantization = ""
+base_model = "FLUX.1 Schnell"
+capabilities = ["image_gen"]
 
 [storage_size]
 in_bytes = 33306978432

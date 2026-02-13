@@ -34,6 +34,7 @@ TOKENIZER_FILE_PATTERNS = [
     "added_tokens.json",
     "tokenizer.model",
     "tokenization_*.py",  # Custom tokenizer implementations
+    "tool_declaration_ts.py",  # Dependency of tokenization_kimi.py
 ]
 
 
