@@ -1,5 +1,3 @@
-from datetime import datetime, timedelta, timezone
-
 import anyio
 from anyio.abc import TaskGroup
 from loguru import logger
@@ -35,8 +33,7 @@ from exo.shared.types.events import (
     IndexedEvent,
     InputChunkReceived,
     InstanceDeleted,
-    NodeGatheredInfo,
-    NodeTimedOut,
+    NodeDisconnected,
     TaskCreated,
     TaskDeleted,
     TraceEventData,
@@ -92,6 +89,8 @@ class Master:
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
+        self._last_checked_indices: dict[NodeId, int] = {}
+        self._stale_cycles: dict[NodeId, int] = {}
 
     async def run(self):
         logger.info("Starting Master")
@@ -358,12 +357,25 @@ class Master:
                         )
                         break
 
-            # time out dead nodes
-            for node_id, time in self.state.last_seen.items():
-                now = datetime.now(tz=timezone.utc)
-                if now - time > timedelta(seconds=30):
-                    logger.info(f"Manually removing node {node_id} due to inactivity")
-                    await self.event_sender.send(NodeTimedOut(node_id=node_id))
+            # Check which nodes have gone stale
+            current_indices = dict(self.state.last_event_index_by_node)
+            for node_id in list(current_indices):
+                last_checked = self._last_checked_indices.get(node_id, -1)
+                if current_indices[node_id] == last_checked:
+                    self._stale_cycles[node_id] = self._stale_cycles.get(node_id, 0) + 1
+                else:
+                    self._stale_cycles.pop(node_id, None)
+
+            self._last_checked_indices = current_indices
+
+            # Disconnect nodes stale for >= 3 consecutive cycles (~30s)
+            for node_id, cycles in list(self._stale_cycles.items()):
+                if cycles >= 3:
+                    logger.info(
+                        f"Removing node {node_id}: no events for {cycles} plan cycles"
+                    )
+                    del self._stale_cycles[node_id]
+                    await self.event_sender.send(NodeDisconnected(node_id=node_id))
 
             await anyio.sleep(10)
 
@@ -386,10 +398,6 @@ class Master:
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
                     indexed = IndexedEvent(event=event, idx=len(self._event_log))
                     self.state = apply(self.state, indexed)
-
-                    event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
-                    if isinstance(event, NodeGatheredInfo):
-                        event.when = str(datetime.now(tz=timezone.utc))
 
                     self._event_log.append(event)
                     await self._send_event(indexed)
