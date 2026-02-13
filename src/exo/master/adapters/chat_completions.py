@@ -79,6 +79,7 @@ def chat_request_to_text_generation(
         seed=request.seed,
         stream=request.stream,
         tools=request.tools,
+        enable_thinking=request.enable_thinking,
         chat_template_messages=chat_template_messages
         if chat_template_messages
         else None,
