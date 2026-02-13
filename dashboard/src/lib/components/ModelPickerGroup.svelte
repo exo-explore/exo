@@ -21,16 +21,26 @@
     hasMultipleVariants: boolean;
   }
 
+  type DownloadAvailability = {
+    available: boolean;
+    nodeNames: string[];
+    nodeIds: string[];
+  };
+  type ModelFitStatus = "fits_now" | "fits_cluster_capacity" | "too_large";
+
   type ModelPickerGroupProps = {
     group: ModelGroup;
     isExpanded: boolean;
     isFavorite: boolean;
     selectedModelId: string | null;
     canModelFit: (id: string) => boolean;
+    getModelFitStatus: (id: string) => ModelFitStatus;
     onToggleExpand: () => void;
     onSelectModel: (modelId: string) => void;
     onToggleFavorite: (baseModelId: string) => void;
     onShowInfo: (group: ModelGroup) => void;
+    downloadStatusMap?: Map<string, DownloadAvailability>;
+    launchedAt?: number;
   };
 
   let {
@@ -39,11 +49,24 @@
     isFavorite,
     selectedModelId,
     canModelFit,
+    getModelFitStatus,
     onToggleExpand,
     onSelectModel,
     onToggleFavorite,
     onShowInfo,
+    downloadStatusMap,
+    launchedAt,
   }: ModelPickerGroupProps = $props();
+
+  // Group-level download status: show if any variant is downloaded
+  const groupDownloadStatus = $derived.by(() => {
+    if (!downloadStatusMap || downloadStatusMap.size === 0) return undefined;
+    // Return the first available entry (prefer "available" ones)
+    for (const avail of downloadStatusMap.values()) {
+      if (avail.available) return avail;
+    }
+    return downloadStatusMap.values().next().value;
+  });
 
   // Format storage size
   function formatSize(mb: number | undefined): string {
@@ -54,10 +77,45 @@
     return `${mb}MB`;
   }
 
+  function timeAgo(ts: number): string {
+    const seconds = Math.floor((Date.now() - ts) / 1000);
+    if (seconds < 60) return "just now";
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  }
+
   // Check if any variant can fit
   const anyVariantFits = $derived(
     group.variants.some((v) => canModelFit(v.id)),
   );
+  const groupFitStatus = $derived.by((): ModelFitStatus => {
+    let hasClusterCapacityOnly = false;
+    for (const variant of group.variants) {
+      const fitStatus = getModelFitStatus(variant.id);
+      if (fitStatus === "fits_now") {
+        return "fits_now";
+      }
+      if (fitStatus === "fits_cluster_capacity") {
+        hasClusterCapacityOnly = true;
+      }
+    }
+    return hasClusterCapacityOnly ? "fits_cluster_capacity" : "too_large";
+  });
+
+  function getSizeClassForFitStatus(fitStatus: ModelFitStatus): string {
+    switch (fitStatus) {
+      case "fits_now":
+        return "text-white/40";
+      case "fits_cluster_capacity":
+        return "text-orange-400/80";
+      case "too_large":
+        return "text-red-400/70";
+    }
+  }
 
   // Check if this group's model is currently selected (for single-variant groups)
   const isMainSelected = $derived(
@@ -182,9 +240,42 @@
               stroke-width="1.5"
               title="Supports image generation"
             >
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+              <rect
+                x="3"
+                y="3"
+                width="18"
+                height="18"
+                rx="2"
+                ry="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
               <circle cx="8.5" cy="8.5" r="1.5" />
-              <path d="M21 15l-5-5L5 21" />
+              <path
+                d="M21 15l-5-5L5 21"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          {:else if cap === "image_edit"}
+            <svg
+              class="w-3.5 h-3.5 text-white/40 flex-shrink-0"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              title="Supports image editing"
+            >
+              <path
+                d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
             </svg>
           {/if}
         {/each}
@@ -193,15 +284,65 @@
 
     <!-- Size indicator (smallest variant) -->
     {#if !group.hasMultipleVariants && group.smallestVariant?.storage_size_megabytes}
-      <span class="text-xs font-mono text-white/30 flex-shrink-0">
+      {@const singleVariantFitStatus = getModelFitStatus(
+        group.smallestVariant.id,
+      )}
+      <span
+        class="text-xs font-mono flex-shrink-0 {getSizeClassForFitStatus(
+          singleVariantFitStatus,
+        )}"
+      >
         {formatSize(group.smallestVariant.storage_size_megabytes)}
       </span>
     {/if}
 
-    <!-- Variant count -->
+    <!-- Variant count with size range -->
     {#if group.hasMultipleVariants}
-      <span class="text-xs font-mono text-white/30 flex-shrink-0">
-        {group.variants.length} variants
+      {@const sizes = group.variants
+        .map((v) => v.storage_size_megabytes || 0)
+        .filter((s) => s > 0)
+        .sort((a, b) => a - b)}
+      <span
+        class="text-xs font-mono flex-shrink-0 {getSizeClassForFitStatus(
+          groupFitStatus,
+        )}"
+      >
+        {group.variants.length} variants{#if sizes.length >= 2}{" "}({formatSize(
+            sizes[0],
+          )}-{formatSize(sizes[sizes.length - 1])}){/if}
+      </span>
+    {/if}
+
+    <!-- Time ago (for recent models) -->
+    {#if launchedAt}
+      <span class="text-xs font-mono text-white/20 flex-shrink-0">
+        {timeAgo(launchedAt)}
+      </span>
+    {/if}
+
+    <!-- Download availability indicator -->
+    {#if groupDownloadStatus && groupDownloadStatus.nodeIds.length > 0}
+      <span
+        class="flex-shrink-0"
+        title={groupDownloadStatus.available
+          ? `Ready — downloaded on ${groupDownloadStatus.nodeNames.join(", ")}`
+          : `Downloaded on ${groupDownloadStatus.nodeNames.join(", ")} (may need more nodes)`}
+      >
+        <svg
+          class="w-4 h-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path
+            class="text-white/40"
+            d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+          />
+          <path class="text-green-400" d="m9 13 2 2 4-4" />
+        </svg>
       </span>
     {/if}
 
@@ -277,6 +418,7 @@
   {#if isExpanded && group.hasMultipleVariants}
     <div class="bg-black/20 border-t border-white/5">
       {#each group.variants as variant}
+        {@const fitStatus = getModelFitStatus(variant.id)}
         {@const modelCanFit = canModelFit(variant.id)}
         {@const isSelected = selectedModelId === variant.id}
         <button
@@ -301,9 +443,40 @@
           </span>
 
           <!-- Size -->
-          <span class="text-xs font-mono text-white/40 flex-1">
+          <span
+            class="text-xs font-mono flex-1 {getSizeClassForFitStatus(
+              fitStatus,
+            )}"
+          >
             {formatSize(variant.storage_size_megabytes)}
           </span>
+
+          <!-- Download indicator for this variant -->
+          {#if downloadStatusMap?.get(variant.id)}
+            {@const variantDl = downloadStatusMap.get(variant.id)}
+            {#if variantDl}
+              <span
+                class="flex-shrink-0"
+                title={`Downloaded on ${variantDl.nodeNames.join(", ")}`}
+              >
+                <svg
+                  class="w-3.5 h-3.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    class="text-white/40"
+                    d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+                  />
+                  <path class="text-green-400" d="m9 13 2 2 4-4" />
+                </svg>
+              </span>
+            {/if}
+          {/if}
 
           <!-- Check mark if selected -->
           {#if isSelected}

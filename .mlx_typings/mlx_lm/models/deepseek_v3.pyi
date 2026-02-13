@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 
 import mlx.core as mx
 import mlx.nn as nn
+from mlx_lm.models.mla import MultiLinear
 
 from .base import BaseModelArgs
 from .switch_layers import SwitchGLU
@@ -60,7 +61,10 @@ class DeepseekV3Attention(nn.Module):
     q_b_proj: nn.Linear
     kv_a_proj_with_mqa: nn.Linear
     kv_a_layernorm: nn.RMSNorm
-    kv_b_proj: nn.Linear
+    # kv_b_proj: nn.Linear
+    embed_q: MultiLinear
+    unembed_out: MultiLinear
+
     o_proj: nn.Linear
     rope: Any
 
