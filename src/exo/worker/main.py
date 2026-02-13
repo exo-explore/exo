@@ -236,7 +236,7 @@ class Worker:
                             )
                         )
                     finally:
-                        await runner.shutdown()
+                        runner.shutdown()
                 case CancelTask(
                     cancelled_task_id=cancelled_task_id, runner_id=runner_id
                 ):

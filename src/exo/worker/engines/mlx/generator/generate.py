@@ -171,7 +171,6 @@ def warmup_inference(
 
     mx_barrier(group)
 
-
     return tokens_generated
 
 
