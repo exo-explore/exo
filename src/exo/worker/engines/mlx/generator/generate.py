@@ -1,6 +1,9 @@
 import time
 from copy import deepcopy
-from typing import Callable, Generator, cast, get_args
+from typing import TYPE_CHECKING, Any, Callable, Generator, cast, get_args
+
+if TYPE_CHECKING:
+    from exo.worker.engines.mlx.mtp.module import MTPModule
 
 import mlx.core as mx
 from mlx_lm.generate import stream_generate
@@ -38,6 +41,8 @@ from exo.worker.engines.mlx.constants import (
     KV_BITS,
     KV_GROUP_SIZE,
     MAX_TOKENS,
+    MTP_ENABLED,
+    MTP_NUM_DRAFT_TOKENS,
 )
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
@@ -192,6 +197,11 @@ def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
     return eos
 
 
+def _has_mtp_module(model: Model) -> bool:
+    """Check if the model has an attached MTP module."""
+    return hasattr(model, "mtp_module") and model.mtp_module is not None  # type: ignore[attr-defined]
+
+
 def extract_top_logprobs(
     logprobs: mx.array,
     tokenizer: TokenizerWrapper,
@@ -297,6 +307,24 @@ def mlx_generate(
         top_k=task.top_k if task.top_k is not None else 0,
     )
 
+    max_tokens = task.max_output_tokens or MAX_TOKENS
+
+    # Check if we should use MTP speculative decoding
+    use_mtp = MTP_ENABLED and _has_mtp_module(model)
+
+    if use_mtp:
+        logger.info("Using MTP speculative decoding")
+        yield from _mlx_generate_with_mtp(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            sampler=sampler,
+            logits_processors=logits_processors,
+            prompt_cache=caches,
+        )
+        return
+
     # Normalize stop sequences to a list
     stop_sequences: list[str] = (
         ([task.stop] if isinstance(task.stop, str) else task.stop)
@@ -321,7 +349,6 @@ def mlx_generate(
     # stream_generate starts from the last token
     last_token = prompt_tokens[-2:]
 
-    max_tokens = task.max_output_tokens or MAX_TOKENS
     accumulated_text = ""
     generated_text_parts: list[str] = []
     generation_start_time = time.perf_counter()
@@ -470,3 +497,66 @@ def mlx_generate(
         # Limit accumulated_text to what's needed for stop sequence detection
         if max_stop_len > 0 and len(accumulated_text) > max_stop_len:
             accumulated_text = accumulated_text[-max_stop_len:]
+
+        # TODO: Do we want an mx_barrier?
+
+
+def _mlx_generate_with_mtp(
+    model: Model,
+    tokenizer: TokenizerWrapper,
+    prompt: str,
+    max_tokens: int,
+    sampler: Callable[[mx.array], mx.array],
+    logits_processors: list[Callable[[mx.array, mx.array], mx.array]],
+    prompt_cache: KVCacheType,
+) -> Generator[GenerationResponse]:
+    """MTP speculative decoding generation path.
+
+    Uses the model's attached MTP module for speculative decoding,
+    which can provide 1.5-2x speedup with ~81% acceptance rate.
+    """
+    from exo.worker.engines.mlx.mtp.speculative_decode import mtp_speculative_generate
+
+    mtp_module = cast("MTPModule", model.mtp_module)
+
+    for out in mtp_speculative_generate(
+        model=model,
+        mtp_module=mtp_module,
+        tokenizer=tokenizer,
+        prompt=prompt,
+        max_tokens=max_tokens,
+        sampler=sampler,
+        logits_processors=logits_processors,
+        prompt_cache=cast(list[Any], prompt_cache),
+        num_draft_tokens=MTP_NUM_DRAFT_TOKENS,
+        prefill_step_size=2048,
+        kv_group_size=KV_GROUP_SIZE if KV_GROUP_SIZE is not None else 64,
+        kv_bits=KV_BITS,
+    ):
+        logger.info(f"{out.text} (from_draft={out.from_draft})")
+
+        stats: GenerationStats | None = None
+        if out.finish_reason is not None:
+            stats = GenerationStats(
+                prompt_tps=float(out.prompt_tps),
+                generation_tps=float(out.generation_tps),
+                prompt_tokens=int(out.prompt_tokens),
+                generation_tokens=int(out.generation_tokens),
+                peak_memory_usage=Memory.from_gb(out.peak_memory),
+            )
+
+            if out.finish_reason not in get_args(FinishReason):
+                logger.warning(
+                    f"Model generated unexpected finish_reason: {out.finish_reason}"
+                )
+
+        yield GenerationResponse(
+            text=out.text,
+            token=out.token,
+            finish_reason=cast(FinishReason | None, out.finish_reason),
+            stats=stats,
+            usage=None,
+        )
+
+        if out.finish_reason is not None:
+            break
