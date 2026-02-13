@@ -83,6 +83,9 @@
           _module.args.pkgs = import inputs.nixpkgs {
             inherit system;
             config.allowUnfreePredicate = pkg: (pkg.pname or "") == "metal-toolchain";
+            overlays = [
+              (import ./nix/apple-sdk-overlay.nix)
+            ];
           };
           treefmt = {
             projectRootFile = "flake.nix";
@@ -118,9 +121,10 @@
             {
               metal-toolchain = pkgs.callPackage ./nix/metal-toolchain.nix { };
               mlx = pkgs.callPackage ./nix/mlx.nix {
-                metal-toolchain = self'.packages.metal-toolchain;
+                inherit (self'.packages) metal-toolchain;
                 inherit uvLockMlxVersion;
               };
+              default = self'.packages.exo;
             }
           );
 

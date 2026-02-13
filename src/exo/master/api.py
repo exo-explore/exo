@@ -3,7 +3,7 @@ import contextlib
 import json
 import random
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
 from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
@@ -37,11 +37,13 @@ from exo.master.adapters.responses import (
     generate_responses_stream,
     responses_request_to_text_generation,
 )
+from exo.master.event_log import DiskEventLog
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
+    EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
     EXO_TRACING_CACHE_DIR,
@@ -148,6 +150,8 @@ from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
 
+_API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
+
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
     return f"image/{image_format or 'png'}"
@@ -177,7 +181,7 @@ class API:
         election_receiver: Receiver[ElectionMessage],
     ) -> None:
         self.state = State()
-        self._event_log: list[Event] = []
+        self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.global_event_receiver = global_event_receiver
@@ -226,6 +230,8 @@ class API:
 
     def reset(self, new_session_id: SessionId, result_clock: int):
         logger.info("Resetting API State")
+        self._event_log.close()
+        self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
         self.state = State()
         self.session_id = new_session_id
         self.event_buffer = OrderedBuffer[Event]()
@@ -292,7 +298,7 @@ class API:
         self.app.post("/v1/messages", response_model=None)(self.claude_messages)
         self.app.post("/v1/responses", response_model=None)(self.openai_responses)
         self.app.get("/state")(lambda: self.state)
-        self.app.get("/events")(lambda: self._event_log)
+        self.app.get("/events")(self.stream_events)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
         self.app.get("/v1/traces")(self.list_traces)
@@ -389,7 +395,12 @@ class API:
         if len(list(self.state.topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
-        model_card = await ModelCard.load(model_id)
+        try:
+            model_card = await ModelCard.load(model_id)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Failed to load model card: {exc}"
+            ) from exc
         instance_combinations: list[tuple[Sharding, InstanceMeta, int]] = []
         for sharding in (Sharding.Pipeline, Sharding.Tensor):
             for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
@@ -707,6 +718,22 @@ class API:
                 status_code=404, detail=f"No instance found for model {resolved_model}"
             )
         return resolved_model
+
+    def stream_events(self) -> StreamingResponse:
+        def _generate_json_array(events: Iterator[Event]) -> Iterator[str]:
+            yield "["
+            first = True
+            for event in events:
+                if not first:
+                    yield ","
+                first = False
+                yield event.model_dump_json()
+            yield "]"
+
+        return StreamingResponse(
+            _generate_json_array(self._event_log.read_all()),
+            media_type="application/json",
+        )
 
     async def get_image(self, image_id: str) -> FileResponse:
         stored = self._image_store.get(Id(image_id))
@@ -1345,28 +1372,40 @@ class API:
         ]
 
     async def run(self):
+        shutdown_ev = anyio.Event()
+
+        try:
+            async with create_task_group() as tg:
+                self._tg = tg
+                logger.info("Starting API")
+                tg.start_soon(self._apply_state)
+                tg.start_soon(self._pause_on_new_election)
+                tg.start_soon(self._cleanup_expired_images)
+                print_startup_banner(self.port)
+                tg.start_soon(self.run_api, shutdown_ev)
+                try:
+                    await anyio.sleep_forever()
+                finally:
+                    with anyio.CancelScope(shield=True):
+                        shutdown_ev.set()
+        finally:
+            self._event_log.close()
+            self.command_sender.close()
+            self.global_event_receiver.close()
+
+    async def run_api(self, ev: anyio.Event):
         cfg = Config()
-        cfg.bind = f"0.0.0.0:{self.port}"
+        cfg.bind = [f"0.0.0.0:{self.port}"]
         # nb: shared.logging needs updating if any of this changes
         cfg.accesslog = None
         cfg.errorlog = "-"
         cfg.logger_class = InterceptLogger
-
-        async with create_task_group() as tg:
-            self._tg = tg
-            logger.info("Starting API")
-            tg.start_soon(self._apply_state)
-            tg.start_soon(self._pause_on_new_election)
-            tg.start_soon(self._cleanup_expired_images)
-            print_startup_banner(self.port)
+        with anyio.CancelScope(shield=True):
             await serve(
                 cast(ASGIFramework, self.app),
                 cfg,
-                shutdown_trigger=lambda: anyio.sleep_forever(),
+                shutdown_trigger=ev.wait,
             )
-
-        self.command_sender.close()
-        self.global_event_receiver.close()
 
     async def _apply_state(self):
         with self.global_event_receiver as events:

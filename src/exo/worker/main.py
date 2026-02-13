@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import datetime, timezone
 from random import random
 from typing import Iterator
@@ -98,21 +99,23 @@ class Worker:
         info_send, info_recv = channel[GatheredInfo]()
         info_gatherer: InfoGatherer = InfoGatherer(info_send)
 
-        async with self._tg as tg:
-            tg.start_soon(info_gatherer.run)
-            tg.start_soon(self._forward_info, info_recv)
-            tg.start_soon(self.plan_step)
-            tg.start_soon(self._resend_out_for_delivery)
-            tg.start_soon(self._event_applier)
-            tg.start_soon(self._forward_events)
-            tg.start_soon(self._poll_connection_updates)
-
-        # Actual shutdown code - waits for all tasks to complete before executing.
-        self.local_event_sender.close()
-        self.command_sender.close()
-        self.download_command_sender.close()
-        for runner in self.runners.values():
-            runner.shutdown()
+        try:
+            async with self._tg as tg:
+                tg.start_soon(info_gatherer.run)
+                tg.start_soon(self._forward_info, info_recv)
+                tg.start_soon(self.plan_step)
+                tg.start_soon(self._resend_out_for_delivery)
+                tg.start_soon(self._event_applier)
+                tg.start_soon(self._forward_events)
+                tg.start_soon(self._poll_connection_updates)
+        finally:
+            # Actual shutdown code - waits for all tasks to complete before executing.
+            logger.info("Stopping Worker")
+            self.local_event_sender.close()
+            self.command_sender.close()
+            self.download_command_sender.close()
+            for runner in self.runners.values():
+                runner.shutdown()
 
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
@@ -181,6 +184,14 @@ class Worker:
             )
             if task is None:
                 continue
+
+            # Gate DownloadModel on backoff BEFORE emitting TaskCreated
+            # to prevent flooding the event log with useless events
+            if isinstance(task, DownloadModel):
+                model_id = task.shard_metadata.model_card.model_id
+                if not self._download_backoff.should_proceed(model_id):
+                    continue
+
             logger.info(f"Worker plan: {task.__class__.__name__}")
             assert task.task_status
             await self.event_sender.send(TaskCreated(task_id=task.task_id, task=task))
@@ -196,9 +207,6 @@ class Worker:
                     )
                 case DownloadModel(shard_metadata=shard):
                     model_id = shard.model_card.model_id
-                    if not self._download_backoff.should_proceed(model_id):
-                        continue
-
                     self._download_backoff.record_attempt(model_id)
 
                     await self.download_command_sender.send(
@@ -343,29 +351,29 @@ class Worker:
             edges = set(
                 conn.edge for conn in self.state.topology.out_edges(self.node_id)
             )
-            conns = await check_reachable(
+            conns: defaultdict[NodeId, set[str]] = defaultdict(set)
+            async for ip, nid in check_reachable(
                 self.state.topology,
                 self.node_id,
                 self.state.node_network,
-            )
-            for nid in conns:
-                for ip in conns[nid]:
-                    edge = SocketConnection(
-                        # nonsense multiaddr
-                        sink_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/52415")
-                        if "." in ip
-                        # nonsense multiaddr
-                        else Multiaddr(address=f"/ip6/{ip}/tcp/52415"),
-                    )
-                    if edge not in edges:
-                        logger.debug(f"ping discovered {edge=}")
-                        await self.event_sender.send(
-                            TopologyEdgeCreated(
-                                conn=Connection(
-                                    source=self.node_id, sink=nid, edge=edge
-                                )
-                            )
+            ):
+                if ip in conns[nid]:
+                    continue
+                conns[nid].add(ip)
+                edge = SocketConnection(
+                    # nonsense multiaddr
+                    sink_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/52415")
+                    if "." in ip
+                    # nonsense multiaddr
+                    else Multiaddr(address=f"/ip6/{ip}/tcp/52415"),
+                )
+                if edge not in edges:
+                    logger.debug(f"ping discovered {edge=}")
+                    await self.event_sender.send(
+                        TopologyEdgeCreated(
+                            conn=Connection(source=self.node_id, sink=nid, edge=edge)
                         )
+                    )
 
             for conn in self.state.topology.out_edges(self.node_id):
                 if not isinstance(conn.edge, SocketConnection):
@@ -375,8 +383,7 @@ class Worker:
                     continue
                 if (
                     conn.sink not in conns
-                    or conn.edge.sink_multiaddr.ip_address
-                    not in conns.get(conn.sink, set())
+                    or conn.edge.sink_multiaddr.ip_address not in conns[conn.sink]
                 ):
                     logger.debug(f"ping failed to discover {conn=}")
                     await self.event_sender.send(TopologyEdgeDeleted(conn=conn))

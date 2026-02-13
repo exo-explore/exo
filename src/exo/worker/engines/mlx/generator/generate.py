@@ -1,9 +1,10 @@
 import time
-from typing import Any, Callable, Generator, cast, get_args
+from copy import deepcopy
+from typing import Callable, Generator, cast, get_args
 
 import mlx.core as mx
 from mlx_lm.generate import stream_generate
-from mlx_lm.models.cache import trim_prompt_cache
+from mlx_lm.models.cache import ArraysCache, RotatingKVCache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
@@ -23,7 +24,15 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
 from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.cache import KVPrefixCache, encode_prompt, make_kv_cache
+from exo.worker.engines.mlx.auto_parallel import set_pipeline_prefill
+from exo.worker.engines.mlx.cache import (
+    CacheSnapshot,
+    KVPrefixCache,
+    encode_prompt,
+    has_non_kv_caches,
+    make_kv_cache,
+    snapshot_ssm_states,
+)
 from exo.worker.engines.mlx.constants import (
     DEFAULT_TOP_LOGPROBS,
     KV_BITS,
@@ -32,6 +41,7 @@ from exo.worker.engines.mlx.constants import (
 )
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
+    fix_unmatched_think_end_tokens,
     mx_barrier,
 )
 from exo.worker.runner.bootstrap import logger
@@ -47,7 +57,7 @@ def prefill(
     sampler: Callable[[mx.array], mx.array],
     prompt_tokens: mx.array,
     cache: KVCacheType,
-) -> tuple[float, int]:
+) -> tuple[float, int, list[CacheSnapshot]]:
     """Prefill the KV cache with prompt tokens.
 
     This runs the model over the prompt tokens to populate the cache,
@@ -58,17 +68,23 @@ def prefill(
     """
     num_tokens = len(prompt_tokens)
     if num_tokens == 0:
-        return 0.0, 0
+        return 0.0, 0, []
 
     logger.debug(f"Prefilling {num_tokens} tokens...")
     start_time = time.perf_counter()
+    has_ssm = has_non_kv_caches(cache)
+    snapshots: list[CacheSnapshot] = []
 
     def progress_callback(processed: int, total: int) -> None:
-        elapsed = time.time() - start_time
+        elapsed = time.perf_counter() - start_time
         tok_per_sec = processed / elapsed if elapsed > 0 else 0
         logger.debug(
             f"Prefill progress: {processed}/{total} tokens ({tok_per_sec:.1f} tok/s)"
         )
+        if has_ssm:
+            snapshots.append(snapshot_ssm_states(cache))
+
+    set_pipeline_prefill(model, is_prefill=True)
 
     # Use max_tokens=1 because max_tokens=0 does not work.
     # We just throw away the generated token - we only care about filling the cache
@@ -79,13 +95,26 @@ def prefill(
         max_tokens=1,
         sampler=sampler,
         prompt_cache=cache,
-        prefill_step_size=1024,
+        prefill_step_size=8192,
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
         prompt_progress_callback=progress_callback,
     ):
         break  # Stop after first iteration - cache is now filled
-    trim_prompt_cache(cast(list[Any], cache), 1)
+
+    set_pipeline_prefill(model, is_prefill=False)
+
+    # stream_generate added 1 extra generated token to the cache, so we should trim it.
+    # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
+    pre_gen = deepcopy(snapshots[-2]) if has_ssm else None
+    for i, c in enumerate(cache):
+        if has_ssm and isinstance(c, (ArraysCache, RotatingKVCache)):
+            assert pre_gen is not None
+            if pre_gen.states[i] is not None:
+                cache[i] = deepcopy(pre_gen.states[i])  # type: ignore
+        else:
+            assert not isinstance(c, (ArraysCache, RotatingKVCache))
+            c.trim(2)  # pyright: ignore[reportUnknownMemberType]
 
     elapsed = time.perf_counter() - start_time
     tokens_per_sec = num_tokens / elapsed if elapsed > 0 else 0.0
@@ -93,12 +122,14 @@ def prefill(
         f"Prefill complete: {num_tokens} tokens in {elapsed:.2f}s "
         f"({tokens_per_sec:.1f} tok/s)"
     )
-    return tokens_per_sec, num_tokens
+    # Exclude the last snapshot
+    return tokens_per_sec, num_tokens, snapshots[:-1] if snapshots else []
 
 
 def warmup_inference(
     model: Model,
     tokenizer: TokenizerWrapper,
+    group: mx.distributed.Group | None = None,
 ) -> int:
     content = "Prompt to warm up the inference engine. Repeat this."
 
@@ -117,7 +148,9 @@ def warmup_inference(
     )
 
     # Use a default sampler for warmup
-    sampler = make_sampler(temp=0.7)
+    sampler = make_sampler(temp=0.0)
+
+    mx_barrier(group)
 
     logger.info("Generating warmup tokens")
     for _r in stream_generate(
@@ -136,9 +169,7 @@ def warmup_inference(
 
     logger.info("Generated ALL warmup tokens")
 
-    # TODO: Do we want an mx_barrier?
-    #  At least this version is actively incorrect, as it should use mx_barrier(group)
-    mx_barrier()
+    mx_barrier(group)
 
     return tokens_generated
 
@@ -222,11 +253,17 @@ def mlx_generate(
     prompt: str,
     kv_prefix_cache: KVPrefixCache | None = None,
     on_prefill_progress: Callable[[int, int], None] | None = None,
+    group: mx.distributed.Group | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
-    if task.seed is not None:
-        mx.random.seed(task.seed)
+    # TODO: Randomise task seed and set in taskparams, instead of hard coding as 42.
+    seed = task.seed or 42
+    mx.random.seed(seed)
+
+    # Encode prompt once at the top and fix unmatched think tags
+    all_prompt_tokens = encode_prompt(tokenizer, prompt)
+    all_prompt_tokens = fix_unmatched_think_end_tokens(all_prompt_tokens, tokenizer)
 
     # Do not use the prefix cache if we are trying to do benchmarks.
     is_bench = task.bench
@@ -238,13 +275,16 @@ def mlx_generate(
     matched_index: int | None = None
     if kv_prefix_cache is None:
         caches = make_kv_cache(model=model)
-        prompt_tokens = encode_prompt(tokenizer, prompt)
+        prompt_tokens = all_prompt_tokens
     else:
         caches, prompt_tokens, matched_index = kv_prefix_cache.get_kv_cache(
-            model, prompt
+            model, all_prompt_tokens
         )
-        all_prompt_tokens = encode_prompt(tokenizer, prompt)
         prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
+        if prefix_hit_length > 0:
+            logger.info(
+                f"KV cache hit: {prefix_hit_length}/{len(all_prompt_tokens)} tokens cached ({100 * prefix_hit_length / len(all_prompt_tokens):.1f}%)"
+            )
 
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = []
     if is_bench:
@@ -266,13 +306,21 @@ def mlx_generate(
     )
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
+    mx_barrier(group)
+    logger.info("Ready to prefill")
+
     # Prefill cache with all tokens except the last one
-    prefill_tps, prefill_tokens = prefill(
-        model, tokenizer, sampler, prompt_tokens[:-1], caches
+    prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
+        model,
+        tokenizer,
+        sampler,
+        prompt_tokens[:-1],
+        caches,
     )
+    cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 
     # stream_generate starts from the last token
-    last_token = prompt_tokens[-1:]
+    last_token = prompt_tokens[-2:]
 
     max_tokens = task.max_output_tokens or MAX_TOKENS
     accumulated_text = ""
@@ -283,6 +331,9 @@ def mlx_generate(
     reasoning_tokens = 0
     think_start = tokenizer.think_start
     think_end = tokenizer.think_end
+
+    mx_barrier(group)
+
     for completion_tokens, out in enumerate(
         stream_generate(
             model=model,
@@ -292,8 +343,7 @@ def mlx_generate(
             sampler=sampler,
             logits_processors=logits_processors,
             prompt_cache=caches,
-            # TODO: Dynamically change prefill step size to be the maximum possible without timing out.
-            prefill_step_size=1024,
+            prefill_step_size=1,
             kv_group_size=KV_GROUP_SIZE,
             kv_bits=KV_BITS,
             prompt_progress_callback=on_prefill_progress,
@@ -301,7 +351,6 @@ def mlx_generate(
         start=1,
     ):
         generated_text_parts.append(out.text)
-        logger.info(out.text)
         accumulated_text += out.text
 
         if think_start is not None and out.text == think_start:
@@ -369,16 +418,6 @@ def mlx_generate(
                 selected_token=out.token,
             )
 
-        yield GenerationResponse(
-            text=text,
-            token=out.token,
-            logprob=logprob,
-            top_logprobs=top_logprobs,
-            finish_reason=finish_reason,
-            stats=stats,
-            usage=usage,
-        )
-
         if is_done:
             # Log generation stats
             generation_elapsed = time.perf_counter() - generation_start_time
@@ -392,18 +431,44 @@ def mlx_generate(
                 f"{generation_tps:.1f} tok/s"
             )
             if kv_prefix_cache is not None:
-                full_prompt = prompt + "".join(generated_text_parts)
+                generated_tokens_array = mx.array(
+                    tokenizer.encode(
+                        "".join(generated_text_parts), add_special_tokens=False
+                    )
+                )
+                full_prompt_tokens = mx.concatenate(
+                    [all_prompt_tokens, generated_tokens_array]
+                )
                 if (
                     matched_index is not None
                     and prefix_hit_length >= _MIN_PREFIX_HIT_TO_UPDATE
                 ):
-                    kv_prefix_cache.update_kv_cache(matched_index, full_prompt, caches)
+                    kv_prefix_cache.update_kv_cache(
+                        matched_index,
+                        full_prompt_tokens,
+                        caches,
+                        cache_snapshots,
+                        restore_pos=prefix_hit_length,
+                    )
                 else:
-                    kv_prefix_cache.add_kv_cache(full_prompt, caches)
+                    kv_prefix_cache.add_kv_cache(
+                        full_prompt_tokens, caches, cache_snapshots
+                    )
+
+        yield GenerationResponse(
+            text=text,
+            token=out.token,
+            logprob=logprob,
+            top_logprobs=top_logprobs,
+            finish_reason=finish_reason,
+            stats=stats,
+            usage=usage,
+        )
+
+        if is_done:
+            mx_barrier(group)
             break
 
         # Limit accumulated_text to what's needed for stop sequence detection
         if max_stop_len > 0 and len(accumulated_text) > max_stop_len:
             accumulated_text = accumulated_text[-max_stop_len:]
-
-        # TODO: Do we want an mx_barrier?

@@ -5,6 +5,8 @@
   import ModelPickerGroup from "./ModelPickerGroup.svelte";
   import ModelFilterPopover from "./ModelFilterPopover.svelte";
   import HuggingFaceResultItem from "./HuggingFaceResultItem.svelte";
+  import { getNodesWithModelDownloaded } from "$lib/utils/downloads";
+  import { getRecentEntries } from "$lib/stores/recents.svelte";
 
   interface ModelInfo {
     id: string;
@@ -33,6 +35,7 @@
   interface FilterState {
     capabilities: string[];
     sizeRange: { min: number; max: number } | null;
+    downloadedOnly: boolean;
   }
 
   interface HuggingFaceModel {
@@ -44,13 +47,18 @@
     tags: string[];
   }
 
+  type ModelFitStatus = "fits_now" | "fits_cluster_capacity" | "too_large";
+
   type ModelPickerModalProps = {
     isOpen: boolean;
     models: ModelInfo[];
     selectedModelId: string | null;
     favorites: Set<string>;
+    recentModelIds?: string[];
+    hasRecents?: boolean;
     existingModelIds: Set<string>;
     canModelFit: (modelId: string) => boolean;
+    getModelFitStatus: (modelId: string) => ModelFitStatus;
     onSelect: (modelId: string) => void;
     onClose: () => void;
     onToggleFavorite: (baseModelId: string) => void;
@@ -58,6 +66,15 @@
     onDeleteModel: (modelId: string) => Promise<void>;
     totalMemoryGB: number;
     usedMemoryGB: number;
+    downloadsData?: Record<string, unknown[]>;
+    topologyNodes?: Record<
+      string,
+      {
+        friendly_name?: string;
+        system_info?: { model_id?: string };
+        macmon_info?: { memory?: { ram_total?: number } };
+      }
+    >;
   };
 
   let {
@@ -65,8 +82,11 @@
     models,
     selectedModelId,
     favorites,
+    recentModelIds = [],
+    hasRecents: hasRecentsTab = false,
     existingModelIds,
     canModelFit,
+    getModelFitStatus,
     onSelect,
     onClose,
     onToggleFavorite,
@@ -74,6 +94,8 @@
     onDeleteModel,
     totalMemoryGB,
     usedMemoryGB,
+    downloadsData,
+    topologyNodes,
   }: ModelPickerModalProps = $props();
 
   // Local state
@@ -81,8 +103,74 @@
   let selectedFamily = $state<string | null>(null);
   let expandedGroups = $state<Set<string>>(new Set());
   let showFilters = $state(false);
-  let filters = $state<FilterState>({ capabilities: [], sizeRange: null });
+  let filters = $state<FilterState>({
+    capabilities: [],
+    sizeRange: null,
+    downloadedOnly: false,
+  });
   let infoGroup = $state<ModelGroup | null>(null);
+
+  // Download availability per model group
+  type DownloadAvailability = {
+    available: boolean;
+    nodeNames: string[];
+    nodeIds: string[];
+  };
+
+  function getNodeName(nodeId: string): string {
+    const node = topologyNodes?.[nodeId];
+    return (
+      node?.friendly_name || node?.system_info?.model_id || nodeId.slice(0, 8)
+    );
+  }
+
+  const modelDownloadAvailability = $derived.by(() => {
+    const result = new Map<string, DownloadAvailability>();
+    if (!downloadsData || !topologyNodes) return result;
+
+    for (const model of models) {
+      const nodeIds = getNodesWithModelDownloaded(downloadsData, model.id);
+      if (nodeIds.length === 0) continue;
+
+      // Sum total RAM across nodes that have the model
+      let totalRamBytes = 0;
+      for (const nodeId of nodeIds) {
+        const ramTotal = topologyNodes[nodeId]?.macmon_info?.memory?.ram_total;
+        if (typeof ramTotal === "number") totalRamBytes += ramTotal;
+      }
+
+      const modelSizeBytes = (model.storage_size_megabytes || 0) * 1024 * 1024;
+      result.set(model.id, {
+        available: modelSizeBytes > 0 && totalRamBytes >= modelSizeBytes,
+        nodeNames: nodeIds.map(getNodeName),
+        nodeIds,
+      });
+    }
+    return result;
+  });
+
+  // Aggregate download availability per group (available if ANY variant is available)
+  function getGroupDownloadAvailability(
+    group: ModelGroup,
+  ): DownloadAvailability | undefined {
+    for (const variant of group.variants) {
+      const avail = modelDownloadAvailability.get(variant.id);
+      if (avail && avail.nodeIds.length > 0) return avail;
+    }
+    return undefined;
+  }
+
+  // Get per-variant download map for a group
+  function getVariantDownloadMap(
+    group: ModelGroup,
+  ): Map<string, DownloadAvailability> {
+    const map = new Map<string, DownloadAvailability>();
+    for (const variant of group.variants) {
+      const avail = modelDownloadAvailability.get(variant.id);
+      if (avail && avail.nodeIds.length > 0) map.set(variant.id, avail);
+    }
+    return map;
+  }
 
   // HuggingFace Hub state
   let hfSearchQuery = $state("");
@@ -95,15 +183,12 @@
   let manualModelId = $state("");
   let addModelError = $state<string | null>(null);
 
-  // Reset state when modal opens
+  // Reset transient state when modal opens, but preserve tab selection
   $effect(() => {
     if (isOpen) {
       searchQuery = "";
-      selectedFamily = null;
       expandedGroups = new Set();
       showFilters = false;
-      hfSearchQuery = "";
-      hfSearchResults = [];
       manualModelId = "";
       addModelError = null;
     }
@@ -287,6 +372,8 @@
       "deepseek",
       "gpt-oss",
       "llama",
+      "flux",
+      "qwen-image",
     ];
     return Array.from(families).sort((a, b) => {
       const aIdx = familyOrder.indexOf(a);
@@ -305,7 +392,11 @@
     // Filter by family
     if (selectedFamily === "favorites") {
       result = result.filter((g) => favorites.has(g.id));
-    } else if (selectedFamily && selectedFamily !== "huggingface") {
+    } else if (
+      selectedFamily &&
+      selectedFamily !== "huggingface" &&
+      selectedFamily !== "recents"
+    ) {
       result = result.filter((g) => g.family === selectedFamily);
     }
 
@@ -339,13 +430,33 @@
       });
     }
 
-    // Sort: models that fit first, then by size (largest first)
-    result.sort((a, b) => {
-      const aFits = a.variants.some((v) => canModelFit(v.id));
-      const bFits = b.variants.some((v) => canModelFit(v.id));
+    // Filter to downloaded models only
+    if (filters.downloadedOnly) {
+      result = result.filter((g) =>
+        g.variants.some((v) => {
+          const avail = modelDownloadAvailability.get(v.id);
+          return avail && avail.nodeIds.length > 0;
+        }),
+      );
+    }
 
-      if (aFits && !bFits) return -1;
-      if (!aFits && bFits) return 1;
+    // Sort: fits-now first, then fits-cluster-capacity, then too-large
+    result.sort((a, b) => {
+      const getGroupFitRank = (group: ModelGroup): number => {
+        let hasClusterCapacityOnly = false;
+        for (const variant of group.variants) {
+          const fitStatus = getModelFitStatus(variant.id);
+          if (fitStatus === "fits_now") return 0;
+          if (fitStatus === "fits_cluster_capacity") {
+            hasClusterCapacityOnly = true;
+          }
+        }
+        return hasClusterCapacityOnly ? 1 : 2;
+      };
+
+      const aRank = getGroupFitRank(a);
+      const bRank = getGroupFitRank(b);
+      if (aRank !== bRank) return aRank - bRank;
 
       return (
         (b.smallestVariant.storage_size_megabytes || 0) -
@@ -358,6 +469,48 @@
 
   // Check if any favorites exist
   const hasFavorites = $derived(favorites.size > 0);
+
+  // Timestamp lookup for recent models
+  const recentTimestamps = $derived(
+    new Map(getRecentEntries().map((e) => [e.modelId, e.launchedAt])),
+  );
+
+  // Recent models: single-variant ModelGroups in launch order
+  const recentGroups = $derived.by((): ModelGroup[] => {
+    if (!recentModelIds || recentModelIds.length === 0) return [];
+    const result: ModelGroup[] = [];
+    for (const id of recentModelIds) {
+      const model = models.find((m) => m.id === id);
+      if (model) {
+        result.push({
+          id: model.base_model || model.id,
+          name: model.name || model.id,
+          capabilities: model.capabilities || ["text"],
+          family: model.family || "",
+          variants: [model],
+          smallestVariant: model,
+          hasMultipleVariants: false,
+        });
+      }
+    }
+    return result;
+  });
+
+  // Filtered recent groups (apply search query)
+  const filteredRecentGroups = $derived.by((): ModelGroup[] => {
+    if (!searchQuery.trim()) return recentGroups;
+    const query = searchQuery.toLowerCase().trim();
+    return recentGroups.filter(
+      (g) =>
+        g.name.toLowerCase().includes(query) ||
+        g.variants.some(
+          (v) =>
+            v.id.toLowerCase().includes(query) ||
+            (v.name || "").toLowerCase().includes(query) ||
+            (v.quantization || "").toLowerCase().includes(query),
+        ),
+    );
+  });
 
   function toggleGroupExpanded(groupId: string) {
     const next = new Set(expandedGroups);
@@ -385,11 +538,13 @@
   }
 
   function clearFilters() {
-    filters = { capabilities: [], sizeRange: null };
+    filters = { capabilities: [], sizeRange: null, downloadedOnly: false };
   }
 
   const hasActiveFilters = $derived(
-    filters.capabilities.length > 0 || filters.sizeRange !== null,
+    filters.capabilities.length > 0 ||
+      filters.sizeRange !== null ||
+      filters.downloadedOnly,
   );
 </script>
 
@@ -514,11 +669,12 @@
         families={uniqueFamilies}
         {selectedFamily}
         {hasFavorites}
+        hasRecents={hasRecentsTab}
         onSelect={(family) => (selectedFamily = family)}
       />
 
       <!-- Model list -->
-      <div class="flex-1 overflow-y-auto flex flex-col">
+      <div class="flex-1 overflow-y-auto scrollbar-hide flex flex-col">
         {#if selectedFamily === "huggingface"}
           <!-- HuggingFace Hub view -->
           <div class="flex-1 flex flex-col min-h-0">
@@ -536,7 +692,7 @@
             </div>
 
             <!-- Results list -->
-            <div class="flex-1 overflow-y-auto">
+            <div class="flex-1 overflow-y-auto scrollbar-hide">
               {#if hfIsLoadingTrending && hfTrendingModels.length === 0}
                 <div
                   class="flex items-center justify-center py-12 text-white/40"
@@ -576,6 +732,12 @@
                     isAdding={addingModelId === model.id}
                     onAdd={() => handleAddModel(model.id)}
                     onSelect={() => handleSelectHfModel(model.id)}
+                    downloadedOnNodes={downloadsData
+                      ? getNodesWithModelDownloaded(
+                          downloadsData,
+                          model.id,
+                        ).map(getNodeName)
+                      : []}
                   />
                 {/each}
               {/if}
@@ -615,6 +777,44 @@
               </div>
             </div>
           </div>
+        {:else if selectedFamily === "recents"}
+          <!-- Recent models view -->
+          {#if filteredRecentGroups.length === 0}
+            <div
+              class="flex flex-col items-center justify-center h-full text-white/40 p-8"
+            >
+              <svg
+                class="w-12 h-12 mb-3"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <path
+                  d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"
+                />
+              </svg>
+              <p class="font-mono text-sm">
+                {searchQuery
+                  ? "No matching recent models"
+                  : "No recently launched models"}
+              </p>
+            </div>
+          {:else}
+            {#each filteredRecentGroups as group}
+              <ModelPickerGroup
+                {group}
+                isExpanded={expandedGroups.has(group.id)}
+                isFavorite={favorites.has(group.id)}
+                {selectedModelId}
+                {canModelFit}
+                onToggleExpand={() => toggleGroupExpanded(group.id)}
+                onSelectModel={handleSelect}
+                {onToggleFavorite}
+                onShowInfo={(g) => (infoGroup = g)}
+                downloadStatusMap={getVariantDownloadMap(group)}
+                launchedAt={recentTimestamps.get(group.variants[0]?.id ?? "")}
+              />
+            {/each}
+          {/if}
         {:else if filteredGroups.length === 0}
           <div
             class="flex flex-col items-center justify-center h-full text-white/40 p-8"
@@ -646,10 +846,12 @@
               isFavorite={favorites.has(group.id)}
               {selectedModelId}
               {canModelFit}
+              {getModelFitStatus}
               onToggleExpand={() => toggleGroupExpanded(group.id)}
               onSelectModel={handleSelect}
               {onToggleFavorite}
               onShowInfo={(g) => (infoGroup = g)}
+              downloadStatusMap={getVariantDownloadMap(group)}
             />
           {/each}
         {/if}
@@ -667,6 +869,11 @@
             >{cap}</span
           >
         {/each}
+        {#if filters.downloadedOnly}
+          <span class="px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded"
+            >Downloaded</span
+          >
+        {/if}
         {#if filters.sizeRange}
           <span class="px-1.5 py-0.5 bg-exo-yellow/20 text-exo-yellow rounded">
             {filters.sizeRange.min}GB - {filters.sizeRange.max}GB
@@ -741,6 +948,40 @@
               {/each}
             </div>
           </div>
+        {/if}
+        {#if getGroupDownloadAvailability(infoGroup)?.nodeNames?.length}
+          {@const infoDownload = getGroupDownloadAvailability(infoGroup)}
+          {#if infoDownload}
+            <div class="mt-3 pt-3 border-t border-exo-yellow/10">
+              <div class="flex items-center gap-2 mb-1">
+                <svg
+                  class="w-3.5 h-3.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    class="text-white/40"
+                    d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+                  />
+                  <path class="text-green-400" d="m9 13 2 2 4-4" />
+                </svg>
+                <span class="text-white/40">Downloaded on:</span>
+              </div>
+              <div class="flex flex-wrap gap-1 mt-1">
+                {#each infoDownload.nodeNames as nodeName}
+                  <span
+                    class="px-1.5 py-0.5 bg-green-500/10 text-green-400/80 border border-green-500/20 rounded text-[10px]"
+                  >
+                    {nodeName}
+                  </span>
+                {/each}
+              </div>
+            </div>
+          {/if}
         {/if}
       </div>
     </div>
