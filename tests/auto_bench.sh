@@ -28,12 +28,12 @@ trap 'cleanup' EXIT INT TERM
 
 for host; do
   ssh -T -o BatchMode=yes -o ServerAliveInterval=30 "$host@$host" \
-    "EXO_LIBP2P_NAMESPACE=$commit /nix/var/nix/profiles/default/bin/nix build github:exo-explore/exo/$commit" &
+    "/nix/var/nix/profiles/default/bin/nix build github:exo-explore/exo/$commit" &
 done
 wait
 for host; do
   ssh -T -o BatchMode=yes -o ServerAliveInterval=30 "$host@$host" \
-    "EXO_LIBP2P_NAMESPACE=$commit /nix/var/nix/profiles/default/bin/nix run github:exo-explore/exo/$commit" &>/dev/null &
+    "/nix/var/nix/profiles/default/bin/nix run github:exo-explore/exo/$commit -- --namespace $commit" &>/dev/null &
 done
 
 for host; do

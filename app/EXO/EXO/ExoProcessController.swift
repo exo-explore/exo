@@ -82,6 +82,7 @@ final class ExoProcessController: ObservableObject {
 
             let child = Process()
             child.executableURL = executableURL
+            child.arguments = ["--namespace", computeNamespace()]
             let exoHomeURL = Self.exoDirectoryURL
             try? FileManager.default.createDirectory(
                 at: exoHomeURL, withIntermediateDirectories: true
@@ -216,7 +217,6 @@ final class ExoProcessController: ObservableObject {
     private func makeEnvironment(for runtimeURL: URL) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         environment["EXO_RUNTIME_DIR"] = runtimeURL.path
-        environment["EXO_LIBP2P_NAMESPACE"] = computeNamespace()
         if !hfToken.isEmpty {
             environment["HF_TOKEN"] = hfToken
         }

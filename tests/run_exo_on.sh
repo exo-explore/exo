@@ -35,7 +35,7 @@ i=0
 for host; do
   colour=${colours[i++ % 4]}
   ssh -T -o BatchMode=yes -o ServerAliveInterval=30 "$host@$host" \
-    "EXO_LIBP2P_NAMESPACE=$commit /nix/var/nix/profiles/default/bin/nix run github:exo-explore/exo/$commit" |&
+    "/nix/var/nix/profiles/default/bin/nix run github:exo-explore/exo/$commit -- --namespace $commit" |&
     awk -v p="${colour}[${host}]${reset}" '{ print p $0; fflush() }' &
 done
 
