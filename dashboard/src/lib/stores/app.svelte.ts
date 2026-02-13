@@ -242,6 +242,16 @@ interface RawStateResponse {
   >;
   // RDMA ctl status per node
   nodeRdmaCtl?: Record<string, { enabled: boolean }>;
+  // RDMA device health per node (ibv_alloc_pd probing)
+  nodeRdmaDeviceHealth?: Record<
+    string,
+    {
+      healthy: boolean;
+      testedDevices: number;
+      failedDevices: number;
+      errorMessage?: string | null;
+    }
+  >;
   // Thunderbolt bridge status per node
   nodeThunderboltBridge?: Record<
     string,
@@ -565,6 +575,17 @@ class AppStore {
     >
   >({});
   nodeRdmaCtl = $state<Record<string, { enabled: boolean }>>({});
+  nodeRdmaDeviceHealth = $state<
+    Record<
+      string,
+      {
+        healthy: boolean;
+        testedDevices: number;
+        failedDevices: number;
+        errorMessage?: string | null;
+      }
+    >
+  >({});
   nodeThunderboltBridge = $state<
     Record<
       string,
@@ -1285,6 +1306,8 @@ class AppStore {
       this.nodeRdmaCtl = data.nodeRdmaCtl ?? {};
       // MetaInstances
       this.metaInstances = data.metaInstances ?? {};
+      // RDMA device health per node
+      this.nodeRdmaDeviceHealth = data.nodeRdmaDeviceHealth ?? {};
       // Thunderbolt bridge cycles
       this.thunderboltBridgeCycles = data.thunderboltBridgeCycles ?? [];
       // Thunderbolt bridge status per node
@@ -3150,6 +3173,7 @@ export const nodeIdentities = () => appStore.nodeIdentities;
 // Thunderbolt & RDMA status
 export const nodeThunderbolt = () => appStore.nodeThunderbolt;
 export const nodeRdmaCtl = () => appStore.nodeRdmaCtl;
+export const nodeRdmaDeviceHealth = () => appStore.nodeRdmaDeviceHealth;
 export const thunderboltBridgeCycles = () => appStore.thunderboltBridgeCycles;
 export const nodeThunderboltBridge = () => appStore.nodeThunderboltBridge;
 

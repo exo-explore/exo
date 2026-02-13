@@ -39,6 +39,7 @@ from exo.shared.types.profiling import (
     NodeIdentity,
     NodeNetworkInfo,
     NodeRdmaCtlStatus,
+    NodeRdmaDeviceHealth,
     NodeThunderboltInfo,
     ThunderboltBridgeStatus,
 )
@@ -58,6 +59,7 @@ from exo.utils.info_gatherer.info_gatherer import (
     NodeDiskUsage,
     NodeNetworkInterfaces,
     RdmaCtlStatus,
+    RdmaDeviceHealth,
     StaticNodeInformation,
     ThunderboltBridgeInfo,
 )
@@ -360,6 +362,11 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
     node_rdma_ctl = {
         key: value for key, value in state.node_rdma_ctl.items() if key != event.node_id
     }
+    node_rdma_device_health = {
+        key: value
+        for key, value in state.node_rdma_device_health.items()
+        if key != event.node_id
+    }
     # Only recompute cycles if the leaving node had TB bridge enabled
     leaving_node_status = state.node_thunderbolt_bridge.get(event.node_id)
     leaving_node_had_tb_enabled = (
@@ -382,6 +389,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
             "node_thunderbolt": node_thunderbolt,
             "node_thunderbolt_bridge": node_thunderbolt_bridge,
             "node_rdma_ctl": node_rdma_ctl,
+            "node_rdma_device_health": node_rdma_device_health,
             "thunderbolt_bridge_cycles": thunderbolt_bridge_cycles,
         }
     )
@@ -487,6 +495,16 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             update["node_rdma_ctl"] = {
                 **state.node_rdma_ctl,
                 event.node_id: NodeRdmaCtlStatus(enabled=info.enabled),
+            }
+        case RdmaDeviceHealth():
+            update["node_rdma_device_health"] = {
+                **state.node_rdma_device_health,
+                event.node_id: NodeRdmaDeviceHealth(
+                    healthy=info.healthy,
+                    tested_devices=info.tested_devices,
+                    failed_devices=info.failed_devices,
+                    error_message=info.error_message,
+                ),
             }
 
     return state.model_copy(update=update)

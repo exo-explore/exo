@@ -45,6 +45,7 @@
     nodeThunderbolt,
     nodeRdmaCtl,
     metaInstances,
+    nodeRdmaDeviceHealth,
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
     nodeIdentities,
@@ -140,6 +141,7 @@
   const identitiesData = $derived(nodeIdentities());
   const tbIdentifiers = $derived(nodeThunderbolt());
   const rdmaCtlData = $derived(nodeRdmaCtl());
+  const rdmaHealthData = $derived(nodeRdmaDeviceHealth());
   const nodeFilter = $derived(previewNodeFilter());
 
   // Detect macOS version mismatches across cluster nodes
@@ -191,6 +193,63 @@
     return null;
   });
   let jacclDismissedError = $state<string | null>(null);
+
+  // Detect unhealthy RDMA devices (ibv_alloc_pd failure)
+  const rdmaDeviceUnhealthy = $derived.by(() => {
+    const health = rdmaHealthData;
+    if (!health) return null;
+
+    // Find nodes with unhealthy RDMA
+    const unhealthyNodeIds = Object.entries(health)
+      .filter(([_, h]) => h.healthy === false)
+      .map(([id]) => id);
+    if (unhealthyNodeIds.length === 0) return null;
+
+    // Cross-reference with RDMA topology edges to identify cable endpoints
+    const edges = data?.edges ?? [];
+    const affectedPairs: Array<{
+      nodeA: string;
+      nodeB: string;
+      nameA: string;
+      nameB: string;
+    }> = [];
+    const seenPairs = new Set<string>();
+
+    for (const unhealthyId of unhealthyNodeIds) {
+      let foundPeer = false;
+      for (const edge of edges) {
+        if (!(edge.sourceRdmaIface || edge.sinkRdmaIface)) continue;
+        let peer: string | null = null;
+        if (edge.source === unhealthyId) peer = edge.target;
+        else if (edge.target === unhealthyId) peer = edge.source;
+        if (!peer) continue;
+
+        const pairKey = [unhealthyId, peer].sort().join("-");
+        if (seenPairs.has(pairKey)) continue;
+        seenPairs.add(pairKey);
+        foundPeer = true;
+
+        affectedPairs.push({
+          nodeA: unhealthyId,
+          nodeB: peer,
+          nameA: getNodeName(unhealthyId),
+          nameB: getNodeName(peer),
+        });
+      }
+      // If no RDMA edges found but node is unhealthy, still report it
+      if (!foundPeer) {
+        affectedPairs.push({
+          nodeA: unhealthyId,
+          nodeB: "",
+          nameA: getNodeName(unhealthyId),
+          nameB: "",
+        });
+      }
+    }
+
+    return affectedPairs.length > 0 ? affectedPairs : null;
+  });
+  let rdmaHealthDismissed = $state(false);
 
   // Helper to get friendly node name from node ID
   function getNodeName(nodeId: string): string {
@@ -2080,8 +2139,76 @@
 </script>
 
 {#snippet clusterWarnings()}
-  {#if tbBridgeCycles.length > 0 || macosVersionMismatch || (tb5WithoutRdma && !tb5InfoDismissed) || (jacclError && jacclError !== jacclDismissedError)}
+  {#if tbBridgeCycles.length > 0 || macosVersionMismatch || (tb5WithoutRdma && !tb5InfoDismissed) || (jacclError && jacclError !== jacclDismissedError) || (rdmaDeviceUnhealthy && !rdmaHealthDismissed)}
     <div class="absolute top-4 left-4 flex flex-col gap-2 z-40">
+      {#if rdmaDeviceUnhealthy && !rdmaHealthDismissed}
+        <div class="group relative" role="alert">
+          <div
+            class="flex items-center gap-2 px-3 py-2 rounded border border-red-500/50 bg-red-500/10 backdrop-blur-sm cursor-help"
+          >
+            <svg
+              class="w-5 h-5 text-red-400 flex-shrink-0"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d={warningIconPath}
+              />
+            </svg>
+            <span class="text-sm font-mono text-red-200">
+              RDMA DEVICE UNHEALTHY
+            </span>
+            <button
+              type="button"
+              onclick={() => (rdmaHealthDismissed = true)}
+              class="ml-1 text-red-300/60 hover:text-red-200 transition-colors cursor-pointer"
+              title="Dismiss"
+            >
+              <svg
+                class="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          </div>
+
+          <!-- Tooltip on hover -->
+          <div
+            class="absolute top-full left-0 mt-2 w-96 p-3 rounded border border-red-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+          >
+            <p class="text-xs text-white/80 mb-2">
+              RDMA Protection Domain allocation failed (ibv_alloc_pd). This is
+              caused by a Thunderbolt initialization bug in macOS.
+            </p>
+            {#each rdmaDeviceUnhealthy as pair}
+              <p class="text-xs text-white/60 mb-1">
+                <span class="text-red-300">To fix:</span>
+                {#if pair.nodeB}
+                  Disconnect and reconnect the Thunderbolt 5 cable between
+                  <strong class="text-white">{pair.nameA}</strong> and
+                  <strong class="text-white">{pair.nameB}</strong>.
+                {:else}
+                  Disconnect and reconnect the Thunderbolt 5 cable on
+                  <strong class="text-white">{pair.nameA}</strong>.
+                {/if}
+              </p>
+            {/each}
+          </div>
+        </div>
+      {/if}
+
       {#if jacclError && jacclError !== jacclDismissedError}
         <div class="group relative" role="alert">
           <div
@@ -2313,8 +2440,29 @@
 {/snippet}
 
 {#snippet clusterWarningsCompact()}
-  {#if tbBridgeCycles.length > 0 || macosVersionMismatch || (tb5WithoutRdma && !tb5InfoDismissed) || (jacclError && jacclError !== jacclDismissedError)}
+  {#if tbBridgeCycles.length > 0 || macosVersionMismatch || (tb5WithoutRdma && !tb5InfoDismissed) || (jacclError && jacclError !== jacclDismissedError) || (rdmaDeviceUnhealthy && !rdmaHealthDismissed)}
     <div class="absolute top-2 left-2 flex flex-col gap-1">
+      {#if rdmaDeviceUnhealthy && !rdmaHealthDismissed}
+        <div
+          class="flex items-center gap-1.5 px-2 py-1 rounded border border-red-500/50 bg-red-500/10 backdrop-blur-sm"
+          title="RDMA device unhealthy — disconnect and reconnect Thunderbolt cable"
+        >
+          <svg
+            class="w-3.5 h-3.5 text-red-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d={warningIconPath}
+            />
+          </svg>
+          <span class="text-[10px] font-mono text-red-200">RDMA UNHEALTHY</span>
+        </div>
+      {/if}
       {#if jacclError && jacclError !== jacclDismissedError}
         <div
           class="flex items-center gap-1.5 px-2 py-1 rounded border border-red-500/50 bg-red-500/10 backdrop-blur-sm"
