@@ -194,3 +194,40 @@ GitHub's API doesn't support direct image upload for PR comments. Workaround:
    git push origin <branch>
    ```
    The images still render in the PR comment because they reference the permanent commit SHA.
+
+## Running exo Remotely via SSH (macOS mDNS)
+
+**CRITICAL: On macOS, mDNS multicast (used for peer discovery) only works when the process runs in a proper macOS user session.** Background processes started via `nohup ... &`, `screen`, or plain SSH commands will NOT send mDNS packets and nodes will never discover each other.
+
+### The Problem
+When you SSH into a Mac and run `nohup uv run exo &`, the process runs in a detached session without access to macOS multicast networking. The exo node will start but will never discover peers, even if they're on the same network.
+
+### The Solution: Use `open` with a `.command` wrapper
+
+Create a `.command` script that `open` will execute in the proper macOS GUI session context:
+
+```bash
+# 1. Create wrapper script on the remote machine
+ssh user@remote-mac "cat > /tmp/run_exo.command << 'SCRIPT'
+#!/bin/bash
+export PATH=/opt/homebrew/bin:\$HOME/.local/bin:\$PATH
+export EXO_LIBP2P_NAMESPACE=your-namespace  # must match across all nodes
+cd ~/path/to/exo
+exec uv run exo -vv 2>&1 | tee /tmp/exo.log
+SCRIPT
+chmod +x /tmp/run_exo.command"
+
+# 2. Launch it via `open` (runs in macOS GUI session with proper mDNS)
+ssh user@remote-mac "open /tmp/run_exo.command"
+
+# 3. Check logs
+ssh user@remote-mac "tail -f /tmp/exo.log"
+```
+
+### Key Details
+- **`EXO_LIBP2P_NAMESPACE`**: All nodes in a cluster MUST use the same namespace value. The EXO.app uses a build-specific namespace (check with `ps eww <pid> | grep NAMESPACE`). If mixing dev builds with EXO.app, set the dev build's namespace to match.
+- **`open *.command`**: This is the macOS equivalent of double-clicking the script in Finder. It runs in the user's GUI session with full network access.
+- **Do NOT use**: `nohup ... &`, `screen -dm`, `tmux new-session -d`, or `sshpass`. These all create detached sessions where mDNS won't work.
+- **Killing**: `ssh user@remote-mac "pkill -f 'python.*exo'"` works fine for stopping.
+- **Dashboard**: Must be built before running: `cd dashboard && npm install && npm run build && cd ..`. Node.js is at `/opt/homebrew/bin/node` on Apple Silicon Macs.
+- **Verifying cluster**: `curl -s http://localhost:52415/state | python3 -c "import json,sys; s=json.load(sys.stdin); print(len(s['topology']['nodes']), 'nodes')"` — should show 2+ nodes.
