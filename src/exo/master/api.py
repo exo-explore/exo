@@ -554,14 +554,9 @@ class API:
         if not meta:
             raise HTTPException(status_code=404, detail="MetaInstance not found")
 
-        # Delete MetaInstance first to prevent reconciler from re-placing
+        # Command processor handles cascade-deleting backing instances
         command = DeleteMetaInstance(meta_instance_id=meta_instance_id)
         await self._send(command)
-
-        # Then cascade-delete any backing instances
-        for instance_id, instance in self.state.instances.items():
-            if instance.meta_instance_id == meta_instance_id:
-                await self._send(DeleteInstance(instance_id=instance_id))
 
         return DeleteMetaInstanceResponse(
             message="Command received.",

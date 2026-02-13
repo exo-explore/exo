@@ -17,7 +17,10 @@ from exo.master.process_managers import ProcessManager
 from exo.master.process_managers.instance_health import InstanceHealthReconciler
 from exo.master.process_managers.meta_instance import MetaInstanceReconciler
 from exo.master.process_managers.node_timeout import NodeTimeoutReconciler
-from exo.master.reconcile import try_place_for_meta_instance
+from exo.master.reconcile import (
+    find_unsatisfied_meta_instances,
+    try_place_for_meta_instance,
+)
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.models.model_cards import ModelCard
@@ -43,6 +46,7 @@ from exo.shared.types.events import (
     ForwarderEvent,
     IndexedEvent,
     InputChunkReceived,
+    InstanceDeleted,
     JacclSideChannelData,
     JacclSideChannelGathered,
     MetaInstanceCreated,
@@ -300,28 +304,47 @@ class Master:
                                 )
                             generated_events.extend(transition_events)
                         case CreateMetaInstance():
-                            generated_events.append(
+                            # Apply immediately so self.state is fresh across
+                            # the await below and the reconciler won't race.
+                            await self._apply_and_broadcast(
                                 MetaInstanceCreated(meta_instance=command.meta_instance)
                             )
                             # Immediate placement attempt for responsiveness
                             model_card = await ModelCard.load(
                                 command.meta_instance.model_id
                             )
-                            result = try_place_for_meta_instance(
-                                command.meta_instance,
-                                model_card,
-                                self.state.topology,
-                                self.state.instances,
-                                self.state.node_memory,
-                                self.state.node_network,
+                            # Re-check: reconciler may have satisfied it during the await
+                            meta_id = command.meta_instance.meta_instance_id
+                            still_unsatisfied = any(
+                                m.meta_instance_id == meta_id
+                                for m in find_unsatisfied_meta_instances(
+                                    self.state.meta_instances,
+                                    self.state.instances,
+                                    self.state.topology,
+                                )
                             )
-                            generated_events.extend(result.events)
+                            if still_unsatisfied:
+                                result = try_place_for_meta_instance(
+                                    command.meta_instance,
+                                    model_card,
+                                    self.state.topology,
+                                    self.state.instances,
+                                    self.state.node_memory,
+                                    self.state.node_network,
+                                )
+                                generated_events.extend(result.events)
                         case DeleteMetaInstance():
                             generated_events.append(
                                 MetaInstanceDeleted(
                                     meta_instance_id=command.meta_instance_id
                                 )
                             )
+                            # Cascade-delete backing instances atomically
+                            for iid, inst in self.state.instances.items():
+                                if inst.meta_instance_id == command.meta_instance_id:
+                                    generated_events.append(
+                                        InstanceDeleted(instance_id=iid)
+                                    )
                         case PlaceInstance():
                             placement = place_instance(
                                 command,
