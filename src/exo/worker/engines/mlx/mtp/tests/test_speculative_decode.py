@@ -249,5 +249,12 @@ class TestIntegration:
         assert logits.shape == (1, 1, 100)
         assert new_hidden.shape == (1, 1, config.hidden_size)
         # Verify outputs are valid (not NaN)
-        assert not mx.any(mx.isnan(logits))
-        assert not mx.any(mx.isnan(new_hidden))
+        # mx.isnan forces GPU evaluation which may fail on CI runners
+        # with incompatible Metal toolchains (e.g. missing steel_gemm kernels)
+        try:
+            assert not mx.any(mx.isnan(logits))
+            assert not mx.any(mx.isnan(new_hidden))
+        except RuntimeError as e:
+            if "Unable to load kernel" in str(e):
+                pytest.skip(f"Metal kernel not available on this device: {e}")
+            raise
