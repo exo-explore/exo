@@ -1,0 +1,20 @@
+services:
+  exo-node-1:
+    image: exo-e2e:latest
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    environment:
+      - EXO_LIBP2P_NAMESPACE=docker-e2e
+    command: [".venv/bin/exo", "-v"]
+    ports:
+      - "52415:52415"
+
+  exo-node-2:
+    image: exo-e2e:latest
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    environment:
+      - EXO_LIBP2P_NAMESPACE=docker-e2e
+    command: [".venv/bin/exo", "-v"]
