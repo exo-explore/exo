@@ -34,6 +34,8 @@ def is_slow(test_file: Path) -> bool:
 
 def main():
     run_slow = "--slow" in sys.argv or os.environ.get("E2E_SLOW") == "1"
+    if "--update-snapshots" in sys.argv:
+        os.environ["UPDATE_SNAPSHOTS"] = "1"
     test_files = sorted(E2E_DIR.glob("test_*.py"))
     if not test_files:
         print("No test files found")
