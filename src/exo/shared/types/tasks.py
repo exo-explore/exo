@@ -40,6 +40,12 @@ class DownloadModel(BaseTask):  # emitted by Worker
     shard_metadata: ShardMetadata
 
 
+class DownloadDraftModel(BaseTask):  # emitted by Worker
+    """Download a draft model for speculative decoding (rank 0 only)."""
+
+    model_id: str  # HuggingFace model ID
+
+
 class LoadModel(BaseTask):  # emitted by Worker
     pass
 
@@ -80,9 +86,17 @@ class Shutdown(BaseTask):  # emitted by Worker
     runner_id: RunnerId
 
 
+class SetDraftModel(BaseTask):  # emitted by Worker
+    """Load or clear a draft model on an already-running instance."""
+
+    model_id: str | None  # HuggingFace model ID, or None to clear
+    num_draft_tokens: int = 4
+
+
 Task = (
     CreateRunner
     | DownloadModel
+    | DownloadDraftModel
     | ConnectToGroup
     | LoadModel
     | StartWarmup
@@ -90,4 +104,5 @@ Task = (
     | ImageGeneration
     | ImageEdits
     | Shutdown
+    | SetDraftModel
 )

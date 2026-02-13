@@ -38,6 +38,8 @@ class PlaceInstance(BaseCommand):
     sharding: Sharding
     instance_meta: InstanceMeta
     min_nodes: int
+    draft_model: ModelId | None = None
+    num_draft_tokens: int = 4
 
 
 class CreateInstance(BaseCommand):
@@ -72,6 +74,14 @@ class DeleteDownload(BaseCommand):
     model_id: ModelId
 
 
+class SetInstanceDraftModel(BaseCommand):
+    """Set or update the draft model for an existing instance."""
+
+    instance_id: InstanceId
+    draft_model: ModelId | None  # None to disable speculative decoding
+    num_draft_tokens: int = 4
+
+
 class CancelDownload(BaseCommand):
     target_node_id: NodeId
     model_id: ModelId
@@ -89,6 +99,7 @@ Command = (
     | PlaceInstance
     | CreateInstance
     | DeleteInstance
+    | SetInstanceDraftModel
     | TaskFinished
     | SendInputChunk
 )
