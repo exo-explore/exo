@@ -1,8 +1,6 @@
 """Test: Reasoning/math snapshot.
-slow
 
 Verifies deterministic output for a simple reasoning prompt.
-Run with: python3 e2e/run_all.py --slow  or  E2E_SLOW=1 python3 e2e/run_all.py
 """
 
 import asyncio

@@ -1,9 +1,7 @@
 """Test: Edge case snapshots.
-slow
 
-Verifies deterministic output for edge-case prompts: empty-ish input,
-very short input, and special characters.
-Run with: python3 e2e/run_all.py --slow  or  E2E_SLOW=1 python3 e2e/run_all.py
+Verifies deterministic output for edge-case prompts: single word input,
+special characters, and unicode.
 """
 
 import asyncio
