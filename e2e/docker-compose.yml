@@ -1,5 +1,6 @@
 services:
   exo-node-1:
+    image: exo-e2e:latest
     build:
       context: ..
       dockerfile: e2e/Dockerfile
@@ -10,6 +11,7 @@ services:
       - "52415:52415"
 
   exo-node-2:
+    image: exo-e2e:latest
     build:
       context: ..
       dockerfile: e2e/Dockerfile

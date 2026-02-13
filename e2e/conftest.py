@@ -52,6 +52,19 @@ class Cluster:
         return output
 
     async def build(self):
+        # Skip build if the image was pre-built (e.g. in CI with buildx cache)
+        proc = await asyncio.create_subprocess_exec(
+            "docker",
+            "image",
+            "inspect",
+            "exo-e2e:latest",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await proc.wait()
+        if proc.returncode == 0:
+            print("  Using pre-built image (exo-e2e:latest)")
+            return
         print("  Building images...")
         await self._run("build", "--quiet")
 
