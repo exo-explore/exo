@@ -65,7 +65,7 @@ members = [
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
 #mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", marker = "sys_platform == 'darwin'" }
-mlx-lm = { git = "https://github.com/Goekdeniz-Guelmez/mlx-lm", branch = "add-glm-moe-dsa" }
+mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", branch = "main" }
 #mlx-lm = { git = "https://github.com/davidmcc73/mlx-lm", branch = "stable" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }

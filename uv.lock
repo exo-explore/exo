@@ -418,7 +418,7 @@ requires-dist = [
     { name = "mflux", specifier = "==0.15.5" },
     { name = "mlx", specifier = "==0.30.6" },
     { name = "mlx", extras = ["cpu"], marker = "sys_platform == 'linux'", specifier = "==0.30.6" },
-    { name = "mlx-lm", git = "https://github.com/Goekdeniz-Guelmez/mlx-lm?branch=add-glm-moe-dsa" },
+    { name = "mlx-lm", git = "https://github.com/ml-explore/mlx-lm?branch=main" },
     { name = "msgspec", specifier = ">=0.19.0" },
     { name = "openai-harmony", specifier = ">=0.0.8" },
     { name = "pillow", specifier = ">=11.0,<12.0" },
@@ -1099,7 +1099,7 @@ wheels = [
 [[package]]
 name = "mlx-lm"
 version = "0.30.7"
-source = { git = "https://github.com/Goekdeniz-Guelmez/mlx-lm?branch=add-glm-moe-dsa#0728bc549b3d38e95ab0fb94e8c64ac7426f3d0b" }
+source = { git = "https://github.com/ml-explore/mlx-lm?branch=main#bcf630614ffb5624bcb19870a7bcb0d847e6e98f" }
 dependencies = [
     { name = "jinja2", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", marker = "sys_platform == 'darwin'" },
