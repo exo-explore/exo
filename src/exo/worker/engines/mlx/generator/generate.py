@@ -485,3 +485,250 @@ def mlx_generate(
         # Limit accumulated_text to what's needed for stop sequence detection
         if max_stop_len > 0 and len(accumulated_text) > max_stop_len:
             accumulated_text = accumulated_text[-max_stop_len:]
+
+
+def mlx_generate_with_postprocessing(
+    model: Model,
+    tokenizer: TokenizerWrapper,
+    task: TextGenerationTaskParams,
+    prompt: str,
+    model_id: str,
+    kv_prefix_cache: KVPrefixCache | None = None,
+    group: mx.distributed.Group | None = None,
+) -> Generator[GenerationResponse | ToolCallResponse]:
+    """
+        This wrapper function for mlx_generate() includes model specific
+        post-processing required by GPT-OSS, Kimi and GLM.
+
+        This will ensure engine-dependent post-processing to be contained
+        within the engine package, requiring minimal changes in `runner.py`
+        file.
+    """
+
+    gen = mlx_generate(model=model, tokenizer=tokenizer, task=task,
+                       prompt=prompt, kv_prefix_cache=kv_prefix_cache, group=group)
+
+    # Kimi-K2 has tool call sections - we don't care about them
+    if "kimi" in model_id.lower():
+        gen = filter_kimi_tokens(gen)
+        patch_kimi_tokenizer(tokenizer)
+
+    # GLM models need patched parser (upstream has bug with None regex match)
+    elif "glm" in model_id.lower():
+        patch_glm_tokenizer(tokenizer)
+
+    # GPT-OSS specific parsing to match other model formats.
+    elif isinstance(model, GptOssModel):
+        gen = parse_gpt_oss(gen)
+
+    return gen
+
+
+def parse_gpt_oss(
+    responses: Generator[GenerationResponse | ToolCallResponse],
+) -> Generator[GenerationResponse | ToolCallResponse]:
+    encoding = get_gpt_oss_encoding()
+    stream = StreamableParser(encoding, role=Role.ASSISTANT)
+    thinking = False
+    current_tool_name: str | None = None
+    tool_arg_parts: list[str] = []
+
+    for response in responses:
+        assert isinstance(response, GenerationResponse)
+        stream.process(response.token)
+
+        delta = stream.last_content_delta
+        ch = stream.current_channel
+        recipient = stream.current_recipient
+
+        if recipient != current_tool_name:
+            if current_tool_name is not None:
+                prefix = "functions."
+                if current_tool_name.startswith(prefix):
+                    current_tool_name = current_tool_name[len(prefix) :]
+                yield ToolCallResponse(
+                    tool_calls=[
+                        ToolCallItem(
+                            name=current_tool_name,
+                            arguments="".join(tool_arg_parts).strip(),
+                        )
+                    ],
+                    usage=response.usage,
+                )
+                tool_arg_parts = []
+            current_tool_name = recipient
+
+        # If inside a tool call, accumulate arguments
+        if current_tool_name is not None:
+            if delta:
+                tool_arg_parts.append(delta)
+            continue
+
+        if ch == "analysis" and not thinking:
+            thinking = True
+            yield response.model_copy(update={"text": "<think>"})
+
+        if ch != "analysis" and thinking:
+            thinking = False
+            yield response.model_copy(update={"text": "</think>"})
+
+        if delta:
+            yield response.model_copy(update={"text": delta})
+
+        if response.finish_reason is not None:
+            if thinking:
+                yield response.model_copy(update={"text": "</think>"})
+            yield response
+
+
+@cache
+def get_gpt_oss_encoding():
+    encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
+    return encoding
+
+
+def filter_kimi_tokens(
+    responses: Generator[GenerationResponse | ToolCallResponse],
+) -> Generator[GenerationResponse]:
+    for resp in responses:
+        assert isinstance(resp, GenerationResponse)
+        if (
+            resp.text == "<|tool_calls_section_begin|>"
+            or resp.text == "<|tool_calls_section_end|>"
+        ):
+            continue
+        yield resp
+
+
+def patch_glm_tokenizer(tokenizer: TokenizerWrapper):
+    """
+    Fixed version of mlx_lm's glm47 tool parser that handles regex match failures.
+    """
+    import ast
+    import json
+    from typing import Any
+
+    import regex as re
+
+    _func_name_regex = re.compile(r"^(.*?)<arg_key>", re.DOTALL)
+    _func_arg_regex = re.compile(
+        r"<arg_key>(.*?)</arg_key>(?:\n|\s)*<arg_value>(.*?)(?:</arg_value>|(?=<arg_key>)|$)",
+        re.DOTALL,
+    )
+
+    tool_call_start = "<tool_call>"
+    tool_call_end = "</tool_call>"
+
+    def _is_string_type(
+        tool_name: str,
+        arg_name: str,
+        tools: list[Any] | None,
+    ) -> bool:
+        if tools is None:
+            return False
+        for tool in tools:  # pyright: ignore[reportAny]
+            func = tool["function"]  # pyright: ignore[reportAny]
+            if func["name"] == tool_name:
+                params = func["parameters"]  # pyright: ignore[reportAny]
+                if params is None:
+                    return False
+                props = params.get("properties", {})  # pyright: ignore[reportAny]
+                arg_props = props.get(arg_name, {})  # pyright: ignore[reportAny]
+                arg_type = arg_props.get("type", None)  # pyright: ignore[reportAny]
+                return arg_type == "string"  # pyright: ignore[reportAny]
+        return False
+
+    def _deserialize(value: str) -> Any:  # pyright: ignore[reportAny]
+        try:
+            return json.loads(value)  # pyright: ignore[reportAny]
+        except Exception:
+            pass
+        try:
+            return ast.literal_eval(value)  # pyright: ignore[reportAny]
+        except Exception:
+            pass
+        return value
+
+
+    def parse_tool_call(text: str, tools: list[Any] | None = None):
+        func_name_match = _func_name_regex.search(text)
+        if func_name_match is None:
+            raise ValueError(f"Could not parse function name from tool call: {text!r}")
+        func_name = func_name_match.group(1)
+
+        pairs = _func_arg_regex.findall(text)
+        arg_dct: dict[str, Any] = {}
+        for key, value in pairs:  # pyright: ignore[reportAny]
+            arg_key = key.strip()  # pyright: ignore[reportAny]
+            arg_val = value.strip()  # pyright: ignore[reportAny]
+            if not _is_string_type(func_name, arg_key, tools):  # pyright: ignore[reportAny]
+                arg_val = _deserialize(arg_val)  # pyright: ignore[reportAny]
+            arg_dct[arg_key] = arg_val
+        return dict(name=func_name, arguments=arg_dct)
+
+    tokenizer._tool_call_start = tool_call_start
+    tokenizer._tool_call_end = tool_call_end
+    tokenizer._tool_parser = parse_tool_call
+
+
+def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
+    """
+    Version of to-be-upstreamed kimi-k2 tool parser
+    """
+    import ast
+    import json
+    from typing import Any
+
+    import regex as re
+
+    # kimi has a fixed function naming scheme, with a json formatted arg
+    #   functions.multiply:0 <|tool_call_argument_begin|> {"a": 2, "b": 3}
+    #   Also needs to handle tools like call_0<|tool_call_argument_begin|>{"filePath": "..."}
+    _func_name_regex = re.compile(
+        r"^\s*(.+)[:](\d+)\s*<\|tool_call_argument_begin\|>", re.DOTALL
+    )
+    _func_arg_regex = re.compile(r"<\|tool_call_argument_begin\|>\s*(.*)\s*", re.DOTALL)
+
+    # kimi has a tool_calls_section - we're leaving this up to the caller to handle
+    tool_call_start = "<|tool_call_begin|>"
+    tool_call_end = "<|tool_call_end|>"
+
+    def _deserialize(value: str) -> Any:  # pyright: ignore[reportAny]
+        try:
+            return json.loads(value)  # pyright: ignore[reportAny]
+        except Exception:
+            pass
+
+        try:
+            return ast.literal_eval(value)  # pyright: ignore[reportAny]
+        except Exception:
+            pass
+        return value
+
+    def parse_tool_call(text: str, tools: Any | None = None):
+        func_name_match = _func_name_regex.search(text)
+        if func_name_match is None:
+            raise ValueError(f"Could not parse function name from tool call: {text!r}")
+        original_func_name = func_name_match.group(1)
+        tool_id = func_name_match.group(2)
+        # strip off the `functions.` prefix, if it exists.
+        func_name = original_func_name[original_func_name.find(".") + 1 :]
+
+        func_args_match = _func_arg_regex.search(text)
+        if func_args_match is None:
+            raise ValueError(f"Could not parse function args from tool call: {text!r}")
+        func_args = func_args_match.group(1)
+        # the args should be valid json - no need to check against our tools to deserialize
+        arg_dct = _deserialize(func_args)  # pyright: ignore[reportAny]
+
+        return dict(
+            id=f"{original_func_name}:{tool_id}",
+            name=func_name,
+            arguments=arg_dct,  # pyright: ignore[reportAny]
+        )
+
+    tokenizer._tool_call_start = tool_call_start
+    tokenizer._tool_call_end = tool_call_end
+    tokenizer._tool_parser = parse_tool_call
+
+

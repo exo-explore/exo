@@ -6,9 +6,6 @@ from collections.abc import Generator
 from functools import cache
 from typing import Literal
 
-import mlx.core as mx
-from mlx_lm.models.gpt_oss import Model as GptOssModel
-from mlx_lm.tokenizer_utils import TokenizerWrapper
 from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     HarmonyEncodingName,
     HarmonyError,  # pyright: ignore[reportUnknownVariableType]
@@ -74,26 +71,27 @@ from exo.shared.types.worker.shards import (
     ShardMetadata,
 )
 from exo.utils.channels import MpReceiver, MpSender
-from exo.worker.engines.image import (
-    DistributedImageModel,
-    generate_image,
-    initialize_image_model,
-    warmup_image_generator,
-)
-from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.cache import KVPrefixCache
-from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
-from exo.worker.engines.mlx.utils_mlx import (
-    apply_chat_template,
-    detect_thinking_prompt_suffix,
-    initialize_mlx,
-    load_mlx_items,
-    mlx_force_oom,
-    mx_any,
-)
+try:
+    from exo.worker.engines.image import (
+        DistributedImageModel,
+        generate_image,
+        initialize_image_model,
+        warmup_image_generator,
+    )
+    from exo.worker.engines.mlx import Model
+    from exo.worker.engines.mlx.cache import KVPrefixCache
+except (ImportError, OSError):
+    DistributedImageModel = None  # type: ignore[assignment, misc]
+    generate_image = None  # type: ignore[assignment]
+    initialize_image_model = None  # type: ignore[assignment]
+    warmup_image_generator = None  # type: ignore[assignment]
+    Model = None  # type: ignore[assignment, misc]
+    KVPrefixCache = None  # type: ignore[assignment, misc]
 from exo.worker.runner.bootstrap import logger
 
 from .tool_parsers import ToolParser, make_mlx_parser
+from exo.shared.types.worker.tokenizer import MutableTokenizer, Tokenizer
+from exo.worker.engines.engine_factory import Engine, create_engine
 
 
 def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:
@@ -136,14 +134,15 @@ def main(
     setup_start_time = time.time()
     cancelled_tasks = set[TaskId]()
 
-    # type checker was unhappy with me - splitting these fixed it
-    inference_model: Model | None = None
-    image_model: DistributedImageModel | None = None
+    engine = create_engine(bound_instance)
+    model: Any = None                   # Model | DistributedImageModel | None = None
     tokenizer = None
     tool_parser: ToolParser | None = None
     group = None
     kv_prefix_cache: KVPrefixCache | None = None
     check_for_cancel_every: int | None = None
+    context: Any = None                 # replaced group
+    kv_prefix_cache: Any = None         # (now, managed per-engine) KVPrefixCache | None 
 
     current_status: RunnerStatus = RunnerIdle()
     logger.info("runner created")
@@ -172,7 +171,7 @@ def main(
                         )
                     )
                     event_sender.send(TaskAcknowledged(task_id=task.task_id))
-                    group = initialize_mlx(bound_instance)
+                    group = engine.initialize(bound_instance)
 
                     logger.info("runner connected")
                     current_status = RunnerConnected()
@@ -202,7 +201,7 @@ def main(
                         time.sleep(0.5)
 
                     if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
-                        inference_model, tokenizer = load_mlx_items(
+                        model, tokenizer = engine.load(
                             bound_instance, group, on_timeout=on_model_load_timeout
                         )
                         logger.info(
@@ -245,9 +244,8 @@ def main(
                         assert inference_model
                         assert tokenizer
 
-                        t = time.monotonic()
-                        toks = warmup_inference(
-                            model=inference_model,
+                        toks = engine.warmup(
+                            model=model,
                             tokenizer=tokenizer,
                             group=group,
                         )
@@ -315,11 +313,11 @@ def main(
                         _check_for_debug_prompts(task_params)
 
                         # Build prompt once - used for both generation and thinking detection
-                        prompt = apply_chat_template(tokenizer, task_params)
+                        prompt = engine.apply_chat_template(tokenizer, task_params)
 
                         # Generate responses using the actual MLX generation
-                        mlx_generator = mlx_generate(
-                            model=inference_model,
+                        mlx_generator = engine.generate(
+                            model=model,
                             tokenizer=tokenizer,
                             task=task_params,
                             prompt=prompt,
@@ -329,8 +327,12 @@ def main(
                         )
 
                         # For other thinking models (GLM, etc.), check if we need to
-                        # prepend the thinking tag that was consumed by the chat template
-                        if detect_thinking_prompt_suffix(prompt, tokenizer):
+                        # prepend the thinking tag that was consumed by the chat template.
+                        # This is now engine-specific and for MLX,
+                        # engine.generate = mlx_generate_with_postprocessing
+                        # handling the MLX specific postprocessing
+
+                        if engine.detect_thinking_prompt_suffix(prompt, tokenizer):
                             mlx_generator = parse_thinking_models(
                                 mlx_generator, tokenizer
                             )
@@ -667,6 +669,10 @@ def parse_thinking_models(
     responses: Generator[GenerationResponse],
     tokenizer: TokenizerWrapper,
 ) -> Generator[GenerationResponse]:
+def parse_thinking_models(
+    responses: Generator[GenerationResponse | ToolCallResponse],
+    tokenizer: Tokenizer,
+) -> Generator[GenerationResponse | ToolCallResponse]:
     """
     For models that inject thinking tags in the prompt (like GLM-4.7),
     prepend the thinking tag to the output stream so the frontend
@@ -858,6 +864,7 @@ def _check_for_debug_prompts(task_params: TextGenerationTaskParams) -> None:
         logger.info("raising exception")
         raise Exception("Artificial runner exception - for testing purposes only.")
     if EXO_RUNNER_MUST_OOM in prompt:
+        from exo.worker.engines.mlx.utils_mlx import mlx_force_oom
         mlx_force_oom()
     if EXO_RUNNER_MUST_TIMEOUT in prompt:
         time.sleep(100)
