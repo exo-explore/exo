@@ -3,11 +3,10 @@ from collections.abc import Generator
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
-from pydantic_core import PydanticUseDefault
+from pydantic import BaseModel, Field
 
 from exo.shared.models.model_cards import ModelCard, ModelId
-from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.common import CommandId, MetaInstanceId, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
@@ -228,13 +227,6 @@ class PlaceInstanceParams(BaseModel):
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
     min_nodes: int = 1
 
-    @field_validator("sharding", "instance_meta", mode="plain")
-    @classmethod
-    def use_default(cls, v: object):
-        if not v or not isinstance(v, (Sharding, InstanceMeta)):
-            raise PydanticUseDefault()
-        return v
-
 
 class CreateInstanceParams(BaseModel):
     instance: Instance
@@ -268,6 +260,26 @@ class DeleteInstanceResponse(BaseModel):
     message: str
     command_id: CommandId
     instance_id: InstanceId
+
+
+class CreateMetaInstanceParams(BaseModel):
+    model_id: ModelId
+    sharding: Sharding = Sharding.Pipeline
+    instance_meta: InstanceMeta = InstanceMeta.MlxRing
+    min_nodes: int = 1
+    node_ids: list[NodeId] | None = None
+
+
+class CreateMetaInstanceResponse(BaseModel):
+    message: str
+    command_id: CommandId
+    meta_instance_id: MetaInstanceId
+
+
+class DeleteMetaInstanceResponse(BaseModel):
+    message: str
+    command_id: CommandId
+    meta_instance_id: MetaInstanceId
 
 
 class AdvancedImageParams(BaseModel):

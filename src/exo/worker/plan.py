@@ -34,6 +34,7 @@ from exo.shared.types.worker.runners import (
     RunnerLoading,
     RunnerReady,
     RunnerRunning,
+    RunnerShutdown,
     RunnerStatus,
     RunnerWarmingUp,
 )
@@ -54,7 +55,7 @@ def plan(
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
         _kill_runner(runners, all_runners, instances)
-        or _create_runner(node_id, runners, instances)
+        or _create_runner(node_id, runners, instances, all_runners)
         or _model_needs_download(node_id, runners, global_download_status)
         or _init_distributed_backend(runners, all_runners)
         or _load_model(runners, all_runners, global_download_status)
@@ -71,6 +72,12 @@ def _kill_runner(
     for runner in runners.values():
         runner_id = runner.bound_instance.bound_runner_id
         if (instance_id := runner.bound_instance.instance.instance_id) not in instances:
+            return Shutdown(instance_id=instance_id, runner_id=runner_id)
+
+        # Master removed our runner from state (retry signal) and process is dead
+        if runner_id not in all_runners and isinstance(
+            runner.status, (RunnerFailed, RunnerShutdown)
+        ):
             return Shutdown(instance_id=instance_id, runner_id=runner_id)
 
         for (
@@ -90,6 +97,7 @@ def _create_runner(
     node_id: NodeId,
     runners: Mapping[RunnerId, RunnerSupervisor],
     instances: Mapping[InstanceId, Instance],
+    all_runners: Mapping[RunnerId, RunnerStatus],
 ) -> CreateRunner | None:
     for instance in instances.values():
         runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)
@@ -97,6 +105,16 @@ def _create_runner(
             continue
 
         if runner_id in runners:
+            continue
+
+        # Don't create while any peer runner is in a terminal state — wait for
+        # the master to emit InstanceRetrying which removes them from state.
+        has_terminal_peer = any(
+            isinstance(all_runners.get(peer_rid), (RunnerFailed, RunnerShutdown))
+            for peer_rid in instance.shard_assignments.node_to_runner.values()
+            if peer_rid != runner_id
+        )
+        if has_terminal_peer:
             continue
 
         shard = instance.shard(runner_id)

@@ -168,7 +168,7 @@ export interface ModelDownloadStatus {
 export interface PlacementPreview {
   model_id: string;
   sharding: "Pipeline" | "Tensor";
-  instance_meta: "MlxRing" | "MlxIbv" | "MlxJaccl";
+  instance_meta: "MlxRing" | "MlxJaccl";
   instance: unknown | null;
   memory_delta_by_node: Record<string, number> | null;
   error: string | null;
@@ -219,7 +219,6 @@ interface RawStateResponse {
     string,
     {
       MlxRingInstance?: Instance;
-      MlxIbvInstance?: Instance;
       MlxJacclInstance?: Instance;
     }
   >;
@@ -250,6 +249,20 @@ interface RawStateResponse {
   >;
   // Thunderbolt bridge cycles (nodes with bridge enabled forming loops)
   thunderboltBridgeCycles?: string[][];
+  // MetaInstances (declarative instance constraints)
+  metaInstances?: Record<string, MetaInstanceData>;
+}
+
+export interface MetaInstanceData {
+  metaInstanceId: string;
+  modelId: string;
+  sharding: string;
+  instanceMeta: string;
+  minNodes: number;
+  nodeIds: string[] | null;
+  placementError: string | null;
+  consecutiveFailures: number;
+  lastFailureError: string | null;
 }
 
 export interface MessageAttachment {
@@ -536,6 +549,7 @@ class AppStore {
   isLoadingPreviews = $state(false);
   previewNodeFilter = $state<Set<string>>(new Set());
   lastUpdate = $state<number | null>(null);
+  metaInstances = $state<Record<string, MetaInstanceData>>({});
   nodeIdentities = $state<Record<string, RawNodeIdentity>>({});
   thunderboltBridgeCycles = $state<string[][]>([]);
   nodeThunderbolt = $state<
@@ -895,11 +909,7 @@ class AppStore {
 
     let instanceType: string | null = null;
     if (instanceTag === "MlxRingInstance") instanceType = "MLX Ring";
-    else if (
-      instanceTag === "MlxIbvInstance" ||
-      instanceTag === "MlxJacclInstance"
-    )
-      instanceType = "MLX RDMA";
+    else if (instanceTag === "MlxJacclInstance") instanceType = "MLX RDMA";
 
     let sharding: string | null = null;
     const inst = instance as {
@@ -1264,6 +1274,8 @@ class AppStore {
       if (data.downloads) {
         this.downloads = data.downloads;
       }
+      // MetaInstances
+      this.metaInstances = data.metaInstances ?? {};
       if (data.nodeDisk) {
         this.nodeDisk = data.nodeDisk;
       }
@@ -3044,6 +3056,7 @@ export const tps = () => appStore.tps;
 export const totalTokens = () => appStore.totalTokens;
 export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
+export const metaInstances = () => appStore.metaInstances;
 export const runners = () => appStore.runners;
 export const downloads = () => appStore.downloads;
 export const nodeDisk = () => appStore.nodeDisk;
