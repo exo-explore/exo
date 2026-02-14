@@ -265,6 +265,7 @@
 
   function handleSubmit() {
     if ((!message.trim() && uploadedFiles.length === 0) || loading) return;
+    if (isEditOnlyWithoutImage) return;
 
     const content = message.trim();
     const files = [...uploadedFiles];
@@ -289,7 +290,11 @@
       if (imageFile.preview) {
         editImage(content, imageFile.preview);
       }
-    } else if (isImageModel() && content) {
+    } else if (
+      currentModel &&
+      modelSupportsTextToImage(currentModel) &&
+      content
+    ) {
       // Use image generation for text-to-image models
       generateImage(content);
     } else {
