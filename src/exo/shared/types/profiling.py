@@ -103,6 +103,15 @@ class NodeRdmaCtlStatus(CamelCaseModel):
     enabled: bool
 
 
+class NodeRdmaDeviceHealth(CamelCaseModel):
+    """Whether ibv_alloc_pd() succeeds on this node's RDMA devices."""
+
+    healthy: bool
+    tested_devices: int = 0
+    failed_devices: int = 0
+    error_message: str | None = None
+
+
 class ThunderboltBridgeStatus(CamelCaseModel):
     """Whether the Thunderbolt Bridge network service is enabled on this node."""
 

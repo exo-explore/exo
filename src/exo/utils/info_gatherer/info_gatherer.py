@@ -1,3 +1,4 @@
+import ctypes
 import os
 import shutil
 import sys
@@ -232,6 +233,98 @@ class RdmaCtlStatus(TaggedModel):
         return None
 
 
+def _probe_rdma_pd_health() -> "RdmaDeviceHealth | None":
+    """Test ibv_alloc_pd() on all RDMA devices via ctypes.
+
+    Returns None when the RDMA library is unavailable (no RDMA on this system).
+    Runs synchronously — call via ``to_thread.run_sync``.
+    """
+    try:
+        lib = ctypes.cdll.LoadLibrary("librdma.dylib")
+    except OSError:
+        return None
+
+    # Configure function signatures for libibverbs (opaque-pointer API)
+    lib.ibv_get_device_list.restype = ctypes.POINTER(ctypes.c_void_p)
+    lib.ibv_get_device_list.argtypes = [ctypes.POINTER(ctypes.c_int)]
+    lib.ibv_open_device.restype = ctypes.c_void_p
+    lib.ibv_open_device.argtypes = [ctypes.c_void_p]
+    lib.ibv_alloc_pd.restype = ctypes.c_void_p
+    lib.ibv_alloc_pd.argtypes = [ctypes.c_void_p]
+    lib.ibv_dealloc_pd.restype = ctypes.c_int
+    lib.ibv_dealloc_pd.argtypes = [ctypes.c_void_p]
+    lib.ibv_close_device.restype = ctypes.c_int
+    lib.ibv_close_device.argtypes = [ctypes.c_void_p]
+    lib.ibv_free_device_list.restype = None
+    lib.ibv_free_device_list.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+
+    num_devices = ctypes.c_int(0)
+    device_list = lib.ibv_get_device_list(ctypes.byref(num_devices))  # pyright: ignore[reportAny]
+    if not device_list or num_devices.value == 0:
+        if device_list:
+            lib.ibv_free_device_list(device_list)
+        return None
+
+    tested = 0
+    failed = 0
+    error_msg: str | None = None
+
+    try:
+        for i in range(num_devices.value):
+            device = device_list[i]  # pyright: ignore[reportAny]
+            if not device:
+                break
+            tested += 1
+            ctx = lib.ibv_open_device(device)  # pyright: ignore[reportAny]
+            if not ctx:
+                failed += 1
+                error_msg = "ibv_open_device failed"
+                continue
+            pd = lib.ibv_alloc_pd(ctx)  # pyright: ignore[reportAny]
+            if not pd:
+                failed += 1
+                error_msg = "ibv_alloc_pd failed"
+            else:
+                lib.ibv_dealloc_pd(pd)
+            lib.ibv_close_device(ctx)
+    finally:
+        lib.ibv_free_device_list(device_list)
+
+    return RdmaDeviceHealth(
+        healthy=(failed == 0),
+        tested_devices=tested,
+        failed_devices=failed,
+        error_message=error_msg if failed > 0 else None,
+    )
+
+
+class RdmaDeviceHealth(TaggedModel):
+    """Result of probing ibv_alloc_pd() on RDMA devices."""
+
+    healthy: bool
+    tested_devices: int
+    failed_devices: int
+    error_message: str | None = None
+
+    @classmethod
+    async def gather(cls) -> Self | None:
+        if not IS_DARWIN:
+            return None
+        try:
+            result = await to_thread.run_sync(_probe_rdma_pd_health)
+            if result is None:
+                return None
+            return cls(
+                healthy=result.healthy,
+                tested_devices=result.tested_devices,
+                failed_devices=result.failed_devices,
+                error_message=result.error_message,
+            )
+        except Exception as exc:
+            logger.warning(f"RDMA PD health probe failed: {exc}")
+            return None
+
+
 class ThunderboltBridgeInfo(TaggedModel):
     status: ThunderboltBridgeStatus
 
@@ -361,6 +454,7 @@ GatheredInfo = (
     | MacThunderboltIdentifiers
     | MacThunderboltConnections
     | RdmaCtlStatus
+    | RdmaDeviceHealth
     | ThunderboltBridgeInfo
     | NodeConfig
     | MiscData
@@ -380,6 +474,7 @@ class InfoGatherer:
     thunderbolt_bridge_poll_interval: float | None = 10 if IS_DARWIN else None
     static_info_poll_interval: float | None = 60
     rdma_ctl_poll_interval: float | None = 10 if IS_DARWIN else None
+    rdma_device_health_poll_interval: float | None = 30 if IS_DARWIN else None
     disk_poll_interval: float | None = 30
     _tg: TaskGroup = field(init=False, default_factory=create_task_group)
 
@@ -391,6 +486,7 @@ class InfoGatherer:
                 tg.start_soon(self._monitor_system_profiler_thunderbolt_data)
                 tg.start_soon(self._monitor_thunderbolt_bridge_status)
                 tg.start_soon(self._monitor_rdma_ctl_status)
+                tg.start_soon(self._monitor_rdma_device_health)
             tg.start_soon(self._watch_system_info)
             tg.start_soon(self._monitor_memory_usage)
             tg.start_soon(self._monitor_misc)
@@ -507,6 +603,19 @@ class InfoGatherer:
             except Exception as e:
                 logger.warning(f"Error gathering RDMA ctl status: {e}")
             await anyio.sleep(self.rdma_ctl_poll_interval)
+
+    async def _monitor_rdma_device_health(self):
+        if self.rdma_device_health_poll_interval is None:
+            return
+        while True:
+            try:
+                with fail_after(15):
+                    curr = await RdmaDeviceHealth.gather()
+                    if curr is not None:
+                        await self.info_sender.send(curr)
+            except Exception as e:
+                logger.warning(f"Error probing RDMA device health: {e}")
+            await anyio.sleep(self.rdma_device_health_poll_interval)
 
     async def _monitor_disk_usage(self):
         if self.disk_poll_interval is None:
