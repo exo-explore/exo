@@ -229,7 +229,7 @@
   const showOnboarding = $derived(onboardingStep > 0);
 
   // Recommended models for onboarding (sorted by fit, then size desc, limited to 6)
-  const onboardingModels = $derived(() => {
+  const onboardingModels = $derived.by(() => {
     if (models.length === 0) return [];
     return [...models]
       .filter((m) => getModelMemoryFitStatus(m) !== "too_large")
@@ -242,19 +242,30 @@
       .slice(0, 6);
   });
 
-  // Track onboarding instance status for auto-advancing steps
+  // Track onboarding instance status for auto-advancing steps.
+  // Handles cached models: if no download is needed, skip step 4 entirely.
   $effect(() => {
     if (onboardingStep === 4 && instanceCount > 0) {
-      // Check if any instance is past downloading
       let anyDownloading = false;
+      let anyReady = false;
       for (const [id, inst] of Object.entries(instanceData)) {
         const status = getInstanceDownloadStatus(id, inst);
         if (status.isDownloading) {
           anyDownloading = true;
-          break;
+        }
+        if (
+          status.statusText === "READY" ||
+          status.statusText === "LOADED" ||
+          status.statusText === "RUNNING"
+        ) {
+          anyReady = true;
         }
       }
-      if (!anyDownloading) {
+      // Model already cached & ready — skip download AND loading steps
+      if (anyReady) {
+        onboardingStep = 6;
+      } else if (!anyDownloading) {
+        // Download finished (or was never needed) but not ready yet
         onboardingStep = 5;
       }
     }
@@ -285,8 +296,11 @@
     }
   }
 
+  let onboardingError = $state<string | null>(null);
+
   async function onboardingLaunchModel(modelId: string) {
     onboardingModelId = modelId;
+    onboardingError = null;
     selectPreviewModel(modelId);
     onboardingStep = 4;
     // Launch via API
@@ -295,10 +309,8 @@
         `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${selectedSharding}&instance_meta=${selectedInstanceType}&min_nodes=1`,
       );
       if (!placementResponse.ok) {
-        console.error(
-          "Onboarding placement failed:",
-          await placementResponse.text(),
-        );
+        const errorText = await placementResponse.text();
+        onboardingError = `Could not place model: ${errorText}`;
         onboardingStep = 3;
         return;
       }
@@ -309,20 +321,21 @@
         body: JSON.stringify({ instance: placementData }),
       });
       if (!response.ok) {
-        console.error("Onboarding launch failed:", await response.text());
+        const errorText = await response.text();
+        onboardingError = `Failed to launch: ${errorText}`;
         onboardingStep = 3;
         return;
       }
       setSelectedChatModel(modelId);
       recordRecentLaunch(modelId);
     } catch (error) {
-      console.error("Onboarding launch error:", error);
+      onboardingError = `Network error: ${error}`;
       onboardingStep = 3;
     }
   }
 
   // Helper to get onboarding download progress
-  const onboardingDownloadProgress = $derived(() => {
+  const onboardingDownloadProgress = $derived.by(() => {
     if (instanceCount === 0) return null;
     for (const [id, inst] of Object.entries(instanceData)) {
       const status = getInstanceDownloadStatus(id, inst);
@@ -2628,7 +2641,16 @@
             </p>
           </div>
 
-          {#if onboardingModels().length === 0}
+          {#if onboardingError}
+            <div
+              class="w-full mb-6 px-4 py-3 rounded-lg border border-red-500/30 bg-red-500/10 text-sm font-mono text-red-300"
+              in:fade={{ duration: 200 }}
+            >
+              {onboardingError}
+            </div>
+          {/if}
+
+          {#if onboardingModels.length === 0}
             <div class="text-center py-8">
               <div class="text-sm text-white/50 font-mono animate-pulse">
                 Loading models...
@@ -2636,7 +2658,7 @@
             </div>
           {:else}
             <div class="w-full space-y-3 mb-8">
-              {#each onboardingModels() as model}
+              {#each onboardingModels as model}
                 {@const sizeGB = getModelSizeGB(model)}
                 {@const fitsNow = hasEnoughMemory(model)}
                 {@const tags = modelTags()[model.id] || []}
@@ -2712,28 +2734,24 @@
             </p>
           </div>
 
-          {#if onboardingDownloadProgress()}
+          {#if onboardingDownloadProgress}
             <div class="w-full max-w-md mx-auto space-y-4">
               <div class="relative h-2 bg-white/5 rounded-full overflow-hidden">
                 <div
                   class="absolute inset-y-0 left-0 bg-gradient-to-r from-exo-yellow to-amber-400 rounded-full transition-all duration-500"
-                  style="width: {onboardingDownloadProgress()!.percentage}%"
+                  style="width: {onboardingDownloadProgress.percentage}%"
                 ></div>
               </div>
               <div class="flex justify-between text-xs font-mono text-white/50">
+                <span>{onboardingDownloadProgress.percentage.toFixed(1)}%</span>
                 <span
-                  >{onboardingDownloadProgress()!.percentage.toFixed(1)}%</span
-                >
-                <span
-                  >{formatBytes(onboardingDownloadProgress()!.downloadedBytes)} /
-                  {formatBytes(onboardingDownloadProgress()!.totalBytes)}</span
+                  >{formatBytes(onboardingDownloadProgress.downloadedBytes)} /
+                  {formatBytes(onboardingDownloadProgress.totalBytes)}</span
                 >
               </div>
               <div class="flex justify-between text-xs font-mono text-white/40">
-                <span>{formatSpeed(onboardingDownloadProgress()!.speed)}</span>
-                <span
-                  >ETA: {formatEta(onboardingDownloadProgress()!.etaMs)}</span
-                >
+                <span>{formatSpeed(onboardingDownloadProgress.speed)}</span>
+                <span>ETA: {formatEta(onboardingDownloadProgress.etaMs)}</span>
               </div>
             </div>
           {:else}
@@ -3373,11 +3391,9 @@
                           >
                             {getInstanceModelId(instance)}
                           </div>
-                          {#if debugEnabled}
-                            <div class="text-white/60 text-xs font-mono">
-                              {instanceInfo.sharding} · {instanceInfo.instanceType}
-                            </div>
-                          {/if}
+                          <div class="text-white/60 text-xs font-mono">
+                            {instanceInfo.sharding} · {instanceInfo.instanceType}
+                          </div>
                           {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
                             <a
                               class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
@@ -4258,11 +4274,9 @@
                             >
                               {getInstanceModelId(instance)}
                             </div>
-                            {#if debugEnabled}
-                              <div class="text-white/60 text-xs font-mono">
-                                {instanceInfo.sharding} · {instanceInfo.instanceType}
-                              </div>
-                            {/if}
+                            <div class="text-white/60 text-xs font-mono">
+                              {instanceInfo.sharding} · {instanceInfo.instanceType}
+                            </div>
                             {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
                               <a
                                 class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
