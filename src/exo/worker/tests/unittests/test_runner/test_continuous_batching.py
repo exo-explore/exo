@@ -197,6 +197,22 @@ def patch_batch_engine(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_runner, "BatchGenerationEngine", FakeBatchEngineWithTokens)
 
 
+class EventCollector:
+    """Collects events directly into a list to avoid mp_channel flakiness."""
+
+    def __init__(self) -> None:
+        self.events: list[Event] = []
+
+    def send(self, event: Event) -> None:
+        self.events.append(event)
+
+    def close(self) -> None:
+        pass
+
+    def join(self) -> None:
+        pass
+
+
 def _run_with_tasks(tasks: list[Task]) -> list[Event]:
     """
     Run tasks through the runner, adding shutdown at the end.
@@ -212,7 +228,7 @@ def _run_with_tasks(tasks: list[Task]) -> list[Event]:
     )
 
     task_sender, task_receiver = mp_channel[Task]()
-    event_sender, event_receiver = mp_channel[Event]()
+    event_collector = EventCollector()
 
     shutdown_task = Shutdown(
         task_id=TaskId("shutdown"),
@@ -220,21 +236,19 @@ def _run_with_tasks(tasks: list[Task]) -> list[Event]:
         runner_id=RUNNER_1_ID,
     )
 
-    with task_sender, event_receiver:
+    with task_sender:
         # Send all tasks including shutdown
         for t in tasks:
             task_sender.send(t)
         task_sender.send(shutdown_task)
 
         # Disable cleanup methods to prevent issues
-        event_sender.close = lambda: None
-        event_sender.join = lambda: None
         task_receiver.close = lambda: None
         task_receiver.join = lambda: None
 
-        mlx_runner.main(bound_instance, event_sender, task_receiver)
+        mlx_runner.main(bound_instance, event_collector, task_receiver)  # type: ignore[arg-type]
 
-        return event_receiver.collect()
+        return event_collector.events
 
 
 INIT_TASK = ConnectToGroup(task_id=TaskId("init"), instance_id=INSTANCE_1_ID)
