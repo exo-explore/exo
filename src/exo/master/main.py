@@ -51,6 +51,7 @@ from exo.shared.types.events import (
     JacclSideChannelGathered,
     MetaInstanceCreated,
     MetaInstanceDeleted,
+    MetaInstancePlacementFailed,
     NodeGatheredInfo,
     TaskCreated,
     TaskDeleted,
@@ -333,6 +334,13 @@ class Master:
                                     self.state.node_network,
                                 )
                                 generated_events.extend(result.events)
+                                if result.error is not None:
+                                    generated_events.append(
+                                        MetaInstancePlacementFailed(
+                                            meta_instance_id=meta_id,
+                                            reason=result.error,
+                                        )
+                                    )
                         case DeleteMetaInstance():
                             generated_events.append(
                                 MetaInstanceDeleted(
