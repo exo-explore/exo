@@ -110,14 +110,36 @@ class DownloadCoordinator:
             tg.start_soon(self._check_internet_connection)
 
     def _test_internet_connection(self) -> None:
-        try:
-            socket.create_connection(("1.1.1.1", 443), timeout=3).close()
-            self.shard_downloader.set_internet_connection(True)
-        except OSError:
-            self.shard_downloader.set_internet_connection(False)
-        logger.debug(
-            f"Internet connectivity: {self.shard_downloader.internet_connection}"
-        )
+        # Try multiple hosts to be resilient against firewall/DNS issues
+        test_hosts = [
+            ("1.1.1.1", 443),  # Cloudflare DNS
+            ("8.8.8.8", 443),  # Google DNS
+            ("api.github.com", 443),  # GitHub API (likely needed for downloads)
+        ]
+        
+        connected = False
+        last_error = None
+        
+        for host, port in test_hosts:
+            try:
+                socket.create_connection((host, port), timeout=5).close()
+                connected = True
+                break
+            except OSError as e:
+                last_error = e
+                logger.debug(f"Connectivity check failed for {host}:{port}: {e}")
+                continue
+        
+        self.shard_downloader.set_internet_connection(connected)
+        
+        if connected:
+            logger.debug("Internet connectivity: ONLINE")
+        else:
+            logger.warning(
+                f"Internet connectivity: OFFLINE (all checks failed). "
+                f"Last error: {last_error}. "
+                f"Check firewall/proxy settings if downloads fail."
+            )
 
     async def _check_internet_connection(self) -> None:
         first_connection = True

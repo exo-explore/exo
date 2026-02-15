@@ -264,7 +264,9 @@ async def fetch_file_list_with_cache(
             )
             return local_file_list
         raise FileNotFoundError(
-            f"No internet connection and no cached file list for {model_id}"
+            f"Cannot download {model_id}: No internet connection detected and no cached files found. "
+            f"Please check your network connection, firewall settings, or proxy configuration. "
+            f"Ensure you can reach huggingface.co and api.github.com."
         )
 
     try:
@@ -292,10 +294,14 @@ async def fetch_file_list_with_cache(
         )
         if local_file_list is not None:
             logger.warning(
-                f"Failed to fetch file list for {model_id} and no cache exists, "
+                f"Failed to fetch file list for {model_id} but found local files, using them"
             )
             return local_file_list
-        raise FileNotFoundError(f"Failed to fetch file list for {model_id}: {e}") from e
+        raise FileNotFoundError(
+            f"Cannot download {model_id}: Network error and no cached/local files found. "
+            f"Error: {e}. "
+            f"Check your internet connection, firewall, or proxy settings."
+        ) from e
 
 
 async def fetch_file_list_with_retry(
