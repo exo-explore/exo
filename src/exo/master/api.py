@@ -584,10 +584,10 @@ class API:
                         break
 
         except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
+            cancel_command = TaskCancelled(cancelled_command_id=command_id)
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(
-                    ForwarderCommand(origin=self.node_id, command=command)
+                    ForwarderCommand(origin=self.node_id, command=cancel_command)
                 )
             raise
         finally:
@@ -927,10 +927,10 @@ class API:
                         del image_metadata[key]
 
         except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
+            cancel_command = TaskCancelled(cancelled_command_id=command_id)
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(
-                    ForwarderCommand(origin=self.node_id, command=command)
+                    ForwarderCommand(origin=self.node_id, command=cancel_command)
                 )
             raise
         finally:
@@ -1013,10 +1013,10 @@ class API:
 
             return (images, stats if capture_stats else None)
         except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
+            cancel_command = TaskCancelled(cancelled_command_id=command_id)
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(
-                    ForwarderCommand(origin=self.node_id, command=command)
+                    ForwarderCommand(origin=self.node_id, command=cancel_command)
                 )
             raise
         finally:

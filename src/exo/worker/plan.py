@@ -328,7 +328,8 @@ def _pending_tasks(
 def _cancel_tasks(
     runners: Mapping[RunnerId, RunnerSupervisor],
     tasks: Mapping[TaskId, Task],
-) -> Task | None:
+) -> CancelTask | None:
+    """Find a cancelled task that hasn't been sent to the runner yet."""
     for task in tasks.values():
         if task.task_status != TaskStatus.Cancelled:
             continue

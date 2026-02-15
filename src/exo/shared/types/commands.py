@@ -61,6 +61,10 @@ class DeleteMetaInstance(BaseCommand):
     meta_instance_id: MetaInstanceId
 
 
+class TaskCancelled(BaseCommand):
+    cancelled_command_id: CommandId
+
+
 class TaskFinished(BaseCommand):
     finished_command_id: CommandId
 
@@ -105,6 +109,7 @@ Command = (
     | TaskCancelled
     | CreateMetaInstance
     | DeleteMetaInstance
+    | TaskCancelled
     | TaskFinished
     | SendInputChunk
 )
