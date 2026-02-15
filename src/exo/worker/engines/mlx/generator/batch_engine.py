@@ -2,6 +2,7 @@
 
 import time
 from dataclasses import dataclass, field
+from typing import get_args
 
 import mlx.core as mx
 from mlx_lm.generate import BatchGenerator
@@ -126,14 +127,11 @@ class BatchGenerationEngine:
         else:
             # Distributed: broadcast pending inserts from rank 0 to all ranks
             assert self.group is not None
-            pending_data = self._pending_inserts if self.rank == 0 else None
-            synced_data = share_object(pending_data, self.rank, self.group)
-
-            if synced_data is None:
-                self._pending_inserts.clear()
-                return []
-
-            inserts_to_process = synced_data
+            inserts_to_process = share_object(
+                self._pending_inserts if self.rank == 0 else None,
+                self.rank,
+                self.group,
+            )
 
         if not inserts_to_process:
             self._pending_inserts.clear()
@@ -219,10 +217,8 @@ class BatchGenerationEngine:
                     peak_memory_usage=Memory.from_gb(mx.get_peak_memory() / 1e9),
                 )
 
-                if raw_finish_reason == "stop":
-                    finish_reason = "stop"
-                elif raw_finish_reason == "length":
-                    finish_reason = "length"
+                if raw_finish_reason in get_args(FinishReason):
+                    finish_reason = raw_finish_reason  # pyright: ignore[reportAssignmentType]
                 else:
                     logger.warning(f"Unknown finish_reason: {raw_finish_reason}")
                     finish_reason = "stop"
@@ -265,14 +261,11 @@ class BatchGenerationEngine:
         # Distributed mode: ALWAYS sync to ensure all ranks participate in collective op
         # This prevents deadlock if one rank has completions and another doesn't
         assert self.group is not None
-        synced_uids = share_object(
+        self._pending_completions = share_object(
             self._pending_completions if self.rank == 0 else None,
             self.rank,
             self.group,
         )
-        if synced_uids:
-            self._pending_completions = synced_uids
-
         self._remove_completed()
 
     def _remove_completed(self) -> None:
