@@ -71,6 +71,7 @@ from exo.shared.types.worker.shards import (
     ShardMetadata,
 )
 from exo.utils.channels import MpReceiver, MpSender
+
 try:
     from exo.worker.engines.image import (
         DistributedImageModel,
@@ -78,7 +79,6 @@ try:
         initialize_image_model,
         warmup_image_generator,
     )
-    from exo.worker.engines.mlx import Model
     from exo.worker.engines.mlx.cache import KVPrefixCache
 except (ImportError, OSError):
     DistributedImageModel = None  # type: ignore[assignment, misc]
@@ -91,7 +91,8 @@ from exo.worker.runner.bootstrap import logger
 
 from .tool_parsers import ToolParser, make_mlx_parser
 from exo.shared.types.worker.tokenizer import MutableTokenizer, Tokenizer
-from exo.worker.engines.engine_factory import Engine, create_engine
+from exo.worker.engines.engine_factory import create_engine
+from exo.worker.runner.bootstrap import logger
 
 
 def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:
@@ -171,7 +172,7 @@ def main(
                         )
                     )
                     event_sender.send(TaskAcknowledged(task_id=task.task_id))
-                    group = engine.initialize(bound_instance)
+                    group = engine.initialize(bound_instance)  # pyright: ignore[reportAny]
 
                     logger.info("runner connected")
                     current_status = RunnerConnected()
@@ -201,7 +202,7 @@ def main(
                         time.sleep(0.5)
 
                     if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
-                        model, tokenizer = engine.load(
+                        model, tokenizer = engine.load(  # pyright: ignore[reportAny]
                             bound_instance, group, on_timeout=on_model_load_timeout
                         )
                         logger.info(
@@ -334,7 +335,7 @@ def main(
 
                         if engine.detect_thinking_prompt_suffix(prompt, tokenizer):
                             mlx_generator = parse_thinking_models(
-                                mlx_generator, tokenizer
+                                mlx_generator, tokenizer  # pyright: ignore[reportAny]
                             )
 
                         # GPT-OSS specific parsing to match other model formats.

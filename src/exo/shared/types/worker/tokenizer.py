@@ -10,6 +10,9 @@ class Tokenizer(Protocol):
     def has_call_start(self) -> bool: ...
 
     @property
+    def tool_call_start(self) -> str | None: ...
+
+    @property
     def tool_call_end(self) -> str | None: ...
 
     @property

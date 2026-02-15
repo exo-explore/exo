@@ -1,7 +1,9 @@
 import json
-import pytest
-
 from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
 
 def test_registered_architecture():
     """
@@ -58,7 +60,7 @@ def test_architecture_spec_is_frozen():
     from exo.shared.architecture import ARCHITECTURE_REGISTRY
 
     spec = ARCHITECTURE_REGISTRY["LlamaForCausalLM"]
-    with pytest.raises(Exception):  # Pydantic ValidationError for frozen model
+    with pytest.raises(ValidationError):
         spec.name = "modified"  # type: ignore[misc]
 
 
@@ -152,5 +154,5 @@ def test_model_config_is_frozen(tmp_path: Path):
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(config))
     parsed = parse_model_config(config_path)
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         parsed.hidden_size = 4096  # type: ignore[misc]

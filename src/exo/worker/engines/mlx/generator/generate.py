@@ -1,18 +1,27 @@
 import time
 from copy import deepcopy
-from typing import Callable, Generator, cast, get_args
+from functools import cache
+from typing import Any, Callable, Generator, cast, get_args
 
 import mlx.core as mx
 from mlx_lm.generate import stream_generate
 from mlx_lm.models.cache import ArraysCache, RotatingKVCache
+from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
+from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
+    HarmonyEncodingName,
+    Role,
+    StreamableParser,
+    load_harmony_encoding,
+)
 
 from exo.shared.types.api import (
     CompletionTokensDetails,
     FinishReason,
     GenerationStats,
     PromptTokensDetails,
+    ToolCallItem,
     TopLogprobItem,
     Usage,
 )
@@ -22,6 +31,7 @@ from exo.shared.types.mlx import KVCacheType
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
+    ToolCallResponse,
 )
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.auto_parallel import set_pipeline_prefill
@@ -527,19 +537,19 @@ def mlx_generate_with_postprocessing(
 def parse_gpt_oss(
     responses: Generator[GenerationResponse | ToolCallResponse],
 ) -> Generator[GenerationResponse | ToolCallResponse]:
-    encoding = get_gpt_oss_encoding()
-    stream = StreamableParser(encoding, role=Role.ASSISTANT)
+    encoding = get_gpt_oss_encoding()  # pyright: ignore[reportAny]
+    stream: Any = StreamableParser(encoding, role=Role.ASSISTANT)  # pyright: ignore[reportAny]
     thinking = False
     current_tool_name: str | None = None
     tool_arg_parts: list[str] = []
 
     for response in responses:
         assert isinstance(response, GenerationResponse)
-        stream.process(response.token)
+        stream.process(response.token)  # pyright: ignore[reportAny]
 
-        delta = stream.last_content_delta
-        ch = stream.current_channel
-        recipient = stream.current_recipient
+        delta: str | None = stream.last_content_delta  # pyright: ignore[reportAny]
+        ch: str | None = stream.current_channel  # pyright: ignore[reportAny]
+        recipient: str | None = stream.current_recipient  # pyright: ignore[reportAny]
 
         if recipient != current_tool_name:
             if current_tool_name is not None:
@@ -582,9 +592,8 @@ def parse_gpt_oss(
 
 
 @cache
-def get_gpt_oss_encoding():
-    encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
-    return encoding
+def get_gpt_oss_encoding() -> Any:  # pyright: ignore[reportAny]
+    return load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
 
 
 def filter_kimi_tokens(
@@ -730,5 +739,3 @@ def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
     tokenizer._tool_call_start = tool_call_start
     tokenizer._tool_call_end = tool_call_end
     tokenizer._tool_parser = parse_tool_call
-
-

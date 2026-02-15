@@ -1,4 +1,5 @@
-from typing import Literal
+from typing import Any, Literal
+
 from pydantic import BaseModel
 
 AttentionType = Literal["multi_head", "grouped_query", "multi_latent"]
@@ -35,6 +36,9 @@ class ArchitectureSpec(BaseModel, frozen=True, strict=True):
     kv_lora_rank: int | None = None
     q_lora_rank: int | None = None
 
+    # Embedding key
+    embed_key: str | None = None
+
     # RoPE default
     rope_theta: float = 10000.0
 
@@ -46,17 +50,18 @@ ARCHITECTURE_REGISTRY: dict[str, ArchitectureSpec] = {}
 def register(huggingface_name: str, spec: ArchitectureSpec) -> None:
     ARCHITECTURE_REGISTRY[huggingface_name] = spec
 
-def detect_architecture(raw_config: dict) -> ArchitectureSpec:
-    for arch_name in raw_config.get("architectures", []):
+def detect_architecture(raw_config: dict[str, Any]) -> ArchitectureSpec:
+    architectures: list[str] = raw_config.get("architectures", [])  # pyright: ignore[reportAny]
+    for arch_name in architectures:
         if arch_name in ARCHITECTURE_REGISTRY:
             return ARCHITECTURE_REGISTRY[arch_name]
 
-    model_type = raw_config.get("model_type", "")
+    model_type: str = raw_config.get("model_type", "")  # pyright: ignore[reportAny]
     if model_type in ARCHITECTURE_REGISTRY:
         return ARCHITECTURE_REGISTRY[model_type]
     raise ValueError(
         f"Unsupported Architecture: {raw_config.get('architectures')}"
     )
 
-from . import llama as _llama
-from . import qwen as _qwen
+from . import llama as _llama  # noqa: F401, E402  # pyright: ignore[reportUnusedImport]
+from . import qwen as _qwen  # noqa: F401, E402  # pyright: ignore[reportUnusedImport]
