@@ -2,9 +2,10 @@
 """Generate a DMG background image for the EXO installer.
 
 Creates a 660x400 PNG with:
-- Dark gradient background matching the EXO brand
-- Right-pointing arrow between app and Applications
-- "Drag to install" instruction text
+- Clean dark gradient background (no grid)
+- Minimal right-pointing arrow between app and Applications
+- White "Drag to install" instruction text
+- Premium style inspired by Slack/Discord/VSCode DMGs
 
 Usage:
     python3 generate-background.py output.png
@@ -12,6 +13,7 @@ Usage:
 
 from __future__ import annotations
 
+import math
 import struct
 import sys
 import zlib
@@ -56,32 +58,71 @@ def _lerp(a: int, b: int, t: float) -> int:
     return max(0, min(255, int(a + (b - a) * t)))
 
 
-def _draw_arrow(
+def _blend(
+    bg: tuple[int, int, int, int], fg: tuple[int, int, int, int]
+) -> tuple[int, int, int, int]:
+    """Alpha-blend fg over bg."""
+    fa = fg[3] / 255.0
+    ba = bg[3] / 255.0
+    oa = fa + ba * (1 - fa)
+    if oa == 0:
+        return (0, 0, 0, 0)
+    r = int((fg[0] * fa + bg[0] * ba * (1 - fa)) / oa)
+    g = int((fg[1] * fa + bg[1] * ba * (1 - fa)) / oa)
+    b = int((fg[2] * fa + bg[2] * ba * (1 - fa)) / oa)
+    return (r, g, b, int(oa * 255))
+
+
+def _draw_smooth_arrow(
     pixels: list[list[tuple[int, int, int, int]]],
     cx: int,
     cy: int,
-    color: tuple[int, int, int, int],
+    color: tuple[int, int, int],
 ) -> None:
-    """Draw a simple right-pointing arrow at (cx, cy)."""
-    # Shaft: horizontal line
-    shaft_len = 60
-    shaft_thickness = 3
-    for dx in range(-shaft_len, shaft_len + 1):
-        for dy in range(-shaft_thickness, shaft_thickness + 1):
-            y = cy + dy
-            x = cx + dx
-            if 0 <= y < len(pixels) and 0 <= x < len(pixels[0]):
-                pixels[y][x] = color
+    """Draw a clean, minimal right-pointing arrow with anti-aliased edges."""
+    height = len(pixels)
+    width = len(pixels[0]) if height > 0 else 0
 
-    # Arrowhead: triangle pointing right
-    head_size = 20
-    for i in range(head_size):
-        spread = int(i * 1.2)
-        x = cx + shaft_len + i
-        for dy in range(-spread, spread + 1):
-            y = cy + dy
-            if 0 <= y < len(pixels) and 0 <= x < len(pixels[0]):
-                pixels[y][x] = color
+    # Slim shaft
+    shaft_half_len = 32
+    shaft_half_thickness = 1.5
+
+    for x in range(cx - shaft_half_len, cx + shaft_half_len + 1):
+        for y_offset_10 in range(-30, 31):  # sub-pixel sampling
+            y_f = cy + y_offset_10 / 10.0
+            yi = int(y_f)
+            dist = abs(y_f - cy)
+            if dist <= shaft_half_thickness and 0 <= yi < height and 0 <= x < width:
+                # Smooth edge falloff
+                edge_dist = shaft_half_thickness - dist
+                alpha = min(1.0, edge_dist * 2.0)
+                a = int(alpha * 200)
+                fg = (color[0], color[1], color[2], a)
+                pixels[yi][x] = _blend(pixels[yi][x], fg)
+
+    # Chevron arrowhead (> shape) — clean and modern
+    head_x = cx + shaft_half_len - 2
+    head_size = 14
+    stroke_width = 2.0
+
+    for i_10 in range(head_size * 10):
+        t = i_10 / 10.0
+        # Top arm of chevron
+        px_f = head_x + t
+        py_top_f = cy - t
+        # Bottom arm of chevron
+        py_bot_f = cy + t
+
+        for dy_10 in range(int(-stroke_width * 10), int(stroke_width * 10) + 1):
+            for arm_py in [py_top_f, py_bot_f]:
+                py = int(arm_py + dy_10 / 10.0)
+                px = int(px_f)
+                if 0 <= py < height and 0 <= px < width:
+                    dist = abs(dy_10 / 10.0)
+                    alpha = max(0.0, min(1.0, (stroke_width - dist) * 1.5))
+                    a = int(alpha * 200)
+                    fg = (color[0], color[1], color[2], a)
+                    pixels[py][px] = _blend(pixels[py][px], fg)
 
 
 def _draw_text_pixel(
@@ -93,7 +134,7 @@ def _draw_text_pixel(
     scale: int = 1,
 ) -> None:
     """Draw simple pixel text. Limited to the phrase 'Drag to install'."""
-    # 5x7 pixel font for uppercase + lowercase letters we need
+    # 5x7 pixel font for the letters we need
     glyphs: dict[str, list[str]] = {
         "D": ["1110 ", "1  01", "1  01", "1  01", "1  01", "1  01", "1110 "],
         "r": ["     ", "     ", " 110 ", "1    ", "1    ", "1    ", "1    "],
@@ -122,7 +163,7 @@ def _draw_text_pixel(
                             py = y + row_idx * scale + sy
                             px = cursor_x + col_idx * scale + sx
                             if 0 <= py < len(pixels) and 0 <= px < len(pixels[0]):
-                                pixels[py][px] = color
+                                pixels[py][px] = _blend(pixels[py][px], color)
         cursor_x += (len(glyph[0]) + 1) * scale
 
 
@@ -130,33 +171,33 @@ def generate_background(output_path: str) -> None:
     """Generate the DMG background image."""
     width, height = 660, 400
 
-    # Build gradient background: dark gray to slightly darker
-    top_color = (30, 30, 30)  # #1e1e1e — matches exo-dark-gray
-    bottom_color = (18, 18, 18)  # #121212 — matches exo-black
+    # Clean dark gradient — no grid, no noise
+    top_color = (28, 28, 30)  # macOS dark mode surface
+    bottom_color = (16, 16, 18)  # slightly darker at bottom
 
     pixels: list[list[tuple[int, int, int, int]]] = []
     for y in range(height):
         t = y / (height - 1)
-        r = _lerp(top_color[0], bottom_color[0], t)
-        g = _lerp(top_color[1], bottom_color[1], t)
-        b = _lerp(top_color[2], bottom_color[2], t)
-        pixels.append([(r, g, b, 255)] * width)
-
-    # Draw subtle grid lines (matches the exo dashboard grid)
-    grid_color = (40, 40, 40, 255)
-    for y in range(0, height, 40):
+        row: list[tuple[int, int, int, int]] = []
         for x in range(width):
-            pixels[y][x] = grid_color
-    for x in range(0, width, 40):
-        for y in range(height):
-            pixels[y][x] = grid_color
+            # Radial vignette: slightly brighter in center for depth
+            dx = (x - width / 2) / (width / 2)
+            dy = (y - height * 0.45) / (height / 2)
+            dist = math.sqrt(dx * dx + dy * dy)
+            vignette = max(0.0, 1.0 - dist * 0.3)
 
-    # Draw the arrow in the center (between app icon at x=155 and Applications at x=505)
-    arrow_color = (200, 180, 50, 255)  # EXO yellow
-    _draw_arrow(pixels, width // 2, 200, arrow_color)
+            r = _lerp(top_color[0], bottom_color[0], t) + int(vignette * 6)
+            g = _lerp(top_color[1], bottom_color[1], t) + int(vignette * 6)
+            b = _lerp(top_color[2], bottom_color[2], t) + int(vignette * 6)
+            row.append((min(255, r), min(255, g), min(255, b), 255))
+        pixels.append(row)
 
-    # Draw instruction text below the arrow
-    text_color = (150, 150, 150, 200)
+    # Draw a clean, minimal arrow between app (x=155) and Applications (x=505)
+    arrow_color = (255, 255, 255)  # white — clean and visible
+    _draw_smooth_arrow(pixels, width // 2, 200, arrow_color)
+
+    # Draw instruction text below the arrow — white for readability
+    text_color = (255, 255, 255, 140)  # white, semi-transparent
     _draw_text_pixel(pixels, 268, 310, "Drag to install", text_color, scale=2)
 
     # Write PNG
