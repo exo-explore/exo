@@ -313,12 +313,27 @@ class API:
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
 
     async def place_instance(self, payload: PlaceInstanceParams):
+        model_card = await ModelCard.load(payload.model_id)
         command = PlaceInstance(
-            model_card=await ModelCard.load(payload.model_id),
+            model_card=model_card,
             sharding=payload.sharding,
             instance_meta=payload.instance_meta,
             min_nodes=payload.min_nodes,
         )
+
+        # Validate placement before sending — fail fast with a clear error
+        # instead of silently dropping the command in the master.
+        try:
+            get_instance_placements(
+                command,
+                topology=self.state.topology,
+                current_instances=self.state.instances,
+                node_memory=self.state.node_memory,
+                node_network=self.state.node_network,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         await self._send(command)
 
         return CreateInstanceResponse(
