@@ -1,4 +1,5 @@
 import logging
+import os
 import webbrowser
 
 from exo.shared.constants import EXO_CONFIG_HOME
@@ -50,9 +51,12 @@ def print_startup_banner(port: int) -> None:
     print(banner)
 
     if first_run:
-        try:
-            webbrowser.open(dashboard_url)
-            logger.info("First run detected — opening dashboard in browser")
-        except Exception:
-            logger.debug("Could not auto-open browser", exc_info=True)
+        # Skip browser open when running inside the native macOS app —
+        # FirstLaunchPopout.swift handles the auto-open with a countdown.
+        if not os.environ.get("EXO_RUNTIME_DIR"):
+            try:
+                webbrowser.open(dashboard_url)
+                logger.info("First run detected — opening dashboard in browser")
+            except Exception:
+                logger.debug("Could not auto-open browser", exc_info=True)
         _mark_first_run_done()
