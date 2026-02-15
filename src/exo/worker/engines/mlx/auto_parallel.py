@@ -1041,7 +1041,9 @@ class Step35ShardingStrategy(TensorParallelShardingStrategy):
     ) -> nn.Module:
         model = cast(Step35Model, model)
 
-        for layer in model.layers:
+        for i, layer in enumerate(model.layers):
+            if weight_loader is not None:
+                weight_loader(model, i)
             eval_with_timeout(
                 layer.parameters(), timeout_seconds / len(model.layers), on_timeout
             )
