@@ -67,7 +67,9 @@ def entrypoint(
         try:
             event_sender.close()
             task_receiver.close()
+            cancel_receiver.close()
         finally:
             event_sender.join()
             task_receiver.join()
+            cancel_receiver.join()
             logger.info("bye from the runner")

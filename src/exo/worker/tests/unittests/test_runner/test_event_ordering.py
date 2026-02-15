@@ -1,9 +1,7 @@
 # Check tasks are complete before runner is ever ready.
-import unittest.mock
 from collections.abc import Iterable
 from typing import Callable
 
-import mlx.core as mx
 import pytest
 
 import exo.worker.runner.runner as mlx_runner
@@ -181,16 +179,12 @@ def _run(tasks: Iterable[Task]):
         cancel_receiver.close = nothin
         cancel_receiver.join = nothin
 
-        with unittest.mock.patch(
-            "exo.worker.runner.runner.mx.distributed.all_gather",
-            make_nothin(mx.array([1])),
-        ):
-            mlx_runner.main(
-                bound_instance,
-                event_sender,  # pyright: ignore[reportArgumentType]
-                task_receiver,
-                cancel_receiver,
-            )
+        mlx_runner.main(
+            bound_instance,
+            event_sender,  # pyright: ignore[reportArgumentType]
+            task_receiver,
+            cancel_receiver,
+        )
 
         return event_sender.events
 
