@@ -273,21 +273,23 @@ def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
             TaskAcknowledged(task_id=WARMUP_TASK_ID),
             TaskStatusUpdated(task_id=WARMUP_TASK_ID, task_status=TaskStatus.Complete),
             RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerReady()),
-            # CHAT TASK: queued into batch engine (not processed synchronously)
+            # CHAT TASK: queued, tokens generated, then completed
             TaskStatusUpdated(
                 task_id=CHAT_COMPLETION_TASK_ID, task_status=TaskStatus.Running
             ),
             TaskAcknowledged(task_id=CHAT_COMPLETION_TASK_ID),
-            TaskStatusUpdated(
-                task_id=CHAT_COMPLETION_TASK_ID, task_status=TaskStatus.Complete
-            ),
             RunnerStatusUpdated(
                 runner_id=RUNNER_1_ID,
                 runner_status=RunnerRunning(active_requests=1),
             ),
-            # SHUTDOWN: batch engine drained first, then shutdown
-            TaskStatusUpdated(task_id=SHUTDOWN_TASK_ID, task_status=TaskStatus.Running),
+            # Generation loop produces token and completes the task
             expected_chunk,
+            TaskStatusUpdated(
+                task_id=CHAT_COMPLETION_TASK_ID, task_status=TaskStatus.Complete
+            ),
+            RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerReady()),
+            # SHUTDOWN
+            TaskStatusUpdated(task_id=SHUTDOWN_TASK_ID, task_status=TaskStatus.Running),
             RunnerStatusUpdated(
                 runner_id=RUNNER_1_ID, runner_status=RunnerShuttingDown()
             ),
@@ -295,7 +297,6 @@ def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
             TaskStatusUpdated(
                 task_id=SHUTDOWN_TASK_ID, task_status=TaskStatus.Complete
             ),
-            # SPECIAL EXCEPTION FOR RUNNER SHUTDOWN
             RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerShutdown()),
         ],
     )

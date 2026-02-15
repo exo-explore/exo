@@ -19,13 +19,14 @@ NOTE: These tests require the continuous-batching runner architecture
 # pyright: reportInvalidTypeVarUse=false
 
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
 import exo.worker.runner.runner as mlx_runner
+from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import (
+    ChunkGenerated,
     Event,
     RunnerStatusUpdated,
     TaskStatusUpdated,
@@ -171,8 +172,20 @@ class FakeBatchEngineWithTokens:
         return False  # Non-distributed mode for testing
 
 
+class MockTokenizer:
+    """Mock tokenizer with tool calling disabled."""
+
+    tool_parser = None
+    tool_call_start = None
+    tool_call_end = None
+    has_tool_calling = False
+
+
 class FakeGroup:
     """Fake MLX distributed group for testing."""
+
+    def rank(self) -> int:
+        return 0
 
     def size(self) -> int:
         return 1  # Single node (non-distributed)
@@ -189,9 +202,7 @@ def make_nothin[T, U, V](res: T):
 def patch_batch_engine(monkeypatch: pytest.MonkeyPatch):
     """Patch MLX dependencies and use FakeBatchEngineWithTokens."""
     monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(FakeGroup()))
-    monkeypatch.setattr(
-        mlx_runner, "load_mlx_items", make_nothin((MagicMock(), MagicMock()))
-    )
+    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
     monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", make_nothin(None))
     monkeypatch.setattr(mlx_runner, "BatchGenerationEngine", FakeBatchEngineWithTokens)
@@ -276,23 +287,36 @@ def test_single_request_generates_tokens(patch_batch_engine: None):
     """
     Verify a single request generates the expected tokens through the batch path.
 
-    Note: With the current non-blocking design, shutdown is processed before
-    batch steps run when all tasks are queued together. This test verifies
-    the runner status reflects active requests.
+    Tokens are generated during the generation loop (not during shutdown drain).
+    The task completes after all tokens are generated.
     """
     chat_task = make_chat_task("chat1", "cmd1", max_tokens=3)
     events = _run_with_tasks([INIT_TASK, LOAD_TASK, WARMUP_TASK, chat_task])
 
-    # Find RunnerRunning status events - this shows the request was inserted
-    running_events = [
+    # Verify ChunkGenerated events are emitted for all tokens
+    chunk_events = [
         e
         for e in events
-        if isinstance(e, RunnerStatusUpdated)
-        and isinstance(e.runner_status, RunnerRunning)
+        if isinstance(e, ChunkGenerated) and e.command_id == CommandId("cmd1")
     ]
+    assert len(chunk_events) == 3, (
+        f"Expected 3 ChunkGenerated events, got {len(chunk_events)}"
+    )
 
-    assert len(running_events) >= 1, "Expected at least one RunnerRunning event"
-    assert running_events[0].runner_status.active_requests == 1
+    # Last chunk should have finish_reason="stop"
+    last_chunk = chunk_events[-1].chunk
+    assert isinstance(last_chunk, TokenChunk)
+    assert last_chunk.finish_reason == "stop"
+
+    # Task should be marked complete after tokens are generated
+    chat_complete = [
+        e
+        for e in events
+        if isinstance(e, TaskStatusUpdated)
+        and e.task_id == TaskId("chat1")
+        and e.task_status == TaskStatus.Complete
+    ]
+    assert len(chat_complete) == 1, "Expected exactly one chat task Complete status"
 
 
 def test_runner_status_reflects_active_requests(patch_batch_engine: None):
@@ -329,25 +353,34 @@ def test_chat_task_acknowledged(patch_batch_engine: None):
     assert len(chat_running) == 1, "Expected exactly one chat task Running status"
 
 
-def test_multiple_requests_tracked(patch_batch_engine: None):
-    """Verify multiple concurrent requests are tracked in active_requests."""
+def test_multiple_requests_generate_tokens(patch_batch_engine: None):
+    """Verify multiple requests each generate their expected tokens."""
     chat1 = make_chat_task("chat1", "cmd1", max_tokens=2)
     chat2 = make_chat_task("chat2", "cmd2", max_tokens=2)
     events = _run_with_tasks([INIT_TASK, LOAD_TASK, WARMUP_TASK, chat1, chat2])
 
-    # Find RunnerRunning status events
-    running_events = [
+    # Both requests should generate their expected number of tokens
+    cmd1_chunks = [
         e
         for e in events
-        if isinstance(e, RunnerStatusUpdated)
-        and isinstance(e.runner_status, RunnerRunning)
+        if isinstance(e, ChunkGenerated) and e.command_id == CommandId("cmd1")
+    ]
+    cmd2_chunks = [
+        e
+        for e in events
+        if isinstance(e, ChunkGenerated) and e.command_id == CommandId("cmd2")
     ]
 
-    # Should have at least 2 RunnerRunning events (one per request inserted)
-    assert len(running_events) >= 2, (
-        f"Expected at least 2 RunnerRunning events, got {len(running_events)}"
-    )
+    assert len(cmd1_chunks) == 2, f"Expected 2 chunks for cmd1, got {len(cmd1_chunks)}"
+    assert len(cmd2_chunks) == 2, f"Expected 2 chunks for cmd2, got {len(cmd2_chunks)}"
 
-    # First should have 1 active request, second should have 2
-    assert running_events[0].runner_status.active_requests == 1
-    assert running_events[1].runner_status.active_requests == 2
+    # Both tasks should be completed
+    completed_task_ids = {
+        e.task_id
+        for e in events
+        if isinstance(e, TaskStatusUpdated)
+        and e.task_status == TaskStatus.Complete
+        and e.task_id in (TaskId("chat1"), TaskId("chat2"))
+    }
+    assert TaskId("chat1") in completed_task_ids
+    assert TaskId("chat2") in completed_task_ids
