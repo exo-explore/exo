@@ -72,6 +72,7 @@ class RunnerSupervisor:
     initialize_timeout: float
     _ev_recv: MpReceiver[Event]
     _task_sender: MpSender[Task]
+    _cancel_sender: MpSender[TaskId]
     _event_sender: Sender[Event]
     _cancel_sender: MpSender[TaskId]
     _pipe_read_fd: int | None = None  # Python reads runner's pipe output
@@ -185,6 +186,8 @@ class RunnerSupervisor:
         logger.info("Runner supervisor shutting down")
         self._ev_recv.close()
         self._task_sender.close()
+        self._cancel_sender.send(TaskId("CANCEL_CURRENT_TASK"))
+        self._cancel_sender.close()
         self._event_sender.close()
         self._cancel_sender.send(TaskId("CANCEL_CURRENT_TASK"))
         self._cancel_sender.close()
@@ -226,6 +229,7 @@ class RunnerSupervisor:
         await event.wait()
 
     async def cancel_task(self, task_id: TaskId):
+        """Send a cancellation signal to the runner process."""
         if task_id in self.completed:
             logger.info(f"Unable to cancel {task_id} as it has been completed")
             return
