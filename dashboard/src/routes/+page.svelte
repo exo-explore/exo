@@ -222,6 +222,117 @@
 
   let mounted = $state(false);
 
+  // ── Onboarding wizard state ──
+  const ONBOARDING_COMPLETE_KEY = "exo-onboarding-complete";
+  let onboardingStep = $state(0); // 0 = not in onboarding, 1-6 = wizard steps
+  let onboardingModelId = $state<string | null>(null); // model selected during onboarding
+  const showOnboarding = $derived(onboardingStep > 0);
+
+  // Recommended models for onboarding (sorted by fit, then size desc, limited to 6)
+  const onboardingModels = $derived(() => {
+    if (models.length === 0) return [];
+    return [...models]
+      .filter((m) => getModelMemoryFitStatus(m) !== "too_large")
+      .sort((a, b) => {
+        const aFit = hasEnoughMemory(a) ? 0 : 1;
+        const bFit = hasEnoughMemory(b) ? 0 : 1;
+        if (aFit !== bFit) return aFit - bFit;
+        return getModelSizeGB(b) - getModelSizeGB(a);
+      })
+      .slice(0, 6);
+  });
+
+  // Track onboarding instance status for auto-advancing steps
+  $effect(() => {
+    if (onboardingStep === 4 && instanceCount > 0) {
+      // Check if any instance is past downloading
+      let anyDownloading = false;
+      for (const [id, inst] of Object.entries(instanceData)) {
+        const status = getInstanceDownloadStatus(id, inst);
+        if (status.isDownloading) {
+          anyDownloading = true;
+          break;
+        }
+      }
+      if (!anyDownloading) {
+        onboardingStep = 5;
+      }
+    }
+  });
+
+  $effect(() => {
+    if (onboardingStep === 5 && instanceCount > 0) {
+      for (const [id, inst] of Object.entries(instanceData)) {
+        const status = getInstanceDownloadStatus(id, inst);
+        if (
+          status.statusText === "READY" ||
+          status.statusText === "LOADED" ||
+          status.statusText === "RUNNING"
+        ) {
+          onboardingStep = 6;
+          break;
+        }
+      }
+    }
+  });
+
+  function completeOnboarding() {
+    onboardingStep = 0;
+    try {
+      localStorage.setItem(ONBOARDING_COMPLETE_KEY, "true");
+    } catch {
+      // ignore
+    }
+  }
+
+  async function onboardingLaunchModel(modelId: string) {
+    onboardingModelId = modelId;
+    selectPreviewModel(modelId);
+    onboardingStep = 4;
+    // Launch via API
+    try {
+      const placementResponse = await fetch(
+        `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${selectedSharding}&instance_meta=${selectedInstanceType}&min_nodes=1`,
+      );
+      if (!placementResponse.ok) {
+        console.error(
+          "Onboarding placement failed:",
+          await placementResponse.text(),
+        );
+        onboardingStep = 3;
+        return;
+      }
+      const placementData = await placementResponse.json();
+      const response = await fetch("/instance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instance: placementData }),
+      });
+      if (!response.ok) {
+        console.error("Onboarding launch failed:", await response.text());
+        onboardingStep = 3;
+        return;
+      }
+      setSelectedChatModel(modelId);
+      recordRecentLaunch(modelId);
+    } catch (error) {
+      console.error("Onboarding launch error:", error);
+      onboardingStep = 3;
+    }
+  }
+
+  // Helper to get onboarding download progress
+  const onboardingDownloadProgress = $derived(() => {
+    if (instanceCount === 0) return null;
+    for (const [id, inst] of Object.entries(instanceData)) {
+      const status = getInstanceDownloadStatus(id, inst);
+      if (status.isDownloading && status.progress) {
+        return status.progress;
+      }
+    }
+    return null;
+  });
+
   // Instance launch state
   let models = $state<
     Array<{
@@ -698,6 +809,10 @@
   onMount(() => {
     mounted = true;
     fetchModels();
+    // Show onboarding wizard for first-time users
+    if (!localStorage.getItem(ONBOARDING_COMPLETE_KEY)) {
+      onboardingStep = 1;
+    }
   });
 
   async function fetchModels() {
@@ -2401,189 +2516,159 @@
     ></div>
   </div>
 
-  {#if !topologyOnlyEnabled}
-    <HeaderNav
-      showHome={chatStarted}
-      onHome={handleGoHome}
-      showSidebarToggle={true}
-      {sidebarVisible}
-      onToggleSidebar={toggleChatSidebarVisible}
-    />
-  {/if}
-
-  <!-- Main Content -->
-  <main class="flex-1 flex overflow-hidden relative">
-    <!-- Left: Conversation History Sidebar (hidden in topology-only mode or when toggled off) -->
-    {#if !topologyOnlyEnabled && sidebarVisible}
-      <div class="w-80 flex-shrink-0 border-r border-exo-yellow/10">
-        <ChatSidebar class="h-full" />
-      </div>
-    {/if}
-
-    {#if topologyOnlyEnabled}
-      <!-- TOPOLOGY ONLY MODE: Full-screen topology -->
-      <div
-        class="flex-1 flex flex-col min-h-0 min-w-0 p-4"
-        in:fade={{ duration: 300 }}
-      >
+  {#if showOnboarding}
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- FULL-SCREEN ONBOARDING WIZARD                          -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div class="flex-1 flex items-center justify-center relative z-10">
+      {#if onboardingStep === 1}
+        <!-- Step 1: Welcome -->
         <div
-          class="flex-1 relative bg-exo-dark-gray/40 rounded-lg overflow-hidden"
+          class="text-center max-w-lg px-8"
+          in:fade={{ duration: 400 }}
+          out:fade={{ duration: 200 }}
         >
-          <TopologyGraph
-            class="w-full h-full"
-            highlightedNodes={highlightedNodes()}
-            filteredNodes={nodeFilter}
-            onNodeClick={togglePreviewNodeFilter}
-          />
-
-          {@render clusterWarnings()}
-
-          <!-- TB5 RDMA Not Enabled Warning -->
-          {#if tb5WithoutRdma && !tb5InfoDismissed}
+          <div class="mb-8">
             <div
-              class="absolute left-4 group"
-              class:top-16={tbBridgeCycles.length > 0}
-              class:top-4={tbBridgeCycles.length === 0}
-              role="status"
+              class="text-5xl font-mono font-bold text-exo-yellow tracking-wider mb-4"
             >
-              <div
-                class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
-              >
-                <svg
-                  class="w-5 h-5 text-yellow-400 flex-shrink-0"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d={warningIconPath}
-                  />
-                </svg>
-                <span class="text-sm font-mono text-yellow-200">
-                  RDMA NOT ENABLED
-                </span>
-                <button
-                  type="button"
-                  onclick={() => (tb5InfoDismissed = true)}
-                  class="ml-1 text-yellow-300/60 hover:text-yellow-200 transition-colors cursor-pointer"
-                  title="Dismiss"
-                >
-                  <svg
-                    class="w-4 h-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M6 18L18 6M6 6l12 12"
-                    />
-                  </svg>
-                </button>
-              </div>
-              <!-- Tooltip on hover -->
-              <div
-                class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
-              >
-                <p class="text-xs text-white/80 mb-2">
-                  Thunderbolt 5 hardware detected on multiple nodes. Enable RDMA
-                  for significantly faster inter-node communication.
-                </p>
-                <p class="text-xs text-white/60 mb-1.5">
-                  <span class="text-yellow-300">To enable:</span>
-                </p>
-                <ol
-                  class="text-xs text-white/60 list-decimal list-inside space-y-0.5 mb-1.5"
-                >
-                  <li>Connect nodes with TB5 cables</li>
-                  <li>Boot to Recovery (hold power 10s → Options)</li>
-                  <li>
-                    Run
-                    <code class="text-yellow-300 bg-yellow-400/10 px-1 rounded"
-                      >rdma_ctl enable</code
-                    >
-                  </li>
-                  <li>Reboot</li>
-                </ol>
-                <p class="text-xs text-white/40">
-                  Requires macOS 26.2+, TB5 cables, and matching OS versions.
-                </p>
-              </div>
+              exo
             </div>
-          {/if}
-
-          <!-- Exit topology-only mode button -->
+            <h1 class="text-2xl font-mono text-white/90 mb-3">
+              Welcome to exo
+            </h1>
+            <p class="text-base text-white/60 leading-relaxed">
+              Run AI models locally, across all your devices. Let's get you set
+              up.
+            </p>
+          </div>
           <button
             type="button"
-            onclick={toggleTopologyOnlyMode}
-            class="absolute bottom-4 right-4 p-2 rounded border border-exo-yellow/30 bg-exo-dark-gray/80 hover:border-exo-yellow/50 hover:bg-exo-dark-gray transition-colors cursor-pointer backdrop-blur-sm"
-            title="Exit topology only mode"
+            onclick={() => (onboardingStep = 2)}
+            class="inline-flex items-center gap-2 px-8 py-3.5 bg-exo-yellow text-exo-black font-mono text-sm font-bold tracking-wider uppercase rounded-lg hover:bg-exo-yellow-darker hover:shadow-[0_0_30px_rgba(255,215,0,0.3)] transition-all duration-200 cursor-pointer"
           >
+            Get Started
             <svg
-              class="w-5 h-5 text-exo-yellow"
+              class="w-4 h-4"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
-              stroke-width="2"
+              stroke-width="2.5"
             >
-              <circle cx="12" cy="5" r="2" fill="currentColor" />
-              <circle cx="5" cy="19" r="2" fill="currentColor" />
-              <circle cx="19" cy="19" r="2" fill="currentColor" />
-              <path stroke-linecap="round" d="M12 7v5m0 0l-5 5m5-5l5 5" />
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M13 7l5 5m0 0l-5 5m5-5H6"
+              />
             </svg>
           </button>
         </div>
-      </div>
-    {:else if !chatStarted}
-      <!-- WELCOME STATE: Topology + Instance Controls (no left sidebar for cleaner look) -->
-      <div
-        class="flex-1 flex overflow-visible relative"
-        in:fade={{ duration: 300 }}
-        out:fade={{ duration: 200 }}
-      >
-        <!-- Center: MAIN TOPOLOGY DISPLAY -->
-        <div class="flex-1 flex flex-col min-h-0 min-w-0 py-4">
-          <!-- Topology Container - Takes most of the space -->
+      {:else if onboardingStep === 2}
+        <!-- Step 2: Your Devices -->
+        <div
+          class="flex flex-col items-center w-full max-w-4xl px-8"
+          in:fade={{ duration: 400 }}
+          out:fade={{ duration: 200 }}
+        >
+          <div class="text-center mb-6">
+            <h1 class="text-2xl font-mono text-white/90 mb-2">
+              Here are your devices
+            </h1>
+            <p class="text-sm text-white/60">
+              {nodeCount} device{nodeCount !== 1 ? "s" : ""} connected
+              {#if clusterTotalMemoryGB() > 0}
+                · {clusterTotalMemoryGB().toFixed(0)} GB total memory
+              {/if}
+            </p>
+          </div>
           <div
-            class="flex-1 relative bg-exo-dark-gray/40 mx-4 mb-4 rounded-lg overflow-hidden"
+            class="w-full h-80 bg-exo-dark-gray/40 rounded-lg overflow-hidden border border-white/5 mb-8"
           >
-            <!-- The main topology graph - full container -->
             <TopologyGraph
               class="w-full h-full"
               highlightedNodes={highlightedNodes()}
               filteredNodes={nodeFilter}
               onNodeClick={togglePreviewNodeFilter}
             />
+          </div>
+          <button
+            type="button"
+            onclick={() => (onboardingStep = 3)}
+            class="inline-flex items-center gap-2 px-8 py-3.5 bg-exo-yellow text-exo-black font-mono text-sm font-bold tracking-wider uppercase rounded-lg hover:bg-exo-yellow-darker hover:shadow-[0_0_30px_rgba(255,215,0,0.3)] transition-all duration-200 cursor-pointer"
+          >
+            Continue
+            <svg
+              class="w-4 h-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="2.5"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M13 7l5 5m0 0l-5 5m5-5H6"
+              />
+            </svg>
+          </button>
+        </div>
+      {:else if onboardingStep === 3}
+        <!-- Step 3: Choose a Model -->
+        <div
+          class="flex flex-col items-center w-full max-w-2xl px-8"
+          in:fade={{ duration: 400 }}
+          out:fade={{ duration: 200 }}
+        >
+          <div class="text-center mb-8">
+            <h1 class="text-2xl font-mono text-white/90 mb-2">
+              Choose a model
+            </h1>
+            <p class="text-sm text-white/60">
+              Pick a model to download and run on your cluster.
+            </p>
+          </div>
 
-            <!-- Welcome overlay - shown when no instances are running -->
-            {#if instanceCount === 0}
-              <div
-                class="absolute inset-0 flex items-center justify-center pointer-events-none"
-              >
-                <div class="text-center pointer-events-auto max-w-md px-6">
-                  <div class="mb-4">
-                    <div
-                      class="text-2xl font-mono text-exo-yellow font-bold tracking-wide mb-2"
-                    >
-                      Welcome to exo
+          {#if onboardingModels().length === 0}
+            <div class="text-center py-8">
+              <div class="text-sm text-white/50 font-mono animate-pulse">
+                Loading models...
+              </div>
+            </div>
+          {:else}
+            <div class="w-full space-y-3 mb-8">
+              {#each onboardingModels() as model}
+                {@const sizeGB = getModelSizeGB(model)}
+                {@const fitsNow = hasEnoughMemory(model)}
+                {@const tags = modelTags()[model.id] || []}
+                <button
+                  type="button"
+                  onclick={() => onboardingLaunchModel(model.id)}
+                  class="w-full flex items-center justify-between gap-4 px-5 py-4 rounded-lg border transition-all duration-200 cursor-pointer {fitsNow
+                    ? 'border-white/10 bg-white/[0.03] hover:border-exo-yellow/40 hover:bg-white/[0.06]'
+                    : 'border-white/5 bg-white/[0.01] hover:border-white/15 opacity-70'}"
+                >
+                  <div class="flex flex-col items-start gap-1 min-w-0">
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm font-mono text-white/90 truncate"
+                        >{model.name || model.id}</span
+                      >
+                      {#each tags as tag}
+                        <span
+                          class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-exo-yellow/15 text-exo-yellow tracking-wider"
+                          >{tag}</span
+                        >
+                      {/each}
                     </div>
-                    <p class="text-sm text-white/70 leading-relaxed">
-                      Your devices are connected. Choose a model to start
-                      running AI locally.
-                    </p>
+                    <span class="text-xs font-mono text-white/40 truncate"
+                      >{model.id}</span
+                    >
                   </div>
-                  <button
-                    type="button"
-                    onclick={() => (isModelPickerOpen = true)}
-                    class="inline-flex items-center gap-2 px-6 py-3 bg-exo-yellow text-exo-black font-mono text-sm font-bold tracking-wider uppercase rounded-lg hover:bg-exo-yellow-darker hover:shadow-[0_0_30px_rgba(255,215,0,0.3)] transition-all duration-200 cursor-pointer"
-                  >
+                  <div class="flex items-center gap-3 flex-shrink-0">
+                    <span class="text-xs font-mono text-white/50"
+                      >{sizeGB >= 1 ? sizeGB.toFixed(0) : sizeGB.toFixed(1)} GB</span
+                    >
                     <svg
-                      class="w-5 h-5"
+                      class="w-4 h-4 text-white/30"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -2592,14 +2677,241 @@
                       <path
                         stroke-linecap="round"
                         stroke-linejoin="round"
-                        d="M12 4v16m8-8H4"
+                        d="M9 5l7 7-7 7"
                       />
                     </svg>
-                    Choose a Model
-                  </button>
-                </div>
+                  </div>
+                </button>
+              {/each}
+            </div>
+          {/if}
+
+          <button
+            type="button"
+            onclick={() => {
+              isModelPickerOpen = true;
+            }}
+            class="text-sm font-mono text-white/50 hover:text-exo-yellow transition-colors cursor-pointer underline underline-offset-4 decoration-white/20 hover:decoration-exo-yellow/40"
+          >
+            Browse all models
+          </button>
+        </div>
+      {:else if onboardingStep === 4}
+        <!-- Step 4: Downloading -->
+        <div
+          class="text-center max-w-lg px-8"
+          in:fade={{ duration: 400 }}
+          out:fade={{ duration: 200 }}
+        >
+          <div class="mb-8">
+            <h1 class="text-2xl font-mono text-white/90 mb-2">Downloading</h1>
+            <p class="text-sm text-white/60">
+              {#if onboardingModelId}
+                <span class="text-exo-yellow">{onboardingModelId}</span>
+              {/if}
+            </p>
+          </div>
+
+          {#if onboardingDownloadProgress()}
+            <div class="w-full max-w-md mx-auto space-y-4">
+              <div class="relative h-2 bg-white/5 rounded-full overflow-hidden">
+                <div
+                  class="absolute inset-y-0 left-0 bg-gradient-to-r from-exo-yellow to-amber-400 rounded-full transition-all duration-500"
+                  style="width: {onboardingDownloadProgress()!.percentage}%"
+                ></div>
               </div>
-            {/if}
+              <div class="flex justify-between text-xs font-mono text-white/50">
+                <span
+                  >{onboardingDownloadProgress()!.percentage.toFixed(1)}%</span
+                >
+                <span
+                  >{formatBytes(onboardingDownloadProgress()!.downloadedBytes)} /
+                  {formatBytes(onboardingDownloadProgress()!.totalBytes)}</span
+                >
+              </div>
+              <div class="flex justify-between text-xs font-mono text-white/40">
+                <span>{formatSpeed(onboardingDownloadProgress()!.speed)}</span>
+                <span
+                  >ETA: {formatEta(onboardingDownloadProgress()!.etaMs)}</span
+                >
+              </div>
+            </div>
+          {:else}
+            <div class="w-full max-w-md mx-auto">
+              <div class="relative h-2 bg-white/5 rounded-full overflow-hidden">
+                <div
+                  class="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-exo-yellow to-amber-400 rounded-full animate-pulse"
+                ></div>
+              </div>
+              <p class="text-xs font-mono text-white/40 mt-4">
+                Preparing download...
+              </p>
+            </div>
+          {/if}
+
+          <p class="text-xs text-white/30 mt-8">
+            This may take a few minutes depending on your connection.
+          </p>
+        </div>
+      {:else if onboardingStep === 5}
+        <!-- Step 5: Loading into memory -->
+        <div
+          class="text-center max-w-lg px-8"
+          in:fade={{ duration: 400 }}
+          out:fade={{ duration: 200 }}
+        >
+          <div class="mb-8">
+            <h1 class="text-2xl font-mono text-white/90 mb-2">
+              Loading into memory
+            </h1>
+            <p class="text-sm text-white/60">
+              {#if onboardingModelId}
+                <span class="text-exo-yellow">{onboardingModelId}</span>
+              {/if}
+            </p>
+          </div>
+
+          <div class="flex justify-center mb-6">
+            <div
+              class="w-12 h-12 border-2 border-exo-yellow/30 border-t-exo-yellow rounded-full animate-spin"
+            ></div>
+          </div>
+
+          <p class="text-sm text-white/40 font-mono">Almost ready...</p>
+        </div>
+      {:else if onboardingStep === 6}
+        <!-- Step 6: Ready! -->
+        <div
+          class="text-center max-w-lg px-8"
+          in:fade={{ duration: 400 }}
+          out:fade={{ duration: 200 }}
+        >
+          <div class="mb-8">
+            <div class="flex justify-center mb-4">
+              <div
+                class="w-16 h-16 rounded-full bg-green-500/10 border border-green-500/30 flex items-center justify-center"
+              >
+                <svg
+                  class="w-8 h-8 text-green-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M5 13l4 4L19 7"
+                  />
+                </svg>
+              </div>
+            </div>
+            <h1 class="text-2xl font-mono text-white/90 mb-2">
+              You're all set!
+            </h1>
+            <p class="text-sm text-white/60">
+              {#if onboardingModelId}
+                <span class="text-exo-yellow">{onboardingModelId}</span> is ready.
+              {:else}
+                Your model is ready.
+              {/if}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onclick={completeOnboarding}
+            class="inline-flex items-center gap-2 px-8 py-3.5 bg-exo-yellow text-exo-black font-mono text-sm font-bold tracking-wider uppercase rounded-lg hover:bg-exo-yellow-darker hover:shadow-[0_0_30px_rgba(255,215,0,0.3)] transition-all duration-200 cursor-pointer"
+          >
+            Start Chatting
+            <svg
+              class="w-4 h-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="2.5"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M13 7l5 5m0 0l-5 5m5-5H6"
+              />
+            </svg>
+          </button>
+        </div>
+      {/if}
+    </div>
+
+    <!-- Model Picker Modal (available during onboarding step 3) -->
+    {#if onboardingStep === 3}
+      <ModelPickerModal
+        isOpen={isModelPickerOpen}
+        {models}
+        {selectedModelId}
+        favorites={favoritesSet}
+        {recentModelIds}
+        hasRecents={showRecentsTab}
+        existingModelIds={new Set(models.map((m) => m.id))}
+        canModelFit={(modelId) => {
+          const model = models.find((m) => m.id === modelId);
+          return model ? hasEnoughMemory(model) : false;
+        }}
+        getModelFitStatus={(modelId): ModelMemoryFitStatus => {
+          const model = models.find((m) => m.id === modelId);
+          return model ? getModelMemoryFitStatus(model) : "too_large";
+        }}
+        onSelect={(modelId) => {
+          isModelPickerOpen = false;
+          onboardingLaunchModel(modelId);
+        }}
+        onClose={() => (isModelPickerOpen = false)}
+        onToggleFavorite={toggleFavorite}
+        onAddModel={addModelFromPicker}
+        onDeleteModel={deleteCustomModel}
+        totalMemoryGB={clusterMemory().total / (1024 * 1024 * 1024)}
+        usedMemoryGB={clusterMemory().used / (1024 * 1024 * 1024)}
+        {downloadsData}
+        topologyNodes={data?.nodes}
+      />
+    {/if}
+  {:else}
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- MAIN DASHBOARD (shown after onboarding)                -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    {#if !topologyOnlyEnabled}
+      <HeaderNav
+        showHome={chatStarted}
+        onHome={handleGoHome}
+        showSidebarToggle={true}
+        {sidebarVisible}
+        onToggleSidebar={toggleChatSidebarVisible}
+      />
+    {/if}
+
+    <!-- Main Content -->
+    <main class="flex-1 flex overflow-hidden relative">
+      <!-- Left: Conversation History Sidebar (hidden in topology-only mode or when toggled off) -->
+      {#if !topologyOnlyEnabled && sidebarVisible}
+        <div class="w-80 flex-shrink-0 border-r border-exo-yellow/10">
+          <ChatSidebar class="h-full" />
+        </div>
+      {/if}
+
+      {#if topologyOnlyEnabled}
+        <!-- TOPOLOGY ONLY MODE: Full-screen topology -->
+        <div
+          class="flex-1 flex flex-col min-h-0 min-w-0 p-4"
+          in:fade={{ duration: 300 }}
+        >
+          <div
+            class="flex-1 relative bg-exo-dark-gray/40 rounded-lg overflow-hidden"
+          >
+            <TopologyGraph
+              class="w-full h-full"
+              highlightedNodes={highlightedNodes()}
+              filteredNodes={nodeFilter}
+              onNodeClick={togglePreviewNodeFilter}
+            />
 
             {@render clusterWarnings()}
 
@@ -2651,7 +2963,6 @@
                     </svg>
                   </button>
                 </div>
-
                 <!-- Tooltip on hover -->
                 <div
                   class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
@@ -2670,8 +2981,7 @@
                     <li>Boot to Recovery (hold power 10s → Options)</li>
                     <li>
                       Run
-                      <code
-                        class="text-yellow-300 bg-yellow-400/10 px-1 rounded"
+                      <code class="text-yellow-300 bg-yellow-400/10 px-1 rounded"
                         >rdma_ctl enable</code
                       >
                     </li>
@@ -2684,931 +2994,231 @@
               </div>
             {/if}
 
-            <!-- Node Filter Indicator (top-right corner) -->
-            {#if isFilterActive()}
-              <button
-                onclick={clearPreviewNodeFilter}
-                class="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 bg-exo-dark-gray/80 border border-exo-yellow/40 rounded text-exo-yellow hover:border-exo-yellow/60 transition-colors cursor-pointer backdrop-blur-sm"
-                title="Clear filter"
+            <!-- Exit topology-only mode button -->
+            <button
+              type="button"
+              onclick={toggleTopologyOnlyMode}
+              class="absolute bottom-4 right-4 p-2 rounded border border-exo-yellow/30 bg-exo-dark-gray/80 hover:border-exo-yellow/50 hover:bg-exo-dark-gray transition-colors cursor-pointer backdrop-blur-sm"
+              title="Exit topology only mode"
+            >
+              <svg
+                class="w-5 h-5 text-exo-yellow"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
               >
-                <span class="text-[10px] font-mono tracking-wider">
-                  FILTER: {nodeFilter.size}
-                </span>
-                <svg
-                  class="w-3 h-3"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
-            {/if}
-          </div>
-
-          <!-- Chat Input - Below topology -->
-          <div class="px-4 pt-6 pb-8">
-            <div class="max-w-3xl mx-auto">
-              {#if instanceCount === 0}
-                <!-- No model loaded prompt -->
-                <div class="text-center mb-6">
-                  <p class="text-sm text-white/60 font-mono">
-                    No model loaded yet. Select a model to get started.
-                  </p>
-                </div>
-              {/if}
-              <ChatForm
-                placeholder={instanceCount === 0
-                  ? "Choose a model above to start chatting"
-                  : "Ask anything"}
-                showHelperText={false}
-                showModelSelector={true}
-                modelTasks={modelTasks()}
-                modelCapabilities={modelCapabilities()}
-              />
-            </div>
+                <circle cx="12" cy="5" r="2" fill="currentColor" />
+                <circle cx="5" cy="19" r="2" fill="currentColor" />
+                <circle cx="19" cy="19" r="2" fill="currentColor" />
+                <path stroke-linecap="round" d="M12 7v5m0 0l-5 5m5-5l5 5" />
+              </svg>
+            </button>
           </div>
         </div>
-
-        <!-- Right Sidebar: Instance Controls (wider on welcome page for better visibility) -->
-        <aside
-          class="w-80 border-l border-exo-yellow/10 bg-exo-dark-gray flex flex-col flex-shrink-0"
+      {:else if !chatStarted}
+        <!-- WELCOME STATE: Topology + Instance Controls (no left sidebar for cleaner look) -->
+        <div
+          class="flex-1 flex overflow-visible relative"
+          in:fade={{ duration: 300 }}
+          out:fade={{ duration: 200 }}
         >
-          <!-- Running Instances Panel (only shown when instances exist) - Scrollable -->
-          {#if instanceCount > 0}
-            <div class="p-4 flex-shrink-0">
-              <!-- Panel Header -->
-              <div class="flex items-center gap-2 mb-4">
+          <!-- Center: MAIN TOPOLOGY DISPLAY -->
+          <div class="flex-1 flex flex-col min-h-0 min-w-0 py-4">
+            <!-- Topology Container - Takes most of the space -->
+            <div
+              class="flex-1 relative bg-exo-dark-gray/40 mx-4 mb-4 rounded-lg overflow-hidden"
+            >
+              <!-- The main topology graph - full container -->
+              <TopologyGraph
+                class="w-full h-full"
+                highlightedNodes={highlightedNodes()}
+                filteredNodes={nodeFilter}
+                onNodeClick={togglePreviewNodeFilter}
+              />
+
+              <!-- Welcome overlay - shown when no instances are running -->
+              {#if instanceCount === 0}
                 <div
-                  class="w-2 h-2 bg-exo-yellow rounded-full shadow-[0_0_8px_rgba(255,215,0,0.6)] animate-pulse"
-                ></div>
-                <h3
-                  class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase"
+                  class="absolute inset-0 flex items-center justify-center pointer-events-none"
                 >
-                  Instances
-                </h3>
-                <div
-                  class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"
-                ></div>
-              </div>
-
-              <div
-                bind:this={instancesContainerRef}
-                class="max-h-72 xl:max-h-96 space-y-3 overflow-y-auto overflow-x-hidden py-px"
-              >
-                {#each Object.entries(instanceData) as [id, instance]}
-                  {@const downloadInfo = getInstanceDownloadStatus(
-                    id,
-                    instance,
-                  )}
-                  {@const statusText = downloadInfo.statusText}
-                  {@const isDownloading = downloadInfo.isDownloading}
-                  {@const isFailed = statusText === "FAILED"}
-                  {@const isLoading =
-                    statusText === "LOADING" ||
-                    statusText === "WARMING UP" ||
-                    statusText === "WAITING"}
-                  {@const isReady =
-                    statusText === "READY" || statusText === "LOADED"}
-                  {@const isRunning = statusText === "RUNNING"}
-                  <!-- Instance Card -->
-                  {@const instanceModelId = getInstanceModelId(instance)}
-                  {@const instanceInfo = getInstanceInfo(instance)}
-                  {@const instanceConnections =
-                    getInstanceConnections(instance)}
-                  <div
-                    class="relative group cursor-pointer"
-                    role="button"
-                    tabindex="0"
-                    onmouseenter={() => (hoveredInstanceId = id)}
-                    onmouseleave={() => (hoveredInstanceId = null)}
-                    onclick={() => {
-                      if (
-                        instanceModelId &&
-                        instanceModelId !== "Unknown" &&
-                        instanceModelId !== "Unknown Model"
-                      ) {
-                        setSelectedChatModel(instanceModelId);
-                      }
-                    }}
-                    onkeydown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        if (
-                          instanceModelId &&
-                          instanceModelId !== "Unknown" &&
-                          instanceModelId !== "Unknown Model"
-                        ) {
-                          setSelectedChatModel(instanceModelId);
-                        }
-                      }
-                    }}
-                  >
-                    <!-- Corner accents -->
-                    <div
-                      class="absolute -top-px -left-px w-2 h-2 border-l border-t {isDownloading
-                        ? 'border-blue-500/50'
-                        : isFailed
-                          ? 'border-red-500/50'
-                          : isLoading
-                            ? 'border-yellow-500/50'
-                            : isReady
-                              ? 'border-green-500/50'
-                              : 'border-teal-500/50'}"
-                    ></div>
-                    <div
-                      class="absolute -top-px -right-px w-2 h-2 border-r border-t {isDownloading
-                        ? 'border-blue-500/50'
-                        : isFailed
-                          ? 'border-red-500/50'
-                          : isLoading
-                            ? 'border-yellow-500/50'
-                            : isReady
-                              ? 'border-green-500/50'
-                              : 'border-teal-500/50'}"
-                    ></div>
-                    <div
-                      class="absolute -bottom-px -left-px w-2 h-2 border-l border-b {isDownloading
-                        ? 'border-blue-500/50'
-                        : isFailed
-                          ? 'border-red-500/50'
-                          : isLoading
-                            ? 'border-yellow-500/50'
-                            : isReady
-                              ? 'border-green-500/50'
-                              : 'border-teal-500/50'}"
-                    ></div>
-                    <div
-                      class="absolute -bottom-px -right-px w-2 h-2 border-r border-b {isDownloading
-                        ? 'border-blue-500/50'
-                        : isFailed
-                          ? 'border-red-500/50'
-                          : isLoading
-                            ? 'border-yellow-500/50'
-                            : isReady
-                              ? 'border-green-500/50'
-                              : 'border-teal-500/50'}"
-                    ></div>
-
-                    <div
-                      class="bg-exo-dark-gray/60 border border-l-2 {isDownloading
-                        ? 'border-blue-500/30 border-l-blue-400'
-                        : isFailed
-                          ? 'border-red-500/30 border-l-red-400'
-                          : isLoading
-                            ? 'border-exo-yellow/30 border-l-yellow-400'
-                            : isReady
-                              ? 'border-green-500/30 border-l-green-400'
-                              : 'border-teal-500/30 border-l-teal-400'} p-3"
-                    >
-                      <div class="flex justify-between items-start mb-2 pl-2">
-                        <div class="flex items-center gap-2">
-                          <div
-                            class="w-1.5 h-1.5 {isDownloading
-                              ? 'bg-blue-400 animate-pulse'
-                              : isFailed
-                                ? 'bg-red-400'
-                                : isLoading
-                                  ? 'bg-yellow-400 animate-pulse'
-                                  : isReady
-                                    ? 'bg-green-400'
-                                    : 'bg-teal-400'} rounded-full shadow-[0_0_6px_currentColor]"
-                          ></div>
-                          <span
-                            class="text-exo-light-gray font-mono text-sm tracking-wider"
-                            >{id.slice(0, 8).toUpperCase()}</span
-                          >
-                        </div>
-                        <button
-                          onclick={() => deleteInstance(id)}
-                          class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
-                        >
-                          DELETE
-                        </button>
+                  <div class="text-center pointer-events-auto max-w-md px-6">
+                    <div class="mb-4">
+                      <div
+                        class="text-2xl font-mono text-exo-yellow font-bold tracking-wide mb-2"
+                      >
+                        Welcome to exo
                       </div>
-                      <div class="pl-2">
-                        <div
-                          class="text-exo-yellow text-xs font-mono tracking-wide truncate"
-                        >
-                          {getInstanceModelId(instance)}
-                        </div>
-                        {#if debugEnabled}
-                          <div class="text-white/60 text-xs font-mono">
-                            {instanceInfo.sharding} · {instanceInfo.instanceType}
-                          </div>
-                        {/if}
-                        {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
-                          <a
-                            class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
-                            href={`https://huggingface.co/${instanceModelId}`}
-                            target="_blank"
-                            rel="noreferrer noopener"
-                            aria-label="View model on Hugging Face"
-                          >
-                            <span>Hugging Face</span>
-                            <svg
-                              class="w-3.5 h-3.5"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="2"
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                            >
-                              <path d="M14 3h7v7" />
-                              <path d="M10 14l11-11" />
-                              <path
-                                d="M21 14v6a1 1 0 0 1-1 1h-16a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1h6"
-                              />
-                            </svg>
-                          </a>
-                        {/if}
-                        {#if instanceInfo.nodeNames.length > 0}
-                          <div class="text-white/60 text-xs font-mono">
-                            {instanceInfo.nodeNames.join(", ")}
-                          </div>
-                        {/if}
-                        {#if debugEnabled && instanceConnections.length > 0}
-                          <div class="mt-2 space-y-1">
-                            {#each instanceConnections as conn}
-                              <div
-                                class="text-[11px] leading-snug font-mono text-white/70"
-                              >
-                                <span>{conn.from} -> {conn.to}: {conn.ip}</span>
-                                <span
-                                  class={conn.missingIface
-                                    ? "text-red-400"
-                                    : "text-white/60"}
-                                >
-                                  ({conn.ifaceLabel})</span
-                                >
-                              </div>
-                            {/each}
-                          </div>
-                        {/if}
-
-                        <!-- Download Progress -->
-                        {#if downloadInfo.isDownloading && downloadInfo.progress}
-                          <div class="mt-2 space-y-1">
-                            <div class="flex justify-between text-xs font-mono">
-                              <span class="text-blue-400"
-                                >{downloadInfo.progress.percentage.toFixed(
-                                  1,
-                                )}%</span
-                              >
-                              <span class="text-exo-light-gray"
-                                >{formatBytes(
-                                  downloadInfo.progress.downloadedBytes,
-                                )}/{formatBytes(
-                                  downloadInfo.progress.totalBytes,
-                                )}</span
-                              >
-                            </div>
-                            <div
-                              class="relative h-1.5 bg-exo-black/60 rounded-sm overflow-hidden"
-                            >
-                              <div
-                                class="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300"
-                                style="width: {downloadInfo.progress
-                                  .percentage}%"
-                              ></div>
-                            </div>
-                            <div
-                              class="flex justify-between text-xs font-mono text-exo-light-gray"
-                            >
-                              <span
-                                >{formatSpeed(
-                                  downloadInfo.progress.speed,
-                                )}</span
-                              >
-                              <span
-                                >ETA: {formatEta(
-                                  downloadInfo.progress.etaMs,
-                                )}</span
-                              >
-                              <span
-                                >{downloadInfo.progress
-                                  .completedFiles}/{downloadInfo.progress
-                                  .totalFiles} files</span
-                              >
-                            </div>
-                          </div>
-                          {#if downloadInfo.perNode.length > 0}
-                            <div
-                              class="mt-2 space-y-2 max-h-48 overflow-y-auto pr-1"
-                            >
-                              {#each downloadInfo.perNode as nodeProg}
-                                {@const nodePercent = Math.min(
-                                  100,
-                                  Math.max(0, nodeProg.progress.percentage),
-                                )}
-                                {@const isExpanded =
-                                  instanceDownloadExpandedNodes.has(
-                                    nodeProg.nodeId,
-                                  )}
-                                <div
-                                  class="rounded border border-exo-medium-gray/40 bg-exo-black/30 p-2"
-                                >
-                                  <button
-                                    type="button"
-                                    class="w-full text-left space-y-1.5"
-                                    onclick={() =>
-                                      toggleInstanceDownloadDetails(
-                                        nodeProg.nodeId,
-                                      )}
-                                  >
-                                    <div
-                                      class="flex items-center justify-between text-[11px] font-mono text-exo-light-gray"
-                                    >
-                                      <span class="text-white/80 truncate pr-2"
-                                        >{nodeProg.nodeName}</span
-                                      >
-                                      <span
-                                        class="flex items-center gap-1 text-blue-300"
-                                      >
-                                        {nodePercent.toFixed(1)}%
-                                        <svg
-                                          class="w-3 h-3 text-exo-light-gray"
-                                          viewBox="0 0 20 20"
-                                          fill="none"
-                                          stroke="currentColor"
-                                          stroke-width="2"
-                                        >
-                                          <path
-                                            d="M6 8l4 4 4-4"
-                                            class={isExpanded
-                                              ? "transform rotate-180 origin-center transition-transform duration-150"
-                                              : "transition-transform duration-150"}
-                                          ></path>
-                                        </svg>
-                                      </span>
-                                    </div>
-                                    <div
-                                      class="relative h-1.5 bg-exo-black/60 rounded-sm overflow-hidden"
-                                    >
-                                      <div
-                                        class="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300"
-                                        style="width: {nodePercent.toFixed(1)}%"
-                                      ></div>
-                                    </div>
-                                    <div
-                                      class="flex items-center justify-between text-[11px] font-mono text-exo-light-gray"
-                                    >
-                                      <span
-                                        >{formatBytes(
-                                          nodeProg.progress.downloadedBytes,
-                                        )} / {formatBytes(
-                                          nodeProg.progress.totalBytes,
-                                        )}</span
-                                      >
-                                      <span
-                                        >{formatSpeed(nodeProg.progress.speed)} •
-                                        ETA {formatEta(
-                                          nodeProg.progress.etaMs,
-                                        )}</span
-                                      >
-                                    </div>
-                                  </button>
-
-                                  {#if isExpanded}
-                                    <div class="mt-2 space-y-1.5">
-                                      {#if nodeProg.progress.files.length === 0}
-                                        <div
-                                          class="text-[11px] font-mono text-exo-light-gray/70"
-                                        >
-                                          No file details reported.
-                                        </div>
-                                      {:else}
-                                        {#each nodeProg.progress.files as f}
-                                          {@const filePercent = Math.min(
-                                            100,
-                                            Math.max(0, f.percentage ?? 0),
-                                          )}
-                                          {@const isFileComplete =
-                                            filePercent >= 100}
-                                          <div
-                                            class="rounded border border-exo-medium-gray/30 bg-exo-black/40 p-2"
-                                          >
-                                            <div
-                                              class="flex items-center justify-between text-[10px] font-mono text-exo-light-gray/90"
-                                            >
-                                              <span class="truncate pr-2"
-                                                >{f.name}</span
-                                              >
-                                              <span
-                                                class={isFileComplete
-                                                  ? "text-green-400"
-                                                  : "text-white/80"}
-                                                >{filePercent.toFixed(1)}%</span
-                                              >
-                                            </div>
-                                            <div
-                                              class="relative h-1 bg-exo-black/60 rounded-sm overflow-hidden mt-1"
-                                            >
-                                              <div
-                                                class="absolute inset-y-0 left-0 bg-gradient-to-r {isFileComplete
-                                                  ? 'from-green-500 to-green-400'
-                                                  : 'from-exo-yellow to-exo-yellow/70'} transition-all duration-300"
-                                                style="width: {filePercent.toFixed(
-                                                  1,
-                                                )}%"
-                                              ></div>
-                                            </div>
-                                            <div
-                                              class="flex items-center justify-between text-[10px] text-exo-light-gray/70 mt-0.5"
-                                            >
-                                              <span
-                                                >{formatBytes(
-                                                  f.downloadedBytes,
-                                                )} / {formatBytes(
-                                                  f.totalBytes,
-                                                )}</span
-                                              >
-                                              <span
-                                                >{formatSpeed(f.speed)} • ETA {formatEta(
-                                                  f.etaMs,
-                                                )}</span
-                                              >
-                                            </div>
-                                          </div>
-                                        {/each}
-                                      {/if}
-                                    </div>
-                                  {/if}
-                                </div>
-                              {/each}
-                            </div>
-                          {/if}
-                          <div class="mt-2 space-y-1">
-                            <div
-                              class="text-xs text-blue-400 font-mono tracking-wider"
-                            >
-                              DOWNLOADING
-                            </div>
-                            <p
-                              class="text-[11px] text-white/50 leading-relaxed"
-                            >
-                              Downloading model files. This runs locally on your
-                              device and needs to finish before you can chat.
-                            </p>
-                          </div>
-                        {:else}
-                          <div class="mt-1 space-y-1">
-                            <div
-                              class="text-xs {getStatusColor(
-                                downloadInfo.statusText,
-                              )} font-mono tracking-wider"
-                            >
-                              {downloadInfo.statusText}
-                            </div>
-                            {#if isLoading}
-                              <p
-                                class="text-[11px] text-white/50 leading-relaxed"
-                              >
-                                Loading model into memory for fast inference...
-                              </p>
-                            {:else if isReady || isRunning}
-                              <p
-                                class="text-[11px] text-green-400/70 leading-relaxed"
-                              >
-                                Ready to chat! Type a message below.
-                              </p>
-                            {/if}
-                          </div>
-                          {#if downloadInfo.isFailed && downloadInfo.errorMessage}
-                            <div
-                              class="text-xs text-red-400/80 font-mono mt-1 break-words"
-                            >
-                              {downloadInfo.errorMessage}
-                            </div>
-                          {/if}
-                        {/if}
-                      </div>
+                      <p class="text-sm text-white/70 leading-relaxed">
+                        Your devices are connected. Choose a model to start
+                        running AI locally.
+                      </p>
                     </div>
-                  </div>
-                {/each}
-              </div>
-            </div>
-          {/if}
-
-          <!-- Models Panel - Scrollable -->
-          <div class="p-4 flex-1 overflow-y-auto">
-            <!-- Panel Header -->
-            <div class="flex items-center gap-2 mb-3 flex-shrink-0">
-              <div class="w-2 h-2 border border-exo-yellow/60 rotate-45"></div>
-              <h3
-                class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase"
-              >
-                Launch Instance
-              </h3>
-              <div
-                class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"
-              ></div>
-              <span class="text-sm text-white/70 font-mono"
-                >{models.length} models</span
-              >
-            </div>
-
-            <!-- Model Picker Button -->
-            <div class="flex-shrink-0 mb-3">
-              <button
-                type="button"
-                onclick={() => (isModelPickerOpen = true)}
-                class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-2.5 text-sm font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 relative"
-              >
-                {#if selectedModelId}
-                  {@const foundModel = models.find(
-                    (m) => m.id === selectedModelId,
-                  )}
-                  {#if foundModel}
-                    {@const sizeGB = getModelSizeGB(foundModel)}
-                    <span
-                      class="flex items-center justify-between gap-2 w-full pr-4"
+                    <button
+                      type="button"
+                      onclick={() => (isModelPickerOpen = true)}
+                      class="inline-flex items-center gap-2 px-6 py-3 bg-exo-yellow text-exo-black font-mono text-sm font-bold tracking-wider uppercase rounded-lg hover:bg-exo-yellow-darker hover:shadow-[0_0_30px_rgba(255,215,0,0.3)] transition-all duration-200 cursor-pointer"
                     >
-                      <span
-                        class="flex items-center gap-2 text-exo-light-gray truncate"
+                      <svg
+                        class="w-5 h-5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        stroke-width="2"
                       >
-                        <span class="truncate"
-                          >{foundModel.name || foundModel.id}</span
-                        >
-                      </span>
-                      <span class="text-white/50 text-xs flex-shrink-0"
-                        >{sizeGB >= 1
-                          ? sizeGB.toFixed(0)
-                          : sizeGB.toFixed(1)}GB</span
-                      >
-                    </span>
-                  {:else}
-                    <span class="text-exo-light-gray">{selectedModelId}</span>
-                  {/if}
-                {:else}
-                  <span class="text-white/50">— SELECT MODEL —</span>
-                {/if}
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="M12 4v16m8-8H4"
+                        />
+                      </svg>
+                      Choose a Model
+                    </button>
+                  </div>
+                </div>
+              {/if}
+
+              {@render clusterWarnings()}
+
+              <!-- TB5 RDMA Not Enabled Warning -->
+              {#if tb5WithoutRdma && !tb5InfoDismissed}
                 <div
-                  class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                  class="absolute left-4 group"
+                  class:top-16={tbBridgeCycles.length > 0}
+                  class:top-4={tbBridgeCycles.length === 0}
+                  role="status"
                 >
+                  <div
+                    class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
+                  >
+                    <svg
+                      class="w-5 h-5 text-yellow-400 flex-shrink-0"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d={warningIconPath}
+                      />
+                    </svg>
+                    <span class="text-sm font-mono text-yellow-200">
+                      RDMA NOT ENABLED
+                    </span>
+                    <button
+                      type="button"
+                      onclick={() => (tb5InfoDismissed = true)}
+                      class="ml-1 text-yellow-300/60 hover:text-yellow-200 transition-colors cursor-pointer"
+                      title="Dismiss"
+                    >
+                      <svg
+                        class="w-4 h-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="M6 18L18 6M6 6l12 12"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+
+                  <!-- Tooltip on hover -->
+                  <div
+                    class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+                  >
+                    <p class="text-xs text-white/80 mb-2">
+                      Thunderbolt 5 hardware detected on multiple nodes. Enable
+                      RDMA for significantly faster inter-node communication.
+                    </p>
+                    <p class="text-xs text-white/60 mb-1.5">
+                      <span class="text-yellow-300">To enable:</span>
+                    </p>
+                    <ol
+                      class="text-xs text-white/60 list-decimal list-inside space-y-0.5 mb-1.5"
+                    >
+                      <li>Connect nodes with TB5 cables</li>
+                      <li>Boot to Recovery (hold power 10s → Options)</li>
+                      <li>
+                        Run
+                        <code class="text-yellow-300 bg-yellow-400/10 px-1 rounded"
+                          >rdma_ctl enable</code
+                        >
+                      </li>
+                      <li>Reboot</li>
+                    </ol>
+                    <p class="text-xs text-white/40">
+                      Requires macOS 26.2+, TB5 cables, and matching OS
+                      versions.
+                    </p>
+                  </div>
+                </div>
+              {/if}
+
+              <!-- Node Filter Indicator (top-right corner) -->
+              {#if isFilterActive()}
+                <button
+                  onclick={clearPreviewNodeFilter}
+                  class="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 bg-exo-dark-gray/80 border border-exo-yellow/40 rounded text-exo-yellow hover:border-exo-yellow/60 transition-colors cursor-pointer backdrop-blur-sm"
+                  title="Clear filter"
+                >
+                  <span class="text-[10px] font-mono tracking-wider">
+                    FILTER: {nodeFilter.size}
+                  </span>
                   <svg
-                    class="w-4 h-4 text-exo-yellow/60"
+                    class="w-3 h-3"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
+                    stroke-width="2"
                   >
                     <path
                       stroke-linecap="round"
                       stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M19 9l-7 7-7-7"
+                      d="M6 18L18 6M6 6l12 12"
                     />
                   </svg>
-                </div>
-              </button>
-            </div>
-
-            <!-- Advanced Options Toggle -->
-            <div class="flex-shrink-0 mb-4">
-              <button
-                type="button"
-                onclick={() => (showAdvancedOptions = !showAdvancedOptions)}
-                class="flex items-center gap-2 text-xs text-white/50 hover:text-white/70 font-mono tracking-wider uppercase transition-colors cursor-pointer py-1"
-              >
-                <svg
-                  class="w-3 h-3 transition-transform duration-200 {showAdvancedOptions
-                    ? 'rotate-90'
-                    : ''}"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M9 5l7 7-7 7"
-                  />
-                </svg>
-                Advanced Options
-              </button>
-
-              {#if showAdvancedOptions}
-                <div class="mt-3 space-y-3 pl-1" in:fade={{ duration: 150 }}>
-                  <!-- Sharding Strategy -->
-                  <div>
-                    <div class="text-xs text-white/50 font-mono mb-2">
-                      Splitting Strategy:
-                    </div>
-                    <div class="flex gap-2">
-                      <button
-                        onclick={() => {
-                          selectedSharding = "Pipeline";
-                          saveLaunchDefaults();
-                        }}
-                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding ===
-                        'Pipeline'
-                          ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                          : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-                      >
-                        <span
-                          class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedSharding ===
-                          'Pipeline'
-                            ? 'border-exo-yellow'
-                            : 'border-exo-medium-gray'}"
-                        >
-                          {#if selectedSharding === "Pipeline"}
-                            <span class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
-                            ></span>
-                          {/if}
-                        </span>
-                        Pipeline
-                      </button>
-                      <button
-                        onclick={() => {
-                          selectedSharding = "Tensor";
-                          saveLaunchDefaults();
-                        }}
-                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding ===
-                        'Tensor'
-                          ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                          : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-                      >
-                        <span
-                          class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedSharding ===
-                          'Tensor'
-                            ? 'border-exo-yellow'
-                            : 'border-exo-medium-gray'}"
-                        >
-                          {#if selectedSharding === "Tensor"}
-                            <span class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
-                            ></span>
-                          {/if}
-                        </span>
-                        Tensor
-                      </button>
-                    </div>
-                  </div>
-
-                  <!-- Runtime -->
-                  <div>
-                    <div class="text-xs text-white/50 font-mono mb-2">
-                      Runtime:
-                    </div>
-                    <div class="flex gap-2">
-                      <button
-                        onclick={() => {
-                          selectedInstanceType = "MlxRing";
-                          saveLaunchDefaults();
-                        }}
-                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
-                        'MlxRing'
-                          ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                          : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-                      >
-                        <span
-                          class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
-                          'MlxRing'
-                            ? 'border-exo-yellow'
-                            : 'border-exo-medium-gray'}"
-                        >
-                          {#if selectedInstanceType === "MlxRing"}
-                            <span class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
-                            ></span>
-                          {/if}
-                        </span>
-                        Standard
-                      </button>
-                      <button
-                        onclick={() => {
-                          selectedInstanceType = "MlxIbv";
-                          saveLaunchDefaults();
-                        }}
-                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
-                        'MlxIbv'
-                          ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                          : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-                      >
-                        <span
-                          class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
-                          'MlxIbv'
-                            ? 'border-exo-yellow'
-                            : 'border-exo-medium-gray'}"
-                        >
-                          {#if selectedInstanceType === "MlxIbv"}
-                            <span class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
-                            ></span>
-                          {/if}
-                        </span>
-                        RDMA (Fast)
-                      </button>
-                    </div>
-                  </div>
-
-                  <!-- Minimum Devices -->
-                  <div>
-                    <div class="text-xs text-white/50 font-mono mb-2">
-                      Minimum Devices:
-                    </div>
-                    <!-- Discrete slider track with drag support -->
-                    <!-- svelte-ignore a11y_no_static_element_interactions -->
-                    <div
-                      bind:this={sliderTrackElement}
-                      class="relative h-16 cursor-pointer select-none px-2 pr-6"
-                      onmousedown={handleSliderMouseDown}
-                      ontouchstart={handleSliderTouchStart}
-                    >
-                      <!-- Track background -->
-                      <div
-                        class="absolute top-6 left-0 right-0 h-2 bg-exo-medium-gray/50 rounded-full"
-                      ></div>
-                      <!-- Active track (fills up to selected) -->
-                      {#if availableMinNodes > 1}
-                        <div
-                          class="absolute top-6 left-0 h-2 bg-white/30 rounded-full transition-all pointer-events-none"
-                          style="width: {((selectedMinNodes - 1) /
-                            (availableMinNodes - 1)) *
-                            100}%"
-                        ></div>
-                      {/if}
-                      <!-- Dots and labels for each device count -->
-                      {#each Array.from({ length: availableMinNodes }, (_, i) => i + 1) as n}
-                        {@const isValid = validMinNodeCounts().has(n)}
-                        {@const isSelected = selectedMinNodes === n}
-                        {@const position =
-                          availableMinNodes > 1
-                            ? ((n - 1) / (availableMinNodes - 1)) * 100
-                            : 50}
-                        <div
-                          class="absolute flex flex-col items-center pointer-events-none"
-                          style="left: {position}%; top: 0; transform: translateX(-50%);"
-                        >
-                          <span
-                            class="rounded-full transition-all {isSelected
-                              ? 'w-6 h-6 bg-exo-yellow shadow-[0_0_10px_rgba(255,215,0,0.6)]'
-                              : isValid
-                                ? 'w-4 h-4 bg-exo-light-gray/70 mt-1'
-                                : 'w-3 h-3 bg-exo-medium-gray/50 mt-1.5'}"
-                          ></span>
-                          <span
-                            class="text-sm font-mono mt-1.5 tabular-nums transition-colors {isSelected
-                              ? 'text-exo-yellow font-bold'
-                              : isValid
-                                ? 'text-white/70'
-                                : 'text-white/30'}">{n}</span
-                          >
-                        </div>
-                      {/each}
-                    </div>
-                  </div>
-                </div>
+                </button>
               {/if}
             </div>
 
-            <!-- Selected Model Preview -->
-            <div class="space-y-3">
-              {#if models.length === 0}
-                <div class="text-center py-8">
-                  <div
-                    class="text-xs text-white/70 font-mono tracking-wider uppercase"
-                  >
-                    Loading models...
-                  </div>
-                </div>
-              {:else if loadingPreviews}
-                <div class="text-center py-8">
-                  <div
-                    class="text-xs text-exo-yellow font-mono tracking-wider uppercase animate-pulse"
-                  >
-                    Loading preview...
-                  </div>
-                </div>
-              {:else}
-                {@const selectedModel = models.find(
-                  (m) => m.id === selectedModelId,
-                )}
-                {@const allPreviews = filteredPreviews()}
-                {#if selectedModel && allPreviews.length > 0}
-                  {@const downloadStatus = getModelDownloadStatus(
-                    selectedModel.id,
-                  )}
-                  {@const tags = modelTags()[selectedModel.id] || []}
-                  <div class="space-y-3">
-                    {#each allPreviews as apiPreview, i}
-                      <div
-                        role="group"
-                        onmouseenter={() => {
-                          if (apiPreview.memory_delta_by_node) {
-                            hoveredPreviewNodes = new Set(
-                              Object.entries(apiPreview.memory_delta_by_node)
-                                .filter(([, delta]) => (delta ?? 0) > 0)
-                                .map(([nodeId]) => nodeId),
-                            );
-                          }
-                        }}
-                        onmouseleave={() => (hoveredPreviewNodes = new Set())}
-                      >
-                        <ModelCard
-                          model={selectedModel}
-                          isLaunching={launchingModelId === selectedModel.id}
-                          {downloadStatus}
-                          nodes={data?.nodes ?? {}}
-                          sharding={apiPreview.sharding}
-                          runtime={apiPreview.instance_meta}
-                          onLaunch={() =>
-                            launchInstance(selectedModel.id, apiPreview)}
-                          {tags}
-                          {apiPreview}
-                          modelIdOverride={apiPreview.model_id}
-                        />
-                      </div>
-                    {/each}
-                  </div>
-                {:else if selectedModel}
-                  <div class="text-center py-4">
-                    <div class="text-xs text-white/50 font-mono">
-                      No valid configurations for current settings
-                    </div>
+            <!-- Chat Input - Below topology -->
+            <div class="px-4 pt-6 pb-8">
+              <div class="max-w-3xl mx-auto">
+                {#if instanceCount === 0}
+                  <!-- No model loaded prompt -->
+                  <div class="text-center mb-6">
+                    <p class="text-sm text-white/60 font-mono">
+                      No model loaded yet. Select a model to get started.
+                    </p>
                   </div>
                 {/if}
-              {/if}
-            </div>
-          </div>
-        </aside>
-      </div>
-    {:else}
-      <!-- CHAT STATE: Chat + Mini-Map -->
-      <div class="flex-1 flex overflow-hidden">
-        <!-- Chat Area -->
-        <div
-          class="flex-1 flex flex-col min-w-0 overflow-hidden"
-          in:fade={{ duration: 300, delay: 100 }}
-        >
-          <div
-            class="flex-1 overflow-y-auto px-8 py-6"
-            bind:this={chatScrollRef}
-          >
-            <div class="max-w-7xl mx-auto">
-              <ChatMessages scrollParent={chatScrollRef} />
-            </div>
-          </div>
-
-          <div
-            class="flex-shrink-0 px-8 pb-6 pt-4 bg-gradient-to-t from-exo-black via-exo-black to-transparent"
-          >
-            <div class="max-w-7xl mx-auto">
-              <ChatForm
-                placeholder="Ask anything"
-                showModelSelector={true}
-                modelTasks={modelTasks()}
-                modelCapabilities={modelCapabilities()}
-              />
-            </div>
-          </div>
-        </div>
-
-        <!-- Right: Mini-Map Sidebar -->
-        {#if minimized}
-          <aside
-            class="w-80 border-l border-exo-yellow/20 bg-exo-dark-gray flex flex-col flex-shrink-0 overflow-y-auto"
-            in:fly={{ x: 100, duration: 400, easing: cubicInOut }}
-          >
-            <!-- Topology Section - clickable to go back to main view -->
-            <button
-              class="p-4 border-b border-exo-medium-gray/30 w-full text-left cursor-pointer hover:bg-exo-medium-gray/10 transition-colors"
-              onclick={handleGoHome}
-              title="Click to return to main topology view"
-            >
-              <div class="flex items-center justify-between mb-3">
-                <div
-                  class="text-xs text-exo-yellow tracking-[0.2em] uppercase flex items-center gap-2"
-                >
-                  <span
-                    class="w-1.5 h-1.5 bg-exo-yellow rounded-full status-pulse"
-                  ></span>
-                  TOPOLOGY
-                </div>
-                <span class="text-xs text-white/70 tabular-nums"
-                  >{nodeCount} {nodeCount === 1 ? "NODE" : "NODES"}</span
-                >
-              </div>
-
-              <div
-                class="relative aspect-square bg-exo-dark-gray rounded-lg overflow-hidden"
-              >
-                <TopologyGraph
-                  highlightedNodes={highlightedNodes()}
-                  filteredNodes={nodeFilter}
-                  onNodeClick={togglePreviewNodeFilter}
+                <ChatForm
+                  placeholder={instanceCount === 0
+                    ? "Choose a model above to start chatting"
+                    : "Ask anything"}
+                  showHelperText={false}
+                  showModelSelector={true}
+                  modelTasks={modelTasks()}
+                  modelCapabilities={modelCapabilities()}
                 />
-
-                {@render clusterWarningsCompact()}
               </div>
-            </button>
+            </div>
+          </div>
 
-            <!-- Instances Section (only shown when instances exist) -->
+          <!-- Right Sidebar: Instance Controls (wider on welcome page for better visibility) -->
+          <aside
+            class="w-80 border-l border-exo-yellow/10 bg-exo-dark-gray flex flex-col flex-shrink-0"
+          >
+            <!-- Running Instances Panel (only shown when instances exist) - Scrollable -->
             {#if instanceCount > 0}
-              <div class="p-4 flex-1">
+              <div class="p-4 flex-shrink-0">
                 <!-- Panel Header -->
                 <div class="flex items-center gap-2 mb-4">
                   <div
@@ -3623,8 +3233,10 @@
                     class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"
                   ></div>
                 </div>
+
                 <div
-                  class="space-y-3 max-h-72 xl:max-h-96 overflow-y-auto overflow-x-hidden py-px pr-1"
+                  bind:this={instancesContainerRef}
+                  class="max-h-72 xl:max-h-96 space-y-3 overflow-y-auto overflow-x-hidden py-px"
                 >
                   {#each Object.entries(instanceData) as [id, instance]}
                     {@const downloadInfo = getInstanceDownloadStatus(
@@ -4071,11 +3683,896 @@
                 </div>
               </div>
             {/if}
+
+            <!-- Models Panel - Scrollable -->
+            <div class="p-4 flex-1 overflow-y-auto">
+              <!-- Panel Header -->
+              <div class="flex items-center gap-2 mb-3 flex-shrink-0">
+                <div
+                  class="w-2 h-2 border border-exo-yellow/60 rotate-45"
+                ></div>
+                <h3
+                  class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase"
+                >
+                  Load Model
+                </h3>
+                <div
+                  class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"
+                ></div>
+                <span class="text-sm text-white/70 font-mono"
+                  >{models.length} models</span
+                >
+              </div>
+
+              <!-- Model Picker Button -->
+              <div class="flex-shrink-0 mb-3">
+                <button
+                  type="button"
+                  onclick={() => (isModelPickerOpen = true)}
+                  class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-2.5 text-sm font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 relative"
+                >
+                  {#if selectedModelId}
+                    {@const foundModel = models.find(
+                      (m) => m.id === selectedModelId,
+                    )}
+                    {#if foundModel}
+                      {@const sizeGB = getModelSizeGB(foundModel)}
+                      <span
+                        class="flex items-center justify-between gap-2 w-full pr-4"
+                      >
+                        <span
+                          class="flex items-center gap-2 text-exo-light-gray truncate"
+                        >
+                          <span class="truncate"
+                            >{foundModel.name || foundModel.id}</span
+                          >
+                        </span>
+                        <span class="text-white/50 text-xs flex-shrink-0"
+                          >{sizeGB >= 1
+                            ? sizeGB.toFixed(0)
+                            : sizeGB.toFixed(1)}GB</span
+                        >
+                      </span>
+                    {:else}
+                      <span class="text-exo-light-gray">{selectedModelId}</span>
+                    {/if}
+                  {:else}
+                    <span class="text-white/50">— SELECT MODEL —</span>
+                  {/if}
+                  <div
+                    class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                  >
+                    <svg
+                      class="w-4 h-4 text-exo-yellow/60"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M19 9l-7 7-7-7"
+                      />
+                    </svg>
+                  </div>
+                </button>
+              </div>
+
+              <!-- Advanced Options Toggle -->
+              <div class="flex-shrink-0 mb-4">
+                <button
+                  type="button"
+                  onclick={() => (showAdvancedOptions = !showAdvancedOptions)}
+                  class="flex items-center gap-2 text-xs text-white/50 hover:text-white/70 font-mono tracking-wider uppercase transition-colors cursor-pointer py-1"
+                >
+                  <svg
+                    class="w-3 h-3 transition-transform duration-200 {showAdvancedOptions
+                      ? 'rotate-90'
+                      : ''}"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M9 5l7 7-7 7"
+                    />
+                  </svg>
+                  Advanced Options
+                </button>
+
+                {#if showAdvancedOptions}
+                  <div class="mt-3 space-y-3 pl-1" in:fade={{ duration: 150 }}>
+                    <!-- Sharding Strategy -->
+                    <div>
+                      <div class="text-xs text-white/50 font-mono mb-2">
+                        Sharding Strategy:
+                      </div>
+                      <div class="flex gap-2">
+                        <button
+                          onclick={() => {
+                            selectedSharding = "Pipeline";
+                            saveLaunchDefaults();
+                          }}
+                          class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding ===
+                          'Pipeline'
+                            ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                            : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                        >
+                          <span
+                            class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedSharding ===
+                            'Pipeline'
+                              ? 'border-exo-yellow'
+                              : 'border-exo-medium-gray'}"
+                          >
+                            {#if selectedSharding === "Pipeline"}
+                              <span
+                                class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
+                              ></span>
+                            {/if}
+                          </span>
+                          Pipeline
+                        </button>
+                        <button
+                          onclick={() => {
+                            selectedSharding = "Tensor";
+                            saveLaunchDefaults();
+                          }}
+                          class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding ===
+                          'Tensor'
+                            ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                            : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                        >
+                          <span
+                            class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedSharding ===
+                            'Tensor'
+                              ? 'border-exo-yellow'
+                              : 'border-exo-medium-gray'}"
+                          >
+                            {#if selectedSharding === "Tensor"}
+                              <span
+                                class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
+                              ></span>
+                            {/if}
+                          </span>
+                          Tensor
+                        </button>
+                      </div>
+                    </div>
+
+                    <!-- Interconnect -->
+                    <div>
+                      <div class="text-xs text-white/50 font-mono mb-2">
+                        Interconnect:
+                      </div>
+                      <div class="flex gap-2">
+                        <button
+                          onclick={() => {
+                            selectedInstanceType = "MlxRing";
+                            saveLaunchDefaults();
+                          }}
+                          class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
+                          'MlxRing'
+                            ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                            : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                        >
+                          <span
+                            class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
+                            'MlxRing'
+                              ? 'border-exo-yellow'
+                              : 'border-exo-medium-gray'}"
+                          >
+                            {#if selectedInstanceType === "MlxRing"}
+                              <span
+                                class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
+                              ></span>
+                            {/if}
+                          </span>
+                          Standard
+                        </button>
+                        <button
+                          onclick={() => {
+                            selectedInstanceType = "MlxIbv";
+                            saveLaunchDefaults();
+                          }}
+                          class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
+                          'MlxIbv'
+                            ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                            : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                        >
+                          <span
+                            class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
+                            'MlxIbv'
+                              ? 'border-exo-yellow'
+                              : 'border-exo-medium-gray'}"
+                          >
+                            {#if selectedInstanceType === "MlxIbv"}
+                              <span
+                                class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
+                              ></span>
+                            {/if}
+                          </span>
+                          RDMA (Fast)
+                        </button>
+                      </div>
+                    </div>
+
+                    <!-- Minimum Devices -->
+                    <div>
+                      <div class="text-xs text-white/50 font-mono mb-2">
+                        Minimum Devices:
+                      </div>
+                      <!-- Discrete slider track with drag support -->
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <div
+                        bind:this={sliderTrackElement}
+                        class="relative h-16 cursor-pointer select-none px-2 pr-6"
+                        onmousedown={handleSliderMouseDown}
+                        ontouchstart={handleSliderTouchStart}
+                      >
+                        <!-- Track background -->
+                        <div
+                          class="absolute top-6 left-0 right-0 h-2 bg-exo-medium-gray/50 rounded-full"
+                        ></div>
+                        <!-- Active track (fills up to selected) -->
+                        {#if availableMinNodes > 1}
+                          <div
+                            class="absolute top-6 left-0 h-2 bg-white/30 rounded-full transition-all pointer-events-none"
+                            style="width: {((selectedMinNodes - 1) /
+                              (availableMinNodes - 1)) *
+                              100}%"
+                          ></div>
+                        {/if}
+                        <!-- Dots and labels for each device count -->
+                        {#each Array.from({ length: availableMinNodes }, (_, i) => i + 1) as n}
+                          {@const isValid = validMinNodeCounts().has(n)}
+                          {@const isSelected = selectedMinNodes === n}
+                          {@const position =
+                            availableMinNodes > 1
+                              ? ((n - 1) / (availableMinNodes - 1)) * 100
+                              : 50}
+                          <div
+                            class="absolute flex flex-col items-center pointer-events-none"
+                            style="left: {position}%; top: 0; transform: translateX(-50%);"
+                          >
+                            <span
+                              class="rounded-full transition-all {isSelected
+                                ? 'w-6 h-6 bg-exo-yellow shadow-[0_0_10px_rgba(255,215,0,0.6)]'
+                                : isValid
+                                  ? 'w-4 h-4 bg-exo-light-gray/70 mt-1'
+                                  : 'w-3 h-3 bg-exo-medium-gray/50 mt-1.5'}"
+                            ></span>
+                            <span
+                              class="text-sm font-mono mt-1.5 tabular-nums transition-colors {isSelected
+                                ? 'text-exo-yellow font-bold'
+                                : isValid
+                                  ? 'text-white/70'
+                                  : 'text-white/30'}">{n}</span
+                            >
+                          </div>
+                        {/each}
+                      </div>
+                    </div>
+                  </div>
+                {/if}
+              </div>
+
+              <!-- Selected Model Preview -->
+              <div class="space-y-3">
+                {#if models.length === 0}
+                  <div class="text-center py-8">
+                    <div
+                      class="text-xs text-white/70 font-mono tracking-wider uppercase"
+                    >
+                      Loading models...
+                    </div>
+                  </div>
+                {:else if loadingPreviews}
+                  <div class="text-center py-8">
+                    <div
+                      class="text-xs text-exo-yellow font-mono tracking-wider uppercase animate-pulse"
+                    >
+                      Loading preview...
+                    </div>
+                  </div>
+                {:else}
+                  {@const selectedModel = models.find(
+                    (m) => m.id === selectedModelId,
+                  )}
+                  {@const allPreviews = filteredPreviews()}
+                  {#if selectedModel && allPreviews.length > 0}
+                    {@const downloadStatus = getModelDownloadStatus(
+                      selectedModel.id,
+                    )}
+                    {@const tags = modelTags()[selectedModel.id] || []}
+                    <div class="space-y-3">
+                      {#each allPreviews as apiPreview, i}
+                        <div
+                          role="group"
+                          onmouseenter={() => {
+                            if (apiPreview.memory_delta_by_node) {
+                              hoveredPreviewNodes = new Set(
+                                Object.entries(apiPreview.memory_delta_by_node)
+                                  .filter(([, delta]) => (delta ?? 0) > 0)
+                                  .map(([nodeId]) => nodeId),
+                              );
+                            }
+                          }}
+                          onmouseleave={() => (hoveredPreviewNodes = new Set())}
+                        >
+                          <ModelCard
+                            model={selectedModel}
+                            isLaunching={launchingModelId === selectedModel.id}
+                            {downloadStatus}
+                            nodes={data?.nodes ?? {}}
+                            sharding={apiPreview.sharding}
+                            runtime={apiPreview.instance_meta}
+                            onLaunch={() =>
+                              launchInstance(selectedModel.id, apiPreview)}
+                            {tags}
+                            {apiPreview}
+                            modelIdOverride={apiPreview.model_id}
+                          />
+                        </div>
+                      {/each}
+                    </div>
+                  {:else if selectedModel}
+                    <div class="text-center py-4">
+                      <div class="text-xs text-white/50 font-mono">
+                        No valid configurations for current settings
+                      </div>
+                    </div>
+                  {/if}
+                {/if}
+              </div>
+            </div>
           </aside>
-        {/if}
-      </div>
-    {/if}
-  </main>
+        </div>
+      {:else}
+        <!-- CHAT STATE: Chat + Mini-Map -->
+        <div class="flex-1 flex overflow-hidden">
+          <!-- Chat Area -->
+          <div
+            class="flex-1 flex flex-col min-w-0 overflow-hidden"
+            in:fade={{ duration: 300, delay: 100 }}
+          >
+            <div
+              class="flex-1 overflow-y-auto px-8 py-6"
+              bind:this={chatScrollRef}
+            >
+              <div class="max-w-7xl mx-auto">
+                <ChatMessages scrollParent={chatScrollRef} />
+              </div>
+            </div>
+
+            <div
+              class="flex-shrink-0 px-8 pb-6 pt-4 bg-gradient-to-t from-exo-black via-exo-black to-transparent"
+            >
+              <div class="max-w-7xl mx-auto">
+                <ChatForm
+                  placeholder="Ask anything"
+                  showModelSelector={true}
+                  modelTasks={modelTasks()}
+                  modelCapabilities={modelCapabilities()}
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Mini-Map Sidebar -->
+          {#if minimized}
+            <aside
+              class="w-80 border-l border-exo-yellow/20 bg-exo-dark-gray flex flex-col flex-shrink-0 overflow-y-auto"
+              in:fly={{ x: 100, duration: 400, easing: cubicInOut }}
+            >
+              <!-- Topology Section - clickable to go back to main view -->
+              <button
+                class="p-4 border-b border-exo-medium-gray/30 w-full text-left cursor-pointer hover:bg-exo-medium-gray/10 transition-colors"
+                onclick={handleGoHome}
+                title="Click to return to main topology view"
+              >
+                <div class="flex items-center justify-between mb-3">
+                  <div
+                    class="text-xs text-exo-yellow tracking-[0.2em] uppercase flex items-center gap-2"
+                  >
+                    <span
+                      class="w-1.5 h-1.5 bg-exo-yellow rounded-full status-pulse"
+                    ></span>
+                    TOPOLOGY
+                  </div>
+                  <span class="text-xs text-white/70 tabular-nums"
+                    >{nodeCount} {nodeCount === 1 ? "NODE" : "NODES"}</span
+                  >
+                </div>
+
+                <div
+                  class="relative aspect-square bg-exo-dark-gray rounded-lg overflow-hidden"
+                >
+                  <TopologyGraph
+                    highlightedNodes={highlightedNodes()}
+                    filteredNodes={nodeFilter}
+                    onNodeClick={togglePreviewNodeFilter}
+                  />
+
+                  {@render clusterWarningsCompact()}
+                </div>
+              </button>
+
+              <!-- Instances Section (only shown when instances exist) -->
+              {#if instanceCount > 0}
+                <div class="p-4 flex-1">
+                  <!-- Panel Header -->
+                  <div class="flex items-center gap-2 mb-4">
+                    <div
+                      class="w-2 h-2 bg-exo-yellow rounded-full shadow-[0_0_8px_rgba(255,215,0,0.6)] animate-pulse"
+                    ></div>
+                    <h3
+                      class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase"
+                    >
+                      Instances
+                    </h3>
+                    <div
+                      class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"
+                    ></div>
+                  </div>
+                  <div
+                    class="space-y-3 max-h-72 xl:max-h-96 overflow-y-auto overflow-x-hidden py-px pr-1"
+                  >
+                    {#each Object.entries(instanceData) as [id, instance]}
+                      {@const downloadInfo = getInstanceDownloadStatus(
+                        id,
+                        instance,
+                      )}
+                      {@const statusText = downloadInfo.statusText}
+                      {@const isDownloading = downloadInfo.isDownloading}
+                      {@const isFailed = statusText === "FAILED"}
+                      {@const isLoading =
+                        statusText === "LOADING" ||
+                        statusText === "WARMING UP" ||
+                        statusText === "WAITING"}
+                      {@const isReady =
+                        statusText === "READY" || statusText === "LOADED"}
+                      {@const isRunning = statusText === "RUNNING"}
+                      <!-- Instance Card -->
+                      {@const instanceModelId = getInstanceModelId(instance)}
+                      {@const instanceInfo = getInstanceInfo(instance)}
+                      {@const instanceConnections =
+                        getInstanceConnections(instance)}
+                      <div
+                        class="relative group cursor-pointer"
+                        role="button"
+                        tabindex="0"
+                        onmouseenter={() => (hoveredInstanceId = id)}
+                        onmouseleave={() => (hoveredInstanceId = null)}
+                        onclick={() => {
+                          if (
+                            instanceModelId &&
+                            instanceModelId !== "Unknown" &&
+                            instanceModelId !== "Unknown Model"
+                          ) {
+                            setSelectedChatModel(instanceModelId);
+                          }
+                        }}
+                        onkeydown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            if (
+                              instanceModelId &&
+                              instanceModelId !== "Unknown" &&
+                              instanceModelId !== "Unknown Model"
+                            ) {
+                              setSelectedChatModel(instanceModelId);
+                            }
+                          }
+                        }}
+                      >
+                        <!-- Corner accents -->
+                        <div
+                          class="absolute -top-px -left-px w-2 h-2 border-l border-t {isDownloading
+                            ? 'border-blue-500/50'
+                            : isFailed
+                              ? 'border-red-500/50'
+                              : isLoading
+                                ? 'border-yellow-500/50'
+                                : isReady
+                                  ? 'border-green-500/50'
+                                  : 'border-teal-500/50'}"
+                        ></div>
+                        <div
+                          class="absolute -top-px -right-px w-2 h-2 border-r border-t {isDownloading
+                            ? 'border-blue-500/50'
+                            : isFailed
+                              ? 'border-red-500/50'
+                              : isLoading
+                                ? 'border-yellow-500/50'
+                                : isReady
+                                  ? 'border-green-500/50'
+                                  : 'border-teal-500/50'}"
+                        ></div>
+                        <div
+                          class="absolute -bottom-px -left-px w-2 h-2 border-l border-b {isDownloading
+                            ? 'border-blue-500/50'
+                            : isFailed
+                              ? 'border-red-500/50'
+                              : isLoading
+                                ? 'border-yellow-500/50'
+                                : isReady
+                                  ? 'border-green-500/50'
+                                  : 'border-teal-500/50'}"
+                        ></div>
+                        <div
+                          class="absolute -bottom-px -right-px w-2 h-2 border-r border-b {isDownloading
+                            ? 'border-blue-500/50'
+                            : isFailed
+                              ? 'border-red-500/50'
+                              : isLoading
+                                ? 'border-yellow-500/50'
+                                : isReady
+                                  ? 'border-green-500/50'
+                                  : 'border-teal-500/50'}"
+                        ></div>
+
+                        <div
+                          class="bg-exo-dark-gray/60 border border-l-2 {isDownloading
+                            ? 'border-blue-500/30 border-l-blue-400'
+                            : isFailed
+                              ? 'border-red-500/30 border-l-red-400'
+                              : isLoading
+                                ? 'border-exo-yellow/30 border-l-yellow-400'
+                                : isReady
+                                  ? 'border-green-500/30 border-l-green-400'
+                                  : 'border-teal-500/30 border-l-teal-400'} p-3"
+                        >
+                          <div
+                            class="flex justify-between items-start mb-2 pl-2"
+                          >
+                            <div class="flex items-center gap-2">
+                              <div
+                                class="w-1.5 h-1.5 {isDownloading
+                                  ? 'bg-blue-400 animate-pulse'
+                                  : isFailed
+                                    ? 'bg-red-400'
+                                    : isLoading
+                                      ? 'bg-yellow-400 animate-pulse'
+                                      : isReady
+                                        ? 'bg-green-400'
+                                        : 'bg-teal-400'} rounded-full shadow-[0_0_6px_currentColor]"
+                              ></div>
+                              <span
+                                class="text-exo-light-gray font-mono text-sm tracking-wider"
+                                >{id.slice(0, 8).toUpperCase()}</span
+                              >
+                            </div>
+                            <button
+                              onclick={() => deleteInstance(id)}
+                              class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
+                            >
+                              DELETE
+                            </button>
+                          </div>
+                          <div class="pl-2">
+                            <div
+                              class="text-exo-yellow text-xs font-mono tracking-wide truncate"
+                            >
+                              {getInstanceModelId(instance)}
+                            </div>
+                            {#if debugEnabled}
+                              <div class="text-white/60 text-xs font-mono">
+                                {instanceInfo.sharding} · {instanceInfo.instanceType}
+                              </div>
+                            {/if}
+                            {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
+                              <a
+                                class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
+                                href={`https://huggingface.co/${instanceModelId}`}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                aria-label="View model on Hugging Face"
+                              >
+                                <span>Hugging Face</span>
+                                <svg
+                                  class="w-3.5 h-3.5"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="2"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                >
+                                  <path d="M14 3h7v7" />
+                                  <path d="M10 14l11-11" />
+                                  <path
+                                    d="M21 14v6a1 1 0 0 1-1 1h-16a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1h6"
+                                  />
+                                </svg>
+                              </a>
+                            {/if}
+                            {#if instanceInfo.nodeNames.length > 0}
+                              <div class="text-white/60 text-xs font-mono">
+                                {instanceInfo.nodeNames.join(", ")}
+                              </div>
+                            {/if}
+                            {#if debugEnabled && instanceConnections.length > 0}
+                              <div class="mt-2 space-y-1">
+                                {#each instanceConnections as conn}
+                                  <div
+                                    class="text-[11px] leading-snug font-mono text-white/70"
+                                  >
+                                    <span
+                                      >{conn.from} -> {conn.to}: {conn.ip}</span
+                                    >
+                                    <span
+                                      class={conn.missingIface
+                                        ? "text-red-400"
+                                        : "text-white/60"}
+                                    >
+                                      ({conn.ifaceLabel})</span
+                                    >
+                                  </div>
+                                {/each}
+                              </div>
+                            {/if}
+
+                            <!-- Download Progress -->
+                            {#if downloadInfo.isDownloading && downloadInfo.progress}
+                              <div class="mt-2 space-y-1">
+                                <div
+                                  class="flex justify-between text-xs font-mono"
+                                >
+                                  <span class="text-blue-400"
+                                    >{downloadInfo.progress.percentage.toFixed(
+                                      1,
+                                    )}%</span
+                                  >
+                                  <span class="text-exo-light-gray"
+                                    >{formatBytes(
+                                      downloadInfo.progress.downloadedBytes,
+                                    )}/{formatBytes(
+                                      downloadInfo.progress.totalBytes,
+                                    )}</span
+                                  >
+                                </div>
+                                <div
+                                  class="relative h-1.5 bg-exo-black/60 rounded-sm overflow-hidden"
+                                >
+                                  <div
+                                    class="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300"
+                                    style="width: {downloadInfo.progress
+                                      .percentage}%"
+                                  ></div>
+                                </div>
+                                <div
+                                  class="flex justify-between text-xs font-mono text-exo-light-gray"
+                                >
+                                  <span
+                                    >{formatSpeed(
+                                      downloadInfo.progress.speed,
+                                    )}</span
+                                  >
+                                  <span
+                                    >ETA: {formatEta(
+                                      downloadInfo.progress.etaMs,
+                                    )}</span
+                                  >
+                                  <span
+                                    >{downloadInfo.progress
+                                      .completedFiles}/{downloadInfo.progress
+                                      .totalFiles} files</span
+                                  >
+                                </div>
+                              </div>
+                              {#if downloadInfo.perNode.length > 0}
+                                <div
+                                  class="mt-2 space-y-2 max-h-48 overflow-y-auto pr-1"
+                                >
+                                  {#each downloadInfo.perNode as nodeProg}
+                                    {@const nodePercent = Math.min(
+                                      100,
+                                      Math.max(0, nodeProg.progress.percentage),
+                                    )}
+                                    {@const isExpanded =
+                                      instanceDownloadExpandedNodes.has(
+                                        nodeProg.nodeId,
+                                      )}
+                                    <div
+                                      class="rounded border border-exo-medium-gray/40 bg-exo-black/30 p-2"
+                                    >
+                                      <button
+                                        type="button"
+                                        class="w-full text-left space-y-1.5"
+                                        onclick={() =>
+                                          toggleInstanceDownloadDetails(
+                                            nodeProg.nodeId,
+                                          )}
+                                      >
+                                        <div
+                                          class="flex items-center justify-between text-[11px] font-mono text-exo-light-gray"
+                                        >
+                                          <span
+                                            class="text-white/80 truncate pr-2"
+                                            >{nodeProg.nodeName}</span
+                                          >
+                                          <span
+                                            class="flex items-center gap-1 text-blue-300"
+                                          >
+                                            {nodePercent.toFixed(1)}%
+                                            <svg
+                                              class="w-3 h-3 text-exo-light-gray"
+                                              viewBox="0 0 20 20"
+                                              fill="none"
+                                              stroke="currentColor"
+                                              stroke-width="2"
+                                            >
+                                              <path
+                                                d="M6 8l4 4 4-4"
+                                                class={isExpanded
+                                                  ? "transform rotate-180 origin-center transition-transform duration-150"
+                                                  : "transition-transform duration-150"}
+                                              ></path>
+                                            </svg>
+                                          </span>
+                                        </div>
+                                        <div
+                                          class="relative h-1.5 bg-exo-black/60 rounded-sm overflow-hidden"
+                                        >
+                                          <div
+                                            class="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300"
+                                            style="width: {nodePercent.toFixed(
+                                              1,
+                                            )}%"
+                                          ></div>
+                                        </div>
+                                        <div
+                                          class="flex items-center justify-between text-[11px] font-mono text-exo-light-gray"
+                                        >
+                                          <span
+                                            >{formatBytes(
+                                              nodeProg.progress.downloadedBytes,
+                                            )} / {formatBytes(
+                                              nodeProg.progress.totalBytes,
+                                            )}</span
+                                          >
+                                          <span
+                                            >{formatSpeed(
+                                              nodeProg.progress.speed,
+                                            )} • ETA {formatEta(
+                                              nodeProg.progress.etaMs,
+                                            )}</span
+                                          >
+                                        </div>
+                                      </button>
+
+                                      {#if isExpanded}
+                                        <div class="mt-2 space-y-1.5">
+                                          {#if nodeProg.progress.files.length === 0}
+                                            <div
+                                              class="text-[11px] font-mono text-exo-light-gray/70"
+                                            >
+                                              No file details reported.
+                                            </div>
+                                          {:else}
+                                            {#each nodeProg.progress.files as f}
+                                              {@const filePercent = Math.min(
+                                                100,
+                                                Math.max(0, f.percentage ?? 0),
+                                              )}
+                                              {@const isFileComplete =
+                                                filePercent >= 100}
+                                              <div
+                                                class="rounded border border-exo-medium-gray/30 bg-exo-black/40 p-2"
+                                              >
+                                                <div
+                                                  class="flex items-center justify-between text-[10px] font-mono text-exo-light-gray/90"
+                                                >
+                                                  <span class="truncate pr-2"
+                                                    >{f.name}</span
+                                                  >
+                                                  <span
+                                                    class={isFileComplete
+                                                      ? "text-green-400"
+                                                      : "text-white/80"}
+                                                    >{filePercent.toFixed(
+                                                      1,
+                                                    )}%</span
+                                                  >
+                                                </div>
+                                                <div
+                                                  class="relative h-1 bg-exo-black/60 rounded-sm overflow-hidden mt-1"
+                                                >
+                                                  <div
+                                                    class="absolute inset-y-0 left-0 bg-gradient-to-r {isFileComplete
+                                                      ? 'from-green-500 to-green-400'
+                                                      : 'from-exo-yellow to-exo-yellow/70'} transition-all duration-300"
+                                                    style="width: {filePercent.toFixed(
+                                                      1,
+                                                    )}%"
+                                                  ></div>
+                                                </div>
+                                                <div
+                                                  class="flex items-center justify-between text-[10px] text-exo-light-gray/70 mt-0.5"
+                                                >
+                                                  <span
+                                                    >{formatBytes(
+                                                      f.downloadedBytes,
+                                                    )} / {formatBytes(
+                                                      f.totalBytes,
+                                                    )}</span
+                                                  >
+                                                  <span
+                                                    >{formatSpeed(f.speed)} • ETA
+                                                    {formatEta(f.etaMs)}</span
+                                                  >
+                                                </div>
+                                              </div>
+                                            {/each}
+                                          {/if}
+                                        </div>
+                                      {/if}
+                                    </div>
+                                  {/each}
+                                </div>
+                              {/if}
+                              <div class="mt-2 space-y-1">
+                                <div
+                                  class="text-xs text-blue-400 font-mono tracking-wider"
+                                >
+                                  DOWNLOADING
+                                </div>
+                                <p
+                                  class="text-[11px] text-white/50 leading-relaxed"
+                                >
+                                  Downloading model files. This runs locally on
+                                  your device and needs to finish before you can
+                                  chat.
+                                </p>
+                              </div>
+                            {:else}
+                              <div class="mt-1 space-y-1">
+                                <div
+                                  class="text-xs {getStatusColor(
+                                    downloadInfo.statusText,
+                                  )} font-mono tracking-wider"
+                                >
+                                  {downloadInfo.statusText}
+                                </div>
+                                {#if isLoading}
+                                  <p
+                                    class="text-[11px] text-white/50 leading-relaxed"
+                                  >
+                                    Loading model into memory for fast
+                                    inference...
+                                  </p>
+                                {:else if isReady || isRunning}
+                                  <p
+                                    class="text-[11px] text-green-400/70 leading-relaxed"
+                                  >
+                                    Ready to chat! Type a message below.
+                                  </p>
+                                {/if}
+                              </div>
+                              {#if downloadInfo.isFailed && downloadInfo.errorMessage}
+                                <div
+                                  class="text-xs text-red-400/80 font-mono mt-1 break-words"
+                                >
+                                  {downloadInfo.errorMessage}
+                                </div>
+                              {/if}
+                            {/if}
+                          </div>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+            </aside>
+          {/if}
+        </div>
+      {/if}
+    </main>
+  {/if}
 </div>
 
 <ModelPickerModal
