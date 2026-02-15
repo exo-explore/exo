@@ -5,6 +5,7 @@ import Foundation
 private let customNamespaceKey = "EXOCustomNamespace"
 private let hfTokenKey = "EXOHFToken"
 private let enableImageModelsKey = "EXOEnableImageModels"
+private let hasLaunchedBeforeKey = "EXOHasLaunchedBefore"
 
 @MainActor
 final class ExoProcessController: ObservableObject {
@@ -60,6 +61,9 @@ final class ExoProcessController: ObservableObject {
         }
     }
 
+    /// Fires once when EXO transitions to `.running` for the very first time (fresh install).
+    @Published private(set) var isFirstLaunchReady = false
+
     private var process: Process?
     private var runtimeDirectoryURL: URL?
     private var pendingLaunchTask: Task<Void, Never>?
@@ -113,6 +117,12 @@ final class ExoProcessController: ObservableObject {
             try child.run()
             process = child
             status = .running
+
+            // Detect first-ever launch to trigger welcome popout
+            if !UserDefaults.standard.bool(forKey: hasLaunchedBeforeKey) {
+                UserDefaults.standard.set(true, forKey: hasLaunchedBeforeKey)
+                isFirstLaunchReady = true
+            }
         } catch {
             process = nil
             status = .failed(message: "Launch error")
