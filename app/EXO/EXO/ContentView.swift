@@ -15,18 +15,16 @@ struct ContentView: View {
     @EnvironmentObject private var localNetworkChecker: LocalNetworkChecker
     @EnvironmentObject private var updater: SparkleUpdater
     @EnvironmentObject private var thunderboltBridgeService: ThunderboltBridgeService
+    @EnvironmentObject private var settingsWindowController: SettingsWindowController
     @State private var focusedNode: NodeViewModel?
     @State private var deletingInstanceIDs: Set<String> = []
     @State private var showAllNodes = false
     @State private var showAllInstances = false
-    @State private var showAdvanced = false
     @State private var showDebugInfo = false
     @State private var bugReportInFlight = false
     @State private var bugReportMessage: String?
     @State private var uninstallInProgress = false
-    @State private var pendingNamespace: String = ""
-    @State private var pendingHFToken: String = ""
-    @State private var pendingEnableImageModels = false
+    @State private var baseURLCopied = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -275,93 +273,23 @@ struct ContentView: View {
 
     private var advancedSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Advanced")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Spacer()
-                collapseButton(isExpanded: $showAdvanced)
+            HoverButton(
+                title: "Settings",
+                tint: .primary,
+                trailingSystemImage: "gear",
+                small: false
+            ) {
+                settingsWindowController.open(controller: controller, updater: updater)
             }
-            .animation(nil, value: showAdvanced)
-            if showAdvanced {
-                VStack(alignment: .leading, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Cluster Namespace")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        HStack {
-                            TextField("optional", text: $pendingNamespace)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.caption2)
-                                .onAppear {
-                                    pendingNamespace = controller.customNamespace
-                                }
-                            Button("Save & Restart") {
-                                controller.customNamespace = pendingNamespace
-                                if controller.status == .running || controller.status == .starting {
-                                    controller.restart()
-                                }
-                            }
-                            .font(.caption2)
-                            .disabled(pendingNamespace == controller.customNamespace)
-                        }
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("HuggingFace Token")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        HStack {
-                            SecureField("optional", text: $pendingHFToken)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.caption2)
-                                .onAppear {
-                                    pendingHFToken = controller.hfToken
-                                }
-                            Button("Save & Restart") {
-                                controller.hfToken = pendingHFToken
-                                if controller.status == .running || controller.status == .starting {
-                                    controller.restart()
-                                }
-                            }
-                            .font(.caption2)
-                            .disabled(pendingHFToken == controller.hfToken)
-                        }
-                    }
-                    Divider()
-                    HStack {
-                        Toggle(
-                            "Enable Image Models (experimental)", isOn: $pendingEnableImageModels
-                        )
-                        .toggleStyle(.switch)
-                        .font(.caption2)
-                        .onAppear {
-                            pendingEnableImageModels = controller.enableImageModels
-                        }
-
-                        Spacer()
-
-                        Button("Save & Restart") {
-                            controller.enableImageModels = pendingEnableImageModels
-                            if controller.status == .running || controller.status == .starting {
-                                controller.restart()
-                            }
-                        }
-                        .font(.caption2)
-                        .disabled(pendingEnableImageModels == controller.enableImageModels)
-                    }
-                    HoverButton(title: "Check for Updates", small: true) {
-                        updater.checkForUpdates()
-                    }
-                    debugSection
-                    HoverButton(title: "Uninstall", tint: .red, small: true) {
-                        showUninstallConfirmationAlert()
-                    }
-                    .disabled(uninstallInProgress)
-                }
-                .transition(.opacity)
+            HoverButton(title: "Check for Updates", small: true) {
+                updater.checkForUpdates()
             }
+            debugSection
+            HoverButton(title: "Uninstall", tint: .red, small: true) {
+                showUninstallConfirmationAlert()
+            }
+            .disabled(uninstallInProgress)
         }
-        .animation(.easeInOut(duration: 0.25), value: showAdvanced)
     }
 
     private func controlButton(title: String, tint: Color = .primary, action: @escaping () -> Void)
@@ -371,25 +299,57 @@ struct ContentView: View {
     }
 
     private var dashboardButton: some View {
-        Button {
-            guard let url = URL(string: "http://localhost:52415/") else { return }
-            NSWorkspace.shared.open(url)
-        } label: {
-            HStack {
-                Image(systemName: "arrow.up.right.square")
-                    .imageScale(.small)
-                Text("Dashboard")
-                    .fontWeight(.medium)
-                Spacer()
+        VStack(spacing: 6) {
+            Button {
+                guard let url = URL(string: "http://localhost:52415/") else { return }
+                NSWorkspace.shared.open(url)
+            } label: {
+                HStack {
+                    Image(systemName: "globe")
+                        .imageScale(.small)
+                    Text("Web Dashboard")
+                        .fontWeight(.medium)
+                    Spacer()
+                    Image(systemName: "arrow.up.right")
+                        .imageScale(.small)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color(red: 1.0, green: 0.87, blue: 0.0).opacity(0.2))
+                )
             }
-            .padding(.vertical, 8)
+            .buttonStyle(.plain)
+
+            // Base URL for API integrations (SillyTavern, etc.)
+            HStack(spacing: 6) {
+                Text("Base URL:")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Text("localhost:52415/v1")
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundColor(.primary)
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString("http://localhost:52415/v1", forType: .string)
+                    baseURLCopied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        baseURLCopied = false
+                    }
+                } label: {
+                    Image(systemName: baseURLCopied ? "checkmark" : "doc.on.doc")
+                        .imageScale(.small)
+                        .foregroundColor(baseURLCopied ? .green : .secondary)
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .buttonStyle(.plain)
+                .help("Copy API base URL")
+            }
             .padding(.horizontal, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color(red: 1.0, green: 0.87, blue: 0.0).opacity(0.2))
-            )
         }
-        .buttonStyle(.plain)
         .padding(.bottom, 4)
     }
 

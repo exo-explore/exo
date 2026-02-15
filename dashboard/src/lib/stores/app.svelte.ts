@@ -1805,7 +1805,7 @@ class AppStore {
           assistantMessage.id,
           (msg) => {
             msg.content =
-              "Error: No model available. Please launch an instance first.";
+              "No model is loaded yet. Select a model from the sidebar to get started — it will download and load automatically.";
           },
         );
         this.syncActiveMessagesIfNeeded(targetConversationId);
@@ -2243,7 +2243,7 @@ class AppStore {
       const modelToUse = this.getModelForRequest();
       if (!modelToUse) {
         throw new Error(
-          "No model selected and no running instances available. Please launch an instance first.",
+          "No model is loaded yet. Select a model from the sidebar to get started — it will download and load automatically.",
         );
       }
 
