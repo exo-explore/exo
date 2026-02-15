@@ -56,7 +56,7 @@ hdiutil create \
   "$TEMP_DMG"
 
 # ── Step 4: Mount and configure ──────────────────────────────────────────────
-MOUNT_DIR=$(hdiutil attach "$TEMP_DMG" -readwrite -noverify | awk '/Apple_HFS/ {print substr($0, index($0, "/"))}')
+MOUNT_DIR=$(hdiutil attach "$TEMP_DMG" -readwrite -noverify | awk -F'\t' '/Apple_HFS/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $NF); print $NF}')
 echo "    Mounted at: $MOUNT_DIR"
 
 # Copy contents
