@@ -366,6 +366,9 @@
   // Model picker modal state
   let isModelPickerOpen = $state(false);
 
+  // Advanced options toggle (hides technical jargon for new users)
+  let showAdvancedOptions = $state(false);
+
   // Favorites state (reactive)
   const favoritesSet = $derived(getFavoritesSet());
 
@@ -2557,6 +2560,47 @@
               onNodeClick={togglePreviewNodeFilter}
             />
 
+            <!-- Welcome overlay - shown when no instances are running -->
+            {#if instanceCount === 0}
+              <div
+                class="absolute inset-0 flex items-center justify-center pointer-events-none"
+              >
+                <div class="text-center pointer-events-auto max-w-md px-6">
+                  <div class="mb-4">
+                    <div
+                      class="text-2xl font-mono text-exo-yellow font-bold tracking-wide mb-2"
+                    >
+                      Welcome to exo
+                    </div>
+                    <p class="text-sm text-white/70 leading-relaxed">
+                      Your devices are connected. Choose a model to start
+                      running AI locally.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onclick={() => (isModelPickerOpen = true)}
+                    class="inline-flex items-center gap-2 px-6 py-3 bg-exo-yellow text-exo-black font-mono text-sm font-bold tracking-wider uppercase rounded-lg hover:bg-exo-yellow-darker hover:shadow-[0_0_30px_rgba(255,215,0,0.3)] transition-all duration-200 cursor-pointer"
+                  >
+                    <svg
+                      class="w-5 h-5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M12 4v16m8-8H4"
+                      />
+                    </svg>
+                    Choose a Model
+                  </button>
+                </div>
+              </div>
+            {/if}
+
             {@render clusterWarnings()}
 
             <!-- TB5 RDMA Not Enabled Warning -->
@@ -2670,8 +2714,18 @@
           <!-- Chat Input - Below topology -->
           <div class="px-4 pt-6 pb-8">
             <div class="max-w-3xl mx-auto">
+              {#if instanceCount === 0}
+                <!-- No model loaded prompt -->
+                <div class="text-center mb-6">
+                  <p class="text-sm text-white/60 font-mono">
+                    No model loaded yet. Select a model to get started.
+                  </p>
+                </div>
+              {/if}
               <ChatForm
-                placeholder="Ask anything"
+                placeholder={instanceCount === 0
+                  ? "Choose a model above to start chatting"
+                  : "Ask anything"}
                 showHelperText={false}
                 showModelSelector={true}
                 modelTasks={modelTasks()}
@@ -2842,11 +2896,11 @@
                         >
                           {getInstanceModelId(instance)}
                         </div>
-                        <div class="text-white/60 text-xs font-mono">
-                          Strategy: <span class="text-white/80"
-                            >{instanceInfo.sharding} ({instanceInfo.instanceType})</span
-                          >
-                        </div>
+                        {#if debugEnabled}
+                          <div class="text-white/60 text-xs font-mono">
+                            {instanceInfo.sharding} · {instanceInfo.instanceType}
+                          </div>
+                        {/if}
                         {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
                           <a
                             class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
@@ -3089,18 +3143,41 @@
                               {/each}
                             </div>
                           {/if}
-                          <div
-                            class="text-xs text-blue-400 font-mono tracking-wider mt-1"
-                          >
-                            DOWNLOADING
+                          <div class="mt-2 space-y-1">
+                            <div
+                              class="text-xs text-blue-400 font-mono tracking-wider"
+                            >
+                              DOWNLOADING
+                            </div>
+                            <p
+                              class="text-[11px] text-white/50 leading-relaxed"
+                            >
+                              Downloading model files. This runs locally on your
+                              device and needs to finish before you can chat.
+                            </p>
                           </div>
                         {:else}
-                          <div
-                            class="text-xs {getStatusColor(
-                              downloadInfo.statusText,
-                            )} font-mono tracking-wider mt-1"
-                          >
-                            {downloadInfo.statusText}
+                          <div class="mt-1 space-y-1">
+                            <div
+                              class="text-xs {getStatusColor(
+                                downloadInfo.statusText,
+                              )} font-mono tracking-wider"
+                            >
+                              {downloadInfo.statusText}
+                            </div>
+                            {#if isLoading}
+                              <p
+                                class="text-[11px] text-white/50 leading-relaxed"
+                              >
+                                Loading model into memory for fast inference...
+                              </p>
+                            {:else if isReady || isRunning}
+                              <p
+                                class="text-[11px] text-green-400/70 leading-relaxed"
+                              >
+                                Ready to chat! Type a message below.
+                              </p>
+                            {/if}
                           </div>
                           {#if downloadInfo.isFailed && downloadInfo.errorMessage}
                             <div
@@ -3191,172 +3268,201 @@
               </button>
             </div>
 
-            <!-- Configuration Options -->
-            <div class="flex-shrink-0 mb-4 space-y-3">
-              <!-- Sharding -->
-              <div>
-                <div class="text-xs text-white/70 font-mono mb-2">
-                  Sharding:
-                </div>
-                <div class="flex gap-2">
-                  <button
-                    onclick={() => {
-                      selectedSharding = "Pipeline";
-                      saveLaunchDefaults();
-                    }}
-                    class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding ===
-                    'Pipeline'
-                      ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                      : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-                  >
-                    <span
-                      class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedSharding ===
-                      'Pipeline'
-                        ? 'border-exo-yellow'
-                        : 'border-exo-medium-gray'}"
-                    >
-                      {#if selectedSharding === "Pipeline"}
-                        <span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
-                      {/if}
-                    </span>
-                    Pipeline
-                  </button>
-                  <button
-                    onclick={() => {
-                      selectedSharding = "Tensor";
-                      saveLaunchDefaults();
-                    }}
-                    class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding ===
-                    'Tensor'
-                      ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                      : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-                  >
-                    <span
-                      class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedSharding ===
-                      'Tensor'
-                        ? 'border-exo-yellow'
-                        : 'border-exo-medium-gray'}"
-                    >
-                      {#if selectedSharding === "Tensor"}
-                        <span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
-                      {/if}
-                    </span>
-                    Tensor
-                  </button>
-                </div>
-              </div>
-
-              <!-- Instance Type -->
-              <div>
-                <div class="text-xs text-white/70 font-mono mb-2">
-                  Instance Type:
-                </div>
-                <div class="flex gap-2">
-                  <button
-                    onclick={() => {
-                      selectedInstanceType = "MlxRing";
-                      saveLaunchDefaults();
-                    }}
-                    class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
-                    'MlxRing'
-                      ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                      : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-                  >
-                    <span
-                      class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
-                      'MlxRing'
-                        ? 'border-exo-yellow'
-                        : 'border-exo-medium-gray'}"
-                    >
-                      {#if selectedInstanceType === "MlxRing"}
-                        <span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
-                      {/if}
-                    </span>
-                    MLX Ring
-                  </button>
-                  <button
-                    onclick={() => {
-                      selectedInstanceType = "MlxIbv";
-                      saveLaunchDefaults();
-                    }}
-                    class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
-                    'MlxIbv'
-                      ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                      : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-                  >
-                    <span
-                      class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
-                      'MlxIbv'
-                        ? 'border-exo-yellow'
-                        : 'border-exo-medium-gray'}"
-                    >
-                      {#if selectedInstanceType === "MlxIbv"}
-                        <span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
-                      {/if}
-                    </span>
-                    MLX RDMA
-                  </button>
-                </div>
-              </div>
-
-              <!-- Minimum Nodes (discrete slider with drag support) -->
-              <div>
-                <div class="text-xs text-white/70 font-mono mb-2">
-                  Minimum Nodes:
-                </div>
-                <!-- Discrete slider track with drag support -->
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <div
-                  bind:this={sliderTrackElement}
-                  class="relative h-16 cursor-pointer select-none px-2 pr-6"
-                  onmousedown={handleSliderMouseDown}
-                  ontouchstart={handleSliderTouchStart}
+            <!-- Advanced Options Toggle -->
+            <div class="flex-shrink-0 mb-4">
+              <button
+                type="button"
+                onclick={() => (showAdvancedOptions = !showAdvancedOptions)}
+                class="flex items-center gap-2 text-xs text-white/50 hover:text-white/70 font-mono tracking-wider uppercase transition-colors cursor-pointer py-1"
+              >
+                <svg
+                  class="w-3 h-3 transition-transform duration-200 {showAdvancedOptions
+                    ? 'rotate-90'
+                    : ''}"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2"
                 >
-                  <!-- Track background - extends full width to align with edge dots -->
-                  <div
-                    class="absolute top-6 left-0 right-0 h-2 bg-exo-medium-gray/50 rounded-full"
-                  ></div>
-                  <!-- Active track (fills up to selected) -->
-                  {#if availableMinNodes > 1}
-                    <div
-                      class="absolute top-6 left-0 h-2 bg-white/30 rounded-full transition-all pointer-events-none"
-                      style="width: {((selectedMinNodes - 1) /
-                        (availableMinNodes - 1)) *
-                        100}%"
-                    ></div>
-                  {/if}
-                  <!-- Dots and labels for each node count -->
-                  {#each Array.from({ length: availableMinNodes }, (_, i) => i + 1) as n}
-                    {@const isValid = validMinNodeCounts().has(n)}
-                    {@const isSelected = selectedMinNodes === n}
-                    {@const position =
-                      availableMinNodes > 1
-                        ? ((n - 1) / (availableMinNodes - 1)) * 100
-                        : 50}
-                    <div
-                      class="absolute flex flex-col items-center pointer-events-none"
-                      style="left: {position}%; top: 0; transform: translateX(-50%);"
-                    >
-                      <!-- Dot -->
-                      <span
-                        class="rounded-full transition-all {isSelected
-                          ? 'w-6 h-6 bg-exo-yellow shadow-[0_0_10px_rgba(255,215,0,0.6)]'
-                          : isValid
-                            ? 'w-4 h-4 bg-exo-light-gray/70 mt-1'
-                            : 'w-3 h-3 bg-exo-medium-gray/50 mt-1.5'}"
-                      ></span>
-                      <!-- Number label below dot -->
-                      <span
-                        class="text-sm font-mono mt-1.5 tabular-nums transition-colors {isSelected
-                          ? 'text-exo-yellow font-bold'
-                          : isValid
-                            ? 'text-white/70'
-                            : 'text-white/30'}">{n}</span
-                      >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M9 5l7 7-7 7"
+                  />
+                </svg>
+                Advanced Options
+              </button>
+
+              {#if showAdvancedOptions}
+                <div class="mt-3 space-y-3 pl-1" in:fade={{ duration: 150 }}>
+                  <!-- Sharding Strategy -->
+                  <div>
+                    <div class="text-xs text-white/50 font-mono mb-2">
+                      Splitting Strategy:
                     </div>
-                  {/each}
+                    <div class="flex gap-2">
+                      <button
+                        onclick={() => {
+                          selectedSharding = "Pipeline";
+                          saveLaunchDefaults();
+                        }}
+                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding ===
+                        'Pipeline'
+                          ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                          : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                      >
+                        <span
+                          class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedSharding ===
+                          'Pipeline'
+                            ? 'border-exo-yellow'
+                            : 'border-exo-medium-gray'}"
+                        >
+                          {#if selectedSharding === "Pipeline"}
+                            <span class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
+                            ></span>
+                          {/if}
+                        </span>
+                        Pipeline
+                      </button>
+                      <button
+                        onclick={() => {
+                          selectedSharding = "Tensor";
+                          saveLaunchDefaults();
+                        }}
+                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding ===
+                        'Tensor'
+                          ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                          : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                      >
+                        <span
+                          class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedSharding ===
+                          'Tensor'
+                            ? 'border-exo-yellow'
+                            : 'border-exo-medium-gray'}"
+                        >
+                          {#if selectedSharding === "Tensor"}
+                            <span class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
+                            ></span>
+                          {/if}
+                        </span>
+                        Tensor
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Runtime -->
+                  <div>
+                    <div class="text-xs text-white/50 font-mono mb-2">
+                      Runtime:
+                    </div>
+                    <div class="flex gap-2">
+                      <button
+                        onclick={() => {
+                          selectedInstanceType = "MlxRing";
+                          saveLaunchDefaults();
+                        }}
+                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
+                        'MlxRing'
+                          ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                          : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                      >
+                        <span
+                          class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
+                          'MlxRing'
+                            ? 'border-exo-yellow'
+                            : 'border-exo-medium-gray'}"
+                        >
+                          {#if selectedInstanceType === "MlxRing"}
+                            <span class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
+                            ></span>
+                          {/if}
+                        </span>
+                        Standard
+                      </button>
+                      <button
+                        onclick={() => {
+                          selectedInstanceType = "MlxIbv";
+                          saveLaunchDefaults();
+                        }}
+                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
+                        'MlxIbv'
+                          ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                          : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                      >
+                        <span
+                          class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
+                          'MlxIbv'
+                            ? 'border-exo-yellow'
+                            : 'border-exo-medium-gray'}"
+                        >
+                          {#if selectedInstanceType === "MlxIbv"}
+                            <span class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
+                            ></span>
+                          {/if}
+                        </span>
+                        RDMA (Fast)
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Minimum Devices -->
+                  <div>
+                    <div class="text-xs text-white/50 font-mono mb-2">
+                      Minimum Devices:
+                    </div>
+                    <!-- Discrete slider track with drag support -->
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                    <div
+                      bind:this={sliderTrackElement}
+                      class="relative h-16 cursor-pointer select-none px-2 pr-6"
+                      onmousedown={handleSliderMouseDown}
+                      ontouchstart={handleSliderTouchStart}
+                    >
+                      <!-- Track background -->
+                      <div
+                        class="absolute top-6 left-0 right-0 h-2 bg-exo-medium-gray/50 rounded-full"
+                      ></div>
+                      <!-- Active track (fills up to selected) -->
+                      {#if availableMinNodes > 1}
+                        <div
+                          class="absolute top-6 left-0 h-2 bg-white/30 rounded-full transition-all pointer-events-none"
+                          style="width: {((selectedMinNodes - 1) /
+                            (availableMinNodes - 1)) *
+                            100}%"
+                        ></div>
+                      {/if}
+                      <!-- Dots and labels for each device count -->
+                      {#each Array.from({ length: availableMinNodes }, (_, i) => i + 1) as n}
+                        {@const isValid = validMinNodeCounts().has(n)}
+                        {@const isSelected = selectedMinNodes === n}
+                        {@const position =
+                          availableMinNodes > 1
+                            ? ((n - 1) / (availableMinNodes - 1)) * 100
+                            : 50}
+                        <div
+                          class="absolute flex flex-col items-center pointer-events-none"
+                          style="left: {position}%; top: 0; transform: translateX(-50%);"
+                        >
+                          <span
+                            class="rounded-full transition-all {isSelected
+                              ? 'w-6 h-6 bg-exo-yellow shadow-[0_0_10px_rgba(255,215,0,0.6)]'
+                              : isValid
+                                ? 'w-4 h-4 bg-exo-light-gray/70 mt-1'
+                                : 'w-3 h-3 bg-exo-medium-gray/50 mt-1.5'}"
+                          ></span>
+                          <span
+                            class="text-sm font-mono mt-1.5 tabular-nums transition-colors {isSelected
+                              ? 'text-exo-yellow font-bold'
+                              : isValid
+                                ? 'text-white/70'
+                                : 'text-white/30'}">{n}</span
+                          >
+                        </div>
+                      {/each}
+                    </div>
+                  </div>
                 </div>
-              </div>
+              {/if}
             </div>
 
             <!-- Selected Model Preview -->
@@ -3655,11 +3761,11 @@
                           >
                             {getInstanceModelId(instance)}
                           </div>
-                          <div class="text-white/60 text-xs font-mono">
-                            Strategy: <span class="text-white/80"
-                              >{instanceInfo.sharding} ({instanceInfo.instanceType})</span
-                            >
-                          </div>
+                          {#if debugEnabled}
+                            <div class="text-white/60 text-xs font-mono">
+                              {instanceInfo.sharding} · {instanceInfo.instanceType}
+                            </div>
+                          {/if}
                           {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
                             <a
                               class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
@@ -3912,18 +4018,43 @@
                                 {/each}
                               </div>
                             {/if}
-                            <div
-                              class="text-xs text-blue-400 font-mono tracking-wider mt-1"
-                            >
-                              DOWNLOADING
+                            <div class="mt-2 space-y-1">
+                              <div
+                                class="text-xs text-blue-400 font-mono tracking-wider"
+                              >
+                                DOWNLOADING
+                              </div>
+                              <p
+                                class="text-[11px] text-white/50 leading-relaxed"
+                              >
+                                Downloading model files. This runs locally on
+                                your device and needs to finish before you can
+                                chat.
+                              </p>
                             </div>
                           {:else}
-                            <div
-                              class="text-xs {getStatusColor(
-                                downloadInfo.statusText,
-                              )} font-mono tracking-wider mt-1"
-                            >
-                              {downloadInfo.statusText}
+                            <div class="mt-1 space-y-1">
+                              <div
+                                class="text-xs {getStatusColor(
+                                  downloadInfo.statusText,
+                                )} font-mono tracking-wider"
+                              >
+                                {downloadInfo.statusText}
+                              </div>
+                              {#if isLoading}
+                                <p
+                                  class="text-[11px] text-white/50 leading-relaxed"
+                                >
+                                  Loading model into memory for fast
+                                  inference...
+                                </p>
+                              {:else if isReady || isRunning}
+                                <p
+                                  class="text-[11px] text-green-400/70 leading-relaxed"
+                                >
+                                  Ready to chat! Type a message below.
+                                </p>
+                              {/if}
                             </div>
                             {#if downloadInfo.isFailed && downloadInfo.errorMessage}
                               <div

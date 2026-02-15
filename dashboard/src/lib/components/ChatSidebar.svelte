@@ -307,7 +307,7 @@
       <div class="py-2">
         <div class="px-4 py-2">
           <span
-            class="text-sm text-white/70 font-mono tracking-wider uppercase"
+            class="text-xs text-exo-light-gray font-mono tracking-wider uppercase"
           >
             {searchQuery ? "SEARCH RESULTS" : "CONVERSATIONS"}
           </span>
@@ -376,39 +376,37 @@
                 onkeydown={(e) =>
                   e.key === "Enter" &&
                   handleSelectConversation(conversation.id)}
-                class="group w-full flex items-center justify-between p-2 rounded mb-1 transition-all text-left cursor-pointer
+                class="group w-full flex items-center justify-between p-2.5 rounded-lg mb-1 transition-all text-left cursor-pointer
 									{activeId === conversation.id
-                  ? 'bg-transparent border border-exo-yellow/30'
-                  : 'hover:border-exo-yellow/20 border border-transparent'}"
+                  ? 'bg-exo-yellow/5 border border-exo-yellow/30'
+                  : 'hover:bg-white/[0.03] hover:border-white/10 border border-transparent'}"
               >
                 <div class="flex-1 min-w-0 pr-2">
                   <div
-                    class="text-sm truncate {activeId === conversation.id
+                    class="text-sm font-medium truncate {activeId ===
+                    conversation.id
                       ? 'text-exo-yellow'
-                      : 'text-white/90'}"
+                      : 'text-white'}"
                   >
                     {conversation.name}
                   </div>
-                  <div class="text-sm text-white/50 mt-0.5">
+                  <div class="text-xs text-white/60 mt-0.5">
                     {formatDate(conversation.updatedAt)}
                   </div>
-                  <div class="text-sm text-white/70 truncate">
+                  <div class="text-xs text-exo-light-gray truncate">
                     {info.modelLabel}
                   </div>
-                  <div class="text-xs text-white/60 font-mono">
-                    Strategy: <span class="text-white/80"
-                      >{info.strategyLabel}</span
-                    >
-                  </div>
                   {#if stats}
-                    <div class="text-xs text-white/60 font-mono mt-1">
-                      {#if stats.ttftMs}<span class="text-white/40">TTFT</span>
-                        {stats.ttftMs.toFixed(
-                          0,
-                        )}ms{/if}{#if stats.ttftMs && stats.tps}<span
-                          class="text-white/30 mx-1.5">•</span
-                        >{/if}{#if stats.tps}{stats.tps.toFixed(1)}
-                        <span class="text-white/40">tok/s</span>{/if}
+                    <div class="text-xs text-white/70 font-mono mt-1">
+                      {#if stats.ttftMs}<span class="text-white/50">TTFT</span>
+                        <span class="text-exo-yellow/80"
+                          >{stats.ttftMs.toFixed(0)}ms</span
+                        >{/if}{#if stats.ttftMs && stats.tps}<span
+                          class="text-white/30 mx-1.5">·</span
+                        >{/if}{#if stats.tps}<span class="text-exo-yellow/80"
+                          >{stats.tps.toFixed(1)}</span
+                        >
+                        <span class="text-white/50">tok/s</span>{/if}
                     </div>
                   {/if}
                 </div>
