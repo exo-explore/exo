@@ -6,6 +6,7 @@ import pytest
 
 import exo.worker.runner.runner as mlx_runner
 from exo.shared.types.chunks import TokenChunk
+from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -19,6 +20,7 @@ from exo.shared.types.tasks import (
     Shutdown,
     StartWarmup,
     Task,
+    TaskId,
     TaskStatus,
     TextGeneration,
 )
@@ -37,6 +39,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import mp_channel
+from exo.worker.engines.mlx.generator.batch_engine import BatchedGenerationResponse
 
 from ...constants import (
     CHAT_COMPLETION_TASK_ID,
@@ -113,15 +116,7 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
     monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", nothin)
-    # Mock apply_chat_template since we're using a fake tokenizer (integer 1).
-    # Returns a prompt without thinking tag so detect_thinking_prompt_suffix returns None.
-    monkeypatch.setattr(mlx_runner, "apply_chat_template", make_nothin("test prompt"))
-    monkeypatch.setattr(mlx_runner, "detect_thinking_prompt_suffix", make_nothin(False))
-
-    def fake_generate(*_1: object, **_2: object):
-        yield GenerationResponse(token=0, text="hi", finish_reason="stop", usage=None)
-
-    monkeypatch.setattr(mlx_runner, "mlx_generate", fake_generate)
+    monkeypatch.setattr(mlx_runner, "BatchGenerationEngine", FakeBatchEngine)
 
 
 # Use a fake event_sender to remove test flakiness.
@@ -152,6 +147,65 @@ class MockGroup:
 
     def size(self) -> int:
         return 1
+
+
+class FakeBatchEngine:
+    """Fake batch engine that generates a single 'hi' token per request."""
+
+    def __init__(self, *_args: object, **_kwargs: object):
+        self._active_requests: dict[int, tuple[CommandId, TaskId]] = {}
+        self._pending_inserts: list[tuple[CommandId, TaskId, object]] = []
+        self._uid_counter = 0
+        self.rank = 0
+
+    def queue_request(
+        self, command_id: CommandId, task_id: TaskId, task_params: object
+    ) -> None:
+        self._pending_inserts.append((command_id, task_id, task_params))
+
+    def sync_and_insert_pending(self) -> list[int]:
+        uids: list[int] = []
+        for cmd_id, task_id, _params in self._pending_inserts:
+            uid = self._uid_counter
+            self._uid_counter += 1
+            self._active_requests[uid] = (cmd_id, task_id)
+            uids.append(uid)
+        self._pending_inserts.clear()
+        return uids
+
+    def step(self) -> list[BatchedGenerationResponse]:
+        results: list[BatchedGenerationResponse] = []
+        for _uid, (cmd_id, task_id) in list(self._active_requests.items()):
+            results.append(
+                BatchedGenerationResponse(
+                    command_id=cmd_id,
+                    task_id=task_id,
+                    response=GenerationResponse(
+                        token=0, text="hi", finish_reason="stop", usage=None
+                    ),
+                )
+            )
+        self._active_requests.clear()
+        return results
+
+    def sync_completions(self) -> None:
+        pass
+
+    @property
+    def has_active_requests(self) -> bool:
+        return bool(self._active_requests)
+
+    @property
+    def has_pending_inserts(self) -> bool:
+        return bool(self._pending_inserts)
+
+    @property
+    def active_count(self) -> int:
+        return len(self._active_requests)
+
+    @property
+    def is_distributed(self) -> bool:
+        return False
 
 
 def _run(tasks: Iterable[Task]):
@@ -219,18 +273,21 @@ def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
             TaskAcknowledged(task_id=WARMUP_TASK_ID),
             TaskStatusUpdated(task_id=WARMUP_TASK_ID, task_status=TaskStatus.Complete),
             RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerReady()),
+            # CHAT TASK: queued into batch engine (not processed synchronously)
             TaskStatusUpdated(
                 task_id=CHAT_COMPLETION_TASK_ID, task_status=TaskStatus.Running
             ),
-            RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerRunning()),
             TaskAcknowledged(task_id=CHAT_COMPLETION_TASK_ID),
-            expected_chunk,
             TaskStatusUpdated(
                 task_id=CHAT_COMPLETION_TASK_ID, task_status=TaskStatus.Complete
             ),
-            # CHAT COMPLETION TASK SHOULD COMPLETE BEFORE RUNNER READY
-            RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerReady()),
+            RunnerStatusUpdated(
+                runner_id=RUNNER_1_ID,
+                runner_status=RunnerRunning(active_requests=1),
+            ),
+            # SHUTDOWN: batch engine drained first, then shutdown
             TaskStatusUpdated(task_id=SHUTDOWN_TASK_ID, task_status=TaskStatus.Running),
+            expected_chunk,
             RunnerStatusUpdated(
                 runner_id=RUNNER_1_ID, runner_status=RunnerShuttingDown()
             ),

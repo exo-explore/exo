@@ -18,15 +18,10 @@ NOTE: These tests require the continuous-batching runner architecture
 # pyright: reportAttributeAccessIssue=false
 # pyright: reportInvalidTypeVarUse=false
 
-import pytest
-
-pytest.skip(
-    "continuous batching runner not yet integrated with main branch runner",
-    allow_module_level=True,
-)
-
 from typing import Any
 from unittest.mock import MagicMock
+
+import pytest
 
 import exo.worker.runner.runner as mlx_runner
 from exo.shared.types.common import CommandId, NodeId
@@ -167,6 +162,9 @@ class FakeBatchEngineWithTokens:
     @property
     def pending_insert_count(self) -> int:
         return len(self._pending_inserts)
+
+    def sync_completions(self) -> None:
+        pass  # Completions already removed in step()
 
     @property
     def is_distributed(self) -> bool:
