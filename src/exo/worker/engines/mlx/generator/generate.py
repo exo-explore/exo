@@ -153,21 +153,35 @@ def warmup_inference(
     mx_barrier(group)
 
     logger.info("Generating warmup tokens")
-    for _r in stream_generate(
-        model=model,
-        tokenizer=tokenizer,
-        prompt=warmup_prompt,
-        max_tokens=50,
-        sampler=sampler,
-        prompt_cache=cache,
-        prefill_step_size=2048,
-        kv_group_size=KV_GROUP_SIZE,
-        kv_bits=KV_BITS,
-    ):
-        logger.info("Generated warmup token: " + str(_r.text))
-        tokens_generated += 1
+    try:
+        for _r in stream_generate(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=warmup_prompt,
+            max_tokens=50,
+            sampler=sampler,
+            prompt_cache=cache,
+            prefill_step_size=2048,
+            kv_group_size=KV_GROUP_SIZE,
+            kv_bits=KV_BITS,
+        ):
+            logger.info("Generated warmup token: " + str(_r.text))
+            tokens_generated += 1
 
-    logger.info("Generated ALL warmup tokens")
+        logger.info("Generated ALL warmup tokens")
+    except RuntimeError as e:
+        # MLX CPU JIT can fail on some platforms (e.g. Linux ARM) with compile
+        # errors (e.g. _Float128 redeclaration). Allow runner to continue
+        # without warmup so the model can still be used.
+        logger.warning(
+            "Warmup inference failed (e.g. MLX CPU compile on this platform): {}",
+            e,
+        )
+        logger.info(
+            "Continuing without warmup; first request may be slower. "
+            "Generated {} warmup tokens.",
+            tokens_generated,
+        )
 
     mx_barrier(group)
 

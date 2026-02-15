@@ -233,28 +233,36 @@ def main(
                         assert inference_model
                         assert tokenizer
 
-                        t = time.monotonic()
-                        toks = warmup_inference(
-                            model=inference_model,
-                            tokenizer=tokenizer,
-                            group=group,
-                        )
-                        logger.info(f"warmed up by generating {toks} tokens")
-                        check_for_cancel_every = min(
-                            math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
-                        )
-                        if group is not None:
-                            check_for_cancel_every = int(
-                                mx.max(
-                                    mx.distributed.all_gather(
-                                        mx.array([check_for_cancel_every]), group=group
-                                    )
-                                ).item()
+                        try:
+                            t = time.monotonic()
+                            toks = warmup_inference(
+                                model=inference_model,
+                                tokenizer=tokenizer,
+                                group=group,
                             )
+                            logger.info(f"warmed up by generating {toks} tokens")
+                            check_for_cancel_every = min(
+                                math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
+                            )
+                            if group is not None:
+                                check_for_cancel_every = int(
+                                    mx.max(
+                                        mx.distributed.all_gather(
+                                            mx.array([check_for_cancel_every]),
+                                            group=group,
+                                        )
+                                    ).item()
+                                )
 
-                        logger.info(
-                            f"runner checking for cancellation every {check_for_cancel_every} tokens"
-                        )
+                            logger.info(
+                                f"runner checking for cancellation every {check_for_cancel_every} tokens"
+                            )
+                        except RuntimeError as e:
+                            # e.g. MLX CPU JIT compile failure on Linux/ARM (issue #1431)
+                            logger.warning(
+                                "Warmup failed (runner will still be ready): {}",
+                                e,
+                            )
                         logger.info(
                             f"runner initialized in {time.time() - setup_start_time} seconds"
                         )
