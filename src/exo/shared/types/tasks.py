@@ -24,7 +24,6 @@ class TaskStatus(str, Enum):
     Complete = "Complete"
     TimedOut = "TimedOut"
     Failed = "Failed"
-    Cancelled = "Cancelled"
 
 
 class BaseTask(TaggedModel):
@@ -61,11 +60,6 @@ class TextGeneration(BaseTask):  # emitted by Master
     error_message: str | None = Field(default=None)
 
 
-class CancelTask(BaseTask):  # emitted by Worker when master cancels a task
-    cancelled_task_id: TaskId
-    runner_id: RunnerId
-
-
 class ImageGeneration(BaseTask):  # emitted by Master
     command_id: CommandId
     task_params: ImageGenerationTaskParams
@@ -93,7 +87,6 @@ Task = (
     | LoadModel
     | StartWarmup
     | TextGeneration
-    | CancelTask
     | ImageGeneration
     | ImageEdits
     | Shutdown

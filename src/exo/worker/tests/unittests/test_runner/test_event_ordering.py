@@ -1,9 +1,7 @@
 # Check tasks are complete before runner is ever ready.
-import unittest.mock
 from collections.abc import Iterable
 from typing import Callable
 
-import mlx.core as mx
 import pytest
 
 import exo.worker.runner.runner as mlx_runner
@@ -21,7 +19,6 @@ from exo.shared.types.tasks import (
     Shutdown,
     StartWarmup,
     Task,
-    TaskId,
     TaskStatus,
     TextGeneration,
 )
@@ -116,7 +113,6 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
     monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", nothin)
-    monkeypatch.setattr(mlx_runner, "mx_any", make_nothin(False))
     # Mock apply_chat_template since we're using a fake tokenizer (integer 1).
     # Returns a prompt without thinking tag so detect_thinking_prompt_suffix returns None.
     monkeypatch.setattr(mlx_runner, "apply_chat_template", make_nothin("test prompt"))
@@ -167,7 +163,6 @@ def _run(tasks: Iterable[Task]):
     )
 
     task_sender, task_receiver = mp_channel[Task]()
-    _cancel_sender, cancel_receiver = mp_channel[TaskId]()
     event_sender = EventCollector()
 
     with task_sender:
@@ -178,19 +173,8 @@ def _run(tasks: Iterable[Task]):
         # this is some c++ nonsense
         task_receiver.close = nothin
         task_receiver.join = nothin
-        cancel_receiver.close = nothin
-        cancel_receiver.join = nothin
 
-        with unittest.mock.patch(
-            "exo.worker.runner.runner.mx.distributed.all_gather",
-            make_nothin(mx.array([1])),
-        ):
-            mlx_runner.main(
-                bound_instance,
-                event_sender,  # pyright: ignore[reportArgumentType]
-                task_receiver,
-                cancel_receiver,
-            )
+        mlx_runner.main(bound_instance, event_sender, task_receiver)  # type: ignore[arg-type]
 
         return event_sender.events
 

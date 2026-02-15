@@ -1,6 +1,5 @@
 import base64
 import json
-import math
 import resource
 import time
 from collections.abc import Generator
@@ -89,7 +88,6 @@ from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
     load_mlx_items,
     mlx_force_oom,
-    mx_any,
 )
 from exo.worker.runner.bootstrap import logger
 
@@ -114,7 +112,6 @@ def main(
     bound_instance: BoundInstance,
     event_sender: MpSender[Event],
     task_receiver: MpReceiver[Task],
-    cancel_receiver: MpReceiver[TaskId],
 ):
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
@@ -132,13 +129,11 @@ def main(
         time.sleep(timeout)
 
     setup_start_time = time.time()
-    cancelled_tasks = set[TaskId]()
 
     model: Model | DistributedImageModel | None = None
     tokenizer = None
     group = None
     kv_prefix_cache: KVPrefixCache | None = None
-    check_for_cancel_every: int | None = None
 
     current_status: RunnerStatus = RunnerIdle()
     logger.info("runner created")
@@ -151,7 +146,6 @@ def main(
             if task.task_id in seen:
                 logger.warning("repeat task - potential error")
             seen.add(task.task_id)
-            cancelled_tasks.discard(TaskId("CANCEL_CURRENT_TASK"))
             event_sender.send(
                 TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Running)
             )
@@ -233,7 +227,6 @@ def main(
                         assert not isinstance(model, DistributedImageModel)
                         assert tokenizer
 
-                        t = time.perf_counter()
                         toks = warmup_inference(
                             model=model,
                             tokenizer=tokenizer,
@@ -241,20 +234,6 @@ def main(
                             # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
                         )
                         logger.info(f"warmed up by generating {toks} tokens")
-                        check_for_cancel_every = min(
-                            math.ceil(toks / (time.perf_counter() - t)), 100
-                        )
-                        if group is not None:
-                            check_for_cancel_every = int(
-                                mx.max(
-                                    mx.distributed.all_gather(
-                                        mx.array([check_for_cancel_every]), group=group
-                                    )
-                                ).item()
-                            )
-                        logger.info(
-                            f"runner checking for cancellation every {check_for_cancel_every} tokens"
-                        )
                         logger.info(
                             f"runner initialized in {time.time() - setup_start_time} seconds"
                         )
@@ -284,7 +263,6 @@ def main(
                     )
                     event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
-                    assert check_for_cancel_every
                     assert model and not isinstance(model, DistributedImageModel)
                     assert tokenizer
 
@@ -338,18 +316,7 @@ def main(
                             )
 
                         completion_tokens = 0
-                        tokens_since_last_cancel_check = 0
                         for response in mlx_generator:
-                            tokens_since_last_cancel_check += 1
-                            if tokens_since_last_cancel_check >= check_for_cancel_every:
-                                tokens_since_last_cancel_check = 0
-                                cancelled_tasks.update(cancel_receiver.collect())
-                                want_to_cancel = (task.task_id in cancelled_tasks) or (
-                                    TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
-                                )
-                                if mx_any(want_to_cancel, group):
-                                    break
-
                             match response:
                                 case GenerationResponse():
                                     completion_tokens += 1

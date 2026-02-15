@@ -4,7 +4,6 @@ from collections.abc import Mapping, Sequence
 
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.tasks import (
-    CancelTask,
     ConnectToGroup,
     CreateRunner,
     DownloadModel,
@@ -55,8 +54,7 @@ def plan(
 ) -> Task | None:
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
-        _cancel_tasks(runners, tasks)
-        or _kill_runner(runners, all_runners, instances)
+        _kill_runner(runners, all_runners, instances)
         or _create_runner(node_id, runners, instances, all_runners)
         or _model_needs_download(node_id, runners, global_download_status)
         or _init_distributed_backend(runners, all_runners)
@@ -325,23 +323,3 @@ def _pending_tasks(
                 for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
             ):
                 return task
-
-
-def _cancel_tasks(
-    runners: Mapping[RunnerId, RunnerSupervisor],
-    tasks: Mapping[TaskId, Task],
-) -> CancelTask | None:
-    """Find a cancelled task that hasn't been sent to the runner yet."""
-    for task in tasks.values():
-        if task.task_status != TaskStatus.Cancelled:
-            continue
-        for runner_id, runner in runners.items():
-            if task.instance_id != runner.bound_instance.instance.instance_id:
-                continue
-            if task.task_id in runner.cancelled:
-                continue
-            return CancelTask(
-                instance_id=task.instance_id,
-                cancelled_task_id=task.task_id,
-                runner_id=runner_id,
-            )

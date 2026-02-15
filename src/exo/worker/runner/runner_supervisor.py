@@ -72,7 +72,6 @@ class RunnerSupervisor:
     initialize_timeout: float
     _ev_recv: MpReceiver[Event]
     _task_sender: MpSender[Task]
-    _cancel_sender: MpSender[TaskId]
     _event_sender: Sender[Event]
     _pipe_read_fd: int | None = None  # Python reads runner's pipe output
     _pipe_write_fd: int | None = None  # Python writes gathered data to runner
@@ -83,7 +82,6 @@ class RunnerSupervisor:
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
     completed: set[TaskId] = field(default_factory=set, init=False)
-    cancelled: set[TaskId] = field(default_factory=set, init=False)
     _gathered_waiters: dict[
         int, tuple[anyio.Event, JacclSideChannelGathered | None]
     ] = field(default_factory=dict, init=False)
@@ -97,8 +95,8 @@ class RunnerSupervisor:
         initialize_timeout: float = 400,
     ) -> Self:
         ev_send, ev_recv = mp_channel[Event]()
+        # A task is kind of a runner command
         task_sender, task_recv = mp_channel[Task]()
-        cancel_sender, cancel_recv = mp_channel[TaskId]()
 
         # For MlxJaccl instances, create named pipes (FIFOs) for SideChannel relay.
         # Named pipes work across multiprocessing.Process spawn (macOS default).
@@ -123,7 +121,6 @@ class RunnerSupervisor:
                 bound_instance,
                 ev_send,
                 task_recv,
-                cancel_recv,
                 logger,
                 pipe_fifo_paths,
             ),
@@ -139,7 +136,6 @@ class RunnerSupervisor:
             initialize_timeout=initialize_timeout,
             _ev_recv=ev_recv,
             _task_sender=task_sender,
-            _cancel_sender=cancel_sender,
             _event_sender=event_sender,
             _fifo_dir=fifo_dir,
             _fifo_c2p=fifo_c2p,
@@ -185,8 +181,6 @@ class RunnerSupervisor:
         logger.info("Runner supervisor shutting down")
         self._ev_recv.close()
         self._task_sender.close()
-        self._cancel_sender.send(TaskId("CANCEL_CURRENT_TASK"))
-        self._cancel_sender.close()
         self._event_sender.close()
         self._close_pipe_fds()
         self.runner_process.join(1)
@@ -232,18 +226,6 @@ class RunnerSupervisor:
             logger.warning(f"Task {task} dropped, runner closed communication.")
             return
         await event.wait()
-
-    async def cancel_task(self, task_id: TaskId):
-        """Send a cancellation signal to the runner process."""
-        if task_id in self.completed:
-            logger.info(f"Unable to cancel {task_id} as it has been completed")
-            return
-        self.cancelled.add(task_id)
-        with anyio.move_on_after(0.5) as scope:
-            await self._cancel_sender.send_async(task_id)
-        if scope.cancel_called:
-            logger.error("RunnerSupervisor cancel pipe blocked")
-            await self._check_runner(TimeoutError("cancel pipe blocked"))
 
     async def _forward_events(self):
         with self._ev_recv as events:

@@ -130,7 +130,6 @@ from exo.shared.types.commands import (
     PlaceInstance,
     SendInputChunk,
     StartDownload,
-    TaskCancelled,
     TaskFinished,
     TextGeneration,
 )
@@ -584,11 +583,12 @@ class API:
                         break
 
         except anyio.get_cancelled_exc_class():
-            cancel_command = TaskCancelled(cancelled_command_id=command_id)
-            with anyio.CancelScope(shield=True):
-                await self.command_sender.send(
-                    ForwarderCommand(origin=self.node_id, command=cancel_command)
-                )
+            # TODO: TaskCancelled
+            """
+            self.command_sender.send_nowait(
+                ForwarderCommand(origin=self.node_id, command=command)
+            )
+            """
             raise
         finally:
             command = TaskFinished(finished_command_id=command_id)
@@ -926,11 +926,6 @@ class API:
                         del image_metadata[key]
 
         except anyio.get_cancelled_exc_class():
-            cancel_command = TaskCancelled(cancelled_command_id=command_id)
-            with anyio.CancelScope(shield=True):
-                await self.command_sender.send(
-                    ForwarderCommand(origin=self.node_id, command=cancel_command)
-                )
             raise
         finally:
             await self._send(TaskFinished(finished_command_id=command_id))
@@ -1012,11 +1007,6 @@ class API:
 
             return (images, stats if capture_stats else None)
         except anyio.get_cancelled_exc_class():
-            cancel_command = TaskCancelled(cancelled_command_id=command_id)
-            with anyio.CancelScope(shield=True):
-                await self.command_sender.send(
-                    ForwarderCommand(origin=self.node_id, command=cancel_command)
-                )
             raise
         finally:
             await self._send(TaskFinished(finished_command_id=command_id))
