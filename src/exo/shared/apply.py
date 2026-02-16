@@ -225,7 +225,17 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
     new_instances: Mapping[InstanceId, Instance] = {
         iid: inst for iid, inst in state.instances.items() if iid != event.instance_id
     }
-    update: dict[str, object] = {"instances": new_instances}
+    # Clean up runner entries belonging to the deleted instance
+    runner_ids_to_remove: set[RunnerId] = set()
+    if deleted_instance is not None:
+        runner_ids_to_remove = set(
+            deleted_instance.shard_assignments.runner_to_shard.keys()
+        )
+    new_runners: Mapping[RunnerId, RunnerStatus] = {
+        rid: rs for rid, rs in state.runners.items() if rid not in runner_ids_to_remove
+    }
+
+    update: dict[str, object] = {"instances": new_instances, "runners": new_runners}
 
     # Track failure on the MetaInstance itself
     if (
