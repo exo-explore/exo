@@ -2199,18 +2199,19 @@
             >
               exo
             </div>
-            <h1 class="text-2xl font-mono text-white/90 mb-3">
+            <h1
+              class="text-2xl font-sans font-light text-white/90 mb-3 tracking-wide"
+            >
               Welcome to exo
             </h1>
-            <p class="text-base text-white/60 leading-relaxed">
-              Run AI models locally, across all your devices. Let's get you set
-              up.
+            <p class="text-base font-sans text-white/50 leading-relaxed">
+              Run AI models locally, across all your devices.
             </p>
           </div>
           <button
             type="button"
             onclick={() => (onboardingStep = 2)}
-            class="inline-flex items-center gap-2 px-8 py-3.5 bg-exo-yellow text-exo-black font-mono text-sm font-bold tracking-wider uppercase rounded-lg hover:bg-exo-yellow-darker hover:shadow-[0_0_30px_rgba(255,215,0,0.3)] transition-all duration-200 cursor-pointer"
+            class="inline-flex items-center gap-2 px-8 py-3 bg-exo-yellow text-exo-black font-sans text-sm font-semibold rounded-full hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.2)] transition-all duration-200 cursor-pointer"
           >
             Get Started
             <svg
@@ -2236,10 +2237,12 @@
           out:fade={{ duration: 200 }}
         >
           <div class="text-center mb-6">
-            <h1 class="text-2xl font-mono text-white/90 mb-2">
-              Here are your devices
+            <h1
+              class="text-2xl font-sans font-light text-white/90 mb-2 tracking-wide"
+            >
+              Your devices
             </h1>
-            <p class="text-sm text-white/60">
+            <p class="text-sm font-sans text-white/50">
               {nodeCount} device{nodeCount !== 1 ? "s" : ""} connected
               {#if clusterTotalMemoryGB() > 0}
                 · {clusterTotalMemoryGB().toFixed(0)} GB total memory
@@ -2256,15 +2259,16 @@
               onNodeClick={togglePreviewNodeFilter}
             />
           </div>
-          <p class="text-sm text-white/50 mt-2 max-w-md text-center">
-            Running on {nodeCount} device{nodeCount !== 1 ? "s" : ""}. Install
-            exo on more devices on your network to combine their power — they
-            connect automatically.
+          <p
+            class="text-sm font-sans text-white/40 mt-2 max-w-md text-center leading-relaxed"
+          >
+            Install exo on more devices on your network to combine their power —
+            they connect automatically.
           </p>
           <button
             type="button"
             onclick={() => (onboardingStep = 3)}
-            class="inline-flex items-center gap-2 px-8 py-3.5 mt-6 bg-exo-yellow text-exo-black font-mono text-sm font-bold tracking-wider uppercase rounded-lg hover:bg-exo-yellow-darker hover:shadow-[0_0_30px_rgba(255,215,0,0.3)] transition-all duration-200 cursor-pointer"
+            class="inline-flex items-center gap-2 px-8 py-3 mt-6 bg-exo-yellow text-exo-black font-sans text-sm font-semibold rounded-full hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.2)] transition-all duration-200 cursor-pointer"
           >
             Continue
             <svg
@@ -2290,11 +2294,13 @@
           out:fade={{ duration: 200 }}
         >
           <div class="text-center mb-8">
-            <h1 class="text-2xl font-mono text-white/90 mb-2">
+            <h1
+              class="text-2xl font-sans font-light text-white/90 mb-2 tracking-wide"
+            >
               Choose a model
             </h1>
-            <p class="text-sm text-white/60">
-              Pick a model to download and run on your cluster.
+            <p class="text-sm font-sans text-white/50">
+              Pick a model to download and run locally.
             </p>
           </div>
 
@@ -2309,7 +2315,7 @@
 
           {#if onboardingModels.length === 0}
             <div class="text-center py-8">
-              <div class="text-sm text-white/50 font-mono animate-pulse">
+              <div class="text-sm text-white/40 font-sans animate-pulse">
                 Loading models...
               </div>
             </div>
@@ -2322,28 +2328,29 @@
                 <button
                   type="button"
                   onclick={() => onboardingLaunchModel(model.id)}
-                  class="w-full flex items-center justify-between gap-4 px-5 py-4 rounded-lg border transition-all duration-200 cursor-pointer {fitsNow
-                    ? 'border-white/10 bg-white/[0.03] hover:border-exo-yellow/40 hover:bg-white/[0.06]'
-                    : 'border-white/5 bg-white/[0.01] hover:border-white/15 opacity-70'}"
+                  class="w-full flex items-center justify-between gap-4 px-5 py-4 rounded-xl border transition-all duration-200 cursor-pointer {fitsNow
+                    ? 'border-white/8 bg-white/[0.03] hover:border-exo-yellow/30 hover:bg-white/[0.05]'
+                    : 'border-white/5 bg-white/[0.01] hover:border-white/10 opacity-60'}"
                 >
                   <div class="flex flex-col items-start gap-1 min-w-0">
                     <div class="flex items-center gap-2">
-                      <span class="text-sm font-mono text-white/90 truncate"
+                      <span
+                        class="text-sm font-sans font-medium text-white/90 truncate"
                         >{model.name || model.id}</span
                       >
                       {#each tags as tag}
                         <span
-                          class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-exo-yellow/15 text-exo-yellow tracking-wider"
+                          class="text-[10px] font-sans font-medium px-1.5 py-0.5 rounded-full bg-exo-yellow/10 text-exo-yellow/80"
                           >{tag}</span
                         >
                       {/each}
                     </div>
-                    <span class="text-xs font-mono text-white/40 truncate"
+                    <span class="text-xs font-mono text-white/30 truncate"
                       >{model.id}</span
                     >
                   </div>
                   <div class="flex items-center gap-3 flex-shrink-0">
-                    <span class="text-xs font-mono text-white/50"
+                    <span class="text-xs font-mono text-white/40"
                       >{sizeGB >= 1 ? sizeGB.toFixed(0) : sizeGB.toFixed(1)} GB</span
                     >
                     <svg
@@ -2370,7 +2377,7 @@
             onclick={() => {
               isModelPickerOpen = true;
             }}
-            class="text-sm font-mono text-white/50 hover:text-exo-yellow transition-colors cursor-pointer underline underline-offset-4 decoration-white/20 hover:decoration-exo-yellow/40"
+            class="text-sm font-sans text-white/40 hover:text-exo-yellow/80 transition-colors cursor-pointer underline underline-offset-4 decoration-white/15 hover:decoration-exo-yellow/30"
           >
             Browse all models
           </button>
@@ -2383,7 +2390,11 @@
           out:fade={{ duration: 200 }}
         >
           <div class="mb-8">
-            <h1 class="text-2xl font-mono text-white/90 mb-2">Downloading</h1>
+            <h1
+              class="text-2xl font-sans font-light text-white/90 mb-2 tracking-wide"
+            >
+              Downloading
+            </h1>
             <p class="text-sm text-white/60">
               {#if onboardingModelId}
                 <span class="text-exo-yellow">{onboardingModelId}</span>
@@ -2424,7 +2435,7 @@
             </div>
           {/if}
 
-          <p class="text-xs text-white/30 mt-8">
+          <p class="text-xs font-sans text-white/30 mt-8">
             This may take a few minutes depending on your connection.
           </p>
         </div>
@@ -2436,7 +2447,9 @@
           out:fade={{ duration: 200 }}
         >
           <div class="mb-8">
-            <h1 class="text-2xl font-mono text-white/90 mb-2">
+            <h1
+              class="text-2xl font-sans font-light text-white/90 mb-2 tracking-wide"
+            >
               Loading into memory
             </h1>
             <p class="text-sm text-white/60">
@@ -2452,7 +2465,7 @@
             ></div>
           </div>
 
-          <p class="text-sm text-white/40 font-mono">Almost ready...</p>
+          <p class="text-sm text-white/40 font-sans">Almost ready...</p>
         </div>
       {:else if onboardingStep === 6}
         <!-- Step 6: Chat — centered input auto-appears, first message transitions to dashboard -->
@@ -2463,14 +2476,14 @@
         >
           <!-- Subtle branding -->
           <div
-            class="text-2xl font-mono text-white/20 font-bold tracking-wider mb-8"
+            class="text-2xl font-mono text-white/15 font-bold tracking-wider mb-8"
           >
             exo
           </div>
 
           <!-- Model name -->
           {#if onboardingModelId}
-            <p class="text-sm text-white/40 font-mono mb-4">
+            <p class="text-sm text-white/35 font-sans mb-4">
               {onboardingModelId.split("/").pop() ?? onboardingModelId}
             </p>
           {/if}
@@ -2489,7 +2502,7 @@
           </div>
 
           <!-- Suggestion chips -->
-          <div class="flex flex-wrap justify-center gap-3 mt-6">
+          <div class="flex flex-wrap justify-center gap-2.5 mt-8">
             {#each ["Write a poem about the ocean", "Explain quantum computing simply", "Help me debug my code", "Tell me a creative story"] as chip}
               <button
                 type="button"
@@ -2497,7 +2510,7 @@
                   sendMessage(chip);
                   completeOnboarding();
                 }}
-                class="px-4 py-2 rounded-full border border-white/10 bg-white/5 text-sm text-white/60 hover:bg-white/10 hover:text-white/80 hover:border-white/20 transition-all duration-200 cursor-pointer"
+                class="px-4 py-2 rounded-full border border-white/8 bg-white/[0.03] text-[13px] font-sans text-white/50 hover:bg-white/[0.07] hover:text-white/70 hover:border-white/15 transition-all duration-200 cursor-pointer"
               >
                 {chip}
               </button>
@@ -2676,13 +2689,15 @@
                   class="absolute inset-0 flex items-center justify-center pointer-events-none"
                 >
                   <div class="text-center pointer-events-auto max-w-md px-6">
-                    <div class="mb-4">
+                    <div class="mb-5">
                       <div
                         class="text-2xl font-mono text-exo-yellow font-bold tracking-wide mb-2"
                       >
-                        Welcome to exo
+                        exo
                       </div>
-                      <p class="text-sm text-white/70 leading-relaxed">
+                      <p
+                        class="text-sm font-sans text-white/50 leading-relaxed"
+                      >
                         Your devices are connected. Choose a model to start
                         running AI locally.
                       </p>
@@ -2690,7 +2705,7 @@
                     <button
                       type="button"
                       onclick={() => (isModelPickerOpen = true)}
-                      class="inline-flex items-center gap-2 px-6 py-3 bg-exo-yellow text-exo-black font-mono text-sm font-bold tracking-wider uppercase rounded-lg hover:bg-exo-yellow-darker hover:shadow-[0_0_30px_rgba(255,215,0,0.3)] transition-all duration-200 cursor-pointer"
+                      class="inline-flex items-center gap-2 px-6 py-3 bg-exo-yellow text-exo-black font-sans text-sm font-semibold rounded-full hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.2)] transition-all duration-200 cursor-pointer"
                     >
                       <svg
                         class="w-5 h-5"
