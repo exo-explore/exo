@@ -225,7 +225,10 @@
         if (!peer) continue;
 
         const pairKey = [unhealthyId, peer].sort().join("-");
-        if (seenPairs.has(pairKey)) continue;
+        if (seenPairs.has(pairKey)) {
+          foundPeer = true;
+          continue;
+        }
         seenPairs.add(pairKey);
         foundPeer = true;
 
