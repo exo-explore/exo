@@ -70,14 +70,21 @@ class ScriptedBatchEngine:
     """
 
     def __init__(self, *_args: Any, **_kwargs: Any):
-        self._active: dict[int, tuple[CommandId, TaskId, list[tuple[str, FinishReason | None]]]] = {}
+        self._active: dict[
+            int, tuple[CommandId, TaskId, list[tuple[str, FinishReason | None]]]
+        ] = {}
         self._pending: list[tuple[CommandId, TaskId, TextGenerationTaskParams]] = []
         self._uid = 0
         self.rank = 0
         # map command_id -> scripted tokens, set externally before tasks arrive
         self.scripts: dict[str, list[tuple[str, FinishReason | None]]] = {}
 
-    def queue_request(self, command_id: CommandId, task_id: TaskId, task_params: TextGenerationTaskParams) -> None:
+    def queue_request(
+        self,
+        command_id: CommandId,
+        task_id: TaskId,
+        task_params: TextGenerationTaskParams,
+    ) -> None:
         self._pending.append((command_id, task_id, task_params))
 
     def sync_and_insert_pending(self) -> list[int]:
@@ -138,11 +145,18 @@ class FakeBatchEngineWithTokens:
 
     def __init__(self, *_args: Any, **_kwargs: Any):
         self._active_requests: dict[int, tuple[CommandId, TaskId, int, int]] = {}
-        self._pending_inserts: list[tuple[CommandId, TaskId, TextGenerationTaskParams]] = []
+        self._pending_inserts: list[
+            tuple[CommandId, TaskId, TextGenerationTaskParams]
+        ] = []
         self._uid_counter = 0
         self.rank = 0
 
-    def queue_request(self, command_id: CommandId, task_id: TaskId, task_params: TextGenerationTaskParams) -> None:
+    def queue_request(
+        self,
+        command_id: CommandId,
+        task_id: TaskId,
+        task_params: TextGenerationTaskParams,
+    ) -> None:
         self._pending_inserts.append((command_id, task_id, task_params))
 
     def sync_and_insert_pending(self) -> list[int]:
@@ -163,7 +177,9 @@ class FakeBatchEngineWithTokens:
     def step(self) -> list[BatchedGenerationResponse]:
         results: list[BatchedGenerationResponse] = []
         done: list[int] = []
-        for uid, (cmd_id, task_id, tokens_gen, max_tokens) in list(self._active_requests.items()):
+        for uid, (cmd_id, task_id, tokens_gen, max_tokens) in list(
+            self._active_requests.items()
+        ):
             tokens_gen += 1
             finish = "stop" if tokens_gen >= max_tokens else None
             results.append(
@@ -171,7 +187,10 @@ class FakeBatchEngineWithTokens:
                     command_id=cmd_id,
                     task_id=task_id,
                     response=GenerationResponse(
-                        token=tokens_gen, text=f"token{tokens_gen}", finish_reason=finish, usage=None
+                        token=tokens_gen,
+                        text=f"token{tokens_gen}",
+                        finish_reason=finish,
+                        usage=None,
                     ),
                 )
             )
@@ -263,7 +282,9 @@ WARMUP_TASK = StartWarmup(task_id=TaskId("warmup"), instance_id=INSTANCE_1_ID)
 SETUP_TASKS: list[Task] = [INIT_TASK, LOAD_TASK, WARMUP_TASK]
 
 
-def make_chat_task(task_id: str, command_id: str, max_tokens: int = 3) -> TextGeneration:
+def make_chat_task(
+    task_id: str, command_id: str, max_tokens: int = 3
+) -> TextGeneration:
     return TextGeneration(
         task_id=TaskId(task_id),
         command_id=CommandId(command_id),
@@ -340,7 +361,8 @@ def _run_with_tasks(
 
 def chunks_for(events: list[Event], command_id: str) -> list[ChunkGenerated]:
     return [
-        e for e in events
+        e
+        for e in events
         if isinstance(e, ChunkGenerated) and e.command_id == CommandId(command_id)
     ]
 
@@ -530,7 +552,11 @@ def test_all_requests_finish_on_same_step():
     ]
     events = _run_with_tasks([*tasks], engine_instance=engine)
 
-    for cmd_id, expected_text in [("cmd_a", "alpha"), ("cmd_b", "beta"), ("cmd_c", "gamma")]:
+    for cmd_id, expected_text in [
+        ("cmd_a", "alpha"),
+        ("cmd_b", "beta"),
+        ("cmd_c", "gamma"),
+    ]:
         c = chunks_for(events, cmd_id)
         assert len(c) == 1, f"Expected 1 chunk for {cmd_id}, got {len(c)}"
         assert isinstance(c[0].chunk, TokenChunk)
@@ -544,13 +570,13 @@ def test_all_requests_finish_on_same_step():
 
     # Runner should be back to RunnerReady after all completions
     last_status = [
-        e for e in events
+        e
+        for e in events
         if isinstance(e, RunnerStatusUpdated)
         and not isinstance(e.runner_status, (RunnerRunning,))
     ]
     ready_after_gen = [
-        e for e in last_status
-        if isinstance(e.runner_status, RunnerReady)
+        e for e in last_status if isinstance(e.runner_status, RunnerReady)
     ]
     assert len(ready_after_gen) >= 2, (
         "Expected RunnerReady after warmup and after generation completes"
@@ -567,7 +593,12 @@ def test_staggered_completions_in_batch():
     engine.scripts["c1"] = [("a", "stop")]  # finishes step 1
     engine.scripts["c2"] = [("a", None), ("b", "stop")]  # finishes step 2
     engine.scripts["c3"] = [("a", None), ("b", None), ("c", "stop")]  # finishes step 3
-    engine.scripts["c4"] = [("a", None), ("b", None), ("c", None), ("d", "stop")]  # finishes step 4
+    engine.scripts["c4"] = [
+        ("a", None),
+        ("b", None),
+        ("c", None),
+        ("d", "stop"),
+    ]  # finishes step 4
 
     tasks = [
         *SETUP_TASKS,
@@ -596,7 +627,9 @@ def test_staggered_completions_in_batch():
 @pytest.fixture
 def patch_batch_engine(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(FakeGroup()))
-    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((MagicMock(), MockTokenizer)))
+    monkeypatch.setattr(
+        mlx_runner, "load_mlx_items", make_nothin((MagicMock(), MockTokenizer))
+    )
     monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", make_nothin(None))
     monkeypatch.setattr(mlx_runner, "BatchGenerationEngine", FakeBatchEngineWithTokens)
@@ -637,11 +670,14 @@ def test_eight_requests_staggered(patch_batch_engine: None):
     # Verify runner transitions back to ready after all requests complete
     # Find the last RunnerReady before shutdown
     ready_events = [
-        (idx, e) for idx, e in enumerate(events)
-        if isinstance(e, RunnerStatusUpdated) and isinstance(e.runner_status, RunnerReady)
+        (idx, e)
+        for idx, e in enumerate(events)
+        if isinstance(e, RunnerStatusUpdated)
+        and isinstance(e.runner_status, RunnerReady)
     ]
     shutdown_idx = next(
-        idx for idx, e in enumerate(events)
+        idx
+        for idx, e in enumerate(events)
         if isinstance(e, TaskStatusUpdated)
         and e.task_id == TaskId("shutdown")
         and e.task_status == TaskStatus.Running
