@@ -2455,64 +2455,54 @@
           <p class="text-sm text-white/40 font-mono">Almost ready...</p>
         </div>
       {:else if onboardingStep === 6}
-        <!-- Step 6: Ready! -->
+        <!-- Step 6: Chat — centered input auto-appears, first message transitions to dashboard -->
         <div
-          class="text-center max-w-lg px-8"
+          class="flex flex-col items-center justify-center w-full max-w-2xl px-8"
           in:fade={{ duration: 400 }}
           out:fade={{ duration: 200 }}
         >
-          <div class="mb-8">
-            <div class="flex justify-center mb-4">
-              <div
-                class="w-16 h-16 rounded-full bg-green-500/10 border border-green-500/30 flex items-center justify-center"
-              >
-                <svg
-                  class="w-8 h-8 text-green-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
-              </div>
-            </div>
-            <h1 class="text-2xl font-mono text-white/90 mb-2">
-              You're all set!
-            </h1>
-            <p class="text-sm text-white/60">
-              {#if onboardingModelId}
-                <span class="text-exo-yellow">{onboardingModelId}</span> is ready.
-              {:else}
-                Your model is ready.
-              {/if}
-            </p>
+          <!-- Subtle branding -->
+          <div
+            class="text-2xl font-mono text-white/20 font-bold tracking-wider mb-8"
+          >
+            exo
           </div>
 
-          <button
-            type="button"
-            onclick={completeOnboarding}
-            class="inline-flex items-center gap-2 px-8 py-3.5 bg-exo-yellow text-exo-black font-mono text-sm font-bold tracking-wider uppercase rounded-lg hover:bg-exo-yellow-darker hover:shadow-[0_0_30px_rgba(255,215,0,0.3)] transition-all duration-200 cursor-pointer"
-          >
-            Start Chatting
-            <svg
-              class="w-4 h-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="2.5"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M13 7l5 5m0 0l-5 5m5-5H6"
-              />
-            </svg>
-          </button>
+          <!-- Model name -->
+          {#if onboardingModelId}
+            <p class="text-sm text-white/40 font-mono mb-4">
+              {onboardingModelId.split("/").pop() ?? onboardingModelId}
+            </p>
+          {/if}
+
+          <!-- Centered ChatForm — first message completes onboarding -->
+          <div class="w-full">
+            <ChatForm
+              placeholder="Ask anything"
+              autofocus={true}
+              showHelperText={false}
+              showModelSelector={false}
+              modelTasks={modelTasks()}
+              modelCapabilities={modelCapabilities()}
+              onSend={completeOnboarding}
+            />
+          </div>
+
+          <!-- Suggestion chips -->
+          <div class="flex flex-wrap justify-center gap-3 mt-6">
+            {#each ["Write a poem about the ocean", "Explain quantum computing simply", "Help me debug my code", "Tell me a creative story"] as chip}
+              <button
+                type="button"
+                onclick={() => {
+                  sendMessage(chip);
+                  completeOnboarding();
+                }}
+                class="px-4 py-2 rounded-full border border-white/10 bg-white/5 text-sm text-white/60 hover:bg-white/10 hover:text-white/80 hover:border-white/20 transition-all duration-200 cursor-pointer"
+              >
+                {chip}
+              </button>
+            {/each}
+          </div>
         </div>
       {/if}
     </div>
@@ -2553,7 +2543,7 @@
     <!-- ═══════════════════════════════════════════════════════ -->
     <!-- MAIN DASHBOARD (shown after onboarding)                -->
     <!-- ═══════════════════════════════════════════════════════ -->
-    {#if !topologyOnlyEnabled && (chatStarted || instanceCount === 0)}
+    {#if !topologyOnlyEnabled}
       <HeaderNav
         showHome={chatStarted}
         onHome={handleGoHome}
@@ -2657,52 +2647,6 @@
                 <path stroke-linecap="round" d="M12 7v5m0 0l-5 5m5-5l5 5" />
               </svg>
             </button>
-          </div>
-        </div>
-      {:else if !chatStarted && instanceCount > 0}
-        <!-- PERPLEXITY-STYLE CHAT HOME: Clean centered input when model is loaded -->
-        <div
-          class="flex-1 flex flex-col items-center justify-center min-h-0 px-8"
-          in:fade={{ duration: 300 }}
-          out:fade={{ duration: 200 }}
-        >
-          <!-- Subtle branding -->
-          <div
-            class="text-2xl font-mono text-white/20 font-bold tracking-wider mb-8"
-          >
-            exo
-          </div>
-
-          <!-- Model name -->
-          {#if selectedChatModel()}
-            <p class="text-sm text-white/40 font-mono mb-4">
-              {selectedChatModel()?.split("/").pop() ?? selectedChatModel()}
-            </p>
-          {/if}
-
-          <!-- Centered ChatForm -->
-          <div class="w-full max-w-2xl">
-            <ChatForm
-              placeholder="Ask anything"
-              autofocus={true}
-              showHelperText={false}
-              showModelSelector={true}
-              modelTasks={modelTasks()}
-              modelCapabilities={modelCapabilities()}
-            />
-          </div>
-
-          <!-- Suggestion chips -->
-          <div class="flex flex-wrap justify-center gap-3 mt-6 max-w-2xl">
-            {#each ["Write a poem about the ocean", "Explain quantum computing simply", "Help me debug my code", "Tell me a creative story"] as chip}
-              <button
-                type="button"
-                onclick={() => sendMessage(chip)}
-                class="px-4 py-2 rounded-full border border-white/10 bg-white/5 text-sm text-white/60 hover:bg-white/10 hover:text-white/80 hover:border-white/20 transition-all duration-200 cursor-pointer"
-              >
-                {chip}
-              </button>
-            {/each}
           </div>
         </div>
       {:else if !chatStarted}
