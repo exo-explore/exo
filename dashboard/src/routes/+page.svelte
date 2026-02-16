@@ -205,47 +205,35 @@
       .map(([id]) => id);
     if (unhealthyNodeIds.length === 0) return null;
 
-    // Cross-reference with RDMA topology edges to identify cable endpoints
+    // Cross-reference with topology edges to identify cable endpoints.
+    // Use ALL edges (not just RDMA-tagged ones) because when RDMA is broken,
+    // the RDMAConnection edges may be absent — only SocketConnection edges remain.
+    // Any direct connection between nodes represents a Thunderbolt cable to re-seat.
     const edges = data?.edges ?? [];
+    const seenPairs = new Set<string>();
     const affectedPairs: Array<{
       nodeA: string;
       nodeB: string;
       nameA: string;
       nameB: string;
     }> = [];
-    const seenPairs = new Set<string>();
 
     for (const unhealthyId of unhealthyNodeIds) {
-      let foundPeer = false;
       for (const edge of edges) {
-        if (!(edge.sourceRdmaIface || edge.sinkRdmaIface)) continue;
         let peer: string | null = null;
         if (edge.source === unhealthyId) peer = edge.target;
         else if (edge.target === unhealthyId) peer = edge.source;
         if (!peer) continue;
 
         const pairKey = [unhealthyId, peer].sort().join("-");
-        if (seenPairs.has(pairKey)) {
-          foundPeer = true;
-          continue;
-        }
+        if (seenPairs.has(pairKey)) continue;
         seenPairs.add(pairKey);
-        foundPeer = true;
 
         affectedPairs.push({
           nodeA: unhealthyId,
           nodeB: peer,
           nameA: getNodeName(unhealthyId),
           nameB: getNodeName(peer),
-        });
-      }
-      // If no RDMA edges found but node is unhealthy, still report it
-      if (!foundPeer) {
-        affectedPairs.push({
-          nodeA: unhealthyId,
-          nodeB: "",
-          nameA: getNodeName(unhealthyId),
-          nameB: "",
         });
       }
     }
@@ -2196,14 +2184,9 @@
             {#each rdmaDeviceUnhealthy as pair}
               <p class="text-xs text-white/60 mb-1">
                 <span class="text-red-300">To fix:</span>
-                {#if pair.nodeB}
-                  Disconnect and reconnect the Thunderbolt 5 cable between
-                  <strong class="text-white">{pair.nameA}</strong> and
-                  <strong class="text-white">{pair.nameB}</strong>.
-                {:else}
-                  Disconnect and reconnect the Thunderbolt 5 cable on
-                  <strong class="text-white">{pair.nameA}</strong>.
-                {/if}
+                Disconnect and reconnect the Thunderbolt 5 cable between
+                <strong class="text-white">{pair.nameA}</strong> and
+                <strong class="text-white">{pair.nameB}</strong>.
               </p>
             {/each}
           </div>
