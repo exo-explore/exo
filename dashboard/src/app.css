@@ -320,3 +320,28 @@ input:focus, textarea:focus {
 		transform: translate(400px, 400px);
 	}
 }
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+	.shooting-star,
+	.shooting-star::before {
+		animation: none !important;
+		opacity: 0 !important;
+	}
+	.graph-link {
+		animation: none;
+	}
+	.status-pulse {
+		animation: none;
+	}
+	.cursor-blink {
+		animation: none;
+	}
+	*,
+	*::before,
+	*::after {
+		transition-duration: 0.01ms !important;
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+	}
+}
