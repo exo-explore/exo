@@ -228,12 +228,14 @@ class MockTokenizer:
     tool_call_start = None
     tool_call_end = None
     has_tool_calling = False
+    has_thinking = False
 
 
 class MockToolTokenizer:
     """Tokenizer with tool calling enabled for testing."""
 
     has_tool_calling = True
+    has_thinking = False
     tool_call_start = "<tool>"
     tool_call_end = "</tool>"
 
