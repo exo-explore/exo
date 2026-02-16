@@ -43,8 +43,9 @@ function generateId(): string {
 
 export function addToast(input: ToastInput): string {
   const id = generateId();
-  const duration =
-    input.persistent ? 0 : (input.duration ?? DEFAULT_DURATIONS[input.type]);
+  const duration = input.persistent
+    ? 0
+    : (input.duration ?? DEFAULT_DURATIONS[input.type]);
 
   const toast: Toast = {
     id,
