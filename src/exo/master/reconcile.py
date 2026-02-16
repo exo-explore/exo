@@ -212,15 +212,24 @@ def try_place_for_meta_instance(
         min_nodes=meta_instance.min_nodes,
     )
     try:
+        # Intersect requested node_ids with live topology nodes so that dead
+        # nodes don't block re-placement.  If the intersection is empty (all
+        # requested nodes are gone), drop the constraint entirely and let the
+        # placement algorithm pick the best available nodes.
+        live_nodes = set(topology.list_nodes())
+        required_nodes: set[NodeId] | None = None
+        if meta_instance.node_ids:
+            alive = set(meta_instance.node_ids) & live_nodes
+            if alive:
+                required_nodes = alive
+
         target_instances = place_instance(
             command,
             topology,
             current_instances,
             node_memory,
             node_network,
-            required_nodes=(
-                set(meta_instance.node_ids) if meta_instance.node_ids else None
-            ),
+            required_nodes=required_nodes,
         )
         # Tag the new instance with meta_instance_id
         new_instance_ids = set(target_instances.keys()) - set(current_instances.keys())

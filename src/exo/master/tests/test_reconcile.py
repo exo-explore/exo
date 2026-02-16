@@ -4,6 +4,7 @@ from exo.master.reconcile import (
     instance_connections_healthy,
     instance_runners_failed,
     instance_satisfies_meta_instance,
+    try_place_for_meta_instance,
 )
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
@@ -740,3 +741,52 @@ async def test_health_reconciler_network_failure_always_deletes():
     assert len(events) == 1
     assert isinstance(events[0], InstanceDeleted)
     assert events[0].failure_error == "Network connection lost"
+
+
+# --- try_place_for_meta_instance: dead node_ids recovery (BUG-B) ---
+
+
+async def test_replaces_instance_when_pinned_node_dies():
+    """When a MetaInstance has node_ids pinned to [A,B,C,D] and node D dies,
+    re-placement should succeed on the remaining [A,B,C] instead of failing
+    because the dead node is no longer in the topology."""
+    from exo.shared.types.profiling import MemoryUsage
+
+    alive_nodes = ["node-a", "node-b", "node-c"]
+    dead_node = "node-d"
+    all_nodes = alive_nodes + [dead_node]
+
+    # MetaInstance was originally pinned to all 4 nodes
+    meta = _meta_instance(
+        node_ids=[NodeId(n) for n in all_nodes],
+        min_nodes=1,
+    )
+
+    # Topology has only the 3 alive nodes (dead node already timed out)
+    topology = _topology(*alive_nodes)
+
+    # Enough memory on each alive node
+    node_memory = {
+        NodeId(n): MemoryUsage(
+            ram_total=Memory.from_gb(32),
+            ram_available=Memory.from_gb(16),
+            swap_total=Memory.from_gb(0),
+            swap_available=Memory.from_gb(0),
+        )
+        for n in alive_nodes
+    }
+
+    model_card = _model_card()
+    result = try_place_for_meta_instance(
+        meta,
+        model_card,
+        topology,
+        current_instances={},
+        node_memory=node_memory,
+        node_network={},
+    )
+
+    # Placement should succeed — not blocked by the dead node
+    assert result.error is None
+    assert len(result.events) > 0
+    assert isinstance(result.events[0], InstanceCreated)
