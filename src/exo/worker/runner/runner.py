@@ -3,6 +3,7 @@ import json
 import resource
 import time
 from collections.abc import Generator
+from dataclasses import dataclass, field
 from functools import cache
 from typing import Any, Callable, Literal
 
@@ -80,10 +81,13 @@ from exo.worker.engines.image import (
     warmup_image_generator,
 )
 from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.cache import KVPrefixCache
-from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
+from exo.worker.engines.mlx.generator.batch_engine import (
+    BatchedGenerationResponse,
+    BatchGenerationEngine,
+)
+from exo.worker.engines.mlx.generator.generate import warmup_inference
+from exo.worker.engines.mlx.generator.time_budget import TimeBudget
 from exo.worker.engines.mlx.utils_mlx import (
-    apply_chat_template,
     detect_thinking_prompt_suffix,
     initialize_mlx,
     load_mlx_items,
@@ -106,6 +110,554 @@ def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:
     elif isinstance(shard_metadata, PipelineShardMetadata):
         return shard_metadata.device_rank == shard_metadata.world_size - 1
     return False
+
+
+def _narrow_finish_reason(
+    raw: str | None,
+) -> Literal["stop", "length", "content_filter"] | None:
+    """Narrow a finish_reason to the subset accepted by TokenChunk."""
+    if raw is None or raw in ("stop", "length", "content_filter"):
+        return raw
+    return "stop"
+
+
+@dataclass
+class ToolCallTracker:
+    """Per-request tool call state machine for the batch generation path.
+
+    Mirrors the logic of parse_tool_calls() but operates on individual tokens
+    from the batch engine rather than a streaming Generator.
+    """
+
+    tool_call_start: str
+    tool_call_end: str
+    tool_parser: Callable[[str], dict[str, Any] | list[dict[str, Any]]]
+    in_tool_call: bool = False
+    tool_call_text_parts: list[str] = field(default_factory=list)
+
+    def process_token(
+        self, response: GenerationResponse, model_id: ModelId
+    ) -> TokenChunk | ToolCallChunk | None:
+        text = response.text
+
+        if text == self.tool_call_start:
+            self.in_tool_call = True
+            return None
+
+        if self.in_tool_call and text == self.tool_call_end:
+            result: TokenChunk | ToolCallChunk
+            try:
+                parsed = self.tool_parser("".join(self.tool_call_text_parts).strip())
+                logger.info(
+                    f"parsed tool_call_text_parts={self.tool_call_text_parts!r} into {parsed=}"
+                )
+                if isinstance(parsed, list):
+                    tools = [_validate_single_tool(tool) for tool in parsed]
+                else:
+                    tools = [_validate_single_tool(parsed)]
+                result = ToolCallChunk(
+                    model=model_id,
+                    tool_calls=tools,
+                    usage=response.usage,
+                    stats=response.stats,
+                )
+            except (
+                json.JSONDecodeError,
+                ValidationError,
+                ValueError,
+                AttributeError,
+            ) as e:
+                logger.opt(exception=e).warning("tool call parsing failed")
+                result = TokenChunk(
+                    model=model_id,
+                    text=self.tool_call_start
+                    + "".join(self.tool_call_text_parts)
+                    + self.tool_call_end,
+                    token_id=response.token,
+                    finish_reason=_narrow_finish_reason(response.finish_reason),
+                    usage=response.usage,
+                    stats=response.stats,
+                    logprob=response.logprob,
+                    top_logprobs=response.top_logprobs,
+                )
+            self.in_tool_call = False
+            self.tool_call_text_parts = []
+            return result
+
+        if self.in_tool_call:
+            self.tool_call_text_parts.append(text)
+            if response.finish_reason is not None:
+                logger.info(
+                    "tool call parsing interrupted, yield partial tool call as text"
+                )
+                partial = TokenChunk(
+                    model=model_id,
+                    text=self.tool_call_start + "".join(self.tool_call_text_parts),
+                    token_id=0,
+                    finish_reason=_narrow_finish_reason(response.finish_reason),
+                    usage=None,
+                )
+                self.in_tool_call = False
+                self.tool_call_text_parts = []
+                return partial
+            return None
+
+        return TokenChunk(
+            model=model_id,
+            text=text,
+            token_id=response.token,
+            finish_reason=_narrow_finish_reason(response.finish_reason),
+            usage=response.usage,
+            stats=response.stats,
+            logprob=response.logprob,
+            top_logprobs=response.top_logprobs,
+        )
+
+
+_KIMI_SECTION_TOKENS = frozenset(
+    {"<|tool_calls_section_begin|>", "<|tool_calls_section_end|>"}
+)
+
+
+@dataclass
+class GptOssTracker:
+    """Per-request GPT-OSS parsing state for the batch generation path.
+
+    Wraps StreamableParser to handle thinking channels and tool call routing
+    on a per-token basis, mirroring parse_gpt_oss() for the batch path.
+    """
+
+    stream: StreamableParser
+    thinking: bool = False
+    current_tool_name: str | None = None
+    tool_arg_parts: list[str] = field(default_factory=list)
+
+    def process_token(
+        self, response: GenerationResponse, model_id: ModelId
+    ) -> list[TokenChunk | ToolCallChunk]:
+        """Process a single token and return chunks to emit.
+
+        May return 0, 1, or multiple chunks for a single input token
+        (e.g. thinking state transition + text delta).
+        """
+        self.stream.process(response.token)
+        delta: str = self.stream.last_content_delta or ""
+        ch: str | None = self.stream.current_channel
+        recipient: str | None = self.stream.current_recipient
+
+        chunks: list[TokenChunk | ToolCallChunk] = []
+
+        # Handle tool call transitions
+        if recipient != self.current_tool_name:
+            if self.current_tool_name is not None:
+                name = self.current_tool_name
+                prefix = "functions."
+                if name.startswith(prefix):
+                    name = name[len(prefix) :]
+                chunks.append(
+                    ToolCallChunk(
+                        model=model_id,
+                        tool_calls=[
+                            ToolCallItem(
+                                name=name,
+                                arguments="".join(self.tool_arg_parts).strip(),
+                            )
+                        ],
+                        usage=response.usage,
+                        stats=response.stats,
+                    )
+                )
+                self.tool_arg_parts = []
+            self.current_tool_name = recipient
+
+        # Inside tool call: accumulate args
+        if self.current_tool_name is not None:
+            if delta:
+                self.tool_arg_parts.append(delta)
+            return chunks
+
+        # Handle thinking state transitions
+        if ch == "analysis" and not self.thinking:
+            self.thinking = True
+            chunks.append(
+                TokenChunk(
+                    model=model_id,
+                    text="<think>",
+                    token_id=response.token,
+                    usage=None,
+                )
+            )
+
+        if ch != "analysis" and self.thinking:
+            self.thinking = False
+            chunks.append(
+                TokenChunk(
+                    model=model_id,
+                    text="</think>",
+                    token_id=response.token,
+                    usage=None,
+                )
+            )
+
+        # Emit text delta
+        if delta:
+            chunks.append(
+                TokenChunk(
+                    model=model_id,
+                    text=delta,
+                    token_id=response.token,
+                    finish_reason=_narrow_finish_reason(response.finish_reason),
+                    usage=response.usage,
+                    stats=response.stats,
+                    logprob=response.logprob,
+                    top_logprobs=response.top_logprobs,
+                )
+            )
+
+        # Handle finish
+        if response.finish_reason is not None:
+            if self.thinking:
+                self.thinking = False
+                chunks.append(
+                    TokenChunk(
+                        model=model_id,
+                        text="</think>",
+                        token_id=response.token,
+                        usage=None,
+                    )
+                )
+            # Emit final chunk with finish_reason if no delta was emitted above
+            if not delta:
+                chunks.append(
+                    TokenChunk(
+                        model=model_id,
+                        text=response.text,
+                        token_id=response.token,
+                        finish_reason=_narrow_finish_reason(response.finish_reason),
+                        usage=response.usage,
+                        stats=response.stats,
+                        logprob=response.logprob,
+                        top_logprobs=response.top_logprobs,
+                    )
+                )
+
+        return chunks
+
+
+def _make_chunk(
+    response: GenerationResponse,
+    model_id: ModelId,
+    tracker: ToolCallTracker | None,
+) -> TokenChunk | ToolCallChunk | None:
+    """Create a chunk from a generation response, routing through tool call tracker if present."""
+    if tracker is not None:
+        return tracker.process_token(response, model_id)
+    return TokenChunk(
+        model=model_id,
+        text=response.text,
+        token_id=response.token,
+        finish_reason=_narrow_finish_reason(response.finish_reason),
+        usage=response.usage,
+        stats=response.stats,
+        logprob=response.logprob,
+        top_logprobs=response.top_logprobs,
+    )
+
+
+def _process_generation_results(
+    results: list[BatchedGenerationResponse],
+    event_sender: MpSender[Event],
+    device_rank: int,
+    shard_metadata: ShardMetadata,
+    in_flight_tasks: dict[CommandId, TaskId],
+    tool_call_trackers: dict[CommandId, ToolCallTracker],
+    is_kimi: bool,
+    gpt_oss_trackers: dict[CommandId, GptOssTracker],
+    thinking_first_token: dict[CommandId, bool],
+    tokenizer: TokenizerWrapper | None,
+) -> None:
+    """Process batch generation results, emitting chunks and completing finished tasks."""
+    model_id = shard_metadata.model_card.model_id
+    for r in results:
+        if device_rank == 0:
+            # Kimi: skip section boundary tokens
+            if (
+                is_kimi
+                and r.response.text in _KIMI_SECTION_TOKENS
+                and r.response.finish_reason is None
+            ):
+                continue
+
+            # GPT-OSS: use dedicated tracker (handles thinking + tool calls)
+            if r.command_id in gpt_oss_trackers:
+                chunks = gpt_oss_trackers[r.command_id].process_token(
+                    r.response, model_id
+                )
+                for chunk in chunks:
+                    event_sender.send(
+                        ChunkGenerated(command_id=r.command_id, chunk=chunk)
+                    )
+            else:
+                # Thinking models: prepend think_start on first token
+                if (
+                    r.command_id in thinking_first_token
+                    and not thinking_first_token[r.command_id]
+                    and tokenizer is not None
+                    and tokenizer.think_start is not None
+                    and tokenizer.think_start_id is not None
+                ):
+                    thinking_first_token[r.command_id] = True
+                    event_sender.send(
+                        ChunkGenerated(
+                            command_id=r.command_id,
+                            chunk=TokenChunk(
+                                model=model_id,
+                                text=tokenizer.think_start,
+                                token_id=tokenizer.think_start_id,
+                                usage=None,
+                            ),
+                        )
+                    )
+
+                chunk = _make_chunk(
+                    r.response, model_id, tool_call_trackers.get(r.command_id)
+                )
+                if chunk is not None:
+                    event_sender.send(
+                        ChunkGenerated(command_id=r.command_id, chunk=chunk)
+                    )
+
+        if r.response.finish_reason is not None:
+            task_id = in_flight_tasks.pop(r.command_id, None)
+            if task_id is not None:
+                _send_traces_if_enabled(
+                    event_sender, task_id, shard_metadata.device_rank
+                )
+                event_sender.send(
+                    TaskStatusUpdated(task_id=task_id, task_status=TaskStatus.Complete)
+                )
+            tool_call_trackers.pop(r.command_id, None)
+            gpt_oss_trackers.pop(r.command_id, None)
+            thinking_first_token.pop(r.command_id, None)
+
+
+def _handle_text_generation(
+    task: TextGeneration,
+    batch_engine: BatchGenerationEngine,
+    event_sender: MpSender[Event],
+    in_flight_tasks: dict[CommandId, TaskId],
+    tool_call_trackers: dict[CommandId, ToolCallTracker],
+    gpt_oss_trackers: dict[CommandId, GptOssTracker],
+    thinking_first_token: dict[CommandId, bool],
+    tokenizer: TokenizerWrapper | None,
+    is_gpt_oss: bool,
+    seen: set[TaskId],
+) -> None:
+    """Handle a TextGeneration task: ACK, queue, and set up trackers.
+
+    Usable from both the main loop and inline within the generation loop.
+    """
+    command_id = task.command_id
+    task_params = task.task_params
+
+    if task.task_id in seen:
+        logger.warning("repeat task - potential error")
+    seen.add(task.task_id)
+
+    _check_for_debug_prompts(task_params)
+    event_sender.send(
+        TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Running)
+    )
+    event_sender.send(TaskAcknowledged(task_id=task.task_id))
+
+    # queue_request does tokenization eagerly and returns the prompt string
+    prompt = batch_engine.queue_request(command_id, task.task_id, task_params)
+    in_flight_tasks[command_id] = task.task_id
+
+    # GPT-OSS: use dedicated tracker (handles thinking + tool calls)
+    if is_gpt_oss and tokenizer is not None:
+        gpt_oss_trackers[command_id] = GptOssTracker(
+            stream=StreamableParser(get_gpt_oss_encoding(), role=Role.ASSISTANT),
+        )
+    elif (
+        tokenizer is not None
+        and tokenizer.has_tool_calling
+        and tokenizer.tool_call_start is not None
+        and tokenizer.tool_call_end is not None
+    ):
+        tool_call_trackers[command_id] = ToolCallTracker(
+            tool_call_start=tokenizer.tool_call_start,
+            tool_call_end=tokenizer.tool_call_end,
+            tool_parser=tokenizer._tool_parser,  # pyright: ignore[reportAny]
+        )
+
+    # Thinking models: use the prompt already computed by queue_request (no double call)
+    if (
+        tokenizer is not None
+        and not is_gpt_oss
+        and tokenizer.has_thinking
+        and detect_thinking_prompt_suffix(prompt, tokenizer)
+    ):
+        thinking_first_token[command_id] = False
+
+    logger.info(
+        f"runner running with {batch_engine.active_count} active + {batch_engine.pending_insert_count} pending requests"
+    )
+
+
+def _run_generation_steps(
+    batch_engine: BatchGenerationEngine,
+    event_sender: MpSender[Event],
+    device_rank: int,
+    shard_metadata: ShardMetadata,
+    group: object | None,
+    in_flight_tasks: dict[CommandId, TaskId],
+    tool_call_trackers: dict[CommandId, ToolCallTracker],
+    is_kimi: bool,
+    gpt_oss_trackers: dict[CommandId, GptOssTracker],
+    thinking_first_token: dict[CommandId, bool],
+    tokenizer: TokenizerWrapper | None,
+    is_gpt_oss: bool,
+    seen: set[TaskId],
+    task_receiver: MpReceiver[Task] | None = None,
+) -> list[Task]:
+    """Run one TimeBudget cycle of batch generation.
+
+    TextGeneration tasks arriving mid-cycle are handled inline (queued,
+    ACK'd, and inserted) without breaking the decode loop.  Only
+    non-TextGeneration tasks cause an early exit.
+
+    Returns any non-TextGeneration tasks that need the main loop.
+    """
+    early_tasks: list[Task] = []
+    if batch_engine.has_pending_inserts:
+        batch_engine.sync_and_insert_pending()
+    for _ in TimeBudget(budget=0.5, group=group):  # pyright: ignore[reportArgumentType]
+        if not batch_engine.has_active_requests:
+            break
+        try:
+            results = batch_engine.step()
+        except Exception as e:
+            logger.opt(exception=e).error("batch_engine.step() failed")
+            model_id = shard_metadata.model_card.model_id
+            if device_rank == 0:
+                for cmd_id in list(in_flight_tasks.keys()):
+                    event_sender.send(
+                        ChunkGenerated(
+                            command_id=cmd_id,
+                            chunk=ErrorChunk(
+                                model=model_id,
+                                finish_reason="error",
+                                error_message=str(e),
+                            ),
+                        )
+                    )
+            for _cmd_id, task_id in in_flight_tasks.items():
+                event_sender.send(
+                    TaskStatusUpdated(task_id=task_id, task_status=TaskStatus.Complete)
+                )
+            in_flight_tasks.clear()
+            tool_call_trackers.clear()
+            gpt_oss_trackers.clear()
+            thinking_first_token.clear()
+            raise
+        _process_generation_results(
+            results,
+            event_sender,
+            device_rank,
+            shard_metadata,
+            in_flight_tasks,
+            tool_call_trackers,
+            is_kimi,
+            gpt_oss_trackers,
+            thinking_first_token,
+            tokenizer,
+        )
+        # After processing a step, check for new tasks.
+        # TextGeneration tasks are handled inline to avoid breaking the
+        # decode loop; all other task types cause an early exit.
+        if task_receiver is not None:
+            collected = task_receiver.collect()
+            for collected_task in collected:
+                if isinstance(collected_task, TextGeneration):
+                    _handle_text_generation(
+                        collected_task,
+                        batch_engine,
+                        event_sender,
+                        in_flight_tasks,
+                        tool_call_trackers,
+                        gpt_oss_trackers,
+                        thinking_first_token,
+                        tokenizer,
+                        is_gpt_oss,
+                        seen,
+                    )
+                else:
+                    early_tasks.append(collected_task)
+            # Batch-insert any requests queued by inline handling
+            if batch_engine.has_pending_inserts:
+                batch_engine.sync_and_insert_pending()
+            if early_tasks:
+                break
+    batch_engine.sync_completions()
+    return early_tasks
+
+
+def _drain_batch_engine(
+    batch_engine: BatchGenerationEngine,
+    event_sender: MpSender[Event],
+    device_rank: int,
+    shard_metadata: ShardMetadata,
+    in_flight_tasks: dict[CommandId, TaskId],
+    tool_call_trackers: dict[CommandId, ToolCallTracker],
+    is_kimi: bool,
+    gpt_oss_trackers: dict[CommandId, GptOssTracker],
+    thinking_first_token: dict[CommandId, bool],
+    tokenizer: TokenizerWrapper | None,
+) -> None:
+    """Drain all active requests from the batch engine, emitting chunks for each token."""
+    if batch_engine.has_pending_inserts:
+        batch_engine.sync_and_insert_pending()
+    while batch_engine.has_active_requests:
+        try:
+            results = batch_engine.step()
+        except Exception as e:
+            logger.opt(exception=e).error("batch_engine.step() failed during drain")
+            model_id = shard_metadata.model_card.model_id
+            if device_rank == 0:
+                for cmd_id in list(in_flight_tasks.keys()):
+                    event_sender.send(
+                        ChunkGenerated(
+                            command_id=cmd_id,
+                            chunk=ErrorChunk(
+                                model=model_id,
+                                finish_reason="error",
+                                error_message=str(e),
+                            ),
+                        )
+                    )
+            for _cmd_id, task_id in in_flight_tasks.items():
+                event_sender.send(
+                    TaskStatusUpdated(task_id=task_id, task_status=TaskStatus.Complete)
+                )
+            in_flight_tasks.clear()
+            tool_call_trackers.clear()
+            gpt_oss_trackers.clear()
+            thinking_first_token.clear()
+            raise
+        _process_generation_results(
+            results,
+            event_sender,
+            device_rank,
+            shard_metadata,
+            in_flight_tasks,
+            tool_call_trackers,
+            is_kimi,
+            gpt_oss_trackers,
+            thinking_first_token,
+            tokenizer,
+        )
+        batch_engine.sync_completions()
 
 
 def main(
@@ -133,7 +685,7 @@ def main(
     model: Model | DistributedImageModel | None = None
     tokenizer = None
     group = None
-    kv_prefix_cache: KVPrefixCache | None = None
+    batch_engine: BatchGenerationEngine | None = None
 
     current_status: RunnerStatus = RunnerIdle()
     logger.info("runner created")
@@ -141,401 +693,421 @@ def main(
         RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
     )
     seen = set[TaskId]()
-    with task_receiver as tasks:
-        for task in tasks:
-            if task.task_id in seen:
-                logger.warning("repeat task - potential error")
-            seen.add(task.task_id)
-            event_sender.send(
-                TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Running)
-            )
-            match task:
-                case ConnectToGroup() if isinstance(
-                    current_status, (RunnerIdle, RunnerFailed)
-                ):
-                    logger.info("runner connecting")
-                    current_status = RunnerConnecting()
+    in_flight_tasks: dict[CommandId, TaskId] = {}
+    tool_call_trackers: dict[CommandId, ToolCallTracker] = {}
+    gpt_oss_trackers: dict[CommandId, GptOssTracker] = {}
+    thinking_first_token: dict[CommandId, bool] = {}
+    is_kimi = False
+    is_gpt_oss = False
+
+    with task_receiver:
+        while True:
+            # Phase 1: Run generation if batch engine has active work
+            if batch_engine is not None and (
+                batch_engine.has_active_requests or batch_engine.has_pending_inserts
+            ):
+                early_tasks = _run_generation_steps(
+                    batch_engine,
+                    event_sender,
+                    device_rank,
+                    shard_metadata,
+                    group,
+                    in_flight_tasks,
+                    tool_call_trackers,
+                    is_kimi,
+                    gpt_oss_trackers,
+                    thinking_first_token,
+                    tokenizer,
+                    is_gpt_oss,
+                    seen,
+                    task_receiver,
+                )
+                # Update runner status based on remaining work
+                if batch_engine.has_active_requests:
+                    new_status: RunnerStatus = RunnerRunning(
+                        active_requests=batch_engine.active_count
+                    )
+                else:
+                    new_status = RunnerReady()
+                if new_status != current_status:
+                    current_status = new_status
                     event_sender.send(
                         RunnerStatusUpdated(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
-                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
-                    group = initialize_mlx(bound_instance)
+                # Use early-collected tasks from generation loop, plus any additional
+                new_tasks = early_tasks + task_receiver.collect()
+                if not new_tasks and batch_engine.has_active_requests:
+                    continue
+            else:
+                # No active work — blocking wait for next task
+                try:
+                    new_tasks = [next(task_receiver)]
+                except StopIteration:
+                    break
 
-                    logger.info("runner connected")
-                    current_status = RunnerConnected()
-
-                # we load the model if it's connected with a group, or idle without a group. we should never tell a model to connect if it doesn't need to
-                case LoadModel() if (
-                    isinstance(current_status, RunnerConnected) and group is not None
-                ) or (isinstance(current_status, RunnerIdle) and group is None):
-                    current_status = RunnerLoading()
-                    logger.info("runner loading")
-                    event_sender.send(
-                        RunnerStatusUpdated(
-                            runner_id=runner_id, runner_status=current_status
-                        )
-                    )
-                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
-
-                    def on_model_load_timeout() -> None:
-                        event_sender.send(
-                            RunnerStatusUpdated(
-                                runner_id=runner_id,
-                                runner_status=RunnerFailed(
-                                    error_message="Model loading timed out"
-                                ),
-                            )
-                        )
-                        time.sleep(0.5)
-
-                    if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
-                        model, tokenizer = load_mlx_items(
-                            bound_instance, group, on_timeout=on_model_load_timeout
-                        )
-                        logger.info(
-                            f"model has_tool_calling={tokenizer.has_tool_calling}"
-                        )
-                        kv_prefix_cache = KVPrefixCache(group)
-
-                    elif (
-                        ModelTask.TextToImage in shard_metadata.model_card.tasks
-                        or ModelTask.ImageToImage in shard_metadata.model_card.tasks
-                    ):
-                        model = initialize_image_model(bound_instance)
-                    else:
-                        raise ValueError(
-                            f"Unknown model task(s): {shard_metadata.model_card.tasks}"
-                        )
-                    current_status = RunnerLoaded()
-                    logger.info("runner loaded")
-                case StartWarmup() if isinstance(current_status, RunnerLoaded):
-                    assert model
-
-                    current_status = RunnerWarmingUp()
-                    logger.info("runner warming up")
-                    event_sender.send(
-                        RunnerStatusUpdated(
-                            runner_id=runner_id, runner_status=current_status
-                        )
-                    )
-                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
-
-                    logger.info(f"warming up inference for instance: {instance}")
-                    if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
-                        assert not isinstance(model, DistributedImageModel)
-                        assert tokenizer
-
-                        toks = warmup_inference(
-                            model=model,
-                            tokenizer=tokenizer,
-                            group=group,
-                            # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
-                        )
-                        logger.info(f"warmed up by generating {toks} tokens")
-                        logger.info(
-                            f"runner initialized in {time.time() - setup_start_time} seconds"
-                        )
-                    elif (
-                        ModelTask.TextToImage in shard_metadata.model_card.tasks
-                        or ModelTask.ImageToImage in shard_metadata.model_card.tasks
-                    ):
-                        assert isinstance(model, DistributedImageModel)
-                        image = warmup_image_generator(model=model)
-                        if image is not None:
-                            logger.info(f"warmed up by generating {image.size} image")
-                        else:
-                            logger.info("warmup completed (non-primary node)")
-
-                    current_status = RunnerReady()
-                    logger.info("runner ready")
-                case TextGeneration(task_params=task_params, command_id=command_id) if (
-                    isinstance(current_status, RunnerReady)
+            # Phase 2: Process new tasks
+            for task in new_tasks:
+                # Fast-path for TextGeneration: _handle_text_generation
+                # sends its own TaskStatusUpdated + seen-check, so skip
+                # the common preamble and match/case below.
+                if (
+                    isinstance(task, TextGeneration)
+                    and isinstance(current_status, (RunnerReady, RunnerRunning))
+                    and batch_engine is not None
                 ):
                     logger.info(f"received chat request: {task}")
-                    current_status = RunnerRunning()
-                    logger.info("runner running")
+                    _handle_text_generation(
+                        task,
+                        batch_engine,
+                        event_sender,
+                        in_flight_tasks,
+                        tool_call_trackers,
+                        gpt_oss_trackers,
+                        thinking_first_token,
+                        tokenizer,
+                        is_gpt_oss,
+                        seen,
+                    )
+                    current_status = RunnerRunning(
+                        active_requests=batch_engine.active_count
+                        + batch_engine.pending_insert_count
+                    )
                     event_sender.send(
                         RunnerStatusUpdated(
-                            runner_id=runner_id, runner_status=current_status
+                            runner_id=runner_id,
+                            runner_status=current_status,
                         )
                     )
-                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
+                    continue
 
-                    assert model and not isinstance(model, DistributedImageModel)
-                    assert tokenizer
+                if task.task_id in seen:
+                    logger.warning("repeat task - potential error")
+                seen.add(task.task_id)
+                event_sender.send(
+                    TaskStatusUpdated(
+                        task_id=task.task_id, task_status=TaskStatus.Running
+                    )
+                )
 
-                    try:
-                        _check_for_debug_prompts(task_params)
+                emit_task_completion = True
 
-                        # Build prompt once - used for both generation and thinking detection
-                        prompt = apply_chat_template(tokenizer, task_params)
-
-                        # Generate responses using the actual MLX generation
-                        mlx_generator = mlx_generate(
-                            model=model,
-                            tokenizer=tokenizer,
-                            task=task_params,
-                            prompt=prompt,
-                            kv_prefix_cache=kv_prefix_cache,
-                            group=group,
+                match task:
+                    case ConnectToGroup() if isinstance(
+                        current_status, (RunnerIdle, RunnerFailed)
+                    ):
+                        logger.info("runner connecting")
+                        current_status = RunnerConnecting()
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=current_status
+                            )
                         )
+                        event_sender.send(TaskAcknowledged(task_id=task.task_id))
+                        group = initialize_mlx(bound_instance)
 
-                        # For other thinking models (GLM, etc.), check if we need to
-                        # prepend the thinking tag that was consumed by the chat template
-                        if detect_thinking_prompt_suffix(prompt, tokenizer):
-                            mlx_generator = parse_thinking_models(
-                                mlx_generator, tokenizer
+                        logger.info("runner connected")
+                        current_status = RunnerConnected()
+
+                    # we load the model if it's connected with a group, or idle without a group. we should never tell a model to connect if it doesn't need to
+                    case LoadModel() if (
+                        isinstance(current_status, RunnerConnected)
+                        and group is not None
+                    ) or (isinstance(current_status, RunnerIdle) and group is None):
+                        current_status = RunnerLoading()
+                        logger.info("runner loading")
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=current_status
+                            )
+                        )
+                        event_sender.send(TaskAcknowledged(task_id=task.task_id))
+
+                        def on_model_load_timeout() -> None:
+                            event_sender.send(
+                                RunnerStatusUpdated(
+                                    runner_id=runner_id,
+                                    runner_status=RunnerFailed(
+                                        error_message="Model loading timed out"
+                                    ),
+                                )
+                            )
+                            time.sleep(0.5)
+
+                        if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
+                            model, tokenizer = load_mlx_items(
+                                bound_instance,
+                                group,
+                                on_timeout=on_model_load_timeout,
+                            )
+                            logger.info(
+                                f"model has_tool_calling={tokenizer.has_tool_calling}"
                             )
 
-                        # Kimi-K2 has tool call sections - we don't care about them
-                        if "kimi" in shard_metadata.model_card.model_id.lower():
-                            mlx_generator = filter_kimi_tokens(mlx_generator)
-                            patch_kimi_tokenizer(tokenizer)
+                            # Apply model-specific tokenizer patches
+                            model_id_lower = shard_metadata.model_card.model_id.lower()
+                            if "kimi" in model_id_lower:
+                                patch_kimi_tokenizer(tokenizer)
+                                is_kimi = True
+                                logger.info("applied kimi tokenizer patch")
+                            elif "glm" in model_id_lower:
+                                patch_glm_tokenizer(tokenizer)
+                                logger.info("applied glm tokenizer patch")
 
-                        # GLM models need patched parser (upstream has bug with None regex match)
-                        elif "glm" in shard_metadata.model_card.model_id.lower():
-                            patch_glm_tokenizer(tokenizer)
+                            is_gpt_oss = isinstance(model, GptOssModel)
 
-                        # GPT-OSS specific parsing to match other model formats.
-                        elif isinstance(model, GptOssModel):
-                            mlx_generator = parse_gpt_oss(mlx_generator)
-
-                        if tokenizer.has_tool_calling and not isinstance(
-                            model, GptOssModel
+                        elif (
+                            ModelTask.TextToImage in shard_metadata.model_card.tasks
+                            or ModelTask.ImageToImage in shard_metadata.model_card.tasks
                         ):
-                            assert tokenizer.tool_call_start
-                            assert tokenizer.tool_call_end
-                            assert tokenizer.tool_parser  # pyright: ignore[reportAny]
-                            mlx_generator = parse_tool_calls(
-                                mlx_generator,
-                                tokenizer.tool_call_start,
-                                tokenizer.tool_call_end,
-                                tokenizer.tool_parser,  # pyright: ignore[reportAny]
+                            model = initialize_image_model(bound_instance)
+                        else:
+                            raise ValueError(
+                                f"Unknown model task(s): {shard_metadata.model_card.tasks}"
                             )
+                        current_status = RunnerLoaded()
+                        logger.info("runner loaded")
+                    case StartWarmup() if isinstance(current_status, RunnerLoaded):
+                        assert model
 
-                        completion_tokens = 0
-                        for response in mlx_generator:
-                            match response:
-                                case GenerationResponse():
-                                    completion_tokens += 1
-                                    if (
-                                        device_rank == 0
-                                        and response.finish_reason == "error"
-                                    ):
-                                        event_sender.send(
-                                            ChunkGenerated(
-                                                command_id=command_id,
-                                                chunk=ErrorChunk(
-                                                    error_message=response.text,
-                                                    model=shard_metadata.model_card.model_id,
-                                                ),
-                                            )
-                                        )
+                        current_status = RunnerWarmingUp()
+                        logger.info("runner warming up")
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=current_status
+                            )
+                        )
+                        event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
-                                    elif device_rank == 0:
-                                        assert response.finish_reason not in (
-                                            "error",
-                                            "tool_calls",
-                                            "function_call",
-                                        )
-                                        event_sender.send(
-                                            ChunkGenerated(
-                                                command_id=command_id,
-                                                chunk=TokenChunk(
-                                                    model=shard_metadata.model_card.model_id,
-                                                    text=response.text,
-                                                    token_id=response.token,
-                                                    usage=response.usage,
-                                                    finish_reason=response.finish_reason,
-                                                    stats=response.stats,
-                                                    logprob=response.logprob,
-                                                    top_logprobs=response.top_logprobs,
-                                                ),
-                                            )
-                                        )
-                                case ToolCallResponse():
-                                    if device_rank == 0:
-                                        event_sender.send(
-                                            ChunkGenerated(
-                                                command_id=command_id,
-                                                chunk=ToolCallChunk(
-                                                    tool_calls=response.tool_calls,
-                                                    model=shard_metadata.model_card.model_id,
-                                                    usage=response.usage,
-                                                ),
-                                            )
-                                        )
+                        logger.info(f"warming up inference for instance: {instance}")
+                        if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
+                            assert not isinstance(model, DistributedImageModel)
+                            assert tokenizer
 
-                    # can we make this more explicit?
-                    except Exception as e:
-                        if device_rank == 0:
-                            event_sender.send(
-                                ChunkGenerated(
-                                    command_id=command_id,
-                                    chunk=ErrorChunk(
-                                        model=shard_metadata.model_card.model_id,
-                                        finish_reason="error",
-                                        error_message=str(e),
-                                    ),
+                            toks = warmup_inference(
+                                model=model,
+                                tokenizer=tokenizer,
+                                group=group,
+                                # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
+                            )
+                            logger.info(f"warmed up by generating {toks} tokens")
+                            logger.info(
+                                f"runner initialized in {time.time() - setup_start_time} seconds"
+                            )
+                            batch_engine = BatchGenerationEngine(
+                                model=model, tokenizer=tokenizer, group=group
+                            )
+                        elif (
+                            ModelTask.TextToImage in shard_metadata.model_card.tasks
+                            or ModelTask.ImageToImage in shard_metadata.model_card.tasks
+                        ):
+                            assert isinstance(model, DistributedImageModel)
+                            image = warmup_image_generator(model=model)
+                            if image is not None:
+                                logger.info(
+                                    f"warmed up by generating {image.size} image"
                                 )
-                            )
-                        raise
+                            else:
+                                logger.info("warmup completed (non-primary node)")
 
-                    current_status = RunnerReady()
-                    logger.info("runner ready")
-                case ImageGeneration(
-                    task_params=task_params, command_id=command_id
-                ) if isinstance(current_status, RunnerReady):
-                    assert isinstance(model, DistributedImageModel)
-                    logger.info(f"received image generation request: {str(task)[:500]}")
-                    current_status = RunnerRunning()
-                    logger.info("runner running")
-                    event_sender.send(
-                        RunnerStatusUpdated(
-                            runner_id=runner_id, runner_status=current_status
+                        current_status = RunnerReady()
+                        logger.info("runner ready")
+                    case ImageGeneration(
+                        task_params=task_params, command_id=command_id
+                    ) if isinstance(current_status, RunnerReady):
+                        assert isinstance(model, DistributedImageModel)
+                        logger.info(
+                            f"received image generation request: {str(task)[:500]}"
                         )
-                    )
-                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
+                        current_status = RunnerRunning()
+                        logger.info("runner running")
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=current_status
+                            )
+                        )
+                        event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
-                    try:
-                        image_index = 0
-                        for response in generate_image(model=model, task=task_params):
-                            is_primary_output = _is_primary_output_node(shard_metadata)
-
-                            if is_primary_output:
-                                match response:
-                                    case PartialImageResponse():
-                                        logger.info(
-                                            f"sending partial ImageChunk {response.partial_index}/{response.total_partials}"
-                                        )
-                                        _process_image_response(
-                                            response,
-                                            command_id,
-                                            shard_metadata,
-                                            event_sender,
-                                            image_index,
-                                        )
-                                    case ImageGenerationResponse():
-                                        logger.info("sending final ImageChunk")
-                                        _process_image_response(
-                                            response,
-                                            command_id,
-                                            shard_metadata,
-                                            event_sender,
-                                            image_index,
-                                        )
-                                        image_index += 1
-                    # can we make this more explicit?
-                    except Exception as e:
-                        if _is_primary_output_node(shard_metadata):
-                            event_sender.send(
-                                ChunkGenerated(
-                                    command_id=command_id,
-                                    chunk=ErrorChunk(
-                                        model=shard_metadata.model_card.model_id,
-                                        finish_reason="error",
-                                        error_message=str(e),
-                                    ),
+                        try:
+                            image_index = 0
+                            for response in generate_image(
+                                model=model, task=task_params
+                            ):
+                                is_primary_output = _is_primary_output_node(
+                                    shard_metadata
                                 )
-                            )
-                        raise
-                    finally:
-                        _send_traces_if_enabled(
-                            event_sender, task.task_id, shard_metadata.device_rank
-                        )
 
-                    current_status = RunnerReady()
-                    logger.info("runner ready")
-                case ImageEdits(task_params=task_params, command_id=command_id) if (
-                    isinstance(current_status, RunnerReady)
-                ):
-                    assert isinstance(model, DistributedImageModel)
-                    logger.info(f"received image edits request: {str(task)[:500]}")
-                    current_status = RunnerRunning()
-                    logger.info("runner running")
-                    event_sender.send(
-                        RunnerStatusUpdated(
-                            runner_id=runner_id, runner_status=current_status
-                        )
-                    )
-                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
-
-                    try:
-                        image_index = 0
-                        for response in generate_image(model=model, task=task_params):
+                                if is_primary_output:
+                                    match response:
+                                        case PartialImageResponse():
+                                            logger.info(
+                                                f"sending partial ImageChunk {response.partial_index}/{response.total_partials}"
+                                            )
+                                            _process_image_response(
+                                                response,
+                                                command_id,
+                                                shard_metadata,
+                                                event_sender,
+                                                image_index,
+                                            )
+                                        case ImageGenerationResponse():
+                                            logger.info("sending final ImageChunk")
+                                            _process_image_response(
+                                                response,
+                                                command_id,
+                                                shard_metadata,
+                                                event_sender,
+                                                image_index,
+                                            )
+                                            image_index += 1
+                        # can we make this more explicit?
+                        except Exception as e:
                             if _is_primary_output_node(shard_metadata):
-                                match response:
-                                    case PartialImageResponse():
-                                        logger.info(
-                                            f"sending partial ImageChunk {response.partial_index}/{response.total_partials}"
-                                        )
-                                        _process_image_response(
-                                            response,
-                                            command_id,
-                                            shard_metadata,
-                                            event_sender,
-                                            image_index,
-                                        )
-                                    case ImageGenerationResponse():
-                                        logger.info("sending final ImageChunk")
-                                        _process_image_response(
-                                            response,
-                                            command_id,
-                                            shard_metadata,
-                                            event_sender,
-                                            image_index,
-                                        )
-                                        image_index += 1
-                    except Exception as e:
-                        if _is_primary_output_node(shard_metadata):
-                            event_sender.send(
-                                ChunkGenerated(
-                                    command_id=command_id,
-                                    chunk=ErrorChunk(
-                                        model=shard_metadata.model_card.model_id,
-                                        finish_reason="error",
-                                        error_message=str(e),
-                                    ),
+                                event_sender.send(
+                                    ChunkGenerated(
+                                        command_id=command_id,
+                                        chunk=ErrorChunk(
+                                            model=shard_metadata.model_card.model_id,
+                                            finish_reason="error",
+                                            error_message=str(e),
+                                        ),
+                                    )
                                 )
+                            raise
+                        finally:
+                            _send_traces_if_enabled(
+                                event_sender,
+                                task.task_id,
+                                shard_metadata.device_rank,
                             )
-                        raise
-                    finally:
-                        _send_traces_if_enabled(
-                            event_sender, task.task_id, shard_metadata.device_rank
+
+                        current_status = RunnerReady()
+                        logger.info("runner ready")
+                    case ImageEdits(task_params=task_params, command_id=command_id) if (
+                        isinstance(current_status, RunnerReady)
+                    ):
+                        assert isinstance(model, DistributedImageModel)
+                        logger.info(f"received image edits request: {str(task)[:500]}")
+                        current_status = RunnerRunning()
+                        logger.info("runner running")
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=current_status
+                            )
+                        )
+                        event_sender.send(TaskAcknowledged(task_id=task.task_id))
+
+                        try:
+                            image_index = 0
+                            for response in generate_image(
+                                model=model, task=task_params
+                            ):
+                                if _is_primary_output_node(shard_metadata):
+                                    match response:
+                                        case PartialImageResponse():
+                                            logger.info(
+                                                f"sending partial ImageChunk {response.partial_index}/{response.total_partials}"
+                                            )
+                                            _process_image_response(
+                                                response,
+                                                command_id,
+                                                shard_metadata,
+                                                event_sender,
+                                                image_index,
+                                            )
+                                        case ImageGenerationResponse():
+                                            logger.info("sending final ImageChunk")
+                                            _process_image_response(
+                                                response,
+                                                command_id,
+                                                shard_metadata,
+                                                event_sender,
+                                                image_index,
+                                            )
+                                            image_index += 1
+                        except Exception as e:
+                            if _is_primary_output_node(shard_metadata):
+                                event_sender.send(
+                                    ChunkGenerated(
+                                        command_id=command_id,
+                                        chunk=ErrorChunk(
+                                            model=shard_metadata.model_card.model_id,
+                                            finish_reason="error",
+                                            error_message=str(e),
+                                        ),
+                                    )
+                                )
+                            raise
+                        finally:
+                            _send_traces_if_enabled(
+                                event_sender,
+                                task.task_id,
+                                shard_metadata.device_rank,
+                            )
+
+                        current_status = RunnerReady()
+                        logger.info("runner ready")
+                    case Shutdown():
+                        # Drain batch engine before shutting down
+                        if batch_engine is not None and (
+                            batch_engine.has_active_requests
+                            or batch_engine.has_pending_inserts
+                        ):
+                            _drain_batch_engine(
+                                batch_engine,
+                                event_sender,
+                                device_rank,
+                                shard_metadata,
+                                in_flight_tasks,
+                                tool_call_trackers,
+                                is_kimi,
+                                gpt_oss_trackers,
+                                thinking_first_token,
+                                tokenizer,
+                            )
+                        current_status = RunnerShuttingDown()
+                        logger.info("runner shutting down")
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=current_status
+                            )
+                        )
+                        event_sender.send(TaskAcknowledged(task_id=task.task_id))
+
+                        current_status = RunnerShutdown()
+                    case _:
+                        raise ValueError(
+                            f"Received {task.__class__.__name__} outside of state machine in {current_status=}"
                         )
 
-                    current_status = RunnerReady()
-                    logger.info("runner ready")
-                case Shutdown():
-                    current_status = RunnerShuttingDown()
-                    logger.info("runner shutting down")
+                if emit_task_completion:
+                    event_sender.send(
+                        TaskStatusUpdated(
+                            task_id=task.task_id,
+                            task_status=TaskStatus.Complete,
+                        )
+                    )
                     event_sender.send(
                         RunnerStatusUpdated(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
-                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
+                if isinstance(current_status, RunnerShutdown):
+                    del model, tokenizer, group
+                    mx.clear_cache()
+                    import gc
 
-                    current_status = RunnerShutdown()
-                case _:
-                    raise ValueError(
-                        f"Received {task.__class__.__name__} outside of state machine in {current_status=}"
-                    )
-            event_sender.send(
-                TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Complete)
-            )
-            event_sender.send(
-                RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
-            )
-            if isinstance(current_status, RunnerShutdown):
-                del model, tokenizer, group
-                mx.clear_cache()
-                import gc
-
-                gc.collect()
-                break
+                    gc.collect()
+                    break
+            else:
+                # Batch-insert all queued requests at once for efficient prefill.
+                # By deferring sync_and_insert_pending() to here (instead of per-task),
+                # all concurrently-arrived tasks share a single prefill pass.
+                if batch_engine is not None and batch_engine.has_pending_inserts:
+                    batch_engine.sync_and_insert_pending()
+                continue
+            break
 
 
 @cache
