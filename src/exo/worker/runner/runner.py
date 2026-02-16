@@ -364,6 +364,7 @@ def main(
                                                     tool_calls=response.tool_calls,
                                                     model=shard_metadata.model_card.model_id,
                                                     usage=response.usage,
+                                                    stats=response.stats,
                                                 ),
                                             )
                                         )
@@ -764,7 +765,9 @@ def parse_tool_calls(
                     tools = [_validate_single_tool(tool) for tool in parsed]
                 else:
                     tools = [_validate_single_tool(parsed)]
-                yield ToolCallResponse(tool_calls=tools, usage=response.usage)
+                yield ToolCallResponse(
+                    tool_calls=tools, usage=response.usage, stats=response.stats
+                )
 
             except (
                 json.JSONDecodeError,
@@ -795,7 +798,8 @@ def parse_tool_calls(
                     text=tool_call_start + "".join(tool_call_text_parts),
                     token=0,
                     finish_reason=response.finish_reason,
-                    usage=None,
+                    usage=response.usage,
+                    stats=response.stats,
                 )
             continue
         # fallthrough
