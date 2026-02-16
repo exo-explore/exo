@@ -5,7 +5,10 @@
 
   const items = $derived(toasts());
 
-  const typeStyles: Record<Toast["type"], { border: string; icon: string; iconColor: string }> = {
+  const typeStyles: Record<
+    Toast["type"],
+    { border: string; icon: string; iconColor: string }
+  > = {
     success: {
       border: "border-l-green-500",
       icon: "M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
@@ -54,7 +57,11 @@
             stroke-width="1.5"
             stroke="currentColor"
           >
-            <path stroke-linecap="round" stroke-linejoin="round" d={style.icon} />
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d={style.icon}
+            />
           </svg>
 
           <!-- Message -->
@@ -68,8 +75,18 @@
             class="flex-shrink-0 p-0.5 text-white/40 hover:text-white/80 transition-colors cursor-pointer"
             aria-label="Dismiss notification"
           >
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            <svg
+              class="w-4 h-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="2"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M6 18L18 6M6 6l12 12"
+              />
             </svg>
           </button>
         </div>
@@ -90,7 +107,11 @@
 
 <style>
   @keyframes shrink {
-    from { width: 100%; }
-    to { width: 0%; }
+    from {
+      width: 100%;
+    }
+    to {
+      width: 0%;
+    }
   }
 </style>
