@@ -23,6 +23,20 @@ from exo.worker.runner.bootstrap import logger
 
 
 @dataclass
+class PendingInsert:
+    """Pre-tokenized request ready for batch insertion."""
+
+    command_id: CommandId
+    task_id: TaskId
+    tokens: list[int]
+    max_tokens: int
+    prompt_tokens: int
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+
+
+@dataclass
 class ActiveRequest:
     """Tracks an active request in the batch."""
 
@@ -61,9 +75,7 @@ class BatchGenerationEngine:
         self.tokenizer = tokenizer
         self.max_tokens = max_tokens
         self.active_requests: dict[int, ActiveRequest] = {}
-        self._pending_inserts: list[
-            tuple[CommandId, TaskId, TextGenerationTaskParams]
-        ] = []
+        self._pending_inserts: list[PendingInsert] = []
         self._pending_completions: list[
             int
         ] = []  # UIDs completed but not yet synced/removed
@@ -96,36 +108,49 @@ class BatchGenerationEngine:
         command_id: CommandId,
         task_id: TaskId,
         task_params: TextGenerationTaskParams,
-    ) -> None:
-        """Queue a request for insertion. Only rank 0 should call this.
+    ) -> str:
+        """Queue a pre-tokenized request for insertion. Only rank 0 should call this.
 
-        In distributed mode, rank 0 receives tasks from the control plane and
-        queues them here. The actual insertion happens in sync_and_insert_pending()
-        which ensures all ranks insert the same requests together.
+        Tokenization happens here (eagerly) so that sync_and_insert_pending()
+        only does the lightweight batch_gen.insert() call, keeping the decode
+        thread unblocked for as long as possible.
+
+        Returns the prompt string for caller use (e.g. thinking-mode detection).
         """
         assert self.rank == 0, "Only rank 0 should queue requests"
-        self._pending_inserts.append((command_id, task_id, task_params))
-        logger.info(
-            f"Queued request {command_id} for insertion (pending={len(self._pending_inserts)})"
+        prompt_str = apply_chat_template(self.tokenizer, task_params)
+        tokens: list[int] = self.tokenizer.encode(prompt_str, add_special_tokens=False)
+        max_tokens = task_params.max_output_tokens or self.max_tokens
+        self._pending_inserts.append(
+            PendingInsert(
+                command_id=command_id,
+                task_id=task_id,
+                tokens=tokens,
+                max_tokens=max_tokens,
+                prompt_tokens=len(tokens),
+                temperature=task_params.temperature,
+                top_p=task_params.top_p,
+                top_k=task_params.top_k,
+            )
         )
+        logger.info(
+            f"Queued request {command_id} for insertion (pending={len(self._pending_inserts)}, prompt_tokens={len(tokens)})"
+        )
+        return prompt_str
 
     def sync_and_insert_pending(self) -> list[int]:
-        """Sync pending inserts across ranks and insert them. Returns UIDs.
+        """Sync pre-tokenized pending inserts across ranks and insert them. Returns UIDs.
 
-        This method ensures all ranks insert the same requests in the same order.
-        In non-distributed mode, it simply inserts all pending requests.
-        In distributed mode, it broadcasts pending requests from rank 0 to all ranks.
-
-        Batches all pending inserts into a single batch_gen.insert() call for
-        efficient prefill batching.
+        Tokens are already prepared by queue_request(), so this method only does
+        the lightweight batch_gen.insert() call plus distributed sync if needed.
         """
-        inserts_to_process: list[tuple[CommandId, TaskId, TextGenerationTaskParams]]
+        inserts_to_process: list[PendingInsert]
 
         if not self.is_distributed:
             # Non-distributed: just insert directly from pending
             inserts_to_process = list(self._pending_inserts)
         else:
-            # Distributed: broadcast pending inserts from rank 0 to all ranks
+            # Distributed: broadcast pre-tokenized inserts from rank 0 to all ranks
             assert self.group is not None
             inserts_to_process = share_object(
                 self._pending_inserts if self.rank == 0 else None,
@@ -137,49 +162,31 @@ class BatchGenerationEngine:
             self._pending_inserts.clear()
             return []
 
-        # Prepare all requests for batched insertion
-        all_tokens: list[list[int]] = []
-        all_max_tokens: list[int] = []
-        all_prompt_tokens: list[int] = []
-        request_info: list[tuple[CommandId, TaskId]] = []
-
-        for cmd_id, task_id, params in inserts_to_process:
-            prompt_str = apply_chat_template(self.tokenizer, params)
-            tokens: list[int] = self.tokenizer.encode(
-                prompt_str, add_special_tokens=False
-            )
-            max_tokens = params.max_output_tokens or self.max_tokens
-
-            all_tokens.append(tokens)
-            all_max_tokens.append(max_tokens)
-            all_prompt_tokens.append(len(tokens))
-            request_info.append((cmd_id, task_id))
-
         # Update sampler from per-request parameters (last request wins for batch)
-        last_params = inserts_to_process[-1][2]
+        last = inserts_to_process[-1]
         self.batch_gen.sampler = make_sampler(  # pyright: ignore[reportAttributeAccessIssue]
-            temp=last_params.temperature
-            if last_params.temperature is not None
-            else 0.7,
-            top_p=last_params.top_p if last_params.top_p is not None else 1.0,
-            top_k=last_params.top_k if last_params.top_k is not None else 0,
+            temp=last.temperature if last.temperature is not None else 0.7,
+            top_p=last.top_p if last.top_p is not None else 1.0,
+            top_k=last.top_k if last.top_k is not None else 0,
         )
 
-        # Single batched insert for efficient prefill
+        # Single batched insert for efficient prefill — tokens already prepared
+        all_tokens = [p.tokens for p in inserts_to_process]
+        all_max_tokens = [p.max_tokens for p in inserts_to_process]
         uids = self.batch_gen.insert(all_tokens, max_tokens=all_max_tokens)
 
         # Track all inserted requests
         for i, uid in enumerate(uids):
-            cmd_id, task_id = request_info[i]
+            p = inserts_to_process[i]
             self.active_requests[uid] = ActiveRequest(
-                command_id=cmd_id,
-                task_id=task_id,
+                command_id=p.command_id,
+                task_id=p.task_id,
                 uid=uid,
                 detokenizer=self.tokenizer.detokenizer,
-                prompt_tokens=all_prompt_tokens[i],
+                prompt_tokens=p.prompt_tokens,
             )
             logger.info(
-                f"Inserted request {cmd_id} with uid={uid}, prompt_tokens={all_prompt_tokens[i]}, max_tokens={all_max_tokens[i]}"
+                f"Inserted request {p.command_id} with uid={uid}, prompt_tokens={p.prompt_tokens}, max_tokens={p.max_tokens}"
             )
 
         self._pending_inserts.clear()

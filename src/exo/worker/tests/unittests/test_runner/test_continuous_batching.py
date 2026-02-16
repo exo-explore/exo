@@ -81,9 +81,10 @@ class FakeBatchEngineWithTokens:
         command_id: CommandId,
         task_id: TaskId,
         task_params: TextGenerationTaskParams,
-    ) -> None:
+    ) -> str:
         """Queue a request for insertion."""
         self._pending_inserts.append((command_id, task_id, task_params))
+        return ""
 
     def sync_and_insert_pending(self) -> list[int]:
         """Insert all pending requests."""

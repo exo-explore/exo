@@ -148,7 +148,11 @@ class RunnerSupervisor:
                     if isinstance(event, RunnerStatusUpdated):
                         self.status = event.runner_status
                     if isinstance(event, TaskAcknowledged):
-                        self.pending.pop(event.task_id).set()
+                        # Signal start_task() to return, but keep the entry
+                        # in self.pending so _pending_tasks won't re-dispatch.
+                        pending_event = self.pending.get(event.task_id)
+                        if pending_event is not None:
+                            pending_event.set()
                         continue
                     if (
                         isinstance(event, TaskStatusUpdated)
@@ -166,6 +170,8 @@ class RunnerSupervisor:
                             ),
                         )
                         self.completed.add(event.task_id)
+                        # Clean up from pending now that it's fully complete
+                        self.pending.pop(event.task_id, None)
                     await self._event_sender.send(event)
             except (ClosedResourceError, BrokenResourceError) as e:
                 await self._check_runner(e)

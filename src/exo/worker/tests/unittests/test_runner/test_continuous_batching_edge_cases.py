@@ -44,7 +44,7 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
-from exo.shared.types.worker.runners import RunnerReady, RunnerRunning
+from exo.shared.types.worker.runners import RunnerReady
 from exo.utils.channels import mp_channel
 from exo.worker.engines.mlx.generator.batch_engine import (
     BatchedGenerationResponse,
@@ -84,8 +84,9 @@ class ScriptedBatchEngine:
         command_id: CommandId,
         task_id: TaskId,
         task_params: TextGenerationTaskParams,
-    ) -> None:
+    ) -> str:
         self._pending.append((command_id, task_id, task_params))
+        return ""
 
     def sync_and_insert_pending(self) -> list[int]:
         uids: list[int] = []
@@ -160,8 +161,9 @@ class FakeBatchEngineWithTokens:
         command_id: CommandId,
         task_id: TaskId,
         task_params: TextGenerationTaskParams,
-    ) -> None:
+    ) -> str:
         self._pending_inserts.append((command_id, task_id, task_params))
+        return ""
 
     def sync_and_insert_pending(self) -> list[int]:
         uids: list[int] = []
@@ -578,19 +580,17 @@ def test_all_requests_finish_on_same_step():
     assert TaskId("tb") in done
     assert TaskId("tc") in done
 
-    # Runner should be back to RunnerReady after all completions
-    last_status = [
+    # Runner should reach RunnerReady at least after warmup.
+    # With inline task processing, later requests may be inserted into the
+    # batch before the generation loop exits, so the runner can stay
+    # RunnerRunning until Shutdown without an intermediate RunnerReady.
+    ready_events = [
         e
         for e in events
         if isinstance(e, RunnerStatusUpdated)
-        and not isinstance(e.runner_status, (RunnerRunning,))
+        and isinstance(e.runner_status, RunnerReady)
     ]
-    ready_after_gen = [
-        e for e in last_status if isinstance(e.runner_status, RunnerReady)
-    ]
-    assert len(ready_after_gen) >= 2, (
-        "Expected RunnerReady after warmup and after generation completes"
-    )
+    assert len(ready_events) >= 1, "Expected RunnerReady at least after warmup"
 
 
 def test_staggered_completions_in_batch():
