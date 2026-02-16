@@ -79,6 +79,7 @@ final class FirstLaunchPopout {
     func dismiss() {
         countdownTask?.cancel()
         countdownTask = nil
+        UserDefaults.standard.set(true, forKey: "EXOOnboardingCompleted")
         guard let window = panel else { return }
         NSAnimationContext.runAnimationGroup(
             { context in

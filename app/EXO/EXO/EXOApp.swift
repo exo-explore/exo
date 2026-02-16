@@ -66,16 +66,18 @@ struct EXOApp: App {
                 .environmentObject(updater)
                 .environmentObject(thunderboltBridgeService)
                 .environmentObject(settingsWindowController)
-                .onReceive(controller.$isFirstLaunchReady) { ready in
-                    if ready {
-                        firstLaunchPopout.onComplete = { [weak controller] in
-                            controller?.markOnboardingCompleted()
-                        }
-                        firstLaunchPopout.show()
-                    }
-                }
         } label: {
             menuBarIcon
+                .onReceive(controller.$isFirstLaunchReady) { ready in
+                    if ready {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            self.firstLaunchPopout.onComplete = { [weak controller] in
+                                controller?.markOnboardingCompleted()
+                            }
+                            self.firstLaunchPopout.show()
+                        }
+                    }
+                }
         }
         .menuBarExtraStyle(.window)
     }
