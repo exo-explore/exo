@@ -51,9 +51,10 @@
     type DownloadProgress,
     type PlacementPreview,
   } from "$lib/stores/app.svelte";
+  import { addToast } from "$lib/stores/toast.svelte";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
-  import { fade, fly } from "svelte/transition";
-  import { cubicInOut } from "svelte/easing";
+  import { fade, fly, slide } from "svelte/transition";
+  import { cubicInOut, cubicOut } from "svelte/easing";
   import { onMount } from "svelte";
 
   const chatStarted = $derived(hasStartedChat());
@@ -856,6 +857,7 @@
         if (!placementResponse.ok) {
           const errorText = await placementResponse.text();
           console.error("Failed to get placement:", errorText);
+          addToast({ type: "error", message: `Placement failed: ${errorText}` });
           return;
         }
 
@@ -872,7 +874,9 @@
       if (!response.ok) {
         const errorText = await response.text();
         console.error("Failed to launch instance:", errorText);
+        addToast({ type: "error", message: `Failed to launch model: ${errorText}` });
       } else {
+        addToast({ type: "success", message: `Model launched successfully` });
         // Always auto-select the newly launched model so the user chats to what they just launched
         setSelectedChatModel(modelId);
 
@@ -895,6 +899,7 @@
       }
     } catch (error) {
       console.error("Error launching instance:", error);
+      addToast({ type: "error", message: "Failed to launch model. Check console for details." });
     } finally {
       launchingModelId = null;
     }
@@ -1366,6 +1371,7 @@
 
       if (!response.ok) {
         console.error("Failed to delete instance:", response.status);
+        addToast({ type: "error", message: "Failed to delete instance" });
       } else if (wasSelected) {
         // If we deleted the currently selected model, switch to another available model
         // Find another instance that isn't the one we just deleted
@@ -2687,25 +2693,32 @@
               {#if instanceCount === 0}
                 <div
                   class="absolute inset-0 flex items-center justify-center pointer-events-none"
+                  in:fade={{ duration: 400, delay: 200 }}
                 >
-                  <div class="text-center pointer-events-auto max-w-md px-6">
-                    <div class="mb-5">
+                  <div class="text-center pointer-events-auto max-w-lg px-6">
+                    <div class="mb-6">
                       <div
-                        class="text-2xl font-mono text-exo-yellow font-bold tracking-wide mb-2"
+                        class="text-2xl font-mono text-exo-yellow font-bold tracking-wide mb-3 glow-text"
                       >
                         exo
                       </div>
                       <p
-                        class="text-sm font-sans text-white/50 leading-relaxed"
+                        class="text-sm font-sans text-white/50 leading-relaxed mb-1"
                       >
-                        Your devices are connected. Choose a model to start
-                        running AI locally.
+                        {#if data && Object.keys(data.nodes).length > 1}
+                          {Object.keys(data.nodes).length} devices connected. Choose a model to start running AI across your cluster.
+                        {:else if data && Object.keys(data.nodes).length === 1}
+                          Your device is ready. Choose a model to start running AI locally.
+                        {:else}
+                          Waiting for devices to connect&hellip;
+                        {/if}
                       </p>
                     </div>
+
                     <button
                       type="button"
                       onclick={() => (isModelPickerOpen = true)}
-                      class="inline-flex items-center gap-2 px-6 py-3 bg-exo-yellow text-exo-black font-sans text-sm font-semibold rounded-full hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.2)] transition-all duration-200 cursor-pointer"
+                      class="inline-flex items-center gap-2 px-6 py-3 bg-exo-yellow text-exo-black font-sans text-sm font-semibold rounded-full hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.2)] transition-all duration-200 cursor-pointer mb-4"
                     >
                       <svg
                         class="w-5 h-5"
@@ -2722,6 +2735,13 @@
                       </svg>
                       Choose a Model
                     </button>
+
+                    <!-- Quick hints -->
+                    <div class="flex items-center justify-center gap-4 text-xs text-white/30 font-mono">
+                      <span>models download automatically</span>
+                      <span class="text-white/15">&bull;</span>
+                      <a href="/#/downloads" class="hover:text-exo-yellow/60 transition-colors">view downloads</a>
+                    </div>
                   </div>
                 </div>
               {/if}
@@ -2910,6 +2930,7 @@
                       class="relative group cursor-pointer"
                       role="button"
                       tabindex="0"
+                      transition:slide={{ duration: 250, easing: cubicOut }}
                       onmouseenter={() => (hoveredInstanceId = id)}
                       onmouseleave={() => (hoveredInstanceId = null)}
                       onclick={() => {
@@ -2980,15 +3001,15 @@
                       ></div>
 
                       <div
-                        class="bg-exo-dark-gray/60 border border-l-2 {isDownloading
-                          ? 'border-blue-500/30 border-l-blue-400'
+                        class="bg-exo-dark-gray/60 border border-l-2 transition-all duration-200 group-hover:bg-exo-dark-gray/80 {isDownloading
+                          ? 'border-blue-500/30 border-l-blue-400 group-hover:border-blue-500/50'
                           : isFailed
-                            ? 'border-red-500/30 border-l-red-400'
+                            ? 'border-red-500/30 border-l-red-400 group-hover:border-red-500/50'
                             : isLoading
-                              ? 'border-exo-yellow/30 border-l-yellow-400'
+                              ? 'border-exo-yellow/30 border-l-yellow-400 group-hover:border-exo-yellow/50'
                               : isReady
-                                ? 'border-green-500/30 border-l-green-400'
-                                : 'border-teal-500/30 border-l-teal-400'} p-3"
+                                ? 'border-green-500/30 border-l-green-400 group-hover:border-green-500/50'
+                                : 'border-teal-500/30 border-l-teal-400 group-hover:border-teal-500/50'} p-3"
                       >
                         <div class="flex justify-between items-start mb-2 pl-2">
                           <div class="flex items-center gap-2">
