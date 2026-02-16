@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 import resource
 import time
 from collections.abc import Generator
@@ -11,6 +12,7 @@ from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     HarmonyEncodingName,
+    HarmonyError,  # pyright: ignore[reportUnknownVariableType]
     Role,
     StreamableParser,
     load_harmony_encoding,
@@ -271,6 +273,9 @@ def main(
 
                         # Build prompt once - used for both generation and thinking detection
                         prompt = apply_chat_template(tokenizer, task_params)
+
+                        if isinstance(model, GptOssModel):
+                            prompt = reformat_gpt_oss_tool_calls(prompt)
 
                         # Generate responses using the actual MLX generation
                         mlx_generator = mlx_generate(
@@ -544,6 +549,21 @@ def get_gpt_oss_encoding():
     return encoding
 
 
+def reformat_gpt_oss_tool_calls(prompt: str) -> str:
+    # The Harmony Jinja template renders tool calls with the recipient before <|channel|>:
+    # <|start|>assistant to=functions.X<|channel|>commentary ...
+    # But the model sometimes prefers generating with the recipient after the channel name:
+    # <|start|>assistant<|channel|>commentary to=functions.X ...
+    # Let's make this consistent!
+    pattern = re.compile(
+        r"<\|start\|>assistant to=(functions\.\S+)<\|channel\|>commentary "
+    )
+
+    return pattern.sub(
+        r"<|start|>assistant<|channel|>commentary to=\1 ", prompt
+    )
+
+
 def filter_kimi_tokens(
     responses: Generator[GenerationResponse | ToolCallResponse],
 ) -> Generator[GenerationResponse]:
@@ -568,7 +588,11 @@ def parse_gpt_oss(
 
     for response in responses:
         assert isinstance(response, GenerationResponse)
-        stream.process(response.token)
+        try:
+            stream.process(response.token)
+        except HarmonyError:
+            logger.error("Encountered critical Harmony Error, returning early")
+            return
 
         delta = stream.last_content_delta
         ch = stream.current_channel
