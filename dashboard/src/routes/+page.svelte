@@ -6,6 +6,7 @@
     ChatSidebar,
     ModelCard,
     ModelPickerModal,
+    QuickLaunchSection,
   } from "$lib/components";
   import {
     favorites,
@@ -51,6 +52,11 @@
     type DownloadProgress,
     type PlacementPreview,
   } from "$lib/stores/app.svelte";
+  import {
+    getModelConfig,
+    saveModelConfig,
+  } from "$lib/stores/modelDefaults.svelte";
+  import { getNodesWithModelDownloaded } from "$lib/utils/downloads";
   import { addToast } from "$lib/stores/toast.svelte";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
   import { fade, fly, slide } from "svelte/transition";
@@ -95,6 +101,17 @@
       count,
       percentage: totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0,
     };
+  });
+
+  // Set of model IDs that are fully downloaded somewhere in the cluster
+  const downloadedModelIds = $derived.by(() => {
+    const ids = new Set<string>();
+    if (!downloadsData) return ids;
+    for (const model of models) {
+      const nodes = getNodesWithModelDownloaded(downloadsData, model.id);
+      if (nodes.length > 0) ids.add(model.id);
+    }
+    return ids;
   });
 
   // Detect macOS version mismatches across cluster nodes
@@ -381,6 +398,11 @@
     minNodes: number;
   }
 
+  function getBaseModelKey(modelId: string): string {
+    const model = models.find((m) => m.id === modelId);
+    return model?.base_model ?? modelId;
+  }
+
   function saveLaunchDefaults(): void {
     const defaults: LaunchDefaults = {
       modelId: selectedPreviewModelId(),
@@ -392,6 +414,17 @@
       localStorage.setItem(LAUNCH_DEFAULTS_KEY, JSON.stringify(defaults));
     } catch (e) {
       console.warn("Failed to save launch defaults:", e);
+    }
+
+    // Also save per-model config if a model is selected
+    const currentModelId = selectedPreviewModelId();
+    if (currentModelId) {
+      const baseKey = getBaseModelKey(currentModelId);
+      saveModelConfig(baseKey, {
+        sharding: selectedSharding,
+        instanceType: selectedInstanceType,
+        minNodes: selectedMinNodes,
+      });
     }
   }
 
@@ -846,6 +879,17 @@
   }
 
   function handleModelPickerSelect(modelId: string) {
+    // Load per-model config if available
+    const baseKey = getBaseModelKey(modelId);
+    const perModelConfig = getModelConfig(baseKey);
+    if (perModelConfig) {
+      selectedSharding = perModelConfig.sharding;
+      selectedInstanceType = perModelConfig.instanceType;
+      if (perModelConfig.minNodes >= 1) {
+        selectedMinNodes = perModelConfig.minNodes;
+      }
+    }
+
     selectPreviewModel(modelId);
     saveLaunchDefaults();
     isModelPickerOpen = false;
@@ -3453,6 +3497,19 @@
                 >
               </div>
 
+              <!-- Quick Launch Recommendations -->
+              <QuickLaunchSection
+                {models}
+                getModelFitStatus={(model) => getModelMemoryFitStatus(model)}
+                {getModelSizeGB}
+                favoriteIds={favoritesSet}
+                {recentModelIds}
+                {downloadedModelIds}
+                hasRunningInstance={Object.keys(instanceData).length > 0}
+                onLaunch={(modelId) => launchInstance(modelId)}
+                onSelect={(modelId) => handleModelPickerSelect(modelId)}
+              />
+
               <!-- Model Picker Button -->
               <div class="flex-shrink-0 mb-3">
                 <button
@@ -3565,6 +3622,7 @@
                             {/if}
                           </span>
                           Pipeline
+                          <span class="text-white/30 text-xs" title="Splits model into sequential stages across devices. Lower network overhead.">&#9432;</span>
                         </button>
                         <button
                           onclick={() => {
@@ -3589,6 +3647,7 @@
                             {/if}
                           </span>
                           Tensor
+                          <span class="text-white/30 text-xs" title="Splits each layer across devices. Better for high-bandwidth connections (Thunderbolt).">&#9432;</span>
                         </button>
                       </div>
                     </div>
@@ -3622,6 +3681,7 @@
                             {/if}
                           </span>
                           Standard
+                          <span class="text-white/30 text-xs" title="Standard communication. Works over any network.">&#9432;</span>
                         </button>
                         <button
                           onclick={() => {
@@ -3646,6 +3706,7 @@
                             {/if}
                           </span>
                           RDMA (Fast)
+                          <span class="text-white/30 text-xs" title="Direct memory access. Requires Thunderbolt, significantly faster.">&#9432;</span>
                         </button>
                       </div>
                     </div>
@@ -3738,6 +3799,20 @@
                       selectedModel.id,
                     )}
                     {@const tags = modelTags()[selectedModel.id] || []}
+                    {@const alternatives = (() => {
+                      if (!selectedModel.base_model) return [];
+                      return models
+                        .filter(
+                          (m) =>
+                            m.id !== selectedModel.id &&
+                            m.base_model === selectedModel.base_model &&
+                            getModelMemoryFitStatus(m) === "fits_now",
+                        )
+                        .sort(
+                          (a, b) => getModelSizeGB(b) - getModelSizeGB(a),
+                        )
+                        .slice(0, 3);
+                    })()}
                     <div class="space-y-3">
                       {#each allPreviews as apiPreview, i}
                         <div
@@ -3765,6 +3840,8 @@
                             {tags}
                             {apiPreview}
                             modelIdOverride={apiPreview.model_id}
+                            alternativeModels={alternatives}
+                            onSelectAlternative={(altId) => handleModelPickerSelect(altId)}
                           />
                         </div>
                       {/each}

@@ -117,6 +117,39 @@
     }
   }
 
+  function getFitDotColor(fitStatus: ModelFitStatus): string {
+    switch (fitStatus) {
+      case "fits_now":
+        return "bg-green-500";
+      case "fits_cluster_capacity":
+        return "bg-orange-400";
+      case "too_large":
+        return "bg-red-500";
+    }
+  }
+
+  function getFitBorderColor(fitStatus: ModelFitStatus): string {
+    switch (fitStatus) {
+      case "fits_now":
+        return "border-green-500/40";
+      case "fits_cluster_capacity":
+        return "border-orange-400/40";
+      case "too_large":
+        return "border-red-500/40";
+    }
+  }
+
+  function getFitLabel(fitStatus: ModelFitStatus): string | null {
+    switch (fitStatus) {
+      case "fits_now":
+        return null;
+      case "fits_cluster_capacity":
+        return "(needs free mem)";
+      case "too_large":
+        return "(too large)";
+    }
+  }
+
   // Check if this group's model is currently selected (for single-variant groups)
   const isMainSelected = $derived(
     !group.hasMultipleVariants &&
@@ -135,7 +168,7 @@
       ? 'hover:bg-white/5 cursor-pointer'
       : 'cursor-not-allowed'} {isMainSelected
       ? 'bg-exo-yellow/10 border-l-2 border-exo-yellow'
-      : 'border-l-2 border-transparent'}"
+      : `border-l-2 ${getFitBorderColor(groupFitStatus)}`}"
     onclick={() => {
       if (group.hasMultipleVariants) {
         onToggleExpand();
@@ -287,12 +320,20 @@
       {@const singleVariantFitStatus = getModelFitStatus(
         group.smallestVariant.id,
       )}
-      <span
-        class="text-xs font-mono flex-shrink-0 {getSizeClassForFitStatus(
-          singleVariantFitStatus,
-        )}"
-      >
-        {formatSize(group.smallestVariant.storage_size_megabytes)}
+      <span class="flex items-center gap-1.5 flex-shrink-0">
+        <span class="w-1.5 h-1.5 rounded-full {getFitDotColor(singleVariantFitStatus)} flex-shrink-0"></span>
+        <span
+          class="text-xs font-mono {getSizeClassForFitStatus(
+            singleVariantFitStatus,
+          )}"
+        >
+          {formatSize(group.smallestVariant.storage_size_megabytes)}
+        </span>
+        {#if getFitLabel(singleVariantFitStatus)}
+          <span class="text-xs font-mono {getSizeClassForFitStatus(singleVariantFitStatus)}">
+            {getFitLabel(singleVariantFitStatus)}
+          </span>
+        {/if}
       </span>
     {/if}
 
@@ -302,14 +343,22 @@
         .map((v) => v.storage_size_megabytes || 0)
         .filter((s) => s > 0)
         .sort((a, b) => a - b)}
-      <span
-        class="text-xs font-mono flex-shrink-0 {getSizeClassForFitStatus(
-          groupFitStatus,
-        )}"
-      >
-        {group.variants.length} variants{#if sizes.length >= 2}{" "}({formatSize(
-            sizes[0],
-          )}-{formatSize(sizes[sizes.length - 1])}){/if}
+      <span class="flex items-center gap-1.5 flex-shrink-0">
+        <span class="w-1.5 h-1.5 rounded-full {getFitDotColor(groupFitStatus)} flex-shrink-0"></span>
+        <span
+          class="text-xs font-mono {getSizeClassForFitStatus(
+            groupFitStatus,
+          )}"
+        >
+          {group.variants.length} variants{#if sizes.length >= 2}{" "}({formatSize(
+              sizes[0],
+            )}-{formatSize(sizes[sizes.length - 1])}){/if}
+        </span>
+        {#if getFitLabel(groupFitStatus)}
+          <span class="text-xs font-mono {getSizeClassForFitStatus(groupFitStatus)}">
+            {getFitLabel(groupFitStatus)}
+          </span>
+        {/if}
       </span>
     {/if}
 
@@ -320,29 +369,21 @@
       </span>
     {/if}
 
-    <!-- Download availability indicator -->
+    <!-- Download status badge -->
     {#if groupDownloadStatus && groupDownloadStatus.nodeIds.length > 0}
       <span
-        class="flex-shrink-0"
+        class="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-mono tracking-wider uppercase rounded bg-green-500/20 text-green-400 border border-green-500/30"
         title={groupDownloadStatus.available
           ? `Ready — downloaded on ${groupDownloadStatus.nodeNames.join(", ")}`
           : `Downloaded on ${groupDownloadStatus.nodeNames.join(", ")} (may need more nodes)`}
       >
-        <svg
-          class="w-4 h-4"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path
-            class="text-white/40"
-            d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
-          />
-          <path class="text-green-400" d="m9 13 2 2 4-4" />
-        </svg>
+        DOWNLOADED
+      </span>
+    {:else if groupFitStatus === "fits_now"}
+      <span
+        class="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-mono tracking-wider uppercase rounded bg-white/5 text-white/30 border border-white/10"
+      >
+        NEEDS DOWNLOAD
       </span>
     {/if}
 
@@ -427,7 +468,7 @@
             ? 'opacity-50 cursor-not-allowed'
             : 'cursor-pointer'} {isSelected
             ? 'bg-exo-yellow/10 border-l-2 border-exo-yellow'
-            : 'border-l-2 border-transparent'}"
+            : `border-l-2 ${getFitBorderColor(fitStatus)}`}"
           disabled={!modelCanFit}
           onclick={() => {
             if (modelCanFit) {
@@ -443,39 +484,39 @@
           </span>
 
           <!-- Size -->
-          <span
-            class="text-xs font-mono flex-1 {getSizeClassForFitStatus(
-              fitStatus,
-            )}"
-          >
-            {formatSize(variant.storage_size_megabytes)}
+          <span class="flex items-center gap-1.5 flex-1">
+            <span class="w-1.5 h-1.5 rounded-full {getFitDotColor(fitStatus)} flex-shrink-0"></span>
+            <span
+              class="text-xs font-mono {getSizeClassForFitStatus(
+                fitStatus,
+              )}"
+            >
+              {formatSize(variant.storage_size_megabytes)}
+            </span>
+            {#if getFitLabel(fitStatus)}
+              <span class="text-xs font-mono {getSizeClassForFitStatus(fitStatus)}">
+                {getFitLabel(fitStatus)}
+              </span>
+            {/if}
           </span>
 
-          <!-- Download indicator for this variant -->
+          <!-- Download status badge for this variant -->
           {#if downloadStatusMap?.get(variant.id)}
             {@const variantDl = downloadStatusMap.get(variant.id)}
             {#if variantDl}
               <span
-                class="flex-shrink-0"
+                class="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-mono tracking-wider uppercase rounded bg-green-500/20 text-green-400 border border-green-500/30"
                 title={`Downloaded on ${variantDl.nodeNames.join(", ")}`}
               >
-                <svg
-                  class="w-3.5 h-3.5"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path
-                    class="text-white/40"
-                    d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
-                  />
-                  <path class="text-green-400" d="m9 13 2 2 4-4" />
-                </svg>
+                DOWNLOADED
               </span>
             {/if}
+          {:else if fitStatus === "fits_now"}
+            <span
+              class="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-mono tracking-wider uppercase rounded bg-white/5 text-white/30 border border-white/10"
+            >
+              NEEDS DOWNLOAD
+            </span>
           {/if}
 
           <!-- Check mark if selected -->
