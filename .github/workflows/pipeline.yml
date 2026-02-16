@@ -8,33 +8,6 @@ on:
       - main
 
 jobs:
-  typecheck:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          lfs: false
-
-      - uses: cachix/install-nix-action@v31
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-
-      - uses: cachix/cachix-action@v14
-        name: Configure Cachix
-        with:
-          name: exo
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-
-      - name: Load nix develop environment
-        run: nix run github:nicknovitski/nix-develop/v1
-
-      - name: Sync dependencies
-        run: uv sync --all-packages
-
-      - name: Run type checker
-        run: uv run basedpyright --project pyproject.toml
-
   nix:
     name: Build and check (${{ matrix.system }})
     runs-on: ${{ matrix.runner }}

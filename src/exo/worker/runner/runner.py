@@ -1,5 +1,6 @@
 import base64
 import json
+import math
 import resource
 import time
 from collections.abc import Generator
@@ -88,6 +89,7 @@ from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
     load_mlx_items,
     mlx_force_oom,
+    mx_any,
 )
 from exo.worker.runner.bootstrap import logger
 
@@ -112,6 +114,7 @@ def main(
     bound_instance: BoundInstance,
     event_sender: MpSender[Event],
     task_receiver: MpReceiver[Task],
+    cancel_receiver: MpReceiver[TaskId],
 ):
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
@@ -129,11 +132,15 @@ def main(
         time.sleep(timeout)
 
     setup_start_time = time.time()
+    cancelled_tasks = set[TaskId]()
 
-    model: Model | DistributedImageModel | None = None
+    # type checker was unhappy with me - splitting these fixed it
+    inference_model: Model | None = None
+    image_model: DistributedImageModel | None = None
     tokenizer = None
     group = None
     kv_prefix_cache: KVPrefixCache | None = None
+    check_for_cancel_every: int | None = None
 
     current_status: RunnerStatus = RunnerIdle()
     logger.info("runner created")
@@ -146,6 +153,7 @@ def main(
             if task.task_id in seen:
                 logger.warning("repeat task - potential error")
             seen.add(task.task_id)
+            cancelled_tasks.discard(TaskId("CANCEL_CURRENT_TASK"))
             event_sender.send(
                 TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Running)
             )
@@ -191,7 +199,7 @@ def main(
                         time.sleep(0.5)
 
                     if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
-                        model, tokenizer = load_mlx_items(
+                        inference_model, tokenizer = load_mlx_items(
                             bound_instance, group, on_timeout=on_model_load_timeout
                         )
                         logger.info(
@@ -203,7 +211,7 @@ def main(
                         ModelTask.TextToImage in shard_metadata.model_card.tasks
                         or ModelTask.ImageToImage in shard_metadata.model_card.tasks
                     ):
-                        model = initialize_image_model(bound_instance)
+                        image_model = initialize_image_model(bound_instance)
                     else:
                         raise ValueError(
                             f"Unknown model task(s): {shard_metadata.model_card.tasks}"
@@ -211,8 +219,6 @@ def main(
                     current_status = RunnerLoaded()
                     logger.info("runner loaded")
                 case StartWarmup() if isinstance(current_status, RunnerLoaded):
-                    assert model
-
                     current_status = RunnerWarmingUp()
                     logger.info("runner warming up")
                     event_sender.send(
@@ -224,16 +230,31 @@ def main(
 
                     logger.info(f"warming up inference for instance: {instance}")
                     if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
-                        assert not isinstance(model, DistributedImageModel)
+                        assert inference_model
                         assert tokenizer
 
+                        t = time.monotonic()
                         toks = warmup_inference(
-                            model=model,
+                            model=inference_model,
                             tokenizer=tokenizer,
                             group=group,
-                            # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
                         )
                         logger.info(f"warmed up by generating {toks} tokens")
+                        check_for_cancel_every = min(
+                            math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
+                        )
+                        if group is not None:
+                            check_for_cancel_every = int(
+                                mx.max(
+                                    mx.distributed.all_gather(
+                                        mx.array([check_for_cancel_every]), group=group
+                                    )
+                                ).item()
+                            )
+
+                        logger.info(
+                            f"runner checking for cancellation every {check_for_cancel_every} tokens"
+                        )
                         logger.info(
                             f"runner initialized in {time.time() - setup_start_time} seconds"
                         )
@@ -241,8 +262,8 @@ def main(
                         ModelTask.TextToImage in shard_metadata.model_card.tasks
                         or ModelTask.ImageToImage in shard_metadata.model_card.tasks
                     ):
-                        assert isinstance(model, DistributedImageModel)
-                        image = warmup_image_generator(model=model)
+                        assert image_model
+                        image = warmup_image_generator(model=image_model)
                         if image is not None:
                             logger.info(f"warmed up by generating {image.size} image")
                         else:
@@ -262,9 +283,9 @@ def main(
                         )
                     )
                     event_sender.send(TaskAcknowledged(task_id=task.task_id))
-
-                    assert model and not isinstance(model, DistributedImageModel)
+                    assert inference_model
                     assert tokenizer
+                    assert check_for_cancel_every
 
                     try:
                         _check_for_debug_prompts(task_params)
@@ -274,7 +295,7 @@ def main(
 
                         # Generate responses using the actual MLX generation
                         mlx_generator = mlx_generate(
-                            model=model,
+                            model=inference_model,
                             tokenizer=tokenizer,
                             task=task_params,
                             prompt=prompt,
@@ -299,11 +320,11 @@ def main(
                             patch_glm_tokenizer(tokenizer)
 
                         # GPT-OSS specific parsing to match other model formats.
-                        elif isinstance(model, GptOssModel):
+                        elif isinstance(inference_model, GptOssModel):
                             mlx_generator = parse_gpt_oss(mlx_generator)
 
                         if tokenizer.has_tool_calling and not isinstance(
-                            model, GptOssModel
+                            inference_model, GptOssModel
                         ):
                             assert tokenizer.tool_call_start
                             assert tokenizer.tool_call_end
@@ -316,7 +337,18 @@ def main(
                             )
 
                         completion_tokens = 0
+                        tokens_since_last_cancel_check = 0
                         for response in mlx_generator:
+                            tokens_since_last_cancel_check += 1
+                            if tokens_since_last_cancel_check >= check_for_cancel_every:
+                                tokens_since_last_cancel_check = 0
+                                cancelled_tasks.update(cancel_receiver.collect())
+                                want_to_cancel = (task.task_id in cancelled_tasks) or (
+                                    TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
+                                )
+                                if mx_any(want_to_cancel, group):
+                                    break
+
                             match response:
                                 case GenerationResponse():
                                     completion_tokens += 1
@@ -364,6 +396,7 @@ def main(
                                                     tool_calls=response.tool_calls,
                                                     model=shard_metadata.model_card.model_id,
                                                     usage=response.usage,
+                                                    stats=response.stats,
                                                 ),
                                             )
                                         )
@@ -388,7 +421,7 @@ def main(
                 case ImageGeneration(
                     task_params=task_params, command_id=command_id
                 ) if isinstance(current_status, RunnerReady):
-                    assert isinstance(model, DistributedImageModel)
+                    assert image_model
                     logger.info(f"received image generation request: {str(task)[:500]}")
                     current_status = RunnerRunning()
                     logger.info("runner running")
@@ -401,7 +434,9 @@ def main(
 
                     try:
                         image_index = 0
-                        for response in generate_image(model=model, task=task_params):
+                        for response in generate_image(
+                            model=image_model, task=task_params
+                        ):
                             is_primary_output = _is_primary_output_node(shard_metadata)
 
                             if is_primary_output:
@@ -451,7 +486,7 @@ def main(
                 case ImageEdits(task_params=task_params, command_id=command_id) if (
                     isinstance(current_status, RunnerReady)
                 ):
-                    assert isinstance(model, DistributedImageModel)
+                    assert image_model
                     logger.info(f"received image edits request: {str(task)[:500]}")
                     current_status = RunnerRunning()
                     logger.info("runner running")
@@ -464,7 +499,9 @@ def main(
 
                     try:
                         image_index = 0
-                        for response in generate_image(model=model, task=task_params):
+                        for response in generate_image(
+                            model=image_model, task=task_params
+                        ):
                             if _is_primary_output_node(shard_metadata):
                                 match response:
                                     case PartialImageResponse():
@@ -523,14 +560,20 @@ def main(
                     raise ValueError(
                         f"Received {task.__class__.__name__} outside of state machine in {current_status=}"
                     )
-            event_sender.send(
-                TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Complete)
+            was_cancelled = (task.task_id in cancelled_tasks) or (
+                TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
             )
+            if not was_cancelled:
+                event_sender.send(
+                    TaskStatusUpdated(
+                        task_id=task.task_id, task_status=TaskStatus.Complete
+                    )
+                )
             event_sender.send(
                 RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
             )
             if isinstance(current_status, RunnerShutdown):
-                del model, tokenizer, group
+                del inference_model, image_model, tokenizer, group
                 mx.clear_cache()
                 import gc
 
@@ -764,7 +807,9 @@ def parse_tool_calls(
                     tools = [_validate_single_tool(tool) for tool in parsed]
                 else:
                     tools = [_validate_single_tool(parsed)]
-                yield ToolCallResponse(tool_calls=tools, usage=response.usage)
+                yield ToolCallResponse(
+                    tool_calls=tools, usage=response.usage, stats=response.stats
+                )
 
             except (
                 json.JSONDecodeError,
@@ -795,7 +840,8 @@ def parse_tool_calls(
                     text=tool_call_start + "".join(tool_call_text_parts),
                     token=0,
                     finish_reason=response.finish_reason,
-                    usage=None,
+                    usage=response.usage,
+                    stats=response.stats,
                 )
             continue
         # fallthrough

@@ -4,7 +4,11 @@ import json
 from collections.abc import AsyncGenerator
 from typing import Any, cast
 
-from exo.master.adapters.claude import collect_claude_response, generate_claude_stream
+from exo.master.adapters.claude import (
+    ClaudeMessagesResponse,
+    collect_claude_response,
+    generate_claude_stream,
+)
 from exo.shared.types.api import ToolCallItem
 from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId, ModelId
@@ -15,6 +19,18 @@ async def _chunks_to_stream(
 ) -> AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None]:
     for chunk in chunks:
         yield chunk
+
+
+async def _collect_response(
+    command_id: CommandId,
+    model: str,
+    chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
+) -> ClaudeMessagesResponse:
+    """Helper to consume the async generator and parse the JSON response."""
+    parts: list[str] = []
+    async for part in collect_claude_response(command_id, model, chunk_stream):
+        parts.append(part)
+    return ClaudeMessagesResponse.model_validate_json("".join(parts))
 
 
 MODEL = ModelId("test-model")
@@ -47,7 +63,7 @@ class TestCollectClaudeResponseToolUse:
                 ],
             ),
         ]
-        response = await collect_claude_response(
+        response = await _collect_response(
             COMMAND_ID, "test-model", _chunks_to_stream(chunks)
         )
 
@@ -77,7 +93,7 @@ class TestCollectClaudeResponseToolUse:
                 ],
             ),
         ]
-        response = await collect_claude_response(
+        response = await _collect_response(
             COMMAND_ID, "test-model", _chunks_to_stream(chunks)
         )
 
@@ -102,7 +118,7 @@ class TestCollectClaudeResponseToolUse:
                 ],
             ),
         ]
-        response = await collect_claude_response(
+        response = await _collect_response(
             COMMAND_ID, "test-model", _chunks_to_stream(chunks)
         )
 
@@ -116,7 +132,7 @@ class TestCollectClaudeResponseToolUse:
 
     async def test_no_content_produces_empty_text_block(self):
         chunks: list[ErrorChunk | ToolCallChunk | TokenChunk] = []
-        response = await collect_claude_response(
+        response = await _collect_response(
             COMMAND_ID, "test-model", _chunks_to_stream(chunks)
         )
         assert len(response.content) == 1

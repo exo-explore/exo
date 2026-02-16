@@ -288,6 +288,151 @@ def resolve_model_short_id(client: ExoClient, model_arg: str) -> tuple[str, str]
     raise ValueError(f"Model not found in /models: {model_arg}")
 
 
+def run_planning_phase(
+    client: ExoClient,
+    full_model_id: str,
+    preview: dict[str, Any],
+    danger_delete: bool,
+    timeout: float,
+    settle_deadline: float | None,
+) -> None:
+    """Check disk space and ensure model is downloaded before benchmarking."""
+    # Get model size from /models
+    models = client.request_json("GET", "/models") or {}
+    model_bytes = 0
+    for m in models.get("data", []):
+        if m.get("hugging_face_id") == full_model_id:
+            model_bytes = m.get("storage_size_megabytes", 0) * 1024 * 1024
+            break
+
+    if not model_bytes:
+        logger.warning(
+            f"Could not determine size for {full_model_id}, skipping disk check"
+        )
+        return
+
+    # Get nodes from preview
+    inner = unwrap_instance(preview["instance"])
+    node_ids = list(inner["shardAssignments"]["nodeToRunner"].keys())
+    runner_to_shard = inner["shardAssignments"]["runnerToShard"]
+
+    state = client.request_json("GET", "/state")
+    downloads = state.get("downloads", {})
+    node_disk = state.get("nodeDisk", {})
+
+    for node_id in node_ids:
+        node_downloads = downloads.get(node_id, [])
+
+        # Check if model already downloaded on this node
+        already_downloaded = any(
+            "DownloadCompleted" in p
+            and unwrap_instance(p["DownloadCompleted"]["shardMetadata"])["modelCard"][
+                "modelId"
+            ]
+            == full_model_id
+            for p in node_downloads
+        )
+        if already_downloaded:
+            continue
+
+        # Wait for disk info if settle_deadline is set
+        disk_info = node_disk.get(node_id, {})
+        backoff = _SETTLE_INITIAL_BACKOFF_S
+        while not disk_info and settle_deadline and time.monotonic() < settle_deadline:
+            remaining = settle_deadline - time.monotonic()
+            logger.info(
+                f"Waiting for disk info on {node_id} ({remaining:.0f}s remaining)..."
+            )
+            time.sleep(min(backoff, remaining))
+            backoff = min(backoff * _SETTLE_BACKOFF_MULTIPLIER, _SETTLE_MAX_BACKOFF_S)
+            state = client.request_json("GET", "/state")
+            node_disk = state.get("nodeDisk", {})
+            disk_info = node_disk.get(node_id, {})
+
+        if not disk_info:
+            logger.warning(f"No disk info for {node_id}, skipping space check")
+            continue
+
+        avail = disk_info.get("available", {}).get("inBytes", 0)
+        if avail >= model_bytes:
+            continue
+
+        if not danger_delete:
+            raise RuntimeError(
+                f"Insufficient disk on {node_id}: need {model_bytes // (1024**3)}GB, "
+                f"have {avail // (1024**3)}GB. Use --danger-delete-downloads to free space."
+            )
+
+        # Delete from smallest to largest
+        completed = [
+            (
+                unwrap_instance(p["DownloadCompleted"]["shardMetadata"])["modelCard"][
+                    "modelId"
+                ],
+                p["DownloadCompleted"]["totalBytes"]["inBytes"],
+            )
+            for p in node_downloads
+            if "DownloadCompleted" in p
+        ]
+        for del_model, size in sorted(completed, key=lambda x: x[1]):
+            logger.info(f"Deleting {del_model} from {node_id} ({size // (1024**2)}MB)")
+            client.request_json("DELETE", f"/download/{node_id}/{del_model}")
+            avail += size
+            if avail >= model_bytes:
+                break
+
+        if avail < model_bytes:
+            raise RuntimeError(f"Could not free enough space on {node_id}")
+
+    # Start downloads (idempotent)
+    for node_id in node_ids:
+        runner_id = inner["shardAssignments"]["nodeToRunner"][node_id]
+        shard = runner_to_shard[runner_id]
+        client.request_json(
+            "POST",
+            "/download/start",
+            body={
+                "targetNodeId": node_id,
+                "shardMetadata": shard,
+            },
+        )
+        logger.info(f"Started download on {node_id}")
+
+    # Wait for downloads
+    start = time.time()
+    while time.time() - start < timeout:
+        state = client.request_json("GET", "/state")
+        downloads = state.get("downloads", {})
+        all_done = True
+        for node_id in node_ids:
+            done = any(
+                "DownloadCompleted" in p
+                and unwrap_instance(p["DownloadCompleted"]["shardMetadata"])[
+                    "modelCard"
+                ]["modelId"]
+                == full_model_id
+                for p in downloads.get(node_id, [])
+            )
+            failed = [
+                p["DownloadFailed"]["errorMessage"]
+                for p in downloads.get(node_id, [])
+                if "DownloadFailed" in p
+                and unwrap_instance(p["DownloadFailed"]["shardMetadata"])["modelCard"][
+                    "modelId"
+                ]
+                == full_model_id
+            ]
+            if failed:
+                raise RuntimeError(f"Download failed on {node_id}: {failed[0]}")
+            if not done:
+                all_done = False
+        if all_done:
+            return
+        time.sleep(1)
+
+    raise TimeoutError("Downloads did not complete in time")
+
+
 def placement_filter(instance_meta: str, wanted: str) -> bool:
     s = (instance_meta or "").lower()
     if wanted == "both":
@@ -535,6 +680,11 @@ def main() -> int:
         default=0,
         help="Max seconds to wait for the cluster to produce valid placements (0 = try once).",
     )
+    ap.add_argument(
+        "--danger-delete-downloads",
+        action="store_true",
+        help="Delete existing models from smallest to largest to make room for benchmark model.",
+    )
     args = ap.parse_args()
 
     pp_list = parse_int_list(args.pp)
@@ -569,13 +719,16 @@ def main() -> int:
         logger.error("[exo-bench] tokenizer usable but prompt sizing failed")
         raise
 
+    settle_deadline = (
+        time.monotonic() + args.settle_timeout if args.settle_timeout > 0 else None
+    )
+
     selected = fetch_and_filter_placements(client, full_model_id, args)
 
-    if not selected and args.settle_timeout > 0:
+    if not selected and settle_deadline:
         backoff = _SETTLE_INITIAL_BACKOFF_S
-        deadline = time.monotonic() + args.settle_timeout
-        while not selected and time.monotonic() < deadline:
-            remaining = deadline - time.monotonic()
+        while not selected and time.monotonic() < settle_deadline:
+            remaining = settle_deadline - time.monotonic()
             logger.warning(
                 f"No valid placements yet (cluster may still be settling). "
                 f"Retrying in {backoff:.1f}s ({remaining:.0f}s remaining)..."
@@ -606,6 +759,16 @@ def main() -> int:
 
     if args.dry_run:
         return 0
+
+    logger.info("Planning phase: checking downloads...")
+    run_planning_phase(
+        client,
+        full_model_id,
+        selected[0],
+        args.danger_delete_downloads,
+        args.timeout,
+        settle_deadline,
+    )
 
     all_rows: list[dict[str, Any]] = []
 

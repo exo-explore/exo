@@ -239,7 +239,7 @@ def try_place_for_meta_instance(
                 update={"meta_instance_id": meta_instance.meta_instance_id}
             )
         return PlacementResult(
-            events=list(get_transition_events(current_instances, target_instances)),
+            events=list(get_transition_events(current_instances, target_instances, {})),
             error=None,
         )
     except ValueError as e:
