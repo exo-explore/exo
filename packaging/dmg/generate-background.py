@@ -206,7 +206,14 @@ def generate_background(output_path: str) -> None:
     _draw_text(pixels, 155 - exo_width // 2, 232, "EXO", label_color, scale=label_scale)
     # "Applications" — 12 chars, centered under icon at x=505
     apps_width = 12 * char_width
-    _draw_text(pixels, 505 - apps_width // 2, 232, "Applications", label_color, scale=label_scale)
+    _draw_text(
+        pixels,
+        505 - apps_width // 2,
+        232,
+        "Applications",
+        label_color,
+        scale=label_scale,
+    )
 
     # Draw "Drag to install" instruction — bright white, scale=3 for readability
     # Text is ~15 chars × 18px/char (at scale=3) = ~270px wide
