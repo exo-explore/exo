@@ -619,9 +619,7 @@
   }
 
   const matchesSelectedRuntime = (runtime: InstanceMeta): boolean =>
-    selectedInstanceType === "MlxRing"
-      ? runtime === "MlxRing"
-      : runtime === "MlxJaccl" || runtime === "MlxJaccl";
+    runtime === selectedInstanceType;
 
   // Helper to check if a model can be launched (has valid placement with >= minNodes)
   function canModelFit(modelId: string): boolean {
@@ -1995,7 +1993,7 @@
     instanceMeta: string | null; // From MetaInstance constraints (used when instance is null)
   }
 
-  const unifiedDisplayItems = $derived((): DisplayItem[] => {
+  const unifiedDisplayItems = $derived.by((): DisplayItem[] => {
     const items: DisplayItem[] = [];
     // MetaInstances
     for (const [metaId, meta] of Object.entries(metaInstancesData)) {
@@ -2865,7 +2863,7 @@
                 bind:this={instancesContainerRef}
                 class="max-h-72 xl:max-h-96 space-y-3 overflow-y-auto overflow-x-hidden py-px"
               >
-                {#each unifiedDisplayItems() as item (item.id)}
+                {#each unifiedDisplayItems as item (item.id)}
                   {@const id = item.id}
                   {@const instance = item.instance}
                   {@const downloadInfo = instance
@@ -3734,7 +3732,7 @@
                 <div
                   class="space-y-3 max-h-72 xl:max-h-96 overflow-y-auto overflow-x-hidden py-px pr-1"
                 >
-                  {#each unifiedDisplayItems() as item (item.id)}
+                  {#each unifiedDisplayItems as item (item.id)}
                     {@const id = item.id}
                     {@const instance = item.instance}
                     {@const downloadInfo = instance
