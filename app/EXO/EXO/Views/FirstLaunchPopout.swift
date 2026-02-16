@@ -9,16 +9,22 @@ final class FirstLaunchPopout {
     private var countdownTask: Task<Void, Never>?
     private static let dashboardURL = "http://localhost:52415/"
 
+    /// Called when the user completes onboarding (clicks Open Dashboard or dismisses).
+    var onComplete: (() -> Void)?
+
     func show() {
         guard panel == nil else { return }
 
         let hostingView = NSHostingView(
             rootView: WelcomeCalloutView(
+                countdownDuration: 30,
                 onDismiss: { [weak self] in
+                    self?.onComplete?()
                     self?.dismiss()
                 },
                 onOpen: { [weak self] in
                     self?.openDashboard()
+                    self?.onComplete?()
                     self?.dismiss()
                 }))
         hostingView.frame = NSRect(x: 0, y: 0, width: 280, height: 100)
@@ -60,15 +66,12 @@ final class FirstLaunchPopout {
             window.animator().alphaValue = 1
         }
 
-        // Auto-open dashboard after 5s then dismiss
+        // Auto-open dashboard after 30s but keep popout visible until user interacts
         countdownTask = Task {
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
             if !Task.isCancelled {
                 openDashboard()
-                try? await Task.sleep(nanoseconds: 800_000_000)
-                if !Task.isCancelled {
-                    dismiss()
-                }
+                onComplete?()
             }
         }
     }
@@ -99,11 +102,19 @@ final class FirstLaunchPopout {
 
 /// Minimal welcome callout — friendly pointer, not a wall of text.
 private struct WelcomeCalloutView: View {
+    let countdownDuration: Int
     let onDismiss: () -> Void
     let onOpen: () -> Void
-    @State private var countdown = 5
+    @State private var countdown: Int
     @State private var timerTask: Task<Void, Never>?
     @State private var appeared = false
+
+    init(countdownDuration: Int, onDismiss: @escaping () -> Void, onOpen: @escaping () -> Void) {
+        self.countdownDuration = countdownDuration
+        self.onDismiss = onDismiss
+        self.onOpen = onOpen
+        self._countdown = State(initialValue: countdownDuration)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -142,7 +153,7 @@ private struct WelcomeCalloutView: View {
                 Spacer()
 
                 if countdown > 0 {
-                    Text("Opening in \(countdown)s")
+                    Text("Auto-opens in \(countdown)s")
                         .font(.system(.caption2, design: .default))
                         .foregroundColor(.secondary.opacity(0.6))
                         .monospacedDigit()
