@@ -17,7 +17,7 @@ dependencies = [
     "loguru>=0.7.3",
     "exo_pyo3_bindings", # rust bindings
     "anyio==4.11.0",
-    "mlx==0.30.6; sys_platform == 'darwin'",
+    "mlx; sys_platform == 'darwin'",
     "mlx[cpu]==0.30.6; sys_platform == 'linux'",
     "mlx-lm==0.30.6",
     "tiktoken>=0.12.0", # required for kimi k2 tokenizer
@@ -64,6 +64,7 @@ members = [
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
+mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", marker = "sys_platform == 'darwin'" }
 #mlx-lm = { git = "https://github.com/davidmcc73/mlx-lm", branch = "stable" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }
