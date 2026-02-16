@@ -2,10 +2,10 @@
 """Generate a DMG background image for the EXO installer.
 
 Creates a 660x400 PNG with:
-- Clean dark gradient background (no grid)
-- Minimal right-pointing arrow between app and Applications
+- Clean solid dark background
+- Bold right-pointing arrow (thick shaft + filled triangle head)
 - White "Drag to install" instruction text
-- Premium style inspired by Slack/Discord/VSCode DMGs
+- Style inspired by Slack/Discord/VSCode DMGs
 
 Usage:
     python3 generate-background.py output.png
@@ -13,7 +13,6 @@ Usage:
 
 from __future__ import annotations
 
-import math
 import struct
 import sys
 import zlib
@@ -54,87 +53,96 @@ def _create_png(
     return signature + ihdr + idat + iend
 
 
-def _lerp(a: int, b: int, t: float) -> int:
-    return max(0, min(255, int(a + (b - a) * t)))
-
-
-def _blend(
-    bg: tuple[int, int, int, int], fg: tuple[int, int, int, int]
-) -> tuple[int, int, int, int]:
-    """Alpha-blend fg over bg."""
-    fa = fg[3] / 255.0
+def _set_pixel(
+    pixels: list[list[tuple[int, int, int, int]]],
+    x: int,
+    y: int,
+    color: tuple[int, int, int],
+    alpha: float,
+) -> None:
+    """Set a pixel with alpha blending."""
+    height = len(pixels)
+    width = len(pixels[0]) if height > 0 else 0
+    if not (0 <= x < width and 0 <= y < height):
+        return
+    a = max(0, min(255, int(alpha * 255)))
+    if a == 0:
+        return
+    bg = pixels[y][x]
+    if a == 255:
+        pixels[y][x] = (color[0], color[1], color[2], 255)
+        return
+    fa = a / 255.0
     ba = bg[3] / 255.0
     oa = fa + ba * (1 - fa)
     if oa == 0:
-        return (0, 0, 0, 0)
-    r = int((fg[0] * fa + bg[0] * ba * (1 - fa)) / oa)
-    g = int((fg[1] * fa + bg[1] * ba * (1 - fa)) / oa)
-    b = int((fg[2] * fa + bg[2] * ba * (1 - fa)) / oa)
-    return (r, g, b, int(oa * 255))
+        return
+    r = int((color[0] * fa + bg[0] * ba * (1 - fa)) / oa)
+    g = int((color[1] * fa + bg[1] * ba * (1 - fa)) / oa)
+    b = int((color[2] * fa + bg[2] * ba * (1 - fa)) / oa)
+    pixels[y][x] = (r, g, b, int(oa * 255))
 
 
-def _draw_smooth_arrow(
+def _draw_arrow(
     pixels: list[list[tuple[int, int, int, int]]],
-    cx: int,
-    cy: int,
     color: tuple[int, int, int],
 ) -> None:
-    """Draw a clean, minimal right-pointing arrow with anti-aliased edges."""
-    height = len(pixels)
-    width = len(pixels[0]) if height > 0 else 0
+    """Draw a bold right-pointing arrow: thick shaft + solid filled triangle head.
 
-    # Slim shaft
-    shaft_half_len = 32
-    shaft_half_thickness = 1.5
+    Arrow is positioned between the app icon (x=155) and Applications (x=505),
+    centered vertically at y=200.
+    """
+    # Arrow geometry
+    cy = 200  # vertical center
 
-    for x in range(cx - shaft_half_len, cx + shaft_half_len + 1):
-        for y_offset_10 in range(-30, 31):  # sub-pixel sampling
-            y_f = cy + y_offset_10 / 10.0
-            yi = int(y_f)
-            dist = abs(y_f - cy)
-            if dist <= shaft_half_thickness and 0 <= yi < height and 0 <= x < width:
-                # Smooth edge falloff
-                edge_dist = shaft_half_thickness - dist
-                alpha = min(1.0, edge_dist * 2.0)
-                a = int(alpha * 200)
-                fg = (color[0], color[1], color[2], a)
-                pixels[yi][x] = _blend(pixels[yi][x], fg)
+    # Shaft: solid rectangle
+    shaft_x1 = 250
+    shaft_x2 = 380
+    shaft_half_h = 3  # 6px thick shaft
 
-    # Chevron arrowhead (> shape) — clean and modern
-    head_x = cx + shaft_half_len - 2
-    head_size = 14
-    stroke_width = 2.0
+    for y in range(cy - shaft_half_h, cy + shaft_half_h + 1):
+        for x in range(shaft_x1, shaft_x2 + 1):
+            # Anti-alias top and bottom edges
+            dist_from_edge = shaft_half_h - abs(y - cy)
+            if dist_from_edge >= 1:
+                _set_pixel(pixels, x, y, color, 1.0)
+            elif dist_from_edge > 0:
+                _set_pixel(pixels, x, y, color, dist_from_edge)
 
-    for i_10 in range(head_size * 10):
-        t = i_10 / 10.0
-        # Top arm of chevron
-        px_f = head_x + t
-        py_top_f = cy - t
-        # Bottom arm of chevron
-        py_bot_f = cy + t
+    # Arrowhead: filled triangle pointing right
+    # Vertices: left-top (375, 180), left-bottom (375, 220), tip (420, 200)
+    head_left = 375
+    head_right = 420
+    head_half_h = 20  # 40px tall triangle
 
-        for dy_10 in range(int(-stroke_width * 10), int(stroke_width * 10) + 1):
-            for arm_py in [py_top_f, py_bot_f]:
-                py = int(arm_py + dy_10 / 10.0)
-                px = int(px_f)
-                if 0 <= py < height and 0 <= px < width:
-                    dist = abs(dy_10 / 10.0)
-                    alpha = max(0.0, min(1.0, (stroke_width - dist) * 1.5))
-                    a = int(alpha * 200)
-                    fg = (color[0], color[1], color[2], a)
-                    pixels[py][px] = _blend(pixels[py][px], fg)
+    for x in range(head_left, head_right + 1):
+        # At this x, how tall is the triangle?
+        t = (x - head_left) / (head_right - head_left)  # 0 at left, 1 at tip
+        half_height = head_half_h * (1.0 - t)
+
+        y_top = cy - half_height
+        y_bot = cy + half_height
+
+        for y in range(int(y_top) - 1, int(y_bot) + 2):
+            dist_top = y - y_top  # positive = inside from top
+            dist_bot = y_bot - y  # positive = inside from bottom
+
+            if dist_top >= 1.0 and dist_bot >= 1.0:
+                _set_pixel(pixels, x, y, color, 1.0)
+            elif dist_top > 0 and dist_bot > 0:
+                alpha = min(dist_top, dist_bot)
+                _set_pixel(pixels, x, y, color, min(1.0, alpha))
 
 
-def _draw_text_pixel(
+def _draw_text(
     pixels: list[list[tuple[int, int, int, int]]],
     x: int,
     y: int,
     text: str,
-    color: tuple[int, int, int, int],
+    color: tuple[int, int, int],
     scale: int = 1,
 ) -> None:
-    """Draw simple pixel text. Limited to the phrase 'Drag to install'."""
-    # 5x7 pixel font for the letters we need
+    """Draw pixel text using a built-in 5x7 bitmap font."""
     glyphs: dict[str, list[str]] = {
         "D": ["1110 ", "1  01", "1  01", "1  01", "1  01", "1  01", "1110 "],
         "r": ["     ", "     ", " 110 ", "1    ", "1    ", "1    ", "1    "],
@@ -162,8 +170,7 @@ def _draw_text_pixel(
                         for sx in range(scale):
                             py = y + row_idx * scale + sy
                             px = cursor_x + col_idx * scale + sx
-                            if 0 <= py < len(pixels) and 0 <= px < len(pixels[0]):
-                                pixels[py][px] = _blend(pixels[py][px], color)
+                            _set_pixel(pixels, px, py, color, 1.0)
         cursor_x += (len(glyph[0]) + 1) * scale
 
 
@@ -171,34 +178,20 @@ def generate_background(output_path: str) -> None:
     """Generate the DMG background image."""
     width, height = 660, 400
 
-    # Clean dark gradient — no grid, no noise
-    top_color = (28, 28, 30)  # macOS dark mode surface
-    bottom_color = (16, 16, 18)  # slightly darker at bottom
+    # Solid dark background — clean, no gradients or vignettes
+    bg_color = (22, 22, 24, 255)  # macOS dark mode surface
 
-    pixels: list[list[tuple[int, int, int, int]]] = []
-    for y in range(height):
-        t = y / (height - 1)
-        row: list[tuple[int, int, int, int]] = []
-        for x in range(width):
-            # Radial vignette: slightly brighter in center for depth
-            dx = (x - width / 2) / (width / 2)
-            dy = (y - height * 0.45) / (height / 2)
-            dist = math.sqrt(dx * dx + dy * dy)
-            vignette = max(0.0, 1.0 - dist * 0.3)
+    pixels: list[list[tuple[int, int, int, int]]] = [
+        [bg_color] * width for _ in range(height)
+    ]
 
-            r = _lerp(top_color[0], bottom_color[0], t) + int(vignette * 6)
-            g = _lerp(top_color[1], bottom_color[1], t) + int(vignette * 6)
-            b = _lerp(top_color[2], bottom_color[2], t) + int(vignette * 6)
-            row.append((min(255, r), min(255, g), min(255, b), 255))
-        pixels.append(row)
+    # Draw bold white right-pointing arrow between icon positions
+    _draw_arrow(pixels, (255, 255, 255))
 
-    # Draw a clean, minimal arrow between app (x=155) and Applications (x=505)
-    arrow_color = (255, 255, 255)  # white — clean and visible
-    _draw_smooth_arrow(pixels, width // 2, 200, arrow_color)
-
-    # Draw instruction text below the arrow — white for readability
-    text_color = (255, 255, 255, 140)  # white, semi-transparent
-    _draw_text_pixel(pixels, 268, 310, "Drag to install", text_color, scale=2)
+    # Draw "Drag to install" text — bright white, fully opaque, centered below arrow
+    # Text is ~15 chars × 12px/char (at scale=2) = ~180px wide
+    text_x = (width - 180) // 2
+    _draw_text(pixels, text_x, 310, "Drag to install", (255, 255, 255), scale=2)
 
     # Write PNG
     png_data = _create_png(width, height, pixels)
