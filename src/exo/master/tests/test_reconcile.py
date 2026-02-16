@@ -17,6 +17,7 @@ from exo.shared.types.events import (
     InstanceRetrying,
     MetaInstanceCreated,
     MetaInstanceDeleted,
+    NodeTimedOut,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.meta_instance import MetaInstance
@@ -790,3 +791,66 @@ async def test_replaces_instance_when_pinned_node_dies():
     assert result.error is None
     assert len(result.events) > 0
     assert isinstance(result.events[0], InstanceCreated)
+
+
+# --- NodeTimeoutReconciler: duplicate node eviction (stale runner fix) ---
+
+
+async def test_duplicate_node_evicted_on_quick_restart():
+    """When a node restarts quickly and gets a new peer ID, the old peer ID
+    should be force-timed-out immediately because both share the same
+    friendly_name.  This prevents stale runners from blocking inference."""
+    from datetime import datetime, timedelta, timezone
+
+    from exo.master.process_managers.node_timeout import NodeTimeoutReconciler
+    from exo.shared.types.profiling import NodeIdentity
+
+    old_node = NodeId("old-peer-id")
+    new_node = NodeId("new-peer-id")
+    now = datetime.now(tz=timezone.utc)
+    old_time = now - timedelta(seconds=10)
+    new_time = now - timedelta(seconds=1)
+
+    state = State(
+        last_seen={old_node: old_time, new_node: new_time},
+        node_identities={
+            old_node: NodeIdentity(friendly_name="Mac mini 1"),
+            new_node: NodeIdentity(friendly_name="Mac mini 1"),
+        },
+        topology=_topology("old-peer-id", "new-peer-id"),
+    )
+
+    reconciler = NodeTimeoutReconciler()
+    events = await reconciler.reconcile(state)
+
+    # Old peer should be evicted, new peer should survive
+    assert len(events) == 1
+    assert isinstance(events[0], NodeTimedOut)
+    assert events[0].node_id == old_node
+
+
+async def test_no_eviction_when_names_differ():
+    """Nodes with different friendly_names should not be treated as duplicates."""
+    from datetime import datetime, timedelta, timezone
+
+    from exo.master.process_managers.node_timeout import NodeTimeoutReconciler
+    from exo.shared.types.profiling import NodeIdentity
+
+    node_a = NodeId("node-a")
+    node_b = NodeId("node-b")
+    now = datetime.now(tz=timezone.utc) - timedelta(seconds=1)
+
+    state = State(
+        last_seen={node_a: now, node_b: now},
+        node_identities={
+            node_a: NodeIdentity(friendly_name="Mac mini 1"),
+            node_b: NodeIdentity(friendly_name="Mac mini 2"),
+        },
+        topology=_topology("node-a", "node-b"),
+    )
+
+    reconciler = NodeTimeoutReconciler()
+    events = await reconciler.reconcile(state)
+
+    # No duplicates, no timeouts (both are recent)
+    assert len(events) == 0
