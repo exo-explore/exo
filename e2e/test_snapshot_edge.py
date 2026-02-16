@@ -1,4 +1,5 @@
 """Test: Edge case snapshots.
+slow
 
 Verifies deterministic output for edge-case prompts: single word input,
 special characters, and unicode.
@@ -39,6 +40,7 @@ async def main():
                 model=MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 seed=SEED,
+                temperature=0,
                 max_tokens=MAX_TOKENS,
             )
 

@@ -1,4 +1,5 @@
 """Test: Code generation snapshot.
+slow
 
 Verifies deterministic output for a code generation prompt.
 """
@@ -34,6 +35,7 @@ async def main():
             model=MODEL,
             messages=[{"role": "user", "content": PROMPT}],
             seed=SEED,
+            temperature=0,
             max_tokens=MAX_TOKENS,
         )
 

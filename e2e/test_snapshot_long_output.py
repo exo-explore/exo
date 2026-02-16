@@ -1,4 +1,5 @@
 """Test: Longer output snapshot.
+slow
 
 Verifies deterministic output with a higher max_tokens (128).
 """
@@ -32,6 +33,7 @@ async def main():
             model=MODEL,
             messages=[{"role": "user", "content": PROMPT}],
             seed=SEED,
+            temperature=0,
             max_tokens=MAX_TOKENS,
         )
 
