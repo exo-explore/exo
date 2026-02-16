@@ -65,6 +65,11 @@ class MetaInstanceReconciler:
             # Update local instance map so next placement sees this one
             for event in result.events:
                 if isinstance(event, InstanceCreated):
+                    logger.info(
+                        f"MetaInstance reconciler placed instance"
+                        f" {event.instance.instance_id} for"
+                        f" {meta_instance.model_id}"
+                    )
                     current_instances[event.instance.instance_id] = event.instance
             all_events.extend(result.events)
 
@@ -73,6 +78,10 @@ class MetaInstanceReconciler:
                 result.error is not None
                 and meta_instance.placement_error != result.error
             ):
+                logger.warning(
+                    f"MetaInstance placement failed for"
+                    f" {meta_instance.model_id}: {result.error}"
+                )
                 all_events.append(
                     MetaInstancePlacementFailed(
                         meta_instance_id=meta_instance.meta_instance_id,

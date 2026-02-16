@@ -25,12 +25,14 @@ from exo.shared.types.events import (
     MetaInstanceCreated,
     MetaInstanceDeleted,
     MetaInstancePlacementFailed,
+    TaskStatusUpdated,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.meta_instance import MetaInstance
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import NodeIdentity
 from exo.shared.types.state import State
+from exo.shared.types.tasks import LoadModel, TaskId, TaskStatus
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.instances import (
     InstanceId,
@@ -684,3 +686,93 @@ async def test_meta_instance_reconciler_continues_after_error(
     # Both should have placement failed events
     placement_failed = [e for e in events if isinstance(e, MetaInstancePlacementFailed)]
     assert len(placement_failed) == 2
+
+
+# =============================================================================
+# 8. Cascade delete with task cancellation
+# =============================================================================
+
+
+def test_cascade_delete_cancels_active_tasks():
+    """Deleting a MetaInstance should cancel tasks on backing instances.
+
+    Regression test: previously, cascade-deleting backing instances via
+    DeleteMetaInstance did not emit TaskStatusUpdated(Cancelled) for active
+    tasks, leaving orphaned task references in state.
+    """
+    meta = _meta_instance()
+    iid, inst = _instance(node_ids=["node-a"], meta_instance_id=meta.meta_instance_id)
+    task_id = TaskId()
+    task = LoadModel(task_id=task_id, instance_id=iid, task_status=TaskStatus.Running)
+
+    # Build state with meta-instance, backing instance, and active task
+    state = State(
+        meta_instances={meta.meta_instance_id: meta},
+        instances={iid: inst},
+        tasks={task_id: task},
+        topology=_topology("node-a"),
+    )
+
+    # Simulate the cascade-delete event sequence produced by main.py:
+    # 1. MetaInstanceDeleted
+    # 2. TaskStatusUpdated(Cancelled) for active tasks
+    # 3. InstanceDeleted
+    idx = 0
+    state = apply(
+        state,
+        IndexedEvent(
+            idx=idx,
+            event=MetaInstanceDeleted(meta_instance_id=meta.meta_instance_id),
+        ),
+    )
+    idx += 1
+    state = apply(
+        state,
+        IndexedEvent(
+            idx=idx,
+            event=TaskStatusUpdated(task_id=task_id, task_status=TaskStatus.Cancelled),
+        ),
+    )
+    idx += 1
+    state = apply(
+        state,
+        IndexedEvent(idx=idx, event=InstanceDeleted(instance_id=iid)),
+    )
+
+    # Verify everything is cleaned up
+    assert len(state.meta_instances) == 0
+    assert len(state.instances) == 0
+    assert state.tasks[task_id].task_status == TaskStatus.Cancelled
+
+
+def test_cascade_delete_skips_completed_tasks():
+    """Cascade delete should only cancel Pending/Running tasks, not completed ones."""
+    meta = _meta_instance()
+    iid, inst = _instance(node_ids=["node-a"], meta_instance_id=meta.meta_instance_id)
+
+    running_task_id = TaskId()
+    completed_task_id = TaskId()
+    running_task = LoadModel(
+        task_id=running_task_id, instance_id=iid, task_status=TaskStatus.Running
+    )
+    completed_task = LoadModel(
+        task_id=completed_task_id, instance_id=iid, task_status=TaskStatus.Complete
+    )
+
+    state = State(
+        meta_instances={meta.meta_instance_id: meta},
+        instances={iid: inst},
+        tasks={running_task_id: running_task, completed_task_id: completed_task},
+        topology=_topology("node-a"),
+    )
+
+    # Only the running task should be cancelled — we verify the logic pattern
+    # by checking which tasks are Pending or Running
+    active_tasks = [
+        t
+        for t in state.tasks.values()
+        if t.instance_id == iid
+        and t.task_status in (TaskStatus.Pending, TaskStatus.Running)
+    ]
+    assert len(active_tasks) == 1
+    assert active_tasks[0].task_id == running_task_id

@@ -1,6 +1,8 @@
 from collections.abc import Sequence
 from typing import final
 
+from loguru import logger
+
 from exo.master.reconcile import instance_connections_healthy, instance_runners_failed
 from exo.shared.types.events import Event, InstanceDeleted, InstanceRetrying
 from exo.shared.types.state import State
@@ -32,6 +34,11 @@ class InstanceHealthReconciler:
                 mid = instance.meta_instance_id
                 mi = state.meta_instances.get(mid) if mid else None
                 if mid and mi and mi.consecutive_failures < MAX_INSTANCE_RETRIES:
+                    logger.info(
+                        f"Instance {instance_id} failed (attempt"
+                        f" {mi.consecutive_failures + 1}/{MAX_INSTANCE_RETRIES}),"
+                        f" retrying: {error_message}"
+                    )
                     events.append(
                         InstanceRetrying(
                             instance_id=instance_id,
@@ -40,6 +47,12 @@ class InstanceHealthReconciler:
                         )
                     )
                 else:
+                    if mid and mi:
+                        logger.warning(
+                            f"Instance {instance_id} exceeded retry limit"
+                            f" ({MAX_INSTANCE_RETRIES}), deleting:"
+                            f" {error_message}"
+                        )
                     events.append(
                         InstanceDeleted(
                             instance_id=instance_id,
