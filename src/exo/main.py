@@ -46,7 +46,12 @@ class Node:
         keypair = get_node_id_keypair()
         node_id = NodeId(keypair.to_peer_id().to_base58())
         session_id = SessionId(master_node_id=node_id, election_clock=0)
-        router = Router.create(keypair)
+        bootstrap_peers: list[str] = []
+        if args.bootstrap_peer:
+            ip, port = args.bootstrap_peer.rsplit(":", 1)
+            bootstrap_peers.append(f"/ip4/{ip}/tcp/{port}")
+            logger.info(f"Bootstrap peer: {args.bootstrap_peer}")
+        router = Router.create(keypair, bootstrap_peers=bootstrap_peers)
         await router.register_topic(topics.GLOBAL_EVENTS)
         await router.register_topic(topics.LOCAL_EVENTS)
         await router.register_topic(topics.COMMANDS)
@@ -283,6 +288,7 @@ class Args(CamelCaseModel):
     no_worker: bool = False
     no_downloads: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
+    bootstrap_peer: str | None = None
 
     @classmethod
     def parse(cls) -> Self:
@@ -342,6 +348,13 @@ class Args(CamelCaseModel):
             action="store_false",
             dest="fast_synch",
             help="Force MLX FAST_SYNCH off",
+        )
+        parser.add_argument(
+            "--bootstrap-peer",
+            type=str,
+            dest="bootstrap_peer",
+            default=None,
+            help="IP:PORT of an existing node to connect to (bypasses mDNS)",
         )
 
         args = parser.parse_args()

@@ -1,7 +1,7 @@
 use crate::alias;
 use crate::swarm::transport::tcp_transport;
 pub use behaviour::{Behaviour, BehaviourEvent};
-use libp2p::{SwarmBuilder, identity};
+use libp2p::{Multiaddr, SwarmBuilder, identity};
 
 pub type Swarm = libp2p::Swarm<Behaviour>;
 
@@ -16,11 +16,14 @@ pub const NETWORK_VERSION: &[u8] = b"v0.0.1";
 pub const OVERRIDE_VERSION_ENV_VAR: &str = "EXO_LIBP2P_NAMESPACE";
 
 /// Create and configure a swarm which listens to all ports on OS
-pub fn create_swarm(keypair: identity::Keypair) -> alias::AnyResult<Swarm> {
+pub fn create_swarm(
+    keypair: identity::Keypair,
+    bootstrap_peers: Vec<Multiaddr>,
+) -> alias::AnyResult<Swarm> {
     let mut swarm = SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
         .with_other_transport(tcp_transport)?
-        .with_behaviour(Behaviour::new)?
+        .with_behaviour(|kp| Behaviour::new(kp, bootstrap_peers))?
         .build();
 
     // Listen on all interfaces and whatever port the OS assigns
@@ -105,7 +108,7 @@ mod transport {
 mod behaviour {
     use crate::{alias, discovery};
     use libp2p::swarm::NetworkBehaviour;
-    use libp2p::{gossipsub, identity};
+    use libp2p::{Multiaddr, gossipsub, identity};
 
     /// Behavior of the Swarm which composes all desired behaviors:
     /// Right now its just [`discovery::Behaviour`] and [`gossipsub::Behaviour`].
@@ -116,9 +119,12 @@ mod behaviour {
     }
 
     impl Behaviour {
-        pub fn new(keypair: &identity::Keypair) -> alias::AnyResult<Self> {
+        pub fn new(
+            keypair: &identity::Keypair,
+            bootstrap_peers: Vec<Multiaddr>,
+        ) -> alias::AnyResult<Self> {
             Ok(Self {
-                discovery: discovery::Behaviour::new(keypair)?,
+                discovery: discovery::Behaviour::new(keypair, bootstrap_peers)?,
                 gossipsub: gossipsub_behaviour(keypair),
             })
         }

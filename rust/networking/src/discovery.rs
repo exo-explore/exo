@@ -106,6 +106,9 @@ pub struct Behaviour {
     managed: managed::Behaviour,
     mdns_discovered: HashMap<PeerId, BTreeSet<Multiaddr>>,
 
+    /// Addresses provided via --bootstrap-peer, re-dialed on the retry loop.
+    bootstrap_addrs: Vec<Multiaddr>,
+
     retry_delay: Delay, // retry interval
 
     // pending events to emmit => waker-backed Deque to control polling
@@ -113,18 +116,34 @@ pub struct Behaviour {
 }
 
 impl Behaviour {
-    pub fn new(keypair: &identity::Keypair) -> io::Result<Self> {
-        Ok(Self {
+    pub fn new(keypair: &identity::Keypair, bootstrap_peers: Vec<Multiaddr>) -> io::Result<Self> {
+        let mut behaviour = Self {
             managed: managed::Behaviour::new(keypair)?,
             mdns_discovered: HashMap::new(),
+            bootstrap_addrs: bootstrap_peers,
             retry_delay: Delay::new(RETRY_CONNECT_INTERVAL),
             pending_events: WakerDeque::new(),
-        })
+        };
+
+        // Immediately dial all bootstrap peers
+        for addr in &behaviour.bootstrap_addrs.clone() {
+            behaviour.dial_addr(addr.clone());
+        }
+
+        Ok(behaviour)
     }
 
     fn dial(&mut self, peer_id: PeerId, addr: Multiaddr) {
         self.pending_events.push_back(ToSwarm::Dial {
             opts: DialOpts::peer_id(peer_id).addresses(vec![addr]).build(),
+        })
+    }
+
+    /// Dial by address only — PeerId is resolved via Noise handshake on connect.
+    /// Used for bootstrap peers where only IP:port is known.
+    fn dial_addr(&mut self, addr: Multiaddr) {
+        self.pending_events.push_back(ToSwarm::Dial {
+            opts: DialOpts::unknown_peer_id().address(addr).build(),
         })
     }
 
@@ -362,12 +381,15 @@ impl NetworkBehaviour for Behaviour {
             Poll::Pending => {}
         }
 
-        // retry connecting to all mDNS peers periodically (fails safely if already connected)
+        // retry connecting to all mDNS + bootstrap peers periodically (fails safely if already connected)
         if self.retry_delay.poll_unpin(cx).is_ready() {
             for (p, mas) in self.mdns_discovered.clone() {
                 for ma in mas {
                     self.dial(p, ma)
                 }
+            }
+            for addr in self.bootstrap_addrs.clone() {
+                self.dial_addr(addr)
             }
             self.retry_delay.reset(RETRY_CONNECT_INTERVAL) // reset timeout
         }

@@ -342,8 +342,10 @@ impl PyNetworkingHandle {
     // ---- Lifecycle management methods ----
 
     #[new]
-    fn py_new(identity: Bound<'_, PyKeypair>) -> PyResult<Self> {
+    #[pyo3(signature = (identity, bootstrap_peers=vec![]))]
+    fn py_new(identity: Bound<'_, PyKeypair>, bootstrap_peers: Vec<String>) -> PyResult<Self> {
         use pyo3_async_runtimes::tokio::get_runtime;
+        use std::str::FromStr;
 
         // create communication channels
         let (to_task_tx, to_task_rx) = mpsc::channel(MPSC_CHANNEL_SIZE);
@@ -353,9 +355,20 @@ impl PyNetworkingHandle {
         // get identity
         let identity = identity.borrow().0.clone();
 
+        // parse bootstrap peer multiaddrs
+        let parsed_peers: Vec<libp2p::Multiaddr> = bootstrap_peers
+            .into_iter()
+            .map(|s| libp2p::Multiaddr::from_str(&s))
+            .collect::<Result<_, _>>()
+            .pyerr()?;
+
+        if !parsed_peers.is_empty() {
+            log::info!("RUST: bootstrap peers: {:?}", parsed_peers);
+        }
+
         // create networking swarm (within tokio context!! or it crashes)
         let swarm = get_runtime()
-            .block_on(async { create_swarm(identity) })
+            .block_on(async { create_swarm(identity, parsed_peers) })
             .pyerr()?;
 
         // spawn tokio task running the networking logic
