@@ -28,6 +28,7 @@
     showModelSelector?: boolean;
     modelTasks?: Record<string, string[]>;
     modelCapabilities?: Record<string, string[]>;
+    onSend?: () => void;
   }
 
   let {
@@ -38,6 +39,7 @@
     showModelSelector = false,
     modelTasks = {},
     modelCapabilities = {},
+    onSend,
   }: Props = $props();
 
   let message = $state("");
@@ -304,6 +306,8 @@
         modelSupportsThinking() ? thinkingEnabled : null,
       );
     }
+
+    onSend?.();
 
     // Refocus the textarea after sending
     setTimeout(() => textareaRef?.focus(), 10);

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate a DMG background image for the EXO installer.
 
-Creates a 660x400 PNG with:
+Creates a 660x440 PNG with:
 - Clean solid dark background
 - Bold right-pointing arrow (thick shaft + filled triangle head)
 - White "Drag to install" instruction text
@@ -90,10 +90,10 @@ def _draw_arrow(
     """Draw a bold right-pointing arrow: thick shaft + solid filled triangle head.
 
     Arrow is positioned between the app icon (x=155) and Applications (x=505),
-    centered vertically at y=200.
+    centered vertically at y=160 (icons moved up to reduce top space).
     """
     # Arrow geometry
-    cy = 200  # vertical center
+    cy = 160  # vertical center — aligned with icon row
 
     # Shaft: solid rectangle
     shaft_x1 = 250
@@ -144,16 +144,22 @@ def _draw_text(
 ) -> None:
     """Draw pixel text using a built-in 5x7 bitmap font."""
     glyphs: dict[str, list[str]] = {
+        "A": [" 111 ", "1   1", "1   1", "11111", "1   1", "1   1", "1   1"],
         "D": ["1110 ", "1  01", "1  01", "1  01", "1  01", "1  01", "1110 "],
-        "r": ["     ", "     ", " 110 ", "1    ", "1    ", "1    ", "1    "],
+        "E": ["11111", "1    ", "1    ", "1111 ", "1    ", "1    ", "11111"],
+        "O": [" 111 ", "1   1", "1   1", "1   1", "1   1", "1   1", " 111 "],
+        "X": ["1   1", " 1 1 ", "  1  ", " 1 1 ", "1   1", "1   1", "     "],
         "a": ["     ", "     ", " 111 ", "   01", " 1111", "1  01", " 1111"],
+        "c": ["     ", "     ", " 111 ", "1    ", "1    ", "1    ", " 111 "],
         "g": ["     ", "     ", " 1111", "1  01", " 1111", "   01", " 110 "],
-        "t": ["     ", " 1   ", "1111 ", " 1   ", " 1   ", " 1   ", "  11 "],
-        "o": ["     ", "     ", " 110 ", "1  01", "1  01", "1  01", " 110 "],
         "i": ["     ", "  1  ", "     ", "  1  ", "  1  ", "  1  ", "  1  "],
-        "n": ["     ", "     ", "1 10 ", "11 01", "1  01", "1  01", "1  01"],
-        "s": ["     ", "     ", " 111 ", "1    ", " 11  ", "   01", "111  "],
         "l": ["     ", " 1   ", " 1   ", " 1   ", " 1   ", " 1   ", "  1  "],
+        "n": ["     ", "     ", "1 10 ", "11 01", "1  01", "1  01", "1  01"],
+        "o": ["     ", "     ", " 110 ", "1  01", "1  01", "1  01", " 110 "],
+        "p": ["     ", "     ", "1110 ", "1  01", "1110 ", "1    ", "1    "],
+        "r": ["     ", "     ", " 110 ", "1    ", "1    ", "1    ", "1    "],
+        "s": ["     ", "     ", " 111 ", "1    ", " 11  ", "   01", "111  "],
+        "t": ["     ", " 1   ", "1111 ", " 1   ", " 1   ", " 1   ", "  11 "],
         " ": ["     ", "     ", "     ", "     ", "     ", "     ", "     "],
     }
 
@@ -176,7 +182,7 @@ def _draw_text(
 
 def generate_background(output_path: str) -> None:
     """Generate the DMG background image."""
-    width, height = 660, 400
+    width, height = 660, 440
 
     # Solid dark background — clean, no gradients or vignettes
     bg_color = (22, 22, 24, 255)  # macOS dark mode surface
@@ -186,12 +192,26 @@ def generate_background(output_path: str) -> None:
     ]
 
     # Draw bold white right-pointing arrow between icon positions
+    # Arrow is vertically centered at icon row (y=160)
     _draw_arrow(pixels, (255, 255, 255))
 
-    # Draw "Drag to install" text — bright white, fully opaque, centered below arrow
-    # Text is ~15 chars × 12px/char (at scale=2) = ~180px wide
-    text_x = (width - 180) // 2
-    _draw_text(pixels, text_x, 310, "Drag to install", (255, 255, 255), scale=2)
+    # Draw white icon labels (Finder's labels are hidden via text size 1)
+    # Finder positions icons by center point: x=155 and x=505
+    # Icon bottom edge is at y=160+64=224, labels start below at y=232
+    label_color = (255, 255, 255)
+    label_scale = 2
+    char_width = 6 * label_scale  # 5px glyph + 1px spacing, scaled
+    # "EXO" — 3 chars, centered under icon at x=155
+    exo_width = 3 * char_width
+    _draw_text(pixels, 155 - exo_width // 2, 232, "EXO", label_color, scale=label_scale)
+    # "Applications" — 12 chars, centered under icon at x=505
+    apps_width = 12 * char_width
+    _draw_text(pixels, 505 - apps_width // 2, 232, "Applications", label_color, scale=label_scale)
+
+    # Draw "Drag to install" instruction — bright white, scale=3 for readability
+    # Text is ~15 chars × 18px/char (at scale=3) = ~270px wide
+    text_x = (width - 270) // 2
+    _draw_text(pixels, text_x, 340, "Drag to install", (255, 255, 255), scale=3)
 
     # Write PNG
     png_data = _create_png(width, height, pixels)
