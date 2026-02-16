@@ -205,11 +205,11 @@
       .map(([id]) => id);
     if (unhealthyNodeIds.length === 0) return null;
 
-    // Cross-reference with topology edges to identify cable endpoints.
-    // Use ALL edges (not just RDMA-tagged ones) because when RDMA is broken,
-    // the RDMAConnection edges may be absent — only SocketConnection edges remain.
-    // Any direct connection between nodes represents a Thunderbolt cable to re-seat.
-    const edges = data?.edges ?? [];
+    // Only use RDMA-tagged edges (those with sourceRdmaIface) to find pairs
+    // with direct Thunderbolt 5 connections. Not all node pairs are connected
+    // all-to-all via Thunderbolt — only show cable warnings for pairs that
+    // actually have a direct Thunderbolt 5 link.
+    const rdmaEdges = (data?.edges ?? []).filter((e) => e.sourceRdmaIface);
     const seenPairs = new Set<string>();
     const affectedPairs: Array<{
       nodeA: string;
@@ -218,24 +218,23 @@
       nameB: string;
     }> = [];
 
-    for (const unhealthyId of unhealthyNodeIds) {
-      for (const edge of edges) {
-        let peer: string | null = null;
-        if (edge.source === unhealthyId) peer = edge.target;
-        else if (edge.target === unhealthyId) peer = edge.source;
-        if (!peer) continue;
+    for (const edge of rdmaEdges) {
+      const a = edge.source;
+      const b = edge.target;
+      // At least one endpoint must have unhealthy RDMA
+      if (!unhealthyNodeIds.includes(a) && !unhealthyNodeIds.includes(b))
+        continue;
 
-        const pairKey = [unhealthyId, peer].sort().join("-");
-        if (seenPairs.has(pairKey)) continue;
-        seenPairs.add(pairKey);
+      const pairKey = [a, b].sort().join("-");
+      if (seenPairs.has(pairKey)) continue;
+      seenPairs.add(pairKey);
 
-        affectedPairs.push({
-          nodeA: unhealthyId,
-          nodeB: peer,
-          nameA: getNodeName(unhealthyId),
-          nameB: getNodeName(peer),
-        });
-      }
+      affectedPairs.push({
+        nodeA: a,
+        nodeB: b,
+        nameA: getNodeName(a),
+        nameB: getNodeName(b),
+      });
     }
 
     return affectedPairs.length > 0 ? affectedPairs : null;
