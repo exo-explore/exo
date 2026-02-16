@@ -77,6 +77,26 @@
   const rdmaCtlData = $derived(nodeRdmaCtl());
   const nodeFilter = $derived(previewNodeFilter());
 
+  // Aggregate active download progress across all instances for header indicator
+  const activeDownloadSummary = $derived.by(() => {
+    let totalBytes = 0;
+    let downloadedBytes = 0;
+    let count = 0;
+    for (const [id, inst] of Object.entries(instanceData)) {
+      const status = getInstanceDownloadStatus(id, inst);
+      if (status.isDownloading && status.progress) {
+        count++;
+        totalBytes += status.progress.totalBytes || 0;
+        downloadedBytes += status.progress.downloadedBytes || 0;
+      }
+    }
+    if (count === 0) return null;
+    return {
+      count,
+      percentage: totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0,
+    };
+  });
+
   // Detect macOS version mismatches across cluster nodes
   const macosVersionMismatch = $derived.by(() => {
     if (!identitiesData) return null;
@@ -2937,6 +2957,7 @@
         showSidebarToggle={true}
         {sidebarVisible}
         onToggleSidebar={toggleChatSidebarVisible}
+        downloadProgress={activeDownloadSummary}
       />
     {/if}
 
@@ -3094,8 +3115,28 @@
                 onNodeClick={togglePreviewNodeFilter}
               />
 
+              <!-- Initial loading state before first data fetch -->
+              {#if !update}
+                <div
+                  class="absolute inset-0 flex items-center justify-center bg-exo-dark-gray/80"
+                  in:fade={{ duration: 200 }}
+                  out:fade={{ duration: 300 }}
+                >
+                  <div class="text-center">
+                    <div
+                      class="w-8 h-8 border-2 border-exo-yellow/30 border-t-exo-yellow rounded-full animate-spin mx-auto mb-4"
+                    ></div>
+                    <p
+                      class="text-xs font-mono text-white/40 tracking-wider uppercase"
+                    >
+                      Connecting to cluster&hellip;
+                    </p>
+                  </div>
+                </div>
+              {/if}
+
               <!-- Welcome overlay - shown when no instances are running -->
-              {#if instanceCount === 0}
+              {#if instanceCount === 0 && update}
                 <div
                   class="absolute inset-0 flex items-center justify-center pointer-events-none"
                   in:fade={{ duration: 400, delay: 200 }}
@@ -3456,8 +3497,25 @@
                           >
                             {getInstanceModelId(instance)}
                           </div>
-                          <div class="text-white/60 text-xs font-mono">
-                            {instanceInfo.sharding} · {instanceInfo.instanceType}
+                          <div
+                            class="flex items-center gap-2 text-white/60 text-xs font-mono"
+                          >
+                            <span
+                              >{instanceInfo.sharding} &middot; {instanceInfo.instanceType}</span
+                            >
+                            <span
+                              class="px-1.5 py-0.5 text-[10px] tracking-wider uppercase rounded transition-all duration-300 {isDownloading
+                                ? 'bg-blue-500/15 text-blue-400'
+                                : isFailed
+                                  ? 'bg-red-500/15 text-red-400'
+                                  : isLoading
+                                    ? 'bg-yellow-500/15 text-yellow-400'
+                                    : isReady
+                                      ? 'bg-green-500/15 text-green-400'
+                                      : 'bg-teal-500/15 text-teal-400'}"
+                            >
+                              {statusText}
+                            </span>
                           </div>
                           {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
                             <a
@@ -4344,8 +4402,25 @@
                             >
                               {getInstanceModelId(instance)}
                             </div>
-                            <div class="text-white/60 text-xs font-mono">
-                              {instanceInfo.sharding} · {instanceInfo.instanceType}
+                            <div
+                              class="flex items-center gap-2 text-white/60 text-xs font-mono"
+                            >
+                              <span
+                                >{instanceInfo.sharding} &middot; {instanceInfo.instanceType}</span
+                              >
+                              <span
+                                class="px-1.5 py-0.5 text-[10px] tracking-wider uppercase rounded transition-all duration-300 {isDownloading
+                                  ? 'bg-blue-500/15 text-blue-400'
+                                  : isFailed
+                                    ? 'bg-red-500/15 text-red-400'
+                                    : isLoading
+                                      ? 'bg-yellow-500/15 text-yellow-400'
+                                      : isReady
+                                        ? 'bg-green-500/15 text-green-400'
+                                        : 'bg-teal-500/15 text-teal-400'}"
+                              >
+                                {statusText}
+                              </span>
                             </div>
                             {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
                               <a
