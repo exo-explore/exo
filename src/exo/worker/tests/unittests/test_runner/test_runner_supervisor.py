@@ -69,6 +69,7 @@ def _build_supervisor(
 
     _ev_send, ev_recv = mp_channel[Event]()
     task_sender, _task_recv = mp_channel[Task]()
+    cancel_sender, _cancel_recv = mp_channel[TaskId]()
     runner_process = multiprocessing.Process(target=target, daemon=True)
     heartbeat: Synchronized[int] = multiprocessing.Value("Q", 0)
 
@@ -80,6 +81,7 @@ def _build_supervisor(
         _ev_recv=ev_recv,
         _task_sender=task_sender,
         _event_sender=event_sender.clone(),
+        _cancel_sender=cancel_sender,
         _heartbeat=heartbeat,
     )
 
