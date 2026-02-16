@@ -69,7 +69,7 @@ if [[ -n $BACKGROUND_PNG && -f $BACKGROUND_PNG ]]; then
 fi
 
 # ── Step 5: Configure window appearance via AppleScript ──────────────────────
-# Window: 660×440, icons at 128px, app on left, Applications on right
+# Window: 660×440, icons at 128px centered at y=130, app on left, Applications on right
 # Text size set to 10 (Finder minimum) to minimize icon label visibility on dark background
 APP_NAME="$(basename "$APP_PATH")"
 
@@ -88,8 +88,8 @@ tell application "Finder"
         if exists file ".background:background.png" then
             set background picture of opts to file ".background:background.png"
         end if
-        set position of item "$APP_NAME" of container window to {155, 160}
-        set position of item "Applications" of container window to {505, 160}
+        set position of item "$APP_NAME" of container window to {155, 130}
+        set position of item "Applications" of container window to {505, 130}
         close
         open
         update without registering applications
