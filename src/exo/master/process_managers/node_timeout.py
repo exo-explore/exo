@@ -65,7 +65,9 @@ def _find_stale_duplicate_nodes(state: State) -> set[NodeId]:
         # Keep the node with the most recent last_seen; evict the rest
         newest = max(
             node_ids,
-            key=lambda nid: state.last_seen.get(nid, datetime.min.replace(tzinfo=timezone.utc)),
+            key=lambda nid: state.last_seen.get(
+                nid, datetime.min.replace(tzinfo=timezone.utc)
+            ),
         )
         for nid in node_ids:
             if nid != newest:
