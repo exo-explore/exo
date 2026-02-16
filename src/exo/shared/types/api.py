@@ -3,8 +3,7 @@ from collections.abc import Generator
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
-from pydantic_core import PydanticUseDefault
+from pydantic import BaseModel, Field
 
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.common import CommandId, NodeId
@@ -227,13 +226,6 @@ class PlaceInstanceParams(BaseModel):
     sharding: Sharding = Sharding.Pipeline
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
     min_nodes: int = 1
-
-    @field_validator("sharding", "instance_meta", mode="plain")
-    @classmethod
-    def use_default(cls, v: object):
-        if not v or not isinstance(v, (Sharding, InstanceMeta)):
-            raise PydanticUseDefault()
-        return v
 
 
 class CreateInstanceParams(BaseModel):
