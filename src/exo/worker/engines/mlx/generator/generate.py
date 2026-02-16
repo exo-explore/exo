@@ -393,10 +393,11 @@ def mlx_generate(
                     f"Model generated unexpected finish_reason: {out.finish_reason}"
                 )
 
+            total_prompt_tokens = len(all_prompt_tokens)
             usage = Usage(
-                prompt_tokens=int(out.prompt_tokens),
+                prompt_tokens=total_prompt_tokens,
                 completion_tokens=completion_tokens,
-                total_tokens=int(out.prompt_tokens) + completion_tokens,
+                total_tokens=total_prompt_tokens + completion_tokens,
                 prompt_tokens_details=PromptTokensDetails(
                     cached_tokens=prefix_hit_length
                 ),

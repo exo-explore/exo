@@ -62,6 +62,7 @@ class PartialImageResponse(BaseRunnerResponse):
 class ToolCallResponse(BaseRunnerResponse):
     tool_calls: list[ToolCallItem]
     usage: Usage | None
+    stats: GenerationStats | None = None
 
 
 class FinishedResponse(BaseRunnerResponse):
