@@ -1,6 +1,6 @@
 """OpenAI Responses API adapter for converting requests/responses."""
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from itertools import count
 from typing import Any
 
@@ -190,6 +190,8 @@ async def generate_responses_stream(
     command_id: CommandId,
     model: str,
     chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
+    *,
+    on_event: Callable[[ResponsesStreamEvent], None] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Generate OpenAI Responses API streaming events from TokenChunks."""
     response_id = f"resp_{command_id}"
@@ -207,12 +209,16 @@ async def generate_responses_stream(
     created_event = ResponseCreatedEvent(
         sequence_number=next(seq), response=initial_response
     )
+    if on_event is not None:
+        on_event(created_event)
     yield f"event: response.created\ndata: {created_event.model_dump_json()}\n\n"
 
     # response.in_progress
     in_progress_event = ResponseInProgressEvent(
         sequence_number=next(seq), response=initial_response
     )
+    if on_event is not None:
+        on_event(in_progress_event)
     yield f"event: response.in_progress\ndata: {in_progress_event.model_dump_json()}\n\n"
 
     # response.output_item.added
@@ -224,6 +230,8 @@ async def generate_responses_stream(
     item_added = ResponseOutputItemAddedEvent(
         sequence_number=next(seq), output_index=0, item=initial_item
     )
+    if on_event is not None:
+        on_event(item_added)
     yield f"event: response.output_item.added\ndata: {item_added.model_dump_json()}\n\n"
 
     # response.content_part.added
@@ -235,6 +243,8 @@ async def generate_responses_stream(
         content_index=0,
         part=initial_part,
     )
+    if on_event is not None:
+        on_event(part_added)
     yield f"event: response.content_part.added\ndata: {part_added.model_dump_json()}\n\n"
 
     accumulated_text = ""
@@ -266,6 +276,8 @@ async def generate_responses_stream(
                     output_index=next_output_index,
                     item=fc_item,
                 )
+                if on_event is not None:
+                    on_event(fc_added)
                 yield f"event: response.output_item.added\ndata: {fc_added.model_dump_json()}\n\n"
 
                 # response.function_call_arguments.delta
@@ -275,6 +287,8 @@ async def generate_responses_stream(
                     output_index=next_output_index,
                     delta=tool.arguments,
                 )
+                if on_event is not None:
+                    on_event(args_delta)
                 yield f"event: response.function_call_arguments.delta\ndata: {args_delta.model_dump_json()}\n\n"
 
                 # response.function_call_arguments.done
@@ -285,6 +299,8 @@ async def generate_responses_stream(
                     name=tool.name,
                     arguments=tool.arguments,
                 )
+                if on_event is not None:
+                    on_event(args_done)
                 yield f"event: response.function_call_arguments.done\ndata: {args_done.model_dump_json()}\n\n"
 
                 # response.output_item.done
@@ -300,6 +316,8 @@ async def generate_responses_stream(
                     output_index=next_output_index,
                     item=fc_done_item,
                 )
+                if on_event is not None:
+                    on_event(fc_item_done)
                 yield f"event: response.output_item.done\ndata: {fc_item_done.model_dump_json()}\n\n"
 
                 function_call_items.append(fc_done_item)
@@ -316,6 +334,8 @@ async def generate_responses_stream(
             content_index=0,
             delta=chunk.text,
         )
+        if on_event is not None:
+            on_event(delta_event)
         yield f"event: response.output_text.delta\ndata: {delta_event.model_dump_json()}\n\n"
 
     # response.output_text.done
@@ -326,6 +346,8 @@ async def generate_responses_stream(
         content_index=0,
         text=accumulated_text,
     )
+    if on_event is not None:
+        on_event(text_done)
     yield f"event: response.output_text.done\ndata: {text_done.model_dump_json()}\n\n"
 
     # response.content_part.done
@@ -337,6 +359,8 @@ async def generate_responses_stream(
         content_index=0,
         part=final_part,
     )
+    if on_event is not None:
+        on_event(part_done)
     yield f"event: response.content_part.done\ndata: {part_done.model_dump_json()}\n\n"
 
     # response.output_item.done
@@ -348,6 +372,8 @@ async def generate_responses_stream(
     item_done = ResponseOutputItemDoneEvent(
         sequence_number=next(seq), output_index=0, item=final_message_item
     )
+    if on_event is not None:
+        on_event(item_done)
     yield f"event: response.output_item.done\ndata: {item_done.model_dump_json()}\n\n"
 
     # Create usage from usage data if available
@@ -373,4 +399,6 @@ async def generate_responses_stream(
     completed_event = ResponseCompletedEvent(
         sequence_number=next(seq), response=final_response
     )
+    if on_event is not None:
+        on_event(completed_event)
     yield f"event: response.completed\ndata: {completed_event.model_dump_json()}\n\n"

@@ -37,6 +37,7 @@ from exo.master.adapters.responses import (
     generate_responses_stream,
     responses_request_to_text_generation,
 )
+from exo.master.responses_store import ResponsesStore
 from exo.master.event_log import DiskEventLog
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
@@ -141,6 +142,7 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.openai_responses import (
     ResponsesRequest,
     ResponsesResponse,
+    ResponsesStreamEvent,
 )
 from exo.shared.types.state import State
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
@@ -226,6 +228,10 @@ class API:
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup | None = None
 
+        # Store for OpenAI Responses streaming events and response metadata
+        self._responses_store = ResponsesStore()
+        self._responses_commands: dict[str, CommandId] = {}
+
     def reset(self, new_session_id: SessionId, result_clock: int):
         logger.info("Resetting API State")
         self._event_log.close()
@@ -295,6 +301,12 @@ class API:
         self.app.get("/images/{image_id}")(self.get_image)
         self.app.post("/v1/messages", response_model=None)(self.claude_messages)
         self.app.post("/v1/responses", response_model=None)(self.openai_responses)
+        self.app.get("/v1/responses/{response_id}", response_model=None)(
+            self.resume_openai_responses
+        )
+        self.app.post("/v1/responses/{response_id}/cancel", response_model=None)(
+            self.cancel_openai_response
+        )
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(self.stream_events)
         self.app.post("/download/start")(self.start_download)
@@ -1253,12 +1265,20 @@ class API:
         command = TextGeneration(task_params=task_params)
         await self._send(command)
 
+        response_id = f"resp_{command.command_id}"
+        self._responses_commands[response_id] = command.command_id
+
         if payload.stream:
+
+            def _record_event(event: ResponsesStreamEvent) -> None:
+                self._responses_store.record_event(response_id, event)
+
             return StreamingResponse(
                 generate_responses_stream(
                     command.command_id,
                     payload.model,
                     self._token_chunk_stream(command.command_id),
+                    on_event=_record_event,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1277,6 +1297,51 @@ class API:
                 ),
                 media_type="application/json",
             )
+
+    async def resume_openai_responses(
+        self,
+        response_id: str,
+        stream: bool = True,
+        starting_after: int = 0,
+    ) -> StreamingResponse:
+        """Resume a dropped OpenAI Responses stream using previously recorded events."""
+        if not stream:
+            raise HTTPException(
+                status_code=400,
+                detail="Only streaming resumptions are supported for /v1/responses/{id}",
+            )
+
+        status = self._responses_store.get_status(response_id)
+        if status is None:
+            raise HTTPException(status_code=404, detail="Response not found")
+
+        async def _event_stream() -> AsyncGenerator[str, None]:
+            async for event in self._responses_store.stream_from(
+                response_id, starting_after
+            ):
+                yield f"event: {event.type}\ndata: {event.model_dump_json()}\n\n"
+
+        return StreamingResponse(
+            _event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "close",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    async def cancel_openai_response(self, response_id: str) -> JSONResponse:
+        """Cancel an in-progress OpenAI Responses generation."""
+        command_id = self._responses_commands.get(response_id)
+        if command_id is None:
+            raise HTTPException(status_code=404, detail="Response not found")
+
+        cancel_cmd = TaskCancelled(command_id=command_id)
+        await self._send(cancel_cmd)
+        self._responses_store.mark_cancelled(response_id)
+
+        return JSONResponse({"id": response_id, "status": "cancelled"})
 
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
