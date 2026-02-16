@@ -54,6 +54,7 @@
   import { addToast } from "$lib/stores/toast.svelte";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
   import { fade, fly, slide } from "svelte/transition";
+  import { tweened } from "svelte/motion";
   import { cubicInOut, cubicOut } from "svelte/easing";
   import { onMount } from "svelte";
 
@@ -178,9 +179,42 @@
 
   // ── Onboarding wizard state ──
   const ONBOARDING_COMPLETE_KEY = "exo-onboarding-complete";
-  let onboardingStep = $state(0); // 0 = not in onboarding, 1-6 = wizard steps
+  let onboardingStep = $state(0); // 0 = not in onboarding, 1-7 = wizard steps
   let onboardingModelId = $state<string | null>(null); // model selected during onboarding
   const showOnboarding = $derived(onboardingStep > 0);
+
+  // ── Step 2 animation state: "Add more devices, run bigger models" ──
+  let deviceAnimPhase = $state(0); // 0=waiting, 1=macbook, 2=studio joins, 3=connection+mid unlock, 4=big unlock
+  let showContinueStep2 = $state(false);
+  const studioX = tweened(560, { duration: 700, easing: cubicOut });
+  const studioOpacity = tweened(0, { duration: 700, easing: cubicOut });
+
+  $effect(() => {
+    if (onboardingStep === 2) {
+      deviceAnimPhase = 0;
+      showContinueStep2 = false;
+      studioX.set(560, { duration: 0 });
+      studioOpacity.set(0, { duration: 0 });
+
+      const t1 = setTimeout(() => { deviceAnimPhase = 1; }, 100);
+      const t2 = setTimeout(() => {
+        deviceAnimPhase = 2;
+        studioX.set(364);
+        studioOpacity.set(1);
+      }, 900);
+      const t3 = setTimeout(() => { deviceAnimPhase = 3; }, 1700);
+      const t4 = setTimeout(() => { deviceAnimPhase = 4; }, 2500);
+      const t5 = setTimeout(() => { showContinueStep2 = true; }, 3500);
+
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+        clearTimeout(t4);
+        clearTimeout(t5);
+      };
+    }
+  });
 
   // Recommended models for onboarding (sorted by fit, then size desc, limited to 6)
   const onboardingModels = $derived.by(() => {
@@ -197,9 +231,9 @@
   });
 
   // Track onboarding instance status for auto-advancing steps.
-  // Handles cached models: if no download is needed, skip step 4 entirely.
+  // Handles cached models: if no download is needed, skip step 5 entirely.
   $effect(() => {
-    if (onboardingStep === 4 && instanceCount > 0) {
+    if (onboardingStep === 5 && instanceCount > 0) {
       let anyDownloading = false;
       let anyReady = false;
       for (const [id, inst] of Object.entries(instanceData)) {
@@ -217,16 +251,16 @@
       }
       // Model already cached & ready — skip download AND loading steps
       if (anyReady) {
-        onboardingStep = 6;
+        onboardingStep = 7;
       } else if (!anyDownloading) {
         // Download finished (or was never needed) but not ready yet
-        onboardingStep = 5;
+        onboardingStep = 6;
       }
     }
   });
 
   $effect(() => {
-    if (onboardingStep === 5 && instanceCount > 0) {
+    if (onboardingStep === 6 && instanceCount > 0) {
       for (const [id, inst] of Object.entries(instanceData)) {
         const status = getInstanceDownloadStatus(id, inst);
         if (
@@ -234,7 +268,7 @@
           status.statusText === "LOADED" ||
           status.statusText === "RUNNING"
         ) {
-          onboardingStep = 6;
+          onboardingStep = 7;
           break;
         }
       }
@@ -256,7 +290,7 @@
     onboardingModelId = modelId;
     onboardingError = null;
     selectPreviewModel(modelId);
-    onboardingStep = 4;
+    onboardingStep = 5;
     // Launch via API
     try {
       const placementResponse = await fetch(
@@ -265,7 +299,7 @@
       if (!placementResponse.ok) {
         const errorText = await placementResponse.text();
         onboardingError = `Could not place model: ${errorText}`;
-        onboardingStep = 3;
+        onboardingStep = 4;
         return;
       }
       const placementData = await placementResponse.json();
@@ -277,14 +311,14 @@
       if (!response.ok) {
         const errorText = await response.text();
         onboardingError = `Failed to launch: ${errorText}`;
-        onboardingStep = 3;
+        onboardingStep = 4;
         return;
       }
       setSelectedChatModel(modelId);
       recordRecentLaunch(modelId);
     } catch (error) {
       onboardingError = `Network error: ${error}`;
-      onboardingStep = 3;
+      onboardingStep = 4;
     }
   }
 
@@ -2265,7 +2299,270 @@
           </button>
         </div>
       {:else if onboardingStep === 2}
-        <!-- Step 2: Your Devices -->
+        <!-- Step 2: Add more devices, run bigger models -->
+        <div
+          class="flex flex-col items-center w-full max-w-2xl px-8"
+          in:fade={{ duration: 400 }}
+          out:fade={{ duration: 200 }}
+        >
+          <div class="text-center mb-4">
+            <h1
+              class="text-2xl font-sans font-light text-white/90 mb-2 tracking-wide"
+            >
+              Add more devices, run bigger models
+            </h1>
+          </div>
+
+          <!-- Animation stage -->
+          <div class="relative w-full" style="height: 340px;">
+            <svg viewBox="0 0 600 340" class="w-full h-full" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <filter id="onb-gold-glow" x="-50%" y="-50%" width="200%" height="200%">
+                  <feGaussianBlur stdDeviation="4" result="blur" />
+                  <feFlood flood-color="#FFD700" flood-opacity="0.6" result="color" />
+                  <feComposite in="color" in2="blur" operator="in" result="glow" />
+                  <feMerge>
+                    <feMergeNode in="glow" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+                <filter id="onb-device-glow" x="-50%" y="-50%" width="200%" height="200%">
+                  <feGaussianBlur stdDeviation="3" result="blur" />
+                  <feFlood flood-color="#FFD700" flood-opacity="0.3" result="color" />
+                  <feComposite in="color" in2="blur" operator="in" result="glow" />
+                  <feMerge>
+                    <feMergeNode in="glow" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+              </defs>
+
+              <!-- MacBook Device (left side) -->
+              {#if deviceAnimPhase >= 1}
+                <g transform="translate(180, 55)" in:fade={{ duration: 600 }}>
+                  <!-- Screen bezel -->
+                  <rect x="0" y="0" width="56" height="38" rx="3"
+                    fill="none" stroke="#FFD700" stroke-width="1.5" filter="url(#onb-device-glow)" />
+                  <!-- Screen interior -->
+                  <rect x="3" y="2" width="50" height="32" rx="1" fill="#0a0a0a" />
+                  <!-- Memory bar inside screen -->
+                  <rect x="6" y="24" width="20" height="6" rx="1" fill="#374151" />
+                  <rect x="6" y="24" width="12" height="6" rx="1" fill="rgba(255,215,0,0.4)" />
+                  <!-- Keyboard base -->
+                  <path d="M -4 41 L 60 41 L 56 48 L 0 48 Z"
+                    fill="none" stroke="#FFD700" stroke-width="1.5" />
+                  <!-- Label -->
+                  <text x="28" y="66" text-anchor="middle"
+                    fill="rgba(255,255,255,0.6)" style="font-size: 10px; font-family: system-ui, sans-serif;">
+                    MacBook Pro
+                  </text>
+                  <text x="28" y="78" text-anchor="middle"
+                    fill="rgba(255,255,255,0.3)" style="font-size: 9px; font-family: 'SF Mono', monospace;">
+                    36 GB
+                  </text>
+                </g>
+              {/if}
+
+              <!-- Mac Studio Device (right side) - tweened fly-in -->
+              <g transform="translate({$studioX}, 55)" opacity={$studioOpacity}>
+                <!-- Studio box -->
+                <rect x="0" y="0" width="52" height="44" rx="5"
+                  fill="none" stroke="#FFD700" stroke-width="1.5" filter="url(#onb-device-glow)" />
+                <!-- Inner face -->
+                <rect x="4" y="4" width="44" height="36" rx="3" fill="#0a0a0a" />
+                <!-- Memory bar inside -->
+                <rect x="8" y="28" width="36" height="6" rx="1" fill="#374151" />
+                <rect x="8" y="28" width="28" height="6" rx="1" fill="rgba(255,215,0,0.4)" />
+                <!-- Front circle detail -->
+                <circle cx="26" cy="40" r="2.5" fill="none" stroke="rgba(255,215,0,0.4)" stroke-width="0.8" />
+                <!-- Label -->
+                <text x="26" y="66" text-anchor="middle"
+                  fill="rgba(255,255,255,0.6)" style="font-size: 10px; font-family: system-ui, sans-serif;">
+                  Mac Studio
+                </text>
+                <text x="26" y="78" text-anchor="middle"
+                  fill="rgba(255,255,255,0.3)" style="font-size: 9px; font-family: 'SF Mono', monospace;">
+                  192 GB
+                </text>
+              </g>
+
+              <!-- Connection line between devices -->
+              {#if deviceAnimPhase >= 3}
+                <line
+                  x1="240" y1="76"
+                  x2="364" y2="76"
+                  class="onboarding-connection-line"
+                  in:fade={{ duration: 400 }}
+                />
+              {/if}
+
+              <!-- Combined memory label -->
+              {#if deviceAnimPhase >= 3}
+                <text x="302" y="64" text-anchor="middle"
+                  fill="rgba(255,215,0,0.6)" style="font-size: 9px; font-family: 'SF Mono', monospace;"
+                  in:fade={{ duration: 400 }}>
+                  228 GB combined
+                </text>
+              {/if}
+
+              <!-- Model cards row -->
+              <g transform="translate(0, 180)">
+                <!-- Arrows from devices to models -->
+                {#if deviceAnimPhase >= 3}
+                  <line x1="208" y1="-38" x2="208" y2="-8"
+                    stroke="rgba(255,215,0,0.15)" stroke-width="1" stroke-dasharray="3,3"
+                    in:fade={{ duration: 300 }} />
+                  <line x1="390" y1="-38" x2="390" y2="-8"
+                    stroke="rgba(255,215,0,0.15)" stroke-width="1" stroke-dasharray="3,3"
+                    in:fade={{ duration: 300 }} />
+                {/if}
+
+                <!-- Small model: 8B (visible from phase 1) -->
+                {#if deviceAnimPhase >= 1}
+                  <g transform="translate(98, 0)" in:fade={{ duration: 500 }}>
+                    <rect x="0" y="0" width="80" height="40" rx="6"
+                      fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.12)" stroke-width="1" />
+                    <text x="40" y="17" text-anchor="middle"
+                      fill="rgba(255,255,255,0.7)" style="font-size: 11px; font-family: system-ui, sans-serif;">
+                      Qwen3 8B
+                    </text>
+                    <text x="40" y="31" text-anchor="middle"
+                      fill="rgba(255,255,255,0.35)" style="font-size: 9px; font-family: 'SF Mono', monospace;">
+                      4 GB
+                    </text>
+                  </g>
+                {/if}
+
+                <!-- Medium model: 30B (locked → unlocks at phase 3) -->
+                {#if deviceAnimPhase >= 1}
+                  <g transform="translate(200, 0)" in:fade={{ duration: 500, delay: 200 }}>
+                    <rect x="0" y="0" width="80" height="40" rx="6"
+                      fill={deviceAnimPhase >= 3 ? 'rgba(255,215,0,0.06)' : 'rgba(255,255,255,0.015)'}
+                      stroke={deviceAnimPhase >= 3 ? 'rgba(255,215,0,0.35)' : 'rgba(255,255,255,0.06)'}
+                      stroke-width="1"
+                      filter={deviceAnimPhase >= 3 ? 'url(#onb-gold-glow)' : 'none'}
+                      style="transition: fill 500ms, stroke 500ms, filter 500ms;"
+                    />
+                    {#if deviceAnimPhase < 3}
+                      <!-- Lock icon -->
+                      <g transform="translate(34, 10)">
+                        <rect x="0" y="8" width="12" height="9" rx="1.5"
+                          fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+                        <path d="M 2 8 V 5 C 2 2.5 4 1 6 1 C 8 1 10 2.5 10 5 V 8"
+                          fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+                      </g>
+                    {:else}
+                      <text x="40" y="17" text-anchor="middle"
+                        fill="#FFD700" style="font-size: 11px; font-family: system-ui, sans-serif;">
+                        Qwen3 30B
+                      </text>
+                      <text x="40" y="31" text-anchor="middle"
+                        fill="rgba(255,215,0,0.6)" style="font-size: 9px; font-family: 'SF Mono', monospace;">
+                        16 GB
+                      </text>
+                    {/if}
+                  </g>
+                {/if}
+
+                <!-- Large model: 72B (locked → unlocks at phase 4) -->
+                {#if deviceAnimPhase >= 1}
+                  <g transform="translate(306, 0)" in:fade={{ duration: 500, delay: 400 }}>
+                    <rect x="0" y="0" width="80" height="40" rx="6"
+                      fill={deviceAnimPhase >= 4 ? 'rgba(255,215,0,0.06)' : 'rgba(255,255,255,0.015)'}
+                      stroke={deviceAnimPhase >= 4 ? 'rgba(255,215,0,0.35)' : 'rgba(255,255,255,0.06)'}
+                      stroke-width="1"
+                      filter={deviceAnimPhase >= 4 ? 'url(#onb-gold-glow)' : 'none'}
+                      style="transition: fill 500ms, stroke 500ms, filter 500ms;"
+                    />
+                    {#if deviceAnimPhase < 4}
+                      <g transform="translate(34, 10)">
+                        <rect x="0" y="8" width="12" height="9" rx="1.5"
+                          fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+                        <path d="M 2 8 V 5 C 2 2.5 4 1 6 1 C 8 1 10 2.5 10 5 V 8"
+                          fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+                      </g>
+                    {:else}
+                      <text x="40" y="17" text-anchor="middle"
+                        fill="#FFD700" style="font-size: 11px; font-family: system-ui, sans-serif;">
+                        Llama 72B
+                      </text>
+                      <text x="40" y="31" text-anchor="middle"
+                        fill="rgba(255,215,0,0.6)" style="font-size: 9px; font-family: 'SF Mono', monospace;">
+                        36 GB
+                      </text>
+                    {/if}
+                  </g>
+                {/if}
+
+                <!-- Extra large model: 405B (locked → unlocks at phase 4 with extra glow) -->
+                {#if deviceAnimPhase >= 1}
+                  <g transform="translate(410, 0)" in:fade={{ duration: 500, delay: 600 }}>
+                    <rect x="0" y="0" width="88" height="40" rx="6"
+                      fill={deviceAnimPhase >= 4 ? 'rgba(255,215,0,0.08)' : 'rgba(255,255,255,0.015)'}
+                      stroke={deviceAnimPhase >= 4 ? 'rgba(255,215,0,0.45)' : 'rgba(255,255,255,0.06)'}
+                      stroke-width={deviceAnimPhase >= 4 ? '1.5' : '1'}
+                      filter={deviceAnimPhase >= 4 ? 'url(#onb-gold-glow)' : 'none'}
+                      style="transition: fill 700ms, stroke 700ms, filter 700ms, stroke-width 700ms;"
+                    />
+                    {#if deviceAnimPhase < 4}
+                      <g transform="translate(38, 10)">
+                        <rect x="0" y="8" width="12" height="9" rx="1.5"
+                          fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+                        <path d="M 2 8 V 5 C 2 2.5 4 1 6 1 C 8 1 10 2.5 10 5 V 8"
+                          fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+                      </g>
+                    {:else}
+                      <text x="44" y="17" text-anchor="middle"
+                        fill="#FFD700" style="font-size: 11px; font-family: system-ui, sans-serif; font-weight: 600;">
+                        Llama 405B
+                      </text>
+                      <text x="44" y="31" text-anchor="middle"
+                        fill="rgba(255,215,0,0.6)" style="font-size: 9px; font-family: 'SF Mono', monospace;">
+                        203 GB
+                      </text>
+                    {/if}
+                  </g>
+                {/if}
+
+                <!-- "Models you can run" label -->
+                {#if deviceAnimPhase >= 1}
+                  <text x="300" y="60" text-anchor="middle"
+                    fill="rgba(255,255,255,0.25)" style="font-size: 10px; font-family: system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.1em;"
+                    in:fade={{ duration: 400 }}>
+                    Models you can run
+                  </text>
+                {/if}
+              </g>
+            </svg>
+          </div>
+
+          <!-- Continue button -->
+          {#if showContinueStep2}
+            <button
+              type="button"
+              onclick={() => (onboardingStep = 3)}
+              class="inline-flex items-center gap-2 px-8 py-3 mt-2 bg-exo-yellow text-exo-black font-sans text-sm font-semibold rounded-full hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.2)] transition-all duration-200 cursor-pointer"
+              in:fade={{ duration: 400 }}
+            >
+              Continue
+              <svg
+                class="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2.5"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M13 7l5 5m0 0l-5 5m5-5H6"
+                />
+              </svg>
+            </button>
+          {/if}
+        </div>
+      {:else if onboardingStep === 3}
+        <!-- Step 3: Your Devices -->
         <div
           class="flex flex-col items-center w-full max-w-4xl px-8"
           in:fade={{ duration: 400 }}
@@ -2302,7 +2599,7 @@
           </p>
           <button
             type="button"
-            onclick={() => (onboardingStep = 3)}
+            onclick={() => (onboardingStep = 4)}
             class="inline-flex items-center gap-2 px-8 py-3 mt-6 bg-exo-yellow text-exo-black font-sans text-sm font-semibold rounded-full hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.2)] transition-all duration-200 cursor-pointer"
           >
             Continue
@@ -2321,8 +2618,8 @@
             </svg>
           </button>
         </div>
-      {:else if onboardingStep === 3}
-        <!-- Step 3: Choose a Model -->
+      {:else if onboardingStep === 4}
+        <!-- Step 4: Choose a Model -->
         <div
           class="flex flex-col items-center w-full max-w-2xl px-8"
           in:fade={{ duration: 400 }}
@@ -2417,8 +2714,8 @@
             Browse all models
           </button>
         </div>
-      {:else if onboardingStep === 4}
-        <!-- Step 4: Downloading -->
+      {:else if onboardingStep === 5}
+        <!-- Step 5: Downloading -->
         <div
           class="text-center max-w-lg px-8"
           in:fade={{ duration: 400 }}
@@ -2474,8 +2771,8 @@
             This may take a few minutes depending on your connection.
           </p>
         </div>
-      {:else if onboardingStep === 5}
-        <!-- Step 5: Loading into memory -->
+      {:else if onboardingStep === 6}
+        <!-- Step 6: Loading into memory -->
         <div
           class="text-center max-w-lg px-8"
           in:fade={{ duration: 400 }}
@@ -2502,8 +2799,8 @@
 
           <p class="text-sm text-white/40 font-sans">Almost ready...</p>
         </div>
-      {:else if onboardingStep === 6}
-        <!-- Step 6: Chat — centered input auto-appears, first message transitions to dashboard -->
+      {:else if onboardingStep === 7}
+        <!-- Step 7: Chat — centered input auto-appears, first message transitions to dashboard -->
         <div
           class="flex flex-col items-center justify-center w-full max-w-2xl px-8"
           in:fade={{ duration: 400 }}
@@ -2555,8 +2852,8 @@
       {/if}
     </div>
 
-    <!-- Model Picker Modal (available during onboarding step 3) -->
-    {#if onboardingStep === 3}
+    <!-- Model Picker Modal (available during onboarding step 4) -->
+    {#if onboardingStep === 4}
       <ModelPickerModal
         isOpen={isModelPickerOpen}
         {models}
