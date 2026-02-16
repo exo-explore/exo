@@ -114,9 +114,7 @@
         perNodeStatus: [] as PerNodeRunnerStatus[],
         errorMessage: isRecreated
           ? `Instance re-created due to failure: ${lastError}`
-          : lastError
-            ? `Previous failure: ${lastError}`
-            : null,
+          : `Previous failure: ${lastError}`,
       };
     }
 
@@ -1933,7 +1931,7 @@
     instanceMeta: string | null; // From MetaInstance constraints (used when instance is null)
   }
 
-  const unifiedDisplayItems = $derived((): DisplayItem[] => {
+  const unifiedDisplayItems = $derived.by((): DisplayItem[] => {
     const items: DisplayItem[] = [];
     // MetaInstances
     for (const [metaId, meta] of Object.entries(metaInstancesData)) {
@@ -2714,7 +2712,7 @@
                 bind:this={instancesContainerRef}
                 class="max-h-72 xl:max-h-96 space-y-3 overflow-y-auto overflow-x-hidden py-px"
               >
-                {#each unifiedDisplayItems() as item (item.id)}
+                {#each unifiedDisplayItems as item (item.id)}
                   {@const id = item.id}
                   {@const instance = item.instance}
                   {@const downloadInfo = instance
@@ -3583,7 +3581,7 @@
                 <div
                   class="space-y-3 max-h-72 xl:max-h-96 overflow-y-auto overflow-x-hidden py-px pr-1"
                 >
-                  {#each unifiedDisplayItems() as item (item.id)}
+                  {#each unifiedDisplayItems as item (item.id)}
                     {@const id = item.id}
                     {@const instance = item.instance}
                     {@const downloadInfo = instance

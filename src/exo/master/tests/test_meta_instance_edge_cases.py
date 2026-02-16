@@ -1,5 +1,7 @@
 """Edge-case and regression tests for MetaInstance lifecycle, concurrent operations, and error handling."""
 
+import pytest
+
 from exo.master.process_managers.instance_health import (
     MAX_INSTANCE_RETRIES,
     InstanceHealthReconciler,
@@ -591,7 +593,7 @@ def test_state_with_meta_instances_serializes():
 
 
 async def test_meta_instance_reconciler_model_load_error_emits_placement_failed(
-    monkeypatch: object,
+    monkeypatch: "pytest.MonkeyPatch",
 ):
     """When ModelCard.load raises, reconciler emits MetaInstancePlacementFailed."""
     import exo.master.process_managers.meta_instance as mi_mod
@@ -608,7 +610,7 @@ async def test_meta_instance_reconciler_model_load_error_emits_placement_failed(
 
     monkeypatch.setattr(
         mi_mod, "ModelCard", type("MC", (), {"load": staticmethod(_failing_load)})
-    )  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+    )
 
     reconciler = MetaInstanceReconciler()
     events = await reconciler.reconcile(state)
@@ -620,7 +622,7 @@ async def test_meta_instance_reconciler_model_load_error_emits_placement_failed(
 
 
 async def test_meta_instance_reconciler_model_load_error_skips_dedup(
-    monkeypatch: object,
+    monkeypatch: "pytest.MonkeyPatch",
 ):
     """When ModelCard.load error matches existing placement_error, no duplicate event."""
     import exo.master.process_managers.meta_instance as mi_mod
@@ -637,7 +639,7 @@ async def test_meta_instance_reconciler_model_load_error_skips_dedup(
 
     monkeypatch.setattr(
         mi_mod, "ModelCard", type("MC", (), {"load": staticmethod(_failing_load)})
-    )  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+    )
 
     reconciler = MetaInstanceReconciler()
     events = await reconciler.reconcile(state)
@@ -647,7 +649,7 @@ async def test_meta_instance_reconciler_model_load_error_skips_dedup(
 
 
 async def test_meta_instance_reconciler_continues_after_error(
-    monkeypatch: object,
+    monkeypatch: "pytest.MonkeyPatch",
 ):
     """Reconciler should continue to next meta-instance after one fails to load."""
     import exo.master.process_managers.meta_instance as mi_mod
@@ -672,7 +674,7 @@ async def test_meta_instance_reconciler_continues_after_error(
 
     monkeypatch.setattr(
         mi_mod, "ModelCard", type("MC", (), {"load": staticmethod(_load_second_fails)})
-    )  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+    )
 
     reconciler = MetaInstanceReconciler()
     events = await reconciler.reconcile(state)
