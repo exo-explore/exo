@@ -69,7 +69,8 @@ if [[ -n $BACKGROUND_PNG && -f $BACKGROUND_PNG ]]; then
 fi
 
 # ── Step 5: Configure window appearance via AppleScript ──────────────────────
-# Window: 660×400, icons at 128px, app on left, Applications on right
+# Window: 660×440, icons at 128px, app on left, Applications on right
+# Text size set to 1 to hide Finder's black icon labels on dark background
 APP_NAME="$(basename "$APP_PATH")"
 
 osascript <<APPLESCRIPT
@@ -79,15 +80,16 @@ tell application "Finder"
         set current view of container window to icon view
         set toolbar visible of container window to false
         set statusbar visible of container window to false
-        set bounds of container window to {200, 200, 860, 600}
+        set bounds of container window to {200, 200, 860, 640}
         set opts to icon view options of container window
         set icon size of opts to 128
+        set text size of opts to 1
         set arrangement of opts to not arranged
         if exists file ".background:background.png" then
             set background picture of opts to file ".background:background.png"
         end if
-        set position of item "$APP_NAME" of container window to {155, 200}
-        set position of item "Applications" of container window to {505, 200}
+        set position of item "$APP_NAME" of container window to {155, 160}
+        set position of item "Applications" of container window to {505, 160}
         close
         open
         update without registering applications
