@@ -155,6 +155,16 @@ class BatchGenerationEngine:
             all_prompt_tokens.append(len(tokens))
             request_info.append((cmd_id, task_id))
 
+        # Update sampler from per-request parameters (last request wins for batch)
+        last_params = inserts_to_process[-1][2]
+        self.batch_gen.sampler = make_sampler(  # pyright: ignore[reportAttributeAccessIssue]
+            temp=last_params.temperature
+            if last_params.temperature is not None
+            else 0.7,
+            top_p=last_params.top_p if last_params.top_p is not None else 1.0,
+            top_k=last_params.top_k if last_params.top_k is not None else 0,
+        )
+
         # Single batched insert for efficient prefill
         uids = self.batch_gen.insert(all_tokens, max_tokens=all_max_tokens)
 

@@ -8,6 +8,7 @@ from functools import cache
 from typing import Any, Callable, Literal
 
 import mlx.core as mx
+from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     HarmonyEncodingName,
@@ -87,6 +88,8 @@ from exo.worker.engines.mlx.generator.batch_engine import (
 from exo.worker.engines.mlx.generator.generate import warmup_inference
 from exo.worker.engines.mlx.generator.time_budget import TimeBudget
 from exo.worker.engines.mlx.utils_mlx import (
+    apply_chat_template,
+    detect_thinking_prompt_suffix,
     initialize_mlx,
     load_mlx_items,
     mlx_force_oom,
@@ -212,6 +215,136 @@ class ToolCallTracker:
         )
 
 
+_KIMI_SECTION_TOKENS = frozenset(
+    {"<|tool_calls_section_begin|>", "<|tool_calls_section_end|>"}
+)
+
+
+@dataclass
+class GptOssTracker:
+    """Per-request GPT-OSS parsing state for the batch generation path.
+
+    Wraps StreamableParser to handle thinking channels and tool call routing
+    on a per-token basis, mirroring parse_gpt_oss() for the batch path.
+    """
+
+    stream: StreamableParser
+    thinking: bool = False
+    current_tool_name: str | None = None
+    tool_arg_parts: list[str] = field(default_factory=list)
+
+    def process_token(
+        self, response: GenerationResponse, model_id: ModelId
+    ) -> list[TokenChunk | ToolCallChunk]:
+        """Process a single token and return chunks to emit.
+
+        May return 0, 1, or multiple chunks for a single input token
+        (e.g. thinking state transition + text delta).
+        """
+        self.stream.process(response.token)
+        delta: str = self.stream.last_content_delta or ""
+        ch: str | None = self.stream.current_channel
+        recipient: str | None = self.stream.current_recipient
+
+        chunks: list[TokenChunk | ToolCallChunk] = []
+
+        # Handle tool call transitions
+        if recipient != self.current_tool_name:
+            if self.current_tool_name is not None:
+                name = self.current_tool_name
+                prefix = "functions."
+                if name.startswith(prefix):
+                    name = name[len(prefix) :]
+                chunks.append(
+                    ToolCallChunk(
+                        model=model_id,
+                        tool_calls=[
+                            ToolCallItem(
+                                name=name,
+                                arguments="".join(self.tool_arg_parts).strip(),
+                            )
+                        ],
+                        usage=response.usage,
+                        stats=response.stats,
+                    )
+                )
+                self.tool_arg_parts = []
+            self.current_tool_name = recipient
+
+        # Inside tool call: accumulate args
+        if self.current_tool_name is not None:
+            if delta:
+                self.tool_arg_parts.append(delta)
+            return chunks
+
+        # Handle thinking state transitions
+        if ch == "analysis" and not self.thinking:
+            self.thinking = True
+            chunks.append(
+                TokenChunk(
+                    model=model_id,
+                    text="<think>",
+                    token_id=response.token,
+                    usage=None,
+                )
+            )
+
+        if ch != "analysis" and self.thinking:
+            self.thinking = False
+            chunks.append(
+                TokenChunk(
+                    model=model_id,
+                    text="</think>",
+                    token_id=response.token,
+                    usage=None,
+                )
+            )
+
+        # Emit text delta
+        if delta:
+            chunks.append(
+                TokenChunk(
+                    model=model_id,
+                    text=delta,
+                    token_id=response.token,
+                    finish_reason=_narrow_finish_reason(response.finish_reason),
+                    usage=response.usage,
+                    stats=response.stats,
+                    logprob=response.logprob,
+                    top_logprobs=response.top_logprobs,
+                )
+            )
+
+        # Handle finish
+        if response.finish_reason is not None:
+            if self.thinking:
+                self.thinking = False
+                chunks.append(
+                    TokenChunk(
+                        model=model_id,
+                        text="</think>",
+                        token_id=response.token,
+                        usage=None,
+                    )
+                )
+            # Emit final chunk with finish_reason if no delta was emitted above
+            if not delta:
+                chunks.append(
+                    TokenChunk(
+                        model=model_id,
+                        text=response.text,
+                        token_id=response.token,
+                        finish_reason=_narrow_finish_reason(response.finish_reason),
+                        usage=response.usage,
+                        stats=response.stats,
+                        logprob=response.logprob,
+                        top_logprobs=response.top_logprobs,
+                    )
+                )
+
+        return chunks
+
+
 def _make_chunk(
     response: GenerationResponse,
     model_id: ModelId,
@@ -239,23 +372,74 @@ def _process_generation_results(
     shard_metadata: ShardMetadata,
     in_flight_tasks: dict[CommandId, TaskId],
     tool_call_trackers: dict[CommandId, ToolCallTracker],
+    is_kimi: bool,
+    gpt_oss_trackers: dict[CommandId, GptOssTracker],
+    thinking_first_token: dict[CommandId, bool],
+    tokenizer: TokenizerWrapper | None,
 ) -> None:
     """Process batch generation results, emitting chunks and completing finished tasks."""
     model_id = shard_metadata.model_card.model_id
     for r in results:
         if device_rank == 0:
-            chunk = _make_chunk(
-                r.response, model_id, tool_call_trackers.get(r.command_id)
-            )
-            if chunk is not None:
-                event_sender.send(ChunkGenerated(command_id=r.command_id, chunk=chunk))
+            # Kimi: skip section boundary tokens
+            if (
+                is_kimi
+                and r.response.text in _KIMI_SECTION_TOKENS
+                and r.response.finish_reason is None
+            ):
+                continue
+
+            # GPT-OSS: use dedicated tracker (handles thinking + tool calls)
+            if r.command_id in gpt_oss_trackers:
+                chunks = gpt_oss_trackers[r.command_id].process_token(
+                    r.response, model_id
+                )
+                for chunk in chunks:
+                    event_sender.send(
+                        ChunkGenerated(command_id=r.command_id, chunk=chunk)
+                    )
+            else:
+                # Thinking models: prepend think_start on first token
+                if (
+                    r.command_id in thinking_first_token
+                    and not thinking_first_token[r.command_id]
+                    and tokenizer is not None
+                    and tokenizer.think_start is not None
+                    and tokenizer.think_start_id is not None
+                ):
+                    thinking_first_token[r.command_id] = True
+                    event_sender.send(
+                        ChunkGenerated(
+                            command_id=r.command_id,
+                            chunk=TokenChunk(
+                                model=model_id,
+                                text=tokenizer.think_start,
+                                token_id=tokenizer.think_start_id,
+                                usage=None,
+                            ),
+                        )
+                    )
+
+                chunk = _make_chunk(
+                    r.response, model_id, tool_call_trackers.get(r.command_id)
+                )
+                if chunk is not None:
+                    event_sender.send(
+                        ChunkGenerated(command_id=r.command_id, chunk=chunk)
+                    )
+
         if r.response.finish_reason is not None:
             task_id = in_flight_tasks.pop(r.command_id, None)
             if task_id is not None:
+                _send_traces_if_enabled(
+                    event_sender, task_id, shard_metadata.device_rank
+                )
                 event_sender.send(
                     TaskStatusUpdated(task_id=task_id, task_status=TaskStatus.Complete)
                 )
             tool_call_trackers.pop(r.command_id, None)
+            gpt_oss_trackers.pop(r.command_id, None)
+            thinking_first_token.pop(r.command_id, None)
 
 
 def _run_generation_steps(
@@ -266,6 +450,10 @@ def _run_generation_steps(
     group: object | None,
     in_flight_tasks: dict[CommandId, TaskId],
     tool_call_trackers: dict[CommandId, ToolCallTracker],
+    is_kimi: bool,
+    gpt_oss_trackers: dict[CommandId, GptOssTracker],
+    thinking_first_token: dict[CommandId, bool],
+    tokenizer: TokenizerWrapper | None,
 ) -> None:
     """Run one TimeBudget cycle of batch generation."""
     if batch_engine.has_pending_inserts:
@@ -273,7 +461,32 @@ def _run_generation_steps(
     for _ in TimeBudget(budget=0.5, group=group):  # pyright: ignore[reportArgumentType]
         if not batch_engine.has_active_requests:
             break
-        results = batch_engine.step()
+        try:
+            results = batch_engine.step()
+        except Exception as e:
+            logger.opt(exception=e).error("batch_engine.step() failed")
+            model_id = shard_metadata.model_card.model_id
+            if device_rank == 0:
+                for cmd_id in list(in_flight_tasks.keys()):
+                    event_sender.send(
+                        ChunkGenerated(
+                            command_id=cmd_id,
+                            chunk=ErrorChunk(
+                                model=model_id,
+                                finish_reason="error",
+                                error_message=str(e),
+                            ),
+                        )
+                    )
+            for _cmd_id, task_id in in_flight_tasks.items():
+                event_sender.send(
+                    TaskStatusUpdated(task_id=task_id, task_status=TaskStatus.Complete)
+                )
+            in_flight_tasks.clear()
+            tool_call_trackers.clear()
+            gpt_oss_trackers.clear()
+            thinking_first_token.clear()
+            raise
         _process_generation_results(
             results,
             event_sender,
@@ -281,6 +494,10 @@ def _run_generation_steps(
             shard_metadata,
             in_flight_tasks,
             tool_call_trackers,
+            is_kimi,
+            gpt_oss_trackers,
+            thinking_first_token,
+            tokenizer,
         )
     batch_engine.sync_completions()
 
@@ -292,12 +509,41 @@ def _drain_batch_engine(
     shard_metadata: ShardMetadata,
     in_flight_tasks: dict[CommandId, TaskId],
     tool_call_trackers: dict[CommandId, ToolCallTracker],
+    is_kimi: bool,
+    gpt_oss_trackers: dict[CommandId, GptOssTracker],
+    thinking_first_token: dict[CommandId, bool],
+    tokenizer: TokenizerWrapper | None,
 ) -> None:
     """Drain all active requests from the batch engine, emitting chunks for each token."""
     if batch_engine.has_pending_inserts:
         batch_engine.sync_and_insert_pending()
     while batch_engine.has_active_requests:
-        results = batch_engine.step()
+        try:
+            results = batch_engine.step()
+        except Exception as e:
+            logger.opt(exception=e).error("batch_engine.step() failed during drain")
+            model_id = shard_metadata.model_card.model_id
+            if device_rank == 0:
+                for cmd_id in list(in_flight_tasks.keys()):
+                    event_sender.send(
+                        ChunkGenerated(
+                            command_id=cmd_id,
+                            chunk=ErrorChunk(
+                                model=model_id,
+                                finish_reason="error",
+                                error_message=str(e),
+                            ),
+                        )
+                    )
+            for _cmd_id, task_id in in_flight_tasks.items():
+                event_sender.send(
+                    TaskStatusUpdated(task_id=task_id, task_status=TaskStatus.Complete)
+                )
+            in_flight_tasks.clear()
+            tool_call_trackers.clear()
+            gpt_oss_trackers.clear()
+            thinking_first_token.clear()
+            raise
         _process_generation_results(
             results,
             event_sender,
@@ -305,6 +551,10 @@ def _drain_batch_engine(
             shard_metadata,
             in_flight_tasks,
             tool_call_trackers,
+            is_kimi,
+            gpt_oss_trackers,
+            thinking_first_token,
+            tokenizer,
         )
         batch_engine.sync_completions()
 
@@ -344,6 +594,10 @@ def main(
     seen = set[TaskId]()
     in_flight_tasks: dict[CommandId, TaskId] = {}
     tool_call_trackers: dict[CommandId, ToolCallTracker] = {}
+    gpt_oss_trackers: dict[CommandId, GptOssTracker] = {}
+    thinking_first_token: dict[CommandId, bool] = {}
+    is_kimi = False
+    is_gpt_oss = False
 
     with task_receiver:
         while True:
@@ -359,6 +613,10 @@ def main(
                     group,
                     in_flight_tasks,
                     tool_call_trackers,
+                    is_kimi,
+                    gpt_oss_trackers,
+                    thinking_first_token,
+                    tokenizer,
                 )
                 # Update runner status based on remaining work
                 if batch_engine.has_active_requests:
@@ -450,6 +708,18 @@ def main(
                                 f"model has_tool_calling={tokenizer.has_tool_calling}"
                             )
 
+                            # Apply model-specific tokenizer patches
+                            model_id_lower = shard_metadata.model_card.model_id.lower()
+                            if "kimi" in model_id_lower:
+                                patch_kimi_tokenizer(tokenizer)
+                                is_kimi = True
+                                logger.info("applied kimi tokenizer patch")
+                            elif "glm" in model_id_lower:
+                                patch_glm_tokenizer(tokenizer)
+                                logger.info("applied glm tokenizer patch")
+
+                            is_gpt_oss = isinstance(model, GptOssModel)
+
                         elif (
                             ModelTask.TextToImage in shard_metadata.model_card.tasks
                             or ModelTask.ImageToImage in shard_metadata.model_card.tasks
@@ -520,7 +790,15 @@ def main(
                         )
                         batch_engine.sync_and_insert_pending()
                         in_flight_tasks[command_id] = task.task_id
-                        if (
+
+                        # GPT-OSS: use dedicated tracker (handles thinking + tool calls)
+                        if is_gpt_oss and tokenizer is not None:
+                            gpt_oss_trackers[command_id] = GptOssTracker(
+                                stream=StreamableParser(
+                                    get_gpt_oss_encoding(), role=Role.ASSISTANT
+                                ),
+                            )
+                        elif (
                             tokenizer is not None
                             and tokenizer.has_tool_calling
                             and tokenizer.tool_call_start is not None
@@ -531,6 +809,16 @@ def main(
                                 tool_call_end=tokenizer.tool_call_end,
                                 tool_parser=tokenizer._tool_parser,  # pyright: ignore[reportAny]
                             )
+
+                        # Thinking models: detect if chat template consumed a think tag
+                        if (
+                            tokenizer is not None
+                            and not is_gpt_oss
+                            and tokenizer.has_thinking
+                        ):
+                            prompt = apply_chat_template(tokenizer, task_params)
+                            if detect_thinking_prompt_suffix(prompt, tokenizer):
+                                thinking_first_token[command_id] = False
                         current_status = RunnerRunning(
                             active_requests=batch_engine.active_count
                         )
@@ -692,6 +980,10 @@ def main(
                                 shard_metadata,
                                 in_flight_tasks,
                                 tool_call_trackers,
+                                is_kimi,
+                                gpt_oss_trackers,
+                                thinking_first_token,
+                                tokenizer,
                             )
                         current_status = RunnerShuttingDown()
                         logger.info("runner shutting down")
