@@ -2,6 +2,8 @@ name: e2e-tests
 
 on:
   push:
+    branches:
+      - e2e-tests
   pull_request:
     branches:
       - staging

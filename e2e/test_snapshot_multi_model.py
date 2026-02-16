@@ -46,6 +46,7 @@ async def main():
                 model=model,
                 messages=[{"role": "user", "content": PROMPT}],
                 seed=SEED,
+                temperature=0,
                 max_tokens=MAX_TOKENS,
             )
 
