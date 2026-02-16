@@ -1,6 +1,9 @@
 from collections.abc import Sequence
 from typing import final
 
+import anyio
+from loguru import logger
+
 from exo.master.reconcile import (
     find_unsatisfied_meta_instances,
     try_place_for_meta_instance,
@@ -9,6 +12,8 @@ from exo.shared.models.model_cards import ModelCard
 from exo.shared.types.events import Event, InstanceCreated, MetaInstancePlacementFailed
 from exo.shared.types.state import State
 from exo.shared.types.worker.instances import Instance, InstanceId
+
+MODEL_CARD_LOAD_TIMEOUT_SECONDS = 10
 
 
 @final
@@ -27,7 +32,28 @@ class MetaInstanceReconciler:
             state.topology,
         )
         for meta_instance in unsatisfied:
-            model_card = await ModelCard.load(meta_instance.model_id)
+            try:
+                with anyio.fail_after(MODEL_CARD_LOAD_TIMEOUT_SECONDS):
+                    model_card = await ModelCard.load(meta_instance.model_id)
+            except TimeoutError:
+                logger.warning(
+                    f"ModelCard.load timed out for {meta_instance.model_id}, skipping this cycle"
+                )
+                continue
+            except Exception as exc:
+                logger.warning(
+                    f"ModelCard.load failed for {meta_instance.model_id}: {exc}"
+                )
+                error = f"Failed to load model card: {exc}"
+                if meta_instance.placement_error != error:
+                    all_events.append(
+                        MetaInstancePlacementFailed(
+                            meta_instance_id=meta_instance.meta_instance_id,
+                            reason=error,
+                        )
+                    )
+                continue
+
             result = try_place_for_meta_instance(
                 meta_instance,
                 model_card,
