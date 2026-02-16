@@ -195,7 +195,7 @@ def generate_background(output_path: str) -> None:
     # Arrow is vertically centered at icon row (y=160)
     _draw_arrow(pixels, (255, 255, 255))
 
-    # Draw white icon labels (Finder's labels are hidden via text size 1)
+    # Draw white icon labels (Finder's labels minimized via text size 10)
     # Finder positions icons by center point: x=155 and x=505
     # Icon bottom edge is at y=160+64=224, labels start below at y=232
     label_color = (255, 255, 255)
