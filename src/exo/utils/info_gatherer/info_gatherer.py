@@ -390,7 +390,9 @@ class InfoGatherer:
                     tg.start_soon(self._monitor_macmon, macmon_path)
                 else:
                     # macmon not installed — fall back to psutil for memory
-                    logger.warning("macmon not found, falling back to psutil for memory monitoring")
+                    logger.warning(
+                        "macmon not found, falling back to psutil for memory monitoring"
+                    )
                     self.memory_poll_rate = 1
                 tg.start_soon(self._monitor_system_profiler_thunderbolt_data)
                 tg.start_soon(self._monitor_thunderbolt_bridge_status)
