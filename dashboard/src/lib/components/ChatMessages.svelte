@@ -802,8 +802,8 @@
       >
         AWAITING INPUT
       </p>
-      <p class="text-sm sm:text-xs text-exo-light-gray tracking-wider mt-1">
-        ENTER A QUERY TO BEGIN
+      <p class="text-xs text-white/30 tracking-wider mt-1.5 font-mono">
+        Type a message below &middot; Shift+Enter for newline
       </p>
     </div>
   {/if}
