@@ -201,6 +201,10 @@ class FakeBatchEngine:
         return bool(self._pending_inserts)
 
     @property
+    def pending_insert_count(self) -> int:
+        return len(self._pending_inserts)
+
+    @property
     def active_count(self) -> int:
         return len(self._active_requests)
 

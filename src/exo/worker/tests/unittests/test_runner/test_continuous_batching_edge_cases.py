@@ -102,6 +102,10 @@ class ScriptedBatchEngine:
     def has_pending_inserts(self) -> bool:
         return bool(self._pending)
 
+    @property
+    def pending_insert_count(self) -> int:
+        return len(self._pending)
+
     def step(self) -> list[BatchedGenerationResponse]:
         results: list[BatchedGenerationResponse] = []
         done: list[int] = []
@@ -173,6 +177,10 @@ class FakeBatchEngineWithTokens:
     @property
     def has_pending_inserts(self) -> bool:
         return bool(self._pending_inserts)
+
+    @property
+    def pending_insert_count(self) -> int:
+        return len(self._pending_inserts)
 
     def step(self) -> list[BatchedGenerationResponse]:
         results: list[BatchedGenerationResponse] = []
