@@ -377,6 +377,15 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
         for key, value in state.node_rdma_device_health.items()
         if key != event.node_id
     }
+    # Clean up runners belonging to the timed-out node across all instances
+    runner_ids_to_remove: set[RunnerId] = set()
+    for instance in state.instances.values():
+        runner_id = instance.shard_assignments.node_to_runner.get(event.node_id)
+        if runner_id is not None:
+            runner_ids_to_remove.add(runner_id)
+    new_runners: Mapping[RunnerId, RunnerStatus] = {
+        rid: rs for rid, rs in state.runners.items() if rid not in runner_ids_to_remove
+    }
     # Only recompute cycles if the leaving node had TB bridge enabled
     leaving_node_status = state.node_thunderbolt_bridge.get(event.node_id)
     leaving_node_had_tb_enabled = (
@@ -392,6 +401,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
             "downloads": downloads,
             "topology": topology,
             "last_seen": last_seen,
+            "runners": new_runners,
             "node_memory": node_memory,
             "node_disk": node_disk,
             "node_system": node_system,
