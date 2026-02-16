@@ -2585,7 +2585,11 @@
     <main class="flex-1 flex overflow-hidden relative">
       <!-- Left: Conversation History Sidebar (hidden in topology-only mode or when toggled off) -->
       {#if !topologyOnlyEnabled && sidebarVisible}
-        <div class="w-80 flex-shrink-0 border-r border-exo-yellow/10">
+        <div
+          class="w-80 flex-shrink-0 border-r border-exo-yellow/10"
+          role="complementary"
+          aria-label="Conversation history"
+        >
           <ChatSidebar class="h-full" />
         </div>
       {/if}
@@ -2637,6 +2641,7 @@
                   onclick={() => (tb5InfoDismissed = true)}
                   class="ml-1 text-blue-300/60 hover:text-blue-200 transition-colors cursor-pointer"
                   title="Dismiss"
+                  aria-label="Dismiss RDMA available notification"
                 >
                   <svg
                     class="w-4 h-4"
@@ -2661,6 +2666,7 @@
               onclick={toggleTopologyOnlyMode}
               class="absolute bottom-4 right-4 p-2 rounded border border-exo-yellow/30 bg-exo-dark-gray/80 hover:border-exo-yellow/50 hover:bg-exo-dark-gray transition-colors cursor-pointer backdrop-blur-sm"
               title="Exit topology only mode"
+              aria-label="Exit topology only mode"
             >
               <svg
                 class="w-5 h-5 text-exo-yellow"
@@ -2900,6 +2906,7 @@
           <!-- Right Sidebar: Instance Controls (wider on welcome page for better visibility) -->
           <aside
             class="w-80 border-l border-exo-yellow/10 bg-exo-dark-gray flex flex-col flex-shrink-0"
+            aria-label="Instance controls"
           >
             <!-- Running Instances Panel (only shown when instances exist) - Scrollable -->
             {#if instanceCount > 0}
@@ -3449,6 +3456,7 @@
                   type="button"
                   onclick={() => (showAdvancedOptions = !showAdvancedOptions)}
                   class="flex items-center gap-2 text-xs text-white/50 hover:text-white/70 font-mono tracking-wider uppercase transition-colors cursor-pointer py-1"
+                  aria-expanded={showAdvancedOptions}
                 >
                   <svg
                     class="w-3 h-3 transition-transform duration-200 {showAdvancedOptions
@@ -3726,6 +3734,9 @@
             <div
               class="flex-1 overflow-y-auto px-8 py-6"
               bind:this={chatScrollRef}
+              role="log"
+              aria-live="polite"
+              aria-label="Chat messages"
             >
               <div class="max-w-7xl mx-auto">
                 <ChatMessages scrollParent={chatScrollRef} />
@@ -3751,6 +3762,7 @@
             <aside
               class="w-80 border-l border-exo-yellow/20 bg-exo-dark-gray flex flex-col flex-shrink-0 overflow-y-auto"
               in:fly={{ x: 100, duration: 400, easing: cubicInOut }}
+              aria-label="Cluster topology"
             >
               <!-- Topology Section - clickable to go back to main view -->
               <button
