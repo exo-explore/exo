@@ -83,7 +83,7 @@ tell application "Finder"
         set bounds of container window to {200, 120, 1000, 520}
         set opts to icon view options of container window
         set icon size of opts to 128
-        set text size of opts to 12
+        set text size of opts to 10
         set arrangement of opts to not arranged
         if exists file ".background:background.png" then
             set background picture of opts to file ".background:background.png"
