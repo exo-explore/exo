@@ -70,7 +70,7 @@ fi
 
 # ── Step 5: Configure window appearance via AppleScript ──────────────────────
 # Window: 660×440, icons at 128px, app on left, Applications on right
-# Text size set to 1 to hide Finder's black icon labels on dark background
+# Text size set to 10 (Finder minimum) to minimize icon label visibility on dark background
 APP_NAME="$(basename "$APP_PATH")"
 
 osascript <<APPLESCRIPT
@@ -83,7 +83,7 @@ tell application "Finder"
         set bounds of container window to {200, 200, 860, 640}
         set opts to icon view options of container window
         set icon size of opts to 128
-        set text size of opts to 1
+        set text size of opts to 10
         set arrangement of opts to not arranged
         if exists file ".background:background.png" then
             set background picture of opts to file ".background:background.png"
