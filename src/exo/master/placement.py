@@ -132,6 +132,10 @@ def place_instance(
     instance_id = InstanceId()
     target_instances = dict(deepcopy(current_instances))
 
+    # Single-node placements always use MlxRing, regardless of requested instance_meta.
+    # MlxJaccl requires multi-node RDMA communication, so it's not applicable for
+    # single-node deployments. This override ensures the returned instance type
+    # matches the actual networking setup.
     if len(selected_cycle) == 1:
         command.instance_meta = InstanceMeta.MlxRing
 

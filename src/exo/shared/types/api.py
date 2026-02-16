@@ -3,13 +3,19 @@ from collections.abc import Generator
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_core import PydanticUseDefault
 
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.memory import Memory
-from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
+from exo.shared.types.worker.instances import (
+    Instance,
+    InstanceId,
+    InstanceMeta,
+    MlxJacclInstance,
+    MlxRingInstance,
+)
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
 from exo.utils.pydantic_ext import CamelCaseModel
 
@@ -248,6 +254,28 @@ class PlacementPreview(BaseModel):
     # Keys are NodeId strings, values are additional bytes that would be used on that node
     memory_delta_by_node: dict[str, int] | None = None
     error: str | None = None
+
+    @model_validator(mode="after")
+    def validate_instance_meta_matches_instance(self) -> "PlacementPreview":
+        """
+        Ensure instance_meta matches the actual instance type.
+        
+        This validator catches mismatches between the metadata enum and the
+        actual instance object type, which can occur if placement logic overrides
+        the requested instance_meta (e.g., single-node forcing MlxRing).
+        """
+        if self.instance is not None:
+            if isinstance(self.instance, MlxJacclInstance):
+                if self.instance_meta != InstanceMeta.MlxJaccl:
+                    raise ValueError(
+                        f"instance_meta is {self.instance_meta} but instance is MlxJacclInstance"
+                    )
+            elif isinstance(self.instance, MlxRingInstance):
+                if self.instance_meta != InstanceMeta.MlxRing:
+                    raise ValueError(
+                        f"instance_meta is {self.instance_meta} but instance is MlxRingInstance"
+                    )
+        return self
 
 
 class PlacementPreviewResponse(BaseModel):

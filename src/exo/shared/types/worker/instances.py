@@ -38,6 +38,21 @@ class MlxJacclInstance(BaseInstance):
 Instance = MlxRingInstance | MlxJacclInstance
 
 
+def get_instance_meta(instance: Instance) -> InstanceMeta:
+    """
+    Get the InstanceMeta corresponding to an Instance object.
+    
+    This ensures the mapping between instance types and their metadata
+    is centralized and consistent across the codebase.
+    """
+    if isinstance(instance, MlxJacclInstance):
+        return InstanceMeta.MlxJaccl
+    elif isinstance(instance, MlxRingInstance):
+        return InstanceMeta.MlxRing
+    else:
+        raise ValueError(f"Unknown instance type: {type(instance)}")
+
+
 class BoundInstance(CamelCaseModel):
     instance: Instance
     bound_runner_id: RunnerId
