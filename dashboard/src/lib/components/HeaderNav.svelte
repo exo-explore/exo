@@ -35,6 +35,10 @@
         onclick={handleToggleSidebar}
         class="p-2 rounded border border-exo-medium-gray/40 hover:border-exo-yellow/50 transition-colors cursor-pointer"
         title={sidebarVisible ? "Hide sidebar" : "Show sidebar"}
+        aria-label={sidebarVisible
+          ? "Hide conversation sidebar"
+          : "Show conversation sidebar"}
+        aria-pressed={sidebarVisible}
       >
         <svg
           class="w-5 h-5 {sidebarVisible
@@ -80,8 +84,9 @@
   </button>
 
   <!-- Right: Home + Downloads -->
-  <div
+  <nav
     class="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-4"
+    aria-label="Main navigation"
   >
     {#if showHome}
       <button
@@ -125,5 +130,5 @@
       </svg>
       Downloads
     </a>
-  </div>
+  </nav>
 </header>
