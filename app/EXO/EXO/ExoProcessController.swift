@@ -5,7 +5,7 @@ import Foundation
 private let customNamespaceKey = "EXOCustomNamespace"
 private let hfTokenKey = "EXOHFToken"
 private let enableImageModelsKey = "EXOEnableImageModels"
-private let hasLaunchedBeforeKey = "EXOHasLaunchedBefore"
+private let onboardingCompletedKey = "EXOOnboardingCompleted"
 
 @MainActor
 final class ExoProcessController: ObservableObject {
@@ -118,9 +118,8 @@ final class ExoProcessController: ObservableObject {
             process = child
             status = .running
 
-            // Detect first-ever launch to trigger welcome popout
-            if !UserDefaults.standard.bool(forKey: hasLaunchedBeforeKey) {
-                UserDefaults.standard.set(true, forKey: hasLaunchedBeforeKey)
+            // Show welcome popout if onboarding was never completed
+            if !UserDefaults.standard.bool(forKey: onboardingCompletedKey) {
                 isFirstLaunchReady = true
             }
         } catch {
@@ -172,6 +171,17 @@ final class ExoProcessController: ObservableObject {
     func restart() {
         stop()
         launch()
+    }
+
+    /// Mark onboarding as completed (user interacted with the welcome popout).
+    func markOnboardingCompleted() {
+        UserDefaults.standard.set(true, forKey: onboardingCompletedKey)
+    }
+
+    /// Reset onboarding so the welcome popout appears on next launch.
+    func resetOnboarding() {
+        UserDefaults.standard.removeObject(forKey: onboardingCompletedKey)
+        isFirstLaunchReady = false
     }
 
     func scheduleLaunch(after seconds: TimeInterval) {
