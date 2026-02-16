@@ -560,9 +560,15 @@ def main(
                     raise ValueError(
                         f"Received {task.__class__.__name__} outside of state machine in {current_status=}"
                     )
-            event_sender.send(
-                TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Complete)
+            was_cancelled = (task.task_id in cancelled_tasks) or (
+                TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
             )
+            if not was_cancelled:
+                event_sender.send(
+                    TaskStatusUpdated(
+                        task_id=task.task_id, task_status=TaskStatus.Complete
+                    )
+                )
             event_sender.send(
                 RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
             )
