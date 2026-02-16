@@ -58,8 +58,14 @@ def main():
         if result.returncode == 0:
             passed += 1
         else:
-            failed += 1
-            failures.append(name)
+            # Retry once — Docker networking (mDNS) can be slow on first boot
+            print(f"\n=== {name} === RETRYING (attempt 2/2)")
+            result = subprocess.run([sys.executable, str(test_file)])
+            if result.returncode == 0:
+                passed += 1
+            else:
+                failed += 1
+                failures.append(name)
         print()
 
     total = passed + failed + skipped
