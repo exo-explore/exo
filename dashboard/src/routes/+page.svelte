@@ -857,7 +857,10 @@
         if (!placementResponse.ok) {
           const errorText = await placementResponse.text();
           console.error("Failed to get placement:", errorText);
-          addToast({ type: "error", message: `Placement failed: ${errorText}` });
+          addToast({
+            type: "error",
+            message: `Placement failed: ${errorText}`,
+          });
           return;
         }
 
@@ -874,7 +877,10 @@
       if (!response.ok) {
         const errorText = await response.text();
         console.error("Failed to launch instance:", errorText);
-        addToast({ type: "error", message: `Failed to launch model: ${errorText}` });
+        addToast({
+          type: "error",
+          message: `Failed to launch model: ${errorText}`,
+        });
       } else {
         addToast({ type: "success", message: `Model launched successfully` });
         // Always auto-select the newly launched model so the user chats to what they just launched
@@ -899,7 +905,10 @@
       }
     } catch (error) {
       console.error("Error launching instance:", error);
-      addToast({ type: "error", message: "Failed to launch model. Check console for details." });
+      addToast({
+        type: "error",
+        message: "Failed to launch model. Check console for details.",
+      });
     } finally {
       launchingModelId = null;
     }
@@ -2706,9 +2715,11 @@
                         class="text-sm font-sans text-white/50 leading-relaxed mb-1"
                       >
                         {#if data && Object.keys(data.nodes).length > 1}
-                          {Object.keys(data.nodes).length} devices connected. Choose a model to start running AI across your cluster.
+                          {Object.keys(data.nodes).length} devices connected. Choose
+                          a model to start running AI across your cluster.
                         {:else if data && Object.keys(data.nodes).length === 1}
-                          Your device is ready. Choose a model to start running AI locally.
+                          Your device is ready. Choose a model to start running
+                          AI locally.
                         {:else}
                           Waiting for devices to connect&hellip;
                         {/if}
@@ -2737,10 +2748,16 @@
                     </button>
 
                     <!-- Quick hints -->
-                    <div class="flex items-center justify-center gap-4 text-xs text-white/30 font-mono">
+                    <div
+                      class="flex items-center justify-center gap-4 text-xs text-white/30 font-mono"
+                    >
                       <span>models download automatically</span>
                       <span class="text-white/15">&bull;</span>
-                      <a href="/#/downloads" class="hover:text-exo-yellow/60 transition-colors">view downloads</a>
+                      <a
+                        href="/#/downloads"
+                        class="hover:text-exo-yellow/60 transition-colors"
+                        >view downloads</a
+                      >
                     </div>
                   </div>
                 </div>
