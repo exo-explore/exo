@@ -251,6 +251,9 @@ def apply_instance_retrying(event: InstanceRetrying, state: State) -> State:
     """Runners failed but retry limit not reached — remove runners, keep instance."""
     instance = state.instances.get(event.instance_id)
     if instance is None:
+        # Instance was already deleted (e.g. cascade from DeleteMetaInstance).
+        # The InstanceDeleted handler already incremented consecutive_failures
+        # on the MetaInstance, so skipping here avoids double-counting.
         return state
 
     # Remove all runners belonging to this instance from state

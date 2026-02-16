@@ -583,3 +583,102 @@ def test_state_with_meta_instances_serializes():
     assert mi.last_failure_error == "test"
     assert iid in restored.instances
     assert restored.instances[iid].meta_instance_id == meta.meta_instance_id
+
+
+# =============================================================================
+# 8. MetaInstanceReconciler error handling
+# =============================================================================
+
+
+async def test_meta_instance_reconciler_model_load_error_emits_placement_failed(
+    monkeypatch: object,
+):
+    """When ModelCard.load raises, reconciler emits MetaInstancePlacementFailed."""
+    import exo.master.process_managers.meta_instance as mi_mod
+
+    meta = _meta_instance()
+    topo = _topology("node-a")
+    state = State(
+        meta_instances={meta.meta_instance_id: meta},
+        topology=topo,
+    )
+
+    async def _failing_load(_model_id: ModelId) -> ModelCard:
+        raise RuntimeError("Network error")
+
+    monkeypatch.setattr(
+        mi_mod, "ModelCard", type("MC", (), {"load": staticmethod(_failing_load)})
+    )  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+
+    reconciler = MetaInstanceReconciler()
+    events = await reconciler.reconcile(state)
+
+    placement_failed = [e for e in events if isinstance(e, MetaInstancePlacementFailed)]
+    assert len(placement_failed) == 1
+    assert "Failed to load model card" in placement_failed[0].reason
+    assert meta.meta_instance_id == placement_failed[0].meta_instance_id
+
+
+async def test_meta_instance_reconciler_model_load_error_skips_dedup(
+    monkeypatch: object,
+):
+    """When ModelCard.load error matches existing placement_error, no duplicate event."""
+    import exo.master.process_managers.meta_instance as mi_mod
+
+    meta = _meta_instance(placement_error="Failed to load model card: Network error")
+    topo = _topology("node-a")
+    state = State(
+        meta_instances={meta.meta_instance_id: meta},
+        topology=topo,
+    )
+
+    async def _failing_load(_model_id: ModelId) -> ModelCard:
+        raise RuntimeError("Network error")
+
+    monkeypatch.setattr(
+        mi_mod, "ModelCard", type("MC", (), {"load": staticmethod(_failing_load)})
+    )  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+
+    reconciler = MetaInstanceReconciler()
+    events = await reconciler.reconcile(state)
+
+    # Error matches existing placement_error, so no duplicate event emitted
+    assert len(events) == 0
+
+
+async def test_meta_instance_reconciler_continues_after_error(
+    monkeypatch: object,
+):
+    """Reconciler should continue to next meta-instance after one fails to load."""
+    import exo.master.process_managers.meta_instance as mi_mod
+
+    meta_a = _meta_instance(model_id="org/model-a")
+    meta_b = _meta_instance(model_id="org/model-b")
+    topo = _topology("node-a")
+    state = State(
+        meta_instances={
+            meta_a.meta_instance_id: meta_a,
+            meta_b.meta_instance_id: meta_b,
+        },
+        topology=topo,
+    )
+
+    call_count = 0
+
+    async def _load_second_fails(model_id: ModelId) -> ModelCard:
+        nonlocal call_count
+        call_count += 1
+        raise RuntimeError(f"Cannot load {model_id}")
+
+    monkeypatch.setattr(
+        mi_mod, "ModelCard", type("MC", (), {"load": staticmethod(_load_second_fails)})
+    )  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+
+    reconciler = MetaInstanceReconciler()
+    events = await reconciler.reconcile(state)
+
+    # Both meta-instances should have been attempted (not short-circuited)
+    assert call_count == 2
+    # Both should have placement failed events
+    placement_failed = [e for e in events if isinstance(e, MetaInstancePlacementFailed)]
+    assert len(placement_failed) == 2
