@@ -77,15 +77,17 @@ final class FirstLaunchPopout {
         countdownTask?.cancel()
         countdownTask = nil
         guard let window = panel else { return }
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.2
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            window.animator().alphaValue = 0
-        }, completionHandler: {
-            Task { @MainActor in
-                window.close()
-            }
-        })
+        NSAnimationContext.runAnimationGroup(
+            { context in
+                context.duration = 0.2
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                window.animator().alphaValue = 0
+            },
+            completionHandler: {
+                Task { @MainActor in
+                    window.close()
+                }
+            })
         panel = nil
     }
 
