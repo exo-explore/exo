@@ -68,6 +68,9 @@ struct EXOApp: App {
                 .environmentObject(settingsWindowController)
                 .onReceive(controller.$isFirstLaunchReady) { ready in
                     if ready {
+                        firstLaunchPopout.onComplete = { [weak controller] in
+                            controller?.markOnboardingCompleted()
+                        }
                         firstLaunchPopout.show()
                     }
                 }
