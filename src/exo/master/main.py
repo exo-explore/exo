@@ -305,6 +305,11 @@ class Master:
                                 )
                             generated_events.extend(transition_events)
                         case CreateMetaInstance():
+                            logger.info(
+                                f"Creating MetaInstance for {command.meta_instance.model_id}"
+                                f" (min_nodes={command.meta_instance.min_nodes},"
+                                f" sharding={command.meta_instance.sharding})"
+                            )
                             # Apply immediately so self.state is fresh across
                             # the await below and the reconciler won't race.
                             await self._apply_and_broadcast(
@@ -342,14 +347,39 @@ class Master:
                                         )
                                     )
                         case DeleteMetaInstance():
+                            backing_count = sum(
+                                1
+                                for inst in self.state.instances.values()
+                                if inst.meta_instance_id == command.meta_instance_id
+                            )
+                            logger.info(
+                                f"Deleting MetaInstance {command.meta_instance_id}"
+                                f" (cascade-deleting {backing_count} backing instance(s))"
+                            )
                             generated_events.append(
                                 MetaInstanceDeleted(
                                     meta_instance_id=command.meta_instance_id
                                 )
                             )
-                            # Cascade-delete backing instances atomically
+                            # Cascade-delete backing instances atomically,
+                            # cancelling any active tasks first.
                             for iid, inst in self.state.instances.items():
                                 if inst.meta_instance_id == command.meta_instance_id:
+                                    for task in self.state.tasks.values():
+                                        if (
+                                            task.instance_id == iid
+                                            and task.task_status
+                                            in (
+                                                TaskStatus.Pending,
+                                                TaskStatus.Running,
+                                            )
+                                        ):
+                                            generated_events.append(
+                                                TaskStatusUpdated(
+                                                    task_status=TaskStatus.Cancelled,
+                                                    task_id=task.task_id,
+                                                )
+                                            )
                                     generated_events.append(
                                         InstanceDeleted(instance_id=iid)
                                     )

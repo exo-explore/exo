@@ -282,6 +282,7 @@ class API:
         self.app.get("/instance/previews")(self.get_placement_previews)
         self.app.get("/instance/{instance_id}")(self.get_instance)
         self.app.delete("/instance/{instance_id}")(self.delete_instance)
+        self.app.get("/meta_instances")(self.list_meta_instances)
         self.app.post("/meta_instance")(self.create_meta_instance)
         self.app.delete("/meta_instance/{meta_instance_id}")(self.delete_meta_instance)
         self.app.get("/models")(self.get_models)
@@ -544,6 +545,9 @@ class API:
             command_id=command.command_id,
             instance_id=instance_id,
         )
+
+    def list_meta_instances(self) -> dict[MetaInstanceId, MetaInstance]:
+        return dict(self.state.meta_instances)
 
     async def create_meta_instance(
         self, payload: CreateMetaInstanceParams
