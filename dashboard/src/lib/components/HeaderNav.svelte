@@ -47,7 +47,7 @@
         <svg
           class="w-5 h-5 {sidebarVisible
             ? 'text-exo-yellow'
-            : 'text-exo-medium-gray'}"
+            : 'text-exo-light-gray'}"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
