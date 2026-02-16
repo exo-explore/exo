@@ -144,8 +144,8 @@ async def collect_responses_response(
             for tool in chunk.tool_calls:
                 function_call_items.append(
                     ResponseFunctionCallItem(
-                        id=f"fc_{tool.id}",
-                        call_id=f"call_{tool.id}",
+                        id=tool.id,
+                        call_id=tool.id,
                         name=tool.name,
                         arguments=tool.arguments,
                     )
