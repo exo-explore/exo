@@ -184,10 +184,19 @@ def apply_instance_created(event: InstanceCreated, state: State) -> State:
 
 
 def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
+    deleted_instance = state.instances.get(event.instance_id)
     new_instances: Mapping[InstanceId, Instance] = {
         iid: inst for iid, inst in state.instances.items() if iid != event.instance_id
     }
-    return state.model_copy(update={"instances": new_instances})
+    runner_ids_to_remove: set[RunnerId] = set()
+    if deleted_instance is not None:
+        runner_ids_to_remove = set(
+            deleted_instance.shard_assignments.runner_to_shard.keys()
+        )
+    new_runners: Mapping[RunnerId, RunnerStatus] = {
+        rid: rs for rid, rs in state.runners.items() if rid not in runner_ids_to_remove
+    }
+    return state.model_copy(update={"instances": new_instances, "runners": new_runners})
 
 
 def apply_runner_status_updated(event: RunnerStatusUpdated, state: State) -> State:
