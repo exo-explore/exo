@@ -7,7 +7,13 @@ import SwiftUI
 final class SettingsWindowController: ObservableObject {
     private var window: NSWindow?
 
-    func open(controller: ExoProcessController, updater: SparkleUpdater) {
+    func open(
+        controller: ExoProcessController,
+        updater: SparkleUpdater,
+        networkStatusService: NetworkStatusService,
+        thunderboltBridgeService: ThunderboltBridgeService,
+        stateService: ClusterStateService
+    ) {
         if let existing = window, existing.isVisible {
             existing.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -17,11 +23,14 @@ final class SettingsWindowController: ObservableObject {
         let settingsView = SettingsView()
             .environmentObject(controller)
             .environmentObject(updater)
+            .environmentObject(networkStatusService)
+            .environmentObject(thunderboltBridgeService)
+            .environmentObject(stateService)
 
         let hostingView = NSHostingView(rootView: settingsView)
 
         let newWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 450, height: 320),
+            contentRect: NSRect(x: 0, y: 0, width: 450, height: 400),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false

@@ -82,6 +82,7 @@ private struct PopoutContentView: View {
     let onDismiss: () -> Void
     let onOpen: () -> Void
     @State private var countdown = 5
+    @State private var timerTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -130,10 +131,14 @@ private struct PopoutContentView: View {
         .onAppear {
             startCountdown()
         }
+        .onDisappear {
+            timerTask?.cancel()
+            timerTask = nil
+        }
     }
 
     private func startCountdown() {
-        Task {
+        timerTask = Task {
             while countdown > 0 {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 if !Task.isCancelled {

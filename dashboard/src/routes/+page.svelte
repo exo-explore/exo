@@ -36,6 +36,7 @@
     createConversation,
     setSelectedChatModel,
     selectedChatModel,
+    sendMessage,
     debugMode,
     toggleDebugMode,
     topologyOnlyMode,
@@ -754,6 +755,16 @@
   onMount(() => {
     mounted = true;
     fetchModels();
+
+    // Handle reset-onboarding query parameter (triggered from native Settings)
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("reset-onboarding")) {
+      localStorage.removeItem(ONBOARDING_COMPLETE_KEY);
+      window.history.replaceState({}, "", window.location.pathname);
+      onboardingStep = 1;
+      return;
+    }
+
     // Show onboarding wizard for first-time users
     if (!localStorage.getItem(ONBOARDING_COMPLETE_KEY)) {
       onboardingStep = 1;
@@ -2245,10 +2256,15 @@
               onNodeClick={togglePreviewNodeFilter}
             />
           </div>
+          <p class="text-sm text-white/50 mt-2 max-w-md text-center">
+            Running on {nodeCount} device{nodeCount !== 1 ? "s" : ""}. Install
+            exo on more devices on your network to combine their power — they
+            connect automatically.
+          </p>
           <button
             type="button"
             onclick={() => (onboardingStep = 3)}
-            class="inline-flex items-center gap-2 px-8 py-3.5 bg-exo-yellow text-exo-black font-mono text-sm font-bold tracking-wider uppercase rounded-lg hover:bg-exo-yellow-darker hover:shadow-[0_0_30px_rgba(255,215,0,0.3)] transition-all duration-200 cursor-pointer"
+            class="inline-flex items-center gap-2 px-8 py-3.5 mt-6 bg-exo-yellow text-exo-black font-mono text-sm font-bold tracking-wider uppercase rounded-lg hover:bg-exo-yellow-darker hover:shadow-[0_0_30px_rgba(255,215,0,0.3)] transition-all duration-200 cursor-pointer"
           >
             Continue
             <svg
@@ -2537,7 +2553,7 @@
     <!-- ═══════════════════════════════════════════════════════ -->
     <!-- MAIN DASHBOARD (shown after onboarding)                -->
     <!-- ═══════════════════════════════════════════════════════ -->
-    {#if !topologyOnlyEnabled}
+    {#if !topologyOnlyEnabled && (chatStarted || instanceCount === 0)}
       <HeaderNav
         showHome={chatStarted}
         onHome={handleGoHome}
@@ -2641,6 +2657,52 @@
                 <path stroke-linecap="round" d="M12 7v5m0 0l-5 5m5-5l5 5" />
               </svg>
             </button>
+          </div>
+        </div>
+      {:else if !chatStarted && instanceCount > 0}
+        <!-- PERPLEXITY-STYLE CHAT HOME: Clean centered input when model is loaded -->
+        <div
+          class="flex-1 flex flex-col items-center justify-center min-h-0 px-8"
+          in:fade={{ duration: 300 }}
+          out:fade={{ duration: 200 }}
+        >
+          <!-- Subtle branding -->
+          <div
+            class="text-2xl font-mono text-white/20 font-bold tracking-wider mb-8"
+          >
+            exo
+          </div>
+
+          <!-- Model name -->
+          {#if selectedChatModel()}
+            <p class="text-sm text-white/40 font-mono mb-4">
+              {selectedChatModel()?.split("/").pop() ?? selectedChatModel()}
+            </p>
+          {/if}
+
+          <!-- Centered ChatForm -->
+          <div class="w-full max-w-2xl">
+            <ChatForm
+              placeholder="Ask anything"
+              autofocus={true}
+              showHelperText={false}
+              showModelSelector={true}
+              modelTasks={modelTasks()}
+              modelCapabilities={modelCapabilities()}
+            />
+          </div>
+
+          <!-- Suggestion chips -->
+          <div class="flex flex-wrap justify-center gap-3 mt-6 max-w-2xl">
+            {#each ["Write a poem about the ocean", "Explain quantum computing simply", "Help me debug my code", "Tell me a creative story"] as chip}
+              <button
+                type="button"
+                onclick={() => sendMessage(chip)}
+                class="px-4 py-2 rounded-full border border-white/10 bg-white/5 text-sm text-white/60 hover:bg-white/10 hover:text-white/80 hover:border-white/20 transition-all duration-200 cursor-pointer"
+              >
+                {chip}
+              </button>
+            {/each}
           </div>
         </div>
       {:else if !chatStarted}
