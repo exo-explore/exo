@@ -34,9 +34,7 @@
 
   // Filter to fits_now models and score/sort them
   const recommendedModels = $derived.by(() => {
-    const fitting = models.filter(
-      (m) => getModelFitStatus(m) === "fits_now",
-    );
+    const fitting = models.filter((m) => getModelFitStatus(m) === "fits_now");
 
     // Score each model for ranking: recent > downloaded > favorite > largest
     const recentSet = new Set(recentModelIds);
@@ -64,7 +62,9 @@
 {#if !hasRunningInstance && recommendedModels.length > 0}
   <div class="mb-3">
     <div class="flex items-center gap-2 mb-2">
-      <span class="text-[10px] text-white/40 font-mono tracking-wider uppercase">Recommended</span>
+      <span class="text-[10px] text-white/40 font-mono tracking-wider uppercase"
+        >Recommended</span
+      >
       <div class="flex-1 h-px bg-white/10"></div>
     </div>
     <div class="space-y-1.5">
@@ -76,7 +76,8 @@
             class="flex-1 min-w-0 flex items-center gap-2 px-2.5 py-1.5 bg-white/5 border border-white/10 rounded text-left hover:border-exo-yellow/30 hover:bg-white/8 transition-all cursor-pointer"
             onclick={() => onSelect(model.id)}
           >
-            <span class="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0"
+            ></span>
             <span class="text-xs font-mono text-white/80 truncate flex-1">
               {model.name || model.id}
             </span>

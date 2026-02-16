@@ -1037,9 +1037,14 @@
           LAUNCHING...
         </span>
       {:else if !canFit}
-        {@const totalClusterGB = nodeList().reduce((sum, n) => sum + n.totalGB, 0)}
+        {@const totalClusterGB = nodeList().reduce(
+          (sum, n) => sum + n.totalGB,
+          0,
+        )}
         {#if totalClusterGB > 0}
-          TOO LARGE — needs {estimatedMemory}GB, cluster has {Math.round(totalClusterGB)}GB
+          TOO LARGE — needs {estimatedMemory}GB, cluster has {Math.round(
+            totalClusterGB,
+          )}GB
         {:else}
           INSUFFICIENT MEMORY
         {/if}
@@ -1051,25 +1056,33 @@
     <!-- Alternative model suggestions when too large -->
     {#if !canFit && alternativeModels.length > 0 && onSelectAlternative}
       <div class="mt-2 pt-2 border-t border-white/10">
-        <div class="text-[10px] font-mono text-white/40 uppercase tracking-wider mb-1.5">
+        <div
+          class="text-[10px] font-mono text-white/40 uppercase tracking-wider mb-1.5"
+        >
           Try instead:
         </div>
         <div class="space-y-1">
           {#each alternativeModels as alt}
-            {@const altSizeGB = alt.storage_size_megabytes ? Math.round(alt.storage_size_megabytes / 1024) : 0}
+            {@const altSizeGB = alt.storage_size_megabytes
+              ? Math.round(alt.storage_size_megabytes / 1024)
+              : 0}
             <button
               type="button"
               class="w-full flex items-center justify-between gap-2 px-2 py-1.5 text-left bg-green-500/5 border border-green-500/20 rounded hover:bg-green-500/10 hover:border-green-500/30 transition-all cursor-pointer"
               onclick={() => onSelectAlternative?.(alt.id)}
             >
               <span class="flex items-center gap-1.5 min-w-0">
-                <span class="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0"></span>
+                <span
+                  class="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0"
+                ></span>
                 <span class="text-xs font-mono text-white/70 truncate">
                   {alt.name || alt.id}
                 </span>
               </span>
               {#if altSizeGB > 0}
-                <span class="text-[10px] font-mono text-green-400/70 flex-shrink-0">
+                <span
+                  class="text-[10px] font-mono text-green-400/70 flex-shrink-0"
+                >
                   {altSizeGB}GB
                 </span>
               {/if}

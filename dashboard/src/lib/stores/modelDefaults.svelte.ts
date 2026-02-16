@@ -60,7 +60,5 @@ export const modelDefaultsStore = new ModelDefaultsStore();
 
 export const getModelConfig = (baseModelId: string) =>
   modelDefaultsStore.getConfig(baseModelId);
-export const saveModelConfig = (
-  baseModelId: string,
-  config: ModelConfig,
-) => modelDefaultsStore.saveConfig(baseModelId, config);
+export const saveModelConfig = (baseModelId: string, config: ModelConfig) =>
+  modelDefaultsStore.saveConfig(baseModelId, config);

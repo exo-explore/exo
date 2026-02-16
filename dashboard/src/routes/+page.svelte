@@ -3622,7 +3622,11 @@
                             {/if}
                           </span>
                           Pipeline
-                          <span class="text-white/30 text-xs" title="Splits model into sequential stages across devices. Lower network overhead.">&#9432;</span>
+                          <span
+                            class="text-white/30 text-xs"
+                            title="Splits model into sequential stages across devices. Lower network overhead."
+                            >&#9432;</span
+                          >
                         </button>
                         <button
                           onclick={() => {
@@ -3647,7 +3651,11 @@
                             {/if}
                           </span>
                           Tensor
-                          <span class="text-white/30 text-xs" title="Splits each layer across devices. Better for high-bandwidth connections (Thunderbolt).">&#9432;</span>
+                          <span
+                            class="text-white/30 text-xs"
+                            title="Splits each layer across devices. Better for high-bandwidth connections (Thunderbolt)."
+                            >&#9432;</span
+                          >
                         </button>
                       </div>
                     </div>
@@ -3681,7 +3689,11 @@
                             {/if}
                           </span>
                           Standard
-                          <span class="text-white/30 text-xs" title="Standard communication. Works over any network.">&#9432;</span>
+                          <span
+                            class="text-white/30 text-xs"
+                            title="Standard communication. Works over any network."
+                            >&#9432;</span
+                          >
                         </button>
                         <button
                           onclick={() => {
@@ -3706,7 +3718,11 @@
                             {/if}
                           </span>
                           RDMA (Fast)
-                          <span class="text-white/30 text-xs" title="Direct memory access. Requires Thunderbolt, significantly faster.">&#9432;</span>
+                          <span
+                            class="text-white/30 text-xs"
+                            title="Direct memory access. Requires Thunderbolt, significantly faster."
+                            >&#9432;</span
+                          >
                         </button>
                       </div>
                     </div>
@@ -3808,9 +3824,7 @@
                             m.base_model === selectedModel.base_model &&
                             getModelMemoryFitStatus(m) === "fits_now",
                         )
-                        .sort(
-                          (a, b) => getModelSizeGB(b) - getModelSizeGB(a),
-                        )
+                        .sort((a, b) => getModelSizeGB(b) - getModelSizeGB(a))
                         .slice(0, 3);
                     })()}
                     <div class="space-y-3">
@@ -3841,7 +3855,8 @@
                             {apiPreview}
                             modelIdOverride={apiPreview.model_id}
                             alternativeModels={alternatives}
-                            onSelectAlternative={(altId) => handleModelPickerSelect(altId)}
+                            onSelectAlternative={(altId) =>
+                              handleModelPickerSelect(altId)}
                           />
                         </div>
                       {/each}

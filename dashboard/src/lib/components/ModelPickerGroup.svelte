@@ -321,7 +321,11 @@
         group.smallestVariant.id,
       )}
       <span class="flex items-center gap-1.5 flex-shrink-0">
-        <span class="w-1.5 h-1.5 rounded-full {getFitDotColor(singleVariantFitStatus)} flex-shrink-0"></span>
+        <span
+          class="w-1.5 h-1.5 rounded-full {getFitDotColor(
+            singleVariantFitStatus,
+          )} flex-shrink-0"
+        ></span>
         <span
           class="text-xs font-mono {getSizeClassForFitStatus(
             singleVariantFitStatus,
@@ -330,7 +334,11 @@
           {formatSize(group.smallestVariant.storage_size_megabytes)}
         </span>
         {#if getFitLabel(singleVariantFitStatus)}
-          <span class="text-xs font-mono {getSizeClassForFitStatus(singleVariantFitStatus)}">
+          <span
+            class="text-xs font-mono {getSizeClassForFitStatus(
+              singleVariantFitStatus,
+            )}"
+          >
             {getFitLabel(singleVariantFitStatus)}
           </span>
         {/if}
@@ -344,18 +352,22 @@
         .filter((s) => s > 0)
         .sort((a, b) => a - b)}
       <span class="flex items-center gap-1.5 flex-shrink-0">
-        <span class="w-1.5 h-1.5 rounded-full {getFitDotColor(groupFitStatus)} flex-shrink-0"></span>
         <span
-          class="text-xs font-mono {getSizeClassForFitStatus(
+          class="w-1.5 h-1.5 rounded-full {getFitDotColor(
             groupFitStatus,
-          )}"
+          )} flex-shrink-0"
+        ></span>
+        <span
+          class="text-xs font-mono {getSizeClassForFitStatus(groupFitStatus)}"
         >
           {group.variants.length} variants{#if sizes.length >= 2}{" "}({formatSize(
               sizes[0],
             )}-{formatSize(sizes[sizes.length - 1])}){/if}
         </span>
         {#if getFitLabel(groupFitStatus)}
-          <span class="text-xs font-mono {getSizeClassForFitStatus(groupFitStatus)}">
+          <span
+            class="text-xs font-mono {getSizeClassForFitStatus(groupFitStatus)}"
+          >
             {getFitLabel(groupFitStatus)}
           </span>
         {/if}
@@ -485,16 +497,20 @@
 
           <!-- Size -->
           <span class="flex items-center gap-1.5 flex-1">
-            <span class="w-1.5 h-1.5 rounded-full {getFitDotColor(fitStatus)} flex-shrink-0"></span>
             <span
-              class="text-xs font-mono {getSizeClassForFitStatus(
+              class="w-1.5 h-1.5 rounded-full {getFitDotColor(
                 fitStatus,
-              )}"
+              )} flex-shrink-0"
+            ></span>
+            <span
+              class="text-xs font-mono {getSizeClassForFitStatus(fitStatus)}"
             >
               {formatSize(variant.storage_size_megabytes)}
             </span>
             {#if getFitLabel(fitStatus)}
-              <span class="text-xs font-mono {getSizeClassForFitStatus(fitStatus)}">
+              <span
+                class="text-xs font-mono {getSizeClassForFitStatus(fitStatus)}"
+              >
                 {getFitLabel(fitStatus)}
               </span>
             {/if}
