@@ -204,6 +204,10 @@ class MpReceiver[T]:
     def close(self) -> None:
         if not self._state.closed.is_set():
             self._state.closed.set()
+        try:  # noqa: SIM105
+            self._state.buffer.put_nowait(_MpEndOfStream())
+        except Exception:
+            pass
         self._state.buffer.close()
 
     # == unique to Mp channels ==
