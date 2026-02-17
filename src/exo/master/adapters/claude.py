@@ -161,7 +161,9 @@ async def collect_claude_response(
     command_id: CommandId,
     model: str,
     chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
-) -> ClaudeMessagesResponse:
+) -> AsyncGenerator[str]:
+    # This is an AsyncGenerator[str] rather than returning a ChatCompletionReponse because
+    # FastAPI handles the cancellation better but wouldn't auto-serialize for some reason
     """Collect all token chunks and return a single ClaudeMessagesResponse."""
     text_parts: list[str] = []
     tool_use_blocks: list[ClaudeToolUseBlock] = []
@@ -212,7 +214,7 @@ async def collect_claude_response(
     input_tokens = last_usage.prompt_tokens if last_usage else 0
     output_tokens = last_usage.completion_tokens if last_usage else 0
 
-    return ClaudeMessagesResponse(
+    yield ClaudeMessagesResponse(
         id=f"msg_{command_id}",
         model=model,
         content=content,
@@ -221,7 +223,8 @@ async def collect_claude_response(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
         ),
-    )
+    ).model_dump_json()
+    return
 
 
 async def generate_claude_stream(
