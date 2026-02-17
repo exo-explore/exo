@@ -23,6 +23,8 @@ use util::wakerdeque::WakerDeque;
 
 const RETRY_CONNECT_INTERVAL: Duration = Duration::from_secs(5);
 
+const MAX_PING_FAILURES: u32 = 3;
+
 mod managed {
     use libp2p::swarm::NetworkBehaviour;
     use libp2p::{identity, mdns, ping};
@@ -31,8 +33,8 @@ mod managed {
 
     const MDNS_RECORD_TTL: Duration = Duration::from_secs(2_500);
     const MDNS_QUERY_INTERVAL: Duration = Duration::from_secs(1_500);
-    const PING_TIMEOUT: Duration = Duration::from_millis(2_500);
-    const PING_INTERVAL: Duration = Duration::from_millis(2_500);
+    const PING_TIMEOUT: Duration = Duration::from_secs(10);
+    const PING_INTERVAL: Duration = Duration::from_secs(5);
 
     #[derive(NetworkBehaviour)]
     pub struct Behaviour {
@@ -109,6 +111,9 @@ pub struct Behaviour {
 
     // pending events to emmit => waker-backed Deque to control polling
     pending_events: WakerDeque<ToSwarm<Event, Infallible>>,
+
+    // track consecutive ping failures per connection for N-strike tolerance
+    ping_failures: HashMap<ConnectionId, u32>,
 }
 
 impl Behaviour {
@@ -118,6 +123,7 @@ impl Behaviour {
             mdns_discovered: HashMap::new(),
             retry_delay: Delay::new(RETRY_CONNECT_INTERVAL),
             pending_events: WakerDeque::new(),
+            ping_failures: HashMap::new(),
         })
     }
 
@@ -308,6 +314,7 @@ impl NetworkBehaviour for Behaviour {
                 };
 
                 if let Some((ip, port)) = remote_address.try_to_tcp_addr() {
+                    self.ping_failures.remove(&connection_id);
                     // handle connection closed event which is filtered correctly
                     self.on_connection_closed(peer_id, connection_id, ip, port)
                 }
@@ -337,10 +344,37 @@ impl NetworkBehaviour for Behaviour {
                         }
                     },
 
-                    // handle ping events => if error then disconnect
+                    // handle ping events => disconnect after N consecutive failures
                     managed::BehaviourEvent::Ping(e) => {
-                        if let Err(_) = e.result {
-                            self.close_connection(e.peer, e.connection.clone())
+                        match &e.result {
+                            Err(err) => {
+                                let count = self.ping_failures.entry(e.connection).or_insert(0);
+                                *count += 1;
+                                log::warn!(
+                                    "Ping failed for peer {:?} (connection {:?}): {:?} — failure {}/{}",
+                                    e.peer,
+                                    e.connection,
+                                    err,
+                                    count,
+                                    MAX_PING_FAILURES
+                                );
+                                if *count >= MAX_PING_FAILURES {
+                                    log::warn!(
+                                        "Closing connection to peer {:?} after {} consecutive ping failures",
+                                        e.peer,
+                                        MAX_PING_FAILURES
+                                    );
+                                    self.ping_failures.remove(&e.connection);
+                                    self.close_connection(e.peer, e.connection);
+                                }
+                            }
+                            Ok(rtt) => {
+                                // Reset failure counter on successful ping
+                                if self.ping_failures.remove(&e.connection).is_some() {
+                                    log::debug!("Ping recovered for peer {:?} (rtt={:?}), reset failure counter", e.peer, rtt);
+                                }
+                                log::trace!("Ping OK for peer {:?}: rtt={:?}", e.peer, rtt);
+                            }
                         }
                     }
                 }
