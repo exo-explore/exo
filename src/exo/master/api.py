@@ -85,6 +85,7 @@ from exo.shared.types.api import (
     ImageGenerationTaskParams,
     ImageListItem,
     ImageListResponse,
+    ImageSize,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
@@ -100,6 +101,7 @@ from exo.shared.types.api import (
     TraceRankStats,
     TraceResponse,
     TraceStatsResponse,
+    normalize_image_size,
 )
 from exo.shared.types.chunks import (
     ErrorChunk,
@@ -751,9 +753,11 @@ class API:
         When stream=True and partial_images > 0, returns a StreamingResponse
         with SSE-formatted events for partial and final images.
         """
-        payload.model = await self._validate_image_model(ModelId(payload.model))
         payload = payload.model_copy(
-            update={"advanced_params": _ensure_seed(payload.advanced_params)}
+            update={
+                "model": await self._validate_image_model(ModelId(payload.model)),
+                "advanced_params": _ensure_seed(payload.advanced_params),
+            }
         )
 
         command = ImageGeneration(
@@ -1009,12 +1013,13 @@ class API:
     async def bench_image_generations(
         self, request: Request, payload: BenchImageGenerationTaskParams
     ) -> BenchImageGenerationResponse:
-        payload.model = await self._validate_image_model(ModelId(payload.model))
-
-        payload.stream = False
-        payload.partial_images = 0
         payload = payload.model_copy(
-            update={"advanced_params": _ensure_seed(payload.advanced_params)}
+            update={
+                "model": await self._validate_image_model(ModelId(payload.model)),
+                "stream": False,
+                "partial_images": 0,
+                "advanced_params": _ensure_seed(payload.advanced_params),
+            }
         )
 
         command = ImageGeneration(
@@ -1035,7 +1040,7 @@ class API:
         prompt: str,
         model: ModelId,
         n: int,
-        size: str,
+        size: ImageSize,
         response_format: Literal["url", "b64_json"],
         input_fidelity: Literal["low", "high"],
         stream: bool,
@@ -1105,7 +1110,7 @@ class API:
         prompt: str = Form(...),
         model: str = Form(...),
         n: int = Form(1),
-        size: str = Form("1024x1024"),
+        size: str | None = Form(None),
         response_format: Literal["url", "b64_json"] = Form("b64_json"),
         input_fidelity: Literal["low", "high"] = Form("low"),
         stream: str = Form("false"),
@@ -1131,7 +1136,7 @@ class API:
             prompt=prompt,
             model=ModelId(model),
             n=n,
-            size=size,
+            size=normalize_image_size(size),
             response_format=response_format,
             input_fidelity=input_fidelity,
             stream=stream_bool,
@@ -1167,7 +1172,7 @@ class API:
         prompt: str = Form(...),
         model: str = Form(...),
         n: int = Form(1),
-        size: str = Form("1024x1024"),
+        size: str | None = Form(None),
         response_format: Literal["url", "b64_json"] = Form("b64_json"),
         input_fidelity: Literal["low", "high"] = Form("low"),
         quality: Literal["high", "medium", "low"] = Form("medium"),
@@ -1187,7 +1192,7 @@ class API:
             prompt=prompt,
             model=ModelId(model),
             n=n,
-            size=size,
+            size=normalize_image_size(size),
             response_format=response_format,
             input_fidelity=input_fidelity,
             stream=False,
