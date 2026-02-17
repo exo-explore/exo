@@ -5,7 +5,6 @@ import Foundation
 private let customNamespaceKey = "EXOCustomNamespace"
 private let hfTokenKey = "EXOHFToken"
 private let enableImageModelsKey = "EXOEnableImageModels"
-private let onboardingCompletedKey = "EXOOnboardingCompleted"
 
 @MainActor
 final class ExoProcessController: ObservableObject {
@@ -61,9 +60,6 @@ final class ExoProcessController: ObservableObject {
         }
     }
 
-    /// Fires once when EXO transitions to `.running` for the very first time (fresh install).
-    @Published private(set) var isFirstLaunchReady = false
-
     private var process: Process?
     private var runtimeDirectoryURL: URL?
     private var pendingLaunchTask: Task<Void, Never>?
@@ -117,11 +113,6 @@ final class ExoProcessController: ObservableObject {
             try child.run()
             process = child
             status = .running
-
-            // Show welcome popout if onboarding was never completed
-            if !UserDefaults.standard.bool(forKey: onboardingCompletedKey) {
-                isFirstLaunchReady = true
-            }
         } catch {
             process = nil
             status = .failed(message: "Launch error")
@@ -171,17 +162,6 @@ final class ExoProcessController: ObservableObject {
     func restart() {
         stop()
         launch()
-    }
-
-    /// Mark onboarding as completed (user interacted with the welcome popout).
-    func markOnboardingCompleted() {
-        UserDefaults.standard.set(true, forKey: onboardingCompletedKey)
-    }
-
-    /// Reset onboarding so the welcome popout appears on next launch.
-    func resetOnboarding() {
-        UserDefaults.standard.removeObject(forKey: onboardingCompletedKey)
-        isFirstLaunchReady = false
     }
 
     func scheduleLaunch(after seconds: TimeInterval) {

@@ -6,10 +6,6 @@
   export let showSidebarToggle = false;
   export let sidebarVisible = true;
   export let onToggleSidebar: (() => void) | null = null;
-  export let downloadProgress: {
-    count: number;
-    percentage: number;
-  } | null = null;
 
   function handleHome(): void {
     if (onHome) {
@@ -39,15 +35,11 @@
         onclick={handleToggleSidebar}
         class="p-2 rounded border border-exo-medium-gray/40 hover:border-exo-yellow/50 transition-colors cursor-pointer"
         title={sidebarVisible ? "Hide sidebar" : "Show sidebar"}
-        aria-label={sidebarVisible
-          ? "Hide conversation sidebar"
-          : "Show conversation sidebar"}
-        aria-pressed={sidebarVisible}
       >
         <svg
           class="w-5 h-5 {sidebarVisible
             ? 'text-exo-yellow'
-            : 'text-exo-light-gray'}"
+            : 'text-exo-medium-gray'}"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -88,9 +80,8 @@
   </button>
 
   <!-- Right: Home + Downloads -->
-  <nav
+  <div
     class="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-4"
-    aria-label="Main navigation"
   >
     {#if showHome}
       <button
@@ -119,56 +110,20 @@
       class="text-sm text-exo-light-gray hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-2 cursor-pointer"
       title="View downloads overview"
     >
-      {#if downloadProgress}
-        <!-- Compact download progress indicator -->
-        <div class="relative w-4 h-4 flex-shrink-0">
-          <svg class="w-4 h-4 -rotate-90" viewBox="0 0 20 20">
-            <circle
-              cx="10"
-              cy="10"
-              r="8"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              opacity="0.2"
-            />
-            <circle
-              cx="10"
-              cy="10"
-              r="8"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-dasharray={2 * Math.PI * 8}
-              stroke-dashoffset={2 *
-                Math.PI *
-                8 *
-                (1 - downloadProgress.percentage / 100)}
-              class="text-blue-400 transition-all duration-300"
-            />
-          </svg>
-          <div
-            class="absolute inset-0 flex items-center justify-center text-[6px] font-mono text-blue-400"
-          >
-            {downloadProgress.count}
-          </div>
-        </div>
-      {:else}
-        <svg
-          class="w-4 h-4"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M12 3v12" />
-          <path d="M7 12l5 5 5-5" />
-          <path d="M5 21h14" />
-        </svg>
-      {/if}
+      <svg
+        class="w-4 h-4"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M12 3v12" />
+        <path d="M7 12l5 5 5-5" />
+        <path d="M5 21h14" />
+      </svg>
       Downloads
     </a>
-  </nav>
+  </div>
 </header>
