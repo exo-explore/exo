@@ -61,7 +61,7 @@ class TextGeneration(BaseTask):  # emitted by Master
     error_message: str | None = Field(default=None)
 
 
-class CancelTask(BaseTask):  # emitted by Worker when master cancels a task
+class CancelTask(BaseTask):
     cancelled_task_id: TaskId
     runner_id: RunnerId
 
