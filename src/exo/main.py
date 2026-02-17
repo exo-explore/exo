@@ -94,6 +94,7 @@ class Node:
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 event_index_counter=event_index_counter,
+                no_downloads=args.no_downloads,
             )
         else:
             worker = None
@@ -225,6 +226,7 @@ class Node:
                         )
                         self._tg.start_soon(self.download_coordinator.run)
                     if self.worker:
+                        no_downloads = self.worker.no_downloads
                         self.worker.shutdown()
                         # TODO: add profiling etc to resource monitor
                         self.worker = Worker(
@@ -239,6 +241,7 @@ class Node:
                                 topics.DOWNLOAD_COMMANDS
                             ),
                             event_index_counter=self.event_index_counter,
+                            no_downloads=no_downloads,
                         )
                         self._tg.start_soon(self.worker.run)
                     if self.api:

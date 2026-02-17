@@ -65,6 +65,7 @@ class Worker:
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
         event_index_counter: Iterator[int],
+        no_downloads: bool = False,
     ):
         self.node_id: NodeId = node_id
         self.session_id: SessionId = session_id
@@ -74,6 +75,7 @@ class Worker:
         self.event_index_counter = event_index_counter
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
+        self.no_downloads = no_downloads
         self.event_buffer = OrderedBuffer[Event]()
         self.out_for_delivery: dict[EventId, ForwarderEvent] = {}
 
@@ -182,6 +184,7 @@ class Worker:
                 self.state.tasks,
                 self.input_chunk_buffer,
                 self.input_chunk_counts,
+                no_downloads=self.no_downloads,
             )
             if task is None:
                 continue
