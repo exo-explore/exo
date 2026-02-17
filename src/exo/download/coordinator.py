@@ -398,7 +398,17 @@ class DownloadCoordinator:
                             ),
                         )
                     elif progress.status in ["in_progress", "not_started"]:
-                        if progress.downloaded_this_session.in_bytes == 0:
+                        if (
+                            progress.downloaded.in_bytes
+                            >= progress.total.in_bytes
+                            > 0
+                        ):
+                            status = DownloadCompleted(
+                                node_id=self.node_id,
+                                shard_metadata=progress.shard,
+                                total=progress.total,
+                            )
+                        elif progress.downloaded.in_bytes == 0:
                             status = DownloadPending(
                                 node_id=self.node_id,
                                 shard_metadata=progress.shard,
