@@ -3,7 +3,7 @@ from collections.abc import Generator
 from typing import Annotated, Any, Literal, get_args
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.common import CommandId, NodeId
