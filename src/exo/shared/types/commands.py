@@ -8,7 +8,12 @@ from exo.shared.types.api import (
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.text_generation import TextGenerationTaskParams
-from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
+from exo.shared.types.worker.instances import (
+    Instance,
+    InstanceId,
+    InstanceMeta,
+    MlxDevice,
+)
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
@@ -38,6 +43,7 @@ class PlaceInstance(BaseCommand):
     sharding: Sharding
     instance_meta: InstanceMeta
     min_nodes: int
+    mlx_device: MlxDevice = MlxDevice.Auto
 
 
 class CreateInstance(BaseCommand):

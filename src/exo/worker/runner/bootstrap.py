@@ -4,7 +4,7 @@ import loguru
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
 from exo.shared.types.tasks import Task, TaskId
-from exo.shared.types.worker.instances import BoundInstance, MlxJacclInstance
+from exo.shared.types.worker.instances import BoundInstance, MlxDevice, MlxJacclInstance
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 
@@ -34,6 +34,15 @@ def entrypoint(
     logger = _logger
 
     logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
+
+    # Set MLX compute device before importing runner (which imports mlx.core at module scope)
+    mlx_device = bound_instance.instance.mlx_device
+    if mlx_device != MlxDevice.Auto:
+        import mlx.core as mx
+
+        device = mx.cpu if mlx_device == MlxDevice.Cpu else mx.gpu
+        mx.set_default_device(device)
+        logger.info(f"MLX device set to: {mlx_device}")
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:

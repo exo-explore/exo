@@ -16,9 +16,16 @@ class InstanceMeta(str, Enum):
     MlxJaccl = "MlxJaccl"
 
 
+class MlxDevice(str, Enum):
+    Auto = "Auto"
+    Cpu = "Cpu"
+    Gpu = "Gpu"
+
+
 class BaseInstance(TaggedModel):
     instance_id: InstanceId
     shard_assignments: ShardAssignments
+    mlx_device: MlxDevice = MlxDevice.Auto
 
     def shard(self, runner_id: RunnerId) -> ShardMetadata | None:
         return self.shard_assignments.runner_to_shard.get(runner_id, None)

@@ -143,7 +143,12 @@ from exo.shared.types.openai_responses import (
     ResponsesResponse,
 )
 from exo.shared.types.state import State
-from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
+from exo.shared.types.worker.instances import (
+    Instance,
+    InstanceId,
+    InstanceMeta,
+    MlxDevice,
+)
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
@@ -310,6 +315,7 @@ class API:
             sharding=payload.sharding,
             instance_meta=payload.instance_meta,
             min_nodes=payload.min_nodes,
+            mlx_device=payload.mlx_device,
         )
         await self._send(command)
 
@@ -350,6 +356,7 @@ class API:
         sharding: Sharding = Sharding.Pipeline,
         instance_meta: InstanceMeta = InstanceMeta.MlxRing,
         min_nodes: int = 1,
+        mlx_device: MlxDevice = MlxDevice.Auto,
     ) -> Instance:
         model_card = await ModelCard.load(model_id)
 
@@ -360,6 +367,7 @@ class API:
                     sharding=sharding,
                     instance_meta=instance_meta,
                     min_nodes=min_nodes,
+                    mlx_device=mlx_device,
                 ),
                 node_memory=self.state.node_memory,
                 node_network=self.state.node_network,
