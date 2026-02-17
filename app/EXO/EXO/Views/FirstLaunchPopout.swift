@@ -14,7 +14,20 @@ final class FirstLaunchPopout {
 
     func show() {
         guard popover == nil else { return }
-        guard let button = Self.findStatusItemButton() else { return }
+
+        // The status bar button may not exist yet on first launch; retry a few times.
+        showWithRetry(attemptsRemaining: 5)
+    }
+
+    private func showWithRetry(attemptsRemaining: Int) {
+        guard attemptsRemaining > 0 else { return }
+
+        guard let button = Self.findStatusItemButton() else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.showWithRetry(attemptsRemaining: attemptsRemaining - 1)
+            }
+            return
+        }
 
         let pop = NSPopover()
         pop.behavior = .applicationDefined
@@ -38,12 +51,13 @@ final class FirstLaunchPopout {
         self.popover = pop
         pop.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
 
-        // Auto-open dashboard after 30s but keep popout visible until user interacts
+        // Auto-open dashboard after 30s then dismiss
         countdownTask = Task {
             try? await Task.sleep(nanoseconds: 30_000_000_000)
             if !Task.isCancelled {
                 openDashboard()
                 onComplete?()
+                dismiss()
             }
         }
     }
@@ -63,13 +77,32 @@ final class FirstLaunchPopout {
     }
 
     /// Finds the NSStatusBarButton created by SwiftUI's MenuBarExtra.
+    /// Walks the view hierarchy to find the actual button rather than the content view.
     private static func findStatusItemButton() -> NSView? {
         for window in NSApp.windows {
             let className = NSStringFromClass(type(of: window))
-            if className.contains("NSStatusBarWindow"),
-                let content = window.contentView
-            {
-                return content
+            if className.contains("NSStatusBarWindow") {
+                // Try to find the actual status bar button in the view hierarchy
+                if let content = window.contentView {
+                    if let button = findButton(in: content) {
+                        return button
+                    }
+                    return content
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Recursively searches the view hierarchy for an NSStatusBarButton.
+    private static func findButton(in view: NSView) -> NSView? {
+        let className = NSStringFromClass(type(of: view))
+        if className.contains("StatusBarButton") {
+            return view
+        }
+        for subview in view.subviews {
+            if let found = findButton(in: subview) {
+                return found
             }
         }
         return nil

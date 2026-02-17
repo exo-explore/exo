@@ -70,7 +70,7 @@ fi
 
 # ── Step 5: Configure window appearance via AppleScript ──────────────────────
 # Window: 800×400, app icon on left, Applications on right (matches Ollama layout)
-# Background image is 1600×740 (2× retina). Text size 12.
+# Background image is 1600×740 (2× retina for 800×400 logical window).
 APP_NAME="$(basename "$APP_PATH")"
 
 osascript <<APPLESCRIPT
@@ -83,7 +83,7 @@ tell application "Finder"
         set bounds of container window to {200, 120, 1000, 520}
         set opts to icon view options of container window
         set icon size of opts to 128
-        set text size of opts to 10
+        set text size of opts to 12
         set arrangement of opts to not arranged
         if exists file ".background:background.png" then
             set background picture of opts to file ".background:background.png"
