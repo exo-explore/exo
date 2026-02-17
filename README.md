@@ -72,23 +72,16 @@ There are two ways to run exo:
 
 ### Run from Source (macOS)
 
-If you have [Nix](https://nixos.org/) installed, you can skip most of the steps below and run exo directly (after accepting the Cachix cache):
-
-```bash
-nix run .#exo
-```
-
 **Prerequisites:**
-- [Xcode](https://developer.apple.com/xcode/) (provides the Metal ToolChain required for MLX compilation)
 - [brew](https://github.com/Homebrew/brew) (for simple package management on macOS)
-
+  
   ```bash
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   ```
 - [uv](https://github.com/astral-sh/uv) (for Python dependency management)
 - [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
 - [node](https://github.com/nodejs/node) (for building the dashboard)
-
+  
   ```bash
   brew install uv macmon node
   ```
