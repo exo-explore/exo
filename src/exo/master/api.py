@@ -149,7 +149,12 @@ from exo.shared.types.openai_responses import (
     ResponsesResponse,
 )
 from exo.shared.types.state import State
-from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
+from exo.shared.types.worker.instances import (
+    Instance,
+    InstanceId,
+    InstanceMeta,
+    MlxJacclInstance,
+)
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
@@ -491,6 +496,14 @@ class API:
             shard_assignments = instance.shard_assignments
             placement_node_ids = list(shard_assignments.node_to_runner.keys())
 
+            # Derive instance_meta from the actual instance type, since
+            # place_instance() may override it (e.g., single-node → MlxRing)
+            actual_instance_meta = (
+                InstanceMeta.MlxJaccl
+                if isinstance(instance, MlxJacclInstance)
+                else InstanceMeta.MlxRing
+            )
+
             memory_delta_by_node: dict[str, int] = {}
             if placement_node_ids:
                 total_bytes = model_card.storage_size.in_bytes
@@ -503,14 +516,14 @@ class API:
             if (
                 model_card.model_id,
                 sharding,
-                instance_meta,
+                actual_instance_meta,
                 len(placement_node_ids),
             ) not in seen:
                 previews.append(
                     PlacementPreview(
                         model_id=model_card.model_id,
                         sharding=sharding,
-                        instance_meta=instance_meta,
+                        instance_meta=actual_instance_meta,
                         instance=instance,
                         memory_delta_by_node=memory_delta_by_node or None,
                         error=None,
@@ -520,7 +533,7 @@ class API:
                 (
                     model_card.model_id,
                     sharding,
-                    instance_meta,
+                    actual_instance_meta,
                     len(placement_node_ids),
                 )
             )
