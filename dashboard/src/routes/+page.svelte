@@ -369,20 +369,15 @@
     onboardingStep = 5;
     // Launch via API
     try {
-      const placementResponse = await fetch(
-        `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${selectedSharding}&instance_meta=${selectedInstanceType}&min_nodes=1`,
-      );
-      if (!placementResponse.ok) {
-        const errorText = await placementResponse.text();
-        onboardingError = `Could not place model: ${errorText}`;
-        onboardingStep = 4;
-        return;
-      }
-      const placementData = await placementResponse.json();
-      const response = await fetch("/instance", {
+      const response = await fetch("/meta_instance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instance: placementData }),
+        body: JSON.stringify({
+          model_id: modelId,
+          sharding: selectedSharding,
+          instance_meta: selectedInstanceType,
+          min_nodes: 1,
+        }),
       });
       if (!response.ok) {
         const errorText = await response.text();
@@ -975,30 +970,7 @@
 
       let instanceData: unknown;
 
-      if (preview?.instance) {
-        // Use the instance from the preview
-        instanceData = preview.instance;
-      } else {
-        // Fallback: GET placement from API
-        const placementResponse = await fetch(
-          `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${selectedSharding}&instance_meta=${selectedInstanceType}&min_nodes=${selectedMinNodes}`,
-        );
-
-        if (!placementResponse.ok) {
-          const errorText = await placementResponse.text();
-          console.error("Failed to get placement:", errorText);
-          addToast({
-            type: "error",
-            message: `Placement failed: ${errorText}`,
-          });
-          return;
-        }
-
-        instanceData = await placementResponse.json();
-      }
-
-      // POST the instance to create it
-      const response = await fetch("/instance", {
+      const response = await fetch("/meta_instance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ instance: instanceData }),
