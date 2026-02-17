@@ -115,7 +115,7 @@
           packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin (
             let
               uvLock = builtins.fromTOML (builtins.readFile ./uv.lock);
-              mlxPackage = builtins.head (builtins.filter (p: p.name == "mlx" && p.source ? git) uvLock.package);
+              mlxPackage = builtins.head (builtins.filter (p: p.name == "mlx") uvLock.package);
               uvLockMlxVersion = mlxPackage.version;
             in
             {
