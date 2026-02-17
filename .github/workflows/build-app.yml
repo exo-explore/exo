@@ -303,8 +303,11 @@ jobs:
           SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$BUILD_KEYCHAIN_PATH" | awk -F '"' '{print $2}')
           /usr/bin/codesign --deep --force --timestamp --options runtime \
             --sign "$SIGNING_IDENTITY" EXO.app
+          mkdir -p dmg-root
+          cp -R EXO.app dmg-root/
+          ln -s /Applications dmg-root/Applications
           DMG_NAME="EXO-${RELEASE_VERSION}.dmg"
-          bash "$GITHUB_WORKSPACE/packaging/dmg/create-dmg.sh" EXO.app "$DMG_NAME" "EXO"
+          hdiutil create -volname "EXO" -srcfolder dmg-root -ov -format UDZO "$DMG_NAME"
           /usr/bin/codesign --force --timestamp --options runtime \
             --sign "$SIGNING_IDENTITY" "$DMG_NAME"
           if [[ -n "$APPLE_NOTARIZATION_USERNAME" ]]; then

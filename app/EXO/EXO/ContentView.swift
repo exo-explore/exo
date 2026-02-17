@@ -15,12 +15,18 @@ struct ContentView: View {
     @EnvironmentObject private var localNetworkChecker: LocalNetworkChecker
     @EnvironmentObject private var updater: SparkleUpdater
     @EnvironmentObject private var thunderboltBridgeService: ThunderboltBridgeService
-    @EnvironmentObject private var settingsWindowController: SettingsWindowController
     @State private var focusedNode: NodeViewModel?
     @State private var deletingInstanceIDs: Set<String> = []
     @State private var showAllNodes = false
     @State private var showAllInstances = false
-    @State private var baseURLCopied = false
+    @State private var showAdvanced = false
+    @State private var showDebugInfo = false
+    @State private var bugReportInFlight = false
+    @State private var bugReportMessage: String?
+    @State private var uninstallInProgress = false
+    @State private var pendingNamespace: String = ""
+    @State private var pendingHFToken: String = ""
+    @State private var pendingEnableImageModels = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -252,79 +258,139 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             if controller.status != .stopped {
                 dashboardButton
-                baseURLRow
                 Divider()
                     .padding(.vertical, 8)
             } else {
                 Divider()
                     .padding(.vertical, 4)
             }
-            HoverButton(
-                title: "Settings",
-                tint: .primary,
-                trailingSystemImage: "gear"
-            ) {
-                settingsWindowController.open(
-                    controller: controller,
-                    updater: updater,
-                    networkStatusService: networkStatusService,
-                    thunderboltBridgeService: thunderboltBridgeService,
-                    stateService: stateService
-                )
-            }
-            HoverButton(
-                title: "Check for Updates",
-                tint: .primary,
-                trailingSystemImage: "arrow.triangle.2.circlepath"
-            ) {
-                updater.checkForUpdates()
-            }
-            .padding(.bottom, 8)
-            HoverButton(title: "Quit", tint: .secondary) {
+            advancedSection
+                .padding(.bottom, 8)
+            controlButton(title: "Quit", tint: .secondary) {
                 controller.stop()
                 NSApplication.shared.terminate(nil)
             }
         }
     }
 
-    private var dashboardButton: some View {
-        HoverButton(
-            title: "Web Dashboard",
-            tint: .primary,
-            trailingSystemImage: "arrow.up.right"
-        ) {
-            guard let url = URL(string: "http://localhost:52415/") else { return }
-            NSWorkspace.shared.open(url)
+    private var advancedSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Advanced")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                collapseButton(isExpanded: $showAdvanced)
+            }
+            .animation(nil, value: showAdvanced)
+            if showAdvanced {
+                VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Cluster Namespace")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        HStack {
+                            TextField("optional", text: $pendingNamespace)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.caption2)
+                                .onAppear {
+                                    pendingNamespace = controller.customNamespace
+                                }
+                            Button("Save & Restart") {
+                                controller.customNamespace = pendingNamespace
+                                if controller.status == .running || controller.status == .starting {
+                                    controller.restart()
+                                }
+                            }
+                            .font(.caption2)
+                            .disabled(pendingNamespace == controller.customNamespace)
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("HuggingFace Token")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        HStack {
+                            SecureField("optional", text: $pendingHFToken)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.caption2)
+                                .onAppear {
+                                    pendingHFToken = controller.hfToken
+                                }
+                            Button("Save & Restart") {
+                                controller.hfToken = pendingHFToken
+                                if controller.status == .running || controller.status == .starting {
+                                    controller.restart()
+                                }
+                            }
+                            .font(.caption2)
+                            .disabled(pendingHFToken == controller.hfToken)
+                        }
+                    }
+                    Divider()
+                    HStack {
+                        Toggle(
+                            "Enable Image Models (experimental)", isOn: $pendingEnableImageModels
+                        )
+                        .toggleStyle(.switch)
+                        .font(.caption2)
+                        .onAppear {
+                            pendingEnableImageModels = controller.enableImageModels
+                        }
+
+                        Spacer()
+
+                        Button("Save & Restart") {
+                            controller.enableImageModels = pendingEnableImageModels
+                            if controller.status == .running || controller.status == .starting {
+                                controller.restart()
+                            }
+                        }
+                        .font(.caption2)
+                        .disabled(pendingEnableImageModels == controller.enableImageModels)
+                    }
+                    HoverButton(title: "Check for Updates", small: true) {
+                        updater.checkForUpdates()
+                    }
+                    debugSection
+                    HoverButton(title: "Uninstall", tint: .red, small: true) {
+                        showUninstallConfirmationAlert()
+                    }
+                    .disabled(uninstallInProgress)
+                }
+                .transition(.opacity)
+            }
         }
+        .animation(.easeInOut(duration: 0.25), value: showAdvanced)
     }
 
-    private var baseURLRow: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "link")
-                .imageScale(.small)
-                .foregroundColor(.secondary)
-            Text("localhost:52415/v1")
-                .font(.system(.caption, design: .monospaced))
-                .foregroundColor(.primary)
-            Spacer()
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString("http://localhost:52415/v1", forType: .string)
-                baseURLCopied = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    baseURLCopied = false
-                }
-            } label: {
-                Image(systemName: baseURLCopied ? "checkmark" : "doc.on.doc")
+    private func controlButton(title: String, tint: Color = .primary, action: @escaping () -> Void)
+        -> some View
+    {
+        HoverButton(title: title, tint: tint, trailingSystemImage: nil, action: action)
+    }
+
+    private var dashboardButton: some View {
+        Button {
+            guard let url = URL(string: "http://localhost:52415/") else { return }
+            NSWorkspace.shared.open(url)
+        } label: {
+            HStack {
+                Image(systemName: "arrow.up.right.square")
                     .imageScale(.small)
-                    .foregroundColor(baseURLCopied ? .green : .secondary)
-                    .contentTransition(.symbolEffect(.replace))
+                Text("Dashboard")
+                    .fontWeight(.medium)
+                Spacer()
             }
-            .buttonStyle(.plain)
-            .help("Copy API base URL")
+            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(red: 1.0, green: 0.87, blue: 0.0).opacity(0.2))
+            )
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 8)
+        .buttonStyle(.plain)
+        .padding(.bottom, 4)
     }
 
     private func collapseButton(isExpanded: Binding<Bool>) -> some View {
@@ -379,6 +445,207 @@ struct ContentView: View {
         }
     }
 
+    private var thunderboltStatusText: String {
+        switch networkStatusService.status.thunderboltBridgeState {
+        case .some(.disabled):
+            return "Thunderbolt Bridge: Disabled"
+        case .some(.deleted):
+            return "Thunderbolt Bridge: Deleted"
+        case .some(.enabled):
+            return "Thunderbolt Bridge: Enabled"
+        case nil:
+            return "Thunderbolt Bridge: Unknown"
+        }
+    }
+
+    private var thunderboltStatusColor: Color {
+        switch networkStatusService.status.thunderboltBridgeState {
+        case .some(.disabled), .some(.deleted):
+            return .green
+        case .some(.enabled):
+            return .red
+        case nil:
+            return .secondary
+        }
+    }
+
+    /// Shows TB bridge status for all nodes from exo cluster state
+    private var clusterThunderboltBridgeView: some View {
+        let bridgeStatuses = stateService.latestSnapshot?.nodeThunderboltBridge ?? [:]
+        let localNodeId = stateService.localNodeId
+        let nodeProfiles = stateService.latestSnapshot?.nodeProfiles ?? [:]
+
+        return VStack(alignment: .leading, spacing: 1) {
+            if bridgeStatuses.isEmpty {
+                Text("Cluster TB Bridge: No data")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            } else {
+                Text("Cluster TB Bridge Status:")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                ForEach(Array(bridgeStatuses.keys.sorted()), id: \.self) { nodeId in
+                    if let status = bridgeStatuses[nodeId] {
+                        let nodeName =
+                            nodeProfiles[nodeId]?.friendlyName ?? String(nodeId.prefix(8))
+                        let isLocal = nodeId == localNodeId
+                        let prefix = isLocal ? "  \(nodeName) (local):" : "  \(nodeName):"
+                        let statusText =
+                            !status.exists
+                            ? "N/A"
+                            : (status.enabled ? "Enabled" : "Disabled")
+                        let color: Color =
+                            !status.exists
+                            ? .secondary
+                            : (status.enabled ? .red : .green)
+                        Text("\(prefix) \(statusText)")
+                            .font(.caption2)
+                            .foregroundColor(color)
+                    }
+                }
+            }
+        }
+    }
+
+    private var interfaceIpList: some View {
+        let statuses = networkStatusService.status.interfaceStatuses
+        return VStack(alignment: .leading, spacing: 1) {
+            Text("Interfaces (en0–en7):")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            if statuses.isEmpty {
+                Text("  Unknown")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(statuses, id: \.interfaceName) { status in
+                    let ipText = status.ipAddress ?? "No IP"
+                    Text("  \(status.interfaceName): \(ipText)")
+                        .font(.caption2)
+                        .foregroundColor(status.ipAddress == nil ? .red : .green)
+                }
+            }
+        }
+    }
+
+    private var debugSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HoverButton(
+                title: "Debug Info",
+                tint: .primary,
+                trailingSystemImage: showDebugInfo ? "chevron.up" : "chevron.down",
+                small: true
+            ) {
+                showDebugInfo.toggle()
+            }
+            if showDebugInfo {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Version: \(buildTag)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text("Commit: \(buildCommit)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text(thunderboltStatusText)
+                        .font(.caption2)
+                        .foregroundColor(thunderboltStatusColor)
+                    clusterThunderboltBridgeView
+                    interfaceIpList
+                    rdmaStatusView
+                    sendBugReportButton
+                        .padding(.top, 6)
+                }
+                .padding(.leading, 8)
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: showDebugInfo)
+    }
+
+    private var rdmaStatusView: some View {
+        let rdmaStatuses = stateService.latestSnapshot?.nodeRdmaCtl ?? [:]
+        let localNodeId = stateService.localNodeId
+        let nodeProfiles = stateService.latestSnapshot?.nodeProfiles ?? [:]
+        let localDevices = networkStatusService.status.localRdmaDevices
+        let localPorts = networkStatusService.status.localRdmaActivePorts
+
+        return VStack(alignment: .leading, spacing: 1) {
+            if rdmaStatuses.isEmpty {
+                Text("Cluster RDMA: No data")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            } else {
+                Text("Cluster RDMA Status:")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                ForEach(Array(rdmaStatuses.keys.sorted()), id: \.self) { nodeId in
+                    if let status = rdmaStatuses[nodeId] {
+                        let nodeName =
+                            nodeProfiles[nodeId]?.friendlyName ?? String(nodeId.prefix(8))
+                        let isLocal = nodeId == localNodeId
+                        let prefix = isLocal ? "  \(nodeName) (local):" : "  \(nodeName):"
+                        let statusText = status.enabled ? "Enabled" : "Disabled"
+                        let color: Color = status.enabled ? .green : .orange
+                        Text("\(prefix) \(statusText)")
+                            .font(.caption2)
+                            .foregroundColor(color)
+                    }
+                }
+            }
+            if !localDevices.isEmpty {
+                Text("  Local Devices: \(localDevices.joined(separator: ", "))")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            if !localPorts.isEmpty {
+                Text("  Local Active Ports:")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                ForEach(localPorts, id: \.device) { port in
+                    Text("    \(port.device) port \(port.port): \(port.state)")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                }
+            }
+        }
+    }
+
+    private var sendBugReportButton: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                Task {
+                    await sendBugReport()
+                }
+            } label: {
+                HStack {
+                    if bugReportInFlight {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                    }
+                    Text("Send Bug Report")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                    Spacer()
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.accentColor.opacity(0.12))
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(bugReportInFlight)
+
+            if let message = bugReportMessage {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
     private var processToggleBinding: Binding<Bool> {
         Binding(
             get: {
@@ -417,6 +684,101 @@ struct ContentView: View {
                 }
             }
         )
+    }
+
+    private func sendBugReport() async {
+        bugReportInFlight = true
+        bugReportMessage = "Collecting logs..."
+        let service = BugReportService()
+        do {
+            let outcome = try await service.sendReport(isManual: true)
+            bugReportMessage = outcome.message
+        } catch {
+            bugReportMessage = error.localizedDescription
+        }
+        bugReportInFlight = false
+    }
+
+    private func showUninstallConfirmationAlert() {
+        let alert = NSAlert()
+        alert.messageText = "Uninstall EXO"
+        alert.informativeText = """
+            This will remove EXO and all its system components:
+
+            • Network configuration daemon
+            • Launch at login registration
+            • EXO network location
+
+            The app will be moved to Trash.
+            """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Uninstall")
+        alert.addButton(withTitle: "Cancel")
+
+        // Style the Uninstall button as destructive
+        if let uninstallButton = alert.buttons.first {
+            uninstallButton.hasDestructiveAction = true
+        }
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            performUninstall()
+        }
+    }
+
+    private func performUninstall() {
+        uninstallInProgress = true
+
+        // Stop EXO process first
+        controller.cancelPendingLaunch()
+        controller.stop()
+        stateService.stopPolling()
+
+        // Run the privileged uninstall on a background thread
+        // Using .utility QoS to avoid priority inversion with NSAppleScript's subprocess
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                // Remove network setup daemon and components (requires admin privileges)
+                try NetworkSetupHelper.uninstall()
+
+                DispatchQueue.main.async {
+                    // Unregister from launch at login
+                    LaunchAtLoginHelper.disable()
+
+                    // Move app to trash
+                    self.moveAppToTrash()
+
+                    // Quit the app
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        NSApplication.shared.terminate(nil)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.showErrorAlert(message: error.localizedDescription)
+                    self.uninstallInProgress = false
+                }
+            }
+        }
+    }
+
+    private func showErrorAlert(message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Uninstall Failed"
+        alert.informativeText = message
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    private func moveAppToTrash() {
+        guard let appURL = Bundle.main.bundleURL as URL? else { return }
+        do {
+            try FileManager.default.trashItem(at: appURL, resultingItemURL: nil)
+        } catch {
+            // If we can't trash the app, that's OK - user can do it manually
+            // The important system components have already been cleaned up
+        }
     }
 
     private var buildTag: String {
