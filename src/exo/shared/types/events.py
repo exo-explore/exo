@@ -1,17 +1,42 @@
+import base64
+from collections.abc import Mapping
 from datetime import datetime
-from typing import final
+from typing import Annotated, final
 
-from pydantic import Field
+from pydantic import BeforeValidator, Field, PlainSerializer
 
 from exo.shared.topology import Connection
 from exo.shared.types.chunks import GenerationChunk, InputImageChunk
-from exo.shared.types.common import CommandId, Id, NodeId, SessionId
+from exo.shared.types.common import CommandId, Id, MetaInstanceId, NodeId, SessionId
+from exo.shared.types.meta_instance import MetaInstance
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo
 from exo.utils.pydantic_ext import CamelCaseModel, FrozenModel, TaggedModel
+
+
+def _decode_base64_bytes(v: bytes | str) -> bytes:
+    if isinstance(v, bytes):
+        return v
+    return base64.b64decode(v)
+
+
+def _encode_base64_bytes(v: bytes) -> str:
+    return base64.b64encode(v).decode("ascii")
+
+
+Base64Bytes = Annotated[
+    bytes,
+    BeforeValidator(_decode_base64_bytes),
+    PlainSerializer(_encode_base64_bytes, return_type=str),
+]
+"""bytes that serialize to/from base64 strings in JSON.
+
+Needed because TaggedModel's wrap validator converts JSON→Python validation
+context, which breaks strict-mode bytes deserialization from JSON strings.
+"""
 
 
 class EventId(Id):
@@ -66,6 +91,30 @@ class InstanceCreated(BaseEvent):
 
 class InstanceDeleted(BaseEvent):
     instance_id: InstanceId
+    failure_error: str | None = None
+
+
+class MetaInstanceCreated(BaseEvent):
+    meta_instance: MetaInstance
+
+
+class MetaInstanceDeleted(BaseEvent):
+    meta_instance_id: MetaInstanceId
+
+
+@final
+class MetaInstancePlacementFailed(BaseEvent):
+    meta_instance_id: MetaInstanceId
+    reason: str
+
+
+@final
+class InstanceRetrying(BaseEvent):
+    """Runners failed but retry count is below the limit — restart runners, keep instance."""
+
+    instance_id: InstanceId
+    meta_instance_id: MetaInstanceId
+    failure_error: str
 
 
 class RunnerStatusUpdated(BaseEvent):
@@ -132,6 +181,25 @@ class TracesMerged(BaseEvent):
     traces: list[TraceEventData]
 
 
+@final
+class JacclSideChannelData(BaseEvent):
+    """A runner's local contribution to a JACCL SideChannel all_gather round."""
+
+    instance_id: InstanceId
+    runner_id: RunnerId
+    sequence: int
+    data: Base64Bytes
+
+
+@final
+class JacclSideChannelGathered(BaseEvent):
+    """Gathered result of a JACCL SideChannel all_gather round."""
+
+    instance_id: InstanceId
+    sequence: int
+    gathered_data: Mapping[RunnerId, Base64Bytes]
+
+
 Event = (
     TestEvent
     | TaskCreated
@@ -141,6 +209,10 @@ Event = (
     | TaskAcknowledged
     | InstanceCreated
     | InstanceDeleted
+    | InstanceRetrying
+    | MetaInstanceCreated
+    | MetaInstanceDeleted
+    | MetaInstancePlacementFailed
     | RunnerStatusUpdated
     | RunnerDeleted
     | NodeTimedOut
@@ -152,6 +224,8 @@ Event = (
     | TopologyEdgeDeleted
     | TracesCollected
     | TracesMerged
+    | JacclSideChannelData
+    | JacclSideChannelGathered
 )
 
 

@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta, timezone
+from collections.abc import Sequence
+from datetime import datetime, timezone
 
 import anyio
 from anyio.abc import TaskGroup
@@ -12,11 +13,22 @@ from exo.master.placement import (
     get_transition_events,
     place_instance,
 )
+from exo.master.process_managers import ProcessManager
+from exo.master.process_managers.instance_health import InstanceHealthReconciler
+from exo.master.process_managers.meta_instance import MetaInstanceReconciler
+from exo.master.process_managers.node_timeout import NodeTimeoutReconciler
+from exo.master.reconcile import (
+    find_unsatisfied_meta_instances,
+    try_place_for_meta_instance,
+)
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
+from exo.shared.models.model_cards import ModelCard
 from exo.shared.types.commands import (
     CreateInstance,
+    CreateMetaInstance,
     DeleteInstance,
+    DeleteMetaInstance,
     ForwarderCommand,
     ForwarderDownloadCommand,
     ImageEdits,
@@ -36,8 +48,12 @@ from exo.shared.types.events import (
     IndexedEvent,
     InputChunkReceived,
     InstanceDeleted,
+    JacclSideChannelData,
+    JacclSideChannelGathered,
+    MetaInstanceCreated,
+    MetaInstanceDeleted,
+    MetaInstancePlacementFailed,
     NodeGatheredInfo,
-    NodeTimedOut,
     TaskCreated,
     TaskDeleted,
     TaskStatusUpdated,
@@ -60,7 +76,8 @@ from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
 from exo.shared.types.worker.instances import InstanceId
-from exo.utils.channels import Receiver, Sender, channel
+from exo.shared.types.worker.runners import RunnerId
+from exo.utils.channels import Receiver, Sender
 from exo.utils.event_buffer import MultiSourceBuffer
 
 
@@ -84,16 +101,16 @@ class Master:
         self.local_event_receiver = local_event_receiver
         self.global_event_sender = global_event_sender
         self.download_command_sender = download_command_sender
-        send, recv = channel[Event]()
-        self.event_sender: Sender[Event] = send
-        self._loopback_event_receiver: Receiver[Event] = recv
-        self._loopback_event_sender: Sender[ForwarderEvent] = (
-            local_event_receiver.clone_sender()
-        )
         self._multi_buffer = MultiSourceBuffer[NodeId, Event]()
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
+        self._jaccl_pending: dict[InstanceId, dict[int, dict[RunnerId, bytes]]] = {}
+        self._process_managers: Sequence[ProcessManager] = [
+            InstanceHealthReconciler(),
+            NodeTimeoutReconciler(),
+            MetaInstanceReconciler(),
+        ]
 
     async def run(self):
         logger.info("Starting Master")
@@ -102,15 +119,12 @@ class Master:
             async with self._tg as tg:
                 tg.start_soon(self._event_processor)
                 tg.start_soon(self._command_processor)
-                tg.start_soon(self._loopback_processor)
-                tg.start_soon(self._plan)
+                tg.start_soon(self._reconcile)
         finally:
             self._event_log.close()
             self.global_event_sender.close()
             self.local_event_receiver.close()
             self.command_receiver.close()
-            self._loopback_event_sender.close()
-            self._loopback_event_receiver.close()
 
     async def shutdown(self):
         logger.info("Stopping Master")
@@ -292,6 +306,86 @@ class Master:
                                     )
                                 )
                             generated_events.extend(transition_events)
+                        case CreateMetaInstance():
+                            logger.info(
+                                f"Creating MetaInstance for {command.meta_instance.model_id}"
+                                f" (min_nodes={command.meta_instance.min_nodes},"
+                                f" sharding={command.meta_instance.sharding})"
+                            )
+                            # Apply immediately so self.state is fresh across
+                            # the await below and the reconciler won't race.
+                            await self._apply_and_broadcast(
+                                MetaInstanceCreated(meta_instance=command.meta_instance)
+                            )
+                            # Immediate placement attempt for responsiveness
+                            model_card = await ModelCard.load(
+                                command.meta_instance.model_id
+                            )
+                            # Re-check: reconciler may have satisfied it during the await
+                            meta_id = command.meta_instance.meta_instance_id
+                            still_unsatisfied = any(
+                                m.meta_instance_id == meta_id
+                                for m in find_unsatisfied_meta_instances(
+                                    self.state.meta_instances,
+                                    self.state.instances,
+                                    self.state.topology,
+                                )
+                            )
+                            if still_unsatisfied:
+                                result = try_place_for_meta_instance(
+                                    command.meta_instance,
+                                    model_card,
+                                    self.state.topology,
+                                    self.state.instances,
+                                    self.state.node_memory,
+                                    self.state.node_network,
+                                    self.state.tasks,
+                                )
+                                generated_events.extend(result.events)
+                                if result.error is not None:
+                                    generated_events.append(
+                                        MetaInstancePlacementFailed(
+                                            meta_instance_id=meta_id,
+                                            reason=result.error,
+                                        )
+                                    )
+                        case DeleteMetaInstance():
+                            backing_count = sum(
+                                1
+                                for inst in self.state.instances.values()
+                                if inst.meta_instance_id == command.meta_instance_id
+                            )
+                            logger.info(
+                                f"Deleting MetaInstance {command.meta_instance_id}"
+                                f" (cascade-deleting {backing_count} backing instance(s))"
+                            )
+                            generated_events.append(
+                                MetaInstanceDeleted(
+                                    meta_instance_id=command.meta_instance_id
+                                )
+                            )
+                            # Cascade-delete backing instances atomically,
+                            # cancelling any active tasks first.
+                            for iid, inst in self.state.instances.items():
+                                if inst.meta_instance_id == command.meta_instance_id:
+                                    for task in self.state.tasks.values():
+                                        if (
+                                            task.instance_id == iid
+                                            and task.task_status
+                                            in (
+                                                TaskStatus.Pending,
+                                                TaskStatus.Running,
+                                            )
+                                        ):
+                                            generated_events.append(
+                                                TaskStatusUpdated(
+                                                    task_status=TaskStatus.Cancelled,
+                                                    task_id=task.task_id,
+                                                )
+                                            )
+                                    generated_events.append(
+                                        InstanceDeleted(instance_id=iid)
+                                    )
                         case PlaceInstance():
                             placement = place_instance(
                                 command,
@@ -323,16 +417,19 @@ class Master:
                             )
                         case TaskCancelled():
                             if (
-                                task_id := self.command_task_mapping.get(
-                                    command.cancelled_command_id
-                                )
-                            ) is not None:
+                                command.cancelled_command_id
+                                in self.command_task_mapping
+                            ):
                                 generated_events.append(
-                                    TaskStatusUpdated(
-                                        task_status=TaskStatus.Cancelled,
-                                        task_id=task_id,
+                                    TaskDeleted(
+                                        task_id=self.command_task_mapping[
+                                            command.cancelled_command_id
+                                        ]
                                     )
                                 )
+                                del self.command_task_mapping[
+                                    command.cancelled_command_id
+                                ]
                         case TaskFinished():
                             generated_events.append(
                                 TaskDeleted(
@@ -341,9 +438,10 @@ class Master:
                                     ]
                                 )
                             )
-                            self.command_task_mapping.pop(
-                                command.finished_command_id, None
-                            )
+                            if command.finished_command_id in self.command_task_mapping:
+                                del self.command_task_mapping[
+                                    command.finished_command_id
+                                ]
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages
                             # rate limit to 1000 at a time
@@ -354,31 +452,32 @@ class Master:
                             ):
                                 await self._send_event(IndexedEvent(idx=i, event=event))
                     for event in generated_events:
-                        await self.event_sender.send(event)
+                        await self._apply_and_broadcast(event)
                 except ValueError as e:
                     logger.opt(exception=e).warning("Error in command processor")
 
-    # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
-    async def _plan(self) -> None:
+    async def _apply_and_broadcast(self, event: Event) -> None:
+        """Apply event to state, persist to disk, and broadcast to workers.
+
+        State is updated synchronously (before any await), so callers can
+        rely on ``self.state`` reflecting this event immediately after the
+        call.  Python's cooperative scheduling guarantees no interleaving
+        between the state read and write.
+        """
+        logger.debug(f"Master indexing event: {str(event)[:100]}")
+        indexed = IndexedEvent(event=event, idx=len(self._event_log))
+        self.state = apply(self.state, indexed)
+        event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
+        self._event_log.append(event)
+        await self._send_event(indexed)
+
+    async def _reconcile(self) -> None:
         while True:
-            # kill broken instances
-            connected_node_ids = set(self.state.topology.list_nodes())
-            for instance_id, instance in self.state.instances.items():
-                for node_id in instance.shard_assignments.node_to_runner:
-                    if node_id not in connected_node_ids:
-                        await self.event_sender.send(
-                            InstanceDeleted(instance_id=instance_id)
-                        )
-                        break
-
-            # time out dead nodes
-            for node_id, time in self.state.last_seen.items():
-                now = datetime.now(tz=timezone.utc)
-                if now - time > timedelta(seconds=30):
-                    logger.info(f"Manually removing node {node_id} due to inactivity")
-                    await self.event_sender.send(NodeTimedOut(node_id=node_id))
-
-            await anyio.sleep(10)
+            for pm in self._process_managers:
+                events = await pm.reconcile(self.state)
+                for event in events:
+                    await self._apply_and_broadcast(event)
+            await anyio.sleep(1)
 
     async def _event_processor(self) -> None:
         with self.local_event_receiver as local_events:
@@ -396,32 +495,15 @@ class Master:
                         await self._handle_traces_collected(event)
                         continue
 
-                    logger.debug(f"Master indexing event: {str(event)[:100]}")
-                    indexed = IndexedEvent(event=event, idx=len(self._event_log))
-                    self.state = apply(self.state, indexed)
+                    if isinstance(event, JacclSideChannelData):
+                        await self._apply_and_broadcast(event)
+                        await self._handle_jaccl_side_channel(event)
+                        continue
 
-                    event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
                     if isinstance(event, NodeGatheredInfo):
                         event.when = str(datetime.now(tz=timezone.utc))
 
-                    self._event_log.append(event)
-                    await self._send_event(indexed)
-
-    async def _loopback_processor(self) -> None:
-        # this would ideally not be necessary.
-        # this is WAY less hacky than how I was working around this before
-        local_index = 0
-        with self._loopback_event_receiver as events:
-            async for event in events:
-                await self._loopback_event_sender.send(
-                    ForwarderEvent(
-                        origin=NodeId(f"master_{self.node_id}"),
-                        origin_idx=local_index,
-                        session=self.session_id,
-                        event=event,
-                    )
-                )
-                local_index += 1
+                    await self._apply_and_broadcast(event)
 
     # This function is re-entrant, take care!
     async def _send_event(self, event: IndexedEvent):
@@ -453,10 +535,49 @@ class Master:
         for trace_data in self._pending_traces[task_id].values():
             all_trace_data.extend(trace_data)
 
-        await self.event_sender.send(
+        await self._apply_and_broadcast(
             TracesMerged(task_id=task_id, traces=all_trace_data)
         )
 
         del self._pending_traces[task_id]
         if task_id in self._expected_ranks:
             del self._expected_ranks[task_id]
+
+    async def _handle_jaccl_side_channel(self, event: JacclSideChannelData) -> None:
+        """Accumulate SideChannel contributions; when all runners for an instance
+        have submitted for the same sequence, emit JacclSideChannelGathered."""
+        iid = event.instance_id
+        seq = event.sequence
+
+        if iid not in self._jaccl_pending:
+            self._jaccl_pending[iid] = {}
+        if seq not in self._jaccl_pending[iid]:
+            self._jaccl_pending[iid][seq] = {}
+        self._jaccl_pending[iid][seq][event.runner_id] = event.data
+
+        instance = self.state.instances.get(iid)
+        if instance is None:
+            logger.warning(f"JacclSideChannelData for unknown instance {iid}")
+            return
+
+        expected_runners = set(instance.shard_assignments.runner_to_shard.keys())
+        submitted = set(self._jaccl_pending[iid][seq].keys())
+
+        logger.info(
+            f"JACCL side channel: instance={iid} seq={seq} "
+            f"submitted={len(submitted)}/{len(expected_runners)}"
+        )
+
+        if submitted >= expected_runners:
+            gathered = dict(self._jaccl_pending[iid][seq])
+            del self._jaccl_pending[iid][seq]
+            if not self._jaccl_pending[iid]:
+                del self._jaccl_pending[iid]
+
+            await self._apply_and_broadcast(
+                JacclSideChannelGathered(
+                    instance_id=iid,
+                    sequence=seq,
+                    gathered_data=gathered,
+                )
+            )
