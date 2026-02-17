@@ -410,7 +410,6 @@ class Master:
                             )
                             generated_events.extend(transition_events)
                         case DistributeModel():
-                            from exo.shared.models.model_cards import ModelCard
                             from exo.shared.types.worker.instances import InstanceMeta
                             from exo.shared.types.worker.shards import Sharding
 
@@ -437,7 +436,7 @@ class Master:
                                 if instance_id not in self.state.instances:
                                     instance.shard_assignments.transfer_only = True
                             transition_events = get_transition_events(
-                                self.state.instances, placement
+                                self.state.instances, placement, self.state.tasks
                             )
                             generated_events.extend(transition_events)
                         case SendInputChunk(chunk=chunk):
