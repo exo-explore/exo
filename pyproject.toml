@@ -30,6 +30,7 @@ dependencies = [
     "python-multipart>=0.0.21",
     "msgspec>=0.19.0",
     "zstandard>=0.23.0",
+    "mlx-vlm>=0.3.11; sys_platform == 'darwin'", # vision model support (VisionModel, Projector)
 ]
 
 [project.scripts]
@@ -64,6 +65,7 @@ members = [
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
+mlx-vlm = { git = "https://github.com/Drifter4242/mlx-vlm", branch = "main" }  # fork with kimi_k25 support, switch to upstream when merged
 #mlx-lm = { git = "https://github.com/davidmcc73/mlx-lm", branch = "stable" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }

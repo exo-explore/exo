@@ -1,5 +1,6 @@
 import os
 from copy import deepcopy
+from typing import TYPE_CHECKING
 
 import mlx.core as mx
 import psutil
@@ -16,6 +17,9 @@ from exo.shared.types.mlx import KVCacheType
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
 from exo.worker.runner.bootstrap import logger
+
+if TYPE_CHECKING:
+    from exo.worker.engines.mlx.vision import MediaRegion
 
 # Fraction of device memory above which LRU eviction kicks in
 _DEFAULT_MEMORY_THRESHOLD = 0.9
@@ -68,6 +72,7 @@ class KVPrefixCache:
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
         self.caches: list[KVCacheType] = []
         self._snapshots: list[list[CacheSnapshot] | None] = []
+        self._media_regions: list[list["MediaRegion"]] = []  # per-entry media regions
         self._last_used: list[int] = []  # monotonic counter of last access per entry
         self._access_counter: int = 0
         self._group = group
@@ -77,6 +82,7 @@ class KVPrefixCache:
         self.prompts.clear()
         self.caches.clear()
         self._snapshots.clear()
+        self._media_regions.clear()
         self._last_used.clear()
 
     def add_kv_cache(
@@ -84,12 +90,14 @@ class KVPrefixCache:
         prompt_tokens: mx.array,
         cache: KVCacheType,
         ssm_snapshots: list[CacheSnapshot] | None = None,
+        media_regions: list["MediaRegion"] | None = None,
     ):
         """Add a new cache entry. Evicts LRU entries if memory is high."""
         self._evict_if_needed()
         self.prompts.append(prompt_tokens)
         self.caches.append(deepcopy(cache))
         self._snapshots.append(ssm_snapshots)
+        self._media_regions.append(media_regions or [])
         self._access_counter += 1
         self._last_used.append(self._access_counter)
         logger.info(f"KV cache added: {len(prompt_tokens)} tokens")
@@ -101,6 +109,7 @@ class KVPrefixCache:
         cache: KVCacheType,
         snapshots: list[CacheSnapshot] | None,
         restore_pos: int,
+        media_regions: list["MediaRegion"] | None = None,
     ):
         """Update an existing cache entry in-place."""
         old_snapshots = self._snapshots[index]
@@ -113,6 +122,7 @@ class KVPrefixCache:
         self.prompts[index] = prompt_tokens
         self.caches[index] = deepcopy(cache)
         self._snapshots[index] = merged or None
+        self._media_regions[index] = media_regions or []
         self._access_counter += 1
         self._last_used[index] = self._access_counter
         logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
@@ -137,6 +147,7 @@ class KVPrefixCache:
         self,
         model: Model,
         prompt_tokens: mx.array,
+        media_regions: list["MediaRegion"] | None = None,
     ) -> tuple[KVCacheType, mx.array, int | None]:
         """Get KV cache for prompt, returning remaining tokens to prefill.
 
@@ -149,8 +160,14 @@ class KVPrefixCache:
         For models with SSM layers (which are ArraysCache in mlx), the cache is trimmed to the
         nearest SSM snapshot position at or before the match point for correctness.
         Same for rotating KV Cache.
+
+        Media region validation: if the token-level prefix match extends into
+        a cached media region whose content_hash differs from the query's, the
+        match is truncated to the start of that region. This prevents false
+        cache hits when the same pad-token IDs encode different images/frames.
         """
         max_length = len(prompt_tokens)
+        query_regions = media_regions or []
 
         best_index: int | None = None
         best_length = 0
@@ -159,6 +176,13 @@ class KVPrefixCache:
         # Find best cache
         for i, cached_prompt in enumerate(self.prompts):
             length = get_prefix_length(prompt_tokens, cached_prompt)
+            if length > 0:
+                # Validate media regions within the matched prefix
+                length = self._validate_media_match(
+                    length,
+                    self._media_regions[i],
+                    query_regions,
+                )
             if length > best_length:
                 best_index, best_length = i, length
             if length == max_length:
@@ -195,6 +219,64 @@ class KVPrefixCache:
 
         return prompt_cache, remaining, best_index
 
+    @staticmethod
+    def _validate_media_match(
+        match_length: int,
+        cached_regions: list["MediaRegion"],
+        query_regions: list["MediaRegion"],
+    ) -> int:
+        """Truncate match_length if mismatched media regions are in the prefix.
+
+        For each cached media region that falls within [0, match_length),
+        check if the query has a region at the same position with the same
+        content hash.  On first mismatch, truncate to the start of that
+        cached region — the KV values beyond that point encode different
+        media content and must not be reused.
+
+        If the query has *no* media regions (text-only follow-up), cached
+        regions that are fully below match_length are fine — their KV
+        values are already baked in from a prior turn and the conversation
+        token history includes them.
+        """
+        if not cached_regions:
+            # Nothing to validate — cached entry is text-only
+            return match_length
+
+        # Build a lookup: start_pos → query region
+        query_by_start: dict[int, "MediaRegion"] = {
+            r.start_pos: r for r in query_regions
+        }
+
+        for cached_r in cached_regions:
+            if cached_r.start_pos >= match_length:
+                # Cached region is outside the matched prefix — irrelevant
+                break
+            # The matched prefix includes (part of) this cached region.
+            # Check if the query has the same content at the same position.
+            query_r = query_by_start.get(cached_r.start_pos)
+            if query_r is None:
+                # Query has no media here. This is OK — the cached KV
+                # already includes the vision features from a prior turn,
+                # and the text tokens after that region are what diverge.
+                # But if the match extends *into* a region that the query
+                # doesn't have at all, we should still truncate because
+                # the token-ids match (pad tokens) but meanings differ.
+                # However, if this is a text-only follow-up the query
+                # tokens would diverge before the pad region, so
+                # match_length wouldn't reach here. Safe to continue.
+                continue
+            if query_r.content_hash != cached_r.content_hash:
+                logger.info(
+                    f"Media region mismatch at pos {cached_r.start_pos}: "
+                    f"cached={cached_r.content_hash[:12]}… "
+                    f"query={query_r.content_hash[:12]}… — "
+                    f"truncating match from {match_length} to {cached_r.start_pos}"
+                )
+                match_length = cached_r.start_pos
+                break  # first mismatch truncates
+
+        return match_length
+
     def _evict_if_needed(self):
         """Evict least recently used entries while memory usage is high."""
         if len(self.caches) == 0:
@@ -210,6 +292,7 @@ class KVPrefixCache:
             self.prompts.pop(lru_index)
             self.caches.pop(lru_index)
             self._snapshots.pop(lru_index)
+            self._media_regions.pop(lru_index)
             self._last_used.pop(lru_index)
             logger.info(
                 f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory usage"

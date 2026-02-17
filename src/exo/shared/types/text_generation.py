@@ -43,3 +43,4 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     enable_thinking: bool | None = None
     logprobs: bool = False
     top_logprobs: int | None = None
+    images: list[str] | None = None  # base64-encoded image data for vision models

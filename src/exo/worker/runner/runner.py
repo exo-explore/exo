@@ -311,6 +311,7 @@ def main(
                             prompt=prompt,
                             kv_prefix_cache=kv_prefix_cache,
                             group=group,
+                            vision_config=shard_metadata.model_card.vision,
                         )
 
                         # For other thinking models (GLM, etc.), check if we need to

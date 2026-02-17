@@ -59,6 +59,14 @@ class ChatCompletionMessageText(BaseModel):
     text: str
 
 
+class ChatCompletionMessageImageUrl(BaseModel):
+    type: Literal["image_url"] = "image_url"
+    image_url: dict[str, str]  # {"url": "data:image/png;base64,..."}
+
+
+ChatCompletionContentPart = ChatCompletionMessageText | ChatCompletionMessageImageUrl
+
+
 class ToolCallItem(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     name: str
@@ -75,7 +83,7 @@ class ToolCall(BaseModel):
 class ChatCompletionMessage(BaseModel):
     role: Literal["system", "user", "assistant", "developer", "tool", "function"]
     content: (
-        str | ChatCompletionMessageText | list[ChatCompletionMessageText] | None
+        str | ChatCompletionMessageText | list[ChatCompletionContentPart] | None
     ) = None
     thinking: str | None = None  # Added for GPT-OSS harmony format support
     name: str | None = None

@@ -133,7 +133,7 @@ mod behaviour {
         gossipsub::Behaviour::new(
             MessageAuthenticity::Signed(keypair.clone()),
             ConfigBuilder::default()
-                .max_transmit_size(1024 * 1024)
+                .max_transmit_size(8 * 1024 * 1024)
                 .validation_mode(ValidationMode::Strict)
                 .build()
                 .expect("the configuration should always be valid"),
