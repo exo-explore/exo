@@ -587,6 +587,12 @@ class AppStore {
   // Image editing state
   editingImage = $state<EditingImage | null>(null);
 
+  /** True when the backend is reachable. */
+  isConnected = $state<boolean>(true);
+  /** Number of consecutive fetch failures. */
+  private consecutiveFailures = 0;
+  private static readonly CONNECTION_LOST_THRESHOLD = 3;
+
   private fetchInterval: ReturnType<typeof setInterval> | null = null;
   private previewsInterval: ReturnType<typeof setInterval> | null = null;
   private lastConversationPersistTs = 0;
@@ -1290,7 +1296,19 @@ class AppStore {
       // Thunderbolt bridge status per node
       this.nodeThunderboltBridge = data.nodeThunderboltBridge ?? {};
       this.lastUpdate = Date.now();
+      // Connection recovered
+      if (!this.isConnected) {
+        this.isConnected = true;
+      }
+      this.consecutiveFailures = 0;
     } catch (error) {
+      this.consecutiveFailures++;
+      if (
+        this.consecutiveFailures >= AppStore.CONNECTION_LOST_THRESHOLD &&
+        this.isConnected
+      ) {
+        this.isConnected = false;
+      }
       console.error("Error fetching state:", error);
     }
   }
@@ -1817,7 +1835,7 @@ class AppStore {
           assistantMessage.id,
           (msg) => {
             msg.content =
-              "Error: No model available. Please launch an instance first.";
+              "No model is loaded yet. Select a model from the sidebar to get started — it will download and load automatically.";
           },
         );
         this.syncActiveMessagesIfNeeded(targetConversationId);
@@ -2255,7 +2273,7 @@ class AppStore {
       const modelToUse = this.getModelForRequest();
       if (!modelToUse) {
         throw new Error(
-          "No model selected and no running instances available. Please launch an instance first.",
+          "No model is loaded yet. Select a model from the sidebar to get started — it will download and load automatically.",
         );
       }
 
@@ -3143,6 +3161,9 @@ export const toggleChatSidebarVisible = () =>
 export const setChatSidebarVisible = (visible: boolean) =>
   appStore.setChatSidebarVisible(visible);
 export const refreshState = () => appStore.fetchState();
+
+// Connection status
+export const isConnected = () => appStore.isConnected;
 
 // Node identities (for OS version mismatch detection)
 export const nodeIdentities = () => appStore.nodeIdentities;
