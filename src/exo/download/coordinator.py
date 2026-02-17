@@ -324,7 +324,7 @@ class DownloadCoordinator:
                                 shard_metadata=progress.shard,
                                 total_bytes=progress.total_bytes,
                             )
-                        elif progress.downloaded_bytes_this_session.in_bytes == 0:
+                        elif progress.downloaded_bytes.in_bytes == 0:
                             status = DownloadPending(
                                 node_id=self.node_id,
                                 shard_metadata=progress.shard,
