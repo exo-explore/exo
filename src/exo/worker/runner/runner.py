@@ -42,6 +42,7 @@ from exo.shared.types.tasks import (
     TaskId,
     TaskStatus,
     TextGeneration,
+    TransferModelToDisk,
 )
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import BoundInstance
@@ -81,6 +82,11 @@ from exo.worker.engines.image import (
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
+from exo.worker.engines.mlx.model_transfer import (
+    coordinate_transfer,
+    model_path_for_id,
+    transfer_all_files,
+)
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     detect_thinking_prompt_suffix,
@@ -201,7 +207,10 @@ def main(
 
                     if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
                         inference_model, tokenizer = load_mlx_items(
-                            bound_instance, group, on_timeout=on_model_load_timeout
+                            bound_instance,
+                            group,
+                            on_timeout=on_model_load_timeout,
+                            has_local_model=task.has_local_model,
                         )
                         logger.info(
                             f"model has_tool_calling={tokenizer.has_tool_calling} using tokens {tokenizer.tool_call_start}, {tokenizer.tool_call_end}"
@@ -535,6 +544,27 @@ def main(
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
+                case TransferModelToDisk() if (
+                    isinstance(current_status, RunnerConnected) and group is not None
+                ):
+                    logger.info("starting disk-to-disk model transfer")
+                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
+
+                    model_path = model_path_for_id(
+                        task.shard_metadata.model_card.model_id
+                    )
+                    _, source_rank = coordinate_transfer(group, task.has_local_model)
+                    is_source = group.rank() == source_rank
+                    transfer_all_files(model_path, group, is_source)
+
+                    logger.info("disk-to-disk model transfer complete")
+                    current_status = RunnerShuttingDown()
+                    event_sender.send(
+                        RunnerStatusUpdated(
+                            runner_id=runner_id, runner_status=current_status
+                        )
+                    )
+                    current_status = RunnerShutdown()
                 case Shutdown():
                     current_status = RunnerShuttingDown()
                     logger.info("runner shutting down")

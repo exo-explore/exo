@@ -76,6 +76,8 @@ from exo.shared.types.api import (
     DeleteDownloadResponse,
     DeleteInstanceResponse,
     DeleteMetaInstanceResponse,
+    DistributeModelParams,
+    DistributeModelResponse,
     ErrorInfo,
     ErrorResponse,
     FinishReason,
@@ -122,6 +124,7 @@ from exo.shared.types.commands import (
     DeleteDownload,
     DeleteInstance,
     DeleteMetaInstance,
+    DistributeModel,
     DownloadCommand,
     ForwarderCommand,
     ForwarderDownloadCommand,
@@ -149,6 +152,7 @@ from exo.shared.types.openai_responses import (
     ResponsesResponse,
 )
 from exo.shared.types.state import State
+from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
@@ -308,6 +312,7 @@ class API:
         self.app.get("/events")(self.stream_events)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
+        self.app.post("/v1/models/{model_id:path}/distribute")(self.distribute_model)
         self.app.get("/v1/traces")(self.list_traces)
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
         self.app.get("/v1/traces/{task_id}/stats")(self.get_trace_stats)
@@ -1556,6 +1561,57 @@ class API:
         )
         await self._send_download(command)
         return DeleteDownloadResponse(command_id=command.command_id)
+
+    async def distribute_model(
+        self, model_id: ModelId, payload: DistributeModelParams
+    ) -> DistributeModelResponse:
+        """Distribute model files from one node to others via MLX distributed."""
+        # Find a source node that has the model downloaded
+        source_node_id: NodeId | None = None
+        for nid, downloads in self.state.downloads.items():
+            for dp in downloads:
+                if (
+                    isinstance(dp, DownloadCompleted)
+                    and dp.shard_metadata.model_card.model_id == model_id
+                ):
+                    source_node_id = nid
+                    break
+            if source_node_id is not None:
+                break
+
+        if source_node_id is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No node has model {model_id} downloaded",
+            )
+
+        # Determine target nodes
+        if payload.target_node_ids is not None:
+            target_node_ids = [
+                nid for nid in payload.target_node_ids if nid != source_node_id
+            ]
+        else:
+            target_node_ids = [
+                nid for nid in self.state.topology.list_nodes() if nid != source_node_id
+            ]
+
+        if not target_node_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="No target nodes to distribute to",
+            )
+
+        command = DistributeModel(
+            model_id=model_id,
+            source_node_id=source_node_id,
+            target_node_ids=target_node_ids,
+        )
+        await self._send(command)
+
+        return DistributeModelResponse(
+            command_id=command.command_id,
+            message=f"Distributing {model_id} from {source_node_id} to {len(target_node_ids)} node(s)",
+        )
 
     def _get_trace_path(self, task_id: str) -> Path:
         return EXO_TRACING_CACHE_DIR / f"trace_{task_id}.json"

@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -58,6 +59,13 @@ from exo.worker.engines.mlx.auto_parallel import (
     eval_with_timeout,
     pipeline_auto_parallel,
     tensor_auto_parallel,
+)
+from exo.worker.engines.mlx.model_transfer import (
+    WeightBroadcastState,
+    coordinate_transfer,
+    model_path_for_id,
+    prepare_weight_broadcast,
+    transfer_metadata_files,
 )
 from exo.worker.runner.bootstrap import logger
 
@@ -171,6 +179,7 @@ def load_mlx_items(
     bound_instance: BoundInstance,
     group: Group | None,
     on_timeout: TimeoutCallback | None = None,
+    has_local_model: bool = True,
 ) -> tuple[Model, TokenizerWrapper]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
@@ -185,7 +194,10 @@ def load_mlx_items(
         logger.info("Starting distributed init")
         start_time = time.perf_counter()
         model, tokenizer = shard_and_load(
-            bound_instance.bound_shard, group=group, on_timeout=on_timeout
+            bound_instance.bound_shard,
+            group=group,
+            on_timeout=on_timeout,
+            has_local_model=has_local_model,
         )
         end_time = time.perf_counter()
         logger.info(
@@ -201,29 +213,88 @@ def shard_and_load(
     shard_metadata: ShardMetadata,
     group: Group,
     on_timeout: TimeoutCallback | None = None,
+    has_local_model: bool = True,
 ) -> tuple[nn.Module, TokenizerWrapper]:
-    model_path = build_model_path(shard_metadata.model_card.model_id)
+    model_id = shard_metadata.model_card.model_id
+    model_path = model_path_for_id(model_id)
 
-    model, _ = load_model(model_path, lazy=True, strict=False)
+    # Coordinate: does any rank need a transfer?
+    needs_transfer, source_rank = coordinate_transfer(group, has_local_model)
+    is_source = group.rank() == source_rank
+
+    # Step 1: Always ensure all nodes have metadata files (config, tokenizer, etc.).
+    # This is cheap (~20MB, ~1s) and guarantees config.json is present for load_model().
+    transfer_metadata_files(model_path, group, is_source)
+
+    # Step 2: Only broadcast weights if some rank is missing the model
+    broadcast_state: WeightBroadcastState | None = None
+    if needs_transfer:
+        logger.info(
+            f"Model transfer needed (source_rank={source_rank}, "
+            f"is_source={is_source}, local_weights={has_local_model})"
+        )
+        broadcast_state = prepare_weight_broadcast(model_path, group, is_source)
+
+    # Create model architecture (all ranks have config.json on disk now).
+    # Always use lazy=True when we have broadcast state: load_model's internal
+    # nn.quantize skips quantization when weights dict is empty (no safetensors),
+    # leaving the model un-quantized. lazy=False would then mx.eval() the full
+    # fp16 model (~72GB for a 36B-param model), causing OOM on the receiver.
+    # We handle quantization ourselves below before loading broadcast weights.
+    use_lazy = has_local_model or broadcast_state is not None
+    model, _ = load_model(model_path, lazy=use_lazy, strict=False)
     logger.debug(model)
     if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
         pass
         # TODO: See if we should quantize the model.
-        # def is_attention_layer(path: str) -> bool:
-        #     path = path.lower()
-
-        #     return "self_attn" in path and "layernorm" not in path
-
-        # def quant_predicate(path: str, module: nn.Module):
-        #     if not isinstance(module, nn.Linear):
-        #         return False
-
-        #     return is_attention_layer(path)
-        # model, config = quantize_model(
-        #        model, config, group_size=KV_GROUP_SIZE, bits=ATTENTION_KV_BITS, quant_predicate=quant_predicate, mode=QUANTIZE_MODEL_MODE
-        #    )
 
     assert isinstance(model, nn.Module)
+
+    if broadcast_state is not None:
+        # When receiver has no weight files, load_model skips quantization
+        # (its class_predicate checks `f"{p}.scales" in weights`, which is
+        # always False when weights is empty).  Apply quantization explicitly
+        # using the broadcast metadata to determine which layers are quantized,
+        # matching load_model's selective quantization logic exactly.
+        if not has_local_model:
+            config_path = model_path / "config.json"
+            with open(config_path) as f:
+                config = json.load(f)  # pyright: ignore[reportAny]
+            quant_config: dict[str, Any] | None = config.get(  # pyright: ignore[reportAny]
+                "quantization", None
+            )
+            if quant_config is not None:
+                logger.info(f"Applying quantization to receiver model: {quant_config}")
+                broadcast_weight_names = set(broadcast_state.meta.keys())
+
+                def _class_predicate(p: str, m: nn.Module) -> bool | dict[str, Any]:
+                    # Per-layer overrides from config (e.g. "lm_head": false)
+                    assert quant_config is not None
+                    if p in quant_config:
+                        return quant_config[p]  # pyright: ignore[reportAny]
+                    if not hasattr(m, "to_quantized"):
+                        return False
+                    # Only quantize layers whose .scales exist in broadcast weights
+                    return f"{p}.scales" in broadcast_weight_names
+
+                group_size = int(quant_config.get("group_size", 64))  # pyright: ignore[reportAny]
+                bits = int(quant_config.get("bits", 4))  # pyright: ignore[reportAny]
+                mode: str = quant_config.get("mode", "affine")  # pyright: ignore[reportAny]
+                nn.quantize(  # pyright: ignore[reportUnknownMemberType]
+                    model,
+                    group_size=group_size,
+                    bits=bits,
+                    mode=mode,
+                    class_predicate=_class_predicate,
+                )
+
+        # Broadcast and load non-layer weights (embeddings, norms, lm_head) upfront.
+        # These are small (~600MB) and needed before the sharding loop.
+        non_layer_weights = broadcast_state.broadcast_non_layer_weights()
+        if non_layer_weights:
+            model.load_weights(list(non_layer_weights.items()), strict=False)
+            logger.info(f"Loaded {len(non_layer_weights)} non-layer weight tensors")
+        del non_layer_weights
 
     tokenizer = get_tokenizer(model_path, shard_metadata)
 
@@ -238,12 +309,43 @@ def shard_and_load(
         f"(model size: {model_size_gb:.1f}GB)"
     )
 
+    # Build per-layer weight loader for streaming broadcast during sharding.
+    # Each layer's weights are broadcast via all_sum just before that layer is
+    # sharded, so at most one un-sharded layer is in memory at a time.
+    weight_loader_fn: Callable[[nn.Module, int], None] | None = None
+    if broadcast_state is not None:
+        _state = broadcast_state  # capture for closure
+
+        def _load_layer_weights(mdl: nn.Module, layer_idx: int) -> None:
+            layer_weights = _state.broadcast_layer(layer_idx)
+            if layer_weights:
+                mdl.load_weights(list(layer_weights.items()), strict=False)
+
+        weight_loader_fn = _load_layer_weights
+
     match shard_metadata:
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
-            model = tensor_auto_parallel(model, group, timeout_seconds, on_timeout)
+            model = tensor_auto_parallel(
+                model, group, timeout_seconds, on_timeout, weight_loader_fn
+            )
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
+            # Broadcast all layers (all_sum is collective — all ranks must
+            # participate) but only load weights for layers this node will
+            # keep after pipeline slicing.  Out-of-range results are discarded,
+            # keeping peak memory proportional to this node's layer count.
+            if broadcast_state is not None:
+                for layer_idx in sorted(broadcast_state.layer_names.keys()):
+                    layer_weights = broadcast_state.broadcast_layer(layer_idx)
+                    if (
+                        shard_metadata.start_layer
+                        <= layer_idx
+                        < shard_metadata.end_layer
+                        and layer_weights
+                    ):
+                        model.load_weights(list(layer_weights.items()), strict=False)
+                    del layer_weights
             model = pipeline_auto_parallel(model, group, shard_metadata)
             eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
         case CfgShardMetadata():
@@ -251,6 +353,8 @@ def shard_and_load(
                 "CfgShardMetadata is not supported for text model loading - "
                 "this metadata type is only for image generation models"
             )
+
+    del broadcast_state
 
     # TODO: Do we need this?
     mx.eval(model)

@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping, Sequence
 
+from exo.shared.models.model_cards import ModelId
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.tasks import (
     CancelTask,
@@ -17,6 +18,7 @@ from exo.shared.types.tasks import (
     TaskId,
     TaskStatus,
     TextGeneration,
+    TransferModelToDisk,
 )
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -36,8 +38,10 @@ from exo.shared.types.worker.runners import (
     RunnerReady,
     RunnerRunning,
     RunnerShutdown,
+    RunnerShuttingDown,
     RunnerStatus,
     RunnerWarmingUp,
+    ShardAssignments,
 )
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
@@ -60,6 +64,7 @@ def plan(
         or _create_runner(node_id, runners, instances, all_runners)
         or _model_needs_download(node_id, runners, global_download_status)
         or _init_distributed_backend(runners, all_runners)
+        or _transfer_model_to_disk(runners, all_runners, global_download_status)
         or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
         or _pending_tasks(runners, tasks, all_runners, input_chunk_buffer or {})
@@ -141,6 +146,10 @@ def _model_needs_download(
     }
 
     for runner in runners.values():
+        # Transfer-only instances don't need downloads
+        if runner.bound_instance.instance.shard_assignments.transfer_only:
+            continue
+
         model_id = runner.bound_instance.bound_shard.model_card.model_id
         if isinstance(runner.status, RunnerIdle) and (
             model_id not in download_status
@@ -149,6 +158,15 @@ def _model_needs_download(
                 (DownloadOngoing, DownloadCompleted, DownloadFailed),
             )
         ):
+            # For multi-node instances, skip download if a peer already has the model.
+            # The model will be transferred via MLX distributed during LoadModel.
+            instance = runner.bound_instance.instance
+            is_multi_node = len(instance.shard_assignments.node_to_runner) > 1
+            if is_multi_node and _any_peer_has_model(
+                node_id, model_id, instance, global_download_status
+            ):
+                continue
+
             # We don't invalidate download_status randomly in case a file gets deleted on disk
             return DownloadModel(
                 instance_id=runner.bound_instance.instance.instance_id,
@@ -206,6 +224,43 @@ def _init_distributed_backend(
     return None
 
 
+def _transfer_model_to_disk(
+    runners: Mapping[RunnerId, RunnerSupervisor],
+    all_runners: Mapping[RunnerId, RunnerStatus],
+    global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+) -> TransferModelToDisk | None:
+    """For transfer-only instances: after all ranks are connected, emit TransferModelToDisk."""
+    for runner in runners.values():
+        instance = runner.bound_instance.instance
+        shard_assignments = instance.shard_assignments
+
+        if not shard_assignments.transfer_only:
+            continue
+
+        is_runner_connected = isinstance(runner.status, RunnerConnected)
+        all_connected_or_further = all(
+            isinstance(
+                all_runners.get(global_runner_id, None),
+                (RunnerConnected, RunnerLoading, RunnerShuttingDown, RunnerShutdown),
+            )
+            for global_runner_id in shard_assignments.runner_to_shard
+        )
+
+        if is_runner_connected and all_connected_or_further:
+            has_local = _node_has_download(
+                runner.bound_instance.bound_node_id,
+                shard_assignments.model_id,
+                global_download_status,
+            )
+            return TransferModelToDisk(
+                instance_id=instance.instance_id,
+                shard_metadata=runner.bound_instance.bound_shard,
+                has_local_model=has_local,
+            )
+
+    return None
+
+
 def _load_model(
     runners: Mapping[RunnerId, RunnerSupervisor],
     all_runners: Mapping[RunnerId, RunnerStatus],
@@ -215,36 +270,95 @@ def _load_model(
         instance = runner.bound_instance.instance
         shard_assignments = instance.shard_assignments
 
-        all_local_downloads_complete = all(
-            nid in global_download_status
-            and any(
-                isinstance(dp, DownloadCompleted)
-                and dp.shard_metadata.model_card.model_id == shard_assignments.model_id
-                for dp in global_download_status[nid]
-            )
-            for nid in shard_assignments.node_to_runner
-        )
-        if not all_local_downloads_complete:
+        # Transfer-only instances don't load models for inference
+        if shard_assignments.transfer_only:
             continue
 
-        is_single_node_instance = len(instance.shard_assignments.runner_to_shard) == 1
-        if is_single_node_instance and isinstance(runner.status, RunnerIdle):
-            return LoadModel(instance_id=instance.instance_id)
+        is_single_node_instance = len(shard_assignments.runner_to_shard) == 1
 
-        is_runner_waiting = isinstance(runner.status, RunnerConnected)
+        if is_single_node_instance:
+            # Single-node: require local download complete
+            if not _all_downloads_complete(shard_assignments, global_download_status):
+                continue
+            if isinstance(runner.status, RunnerIdle):
+                return LoadModel(instance_id=instance.instance_id, has_local_model=True)
+        else:
+            # Multi-node: require at least one node to have the model downloaded.
+            # Nodes without the model will receive it via MLX distributed transfer
+            # during model loading.
+            if not _any_download_complete(shard_assignments, global_download_status):
+                continue
 
-        all_ready_for_model = all(
-            isinstance(
-                all_runners.get(global_runner_id, None),
-                (RunnerConnected, RunnerLoading, RunnerLoaded),
+            is_runner_waiting = isinstance(runner.status, RunnerConnected)
+            all_ready_for_model = all(
+                isinstance(
+                    all_runners.get(global_runner_id, None),
+                    (RunnerConnected, RunnerLoading, RunnerLoaded),
+                )
+                for global_runner_id in shard_assignments.runner_to_shard
             )
-            for global_runner_id in shard_assignments.runner_to_shard
-        )
 
-        if is_runner_waiting and all_ready_for_model:
-            return LoadModel(instance_id=instance.instance_id)
+            if is_runner_waiting and all_ready_for_model:
+                has_local = _node_has_download(
+                    runner.bound_instance.bound_node_id,
+                    shard_assignments.model_id,
+                    global_download_status,
+                )
+                return LoadModel(
+                    instance_id=instance.instance_id,
+                    has_local_model=has_local,
+                )
 
     return None
+
+
+def _node_has_download(
+    nid: NodeId,
+    model_id: ModelId,
+    global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+) -> bool:
+    """Check if a specific node has completed downloading the given model."""
+    return any(
+        isinstance(dp, DownloadCompleted)
+        and dp.shard_metadata.model_card.model_id == model_id
+        for dp in global_download_status.get(nid, [])
+    )
+
+
+def _any_peer_has_model(
+    node_id: NodeId,
+    model_id: ModelId,
+    instance: Instance,
+    global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+) -> bool:
+    """Check if any other node in the instance already has the model downloaded."""
+    return any(
+        _node_has_download(nid, model_id, global_download_status)
+        for nid in instance.shard_assignments.node_to_runner
+        if nid != node_id
+    )
+
+
+def _all_downloads_complete(
+    shard_assignments: ShardAssignments,
+    global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+) -> bool:
+    """Check if ALL nodes in the instance have completed downloading the model."""
+    return all(
+        _node_has_download(nid, shard_assignments.model_id, global_download_status)
+        for nid in shard_assignments.node_to_runner
+    )
+
+
+def _any_download_complete(
+    shard_assignments: ShardAssignments,
+    global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+) -> bool:
+    """Check if at least one node in the instance has completed downloading the model."""
+    return any(
+        _node_has_download(nid, shard_assignments.model_id, global_download_status)
+        for nid in shard_assignments.node_to_runner
+    )
 
 
 def _ready_to_warmup(
@@ -254,6 +368,11 @@ def _ready_to_warmup(
     for runner in runners.values():
         instance = runner.bound_instance.instance
         shard_assignments = instance.shard_assignments
+
+        # Transfer-only instances don't go through warmup
+        if shard_assignments.transfer_only:
+            continue
+
         shard = runner.bound_instance.bound_shard
         device_rank = shard.device_rank
         runner_id = runner.bound_instance.bound_runner_id

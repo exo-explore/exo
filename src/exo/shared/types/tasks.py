@@ -42,7 +42,7 @@ class DownloadModel(BaseTask):  # emitted by Worker
 
 
 class LoadModel(BaseTask):  # emitted by Worker
-    pass
+    has_local_model: bool = Field(default=True)
 
 
 class ConnectToGroup(BaseTask):  # emitted by Worker
@@ -82,6 +82,13 @@ class ImageEdits(BaseTask):  # emitted by Master
     error_message: str | None = Field(default=None)
 
 
+class TransferModelToDisk(BaseTask):  # emitted by Worker
+    """Transfer all model files from source to receivers' disk via MLX distributed."""
+
+    shard_metadata: ShardMetadata
+    has_local_model: bool = Field(default=True)
+
+
 class Shutdown(BaseTask):  # emitted by Worker
     runner_id: RunnerId
 
@@ -91,6 +98,7 @@ Task = (
     | DownloadModel
     | ConnectToGroup
     | LoadModel
+    | TransferModelToDisk
     | StartWarmup
     | TextGeneration
     | CancelTask
