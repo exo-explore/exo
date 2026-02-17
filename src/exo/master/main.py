@@ -36,6 +36,7 @@ from exo.shared.types.commands import (
     PlaceInstance,
     RequestEventLog,
     SendInputChunk,
+    TaskCancelled,
     TaskFinished,
     TestCommand,
     TextGeneration,
@@ -414,6 +415,21 @@ class Master:
                                     chunk=chunk,
                                 )
                             )
+                        case TaskCancelled():
+                            if (
+                                command.cancelled_command_id
+                                in self.command_task_mapping
+                            ):
+                                generated_events.append(
+                                    TaskDeleted(
+                                        task_id=self.command_task_mapping[
+                                            command.cancelled_command_id
+                                        ]
+                                    )
+                                )
+                                del self.command_task_mapping[
+                                    command.cancelled_command_id
+                                ]
                         case TaskFinished():
                             generated_events.append(
                                 TaskDeleted(
