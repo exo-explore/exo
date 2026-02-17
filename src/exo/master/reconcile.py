@@ -11,6 +11,7 @@ from exo.shared.types.common import MetaInstanceId, NodeId
 from exo.shared.types.events import Event
 from exo.shared.types.meta_instance import MetaInstance
 from exo.shared.types.profiling import MemoryUsage, NodeIdentity, NodeNetworkInfo
+from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.topology import RDMAConnection, SocketConnection
 from exo.shared.types.worker.instances import (
     BaseInstance,
@@ -199,6 +200,7 @@ def try_place_for_meta_instance(
     current_instances: Mapping[InstanceId, Instance],
     node_memory: Mapping[NodeId, MemoryUsage],
     node_network: Mapping[NodeId, NodeNetworkInfo],
+    tasks: Mapping[TaskId, Task] | None = None,
 ) -> PlacementResult:
     """Try to place an instance satisfying the meta-instance constraints.
 
@@ -239,7 +241,7 @@ def try_place_for_meta_instance(
                 update={"meta_instance_id": meta_instance.meta_instance_id}
             )
         return PlacementResult(
-            events=list(get_transition_events(current_instances, target_instances)),
+            events=list(get_transition_events(current_instances, target_instances, tasks or {})),
             error=None,
         )
     except ValueError as e:

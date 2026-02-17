@@ -333,6 +333,7 @@ class Master:
                                     self.state.instances,
                                     self.state.node_memory,
                                     self.state.node_network,
+                                    self.state.tasks,
                                 )
                                 generated_events.extend(result.events)
                         case DeleteMetaInstance():
