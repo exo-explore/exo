@@ -1,11 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// A small floating callout that drops down from the menu bar area on first launch,
-/// pointing the user to the web dashboard. Clean, minimal, speech-bubble style.
+/// A popover callout anchored to the menu bar icon on first launch,
+/// pointing the user to the web dashboard with an arrow connecting to the icon.
 @MainActor
 final class FirstLaunchPopout {
-    private var panel: NSPanel?
+    private var popover: NSPopover?
     private var countdownTask: Task<Void, Never>?
     private static let dashboardURL = "http://localhost:52415/"
 
@@ -13,9 +13,14 @@ final class FirstLaunchPopout {
     var onComplete: (() -> Void)?
 
     func show() {
-        guard panel == nil else { return }
+        guard popover == nil else { return }
+        guard let button = Self.findStatusItemButton() else { return }
 
-        let hostingView = NSHostingView(
+        let pop = NSPopover()
+        pop.behavior = .applicationDefined
+        pop.animates = true
+        pop.contentSize = NSSize(width: 280, height: 120)
+        pop.contentViewController = NSHostingController(
             rootView: WelcomeCalloutView(
                 countdownDuration: 30,
                 onDismiss: { [weak self] in
@@ -26,45 +31,12 @@ final class FirstLaunchPopout {
                     self?.openDashboard()
                     self?.onComplete?()
                     self?.dismiss()
-                }))
-        hostingView.frame = NSRect(x: 0, y: 0, width: 280, height: 100)
-
-        let window = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 280, height: 100),
-            styleMask: [.nonactivatingPanel, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
+                }
+            )
         )
-        window.contentView = hostingView
-        window.isFloatingPanel = true
-        window.level = .floating
-        window.hasShadow = true
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.isMovableByWindowBackground = false
-        window.hidesOnDeactivate = false
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary]
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
 
-        // Position near top-right, just below the menu bar
-        if let screen = NSScreen.main {
-            let screenFrame = screen.visibleFrame
-            let x = screenFrame.maxX - window.frame.width - 16
-            let y = screenFrame.maxY - 8
-            window.setFrameOrigin(NSPoint(x: x, y: y))
-        }
-
-        window.alphaValue = 0
-        window.orderFrontRegardless()
-        panel = window
-
-        // Fade in
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.3
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            window.animator().alphaValue = 1
-        }
+        self.popover = pop
+        pop.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
 
         // Auto-open dashboard after 30s but keep popout visible until user interacts
         countdownTask = Task {
@@ -80,35 +52,38 @@ final class FirstLaunchPopout {
         countdownTask?.cancel()
         countdownTask = nil
         UserDefaults.standard.set(true, forKey: "EXOOnboardingCompleted")
-        guard let window = panel else { return }
-        NSAnimationContext.runAnimationGroup(
-            { context in
-                context.duration = 0.2
-                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-                window.animator().alphaValue = 0
-            },
-            completionHandler: {
-                Task { @MainActor in
-                    window.close()
-                }
-            })
-        panel = nil
+        guard let pop = popover else { return }
+        popover = nil
+        pop.performClose(nil)
     }
 
     private func openDashboard() {
         guard let url = URL(string: Self.dashboardURL) else { return }
         NSWorkspace.shared.open(url)
     }
+
+    /// Finds the NSStatusBarButton created by SwiftUI's MenuBarExtra.
+    private static func findStatusItemButton() -> NSView? {
+        for window in NSApp.windows {
+            let className = NSStringFromClass(type(of: window))
+            if className.contains("NSStatusBarWindow"),
+                let content = window.contentView
+            {
+                return content
+            }
+        }
+        return nil
+    }
 }
 
 /// Minimal welcome callout — friendly pointer, not a wall of text.
+/// Rendered inside the NSPopover which provides its own chrome and arrow.
 private struct WelcomeCalloutView: View {
     let countdownDuration: Int
     let onDismiss: () -> Void
     let onOpen: () -> Void
     @State private var countdown: Int
     @State private var timerTask: Task<Void, Never>?
-    @State private var appeared = false
 
     init(countdownDuration: Int, onDismiss: @escaping () -> Void, onOpen: @escaping () -> Void) {
         self.countdownDuration = countdownDuration
@@ -162,18 +137,7 @@ private struct WelcomeCalloutView: View {
             }
         }
         .padding(14)
-        .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
-        }
-        .padding(4)
-        .opacity(appeared ? 1 : 0)
-        .offset(y: appeared ? 0 : -8)
         .onAppear {
-            withAnimation(.easeOut(duration: 0.35).delay(0.05)) {
-                appeared = true
-            }
             startCountdown()
         }
         .onDisappear {
