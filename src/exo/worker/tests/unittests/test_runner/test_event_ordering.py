@@ -115,6 +115,8 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", nothin)
     monkeypatch.setattr(mlx_runner, "mx_any", make_nothin(False))
+    # Mock mx.distributed.all_gather so MockGroup doesn't hit real MLX C++ bindings.
+    monkeypatch.setattr(mlx_runner.mx.distributed, "all_gather", lambda x, **_kw: x)
     # Mock apply_chat_template since we're using a fake tokenizer (integer 1).
     # Returns a prompt without thinking tag so detect_thinking_prompt_suffix returns None.
     monkeypatch.setattr(mlx_runner, "apply_chat_template", make_nothin("test prompt"))

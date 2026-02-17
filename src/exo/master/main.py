@@ -55,6 +55,7 @@ from exo.shared.types.events import (
     NodeGatheredInfo,
     TaskCreated,
     TaskDeleted,
+    TaskStatusUpdated,
     TraceEventData,
     TracesCollected,
     TracesMerged,
