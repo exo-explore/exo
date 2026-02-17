@@ -254,7 +254,7 @@ def main():
     target = min(max(soft, 65535), hard)
     resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
-    mp.set_start_method("spawn", force=True)
+    mp.set_start_method("spawn")
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
     logger.info("Starting EXO")

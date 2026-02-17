@@ -1,7 +1,9 @@
 # Check tasks are complete before runner is ever ready.
+import unittest.mock
 from collections.abc import Iterable
 from typing import Callable
 
+import mlx.core as mx
 import pytest
 
 import exo.worker.runner.runner as mlx_runner
@@ -115,12 +117,6 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", nothin)
     monkeypatch.setattr(mlx_runner, "mx_any", make_nothin(False))
-
-    # Mock mx.distributed.all_gather so MockGroup doesn't hit real MLX C++ bindings.
-    def _mock_all_gather(x: object, **_kw: object) -> object:
-        return x
-
-    monkeypatch.setattr(mlx_runner.mx.distributed, "all_gather", _mock_all_gather)
     # Mock apply_chat_template since we're using a fake tokenizer (integer 1).
     # Returns a prompt without thinking tag so detect_thinking_prompt_suffix returns None.
     monkeypatch.setattr(mlx_runner, "apply_chat_template", make_nothin("test prompt"))
@@ -182,15 +178,16 @@ def _run(tasks: Iterable[Task]):
         # this is some c++ nonsense
         task_receiver.close = nothin
         task_receiver.join = nothin
-        cancel_receiver.close = nothin
-        cancel_receiver.join = nothin
-
-        mlx_runner.main(
-            bound_instance,
-            event_sender,  # pyright: ignore[reportArgumentType]
-            task_receiver,
-            cancel_receiver,
-        )
+        with unittest.mock.patch(
+            "exo.worker.runner.runner.mx.distributed.all_gather",
+            make_nothin(mx.array([1])),
+        ):
+            mlx_runner.main(
+                bound_instance,
+                event_sender,  # pyright: ignore[reportArgumentType]
+                task_receiver,
+                cancel_receiver,
+            )
 
         return event_sender.events
 
