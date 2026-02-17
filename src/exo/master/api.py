@@ -71,8 +71,11 @@ from exo.shared.types.api import (
     ChatCompletionResponse,
     CreateInstanceParams,
     CreateInstanceResponse,
+    CreateMetaInstanceParams,
+    CreateMetaInstanceResponse,
     DeleteDownloadResponse,
     DeleteInstanceResponse,
+    DeleteMetaInstanceResponse,
     ErrorInfo,
     ErrorResponse,
     FinishReason,
@@ -115,8 +118,10 @@ from exo.shared.types.claude_api import (
 from exo.shared.types.commands import (
     Command,
     CreateInstance,
+    CreateMetaInstance,
     DeleteDownload,
     DeleteInstance,
+    DeleteMetaInstance,
     DownloadCommand,
     ForwarderCommand,
     ForwarderDownloadCommand,
@@ -129,7 +134,7 @@ from exo.shared.types.commands import (
     TaskFinished,
     TextGeneration,
 )
-from exo.shared.types.common import CommandId, Id, NodeId, SessionId
+from exo.shared.types.common import CommandId, Id, MetaInstanceId, NodeId, SessionId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -138,6 +143,7 @@ from exo.shared.types.events import (
     TracesMerged,
 )
 from exo.shared.types.memory import Memory
+from exo.shared.types.meta_instance import MetaInstance
 from exo.shared.types.openai_responses import (
     ResponsesRequest,
     ResponsesResponse,
@@ -276,6 +282,9 @@ class API:
         self.app.get("/instance/previews")(self.get_placement_previews)
         self.app.get("/instance/{instance_id}")(self.get_instance)
         self.app.delete("/instance/{instance_id}")(self.delete_instance)
+        self.app.get("/meta_instances")(self.list_meta_instances)
+        self.app.post("/meta_instance")(self.create_meta_instance)
+        self.app.delete("/meta_instance/{meta_instance_id}")(self.delete_meta_instance)
         self.app.get("/models")(self.get_models)
         self.app.get("/v1/models")(self.get_models)
         self.app.post("/models/add")(self.add_custom_model)
@@ -305,12 +314,27 @@ class API:
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
 
     async def place_instance(self, payload: PlaceInstanceParams):
+        model_card = await ModelCard.load(payload.model_id)
         command = PlaceInstance(
-            model_card=await ModelCard.load(payload.model_id),
+            model_card=model_card,
             sharding=payload.sharding,
             instance_meta=payload.instance_meta,
             min_nodes=payload.min_nodes,
         )
+
+        # Validate placement before sending — fail fast with a clear error
+        # instead of silently dropping the command in the master.
+        try:
+            get_instance_placements(
+                command,
+                topology=self.state.topology,
+                current_instances=self.state.instances,
+                node_memory=self.state.node_memory,
+                node_network=self.state.node_network,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         await self._send(command)
 
         return CreateInstanceResponse(
@@ -522,6 +546,44 @@ class API:
             instance_id=instance_id,
         )
 
+    def list_meta_instances(self) -> dict[MetaInstanceId, MetaInstance]:
+        return dict(self.state.meta_instances)
+
+    async def create_meta_instance(
+        self, payload: CreateMetaInstanceParams
+    ) -> CreateMetaInstanceResponse:
+        meta_instance = MetaInstance(
+            model_id=payload.model_id,
+            sharding=payload.sharding,
+            instance_meta=payload.instance_meta,
+            min_nodes=payload.min_nodes,
+            node_ids=payload.node_ids,
+        )
+        command = CreateMetaInstance(meta_instance=meta_instance)
+        await self._send(command)
+        return CreateMetaInstanceResponse(
+            message="Command received.",
+            command_id=command.command_id,
+            meta_instance_id=meta_instance.meta_instance_id,
+        )
+
+    async def delete_meta_instance(
+        self, meta_instance_id: MetaInstanceId
+    ) -> DeleteMetaInstanceResponse:
+        meta = self.state.meta_instances.get(meta_instance_id)
+        if not meta:
+            raise HTTPException(status_code=404, detail="MetaInstance not found")
+
+        # Command processor handles cascade-deleting backing instances
+        command = DeleteMetaInstance(meta_instance_id=meta_instance_id)
+        await self._send(command)
+
+        return DeleteMetaInstanceResponse(
+            message="Command received.",
+            command_id=command.command_id,
+            meta_instance_id=meta_instance_id,
+        )
+
     async def _token_chunk_stream(
         self, command_id: CommandId
     ) -> AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None]:
@@ -541,10 +603,10 @@ class API:
                         break
 
         except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
+            cancel_command = TaskCancelled(cancelled_command_id=command_id)
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(
-                    ForwarderCommand(origin=self.node_id, command=command)
+                    ForwarderCommand(origin=self.node_id, command=cancel_command)
                 )
             raise
         finally:
@@ -884,10 +946,10 @@ class API:
                         del image_metadata[key]
 
         except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
+            cancel_command = TaskCancelled(cancelled_command_id=command_id)
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(
-                    ForwarderCommand(origin=self.node_id, command=command)
+                    ForwarderCommand(origin=self.node_id, command=cancel_command)
                 )
             raise
         finally:
@@ -970,10 +1032,10 @@ class API:
 
             return (images, stats if capture_stats else None)
         except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
+            cancel_command = TaskCancelled(cancelled_command_id=command_id)
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(
-                    ForwarderCommand(origin=self.node_id, command=command)
+                    ForwarderCommand(origin=self.node_id, command=cancel_command)
                 )
             raise
         finally:

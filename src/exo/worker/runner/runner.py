@@ -243,7 +243,7 @@ def main(
                         assert inference_model
                         assert tokenizer
 
-                        t = time.monotonic()
+                        t = time.perf_counter()
                         toks = warmup_inference(
                             model=inference_model,
                             tokenizer=tokenizer,
@@ -251,7 +251,7 @@ def main(
                         )
                         logger.info(f"warmed up by generating {toks} tokens")
                         check_for_cancel_every = min(
-                            math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
+                            math.ceil(toks / max(time.perf_counter() - t, 0.001)), 100
                         )
                         if group is not None:
                             check_for_cancel_every = int(
