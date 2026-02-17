@@ -202,15 +202,6 @@
 	filter: drop-shadow(0 0 3px oklch(0.85 0.18 85 / 0.5));
 }
 
-/* Onboarding step 2: connection line between devices */
-.onboarding-connection-line {
-	stroke: oklch(0.85 0.18 85 / 0.5);
-	stroke-width: 1.5px;
-	stroke-dasharray: 6, 6;
-	animation: flowAnimation 1s linear infinite;
-	filter: drop-shadow(0 0 4px oklch(0.85 0.18 85 / 0.4));
-}
-
 .graph-link-active {
 	stroke: oklch(0.85 0.18 85 / 0.8);
 	stroke-width: 2px;
@@ -327,33 +318,5 @@ input:focus, textarea:focus {
 	100% {
 		opacity: 0;
 		transform: translate(400px, 400px);
-	}
-}
-
-/* Respect reduced motion preference */
-@media (prefers-reduced-motion: reduce) {
-	.shooting-star,
-	.shooting-star::before {
-		animation: none !important;
-		opacity: 0 !important;
-	}
-	.graph-link {
-		animation: none;
-	}
-	.status-pulse {
-		animation: none;
-	}
-	.cursor-blink {
-		animation: none;
-	}
-	.onboarding-connection-line {
-		animation: none;
-	}
-	*,
-	*::before,
-	*::after {
-		transition-duration: 0.01ms !important;
-		animation-duration: 0.01ms !important;
-		animation-iteration-count: 1 !important;
 	}
 }
