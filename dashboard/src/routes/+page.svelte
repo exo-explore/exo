@@ -4641,29 +4641,31 @@
   {/if}
 </div>
 
-<ModelPickerModal
-  isOpen={isModelPickerOpen}
-  {models}
-  {selectedModelId}
-  favorites={favoritesSet}
-  {recentModelIds}
-  hasRecents={showRecentsTab}
-  existingModelIds={new Set(models.map((m) => m.id))}
-  canModelFit={(modelId) => {
-    const model = models.find((m) => m.id === modelId);
-    return model ? hasEnoughMemory(model) : false;
-  }}
-  getModelFitStatus={(modelId): ModelMemoryFitStatus => {
-    const model = models.find((m) => m.id === modelId);
-    return model ? getModelMemoryFitStatus(model) : "too_large";
-  }}
-  onSelect={handleModelPickerSelect}
-  onClose={() => (isModelPickerOpen = false)}
-  onToggleFavorite={toggleFavorite}
-  onAddModel={addModelFromPicker}
-  onDeleteModel={deleteCustomModel}
-  totalMemoryGB={clusterMemory().total / (1024 * 1024 * 1024)}
-  usedMemoryGB={clusterMemory().used / (1024 * 1024 * 1024)}
-  {downloadsData}
-  topologyNodes={data?.nodes}
-/>
+{#if !showOnboarding}
+  <ModelPickerModal
+    isOpen={isModelPickerOpen}
+    {models}
+    {selectedModelId}
+    favorites={favoritesSet}
+    {recentModelIds}
+    hasRecents={showRecentsTab}
+    existingModelIds={new Set(models.map((m) => m.id))}
+    canModelFit={(modelId) => {
+      const model = models.find((m) => m.id === modelId);
+      return model ? hasEnoughMemory(model) : false;
+    }}
+    getModelFitStatus={(modelId): ModelMemoryFitStatus => {
+      const model = models.find((m) => m.id === modelId);
+      return model ? getModelMemoryFitStatus(model) : "too_large";
+    }}
+    onSelect={handleModelPickerSelect}
+    onClose={() => (isModelPickerOpen = false)}
+    onToggleFavorite={toggleFavorite}
+    onAddModel={addModelFromPicker}
+    onDeleteModel={deleteCustomModel}
+    totalMemoryGB={clusterMemory().total / (1024 * 1024 * 1024)}
+    usedMemoryGB={clusterMemory().used / (1024 * 1024 * 1024)}
+    {downloadsData}
+    topologyNodes={data?.nodes}
+  />
+{/if}
