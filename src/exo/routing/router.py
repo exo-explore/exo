@@ -211,6 +211,14 @@ class Router:
                     pass
                 except AllQueuesFullError:
                     logger.warning(f"All peer queues full, dropping message on {topic}")
+                except RuntimeError as e:
+                    if "MessageTooLarge" in str(e):
+                        logger.error(
+                            f"Message too large for gossipsub on topic {topic} "
+                            f"({len(data)} bytes), dropping message"
+                        )
+                    else:
+                        raise
 
 
 def get_node_id_keypair(
