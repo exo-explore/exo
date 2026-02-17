@@ -30,7 +30,7 @@
         modelDirectory?: string;
       }
     | { kind: "pending"; modelDirectory?: string }
-    | { kind: "failed"; modelDirectory?: string }
+    | { kind: "failed"; modelDirectory?: string; errorMessage?: string }
     | { kind: "not_present" };
 
   type ModelCardInfo = {
@@ -263,7 +263,10 @@
               modelDirectory,
             };
           } else if (tag === "DownloadFailed") {
-            cell = { kind: "failed", modelDirectory };
+            const errorMsg =
+              ((payload.errorMessage ?? payload.error_message) as string) ||
+              undefined;
+            cell = { kind: "failed", modelDirectory, errorMessage: errorMsg };
           } else {
             cell = { kind: "pending", modelDirectory };
           }
@@ -499,7 +502,7 @@
                     {:else if cell.kind === "failed"}
                       <div
                         class="flex flex-col items-center gap-0.5"
-                        title="Download failed"
+                        title={cell.errorMessage ?? "Download failed"}
                       >
                         <svg
                           class="w-5 h-5 text-red-400"
@@ -512,6 +515,14 @@
                             clip-rule="evenodd"
                           ></path>
                         </svg>
+                        {#if cell.errorMessage}
+                          <span
+                            class="text-[9px] text-red-400/70 max-w-[120px] truncate"
+                            title={cell.errorMessage}
+                          >
+                            {cell.errorMessage}
+                          </span>
+                        {/if}
                         {#if row.shardMetadata}
                           <button
                             type="button"
@@ -707,6 +718,11 @@
                       ({clampPercent(cellStatus.percentage).toFixed(0)}%)
                     {/if}
                   </span>
+                  {#if cellStatus.kind === "failed" && "errorMessage" in cellStatus && cellStatus.errorMessage}
+                    <span class="text-[9px] text-red-400/70 break-all pl-1">
+                      {cellStatus.errorMessage}
+                    </span>
+                  {/if}
                   {#if "modelDirectory" in cellStatus && cellStatus.modelDirectory}
                     <span
                       class="text-[9px] text-white/30 break-all pl-1"
