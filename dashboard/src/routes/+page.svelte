@@ -3381,7 +3381,9 @@
 
           {#if onboardingDownloadProgress}
             <div class="w-full max-w-md mx-auto space-y-4">
-              <div class="relative h-2 bg-gray-200 rounded-full overflow-hidden">
+              <div
+                class="relative h-2 bg-gray-200 rounded-full overflow-hidden"
+              >
                 <div
                   class="absolute inset-y-0 left-0 bg-gradient-to-r from-exo-yellow to-amber-400 rounded-full transition-all duration-500"
                   style="width: {onboardingDownloadProgress.percentage}%"
@@ -3401,7 +3403,9 @@
             </div>
           {:else}
             <div class="w-full max-w-md mx-auto">
-              <div class="relative h-2 bg-gray-200 rounded-full overflow-hidden">
+              <div
+                class="relative h-2 bg-gray-200 rounded-full overflow-hidden"
+              >
                 <div
                   class="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-exo-yellow to-amber-400 rounded-full animate-pulse"
                 ></div>
