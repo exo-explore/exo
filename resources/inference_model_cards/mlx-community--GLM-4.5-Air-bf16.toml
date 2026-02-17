@@ -6,7 +6,7 @@ tasks = ["TextGeneration"]
 family = "glm"
 quantization = "bf16"
 base_model = "GLM 4.5 Air"
-capabilities = ["text", "thinking"]
+capabilities = ["text", "thinking", "thinking_toggle"]
 
 [storage_size]
 in_bytes = 229780750336
