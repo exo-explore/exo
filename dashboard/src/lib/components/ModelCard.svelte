@@ -5,7 +5,12 @@
     PlacementPreview,
     TopologyEdge,
   } from "$lib/stores/app.svelte";
-  import { debugMode, topologyData } from "$lib/stores/app.svelte";
+  import {
+    debugMode,
+    nodeThunderbolt,
+    rdmaRequiresTb5Tooltip,
+    topologyData,
+  } from "$lib/stores/app.svelte";
 
   interface Props {
     model: { id: string; name?: string; storage_size_megabytes?: number };
@@ -572,6 +577,11 @@
       </span>
       <span
         class="px-1.5 py-0.5 text-xs font-mono tracking-wider uppercase bg-exo-medium-gray/30 text-exo-light-gray border border-exo-medium-gray/40"
+        title={
+          runtime === "MlxIbv" || runtime === "MlxJaccl"
+            ? rdmaRequiresTb5Tooltip(nodeThunderbolt() ?? null) ?? undefined
+            : undefined
+        }
       >
         {runtime === "MlxRing"
           ? "MLX Ring"

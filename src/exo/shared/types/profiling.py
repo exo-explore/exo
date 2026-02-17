@@ -95,6 +95,8 @@ class NodeThunderboltInfo(CamelCaseModel):
     """Thunderbolt interface identifiers for a node."""
 
     interfaces: Sequence[ThunderboltIdentifier] = []
+    # True if any interface is Thunderbolt 5 (required for RDMA)
+    has_tb5: bool = False
 
 
 class NodeRdmaCtlStatus(CamelCaseModel):
