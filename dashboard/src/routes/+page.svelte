@@ -186,25 +186,33 @@
   // ── Step 2 animation state: "Add more devices, run bigger models" ──
   let deviceAnimPhase = $state(0); // 0=waiting, 1=macbook, 2=studio joins, 3=connection+mid unlock, 4=big unlock
   let showContinueStep2 = $state(false);
-  const studioX = tweened(560, { duration: 700, easing: cubicOut });
+  const studioX = tweened(540, { duration: 700, easing: cubicOut });
   const studioOpacity = tweened(0, { duration: 700, easing: cubicOut });
 
   $effect(() => {
     if (onboardingStep === 2) {
       deviceAnimPhase = 0;
       showContinueStep2 = false;
-      studioX.set(560, { duration: 0 });
+      studioX.set(540, { duration: 0 });
       studioOpacity.set(0, { duration: 0 });
 
-      const t1 = setTimeout(() => { deviceAnimPhase = 1; }, 100);
+      const t1 = setTimeout(() => {
+        deviceAnimPhase = 1;
+      }, 100);
       const t2 = setTimeout(() => {
         deviceAnimPhase = 2;
-        studioX.set(364);
+        studioX.set(340);
         studioOpacity.set(1);
       }, 900);
-      const t3 = setTimeout(() => { deviceAnimPhase = 3; }, 1700);
-      const t4 = setTimeout(() => { deviceAnimPhase = 4; }, 2500);
-      const t5 = setTimeout(() => { showContinueStep2 = true; }, 3500);
+      const t3 = setTimeout(() => {
+        deviceAnimPhase = 3;
+      }, 1700);
+      const t4 = setTimeout(() => {
+        deviceAnimPhase = 4;
+      }, 2500);
+      const t5 = setTimeout(() => {
+        showContinueStep2 = true;
+      }, 3500);
 
       return () => {
         clearTimeout(t1);
@@ -2314,22 +2322,56 @@
           </div>
 
           <!-- Animation stage -->
-          <div class="relative w-full" style="height: 340px;">
-            <svg viewBox="0 0 600 340" class="w-full h-full" xmlns="http://www.w3.org/2000/svg">
+          <div class="relative w-full" style="height: 380px;">
+            <svg
+              viewBox="0 0 600 380"
+              class="w-full h-full"
+              xmlns="http://www.w3.org/2000/svg"
+            >
               <defs>
-                <filter id="onb-gold-glow" x="-50%" y="-50%" width="200%" height="200%">
+                <filter
+                  id="onb-gold-glow"
+                  x="-50%"
+                  y="-50%"
+                  width="200%"
+                  height="200%"
+                >
                   <feGaussianBlur stdDeviation="4" result="blur" />
-                  <feFlood flood-color="#FFD700" flood-opacity="0.6" result="color" />
-                  <feComposite in="color" in2="blur" operator="in" result="glow" />
+                  <feFlood
+                    flood-color="#FFD700"
+                    flood-opacity="0.6"
+                    result="color"
+                  />
+                  <feComposite
+                    in="color"
+                    in2="blur"
+                    operator="in"
+                    result="glow"
+                  />
                   <feMerge>
                     <feMergeNode in="glow" />
                     <feMergeNode in="SourceGraphic" />
                   </feMerge>
                 </filter>
-                <filter id="onb-device-glow" x="-50%" y="-50%" width="200%" height="200%">
-                  <feGaussianBlur stdDeviation="3" result="blur" />
-                  <feFlood flood-color="#FFD700" flood-opacity="0.3" result="color" />
-                  <feComposite in="color" in2="blur" operator="in" result="glow" />
+                <filter
+                  id="onb-device-glow"
+                  x="-50%"
+                  y="-50%"
+                  width="200%"
+                  height="200%"
+                >
+                  <feGaussianBlur stdDeviation="4" result="blur" />
+                  <feFlood
+                    flood-color="#FFD700"
+                    flood-opacity="0.3"
+                    result="color"
+                  />
+                  <feComposite
+                    in="color"
+                    in2="blur"
+                    operator="in"
+                    result="glow"
+                  />
                   <feMerge>
                     <feMergeNode in="glow" />
                     <feMergeNode in="SourceGraphic" />
@@ -2339,49 +2381,140 @@
 
               <!-- MacBook Device (left side) -->
               {#if deviceAnimPhase >= 1}
-                <g transform="translate(180, 55)" in:fade={{ duration: 600 }}>
+                <g transform="translate(135, 30)" in:fade={{ duration: 600 }}>
                   <!-- Screen bezel -->
-                  <rect x="0" y="0" width="56" height="38" rx="3"
-                    fill="none" stroke="#FFD700" stroke-width="1.5" filter="url(#onb-device-glow)" />
+                  <rect
+                    x="0"
+                    y="0"
+                    width="84"
+                    height="56"
+                    rx="4"
+                    fill="none"
+                    stroke="#FFD700"
+                    stroke-width="1.5"
+                    filter="url(#onb-device-glow)"
+                  />
                   <!-- Screen interior -->
-                  <rect x="3" y="2" width="50" height="32" rx="1" fill="#0a0a0a" />
+                  <rect
+                    x="4"
+                    y="3"
+                    width="76"
+                    height="48"
+                    rx="2"
+                    fill="#0a0a0a"
+                  />
                   <!-- Memory bar inside screen -->
-                  <rect x="6" y="24" width="20" height="6" rx="1" fill="#374151" />
-                  <rect x="6" y="24" width="12" height="6" rx="1" fill="rgba(255,215,0,0.4)" />
+                  <rect
+                    x="10"
+                    y="36"
+                    width="30"
+                    height="8"
+                    rx="2"
+                    fill="#374151"
+                  />
+                  <rect
+                    x="10"
+                    y="36"
+                    width="18"
+                    height="8"
+                    rx="2"
+                    fill="rgba(255,215,0,0.4)"
+                  />
                   <!-- Keyboard base -->
-                  <path d="M -4 41 L 60 41 L 56 48 L 0 48 Z"
-                    fill="none" stroke="#FFD700" stroke-width="1.5" />
+                  <path
+                    d="M -6 60 L 90 60 L 84 70 L 0 70 Z"
+                    fill="none"
+                    stroke="#FFD700"
+                    stroke-width="1.5"
+                  />
                   <!-- Label -->
-                  <text x="28" y="66" text-anchor="middle"
-                    fill="rgba(255,255,255,0.6)" style="font-size: 10px; font-family: system-ui, sans-serif;">
+                  <text
+                    x="42"
+                    y="92"
+                    text-anchor="middle"
+                    fill="rgba(255,255,255,0.7)"
+                    style="font-size: 13px; font-family: system-ui, sans-serif;"
+                  >
                     MacBook Pro
                   </text>
-                  <text x="28" y="78" text-anchor="middle"
-                    fill="rgba(255,255,255,0.3)" style="font-size: 9px; font-family: 'SF Mono', monospace;">
+                  <text
+                    x="42"
+                    y="108"
+                    text-anchor="middle"
+                    fill="rgba(255,255,255,0.35)"
+                    style="font-size: 11px; font-family: 'SF Mono', monospace;"
+                  >
                     36 GB
                   </text>
                 </g>
               {/if}
 
               <!-- Mac Studio Device (right side) - tweened fly-in -->
-              <g transform="translate({$studioX}, 55)" opacity={$studioOpacity}>
+              <g transform="translate({$studioX}, 30)" opacity={$studioOpacity}>
                 <!-- Studio box -->
-                <rect x="0" y="0" width="52" height="44" rx="5"
-                  fill="none" stroke="#FFD700" stroke-width="1.5" filter="url(#onb-device-glow)" />
+                <rect
+                  x="0"
+                  y="0"
+                  width="78"
+                  height="62"
+                  rx="6"
+                  fill="none"
+                  stroke="#FFD700"
+                  stroke-width="1.5"
+                  filter="url(#onb-device-glow)"
+                />
                 <!-- Inner face -->
-                <rect x="4" y="4" width="44" height="36" rx="3" fill="#0a0a0a" />
+                <rect
+                  x="5"
+                  y="5"
+                  width="68"
+                  height="52"
+                  rx="4"
+                  fill="#0a0a0a"
+                />
                 <!-- Memory bar inside -->
-                <rect x="8" y="28" width="36" height="6" rx="1" fill="#374151" />
-                <rect x="8" y="28" width="28" height="6" rx="1" fill="rgba(255,215,0,0.4)" />
+                <rect
+                  x="12"
+                  y="40"
+                  width="54"
+                  height="8"
+                  rx="2"
+                  fill="#374151"
+                />
+                <rect
+                  x="12"
+                  y="40"
+                  width="42"
+                  height="8"
+                  rx="2"
+                  fill="rgba(255,215,0,0.4)"
+                />
                 <!-- Front circle detail -->
-                <circle cx="26" cy="40" r="2.5" fill="none" stroke="rgba(255,215,0,0.4)" stroke-width="0.8" />
+                <circle
+                  cx="39"
+                  cy="56"
+                  r="3.5"
+                  fill="none"
+                  stroke="rgba(255,215,0,0.4)"
+                  stroke-width="1"
+                />
                 <!-- Label -->
-                <text x="26" y="66" text-anchor="middle"
-                  fill="rgba(255,255,255,0.6)" style="font-size: 10px; font-family: system-ui, sans-serif;">
+                <text
+                  x="39"
+                  y="86"
+                  text-anchor="middle"
+                  fill="rgba(255,255,255,0.7)"
+                  style="font-size: 13px; font-family: system-ui, sans-serif;"
+                >
                   Mac Studio
                 </text>
-                <text x="26" y="78" text-anchor="middle"
-                  fill="rgba(255,255,255,0.3)" style="font-size: 9px; font-family: 'SF Mono', monospace;">
+                <text
+                  x="39"
+                  y="102"
+                  text-anchor="middle"
+                  fill="rgba(255,255,255,0.35)"
+                  style="font-size: 11px; font-family: 'SF Mono', monospace;"
+                >
                   192 GB
                 </text>
               </g>
@@ -2389,8 +2522,10 @@
               <!-- Connection line between devices -->
               {#if deviceAnimPhase >= 3}
                 <line
-                  x1="240" y1="76"
-                  x2="364" y2="76"
+                  x1="223"
+                  y1="62"
+                  x2="340"
+                  y2="62"
                   class="onboarding-connection-line"
                   in:fade={{ duration: 400 }}
                 />
@@ -2398,36 +2533,73 @@
 
               <!-- Combined memory label -->
               {#if deviceAnimPhase >= 3}
-                <text x="302" y="64" text-anchor="middle"
-                  fill="rgba(255,215,0,0.6)" style="font-size: 9px; font-family: 'SF Mono', monospace;"
-                  in:fade={{ duration: 400 }}>
+                <text
+                  x="282"
+                  y="50"
+                  text-anchor="middle"
+                  fill="rgba(255,215,0,0.7)"
+                  style="font-size: 11px; font-family: 'SF Mono', monospace;"
+                  in:fade={{ duration: 400 }}
+                >
                   228 GB combined
                 </text>
               {/if}
 
               <!-- Model cards row -->
-              <g transform="translate(0, 180)">
+              <g transform="translate(0, 200)">
                 <!-- Arrows from devices to models -->
                 {#if deviceAnimPhase >= 3}
-                  <line x1="208" y1="-38" x2="208" y2="-8"
-                    stroke="rgba(255,215,0,0.15)" stroke-width="1" stroke-dasharray="3,3"
-                    in:fade={{ duration: 300 }} />
-                  <line x1="390" y1="-38" x2="390" y2="-8"
-                    stroke="rgba(255,215,0,0.15)" stroke-width="1" stroke-dasharray="3,3"
-                    in:fade={{ duration: 300 }} />
+                  <line
+                    x1="177"
+                    y1="-50"
+                    x2="177"
+                    y2="-8"
+                    stroke="rgba(255,215,0,0.15)"
+                    stroke-width="1"
+                    stroke-dasharray="4,4"
+                    in:fade={{ duration: 300 }}
+                  />
+                  <line
+                    x1="379"
+                    y1="-50"
+                    x2="379"
+                    y2="-8"
+                    stroke="rgba(255,215,0,0.15)"
+                    stroke-width="1"
+                    stroke-dasharray="4,4"
+                    in:fade={{ duration: 300 }}
+                  />
                 {/if}
 
                 <!-- Small model: 8B (visible from phase 1) -->
                 {#if deviceAnimPhase >= 1}
-                  <g transform="translate(98, 0)" in:fade={{ duration: 500 }}>
-                    <rect x="0" y="0" width="80" height="40" rx="6"
-                      fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.12)" stroke-width="1" />
-                    <text x="40" y="17" text-anchor="middle"
-                      fill="rgba(255,255,255,0.7)" style="font-size: 11px; font-family: system-ui, sans-serif;">
+                  <g transform="translate(55, 0)" in:fade={{ duration: 500 }}>
+                    <rect
+                      x="0"
+                      y="0"
+                      width="110"
+                      height="48"
+                      rx="8"
+                      fill="rgba(255,255,255,0.03)"
+                      stroke="rgba(255,255,255,0.12)"
+                      stroke-width="1"
+                    />
+                    <text
+                      x="55"
+                      y="20"
+                      text-anchor="middle"
+                      fill="rgba(255,255,255,0.7)"
+                      style="font-size: 13px; font-family: system-ui, sans-serif;"
+                    >
                       Qwen3 8B
                     </text>
-                    <text x="40" y="31" text-anchor="middle"
-                      fill="rgba(255,255,255,0.35)" style="font-size: 9px; font-family: 'SF Mono', monospace;">
+                    <text
+                      x="55"
+                      y="37"
+                      text-anchor="middle"
+                      fill="rgba(255,255,255,0.35)"
+                      style="font-size: 11px; font-family: 'SF Mono', monospace;"
+                    >
                       4 GB
                     </text>
                   </g>
@@ -2435,29 +2607,64 @@
 
                 <!-- Medium model: 30B (locked → unlocks at phase 3) -->
                 {#if deviceAnimPhase >= 1}
-                  <g transform="translate(200, 0)" in:fade={{ duration: 500, delay: 200 }}>
-                    <rect x="0" y="0" width="80" height="40" rx="6"
-                      fill={deviceAnimPhase >= 3 ? 'rgba(255,215,0,0.06)' : 'rgba(255,255,255,0.015)'}
-                      stroke={deviceAnimPhase >= 3 ? 'rgba(255,215,0,0.35)' : 'rgba(255,255,255,0.06)'}
+                  <g
+                    transform="translate(185, 0)"
+                    in:fade={{ duration: 500, delay: 200 }}
+                  >
+                    <rect
+                      x="0"
+                      y="0"
+                      width="110"
+                      height="48"
+                      rx="8"
+                      fill={deviceAnimPhase >= 3
+                        ? "rgba(255,215,0,0.06)"
+                        : "rgba(255,255,255,0.015)"}
+                      stroke={deviceAnimPhase >= 3
+                        ? "rgba(255,215,0,0.35)"
+                        : "rgba(255,255,255,0.06)"}
                       stroke-width="1"
-                      filter={deviceAnimPhase >= 3 ? 'url(#onb-gold-glow)' : 'none'}
+                      filter={deviceAnimPhase >= 3
+                        ? "url(#onb-gold-glow)"
+                        : "none"}
                       style="transition: fill 500ms, stroke 500ms, filter 500ms;"
                     />
                     {#if deviceAnimPhase < 3}
-                      <!-- Lock icon -->
-                      <g transform="translate(34, 10)">
-                        <rect x="0" y="8" width="12" height="9" rx="1.5"
-                          fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
-                        <path d="M 2 8 V 5 C 2 2.5 4 1 6 1 C 8 1 10 2.5 10 5 V 8"
-                          fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+                      <g transform="translate(48, 12)">
+                        <rect
+                          x="0"
+                          y="9"
+                          width="14"
+                          height="11"
+                          rx="2"
+                          fill="none"
+                          stroke="rgba(255,255,255,0.2)"
+                          stroke-width="1"
+                        />
+                        <path
+                          d="M 2 9 V 6 C 2 3 4.5 1 7 1 C 9.5 1 12 3 12 6 V 9"
+                          fill="none"
+                          stroke="rgba(255,255,255,0.2)"
+                          stroke-width="1"
+                        />
                       </g>
                     {:else}
-                      <text x="40" y="17" text-anchor="middle"
-                        fill="#FFD700" style="font-size: 11px; font-family: system-ui, sans-serif;">
+                      <text
+                        x="55"
+                        y="20"
+                        text-anchor="middle"
+                        fill="#FFD700"
+                        style="font-size: 13px; font-family: system-ui, sans-serif;"
+                      >
                         Qwen3 30B
                       </text>
-                      <text x="40" y="31" text-anchor="middle"
-                        fill="rgba(255,215,0,0.6)" style="font-size: 9px; font-family: 'SF Mono', monospace;">
+                      <text
+                        x="55"
+                        y="37"
+                        text-anchor="middle"
+                        fill="rgba(255,215,0,0.6)"
+                        style="font-size: 11px; font-family: 'SF Mono', monospace;"
+                      >
                         16 GB
                       </text>
                     {/if}
@@ -2466,28 +2673,64 @@
 
                 <!-- Large model: 72B (locked → unlocks at phase 4) -->
                 {#if deviceAnimPhase >= 1}
-                  <g transform="translate(306, 0)" in:fade={{ duration: 500, delay: 400 }}>
-                    <rect x="0" y="0" width="80" height="40" rx="6"
-                      fill={deviceAnimPhase >= 4 ? 'rgba(255,215,0,0.06)' : 'rgba(255,255,255,0.015)'}
-                      stroke={deviceAnimPhase >= 4 ? 'rgba(255,215,0,0.35)' : 'rgba(255,255,255,0.06)'}
+                  <g
+                    transform="translate(315, 0)"
+                    in:fade={{ duration: 500, delay: 400 }}
+                  >
+                    <rect
+                      x="0"
+                      y="0"
+                      width="110"
+                      height="48"
+                      rx="8"
+                      fill={deviceAnimPhase >= 4
+                        ? "rgba(255,215,0,0.06)"
+                        : "rgba(255,255,255,0.015)"}
+                      stroke={deviceAnimPhase >= 4
+                        ? "rgba(255,215,0,0.35)"
+                        : "rgba(255,255,255,0.06)"}
                       stroke-width="1"
-                      filter={deviceAnimPhase >= 4 ? 'url(#onb-gold-glow)' : 'none'}
+                      filter={deviceAnimPhase >= 4
+                        ? "url(#onb-gold-glow)"
+                        : "none"}
                       style="transition: fill 500ms, stroke 500ms, filter 500ms;"
                     />
                     {#if deviceAnimPhase < 4}
-                      <g transform="translate(34, 10)">
-                        <rect x="0" y="8" width="12" height="9" rx="1.5"
-                          fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
-                        <path d="M 2 8 V 5 C 2 2.5 4 1 6 1 C 8 1 10 2.5 10 5 V 8"
-                          fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+                      <g transform="translate(48, 12)">
+                        <rect
+                          x="0"
+                          y="9"
+                          width="14"
+                          height="11"
+                          rx="2"
+                          fill="none"
+                          stroke="rgba(255,255,255,0.2)"
+                          stroke-width="1"
+                        />
+                        <path
+                          d="M 2 9 V 6 C 2 3 4.5 1 7 1 C 9.5 1 12 3 12 6 V 9"
+                          fill="none"
+                          stroke="rgba(255,255,255,0.2)"
+                          stroke-width="1"
+                        />
                       </g>
                     {:else}
-                      <text x="40" y="17" text-anchor="middle"
-                        fill="#FFD700" style="font-size: 11px; font-family: system-ui, sans-serif;">
+                      <text
+                        x="55"
+                        y="20"
+                        text-anchor="middle"
+                        fill="#FFD700"
+                        style="font-size: 13px; font-family: system-ui, sans-serif;"
+                      >
                         Llama 72B
                       </text>
-                      <text x="40" y="31" text-anchor="middle"
-                        fill="rgba(255,215,0,0.6)" style="font-size: 9px; font-family: 'SF Mono', monospace;">
+                      <text
+                        x="55"
+                        y="37"
+                        text-anchor="middle"
+                        fill="rgba(255,215,0,0.6)"
+                        style="font-size: 11px; font-family: 'SF Mono', monospace;"
+                      >
                         36 GB
                       </text>
                     {/if}
@@ -2496,28 +2739,64 @@
 
                 <!-- Extra large model: 405B (locked → unlocks at phase 4 with extra glow) -->
                 {#if deviceAnimPhase >= 1}
-                  <g transform="translate(410, 0)" in:fade={{ duration: 500, delay: 600 }}>
-                    <rect x="0" y="0" width="88" height="40" rx="6"
-                      fill={deviceAnimPhase >= 4 ? 'rgba(255,215,0,0.08)' : 'rgba(255,255,255,0.015)'}
-                      stroke={deviceAnimPhase >= 4 ? 'rgba(255,215,0,0.45)' : 'rgba(255,255,255,0.06)'}
-                      stroke-width={deviceAnimPhase >= 4 ? '1.5' : '1'}
-                      filter={deviceAnimPhase >= 4 ? 'url(#onb-gold-glow)' : 'none'}
+                  <g
+                    transform="translate(445, 0)"
+                    in:fade={{ duration: 500, delay: 600 }}
+                  >
+                    <rect
+                      x="0"
+                      y="0"
+                      width="110"
+                      height="48"
+                      rx="8"
+                      fill={deviceAnimPhase >= 4
+                        ? "rgba(255,215,0,0.08)"
+                        : "rgba(255,255,255,0.015)"}
+                      stroke={deviceAnimPhase >= 4
+                        ? "rgba(255,215,0,0.45)"
+                        : "rgba(255,255,255,0.06)"}
+                      stroke-width={deviceAnimPhase >= 4 ? "1.5" : "1"}
+                      filter={deviceAnimPhase >= 4
+                        ? "url(#onb-gold-glow)"
+                        : "none"}
                       style="transition: fill 700ms, stroke 700ms, filter 700ms, stroke-width 700ms;"
                     />
                     {#if deviceAnimPhase < 4}
-                      <g transform="translate(38, 10)">
-                        <rect x="0" y="8" width="12" height="9" rx="1.5"
-                          fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
-                        <path d="M 2 8 V 5 C 2 2.5 4 1 6 1 C 8 1 10 2.5 10 5 V 8"
-                          fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+                      <g transform="translate(48, 12)">
+                        <rect
+                          x="0"
+                          y="9"
+                          width="14"
+                          height="11"
+                          rx="2"
+                          fill="none"
+                          stroke="rgba(255,255,255,0.2)"
+                          stroke-width="1"
+                        />
+                        <path
+                          d="M 2 9 V 6 C 2 3 4.5 1 7 1 C 9.5 1 12 3 12 6 V 9"
+                          fill="none"
+                          stroke="rgba(255,255,255,0.2)"
+                          stroke-width="1"
+                        />
                       </g>
                     {:else}
-                      <text x="44" y="17" text-anchor="middle"
-                        fill="#FFD700" style="font-size: 11px; font-family: system-ui, sans-serif; font-weight: 600;">
+                      <text
+                        x="55"
+                        y="20"
+                        text-anchor="middle"
+                        fill="#FFD700"
+                        style="font-size: 13px; font-family: system-ui, sans-serif; font-weight: 600;"
+                      >
                         Llama 405B
                       </text>
-                      <text x="44" y="31" text-anchor="middle"
-                        fill="rgba(255,215,0,0.6)" style="font-size: 9px; font-family: 'SF Mono', monospace;">
+                      <text
+                        x="55"
+                        y="37"
+                        text-anchor="middle"
+                        fill="rgba(255,215,0,0.6)"
+                        style="font-size: 11px; font-family: 'SF Mono', monospace;"
+                      >
                         203 GB
                       </text>
                     {/if}
@@ -2526,9 +2805,14 @@
 
                 <!-- "Models you can run" label -->
                 {#if deviceAnimPhase >= 1}
-                  <text x="300" y="60" text-anchor="middle"
-                    fill="rgba(255,255,255,0.25)" style="font-size: 10px; font-family: system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.1em;"
-                    in:fade={{ duration: 400 }}>
+                  <text
+                    x="300"
+                    y="72"
+                    text-anchor="middle"
+                    fill="rgba(255,255,255,0.25)"
+                    style="font-size: 11px; font-family: system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.12em;"
+                    in:fade={{ duration: 400 }}
+                  >
                     Models you can run
                   </text>
                 {/if}
