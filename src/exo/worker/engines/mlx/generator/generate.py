@@ -306,7 +306,7 @@ def mlx_generate(
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
     mx_barrier(group)
-    logger.info("Ready to prefill")
+    logger.info("Starting prefill")
 
     # Prefill cache with all tokens except the last one
     prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
@@ -393,10 +393,11 @@ def mlx_generate(
                     f"Model generated unexpected finish_reason: {out.finish_reason}"
                 )
 
+            total_prompt_tokens = len(all_prompt_tokens)
             usage = Usage(
-                prompt_tokens=int(out.prompt_tokens),
+                prompt_tokens=total_prompt_tokens,
                 completion_tokens=completion_tokens,
-                total_tokens=int(out.prompt_tokens) + completion_tokens,
+                total_tokens=total_prompt_tokens + completion_tokens,
                 prompt_tokens_details=PromptTokensDetails(
                     cached_tokens=prefix_hit_length
                 ),

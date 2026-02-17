@@ -14,7 +14,9 @@
 
       # Override overlay to inject Nix-built components
       exoOverlay = final: prev: {
-        # Replace workspace exo_pyo3_bindings with Nix-built wheel
+        # Replace workspace exo_pyo3_bindings with Nix-built wheel.
+        # Preserve passthru so mkVirtualEnv can resolve dependency groups.
+        # Copy .pyi stub + py.typed marker so basedpyright can find the types.
         exo-pyo3-bindings = pkgs.stdenv.mkDerivation {
           pname = "exo-pyo3-bindings";
           version = "0.1.0";
@@ -22,6 +24,12 @@
           # Install from pre-built wheel
           nativeBuildInputs = [ final.pyprojectWheelHook ];
           dontStrip = true;
+          passthru = prev.exo-pyo3-bindings.passthru or { };
+          postInstall = ''
+            local siteDir=$out/${final.python.sitePackages}/exo_pyo3_bindings
+            cp ${inputs.self}/rust/exo_pyo3_bindings/exo_pyo3_bindings.pyi $siteDir/
+            touch $siteDir/py.typed
+          '';
         };
       };
 
@@ -29,16 +37,31 @@
 
       # Overlay to provide build systems and custom packages
       buildSystemsOverlay = final: prev: {
-        # Use our pure Nix-built MLX with Metal support
-        mlx = self'.packages.mlx;
-
         # mlx-lm is a git dependency that needs setuptools
         mlx-lm = prev.mlx-lm.overrideAttrs (old: {
           nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
             final.setuptools
           ];
         });
+      } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+        # Use our pure Nix-built MLX with Metal support (macOS only)
+        mlx = self'.packages.mlx;
       };
+
+      # Additional overlay for Linux-specific fixes (type checking env).
+      # Native wheels have shared lib dependencies we don't need at type-check time.
+      linuxOverlay = final: prev:
+        let
+          ignoreMissing = drv: drv.overrideAttrs { autoPatchelfIgnoreMissingDeps = [ "*" ]; };
+          nvidiaPackages = lib.filterAttrs (name: _: lib.hasPrefix "nvidia-" name) prev;
+        in
+        lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
+          (lib.mapAttrs (_: ignoreMissing) nvidiaPackages) // {
+            mlx = ignoreMissing prev.mlx;
+            torch = ignoreMissing prev.torch;
+            triton = ignoreMissing prev.triton;
+          }
+        );
 
       pythonSet = (pkgs.callPackage inputs.pyproject-nix.build.packages {
         inherit python;
@@ -48,6 +71,7 @@
           overlay
           exoOverlay
           buildSystemsOverlay
+          linuxOverlay
         ]
       );
       exoVenv = pythonSet.mkVirtualEnv "exo-env" workspace.deps.default;
@@ -118,6 +142,21 @@
           ${pkgs.ruff}/bin/ruff check ${inputs.self}
           touch $out
         '';
+
+        # Hermetic basedpyright type checking
+        typecheck = pkgs.runCommand "typecheck"
+          {
+            nativeBuildInputs = [
+              testVenv
+              pkgs.basedpyright
+            ];
+          }
+          ''
+            cd ${inputs.self}
+            export HOME=$TMPDIR
+            basedpyright --pythonpath ${testVenv}/bin/python
+            touch $out
+          '';
       };
     };
 }
