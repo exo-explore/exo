@@ -1,9 +1,30 @@
 use crate::alias;
+use crate::discovery;
 use crate::swarm::transport::tcp_transport;
-pub use behaviour::{Behaviour, BehaviourEvent};
-use libp2p::{SwarmBuilder, identity};
+use behaviour::{Behaviour, BehaviourEvent};
+use futures_lite::StreamExt;
+use libp2p::{PeerId, SwarmBuilder, gossipsub, identity, swarm::SwarmEvent};
+use tokio::sync::mpsc;
 
-pub type Swarm = libp2p::Swarm<Behaviour>;
+pub struct Swarm {
+    swarm: libp2p::Swarm<Behaviour>,
+    from_client: mpsc::Receiver<ToSwarm>,
+    to_client: mpsc::Sender<FromSwarm>,
+}
+
+#[derive(Debug)]
+pub enum FromSwarm {
+    PublishError(gossipsub::PublishError),
+    Discovered(PeerId),
+    Expired(PeerId),
+    Message(PeerId, String, Vec<u8>),
+}
+#[derive(Debug)]
+pub enum ToSwarm {
+    Message(String, Vec<u8>),
+    Subscribe(String),
+    Unsubscribe(String),
+}
 
 /// The current version of the network: this prevents devices running different versions of the
 /// software from interacting with each other.
@@ -15,23 +36,142 @@ pub type Swarm = libp2p::Swarm<Behaviour>;
 pub const NETWORK_VERSION: &[u8] = b"v0.0.1";
 pub const OVERRIDE_VERSION_ENV_VAR: &str = "EXO_LIBP2P_NAMESPACE";
 
-/// Create and configure a swarm which listens to all ports on OS
-pub fn create_swarm(keypair: identity::Keypair) -> alias::AnyResult<Swarm> {
-    let mut swarm = SwarmBuilder::with_existing_identity(keypair)
-        .with_tokio()
-        .with_other_transport(tcp_transport)?
-        .with_behaviour(Behaviour::new)?
-        .build();
+impl Swarm {
+    /// Create and configure a swarm which listens to all ports on OS
+    pub fn new(
+        keypair: identity::Keypair,
+        from_client: mpsc::Receiver<ToSwarm>,
+        to_client: mpsc::Sender<FromSwarm>,
+    ) -> alias::AnyResult<Swarm> {
+        let mut swarm = SwarmBuilder::with_existing_identity(keypair)
+            .with_tokio()
+            .with_other_transport(tcp_transport)?
+            .with_behaviour(Behaviour::new)?
+            .build();
 
-    // Listen on all interfaces and whatever port the OS assigns
-    swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
-    Ok(swarm)
+        // Listen on all interfaces and whatever port the OS assigns
+        swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+        Ok(Self {
+            swarm,
+            from_client,
+            to_client,
+        })
+    }
+    pub async fn run(&mut self) {
+        log::info!("RUST: networking task started");
+
+        loop {
+            tokio::select! {
+                message = self.from_client.recv() => {
+                    // handle closed channel
+                    let Some(message) = message else {
+                        log::info!("RUST: channel closed");
+                        break;
+                    };
+
+                    // dispatch incoming messages
+                    match message {
+                        ToSwarm::Subscribe(topic) => {
+                            // try to subscribe
+                            match self.swarm.behaviour_mut().gossipsub.subscribe(&gossipsub::IdentTopic::new(topic.clone())) {
+                                    Err(e) => {
+                                        let gossipsub::SubscriptionError::PublishError(e) = e else {
+                                            unreachable!("topic filter used")
+                                        };
+                                        let Ok(()) = self.to_client.send(FromSwarm::PublishError(e)).await else {
+                                            log::warn!("RUST: client connection closed");
+                                            break
+                                        };
+                                    },
+                                    Ok(false) => log::warn!("RUST: tried to subscribe to topic twice"),
+                                    Ok(true) => {},
+                                }
+                        }
+                        ToSwarm::Unsubscribe(topic) => {
+                            // try to subscribe
+                            if !self.swarm.behaviour_mut().gossipsub.unsubscribe(&gossipsub::IdentTopic::new(topic)) {
+                                log::warn!("RUST: tried to unsubscribe from topic twice");
+                            }
+                        }
+                        ToSwarm::Message( topic, data ) => {
+                            // try to publish the data -> catch NoPeersSubscribedToTopic error & convert to correct exception
+                            match self.swarm.behaviour_mut().gossipsub.publish(
+                                gossipsub::IdentTopic::new(topic), data
+                            ) {
+                                Ok(_) => {},
+                                Err(e) => {
+                                    let Ok(()) = self.to_client.send(FromSwarm::PublishError(e)).await else {
+                                        log::warn!("RUST: client connection closed");
+                                        break
+                                    };
+                                },
+                            }
+                        }
+                    }
+                }
+
+                // architectural solution to this problem:
+                // create keep_alive behavior who's job it is to dial peers discovered by mDNS (and drop when expired)
+                //   -> it will emmit TRUE connected/disconnected events consumable elsewhere
+                //
+                // gossipsub will feed off-of dial attempts created by networking, and that will bootstrap its' peers list
+                // then for actual communication it will dial those peers if need-be
+                swarm_event = self.swarm.next() => {
+                    let Some(swarm_event) = swarm_event else {
+                        log::warn!("RUST: swarm closed communication");
+                        break
+                    };
+                    let SwarmEvent::Behaviour(behaviour_event) = swarm_event else {
+                        continue
+                    };
+                    match behaviour_event {
+                        BehaviourEvent::Gossipsub(gossipsub::Event::Message {
+                            message: gossipsub::Message {
+                                source,
+                                topic,
+                                data,
+                                ..
+                            },
+                            ..
+                        }) => {
+                            let Some(peer_id) = source else {
+                                log::warn!("RUST: ignoring message with unknown source on {topic}");
+                                continue;
+                            };
+                            // send incoming message to channel (or exit if connection closed)
+                            if let Err(e) = self.to_client.send(FromSwarm::Message(peer_id, topic.into_string(), data)).await {
+                                log::warn!("RUST: could not send incoming gossipsub message since channel already closed: {e}");
+                                break
+                            };
+                        },
+                        BehaviourEvent::Discovery(discovery::Event::ConnectionEstablished { peer_id, .. }) => {
+                            // send connection event to channel (or exit if connection closed)
+                            if let Err(_) = self.to_client.send(FromSwarm::Discovered(peer_id)).await {
+                                log::warn!("RUST: swarm closed communication");
+                            };
+                        },
+                        BehaviourEvent::Discovery(discovery::Event::ConnectionClosed { peer_id, .. }) => {
+                            // send connection event to channel (or exit if connection closed)
+                            if let Err(_) = self.to_client.send(FromSwarm::Expired(peer_id)).await {
+                                log::warn!("RUST: swarm closed communication");
+                            };
+                        },
+                        e => {
+                            log::debug!("RUST: other event {e:?}");
+                        }
+                    }
+                }
+            }
+        }
+
+        log::info!("RUST: networking task stopped");
+    }
 }
 
 mod transport {
     use crate::alias;
     use crate::swarm::{NETWORK_VERSION, OVERRIDE_VERSION_ENV_VAR};
-    use futures::{AsyncRead, AsyncWrite};
+    use futures_lite::{AsyncRead, AsyncWrite};
     use keccak_const::Sha3_256;
     use libp2p::core::muxing;
     use libp2p::core::transport::Boxed;

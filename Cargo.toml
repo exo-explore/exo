@@ -37,6 +37,7 @@ keccak-const = "0.2"
 # Async dependencies
 tokio = "1.46"
 futures = "0.3"
+futures-lite = "2.6.1"
 futures-timer = "3.0"
 
 # Data structures

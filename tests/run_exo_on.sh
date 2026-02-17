@@ -43,4 +43,5 @@ for host; do
   echo "Waiting for $host..."
   until curl -sf "http://$host:52415/models" &>/dev/null; do sleep 1; done
 done
+echo "all hosts alive!"
 wait

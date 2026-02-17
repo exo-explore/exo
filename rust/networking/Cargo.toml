@@ -22,7 +22,7 @@ delegate = { workspace = true }
 
 # async
 tokio = { workspace = true, features = ["full"] }
-futures = { workspace = true }
+futures-lite = { workspace = true }
 futures-timer = { workspace = true }
 
 # utility dependencies

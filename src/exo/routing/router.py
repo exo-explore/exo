@@ -16,17 +16,19 @@ from anyio.abc import TaskGroup
 from exo_pyo3_bindings import (
     AllQueuesFullError,
     Keypair,
-    NetworkingHandle,
     NoPeersSubscribedToTopicError,
+    PyMessage,
+    PySwarm,
 )
 from filelock import FileLock
 from loguru import logger
 
 from exo.shared.constants import EXO_NODE_ID_KEYPAIR
+from exo.shared.election import ConnectionMessage
+from exo.shared.types.common import NodeId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.pydantic_ext import CamelCaseModel
 
-from .connection_message import ConnectionMessage
 from .topics import CONNECTION_MESSAGES, PublishPolicy, TypedTopic
 
 
@@ -102,13 +104,13 @@ class TopicRouter[T: CamelCaseModel]:
 class Router:
     @classmethod
     def create(cls, identity: Keypair) -> "Router":
-        return cls(handle=NetworkingHandle(identity))
+        return cls(handle=PySwarm(identity))
 
-    def __init__(self, handle: NetworkingHandle):
+    def __init__(self, handle: PySwarm):
         self.topic_routers: dict[str, TopicRouter[CamelCaseModel]] = {}
         send, recv = channel[tuple[str, bytes]]()
         self.networking_receiver: Receiver[tuple[str, bytes]] = recv
-        self._net: NetworkingHandle = handle
+        self._net = handle
         self._tmp_networking_sender: Sender[tuple[str, bytes]] | None = send
         self._id_count = count()
         self._tg: TaskGroup | None = None
@@ -154,7 +156,6 @@ class Router:
                     router = self.topic_routers[topic]
                     tg.start_soon(router.run)
                 tg.start_soon(self._networking_recv)
-                tg.start_soon(self._networking_recv_connection_messages)
                 tg.start_soon(self._networking_publish)
                 # Router only shuts down if you cancel it.
                 await sleep_forever()
@@ -179,38 +180,44 @@ class Router:
 
     async def _networking_recv(self):
         while True:
-            topic, data = await self._net.gossipsub_recv()
-            logger.trace(f"Received message on {topic} with payload {data}")
-            if topic not in self.topic_routers:
-                logger.warning(f"Received message on unknown or inactive topic {topic}")
+            try:
+                msg = await self._net.recv()
+            except NoPeersSubscribedToTopicError:
+                continue
+            except AllQueuesFullError:
+                logger.warning("All peer queues full, messages have been lost")
                 continue
 
-            router = self.topic_routers[topic]
-            await router.publish_bytes(data)
-
-    async def _networking_recv_connection_messages(self):
-        while True:
-            update = await self._net.connection_update_recv()
-            message = ConnectionMessage.from_update(update)
-            logger.trace(
-                f"Received message on connection_messages with payload {message}"
-            )
-            if CONNECTION_MESSAGES.topic in self.topic_routers:
-                router = self.topic_routers[CONNECTION_MESSAGES.topic]
-                assert router.topic.model_type == ConnectionMessage
-                router = cast(TopicRouter[ConnectionMessage], router)
-                await router.publish(message)
+            match msg:
+                case PyMessage.Connection():
+                    if CONNECTION_MESSAGES.topic in self.topic_routers:
+                        router = self.topic_routers[CONNECTION_MESSAGES.topic]
+                        assert router.topic.model_type == ConnectionMessage
+                        router = cast(TopicRouter[ConnectionMessage], router)
+                        await router.publish(
+                            ConnectionMessage(
+                                node_id=NodeId(msg.node_id), connected=msg.connected
+                            )
+                        )
+                case PyMessage.Gossip():
+                    if msg.topic not in self.topic_routers:
+                        logger.warning(
+                            f"Received message on unknown or inactive topic {msg.topic}"
+                        )
+                        continue
+                    logger.trace(
+                        f"Received message on {msg.topic} with payload {msg.data}"
+                    )
+                    router = self.topic_routers[msg.topic]
+                    await router.publish_bytes(msg.data)
+                case _:
+                    raise ValueError("net recv returned something impossible")
 
     async def _networking_publish(self):
         with self.networking_receiver as networked_items:
             async for topic, data in networked_items:
-                try:
-                    logger.trace(f"Sending message on {topic} with payload {data}")
-                    await self._net.gossipsub_publish(topic, data)
-                except NoPeersSubscribedToTopicError:
-                    pass
-                except AllQueuesFullError:
-                    logger.warning(f"All peer queues full, dropping message on {topic}")
+                logger.trace(f"Sending message on {topic} with payload {data}")
+                await self._net.gossipsub_publish(topic, data)
 
 
 def get_node_id_keypair(
@@ -221,7 +228,7 @@ def get_node_id_keypair(
     Obtain the :class:`PeerId` by from it.
     """
     # TODO(evan): bring back node id persistence once we figure out how to deal with duplicates
-    return Keypair.generate_ed25519()
+    return Keypair.generate()
 
     def lock_path(path: str | bytes | PathLike[str] | PathLike[bytes]) -> Path:
         return Path(str(path) + ".lock")
@@ -235,12 +242,12 @@ def get_node_id_keypair(
                 protobuf_encoded = f.read()
 
                 try:  # if decoded successfully, save & return
-                    return Keypair.from_protobuf_encoding(protobuf_encoded)
+                    return Keypair.deserialize(protobuf_encoded)
                 except ValueError as e:  # on runtime error, assume corrupt file
                     logger.warning(f"Encountered error when trying to get keypair: {e}")
 
         # if no valid credentials, create new ones and persist
         with open(path, "w+b") as f:
-            keypair = Keypair.generate_ed25519()
-            f.write(keypair.to_protobuf_encoding())
+            keypair = Keypair.generate()
+            f.write(keypair.serialize())
             return keypair

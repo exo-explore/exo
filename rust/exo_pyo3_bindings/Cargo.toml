@@ -27,7 +27,7 @@ networking = { workspace = true }
 # interop
 pyo3 = { version = "0.27.2", features = [
     # "abi3-py313", # tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.13
-    "nightly", # enables better-supported GIL integration
+    # "nightly", # enables better-supported GIL integration
     "experimental-async", # async support in #[pyfunction] & #[pymethods]
     #"experimental-inspect", # inspection of generated binary => easier to automate type-hint generation
     #"py-clone", # adding Clone-ing of `Py<T>` without GIL (may cause panics - remove if panics happen)
@@ -38,7 +38,7 @@ pyo3 = { version = "0.27.2", features = [
     # "ordered-float", "rust_decimal", "smallvec",
     # "anyhow", "chrono", "chrono-local", "chrono-tz", "eyre", "jiff-02", "lock_api", "parking-lot", "time",  "serde",
 ] }
-pyo3-stub-gen = { version = "0.17.2" }
+pyo3-stub-gen = { version = "0.19.0" }
 pyo3-async-runtimes = { version = "0.27.0", features = ["attributes", "tokio-runtime", "testing"] }
 pyo3-log = "0.13.2"
 
@@ -49,7 +49,7 @@ pin-project = { workspace = true }
 
 # async runtime
 tokio = { workspace = true, features = ["full", "tracing"] }
-futures = { workspace = true }
+futures-lite = { workspace = true }
 
 # utility dependencies
 util = { workspace = true }

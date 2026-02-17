@@ -10,13 +10,17 @@ from anyio import (
 from anyio.abc import TaskGroup
 from loguru import logger
 
-from exo.routing.connection_message import ConnectionMessage
 from exo.shared.types.commands import ForwarderCommand
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, Sender
 from exo.utils.pydantic_ext import CamelCaseModel
 
 DEFAULT_ELECTION_TIMEOUT = 3.0
+
+
+class ConnectionMessage(CamelCaseModel):
+    node_id: NodeId
+    connected: bool
 
 
 class ElectionMessage(CamelCaseModel):

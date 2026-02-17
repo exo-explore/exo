@@ -1,27 +1,20 @@
-#![allow(
-    clippy::multiple_inherent_impl,
-    clippy::unnecessary_wraps,
-    clippy::unused_self,
-    clippy::needless_pass_by_value
-)]
-
 use crate::r#const::MPSC_CHANNEL_SIZE;
-use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _};
-use crate::ext::{ResultExt as _, TokioMpscReceiverExt as _, TokioMpscSenderExt as _};
+use crate::ext::ResultExt as _;
+use crate::ext::{ByteArrayExt as _, FutureExt as _};
+use crate::ident::PyKeypair;
+use crate::networking::exception::{PyAllQueuesFullError, PyNoPeersSubscribedToTopicError};
 use crate::pyclass;
-use crate::pylibp2p::ident::{PyKeypair, PyPeerId};
-use libp2p::futures::StreamExt as _;
-use libp2p::gossipsub;
-use libp2p::gossipsub::{IdentTopic, Message, MessageId, PublishError};
-use libp2p::swarm::SwarmEvent;
-use networking::discovery;
-use networking::swarm::create_swarm;
-use pyo3::prelude::{PyModule, PyModuleMethods as _};
+use futures_lite::FutureExt as _;
+use networking::swarm::{FromSwarm, Swarm, ToSwarm};
+use pyo3::coroutine::CancelHandle;
+use pyo3::exceptions::{PyConnectionError, PyRuntimeError};
+use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use pyo3::{Bound, Py, PyErr, PyResult, PyTraverseError, PyVisit, Python, pymethods};
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
-use std::net::IpAddr;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use pyo3_async_runtimes::tokio::get_runtime;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pymethods};
+use std::pin::pin;
+use std::sync::Arc;
+use tokio::sync::{Mutex, mpsc};
 
 mod exception {
     use pyo3::types::PyTuple;
@@ -49,14 +42,9 @@ mod exception {
     #[pymethods]
     impl PyNoPeersSubscribedToTopicError {
         #[new]
-        #[pyo3(signature = (*args))]
-        #[allow(unused_variables)]
-        pub(crate) fn new(args: &Bound<'_, PyTuple>) -> Self {
+        #[pyo3(signature = (*_a))]
+        pub(crate) fn new(_a: &Bound<'_, PyTuple>) -> Self {
             Self {}
-        }
-
-        fn __repr__(&self) -> String {
-            format!("PeerId(\"{}\")", Self::MSG)
         }
 
         fn __str__(&self) -> String {
@@ -84,14 +72,9 @@ mod exception {
     #[pymethods]
     impl PyAllQueuesFullError {
         #[new]
-        #[pyo3(signature = (*args))]
-        #[allow(unused_variables)]
-        pub(crate) fn new(args: &Bound<'_, PyTuple>) -> Self {
+        #[pyo3(signature = (*_a))]
+        pub(crate) fn new(_a: &Bound<'_, PyTuple>) -> Self {
             Self {}
-        }
-
-        fn __repr__(&self) -> String {
-            format!("PeerId(\"{}\")", Self::MSG)
         }
 
         fn __str__(&self) -> String {
@@ -100,472 +83,168 @@ mod exception {
     }
 }
 
-/// Connection or disconnection event discriminant type.
-#[gen_stub_pyclass_enum]
-#[pyclass(eq, eq_int, name = "ConnectionUpdateType")]
-#[derive(Debug, Clone, PartialEq)]
-enum PyConnectionUpdateType {
-    Connected = 0,
-    Disconnected,
-}
-
 #[gen_stub_pyclass]
-#[pyclass(frozen, name = "ConnectionUpdate")]
-#[derive(Debug, Clone)]
-struct PyConnectionUpdate {
-    /// Whether this is a connection or disconnection event
-    #[pyo3(get)]
-    update_type: PyConnectionUpdateType,
-
-    /// Identity of the peer that we have connected to or disconnected from.
-    #[pyo3(get)]
-    peer_id: PyPeerId,
-
-    /// Remote connection's IPv4 address.
-    #[pyo3(get)]
-    remote_ipv4: String,
-
-    /// Remote connection's TCP port.
-    #[pyo3(get)]
-    remote_tcp_port: u16,
+#[pyclass]
+struct PySwarm {
+    swarm: Arc<Mutex<Swarm>>,
+    from_swarm: Mutex<mpsc::Receiver<FromSwarm>>,
+    to_swarm: Mutex<mpsc::Sender<ToSwarm>>,
 }
 
-enum ToTask {
-    GossipsubSubscribe {
-        topic: String,
-        result_tx: oneshot::Sender<PyResult<bool>>,
+#[gen_stub_pyclass_complex_enum]
+#[pyclass]
+pub enum PyMessage {
+    Connection {
+        node_id: String,
+        connected: bool,
     },
-    GossipsubUnsubscribe {
+    Gossip {
+        node_id: String,
         topic: String,
-        result_tx: oneshot::Sender<bool>,
-    },
-    GossipsubPublish {
-        topic: String,
-        data: Vec<u8>,
-        result_tx: oneshot::Sender<PyResult<MessageId>>,
+        data: Py<PyBytes>,
     },
 }
-
-#[allow(clippy::enum_glob_use)]
-async fn networking_task(
-    mut swarm: networking::swarm::Swarm,
-    mut to_task_rx: mpsc::Receiver<ToTask>,
-    connection_update_tx: mpsc::Sender<PyConnectionUpdate>,
-    gossipsub_message_tx: mpsc::Sender<(String, Vec<u8>)>,
-) {
-    use SwarmEvent::*;
-    use ToTask::*;
-    use networking::swarm::BehaviourEvent::*;
-
-    log::info!("RUST: networking task started");
-
-    loop {
-        tokio::select! {
-            message = to_task_rx.recv() => {
-                // handle closed channel
-                let Some(message) = message else {
-                    log::info!("RUST: channel closed");
-                    break;
-                };
-
-                // dispatch incoming messages
-                match message {
-                    GossipsubSubscribe { topic, result_tx } => {
-                        // try to subscribe
-                        let result = swarm.behaviour_mut()
-                            .gossipsub.subscribe(&IdentTopic::new(topic));
-
-                        // send response oneshot
-                        if let Err(e) = result_tx.send(result.pyerr()) {
-                            log::error!("RUST: could not subscribe to gossipsub topic since channel already closed: {e:?}");
-                            continue;
-                        }
-                    }
-                    GossipsubUnsubscribe { topic, result_tx } => {
-                        // try to unsubscribe from the topic
-                        let result = swarm.behaviour_mut()
-                            .gossipsub.unsubscribe(&IdentTopic::new(topic));
-
-                        // send response oneshot (or exit if connection closed)
-                        if let Err(e) = result_tx.send(result) {
-                            log::error!("RUST: could not unsubscribe from gossipsub topic since channel already closed: {e:?}");
-                            continue;
-                        }
-                    }
-                    GossipsubPublish { topic, data, result_tx } => {
-                        // try to publish the data -> catch NoPeersSubscribedToTopic error & convert to correct exception
-                        let result = swarm.behaviour_mut().gossipsub.publish(
-                            IdentTopic::new(topic), data);
-                        let pyresult: PyResult<MessageId> = if let Err(PublishError::NoPeersSubscribedToTopic) = result {
-                            Err(exception::PyNoPeersSubscribedToTopicError::new_err())
-                        } else if let Err(PublishError::AllQueuesFull(_)) = result {
-                            Err(exception::PyAllQueuesFullError::new_err())
-                        } else {
-                            result.pyerr()
-                        };
-
-                        // send response oneshot (or exit if connection closed)
-                        if let Err(e) = result_tx.send(pyresult) {
-                            log::error!("RUST: could not publish gossipsub message since channel already closed: {e:?}");
-                            continue;
-                        }
-                    }
+impl TryFrom<FromSwarm> for PyMessage {
+    type Error = PyErr;
+    fn try_from(value: FromSwarm) -> Result<Self, Self::Error> {
+        match value {
+            FromSwarm::Discovered(nid) => Ok(PyMessage::Connection {
+                node_id: nid.to_base58(),
+                connected: true,
+            }),
+            FromSwarm::Expired(nid) => Ok(PyMessage::Connection {
+                node_id: nid.to_base58(),
+                connected: false,
+            }),
+            FromSwarm::Message(nid, topic, data) => Ok(PyMessage::Gossip {
+                node_id: nid.to_base58(),
+                topic,
+                data: data.pybytes(),
+            }),
+            FromSwarm::PublishError(e) => match e {
+                libp2p::gossipsub::PublishError::NoPeersSubscribedToTopic => {
+                    Err(PyNoPeersSubscribedToTopicError::new_err())
                 }
-            }
-
-            // architectural solution to this problem:
-            // create keep_alive behavior who's job it is to dial peers discovered by mDNS (and drop when expired)
-            //   -> it will emmit TRUE connected/disconnected events consumable elsewhere
-            //
-            // gossipsub will feed off-of dial attempts created by networking, and that will bootstrap its' peers list
-            // then for actual communication it will dial those peers if need-be
-            swarm_event = swarm.select_next_some() => {
-                match swarm_event {
-                    Behaviour(Gossipsub(gossipsub::Event::Message {
-                        message: Message {
-                            topic,
-                            data,
-                            ..
-                        },
-                        ..
-                    })) => {
-                        // topic-ID is just the topic hash!!! (since we used identity hasher)
-                        let message = (topic.into_string(), data);
-
-                        // send incoming message to channel (or exit if connection closed)
-                        if let Err(e) = gossipsub_message_tx.send(message).await {
-                            log::error!("RUST: could not send incoming gossipsub message since channel already closed: {e}");
-                            continue;
-                        }
-                    },
-                    Behaviour(Discovery(discovery::Event::ConnectionEstablished { peer_id, remote_ip, remote_tcp_port, .. })) => {
-                        // grab IPv4 string
-                        let remote_ipv4 = match remote_ip {
-                            IpAddr::V4(ip) => ip.to_string(),
-                            IpAddr::V6(ip) => {
-                                log::warn!("RUST: ignoring connection to IPv6 address: {ip}");
-                                continue;
-                            }
-                        };
-
-                        // send connection event to channel (or exit if connection closed)
-                        if let Err(e) = connection_update_tx.send(PyConnectionUpdate {
-                            update_type: PyConnectionUpdateType::Connected,
-                            peer_id: PyPeerId(peer_id),
-                            remote_ipv4,
-                            remote_tcp_port,
-                        }).await {
-                            log::error!("RUST: could not send connection update since channel already closed: {e}");
-                            continue;
-                        }
-                    },
-                    Behaviour(Discovery(discovery::Event::ConnectionClosed { peer_id, remote_ip, remote_tcp_port, .. })) => {
-                        // grab IPv4 string
-                        let remote_ipv4 = match remote_ip {
-                            IpAddr::V4(ip) => ip.to_string(),
-                            IpAddr::V6(ip) => {
-                                log::warn!("RUST: ignoring disconnection from IPv6 address: {ip}");
-                                continue;
-                            }
-                        };
-
-                        // send disconnection event to channel (or exit if connection closed)
-                        if let Err(e) = connection_update_tx.send(PyConnectionUpdate {
-                            update_type: PyConnectionUpdateType::Disconnected,
-                            peer_id: PyPeerId(peer_id),
-                            remote_ipv4,
-                            remote_tcp_port,
-                        }).await {
-                            log::error!("RUST: could not send connection update since channel already closed: {e}");
-                            continue;
-                        }
-                    },
-                    e => {
-                        log::info!("RUST: other event {e:?}");
-                    }
+                libp2p::gossipsub::PublishError::AllQueuesFull(_) => {
+                    Err(PyAllQueuesFullError::new_err())
                 }
-            }
+                e => Err(PyRuntimeError::new_err(e.to_string())),
+            },
         }
-    }
-
-    log::info!("RUST: networking task stopped");
-}
-
-#[gen_stub_pyclass]
-#[pyclass(name = "NetworkingHandle")]
-#[derive(Debug)]
-struct PyNetworkingHandle {
-    // channels
-    to_task_tx: Option<mpsc::Sender<ToTask>>,
-    connection_update_rx: Mutex<mpsc::Receiver<PyConnectionUpdate>>,
-    gossipsub_message_rx: Mutex<mpsc::Receiver<(String, Vec<u8>)>>,
-}
-
-impl Drop for PyNetworkingHandle {
-    fn drop(&mut self) {
-        // TODO: may or may not need to await a "kill-signal" oneshot channel message,
-        //       to ensure that the networking task is done BEFORE exiting the clear function...
-        //       but this may require GIL?? and it may not be safe to call GIL here??
-        self.to_task_tx = None; // Using Option<T> as a trick to force channel to be dropped
-    }
-}
-
-#[allow(clippy::expect_used)]
-impl PyNetworkingHandle {
-    fn new(
-        to_task_tx: mpsc::Sender<ToTask>,
-        connection_update_rx: mpsc::Receiver<PyConnectionUpdate>,
-        gossipsub_message_rx: mpsc::Receiver<(String, Vec<u8>)>,
-    ) -> Self {
-        Self {
-            to_task_tx: Some(to_task_tx),
-            connection_update_rx: Mutex::new(connection_update_rx),
-            gossipsub_message_rx: Mutex::new(gossipsub_message_rx),
-        }
-    }
-
-    const fn to_task_tx(&self) -> &mpsc::Sender<ToTask> {
-        self.to_task_tx
-            .as_ref()
-            .expect("The sender should only be None after de-initialization.")
     }
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyNetworkingHandle {
-    // NOTE: `async fn`s here that use `.await` will wrap the future in `.allow_threads_py()`
-    //       immediately beforehand to release the interpreter.
-    //       SEE: https://pyo3.rs/v0.26.0/async-await.html#detaching-from-the-interpreter-across-await
-
-    // ---- Lifecycle management methods ----
-
+impl PySwarm {
     #[new]
     fn py_new(identity: Bound<'_, PyKeypair>) -> PyResult<Self> {
         use pyo3_async_runtimes::tokio::get_runtime;
 
-        // create communication channels
-        let (to_task_tx, to_task_rx) = mpsc::channel(MPSC_CHANNEL_SIZE);
-        let (connection_update_tx, connection_update_rx) = mpsc::channel(MPSC_CHANNEL_SIZE);
-        let (gossipsub_message_tx, gossipsub_message_rx) = mpsc::channel(MPSC_CHANNEL_SIZE);
-
         // get identity
         let identity = identity.borrow().0.clone();
 
+        let (to_swarm, from_client) = mpsc::channel(MPSC_CHANNEL_SIZE);
+        let (to_client, from_swarm) = mpsc::channel(MPSC_CHANNEL_SIZE);
         // create networking swarm (within tokio context!! or it crashes)
         let swarm = get_runtime()
-            .block_on(async { create_swarm(identity) })
+            .block_on(async { Swarm::new(identity, from_client, to_client) })
             .pyerr()?;
 
-        // spawn tokio task running the networking logic
-        get_runtime().spawn(async move {
-            networking_task(
-                swarm,
-                to_task_rx,
-                connection_update_tx,
-                gossipsub_message_tx,
-            )
-            .await;
+        Ok(Self {
+            swarm: Arc::new(Mutex::new(swarm)),
+            from_swarm: Mutex::new(from_swarm),
+            to_swarm: Mutex::new(to_swarm),
+        })
+    }
+
+    #[gen_stub(skip)]
+    async fn run(&self, #[pyo3(cancel_handle)] mut cancel: CancelHandle) -> PyResult<()> {
+        let copy = Arc::clone(&self.swarm);
+        let jh = get_runtime().spawn(async move {
+            copy.try_lock()
+                .expect("tried to run swarm twice")
+                .run()
+                .await
         });
-        Ok(Self::new(
-            to_task_tx,
-            connection_update_rx,
-            gossipsub_message_rx,
-        ))
-    }
-
-    #[gen_stub(skip)]
-    const fn __traverse__(&self, _visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        Ok(()) // This is needed purely so `__clear__` can work
-    }
-
-    #[gen_stub(skip)]
-    fn __clear__(&mut self) {
-        // TODO: may or may not need to await a "kill-signal" oneshot channel message,
-        //       to ensure that the networking task is done BEFORE exiting the clear function...
-        //       but this may require GIL?? and it may not be safe to call GIL here??
-        self.to_task_tx = None; // Using Option<T> as a trick to force channel to be dropped
+        jh.or(async {
+            cancel.cancelled().await;
+            Ok(())
+        })
+        .await
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     // ---- Connection update receiver methods ----
 
-    /// Receives the next `ConnectionUpdate` from networking.
-    async fn connection_update_recv(&self) -> PyResult<PyConnectionUpdate> {
-        self.connection_update_rx
-            .lock()
-            .allow_threads_py() // allow-threads-aware async call
-            .await
-            .recv_py()
-            .allow_threads_py() // allow-threads-aware async call
-            .await
+    /// Receives the next message from networking.
+    async fn recv(&self) -> PyResult<PyMessage> {
+        let msg = pin!(
+            self.from_swarm
+                .try_lock()
+                .expect("called recv concurrently")
+                .recv()
+        )
+        .allow_threads_py()
+        .await;
+        match msg {
+            None => Err(PyConnectionError::new_err("swarm closed")),
+            Some(msg) => msg.try_into(),
+        }
     }
-
-    /// Receives at most `limit` `ConnectionUpdate`s from networking and returns them.
-    ///
-    /// For `limit = 0`, an empty collection of `ConnectionUpdate`s will be returned immediately.
-    /// For `limit > 0`, if there are no `ConnectionUpdate`s in the channel's queue this method
-    /// will sleep until a `ConnectionUpdate`s is sent.
-    async fn connection_update_recv_many(&self, limit: usize) -> PyResult<Vec<PyConnectionUpdate>> {
-        self.connection_update_rx
-            .lock()
-            .allow_threads_py() // allow-threads-aware async call
-            .await
-            .recv_many_py(limit)
-            .allow_threads_py() // allow-threads-aware async call
-            .await
-    }
-
-    // TODO: rn this blocks main thread if anything else is awaiting the channel (bc its a mutex)
-    //       so its too dangerous to expose just yet. figure out a better semantics for handling this,
-    //       so things don't randomly block
-    // /// Tries to receive the next `ConnectionUpdate` from networking.
-    // fn connection_update_try_recv(&self) -> PyResult<Option<PyConnectionUpdate>> {
-    //     self.connection_update_rx.blocking_lock().try_recv_py()
-    // }
-    //
-    // /// Checks if the `ConnectionUpdate` channel is empty.
-    // fn connection_update_is_empty(&self) -> bool {
-    //     self.connection_update_rx.blocking_lock().is_empty()
-    // }
-    //
-    // /// Returns the number of `ConnectionUpdate`s in the channel.
-    // fn connection_update_len(&self) -> usize {
-    //     self.connection_update_rx.blocking_lock().len()
-    // }
-
-    // ---- Gossipsub management methods ----
 
     /// Subscribe to a `GossipSub` topic.
-    ///
-    /// Returns `True` if the subscription worked. Returns `False` if we were already subscribed.
-    async fn gossipsub_subscribe(&self, topic: String) -> PyResult<bool> {
-        let (tx, rx) = oneshot::channel();
-
+    async fn gossipsub_subscribe(&self, topic: String) -> PyResult<()> {
         // send off request to subscribe
-        self.to_task_tx()
-            .send_py(ToTask::GossipsubSubscribe {
-                topic,
-                result_tx: tx,
-            })
-            .allow_threads_py() // allow-threads-aware async call
-            .await?;
-
-        // wait for response & return any errors
-        rx.allow_threads_py() // allow-threads-aware async call
-            .await
-            .map_err(|_| PyErr::receiver_channel_closed())?
+        pin!(
+            self.to_swarm
+                .try_lock()
+                .expect("called send concurrently")
+                .send(ToSwarm::Subscribe(topic))
+        )
+        .allow_threads_py() // allow-threads-aware async call
+        .await
+        .map_err(|_| PyConnectionError::new_err("swarm closed"))
     }
 
     /// Unsubscribes from a `GossipSub` topic.
     ///
     /// Returns `True` if we were subscribed to this topic. Returns `False` if we were not subscribed.
-    async fn gossipsub_unsubscribe(&self, topic: String) -> PyResult<bool> {
-        let (tx, rx) = oneshot::channel();
-
+    async fn gossipsub_unsubscribe(&self, topic: String) -> PyResult<()> {
         // send off request to unsubscribe
-        self.to_task_tx()
-            .send_py(ToTask::GossipsubUnsubscribe {
-                topic,
-                result_tx: tx,
-            })
-            .allow_threads_py() // allow-threads-aware async call
-            .await?;
-
-        // wait for response & convert any errors
-        rx.allow_threads_py() // allow-threads-aware async call
-            .await
-            .map_err(|_| PyErr::receiver_channel_closed())
+        pin!(
+            self.to_swarm
+                .try_lock()
+                .expect("called send concurrently")
+                .send(ToSwarm::Unsubscribe(topic))
+        )
+        .allow_threads_py() // allow-threads-aware async call
+        .await
+        .map_err(|_| PyConnectionError::new_err("swarm closed"))
     }
 
-    /// Publishes a message with multiple topics to the `GossipSub` network.
-    ///
-    /// If no peers are found that subscribe to this topic, throws `NoPeersSubscribedToTopicError` exception.
+    /// Publishes a message to the network on a specific topic.
     async fn gossipsub_publish(&self, topic: String, data: Py<PyBytes>) -> PyResult<()> {
-        let (tx, rx) = oneshot::channel();
-
         // send off request to subscribe
         let data = Python::attach(|py| Vec::from(data.as_bytes(py)));
-        self.to_task_tx()
-            .send_py(ToTask::GossipsubPublish {
-                topic,
-                data,
-                result_tx: tx,
-            })
-            .allow_threads_py() // allow-threads-aware async call
-            .await?;
-
-        // wait for response & return any errors => ignore messageID for now!!!
-        let _ = rx
-            .allow_threads_py() // allow-threads-aware async call
-            .await
-            .map_err(|_| PyErr::receiver_channel_closed())??;
-        Ok(())
+        pin!(
+            self.to_swarm
+                .try_lock()
+                .expect("called send concurrently")
+                .send(ToSwarm::Message(topic, data))
+        )
+        .allow_threads_py() // allow-threads-aware async call
+        .await
+        .map_err(|_| PyConnectionError::new_err("swarm closed"))
     }
-
-    // ---- Gossipsub message receiver methods ----
-
-    /// Receives the next message from the `GossipSub` network.
-    async fn gossipsub_recv(&self) -> PyResult<(String, Py<PyBytes>)> {
-        self.gossipsub_message_rx
-            .lock()
-            .allow_threads_py() // allow-threads-aware async call
-            .await
-            .recv_py()
-            .allow_threads_py() // allow-threads-aware async call
-            .await
-            .map(|(t, d)| (t, d.pybytes()))
-    }
-
-    /// Receives at most `limit` messages from the `GossipSub` network and returns them.
-    ///
-    /// For `limit = 0`, an empty collection of messages will be returned immediately.
-    /// For `limit > 0`, if there are no messages in the channel's queue this method
-    /// will sleep until a message is sent.
-    async fn gossipsub_recv_many(&self, limit: usize) -> PyResult<Vec<(String, Py<PyBytes>)>> {
-        Ok(self
-            .gossipsub_message_rx
-            .lock()
-            .allow_threads_py() // allow-threads-aware async call
-            .await
-            .recv_many_py(limit)
-            .allow_threads_py() // allow-threads-aware async call
-            .await?
-            .into_iter()
-            .map(|(t, d)| (t, d.pybytes()))
-            .collect())
-    }
-
-    // TODO: rn this blocks main thread if anything else is awaiting the channel (bc its a mutex)
-    //       so its too dangerous to expose just yet. figure out a better semantics for handling this,
-    //       so things don't randomly block
-    // /// Tries to receive the next message from the `GossipSub` network.
-    // fn gossipsub_try_recv(&self) -> PyResult<Option<(String, Py<PyBytes>)>> {
-    //     Ok(self
-    //         .gossipsub_message_rx
-    //         .blocking_lock()
-    //         .try_recv_py()?
-    //         .map(|(t, d)| (t, d.pybytes())))
-    // }
-    //
-    // /// Checks if the `GossipSub` message channel is empty.
-    // fn gossipsub_is_empty(&self) -> bool {
-    //     self.gossipsub_message_rx.blocking_lock().is_empty()
-    // }
-    //
-    // /// Returns the number of `GossipSub` messages in the channel.
-    // fn gossipsub_len(&self) -> usize {
-    //     self.gossipsub_message_rx.blocking_lock().len()
-    // }
 }
 
 pub fn networking_submodule(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<exception::PyNoPeersSubscribedToTopicError>()?;
     m.add_class::<exception::PyAllQueuesFullError>()?;
 
-    m.add_class::<PyConnectionUpdateType>()?;
-    m.add_class::<PyConnectionUpdate>()?;
-    m.add_class::<PyConnectionUpdateType>()?;
-    m.add_class::<PyNetworkingHandle>()?;
+    m.add_class::<PySwarm>()?;
+    m.add_class::<PyMessage>()?;
 
     Ok(())
 }

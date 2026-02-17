@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
 
-from exo.routing.connection_message import ConnectionMessage
-from exo.shared.election import ElectionMessage
+from exo.shared.election import ConnectionMessage, ElectionMessage
 from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
 from exo.shared.types.events import (
     ForwarderEvent,

@@ -1,10 +1,10 @@
 use crate::ext::MultiaddrExt;
 use delegate::delegate;
 use either::Either;
-use futures::FutureExt;
 use futures_timer::Delay;
 use libp2p::core::transport::PortUse;
 use libp2p::core::{ConnectedPoint, Endpoint};
+use libp2p::futures::FutureExt;
 use libp2p::swarm::behaviour::ConnectionEstablished;
 use libp2p::swarm::dial_opts::DialOpts;
 use libp2p::swarm::{
