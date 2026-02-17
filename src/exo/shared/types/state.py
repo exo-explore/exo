@@ -6,8 +6,7 @@ from pydantic import ConfigDict, Field, field_serializer, field_validator
 from pydantic.alias_generators import to_camel
 
 from exo.shared.topology import Topology, TopologySnapshot
-from exo.shared.types.common import MetaInstanceId, NodeId
-from exo.shared.types.meta_instance import MetaInstance
+from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import (
     DiskUsage,
     MemoryUsage,
@@ -42,7 +41,6 @@ class State(CamelCaseModel):
         arbitrary_types_allowed=True,
     )
     instances: Mapping[InstanceId, Instance] = {}
-    meta_instances: Mapping[MetaInstanceId, MetaInstance] = {}
     runners: Mapping[RunnerId, RunnerStatus] = {}
     downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {}
     tasks: Mapping[TaskId, Task] = {}
