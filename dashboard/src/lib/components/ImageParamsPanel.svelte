@@ -225,7 +225,7 @@
 
         <!-- Dropdown Panel - fixed positioning to escape overflow:hidden -->
         <div
-          class="fixed bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto min-w-max"
+          class="fixed bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto overflow-x-hidden min-w-max"
           style="bottom: calc(100vh - {sizeDropdownPosition()
             .top}px + 4px); left: {sizeDropdownPosition().left}px;"
         >
@@ -310,7 +310,7 @@
 
         <!-- Dropdown Panel - fixed positioning to escape overflow:hidden -->
         <div
-          class="fixed bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto min-w-max"
+          class="fixed bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto overflow-x-hidden min-w-max"
           style="bottom: calc(100vh - {qualityDropdownPosition()
             .top}px + 4px); left: {qualityDropdownPosition().left}px;"
         >
