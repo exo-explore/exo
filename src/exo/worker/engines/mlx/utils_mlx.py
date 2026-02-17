@@ -269,19 +269,52 @@ def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerW
     return load_tokenizer_for_model_id(shard_metadata.model_card.model_id, model_path)
 
 
-def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
-    """
-    Get the EOS token IDs for a model based on its ID.
+def _read_model_type_from_config(model_path: Path) -> str | None:
+    """Read the model_type field from config.json at the given model path.
 
-    Some models require explicit EOS token configuration that isn't in their
-    tokenizer config. This function returns the known EOS token IDs for such models.
+    Returns None if config.json doesn't exist or doesn't contain model_type.
+    """
+    config_path = model_path / "config.json"
+    if not config_path.exists():
+        return None
+    try:
+        with open(config_path) as f:
+            config: dict[str, Any] = json.load(f)  # pyright: ignore[reportAny]
+        model_type: Any = config.get("model_type")
+        if model_type is None:
+            text_config: Any = config.get("text_config")
+            if isinstance(text_config, dict):
+                model_type = text_config.get("model_type")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        return model_type if isinstance(model_type, str) else None
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def get_eos_token_ids_for_model(
+    model_id: ModelId, model_type: str | None = None
+) -> list[int] | None:
+    """Get the EOS token IDs for a model based on its architecture type.
+
+    Uses model_type from config.json when available, falls back to model_id
+    string matching for backward compatibility.
 
     Args:
         model_id: The HuggingFace model ID
+        model_type: The model_type field from config.json (e.g., "kimi", "glm4")
 
     Returns:
         List of EOS token IDs, or None if the model uses standard tokenizer config
     """
+    if model_type is not None:
+        if model_type == "kimi":
+            return [163586]
+        elif model_type == "glm4_moe_lite":
+            # 154820: <|endoftext|>, 154827: <|user|>, 154829: <|observation|>
+            return [154820, 154827, 154829]
+        elif model_type.startswith("glm"):
+            return [151336, 151329, 151338]
+
+    # Fallback: string matching on model_id
     model_id_lower = model_id.lower()
     if "kimi-k2" in model_id_lower:
         return [163586]
@@ -296,11 +329,10 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
 def load_tokenizer_for_model_id(
     model_id: ModelId, model_path: Path
 ) -> TokenizerWrapper:
-    """
-    Load tokenizer for a model given its ID and local path.
+    """Load tokenizer for a model given its ID and local path.
 
-    This is the core tokenizer loading logic, handling special cases for different
-    model families (Kimi, GLM, etc.) and transformers 5.x compatibility.
+    Uses model_type from config.json for architecture detection when available,
+    falling back to model_id string matching for backward compatibility.
 
     Args:
         model_id: The HuggingFace model ID (e.g., "moonshotai/Kimi-K2-Instruct")
@@ -309,11 +341,21 @@ def load_tokenizer_for_model_id(
     Returns:
         TokenizerWrapper instance configured for the model
     """
+    model_type = _read_model_type_from_config(model_path)
     model_id_lower = model_id.lower()
-    eos_token_ids = get_eos_token_ids_for_model(model_id)
+    eos_token_ids = get_eos_token_ids_for_model(model_id, model_type=model_type)
+
+    is_kimi = (
+        model_type == "kimi" if model_type is not None else "kimi-k2" in model_id_lower
+    )
+    is_gemma3 = (
+        model_type == "gemma3"
+        if model_type is not None
+        else "gemma-3" in model_id_lower
+    )
 
     # Kimi uses a custom TikTokenTokenizer that transformers 5.x can't load via AutoTokenizer
-    if "kimi-k2" in model_id_lower:
+    if is_kimi:
         import importlib.util
         import types
 
@@ -367,7 +409,7 @@ def load_tokenizer_for_model_id(
         eos_token_ids=eos_token_ids,
     )
 
-    if "gemma-3" in model_id_lower:
+    if is_gemma3:
         gemma_3_eos_id = 1
         gemma_3_end_of_turn_id = 106
         if tokenizer.eos_token_ids is not None:

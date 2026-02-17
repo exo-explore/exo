@@ -165,6 +165,7 @@ def is_custom_card(model_id: ModelId) -> bool:
 class ConfigData(BaseModel):
     model_config = {"extra": "ignore"}  # Allow unknown fields
 
+    model_type: str | None = None
     architectures: list[str] | None = None
     hidden_size: Annotated[int, Field(ge=0)] | None = None
     layer_count: int = Field(
@@ -200,6 +201,7 @@ class ConfigData(BaseModel):
             return data
 
         for field in [
+            "model_type",
             "architectures",
             "hidden_size",
             "num_hidden_layers",

@@ -24,6 +24,7 @@ from exo.worker.engines.mlx.utils_mlx import (
 
 # Files needed for tokenizer functionality
 TOKENIZER_FILE_PATTERNS = [
+    "config.json",
     "tokenizer.json",
     "tokenizer_config.json",
     "special_tokens_map.json",
@@ -338,6 +339,9 @@ async def test_kimi_tokenizer_specifically():
     # Verify EOS token is set
     assert eos_token_ids == [163586], "Kimi EOS token should be [163586]"
 
+    # Verify architecture-based detection gives same result
+    assert get_eos_token_ids_for_model(model_id, model_type="kimi") == [163586]
+
 
 # Test GLM tokenizer since it also has special handling
 @pytest.mark.asyncio
@@ -378,3 +382,10 @@ async def test_glm_tokenizer_specifically():
         151329,
         151338,
     ], "GLM EOS tokens should be correct"
+
+    # Verify architecture-based detection gives same result
+    assert get_eos_token_ids_for_model(model_id, model_type="glm4") == [
+        151336,
+        151329,
+        151338,
+    ]
