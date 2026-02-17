@@ -61,6 +61,7 @@ class MetaInstanceReconciler:
                 current_instances,
                 state.node_memory,
                 state.node_network,
+                state.tasks,
             )
             # Update local instance map so next placement sees this one
             for event in result.events:
