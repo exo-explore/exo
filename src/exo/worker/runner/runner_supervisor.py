@@ -72,7 +72,6 @@ class RunnerSupervisor:
     initialize_timeout: float
     _ev_recv: MpReceiver[Event]
     _task_sender: MpSender[Task]
-    _cancel_sender: MpSender[TaskId]
     _event_sender: Sender[Event]
     _cancel_sender: MpSender[TaskId]
     _pipe_read_fd: int | None = None  # Python reads runner's pipe output
