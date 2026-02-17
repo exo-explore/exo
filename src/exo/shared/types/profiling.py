@@ -109,3 +109,9 @@ class ThunderboltBridgeStatus(CamelCaseModel):
     enabled: bool
     exists: bool
     service_name: str | None = None
+
+
+class NodeBandwidth(CamelCaseModel):
+    """Memory bandwidth information for a node."""
+
+    memory_bandwidth: int | None = None

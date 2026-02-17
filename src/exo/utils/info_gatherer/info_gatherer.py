@@ -38,6 +38,7 @@ from .system_info import (
     get_network_interfaces,
     get_os_build_version,
     get_os_version,
+    profile_memory_bandwidth,
 )
 
 IS_DARWIN = sys.platform == "darwin"
@@ -334,6 +335,32 @@ class NodeDiskUsage(TaggedModel):
         )
 
 
+class NodeMemoryBandwidth(TaggedModel):
+    """Memory bandwidth information gathered once at startup."""
+
+    memory_bandwidth: int | None = None
+
+    @classmethod
+    async def gather(cls) -> "NodeMemoryBandwidth":
+        """Profile memory bandwidth with retries. Returns None if all attempts fail."""
+        for attempt in range(1, 6):
+            try:
+                bandwidth: int = await to_thread.run_sync(profile_memory_bandwidth)
+                logger.info(f"Memory bandwidth: {bandwidth / 1e9:.1f} GB/s")
+                return cls(memory_bandwidth=bandwidth)
+            except Exception as e:
+                if attempt < 5:
+                    logger.warning(
+                        f"Memory bandwidth profiling attempt {attempt} failed: {e}"
+                    )
+                    await anyio.sleep(1)
+                else:
+                    logger.error(
+                        f"Memory bandwidth profiling failed after 5 attempts: {e}"
+                    )
+        return cls(memory_bandwidth=None)
+
+
 async def _gather_iface_map() -> dict[str, str] | None:
     proc = await anyio.run_process(
         ["networksetup", "-listallhardwareports"], check=False
@@ -366,6 +393,7 @@ GatheredInfo = (
     | MiscData
     | StaticNodeInformation
     | NodeDiskUsage
+    | NodeMemoryBandwidth
 )
 
 
@@ -400,6 +428,11 @@ class InfoGatherer:
             nc = await NodeConfig.gather()
             if nc is not None:
                 await self.info_sender.send(nc)
+
+            # Gather memory bandwidth once at startup (macOS only)
+            if IS_DARWIN:
+                bandwidth = await NodeMemoryBandwidth.gather()
+                await self.info_sender.send(bandwidth)
 
     def shutdown(self):
         self._tg.cancel_scope.cancel()

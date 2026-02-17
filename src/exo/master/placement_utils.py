@@ -123,10 +123,84 @@ def _allocate_and_validate_layers(
     return layer_allocations
 
 
+def _reserve_base_layers(world_size: int, total_layers: int) -> dict[int, int]:
+    """Reserve 1 layer per node to ensure connectivity."""
+    if total_layers < world_size:
+        logger.warning(
+            "Fewer layers than nodes! Reducing to 1 layer per node where possible."
+        )
+        return {i: 1 if i < total_layers else 0 for i in range(world_size)}
+    return {i: 1 for i in range(world_size)}
+
+
+def _distribute_layers_by_bandwidth(
+    cycle: Cycle,
+    node_memory: Mapping[NodeId, MemoryUsage],
+    node_bandwidth: Mapping[NodeId, int],
+    assignments: dict[int, int],
+    remaining_layers: int,
+    model_card: ModelCard,
+) -> None:
+    """Distribute remaining layers based on bandwidth and RAM capacity."""
+    indexed_nodes = list(enumerate(cycle.node_ids))
+    sorted_nodes = sorted(
+        indexed_nodes,
+        key=lambda x: node_bandwidth.get(x[1], 0),
+        reverse=True,
+    )
+
+    for original_idx, node_id in sorted_nodes:
+        if remaining_layers <= 0:
+            break
+
+        layer_size_bytes = model_card.storage_size.in_bytes / model_card.n_layers
+        max_layers_by_ram = int(
+            node_memory[node_id].ram_available.in_bytes // layer_size_bytes
+        )
+        can_take = max(0, max_layers_by_ram - assignments[original_idx])
+        take = min(can_take, remaining_layers)
+        assignments[original_idx] += take
+        remaining_layers -= take
+
+    if remaining_layers > 0:
+        logger.warning(
+            "All nodes maxed out on RAM estimation, dumping remaining layers on fastest nodes."
+        )
+        for original_idx, _ in sorted_nodes:
+            assignments[original_idx] += 1
+            remaining_layers -= 1
+            if remaining_layers == 0:
+                break
+
+
+def _assign_layers_by_bandwidth(
+    model_card: ModelCard,
+    cycle: Cycle,
+    node_memory: Mapping[NodeId, MemoryUsage],
+    node_bandwidth: Mapping[NodeId, int],
+) -> list[int]:
+    """Assign layers based on memory bandwidth; returns per-node layer count list."""
+    logger.info("Using bandwidth-aware shard assignment")
+
+    total_layers = model_card.n_layers
+    world_size = len(cycle)
+
+    assignments = _reserve_base_layers(world_size, total_layers)
+    remaining_layers = total_layers - sum(assignments.values())
+
+    if remaining_layers > 0:
+        _distribute_layers_by_bandwidth(
+            cycle, node_memory, node_bandwidth, assignments, remaining_layers, model_card
+        )
+
+    return [assignments[i] for i in range(world_size)]
+
+
 def get_shard_assignments_for_pipeline_parallel(
     model_card: ModelCard,
     cycle: Cycle,
     node_memory: Mapping[NodeId, MemoryUsage],
+    node_bandwidth: Mapping[NodeId, int] | None = None,
 ) -> ShardAssignments:
     """Create shard assignments for pipeline parallel execution."""
     world_size = len(cycle)
@@ -135,7 +209,9 @@ def get_shard_assignments_for_pipeline_parallel(
     if use_cfg_parallel:
         return _get_shard_assignments_for_cfg_parallel(model_card, cycle, node_memory)
     else:
-        return _get_shard_assignments_for_pure_pipeline(model_card, cycle, node_memory)
+        return _get_shard_assignments_for_pure_pipeline(
+            model_card, cycle, node_memory, node_bandwidth
+        )
 
 
 def _get_shard_assignments_for_cfg_parallel(
@@ -205,14 +281,29 @@ def _get_shard_assignments_for_pure_pipeline(
     model_card: ModelCard,
     cycle: Cycle,
     node_memory: Mapping[NodeId, MemoryUsage],
+    node_bandwidth: Mapping[NodeId, int] | None = None,
 ) -> ShardAssignments:
     """Create shard assignments for pure pipeline execution."""
     _validate_cycle(cycle)
-    total_memory = _compute_total_memory(cycle.node_ids, node_memory)
 
-    layer_allocations = _allocate_and_validate_layers(
-        cycle.node_ids, node_memory, total_memory, model_card
+    has_bandwidth = node_bandwidth is not None and all(
+        node_id in node_bandwidth for node_id in cycle.node_ids
     )
+
+    if has_bandwidth:
+        assert node_bandwidth is not None
+        layer_allocations = _assign_layers_by_bandwidth(
+            model_card, cycle, node_memory, node_bandwidth
+        )
+    else:
+        if node_bandwidth:
+            logger.info(
+                "Bandwidth data missing for some nodes, falling back to RAM-proportional assignment"
+            )
+        total_memory = _compute_total_memory(cycle.node_ids, node_memory)
+        layer_allocations = _allocate_and_validate_layers(
+            cycle.node_ids, node_memory, total_memory, model_card
+        )
 
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
@@ -279,6 +370,7 @@ def get_shard_assignments(
     cycle: Cycle,
     sharding: Sharding,
     node_memory: Mapping[NodeId, MemoryUsage],
+    node_bandwidth: Mapping[NodeId, int] | None = None,
 ) -> ShardAssignments:
     match sharding:
         case Sharding.Pipeline:
@@ -286,6 +378,7 @@ def get_shard_assignments(
                 model_card=model_card,
                 cycle=cycle,
                 node_memory=node_memory,
+                node_bandwidth=node_bandwidth,
             )
         case Sharding.Tensor:
             return get_shard_assignments_for_tensor_parallel(
