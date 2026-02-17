@@ -26,11 +26,17 @@ from exo.shared.types.openai_responses import (
     ResponseOutputText,
     ResponsesRequest,
     ResponsesResponse,
+    ResponsesStreamEvent,
     ResponseTextDeltaEvent,
     ResponseTextDoneEvent,
     ResponseUsage,
 )
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+
+
+def _format_sse(event: ResponsesStreamEvent) -> str:
+    """Format a streaming event as an SSE message."""
+    return f"event: {event.type}\ndata: {event.model_dump_json()}\n\n"
 
 
 def _extract_content(content: str | list[ResponseContentPart]) -> str:
@@ -207,13 +213,13 @@ async def generate_responses_stream(
     created_event = ResponseCreatedEvent(
         sequence_number=next(seq), response=initial_response
     )
-    yield f"event: response.created\ndata: {created_event.model_dump_json()}\n\n"
+    yield _format_sse(created_event)
 
     # response.in_progress
     in_progress_event = ResponseInProgressEvent(
         sequence_number=next(seq), response=initial_response
     )
-    yield f"event: response.in_progress\ndata: {in_progress_event.model_dump_json()}\n\n"
+    yield _format_sse(in_progress_event)
 
     # response.output_item.added
     initial_item = ResponseMessageItem(
@@ -224,7 +230,7 @@ async def generate_responses_stream(
     item_added = ResponseOutputItemAddedEvent(
         sequence_number=next(seq), output_index=0, item=initial_item
     )
-    yield f"event: response.output_item.added\ndata: {item_added.model_dump_json()}\n\n"
+    yield _format_sse(item_added)
 
     # response.content_part.added
     initial_part = ResponseOutputText(text="")
@@ -235,7 +241,7 @@ async def generate_responses_stream(
         content_index=0,
         part=initial_part,
     )
-    yield f"event: response.content_part.added\ndata: {part_added.model_dump_json()}\n\n"
+    yield _format_sse(part_added)
 
     accumulated_text = ""
     function_call_items: list[ResponseFunctionCallItem] = []
@@ -266,7 +272,7 @@ async def generate_responses_stream(
                     output_index=next_output_index,
                     item=fc_item,
                 )
-                yield f"event: response.output_item.added\ndata: {fc_added.model_dump_json()}\n\n"
+                yield _format_sse(fc_added)
 
                 # response.function_call_arguments.delta
                 args_delta = ResponseFunctionCallArgumentsDeltaEvent(
@@ -275,7 +281,7 @@ async def generate_responses_stream(
                     output_index=next_output_index,
                     delta=tool.arguments,
                 )
-                yield f"event: response.function_call_arguments.delta\ndata: {args_delta.model_dump_json()}\n\n"
+                yield _format_sse(args_delta)
 
                 # response.function_call_arguments.done
                 args_done = ResponseFunctionCallArgumentsDoneEvent(
@@ -285,7 +291,7 @@ async def generate_responses_stream(
                     name=tool.name,
                     arguments=tool.arguments,
                 )
-                yield f"event: response.function_call_arguments.done\ndata: {args_done.model_dump_json()}\n\n"
+                yield _format_sse(args_done)
 
                 # response.output_item.done
                 fc_done_item = ResponseFunctionCallItem(
@@ -300,7 +306,7 @@ async def generate_responses_stream(
                     output_index=next_output_index,
                     item=fc_done_item,
                 )
-                yield f"event: response.output_item.done\ndata: {fc_item_done.model_dump_json()}\n\n"
+                yield _format_sse(fc_item_done)
 
                 function_call_items.append(fc_done_item)
                 next_output_index += 1
@@ -316,7 +322,7 @@ async def generate_responses_stream(
             content_index=0,
             delta=chunk.text,
         )
-        yield f"event: response.output_text.delta\ndata: {delta_event.model_dump_json()}\n\n"
+        yield _format_sse(delta_event)
 
     # response.output_text.done
     text_done = ResponseTextDoneEvent(
@@ -326,7 +332,7 @@ async def generate_responses_stream(
         content_index=0,
         text=accumulated_text,
     )
-    yield f"event: response.output_text.done\ndata: {text_done.model_dump_json()}\n\n"
+    yield _format_sse(text_done)
 
     # response.content_part.done
     final_part = ResponseOutputText(text=accumulated_text)
@@ -337,7 +343,7 @@ async def generate_responses_stream(
         content_index=0,
         part=final_part,
     )
-    yield f"event: response.content_part.done\ndata: {part_done.model_dump_json()}\n\n"
+    yield _format_sse(part_done)
 
     # response.output_item.done
     final_message_item = ResponseMessageItem(
@@ -348,7 +354,7 @@ async def generate_responses_stream(
     item_done = ResponseOutputItemDoneEvent(
         sequence_number=next(seq), output_index=0, item=final_message_item
     )
-    yield f"event: response.output_item.done\ndata: {item_done.model_dump_json()}\n\n"
+    yield _format_sse(item_done)
 
     # Create usage from usage data if available
     usage = None
@@ -373,4 +379,4 @@ async def generate_responses_stream(
     completed_event = ResponseCompletedEvent(
         sequence_number=next(seq), response=final_response
     )
-    yield f"event: response.completed\ndata: {completed_event.model_dump_json()}\n\n"
+    yield _format_sse(completed_event)
