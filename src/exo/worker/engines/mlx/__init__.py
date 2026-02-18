@@ -12,7 +12,7 @@ using the MLX framework. It handles all MLX-specific logic including:
 
 from collections.abc import Generator
 from functools import cache
-from typing import Any, Union
+from typing import Any
 
 import loguru
 import mlx.core as mx

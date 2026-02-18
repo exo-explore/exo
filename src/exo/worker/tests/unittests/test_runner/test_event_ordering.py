@@ -188,7 +188,9 @@ def _run(tasks: Iterable[Task], engine: Engine):
         task_receiver.close = nothin
         task_receiver.join = nothin
 
-        runner.main(bound_instance, event_sender, task_receiver, cancel_receiver, engine)  # type: ignore[arg-type]
+        runner.main(
+            bound_instance, event_sender, task_receiver, cancel_receiver, engine
+        )  # type: ignore[arg-type]
 
         return event_sender.events
 

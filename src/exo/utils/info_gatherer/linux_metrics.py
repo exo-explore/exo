@@ -64,16 +64,29 @@ async def get_linux_gpu_metrics() -> LinuxGpuMetrics:
             )
             output = result.stdout.decode().strip()
             if output:
-                # Handle multiple GPUs: take the first one for now
                 lines = output.split("\n")
-                if lines:
-                    parts = lines[0].split(",")
+                # Aggregate across all GPUs: sum VRAM, average utilization, max temp, sum power
+                total_vram = 0
+                total_free = 0
+                total_power = 0.0
+                max_temp = 0.0
+                total_util = 0.0
+                gpu_count = 0
+                for line in lines:
+                    parts = line.split(",")
                     if len(parts) >= 5:
-                        gpu_util = _safe_parse_float(parts[0])
-                        gpu_power = _safe_parse_float(parts[1])
-                        gpu_temp = _safe_parse_float(parts[2])
-                        vram_total = _safe_parse_int_from_mib(parts[3])
-                        vram_free = _safe_parse_int_from_mib(parts[4])
+                        total_util += _safe_parse_float(parts[0])
+                        total_power += _safe_parse_float(parts[1])
+                        max_temp = max(max_temp, _safe_parse_float(parts[2]))
+                        total_vram += _safe_parse_int_from_mib(parts[3])
+                        total_free += _safe_parse_int_from_mib(parts[4])
+                        gpu_count += 1
+                if gpu_count > 0:
+                    gpu_util = total_util / gpu_count
+                    gpu_power = total_power
+                    gpu_temp = max_temp
+                    vram_total = total_vram
+                    vram_free = total_free
         except Exception as e:
             logger.warning(f"Failed to query nvidia-smi: {e}")
 
@@ -90,7 +103,9 @@ async def get_linux_gpu_metrics() -> LinuxGpuMetrics:
 async def get_linux_metrics_async() -> MacmonMetrics:
     """Collects metrics for Linux (specifically NVIDIA GPUs via nvidia-smi).
 
-    Returns a MacmonMetrics object for compatibility with the system info interface.
+    Returns a MacmonMetrics object for compatibility with the GatheredInfo interface.
+    MacmonMetrics wraps SystemPerformanceProfile + MemoryUsage which are generic types;
+    Mac-specific fields (pcpu_usage, ecpu_usage) are set to 0 on Linux.
     Note: Uses VRAM as memory metrics for Linux GPU systems.
     """
     gpu_metrics = await get_linux_gpu_metrics()

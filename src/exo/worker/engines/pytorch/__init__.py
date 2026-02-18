@@ -217,10 +217,14 @@ class PytorchEngine(Engine):
         try:
             for new_text in streamer:
                 if new_text:  # Skip empty strings
-                    completion_tokens += 1
+                    # Count actual tokens, not text chunks (streamer may batch)
+                    chunk_token_count: int = len(
+                        self.tokenizer.encode(new_text, add_special_tokens=False)
+                    )  # pyright: ignore[reportAny]
+                    completion_tokens += chunk_token_count
                     yield GenerationResponse(
                         text=new_text,
-                        token=completion_tokens,  # Approximate token count
+                        token=completion_tokens,
                         finish_reason=None,
                         stats=None,
                         usage=None,

@@ -38,6 +38,12 @@ class CustomPytorchLayer(nn.Module):
 
 
 class PipelineFirstLayer(CustomPytorchLayer):
+    """Wrapper for the first layer in a pipeline-parallel shard.
+
+    TODO: Implement inter-device communication via torch.distributed.
+    Currently a no-op pass-through — distributed send/recv not yet implemented.
+    """
+
     def __init__(
         self,
         original_layer: nn.Module,
@@ -57,6 +63,12 @@ class PipelineFirstLayer(CustomPytorchLayer):
 
 
 class PipelineLastLayer(CustomPytorchLayer):
+    """Wrapper for the last layer in a pipeline-parallel shard.
+
+    TODO: Implement inter-device communication via torch.distributed.
+    Currently a no-op pass-through — distributed send/recv not yet implemented.
+    """
+
     def __init__(
         self,
         original_layer: nn.Module,

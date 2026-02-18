@@ -35,7 +35,8 @@ class MlxJacclInstance(BaseInstance):
     jaccl_coordinators: dict[NodeId, str]
 
 
-# TODO: Single node instance - hosts_by_node is empty for now, will need rework for multi-node torch.distributed
+# TODO: Single node instance for now. hosts_by_node and ephemeral_port are placeholders
+# for future multi-node torch.distributed support (currently unused).
 class PytorchInstance(BaseInstance):
     hosts_by_node: dict[NodeId, list[Host]]
     ephemeral_port: int

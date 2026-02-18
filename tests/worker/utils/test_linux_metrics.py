@@ -180,8 +180,8 @@ class TestGetLinuxGpuMetrics:
             assert metrics.vram_total_bytes == 0
 
     @pytest.mark.asyncio
-    async def test_nvidia_smi_multi_gpu_takes_first(self):
-        """Test that multi-GPU output uses the first GPU."""
+    async def test_nvidia_smi_multi_gpu_aggregates(self):
+        """Test that multi-GPU output aggregates across all GPUs."""
         mock_result = MagicMock()
         mock_result.stdout = b"50, 100, 60, 8192, 4096\n75, 200, 70, 16384, 8192\n"
 
@@ -197,9 +197,16 @@ class TestGetLinuxGpuMetrics:
             ),
         ):
             metrics = await get_linux_gpu_metrics()
-            # Should use first GPU's values
-            assert metrics.gpu_utilization == 50.0
-            assert metrics.gpu_power_watts == 100.0
+            # Utilization: average of 50 and 75 = 62.5
+            assert metrics.gpu_utilization == 62.5
+            # Power: sum of 100 and 200 = 300
+            assert metrics.gpu_power_watts == 300.0
+            # Temperature: max of 60 and 70 = 70
+            assert metrics.gpu_temp_celsius == 70.0
+            # VRAM total: sum of 8192 and 16384 MiB
+            assert metrics.vram_total_bytes == (8192 + 16384) * MIB_TO_BYTES
+            # VRAM free: sum of 4096 and 8192 MiB
+            assert metrics.vram_free_bytes == (4096 + 8192) * MIB_TO_BYTES
 
 
 class TestGetLinuxMetricsAsync:
