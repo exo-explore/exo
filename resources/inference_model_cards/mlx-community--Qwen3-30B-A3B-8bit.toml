@@ -1,0 +1,12 @@
+model_id = "mlx-community/Qwen3-30B-A3B-8bit"
+n_layers = 48
+hidden_size = 2048
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "8bit"
+base_model = "Qwen3 30B"
+capabilities = ["text", "thinking", "thinking_toggle"]
+
+[storage_size]
+in_bytes = 33279705088

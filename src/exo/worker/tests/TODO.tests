@@ -1,0 +1,57 @@
+Unit Tests
+1. Test worker plans as expected
+ - State transitions are correct
+ - Unexpected states throw
+
+2. Test runner
+ - Stays loaded
+ - Unloads under end condition
+ - Accepts tasks
+ - Returns ChunkGenerated events
+
+3. Test mlx engine
+ - Autoparallel on n of the same nodes returns tensors with 1/n size
+ - mx.barrier forces computation
+ - Distributed init returns expected configuration
+ - initialize_mlx sets wired limit
+ - shard_and_load returns expected model
+ - Quantization returns quantized layers
+
+ 4. Download
+  - hits the correct endpoint
+  - normalizes tags correctly
+  - updates download progress
+
+ 5. Serialization/Deserialization of tagged models
+
+
+
+
+
+Integration tests:
+1. Test model inference is "sensible" (per-configuration)
+ - Non-empty response
+ - Sensible inference speed
+ - Answers are non-gibberish for many seeds (What is the capital of France? -> "Paris" in answer.)
+ - Answer is the same for particular seed
+
+2. Test that node count does not affect inference result (per-configuration)
+ - Llama on 1 node, and on 2 nodes returns the same result, given temperature 0 and set seed.
+ - Do for all configurations (Ring/Jaccl, Pipeline/Tensor)
+
+3. Test supervisor catches exceptions gracefully
+ - Timeouts
+ - OOM
+ - MLX error
+
+4. distributed init memory requirements are as expected
+
+5. MLX
+ - KVCache size is same length as prompt tokens
+ - Prefix cache (once implemented)
+
+6. Spin up creates a runner or goes to failed status
+
+
+Regression tests:
+1. Per-configuration baseline performance - no 20% drop in performance (device, node count, model, strategy, backend)

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "exo/mlx-community/gpt-oss-120b-MXFP4-Q8",
+  "provider": {
+    "exo": {
+      "api": "http://localhost:52415/v1",
+      "models": {
+        "mlx-community/gpt-oss-120b-MXFP4-Q8": {
+          "name": "GPT OSS 120B",
+          "limit": {
+            "context": 32768,
+            "output": 8192
+          }
+        }
+      }
+    }
+  }
+}

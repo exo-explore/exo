@@ -1,0 +1,12 @@
+name: Unit Test
+
+description: "Run unit tests"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run unit tests
+      run: |
+        nix --extra-experimental-features nix-command --extra-experimental-features flakes develop -c just sync-clean
+        nix --extra-experimental-features nix-command --extra-experimental-features flakes develop -c just test-fast
+      shell: bash

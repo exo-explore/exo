@@ -1,0 +1,12 @@
+model_id = "mlx-community/gpt-oss-20b-MXFP4-Q8"
+n_layers = 24
+hidden_size = 2880
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "gpt-oss"
+quantization = "MXFP4-Q8"
+base_model = "GPT-OSS 20B"
+capabilities = ["text", "thinking"]
+
+[storage_size]
+in_bytes = 12025908224

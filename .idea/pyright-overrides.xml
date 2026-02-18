@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="com.insyncwithfoo.pyright.configurations.Override">
+    <option name="names">
+      <map>
+        <entry key="configurationFile" value="true" />
+        <entry key="diagnosticMode" value="true" />
+        <entry key="inlayHintsGenericTypes" value="true" />
+        <entry key="prefixTooltipMessages" value="true" />
+        <entry key="runningMode" value="true" />
+        <entry key="smartExecutableResolution" value="true" />
+        <entry key="smartLanguageServerExecutableResolution" value="true" />
+        <entry key="useEditorFontForTooltips" value="true" />
+        <entry key="useTypingExtensions" value="true" />
+      </map>
+    </option>
+  </component>
+</project>

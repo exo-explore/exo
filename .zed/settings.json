@@ -1,0 +1,29 @@
+// Folder-specific settings
+//
+// For a full list of overridable settings, and general information on folder-specific settings,
+// see the documentation: https://zed.dev/docs/configuring-zed#settings-files
+{
+  "lsp": {
+    "nix_python": {
+      "binary": {
+        "path": "nix",
+        "arguments": [
+          "run",
+          "--quiet",
+          "--no-warn-dirty",
+          "--no-allow-import-from-derivation",
+          "--print-build-logs",
+          "never",
+          "${projectRoot}#python-lsp",
+          "--",
+          "--stdio"
+        ]
+      }
+    }
+  },
+  "languages": {
+    "Python": {
+      "language_servers": ["nix_python"]
+    }
+  }
+}

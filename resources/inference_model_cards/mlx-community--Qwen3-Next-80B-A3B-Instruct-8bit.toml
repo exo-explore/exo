@@ -1,0 +1,12 @@
+model_id = "mlx-community/Qwen3-Next-80B-A3B-Instruct-8bit"
+n_layers = 48
+hidden_size = 2048
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "8bit"
+base_model = "Qwen3 Next 80B"
+capabilities = ["text"]
+
+[storage_size]
+in_bytes = 88814387200

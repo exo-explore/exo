@@ -1,0 +1,11 @@
+{
+    "recommendations": [
+        "detachhead.basedpyright",
+        "ms-python.python"
+    ],
+    "unwantedRecommendations": [
+        "ms-python.vscode-pylance",
+        "ms-python.pyright",
+        "ms-python.mypy-type-checker"
+    ]
+}

@@ -1,0 +1,12 @@
+model_id = "mlx-community/GLM-4.5-Air-bf16"
+n_layers = 46
+hidden_size = 4096
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "glm"
+quantization = "bf16"
+base_model = "GLM 4.5 Air"
+capabilities = ["text", "thinking", "thinking_toggle"]
+
+[storage_size]
+in_bytes = 229780750336

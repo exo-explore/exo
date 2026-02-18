@@ -1,0 +1,8 @@
+model_id = "mlx-community/Qwen3-Coder-Next-8bit"
+n_layers = 48
+hidden_size = 2048
+supports_tensor = true
+tasks = ["TextGeneration"]
+
+[storage_size]
+in_bytes = 89357758772

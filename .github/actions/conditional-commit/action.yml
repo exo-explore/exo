@@ -1,0 +1,16 @@
+name: Commit if changed
+description: "Create a commit when the working tree is dirty"
+
+inputs:
+  message:
+    description: "Commit message"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Commit changed files
+      shell: bash
+      run: |
+        git diff --quiet && exit 0
+        git commit -am "${{ inputs.message }}"

@@ -1,0 +1,44 @@
+https://github.com/ml-explore/mlx/commit/3fe98bacc7640d857acf3539f1d21b47a32e5609
+^raw sockets distributed -> `<net/ndrv.h>` -> https://newosxbook.com/code/xnu-3247.1.106/bsd/net/ndrv.h.auto.html
+--> header file for a networking component found in the macOS kernel (XNU) that defines structures for network device driver registration, specifically the ndrv_demux_desc and ndrv_protocol_desc structures used for demultiplexing protocol data at the network interface level. It specifies how to describe protocol data, such as an Ethernet type or a SNAP header, and how to associate these descriptions with a specific protocol family to receive matching packets.
+--> Used to bind an NDRV socket so that packets that match given protocol demux descriptions can be received.
+--> An NDRV socket is a special kind of socket in the Darwin/macOS operating system's XNU kernel, used for low-level network packet manipulation and binding to specific protocols for packet processing. It allows user-space applications or drivers to directly write Layer 2 (L2) network packets or interact with the network stack at a lower level, often by binding to protocol descriptors like the ndrv_protocol_desc. This type of socket is used for functions such as capturing and injecting packets, especially in network infrastructure software like routers or for kernel-level network monitoring and security tools.
+--> also called PF_NDRV sockets --> https://newosxbook.com/bonus/vol1ch16.html
+----> they are conceptually similar to https://scapy.disruptivelabs.in/networking/socket-interface PF_RAW or PF_PACKET
+
+https://stackoverflow.com/questions/17169298/af-packet-on-osx
+^AF_PACKET duplicates the packets as soon as it receives them from the physical layer (for incoming packets) or just before sending them out to the physical layer (for outgoing packets). -> this is on Linux only
+^it doesn't exist on OS X so you can use /dev/bpfX (Berkeley Packet Filter) for sniffing
+
+https://www.unix.com/man_page/mojave/4/ip/
+^OS X manpages for IP
+
+https://developer.apple.com/documentation/kernel/implementing_drivers_system_extensions_and_kexts
+^driver kit, system extensions & kexts for macOS
+
+----
+
+To set up a Linux system to use a Thunderbolt connection as a network device, connect the two computers with a Thunderbolt cable, load the thunderbolt-net kernel module (usually automatic but modprobe is an option for manual loading), and then the operating system will create virtual Ethernet interfaces (e.g., thunderbolt0) for networking. You can then use standard tools like ifconfig or your desktop environment's network manager to configure these new interfaces for a link-local network.
+--> https://gist.github.com/geosp/80fbd39e617b7d1d9421683df4ea224a
+----> here is a guide on how to set up thunderbolt-ethernet on linux
+----> I may be able to steal the thunderbolt-net code ideas to implement a kernel module for MacOS
+
+https://chatgpt.com/s/t_68af8e41a8548191993281a014f846a7
+^GPT discussion about making socket interface
+
+https://chatgpt.com/s/t_68afb798a85c8191973c02a0fa7a48a3 --> link-local address,,??
+https://chatgpt.com/s/t_68afb02987e08191b2b0044d3667ece2
+^GPT discussion about accessing TB on MacOS low level interactions
+
+--------------------------------
+
+https://www.intel.com/content/www/us/en/support/articles/000098893/software.html
+^Thunderbolt Share & Thunderbolt Networking Mode => intel's equivalent of thunderbolt bridge
+
+
+---------------------------------
+
+https://www.zerotier.com/blog/how-zerotier-eliminated-kernel-extensions-on-macos/
+-->fake ethernet devices on MacOS -> omg??? we can detect thunderbolt bridge, then bind to it, then re-expose it as fake ethernet??
+-->ps: https://chatgpt.com/s/t_68afb2b25fb881919526763fb5d7359c, AF/PF_NDRV are one and the same!!!
+-->https://github.com/zerotier/ZeroTierOne/blob/dev/osdep/MacEthernetTapAgent.c

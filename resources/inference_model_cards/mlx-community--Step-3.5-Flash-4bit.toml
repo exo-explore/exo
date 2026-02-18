@@ -1,0 +1,12 @@
+model_id = "mlx-community/Step-3.5-Flash-4bit"
+n_layers = 45
+hidden_size = 4096
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "step"
+quantization = "4bit"
+base_model = "Step 3.5 Flash"
+capabilities = ["text", "thinking", "thinking_toggle"]
+
+[storage_size]
+in_bytes = 114572190076

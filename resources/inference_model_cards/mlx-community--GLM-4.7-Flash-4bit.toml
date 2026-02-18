@@ -1,0 +1,12 @@
+model_id = "mlx-community/GLM-4.7-Flash-4bit"
+n_layers = 47
+hidden_size = 2048
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "glm"
+quantization = "4bit"
+base_model = "GLM 4.7 Flash"
+capabilities = ["text", "thinking", "thinking_toggle"]
+
+[storage_size]
+in_bytes = 19327352832

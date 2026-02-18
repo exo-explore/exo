@@ -1,0 +1,20 @@
+name: Verify Clean Working Tree
+
+description: "Fail the job if the previous step left the working tree dirty"
+
+inputs:
+  step:
+    description: "The name of the step that just executed"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Check git diff
+      shell: bash
+      run: |
+        if ! git diff --quiet; then
+          echo "Error: ${{ inputs.step }} left working tree dirty." >&2
+          git --no-pager diff >&2
+          exit 1
+        fi 

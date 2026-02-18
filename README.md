@@ -1,257 +1,428 @@
-# exo-rkllama
+<div align="center">
 
-A fork of [exo-explore/exo](https://github.com/exo-explore/exo) that adds **RKLLM inference engine support** for Rockchip RK3588/RK3576 NPU devices.
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="/docs/imgs/exo-logo-black-bg.jpg">
+  <img alt="exo logo" src="/docs/imgs/exo-logo-transparent.png" width="50%" height="50%">
+</picture>
 
-## What is exo?
+exo: Run frontier AI locally. Maintained by [exo labs](https://x.com/exolabs).
 
-[exo](https://github.com/exo-explore/exo) is a distributed inference framework that lets you run large language models across multiple heterogeneous devices (iPhones, iPads, Macs, NVIDIA GPUs, Raspberry Pis). Key features:
+<p align="center">
+  <a href="https://discord.gg/TJ4P57arEm" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Discord-Join%20Server-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://x.com/exolabs" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/twitter/follow/exolabs?style=social" alt="X"></a>
+  <a href="https://www.apache.org/licenses/LICENSE-2.0.html" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/License-Apache2.0-blue.svg" alt="License: Apache-2.0"></a>
+</p>
 
-- **P2P Architecture**: No master-worker hierarchy - all devices are equal peers
-- **ChatGPT-Compatible API**: Drop-in replacement at `localhost:52415/v1/chat/completions`
-- **Automatic Device Discovery**: Zero-configuration networking via UDP, Tailscale, or manual config
-- **Dynamic Model Partitioning**: Automatically splits models across devices based on available memory
+</div>
 
-## What This Fork Adds
+---
 
-This fork adds the **RKLLM inference engine** that enables LLM inference on Rockchip NPUs (Neural Processing Units), specifically targeting:
+exo connects all your devices into an AI cluster. Not only does exo enable running models larger than would fit on a single device, but with [day-0 support for RDMA over Thunderbolt](https://x.com/exolabs/status/2001817749744476256?s=20), makes models run faster as you add more devices.
 
-- **RK3588** (6 TOPS INT8)
-- **RK3576** (6 TOPS INT8)
+## Features
 
-This allows devices like Orange Pi 5, Rock 5B, Turing Pi 2 RK1 modules, and other RK3588-based SBCs to participate in exo clusters or run inference standalone.
+- **Automatic Device Discovery**: Devices running exo automatically discover each other - no manual configuration.
+- **RDMA over Thunderbolt**: exo ships with [day-0 support for RDMA over Thunderbolt 5](https://x.com/exolabs/status/2001817749744476256?s=20), enabling 99% reduction in latency between devices.
+- **Topology-Aware Auto Parallel**: exo figures out the best way to split your model across all available devices based on a realtime view of your device topology. It takes into account device resources and network latency/bandwidth between each link.
+- **Tensor Parallelism**: exo supports sharding models, for up to 1.8x speedup on 2 devices and 3.2x speedup on 4 devices.
+- **MLX Support**: exo uses [MLX](https://github.com/ml-explore/mlx) as an inference backend and [MLX distributed](https://ml-explore.github.io/mlx/build/html/usage/distributed.html) for distributed communication.
 
-### Architecture
+## Dashboard
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Request Flow                             │
-│                                                                  │
-│  User ──▶ ChatGPT API ──▶ Node ──▶ RKLLMEngine ──▶ HTTP Client  │
-│             :52415                                      │        │
-│                                                         ▼        │
-│                                               ┌─────────────────┐│
-│                                               │ RKLLAMA Server  ││
-│                                               │    :8080        ││
-│                                               └────────┬────────┘│
-│                                                        ▼         │
-│                                               ┌─────────────────┐│
-│                                               │  RK3588 NPU     ││
-│                                               │  6 TOPS INT8    ││
-│                                               └─────────────────┘│
-└─────────────────────────────────────────────────────────────────┘
-```
+exo includes a built-in dashboard for managing your cluster and chatting with models.
 
-The RKLLM engine communicates with a separate [rkllama](https://github.com/jfreed-dev/rkllama) server that handles the actual NPU inference via Rockchip's RKLLM runtime.
+<p align="center">
+  <img src="docs/imgs/dashboard-cluster-view.png" alt="exo dashboard - cluster view showing 4 x M3 Ultra Mac Studio with DeepSeek v3.1 and Kimi-K2-Thinking loaded" width="80%" />
+</p>
+<p align="center"><em>4 × 512GB M3 Ultra Mac Studio running DeepSeek v3.1 (8-bit) and Kimi-K2-Thinking (4-bit)</em></p>
 
-## Performance
+## Benchmarks
 
-Tested on RK3588 with RKLLM SDK 1.1.4:
+<details>
+  <summary>Qwen3-235B (8-bit) on 4 × M3 Ultra Mac Studio with Tensor Parallel RDMA</summary>
+  <img src="docs/benchmarks/jeffgeerling/mac-studio-cluster-ai-full-1-qwen3-235b.jpeg" alt="Benchmark - Qwen3-235B (8-bit) on 4 × M3 Ultra Mac Studio with Tensor Parallel RDMA" width="80%" />
+  <p>
+    <strong>Source:</strong> <a href="https://www.jeffgeerling.com/blog/2025/15-tb-vram-on-mac-studio-rdma-over-thunderbolt-5">Jeff Geerling: 15 TB VRAM on Mac Studio – RDMA over Thunderbolt 5</a>
+  </p>
+</details>
 
-| Model | Tokens/sec | Notes |
-|-------|------------|-------|
-| Qwen2.5-1.5B-Instruct (w8a8) | ~7.8 | Concise responses, ideal for APIs |
-| DeepSeek-R1-1.5B | ~7.9 | Chain-of-thought reasoning |
+<details>
+  <summary>DeepSeek v3.1 671B (8-bit) on 4 × M3 Ultra Mac Studio with Tensor Parallel RDMA</summary>
+  <img src="docs/benchmarks/jeffgeerling/mac-studio-cluster-ai-full-2-deepseek-3.1-671b.jpeg" alt="Benchmark - DeepSeek v3.1 671B (8-bit) on 4 × M3 Ultra Mac Studio with Tensor Parallel RDMA" width="80%" />
+  <p>
+    <strong>Source:</strong> <a href="https://www.jeffgeerling.com/blog/2025/15-tb-vram-on-mac-studio-rdma-over-thunderbolt-5">Jeff Geerling: 15 TB VRAM on Mac Studio – RDMA over Thunderbolt 5</a>
+  </p>
+</details>
 
-## Installation
+<details>
+  <summary>Kimi K2 Thinking (native 4-bit) on 4 × M3 Ultra Mac Studio with Tensor Parallel RDMA</summary>
+  <img src="docs/benchmarks/jeffgeerling/mac-studio-cluster-ai-full-3-kimi-k2-thinking.jpeg" alt="Benchmark - Kimi K2 Thinking (native 4-bit) on 4 × M3 Ultra Mac Studio with Tensor Parallel RDMA" width="80%" />
+  <p>
+    <strong>Source:</strong> <a href="https://www.jeffgeerling.com/blog/2025/15-tb-vram-on-mac-studio-rdma-over-thunderbolt-5">Jeff Geerling: 15 TB VRAM on Mac Studio – RDMA over Thunderbolt 5</a>
+  </p>
+</details>
 
-**Requires Python >= 3.12.0**
-
-```bash
-git clone https://github.com/jfreed-dev/exo-rkllama.git
-cd exo-rkllama
-pip install -e .
-```
+---
 
 ## Quick Start
 
-### 1. Start RKLLAMA Server (on RK3588 device)
+Devices running exo automatically discover each other, without needing any manual configuration. Each device provides an API and a dashboard for interacting with your cluster (runs at `http://localhost:52415`).
+
+There are two ways to run exo:
+
+### Run from Source (macOS)
+
+If you have [Nix](https://nixos.org/) installed, you can skip most of the steps below and run exo directly (after accepting the Cachix cache):
 
 ```bash
-cd /opt/rkllama
-source venv/bin/activate
-python server.py --target_platform rk3588 --port 8080
+nix run .#exo
 ```
 
-### 2. Start exo with RKLLM Engine
+**Prerequisites:**
+- [Xcode](https://developer.apple.com/xcode/) (provides the Metal ToolChain required for MLX compilation)
+- [brew](https://github.com/Homebrew/brew) (for simple package management on macOS)
+
+  ```bash
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  ```
+- [uv](https://github.com/astral-sh/uv) (for Python dependency management)
+- [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
+- [node](https://github.com/nodejs/node) (for building the dashboard)
+
+  ```bash
+  brew install uv macmon node
+  ```
+- [rust](https://github.com/rust-lang/rustup) (to build Rust bindings, nightly for now)
+
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  rustup toolchain install nightly
+  ```
+
+Clone the repo, build the dashboard, and run exo:
 
 ```bash
-# Optional: configure server location (defaults shown)
-export RKLLM_SERVER_HOST=localhost
-export RKLLM_SERVER_PORT=8080
+# Clone exo
+git clone https://github.com/exo-explore/exo
 
-# Start exo
-exo --inference-engine rkllm --disable-tui
+# Build dashboard
+cd exo/dashboard && npm install && npm run build && cd ..
+
+# Run exo
+uv run exo
 ```
 
-### 3. Send Requests
+This starts the exo dashboard and API at http://localhost:52415/
+
+
+*Please view the section on RDMA to enable this feature on MacOS >=26.2!*
+
+
+### Run from Source (Linux)
+
+**Prerequisites:**
+
+- [uv](https://github.com/astral-sh/uv) (for Python dependency management)
+- [node](https://github.com/nodejs/node) (for building the dashboard) - version 18 or higher
+- [rust](https://github.com/rust-lang/rustup) (to build Rust bindings, nightly for now)
+
+**Installation methods:**
+
+**Option 1: Using system package manager (Ubuntu/Debian example):**
+```bash
+# Install Node.js and npm
+sudo apt update
+sudo apt install nodejs npm
+
+# Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install Rust (using rustup)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup toolchain install nightly
+```
+
+**Option 2: Using Homebrew on Linux (if preferred):**
+```bash
+# Install Homebrew on Linux
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install dependencies
+brew install uv node
+
+# Install Rust (using rustup)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup toolchain install nightly
+```
+
+**Note:** The `macmon` package is macOS-only and not required for Linux.
+
+Clone the repo, build the dashboard, and run exo:
 
 ```bash
-curl http://localhost:52415/v1/chat/completions \
-  -H "Content-Type: application/json" \
+# Clone exo
+git clone https://github.com/exo-explore/exo
+
+# Build dashboard
+cd exo/dashboard && npm install && npm run build && cd ..
+
+# Run exo
+uv run exo
+```
+
+This starts the exo dashboard and API at http://localhost:52415/
+
+**Important note for Linux users:** Currently, exo runs on CPU on Linux. GPU support for Linux platforms is under development. If you'd like to see support for your specific Linux hardware, please [search for existing feature requests](https://github.com/exo-explore/exo/issues) or create a new one.
+
+**Configuration Options:**
+
+- `--no-worker`: Run exo without the worker component. Useful for coordinator-only nodes that handle networking and orchestration but don't execute inference tasks. This is helpful for machines without sufficient GPU resources but with good network connectivity.
+
+  ```bash
+  uv run exo --no-worker
+  ```
+
+**File Locations (Linux):**
+
+exo follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html) on Linux:
+
+- **Configuration files**: `~/.config/exo/` (or `$XDG_CONFIG_HOME/exo/`)
+- **Data files**: `~/.local/share/exo/` (or `$XDG_DATA_HOME/exo/`)
+- **Cache files**: `~/.cache/exo/` (or `$XDG_CACHE_HOME/exo/`)
+
+You can override these locations by setting the corresponding XDG environment variables.
+
+### macOS App
+
+exo ships a macOS app that runs in the background on your Mac.
+
+<img src="docs/imgs/macos-app-one-macbook.png" alt="exo macOS App - running on a MacBook" width="35%" />
+
+The macOS app requires macOS Tahoe 26.2 or later.
+
+Download the latest build here: [EXO-latest.dmg](https://assets.exolabs.net/EXO-latest.dmg).
+
+The app will ask for permission to modify system settings and install a new Network profile. Improvements to this are being worked on.
+
+**Custom Namespace for Cluster Isolation:**
+
+The macOS app includes a custom namespace feature that allows you to isolate your exo cluster from others on the same network. This is configured through the `EXO_LIBP2P_NAMESPACE` setting:
+
+- **Use cases**:
+  - Running multiple separate exo clusters on the same network
+  - Isolating development/testing clusters from production clusters
+  - Preventing accidental cluster joining
+
+- **Configuration**: Access this setting in the app's Advanced settings (or set the `EXO_LIBP2P_NAMESPACE` environment variable when running from source)
+
+The namespace is logged on startup for debugging purposes.
+
+#### Uninstalling the macOS App
+
+The recommended way to uninstall is through the app itself: click the menu bar icon → Advanced → Uninstall. This cleanly removes all system components.
+
+If you've already deleted the app, you can run the standalone uninstaller script:
+
+```bash
+sudo ./app/EXO/uninstall-exo.sh
+```
+
+This removes:
+- Network setup LaunchDaemon
+- Network configuration script
+- Log files
+- The "exo" network location
+
+**Note:** You'll need to manually remove EXO from Login Items in System Settings → General → Login Items.
+
+---
+
+### Enabling RDMA on macOS
+
+RDMA is a new capability added to macOS 26.2. It works on any Mac with Thunderbolt 5 (M4 Pro Mac Mini, M4 Max Mac Studio, M4 Max MacBook Pro, M3 Ultra Mac Studio).
+
+Please refer to the caveats for immediate troubleshooting.
+
+To enable RDMA on macOS, follow these steps:
+
+1. Shut down your Mac.
+2. Hold down the power button for 10 seconds until the boot menu appears.
+3. Select "Options" to enter Recovery mode.
+4. When the Recovery UI appears, open the Terminal from the Utilities menu.
+5. In the Terminal, type:
+   ```
+   rdma_ctl enable
+   ```
+   and press Enter.
+6. Reboot your Mac.
+
+After that, RDMA will be enabled in macOS and exo will take care of the rest.
+
+**Important Caveats**
+
+1. Devices that wish to be part of an RDMA cluster must be connected to all other devices in the cluster.
+2. The cables must support TB5.
+3. On a Mac Studio, you cannot use the Thunderbolt 5 port next to the Ethernet port.
+4. If running from source, please use the script found at `tmp/set_rdma_network_config.sh`, which will disable Thunderbolt Bridge and set dhcp on each RDMA port.
+5. RDMA ports may be unable to discover each other on different versions of MacOS. Please ensure that OS versions match exactly (even beta version numbers) on all devices.
+
+---
+
+### Using the API
+
+If you prefer to interact with exo via the API, here is an example creating an instance of a small model (`mlx-community/Llama-3.2-1B-Instruct-4bit`), sending a chat completions request and deleting the instance.
+
+---
+
+**1. Preview instance placements**
+
+The `/instance/previews` endpoint will preview all valid placements for your model.
+
+```bash
+curl "http://localhost:52415/instance/previews?model_id=llama-3.2-1b"
+```
+
+Sample response:
+
+```json
+{
+  "previews": [
+    {
+      "model_id": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+      "sharding": "Pipeline",
+      "instance_meta": "MlxRing",
+      "instance": {...},
+      "memory_delta_by_node": {"local": 729808896},
+      "error": null
+    }
+    // ...possibly more placements...
+  ]
+}
+```
+
+This will return all valid placements for this model. Pick a placement that you like.
+To pick the first one, pipe into `jq`:
+
+```bash
+curl "http://localhost:52415/instance/previews?model_id=llama-3.2-1b" | jq -c '.previews[] | select(.error == null) | .instance' | head -n1
+```
+
+---
+
+**2. Create a model instance**
+
+Send a POST to `/instance` with your desired placement in the `instance` field (the full payload must match types as in `CreateInstanceParams`), which you can copy from step 1:
+
+```bash
+curl -X POST http://localhost:52415/instance \
+  -H 'Content-Type: application/json' \
   -d '{
-     "model": "qwen2.5-1.5b-instruct-rkllm",
-     "messages": [{"role": "user", "content": "Hello!"}],
-     "temperature": 0.7
-   }'
+    "instance": {...}
+  }'
 ```
 
-## Supported RKLLM Models
 
-| Model ID | Description |
-|----------|-------------|
-| `qwen2.5-1.5b-instruct-rkllm` | Qwen 2.5 1.5B Instruct |
-| `qwen2.5-3b-rkllm` | Qwen 2.5 3B |
-| `qwen2.5-7b-rkllm` | Qwen 2.5 7B |
-| `deepseek-r1-1.5b-rkllm` | DeepSeek R1 1.5B (chain-of-thought) |
-| `phi-3-mini-rkllm` | Phi-3 Mini |
+Sample response:
 
-Models require pre-converted `.rkllm` files in `~/RKLLAMA/models/`. See [rkllm-toolkit](https://github.com/jfreed-dev/rkllm-toolkit) for conversion.
+```json
+{
+  "message": "Command received.",
+  "command_id": "e9d1a8ab-...."
+}
+```
 
-## Status Matrix
+---
 
-### Working
+**3. Send a chat completion**
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Basic inference | ✅ | Via HTTP client to rkllama server |
-| ChatGPT-compatible API | ✅ | `/v1/chat/completions` endpoint |
-| Token caching | ✅ | Handles RKLLM batch-style generation |
-| Model loading/unloading | ✅ | Hot-swap models via HTTP API |
-| HuggingFace tokenizers | ✅ | Auto-downloads tokenizers |
-| Qwen2.5-1.5B-Instruct | ✅ | Tested, ~7.8 tok/s, recommended |
-| Systemd services | ✅ | Auto-start on boot |
-| Web UI (tinychat) | ✅ | Works at localhost:52415 |
-| Streaming responses | ✅ | Async generator for real-time token output |
-| Prometheus metrics | ✅ | `/metrics` endpoint for monitoring |
-
-### Not Working / Known Issues
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| DeepSeek-R1-1.5B | ⚠️ | Thinking tokens (`[PAD151935]`) not decoded properly |
-| Layer sharding | ❌ | By design - RKLLM loads full models only |
-| Multi-node distribution | ❌ | By design - use load balancer instead |
-| Direct ctypes mode | ⚠️ | Fallback only, HTTP mode recommended |
-| Qwen2.5-3B+ models | ❓ | Not yet converted/tested |
-
-### Planned / TODO
-
-| Feature | Priority | Description |
-|---------|----------|-------------|
-| DeepSeek thinking tokens | High | Decode `[PAD151935]` thinking tokens properly |
-| Convert 3B/7B models | Medium | Larger models for better quality |
-| Multi-node load balancing | Medium | HAProxy/nginx config for request parallelism |
-
-### Recently Fixed
-
-| Feature | Date | Notes |
-|---------|------|-------|
-| Deployment guide | 2025-12-27 | Complete setup documentation |
-| Prometheus monitoring | 2025-12-27 | `/metrics` endpoint with Grafana dashboard |
-| Streaming support | 2025-12-27 | Async generator streaming in HTTP client and engine |
-| RKLLM runtime 1.2.3 | 2025-12-27 | Updated rkllama fork with correct ABI structures |
-
-See [TODO.md](TODO.md) for detailed task list.
-
-## Limitations
-
-**Single Node Only**: RKLLM loads complete models - no layer sharding across nodes. For multiple RK3588 devices, use request-level parallelism (load balancer) instead of layer-level distribution.
-
-## Other Inference Engines
-
-This fork retains all original exo inference engines:
-
-| Engine | Platform | Status |
-|--------|----------|--------|
-| **MLX** | Apple Silicon | Supported |
-| **tinygrad** | Cross-platform | Supported |
-| **RKLLM** | Rockchip NPU | **Added in this fork** |
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `RKLLM_SERVER_HOST` | `localhost` | RKLLAMA server hostname |
-| `RKLLM_SERVER_PORT` | `8080` | RKLLAMA server port |
-| `EXO_HOME` | `~/.cache/exo` | Model cache directory |
-| `DEBUG` | `0` | Debug verbosity (0-9) |
-
-## Monitoring
-
-Exo exposes Prometheus metrics at `http://localhost:52415/metrics`.
-
-### Quick Setup
+Now, make a POST to `/v1/chat/completions` (the same format as OpenAI's API):
 
 ```bash
-# 1. Start exo (metrics are enabled by default)
-exo --inference-engine rkllm --disable-tui
-
-# 2. Verify metrics endpoint
-curl http://localhost:52415/metrics
+curl -N -X POST http://localhost:52415/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+    "messages": [
+      {"role": "user", "content": "What is Llama 3.2 1B?"}
+    ],
+    "stream": true
+  }'
 ```
 
-### Prometheus Setup
+---
+
+**4. Delete the instance**
+
+When you're done, delete the instance by its ID (find it via `/state` or `/instance` endpoints):
 
 ```bash
-# Use the included config
-prometheus --config.file=prometheus.yml
-
-# Access Prometheus UI at http://localhost:9090
+curl -X DELETE http://localhost:52415/instance/YOUR_INSTANCE_ID
 ```
 
-### Grafana Dashboard
+**Other useful API endpoints*:**
 
-Import the included dashboard for visualization:
+- List all models: `curl http://localhost:52415/models`
+- Inspect instance IDs and deployment state: `curl http://localhost:52415/state`
 
-1. Open Grafana → Dashboards → Import
-2. Upload `grafana/exo-dashboard.json`
-3. Select your Prometheus data source
+For further details, see:
 
-### Available Metrics
+- API basic documentation in [docs/api.md](docs/api.md).
+- API types and endpoints in [src/exo/master/api.py](src/exo/master/api.py).
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `exo_requests_total` | Counter | Total requests by model/status |
-| `exo_requests_in_progress` | Gauge | Currently active requests |
-| `exo_tokens_generated_total` | Counter | Total tokens generated |
-| `exo_request_duration_seconds` | Histogram | Request latency (p50/p95/p99) |
-| `exo_first_token_latency_seconds` | Histogram | Time to first token |
-| `rkllm_server_up` | Gauge | RKLLAMA server status (1=up) |
-| `rkllm_inference_duration_seconds` | Histogram | NPU inference timing |
-| `rkllm_model_load_duration_seconds` | Histogram | Model load time |
+---
 
-### Example Queries
+## Benchmarking
 
-```promql
-# Request rate per minute
-sum(rate(exo_requests_total[5m])) * 60
+The `exo-bench` tool measures model prefill and token generation speed across different placement configurations. This helps you optimize model performance and validate improvements.
 
-# 95th percentile latency
-histogram_quantile(0.95, rate(exo_request_duration_seconds_bucket[5m]))
+**Prerequisites:**
+- Nodes should be running with `uv run exo` before benchmarking
+- The tool uses the `/bench/chat/completions` endpoint
 
-# Token throughput
-sum(rate(exo_tokens_generated_total[1m]))
+**Basic usage:**
 
-# RKLLM server health
-rkllm_server_up
+```bash
+uv run bench/exo_bench.py \
+  --model Llama-3.2-1B-Instruct-4bit \
+  --pp 128,256,512 \
+  --tg 128,256
 ```
 
-## Documentation
+**Key parameters:**
 
-- [Architecture Guide](docs/ARCHITECTURE.md) - System diagrams, data flow, component interactions
-- [Deployment Guide](docs/DEPLOYMENT.md) - Complete setup from scratch
-- [RKLLM Engine Details](exo/inference/rkllm/README.md) - Architecture, benchmarks, troubleshooting
-- [Systemd Services](systemd/README.md) - Auto-start configuration
-- [Nginx Load Balancer](nginx/README.md) - Multi-node request distribution
-- [Prometheus Config](prometheus.yml) - Metrics scraping configuration
-- [Grafana Dashboard](grafana/exo-dashboard.json) - Pre-built visualization
+- `--model`: Model to benchmark (short ID or HuggingFace ID)
+- `--pp`: Prompt size hints (comma-separated integers)
+- `--tg`: Generation lengths (comma-separated integers)
+- `--max-nodes`: Limit placements to N nodes (default: 4)
+- `--instance-meta`: Filter by `ring`, `jaccl`, or `both` (default: both)
+- `--sharding`: Filter by `pipeline`, `tensor`, or `both` (default: both)
+- `--repeat`: Number of repetitions per configuration (default: 1)
+- `--warmup`: Warmup runs per placement (default: 0)
+- `--json-out`: Output file for results (default: bench/results.json)
 
-## Related Repositories
+**Example with filters:**
 
-- [exo-explore/exo](https://github.com/exo-explore/exo) - Original exo project
-- [jfreed-dev/rkllama](https://github.com/jfreed-dev/rkllama) - RKLLAMA server for NPU inference
-- [jfreed-dev/rkllm-toolkit](https://github.com/jfreed-dev/rkllm-toolkit) - Model conversion toolkit
+```bash
+uv run bench/exo_bench.py \
+  --model Llama-3.2-1B-Instruct-4bit \
+  --pp 128,512 \
+  --tg 128 \
+  --max-nodes 2 \
+  --sharding tensor \
+  --repeat 3 \
+  --json-out my-results.json
+```
 
-## License
+The tool outputs performance metrics including prompt tokens per second (prompt_tps), generation tokens per second (generation_tps), and peak memory usage for each configuration.
 
-GPL-3.0 (same as upstream exo)
+---
+
+## Hardware Accelerator Support
+
+On macOS, exo uses the GPU. On Linux, exo currently runs on CPU. We are working on extending hardware accelerator support. If you'd like support for a new hardware platform, please [search for an existing feature request](https://github.com/exo-explore/exo/issues) and add a thumbs up so we know what hardware is important to the community.
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to contribute to exo.

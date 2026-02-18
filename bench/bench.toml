@@ -1,0 +1,7 @@
+# Canary benchmark manifest
+#
+# Lists the suite files to include. Each file defines benchmarks
+# with shared constraints, topology, and default args.
+include = [
+    "single-m3-ultra.toml",
+]

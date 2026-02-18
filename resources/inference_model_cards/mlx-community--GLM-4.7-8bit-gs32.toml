@@ -1,0 +1,12 @@
+model_id = "mlx-community/GLM-4.7-8bit-gs32"
+n_layers = 91
+hidden_size = 5120
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "glm"
+quantization = "8bit"
+base_model = "GLM 4.7"
+capabilities = ["text", "thinking", "thinking_toggle"]
+
+[storage_size]
+in_bytes = 396963397248

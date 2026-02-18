@@ -1,0 +1,10 @@
+name: Regenerate Protobufs
+
+description: "Regenerate protobuf files"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Regenerate protobufs
+      run: nix --extra-experimental-features nix-command --extra-experimental-features flakes develop -c just regenerate-protobufs
+      shell: bash

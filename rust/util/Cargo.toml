@@ -1,0 +1,15 @@
+[package]
+name = "util"
+version = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[lib]
+doctest = false
+name = "util"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]

@@ -1,0 +1,10 @@
+name: Format Code
+
+description: "Run code formatter"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Format code
+      run: nix --extra-experimental-features nix-command --extra-experimental-features flakes develop -c just fmt
+      shell: bash

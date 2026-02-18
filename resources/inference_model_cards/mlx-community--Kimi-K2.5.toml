@@ -1,0 +1,12 @@
+model_id = "mlx-community/Kimi-K2.5"
+n_layers = 61
+hidden_size = 7168
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "kimi"
+quantization = ""
+base_model = "Kimi K2.5"
+capabilities = ["text", "thinking", "thinking_toggle"]
+
+[storage_size]
+in_bytes = 662498705408

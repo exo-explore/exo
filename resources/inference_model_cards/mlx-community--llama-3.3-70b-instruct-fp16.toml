@@ -1,0 +1,12 @@
+model_id = "mlx-community/llama-3.3-70b-instruct-fp16"
+n_layers = 80
+hidden_size = 8192
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "llama"
+quantization = "fp16"
+base_model = "Llama 3.3 70B"
+capabilities = ["text"]
+
+[storage_size]
+in_bytes = 144383672320
