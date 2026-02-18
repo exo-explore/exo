@@ -12,6 +12,7 @@
   } from "$lib/stores/app.svelte";
   import type { MessageAttachment } from "$lib/stores/app.svelte";
   import MarkdownContent from "./MarkdownContent.svelte";
+  import PrefillProgressBar from "./PrefillProgressBar.svelte";
   import TokenHeatmap from "./TokenHeatmap.svelte";
   import PrefillProgressBar from "./PrefillProgressBar.svelte";
   import ImageLightbox from "./ImageLightbox.svelte";
@@ -625,7 +626,9 @@
                       <MarkdownContent
                         content={message.content || (loading ? response : "")}
                       />
-                      {#if loading && !message.content}
+                      {#if loading && !message.content && prefill}
+                        <PrefillProgressBar progress={prefill} class="mt-2" />
+                      {:else if loading && !message.content}
                         <span
                           class="inline-block w-2 h-4 bg-exo-yellow/70 ml-1 cursor-blink"
                         ></span>

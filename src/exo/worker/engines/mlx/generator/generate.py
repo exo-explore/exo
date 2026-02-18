@@ -90,6 +90,8 @@ def prefill(
         )
         if has_ssm:
             snapshots.append(snapshot_ssm_states(cache))
+        if on_prefill_progress is not None:
+            on_prefill_progress(processed, total)
 
         if on_prefill_progress is not None:
             on_prefill_progress(processed, total)

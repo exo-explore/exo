@@ -276,6 +276,8 @@ export interface TokenData {
 export interface PrefillProgress {
   processed: number;
   total: number;
+  /** Timestamp (performance.now()) when prefill started. */
+  startedAt: number;
 }
 
 export interface Message {
@@ -520,12 +522,12 @@ class AppStore {
   messages = $state<Message[]>([]);
   currentResponse = $state("");
   isLoading = $state(false);
+  prefillProgress = $state<PrefillProgress | null>(null);
 
   // Performance metrics
   ttftMs = $state<number | null>(null); // Time to first token in ms
   tps = $state<number | null>(null); // Tokens per second
   totalTokens = $state<number>(0); // Total tokens in current response
-  prefillProgress = $state<PrefillProgress | null>(null);
 
   // Abort controller for stopping generation
   private currentAbortController: AbortController | null = null;
@@ -2018,6 +2020,7 @@ class AppStore {
   ): Promise<void> {
     const decoder = new TextDecoder();
     let buffer = "";
+    let currentEventType = "";
 
     while (true) {
       const { done, value } = await reader.read();
@@ -2033,7 +2036,15 @@ class AppStore {
 
       for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed) continue;
+        if (!trimmed) {
+          currentEventType = "";
+          continue;
+        }
+
+        if (trimmed.startsWith("event: ")) {
+          currentEventType = trimmed.slice(7);
+          continue;
+        }
 
         // Handle SSE comments (": key json") for prefill progress etc.
         if (trimmed.startsWith(": ") && onEvent) {
@@ -2055,14 +2066,22 @@ class AppStore {
 
         if (trimmed.startsWith("data: ")) {
           const data = trimmed.slice(6);
-          if (data === "[DONE]") continue;
+          if (data === "[DONE]") {
+            currentEventType = "";
+            continue;
+          }
 
           try {
-            const parsed = JSON.parse(data) as T;
-            onChunk(parsed);
+            const parsed = JSON.parse(data);
+            if (currentEventType && onEvent?.[currentEventType]) {
+              onEvent[currentEventType](parsed);
+            } else {
+              onChunk(parsed as T);
+            }
           } catch {
             // Skip malformed JSON
           }
+          currentEventType = "";
         }
       }
     }
@@ -2163,6 +2182,7 @@ class AppStore {
 
     this.isLoading = true;
     this.currentResponse = "";
+    this.prefillProgress = null;
     this.ttftMs = null;
     this.tps = null;
     this.totalTokens = 0;
@@ -2367,6 +2387,11 @@ class AppStore {
           }
 
           if (tokenContent) {
+            // Clear prefill progress once tokens start arriving
+            if (this.prefillProgress !== null) {
+              this.prefillProgress = null;
+            }
+
             // Track first token for TTFT
             if (firstTokenTime === null) {
               firstTokenTime = performance.now();
@@ -2420,6 +2445,7 @@ class AppStore {
             this.prefillProgress = {
               processed: inner.processed_tokens,
               total: inner.total_tokens,
+              startedAt: this.prefillProgress?.startedAt ?? performance.now(),
             };
           },
         },
@@ -2474,6 +2500,7 @@ class AppStore {
       this.prefillProgress = null;
       this.isLoading = false;
       this.currentResponse = "";
+      this.prefillProgress = null;
       this.saveConversationsToStorage();
     }
   }
@@ -3106,10 +3133,10 @@ export const hasStartedChat = () => appStore.hasStartedChat;
 export const messages = () => appStore.messages;
 export const currentResponse = () => appStore.currentResponse;
 export const isLoading = () => appStore.isLoading;
+export const prefillProgress = () => appStore.prefillProgress;
 export const ttftMs = () => appStore.ttftMs;
 export const tps = () => appStore.tps;
 export const totalTokens = () => appStore.totalTokens;
-export const prefillProgress = () => appStore.prefillProgress;
 export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
 export const runners = () => appStore.runners;
