@@ -154,26 +154,24 @@ class KVPrefixCache:
 
         best_index: int | None = None
         best_length = 0
-        is_exact = False
 
         # Find best cache
+        # For exact match: trim to max_length-2 so remaining has the second last token
+        # For partial match: trim to best_length, remaining has suffix to prefill
+        # This ensures stream_generate always has at least one token to start with,
+        # and ensures that snapshots work.
         for i, cached_prompt in enumerate(self.prompts):
             length = get_prefix_length(prompt_tokens, cached_prompt)
+            if length >= max_length - 1:
+                best_index, best_length = i, max_length - 2
+                break
             if length > best_length:
                 best_index, best_length = i, length
-            if length == max_length:
-                is_exact = True
-                best_index, best_length = i, length
-                break
 
         if best_index is None:
             return make_kv_cache(model), prompt_tokens, None
 
-        # For exact match: trim to max_length-1 so remaining has the last token
-        # For partial match: trim to best_length, remaining has suffix to prefill
-        # This ensures stream_generate always has at least one token to start with
-        target = (max_length - 1) if is_exact else best_length
-        restore_pos, restore_snap = self._get_snapshot(best_index, target)
+        restore_pos, restore_snap = self._get_snapshot(best_index, best_length)
 
         # No usable snapshot — need fresh cache
         if restore_snap is None and has_non_kv_caches(self.caches[best_index]):
