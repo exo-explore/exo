@@ -145,6 +145,7 @@ from exo.shared.types.openai_responses import (
     ResponsesResponse,
 )
 from exo.shared.types.state import State
+from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
@@ -1292,8 +1293,18 @@ class API:
 
         return total_available
 
-    async def get_models(self) -> ModelList:
-        """Returns list of available models."""
+    async def get_models(self, status: str | None = Query(default=None)) -> ModelList:
+        """Returns list of available models, optionally filtered by being downloaded."""
+        cards = await get_model_cards()
+
+        if status == "downloaded":
+            downloaded_model_ids: set[str] = set()
+            for node_downloads in self.state.downloads.values():
+                for dl in node_downloads:
+                    if isinstance(dl, DownloadCompleted):
+                        downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
+            cards = [c for c in cards if c.model_id in downloaded_model_ids]
+
         return ModelList(
             data=[
                 ModelListModel(
@@ -1311,7 +1322,7 @@ class API:
                     base_model=card.base_model,
                     capabilities=card.capabilities,
                 )
-                for card in await get_model_cards()
+                for card in cards
             ]
         )
 
