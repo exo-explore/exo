@@ -2015,7 +2015,6 @@ class AppStore {
   ): Promise<void> {
     const decoder = new TextDecoder();
     let buffer = "";
-    let currentEventType = "";
 
     while (true) {
       const { done, value } = await reader.read();
@@ -2031,34 +2030,36 @@ class AppStore {
 
       for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed) {
-          currentEventType = "";
-          continue;
-        }
+        if (!trimmed) continue;
 
-        if (trimmed.startsWith("event: ")) {
-          currentEventType = trimmed.slice(7);
+        // Handle SSE comments (": key json") for prefill progress etc.
+        if (trimmed.startsWith(": ") && onEvent) {
+          const comment = trimmed.slice(2);
+          const spaceIdx = comment.indexOf(" ");
+          if (spaceIdx > 0) {
+            const key = comment.slice(0, spaceIdx);
+            if (onEvent[key]) {
+              try {
+                const parsed = JSON.parse(comment.slice(spaceIdx + 1));
+                onEvent[key](parsed);
+              } catch {
+                // Skip malformed JSON in comment
+              }
+            }
+          }
           continue;
         }
 
         if (trimmed.startsWith("data: ")) {
           const data = trimmed.slice(6);
-          if (data === "[DONE]") {
-            currentEventType = "";
-            continue;
-          }
+          if (data === "[DONE]") continue;
 
           try {
-            const parsed = JSON.parse(data);
-            if (currentEventType && onEvent?.[currentEventType]) {
-              onEvent[currentEventType](parsed);
-            } else {
-              onChunk(parsed as T);
-            }
+            const parsed = JSON.parse(data) as T;
+            onChunk(parsed);
           } catch {
             // Skip malformed JSON
           }
-          currentEventType = "";
         }
       }
     }

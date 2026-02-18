@@ -138,7 +138,8 @@ async def generate_chat_stream(
     async for chunk in chunk_stream:
         match chunk:
             case PrefillProgressData():
-                yield f"event: prefill_progress\ndata: {chunk.model_dump_json()}\n\n"
+                # Use SSE comment so third-party clients ignore it
+                yield f": prefill_progress {chunk.model_dump_json()}\n\n"
 
             case ErrorChunk():
                 error_response = ErrorResponse(
