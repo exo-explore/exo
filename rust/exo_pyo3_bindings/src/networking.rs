@@ -8,8 +8,8 @@
 use crate::r#const::MPSC_CHANNEL_SIZE;
 use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _};
 use crate::ext::{ResultExt as _, TokioMpscReceiverExt as _, TokioMpscSenderExt as _};
+use crate::ident::{PyKeypair, PyPeerId};
 use crate::pyclass;
-use crate::pylibp2p::ident::{PyKeypair, PyPeerId};
 use libp2p::futures::StreamExt as _;
 use libp2p::gossipsub;
 use libp2p::gossipsub::{IdentTopic, Message, MessageId, PublishError};

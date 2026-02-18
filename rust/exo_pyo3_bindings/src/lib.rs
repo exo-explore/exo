@@ -4,25 +4,12 @@
 //!
 //!
 
-// enable Rust-unstable features for convenience
-#![feature(trait_alias)]
-#![feature(tuple_trait)]
-#![feature(unboxed_closures)]
-// #![feature(stmt_expr_attributes)]
-// #![feature(assert_matches)]
-// #![feature(async_fn_in_dyn_trait)]
-// #![feature(async_for_loop)]
-// #![feature(auto_traits)]
-// #![feature(negative_impls)]
-
-extern crate core;
 mod allow_threading;
-pub(crate) mod networking;
-pub(crate) mod pylibp2p;
+mod ident;
+mod networking;
 
+use crate::ident::ident_submodule;
 use crate::networking::networking_submodule;
-use crate::pylibp2p::ident::ident_submodule;
-use crate::pylibp2p::multiaddr::multiaddr_submodule;
 use pyo3::prelude::PyModule;
 use pyo3::{Bound, PyResult, pyclass, pymodule};
 use pyo3_stub_gen::define_stub_info_gatherer;
@@ -30,14 +17,6 @@ use pyo3_stub_gen::define_stub_info_gatherer;
 /// Namespace for all the constants used by this crate.
 pub(crate) mod r#const {
     pub const MPSC_CHANNEL_SIZE: usize = 1024;
-}
-
-/// Namespace for all the type/trait aliases used by this crate.
-pub(crate) mod alias {
-    use std::marker::Tuple;
-
-    pub trait SendFn<Args: Tuple + Send + 'static, Output> =
-        Fn<Args, Output = Output> + Send + 'static;
 }
 
 /// Namespace for crate-wide extension traits/methods
@@ -180,7 +159,6 @@ fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     //       work with maturin, where the types generate correctly, in the right folder, without
     //       too many importing issues...
     ident_submodule(m)?;
-    multiaddr_submodule(m)?;
     networking_submodule(m)?;
 
     // top-level constructs

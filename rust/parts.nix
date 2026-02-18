@@ -1,11 +1,10 @@
 { inputs, ... }:
 {
   perSystem =
-    { config, self', inputs', pkgs, lib, ... }:
+    { inputs', pkgs, lib, ... }:
     let
       # Fenix nightly toolchain with all components
-      fenixPkgs = inputs'.fenix.packages;
-      rustToolchain = fenixPkgs.complete.withComponents [
+      rustToolchain = inputs'.fenix.packages.stable.withComponents [
         "cargo"
         "rustc"
         "clippy"

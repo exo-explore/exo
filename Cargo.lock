@@ -890,7 +890,7 @@ dependencies = [
  "delegate",
  "env_logger",
  "extend",
- "futures",
+ "futures-lite",
  "libp2p",
  "log",
  "networking",
@@ -913,6 +913,12 @@ dependencies = [
  "quote",
  "syn 2.0.111",
 ]
+
+[[package]]
+name = "fastrand"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "ff"
@@ -1022,7 +1028,10 @@ version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f78e10609fe0e0b3f4157ffab1876319b5b0db102a2c60dc4626306dc46b44ad"
 dependencies = [
+ "fastrand",
  "futures-core",
+ "futures-io",
+ "parking",
  "pin-project-lite",
 ]
 
@@ -2753,7 +2762,7 @@ dependencies = [
  "delegate",
  "either",
  "extend",
- "futures",
+ "futures-lite",
  "futures-timer",
  "keccak-const",
  "libp2p",
