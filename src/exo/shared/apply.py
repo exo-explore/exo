@@ -4,7 +4,7 @@ from datetime import datetime
 
 from loguru import logger
 
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import MetaInstanceId, NodeId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -12,6 +12,12 @@ from exo.shared.types.events import (
     InputChunkReceived,
     InstanceCreated,
     InstanceDeleted,
+    InstanceRetrying,
+    JacclSideChannelData,
+    JacclSideChannelGathered,
+    MetaInstanceCreated,
+    MetaInstanceDeleted,
+    MetaInstancePlacementFailed,
     NodeDownloadProgress,
     NodeGatheredInfo,
     NodeTimedOut,
@@ -28,10 +34,12 @@ from exo.shared.types.events import (
     TracesCollected,
     TracesMerged,
 )
+from exo.shared.types.meta_instance import MetaInstance
 from exo.shared.types.profiling import (
     NodeIdentity,
     NodeNetworkInfo,
     NodeRdmaCtlStatus,
+    NodeRdmaDeviceHealth,
     NodeThunderboltInfo,
     ThunderboltBridgeStatus,
 )
@@ -51,6 +59,7 @@ from exo.utils.info_gatherer.info_gatherer import (
     NodeDiskUsage,
     NodeNetworkInterfaces,
     RdmaCtlStatus,
+    RdmaDeviceHealth,
     StaticNodeInformation,
     ThunderboltBridgeInfo,
 )
@@ -66,12 +75,22 @@ def event_apply(event: Event, state: State) -> State:
             | InputChunkReceived()
             | TracesCollected()
             | TracesMerged()
+            | JacclSideChannelData()
+            | JacclSideChannelGathered()
         ):  # Pass-through events that don't modify state
             return state
         case InstanceCreated():
             return apply_instance_created(event, state)
         case InstanceDeleted():
             return apply_instance_deleted(event, state)
+        case InstanceRetrying():
+            return apply_instance_retrying(event, state)
+        case MetaInstanceCreated():
+            return apply_meta_instance_created(event, state)
+        case MetaInstanceDeleted():
+            return apply_meta_instance_deleted(event, state)
+        case MetaInstancePlacementFailed():
+            return apply_meta_instance_placement_failed(event, state)
         case NodeTimedOut():
             return apply_node_timed_out(event, state)
         case NodeDownloadProgress():
@@ -174,20 +193,130 @@ def apply_task_failed(event: TaskFailed, state: State) -> State:
     return state.model_copy(update={"tasks": new_tasks})
 
 
+def _update_meta_instance(
+    state: State, mid: MetaInstanceId, **fields: object
+) -> Mapping[MetaInstanceId, MetaInstance]:
+    mi = state.meta_instances[mid]
+    return {**state.meta_instances, mid: mi.model_copy(update=fields)}
+
+
 def apply_instance_created(event: InstanceCreated, state: State) -> State:
     instance = event.instance
     new_instances: Mapping[InstanceId, Instance] = {
         **state.instances,
         instance.instance_id: instance,
     }
-    return state.model_copy(update={"instances": new_instances})
+    update: dict[str, object] = {"instances": new_instances}
+    # Reset failure tracking when a new instance is created for a meta-instance
+    if instance.meta_instance_id and instance.meta_instance_id in state.meta_instances:
+        mi = state.meta_instances[instance.meta_instance_id]
+        if mi.placement_error is not None or mi.consecutive_failures > 0:
+            update["meta_instances"] = _update_meta_instance(
+                state,
+                instance.meta_instance_id,
+                placement_error=None,
+                consecutive_failures=0,
+            )
+    return state.model_copy(update=update)
 
 
 def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
+    deleted_instance = state.instances.get(event.instance_id)
     new_instances: Mapping[InstanceId, Instance] = {
         iid: inst for iid, inst in state.instances.items() if iid != event.instance_id
     }
-    return state.model_copy(update={"instances": new_instances})
+    # Clean up runner entries belonging to the deleted instance
+    runner_ids_to_remove: set[RunnerId] = set()
+    if deleted_instance is not None:
+        runner_ids_to_remove = set(
+            deleted_instance.shard_assignments.runner_to_shard.keys()
+        )
+    new_runners: Mapping[RunnerId, RunnerStatus] = {
+        rid: rs for rid, rs in state.runners.items() if rid not in runner_ids_to_remove
+    }
+
+    update: dict[str, object] = {"instances": new_instances, "runners": new_runners}
+
+    # Track failure on the MetaInstance itself
+    if (
+        event.failure_error
+        and deleted_instance
+        and deleted_instance.meta_instance_id
+        and deleted_instance.meta_instance_id in state.meta_instances
+    ):
+        mid = deleted_instance.meta_instance_id
+        mi = state.meta_instances[mid]
+        update["meta_instances"] = {
+            **state.meta_instances,
+            mid: mi.model_copy(
+                update={
+                    "consecutive_failures": mi.consecutive_failures + 1,
+                    "last_failure_error": event.failure_error,
+                }
+            ),
+        }
+
+    return state.model_copy(update=update)
+
+
+def apply_instance_retrying(event: InstanceRetrying, state: State) -> State:
+    """Runners failed but retry limit not reached — remove runners, keep instance."""
+    instance = state.instances.get(event.instance_id)
+    if instance is None:
+        return state
+
+    # Remove all runners belonging to this instance from state
+    runner_ids_to_remove = set(instance.shard_assignments.node_to_runner.values())
+    new_runners: Mapping[RunnerId, RunnerStatus] = {
+        rid: rs for rid, rs in state.runners.items() if rid not in runner_ids_to_remove
+    }
+
+    update: dict[str, object] = {"runners": new_runners}
+
+    # Increment failure count on the MetaInstance
+    if event.meta_instance_id in state.meta_instances:
+        update["meta_instances"] = _update_meta_instance(
+            state,
+            event.meta_instance_id,
+            consecutive_failures=state.meta_instances[
+                event.meta_instance_id
+            ].consecutive_failures
+            + 1,
+            last_failure_error=event.failure_error,
+        )
+
+    return state.model_copy(update=update)
+
+
+def apply_meta_instance_created(event: MetaInstanceCreated, state: State) -> State:
+    new_meta: Mapping[MetaInstanceId, MetaInstance] = {
+        **state.meta_instances,
+        event.meta_instance.meta_instance_id: event.meta_instance,
+    }
+    return state.model_copy(update={"meta_instances": new_meta})
+
+
+def apply_meta_instance_deleted(event: MetaInstanceDeleted, state: State) -> State:
+    new_meta: Mapping[MetaInstanceId, MetaInstance] = {
+        mid: mi
+        for mid, mi in state.meta_instances.items()
+        if mid != event.meta_instance_id
+    }
+    return state.model_copy(update={"meta_instances": new_meta})
+
+
+def apply_meta_instance_placement_failed(
+    event: MetaInstancePlacementFailed, state: State
+) -> State:
+    if event.meta_instance_id not in state.meta_instances:
+        return state
+    return state.model_copy(
+        update={
+            "meta_instances": _update_meta_instance(
+                state, event.meta_instance_id, placement_error=event.reason
+            )
+        }
+    )
 
 
 def apply_runner_status_updated(event: RunnerStatusUpdated, state: State) -> State:
@@ -243,6 +372,20 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
     node_rdma_ctl = {
         key: value for key, value in state.node_rdma_ctl.items() if key != event.node_id
     }
+    node_rdma_device_health = {
+        key: value
+        for key, value in state.node_rdma_device_health.items()
+        if key != event.node_id
+    }
+    # Clean up runners belonging to the timed-out node across all instances
+    runner_ids_to_remove: set[RunnerId] = set()
+    for instance in state.instances.values():
+        runner_id = instance.shard_assignments.node_to_runner.get(event.node_id)
+        if runner_id is not None:
+            runner_ids_to_remove.add(runner_id)
+    new_runners: Mapping[RunnerId, RunnerStatus] = {
+        rid: rs for rid, rs in state.runners.items() if rid not in runner_ids_to_remove
+    }
     # Only recompute cycles if the leaving node had TB bridge enabled
     leaving_node_status = state.node_thunderbolt_bridge.get(event.node_id)
     leaving_node_had_tb_enabled = (
@@ -258,6 +401,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
             "downloads": downloads,
             "topology": topology,
             "last_seen": last_seen,
+            "runners": new_runners,
             "node_memory": node_memory,
             "node_disk": node_disk,
             "node_system": node_system,
@@ -265,6 +409,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
             "node_thunderbolt": node_thunderbolt,
             "node_thunderbolt_bridge": node_thunderbolt_bridge,
             "node_rdma_ctl": node_rdma_ctl,
+            "node_rdma_device_health": node_rdma_device_health,
             "thunderbolt_bridge_cycles": thunderbolt_bridge_cycles,
         }
     )
@@ -370,6 +515,16 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             update["node_rdma_ctl"] = {
                 **state.node_rdma_ctl,
                 event.node_id: NodeRdmaCtlStatus(enabled=info.enabled),
+            }
+        case RdmaDeviceHealth():
+            update["node_rdma_device_health"] = {
+                **state.node_rdma_device_health,
+                event.node_id: NodeRdmaDeviceHealth(
+                    healthy=info.healthy,
+                    tested_devices=info.tested_devices,
+                    failed_devices=info.failed_devices,
+                    error_message=info.error_message,
+                ),
             }
 
     return state.model_copy(update=update)

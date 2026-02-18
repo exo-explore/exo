@@ -168,7 +168,7 @@ export interface ModelDownloadStatus {
 export interface PlacementPreview {
   model_id: string;
   sharding: "Pipeline" | "Tensor";
-  instance_meta: "MlxRing" | "MlxIbv" | "MlxJaccl";
+  instance_meta: "MlxRing" | "MlxJaccl";
   instance: unknown | null;
   memory_delta_by_node: Record<string, number> | null;
   error: string | null;
@@ -219,7 +219,6 @@ interface RawStateResponse {
     string,
     {
       MlxRingInstance?: Instance;
-      MlxIbvInstance?: Instance;
       MlxJacclInstance?: Instance;
     }
   >;
@@ -243,6 +242,16 @@ interface RawStateResponse {
   >;
   // RDMA ctl status per node
   nodeRdmaCtl?: Record<string, { enabled: boolean }>;
+  // RDMA device health per node (ibv_alloc_pd probing)
+  nodeRdmaDeviceHealth?: Record<
+    string,
+    {
+      healthy: boolean;
+      testedDevices: number;
+      failedDevices: number;
+      errorMessage?: string | null;
+    }
+  >;
   // Thunderbolt bridge status per node
   nodeThunderboltBridge?: Record<
     string,
@@ -250,6 +259,20 @@ interface RawStateResponse {
   >;
   // Thunderbolt bridge cycles (nodes with bridge enabled forming loops)
   thunderboltBridgeCycles?: string[][];
+  // MetaInstances (declarative instance constraints)
+  metaInstances?: Record<string, MetaInstanceData>;
+}
+
+export interface MetaInstanceData {
+  metaInstanceId: string;
+  modelId: string;
+  sharding: string;
+  instanceMeta: string;
+  minNodes: number;
+  nodeIds: string[] | null;
+  placementError: string | null;
+  consecutiveFailures: number;
+  lastFailureError: string | null;
 }
 
 export interface MessageAttachment {
@@ -537,6 +560,7 @@ class AppStore {
   previewNodeFilter = $state<Set<string>>(new Set());
   lastUpdate = $state<number | null>(null);
   nodeIdentities = $state<Record<string, RawNodeIdentity>>({});
+  metaInstances = $state<Record<string, MetaInstanceData>>({});
   thunderboltBridgeCycles = $state<string[][]>([]);
   nodeThunderbolt = $state<
     Record<
@@ -551,6 +575,17 @@ class AppStore {
     >
   >({});
   nodeRdmaCtl = $state<Record<string, { enabled: boolean }>>({});
+  nodeRdmaDeviceHealth = $state<
+    Record<
+      string,
+      {
+        healthy: boolean;
+        testedDevices: number;
+        failedDevices: number;
+        errorMessage?: string | null;
+      }
+    >
+  >({});
   nodeThunderboltBridge = $state<
     Record<
       string,
@@ -895,11 +930,7 @@ class AppStore {
 
     let instanceType: string | null = null;
     if (instanceTag === "MlxRingInstance") instanceType = "MLX Ring";
-    else if (
-      instanceTag === "MlxIbvInstance" ||
-      instanceTag === "MlxJacclInstance"
-    )
-      instanceType = "MLX RDMA";
+    else if (instanceTag === "MlxJacclInstance") instanceType = "MLX RDMA";
 
     let sharding: string | null = null;
     const inst = instance as {
@@ -1273,6 +1304,10 @@ class AppStore {
       this.nodeThunderbolt = data.nodeThunderbolt ?? {};
       // RDMA ctl status per node
       this.nodeRdmaCtl = data.nodeRdmaCtl ?? {};
+      // MetaInstances
+      this.metaInstances = data.metaInstances ?? {};
+      // RDMA device health per node
+      this.nodeRdmaDeviceHealth = data.nodeRdmaDeviceHealth ?? {};
       // Thunderbolt bridge cycles
       this.thunderboltBridgeCycles = data.thunderboltBridgeCycles ?? [];
       // Thunderbolt bridge status per node
@@ -3044,6 +3079,7 @@ export const tps = () => appStore.tps;
 export const totalTokens = () => appStore.totalTokens;
 export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
+export const metaInstances = () => appStore.metaInstances;
 export const runners = () => appStore.runners;
 export const downloads = () => appStore.downloads;
 export const nodeDisk = () => appStore.nodeDisk;
@@ -3137,6 +3173,7 @@ export const nodeIdentities = () => appStore.nodeIdentities;
 // Thunderbolt & RDMA status
 export const nodeThunderbolt = () => appStore.nodeThunderbolt;
 export const nodeRdmaCtl = () => appStore.nodeRdmaCtl;
+export const nodeRdmaDeviceHealth = () => appStore.nodeRdmaDeviceHealth;
 export const thunderboltBridgeCycles = () => appStore.thunderboltBridgeCycles;
 export const nodeThunderboltBridge = () => appStore.nodeThunderboltBridge;
 

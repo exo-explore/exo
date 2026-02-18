@@ -6,13 +6,15 @@ from pydantic import ConfigDict, Field, field_serializer, field_validator
 from pydantic.alias_generators import to_camel
 
 from exo.shared.topology import Topology, TopologySnapshot
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import MetaInstanceId, NodeId
+from exo.shared.types.meta_instance import MetaInstance
 from exo.shared.types.profiling import (
     DiskUsage,
     MemoryUsage,
     NodeIdentity,
     NodeNetworkInfo,
     NodeRdmaCtlStatus,
+    NodeRdmaDeviceHealth,
     NodeThunderboltInfo,
     SystemPerformanceProfile,
     ThunderboltBridgeStatus,
@@ -41,6 +43,7 @@ class State(CamelCaseModel):
         arbitrary_types_allowed=True,
     )
     instances: Mapping[InstanceId, Instance] = {}
+    meta_instances: Mapping[MetaInstanceId, MetaInstance] = {}
     runners: Mapping[RunnerId, RunnerStatus] = {}
     downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {}
     tasks: Mapping[TaskId, Task] = {}
@@ -57,6 +60,7 @@ class State(CamelCaseModel):
     node_thunderbolt: Mapping[NodeId, NodeThunderboltInfo] = {}
     node_thunderbolt_bridge: Mapping[NodeId, ThunderboltBridgeStatus] = {}
     node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] = {}
+    node_rdma_device_health: Mapping[NodeId, NodeRdmaDeviceHealth] = {}
 
     # Detected cycles where all nodes have Thunderbolt bridge enabled (>2 nodes)
     thunderbolt_bridge_cycles: Sequence[Sequence[NodeId]] = []
