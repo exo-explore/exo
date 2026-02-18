@@ -48,7 +48,7 @@ from exo.worker.runner.bootstrap import logger
 
 generation_stream = mx.new_stream(mx.default_device())
 
-_MIN_PREFIX_HIT_TO_UPDATE = 1000
+_MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
 
 
 def prefill(
@@ -436,9 +436,14 @@ def mlx_generate(
                 full_prompt_tokens = mx.concatenate(
                     [all_prompt_tokens, generated_tokens_array]
                 )
+                hit_ratio = (
+                    prefix_hit_length / len(all_prompt_tokens)
+                    if len(all_prompt_tokens) > 0
+                    else 0.0
+                )
                 if (
                     matched_index is not None
-                    and prefix_hit_length >= _MIN_PREFIX_HIT_TO_UPDATE
+                    and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
                 ):
                     kv_prefix_cache.update_kv_cache(
                         matched_index,
