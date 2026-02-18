@@ -45,13 +45,11 @@
     toggleChatSidebarVisible,
     nodeThunderbolt,
     nodeRdmaCtl,
-    metaInstances,
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
     nodeIdentities,
     type DownloadProgress,
     type PlacementPreview,
-    type MetaInstanceData,
   } from "$lib/stores/app.svelte";
   import { addToast } from "$lib/stores/toast.svelte";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
@@ -73,70 +71,7 @@
   const debugEnabled = $derived(debugMode());
   const topologyOnlyEnabled = $derived(topologyOnlyMode());
   const sidebarVisible = $derived(chatSidebarVisible());
-  const metaInstancesData = $derived(metaInstances());
   const tbBridgeCycles = $derived(thunderboltBridgeCycles());
-
-  // Get status for a MetaInstance that has no backing instance yet
-  function getMetaInstancePlacingStatus(metaInstanceId: string) {
-    const meta = metaInstancesData[metaInstanceId];
-    const placementError = meta?.placementError;
-    const failures = meta?.consecutiveFailures ?? 0;
-    const lastError = meta?.lastFailureError;
-
-    if (placementError) {
-      return {
-        statusText: "PLACEMENT FAILED",
-        statusClass: "failed",
-        isDownloading: false as const,
-        isFailed: true,
-        progress: null,
-        perNode: [] as Array<{
-          nodeId: string;
-          nodeName: string;
-          progress: DownloadProgress;
-        }>,
-        perNodeStatus: [] as PerNodeRunnerStatus[],
-        errorMessage: placementError,
-      };
-    }
-
-    if (failures > 0) {
-      const retryPosition = ((failures - 1) % 3) + 1;
-      const isRecreated = failures % 3 === 0;
-      return {
-        statusText: isRecreated ? "PLACING" : `RETRYING (${retryPosition}/3)`,
-        statusClass: "starting",
-        isDownloading: false as const,
-        isFailed: false,
-        progress: null,
-        perNode: [] as Array<{
-          nodeId: string;
-          nodeName: string;
-          progress: DownloadProgress;
-        }>,
-        perNodeStatus: [] as PerNodeRunnerStatus[],
-        errorMessage: isRecreated
-          ? `Instance re-created due to failure: ${lastError}`
-          : `Previous failure: ${lastError}`,
-      };
-    }
-
-    return {
-      statusText: "PLACING",
-      statusClass: "starting",
-      isDownloading: false as const,
-      isFailed: false,
-      progress: null,
-      perNode: [] as Array<{
-        nodeId: string;
-        nodeName: string;
-        progress: DownloadProgress;
-      }>,
-      perNodeStatus: [] as PerNodeRunnerStatus[],
-      errorMessage: null,
-    };
-  }
-
   const tbBridgeData = $derived(nodeThunderboltBridge());
   const identitiesData = $derived(nodeIdentities());
   const tbIdentifiers = $derived(nodeThunderbolt());
@@ -201,17 +136,6 @@
     return tb5NodeIds.some((id) => rdmaCtl[id]?.enabled !== true);
   });
   let tb5InfoDismissed = $state(false);
-
-  // Detect [jaccl] RDMA driver errors from MetaInstance failure errors
-  const jacclError = $derived.by(() => {
-    for (const mi of Object.values(metaInstancesData)) {
-      if (mi.lastFailureError?.includes("[jaccl]")) {
-        return mi.lastFailureError;
-      }
-    }
-    return null;
-  });
-  let jacclDismissedError = $state<string | null>(null);
 
   // Helper to get friendly node name from node ID
   function getNodeName(nodeId: string): string {
@@ -483,7 +407,7 @@
     return model.tasks.includes("ImageToImage");
   }
   let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
-  type InstanceMeta = "MlxRing" | "MlxJaccl";
+  type InstanceMeta = "MlxRing" | "MlxIbv" | "MlxJaccl";
 
   // Launch defaults persistence
   const LAUNCH_DEFAULTS_KEY = "exo-launch-defaults";
@@ -743,7 +667,7 @@
   const matchesSelectedRuntime = (runtime: InstanceMeta): boolean =>
     selectedInstanceType === "MlxRing"
       ? runtime === "MlxRing"
-      : runtime === "MlxJaccl" || runtime === "MlxJaccl";
+      : runtime === "MlxIbv" || runtime === "MlxJaccl";
 
   // Helper to check if a model can be launched (has valid placement with >= minNodes)
   function canModelFit(modelId: string): boolean {
@@ -975,25 +899,34 @@
     launchingModelId = modelId;
 
     try {
+      // Use the specific preview if provided, otherwise fall back to filtered preview
       const preview = specificPreview ?? filteredPreview();
 
-      // Extract node IDs from the preview the user is seeing
-      const previewNodeIds = preview?.memory_delta_by_node
-        ? Object.keys(preview.memory_delta_by_node)
-        : nodeFilter.size > 0
-          ? Array.from(nodeFilter)
-          : undefined;
+      let instanceData: unknown;
 
-      const response = await fetch("/meta_instance", {
+      if (preview?.instance) {
+        // Use the instance from the preview
+        instanceData = preview.instance;
+      } else {
+        // Fallback: GET placement from API
+        const placementResponse = await fetch(
+          `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${selectedSharding}&instance_meta=${selectedInstanceType}&min_nodes=${selectedMinNodes}`,
+        );
+
+        if (!placementResponse.ok) {
+          const errorText = await placementResponse.text();
+          console.error("Failed to get placement:", errorText);
+          return;
+        }
+
+        instanceData = await placementResponse.json();
+      }
+
+      // POST the instance to create it
+      const response = await fetch("/instance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model_id: modelId,
-          sharding: preview?.sharding ?? selectedSharding,
-          instance_meta: preview?.instance_meta ?? selectedInstanceType,
-          min_nodes: selectedMinNodes,
-          node_ids: previewNodeIds,
-        }),
+        body: JSON.stringify({ instance: instanceData }),
       });
 
       if (!response.ok) {
@@ -1232,18 +1165,15 @@
       nodeName: string;
       progress: DownloadProgress;
     }>;
-    perNodeStatus: PerNodeRunnerStatus[];
   } {
     if (!downloadsData || Object.keys(downloadsData).length === 0) {
-      const statusInfo = deriveInstanceStatus(instanceWrapped);
       return {
         isDownloading: false,
-        isFailed: statusInfo.statusText === "FAILED",
-        errorMessage: statusInfo.errorMessage,
+        isFailed: false,
+        errorMessage: null,
         progress: null,
-        statusText: statusInfo.statusText,
+        statusText: "RUNNING",
         perNode: [],
-        perNodeStatus: statusInfo.perNodeStatus,
       };
     }
 
@@ -1257,7 +1187,6 @@
         progress: null,
         statusText: "PREPARING",
         perNode: [],
-        perNodeStatus: [],
       };
     }
 
@@ -1326,7 +1255,6 @@
               progress: null,
               statusText: "FAILED",
               perNode: [],
-              perNodeStatus: [],
             };
           }
         }
@@ -1367,11 +1295,10 @@
       return {
         isDownloading: false,
         isFailed: statusInfo.statusText === "FAILED",
-        errorMessage: statusInfo.errorMessage,
+        errorMessage: null,
         progress: null,
         statusText: statusInfo.statusText,
         perNode: [],
-        perNodeStatus: statusInfo.perNodeStatus,
       };
     }
 
@@ -1395,223 +1322,92 @@
       },
       statusText: "DOWNLOADING",
       perNode,
-      perNodeStatus: [],
     };
   }
 
   // Derive instance status from runners
   // Get color class for a status
   function getStatusColor(statusText: string): string {
-    if (statusText === "FAILED" || statusText === "PLACEMENT FAILED")
-      return "text-red-400";
-    if (statusText.startsWith("RETRYING")) return "text-orange-400";
-    if (statusText === "SHUTDOWN") return "text-gray-400";
-    if (statusText === "DOWNLOADING") return "text-blue-400";
-    if (
-      statusText.startsWith("LOADING") ||
-      statusText.startsWith("WARMING UP") ||
-      statusText === "WAITING" ||
-      statusText === "INITIALIZING"
-    )
-      return "text-yellow-400";
-    if (statusText === "RUNNING") return "text-teal-400";
-    if (statusText === "READY" || statusText === "LOADED")
-      return "text-green-400";
-    return "text-exo-light-gray";
-  }
-
-  const RUNNER_STATUS_MAP: Record<string, string> = {
-    RunnerWaitingForInitialization: "WaitingForInitialization",
-    RunnerInitializingBackend: "InitializingBackend",
-    RunnerWaitingForModel: "WaitingForModel",
-    RunnerLoading: "Loading",
-    RunnerLoaded: "Loaded",
-    RunnerWarmingUp: "WarmingUp",
-    RunnerReady: "Ready",
-    RunnerRunning: "Running",
-    RunnerShutdown: "Shutdown",
-    RunnerFailed: "Failed",
-  };
-
-  // Friendly labels for display
-  const RUNNER_STATUS_DISPLAY: Record<string, string> = {
-    WaitingForInitialization: "Initializing",
-    InitializingBackend: "Initializing",
-    WaitingForModel: "Waiting",
-    Loading: "Loading",
-    Loaded: "Loaded",
-    WarmingUp: "Warming Up",
-    Ready: "Ready",
-    Running: "Running",
-    Shutdown: "Shutdown",
-    Failed: "Failed",
-  };
-
-  interface PerNodeRunnerStatus {
-    nodeId: string;
-    nodeName: string;
-    status: string; // friendly display status
+    switch (statusText) {
+      case "FAILED":
+        return "text-red-400";
+      case "SHUTDOWN":
+        return "text-gray-400";
+      case "DOWNLOADING":
+        return "text-blue-400";
+      case "LOADING":
+      case "WARMING UP":
+      case "WAITING":
+      case "INITIALIZING":
+        return "text-yellow-400";
+      case "RUNNING":
+        return "text-teal-400";
+      case "READY":
+      case "LOADED":
+        return "text-green-400";
+      default:
+        return "text-exo-light-gray";
+    }
   }
 
   function deriveInstanceStatus(instanceWrapped: unknown): {
     statusText: string;
     statusClass: string;
-    perNodeStatus: PerNodeRunnerStatus[];
-    errorMessage: string | null;
   } {
     const [, instance] = getTagged(instanceWrapped);
     if (!instance || typeof instance !== "object") {
-      return {
-        statusText: "PREPARING",
-        statusClass: "inactive",
-        perNodeStatus: [],
-        errorMessage: null,
-      };
+      return { statusText: "PREPARING", statusClass: "inactive" };
     }
 
     const inst = instance as {
-      shardAssignments?: {
-        runnerToShard?: Record<string, unknown>;
-        nodeToRunner?: Record<string, string>;
-      };
+      shardAssignments?: { runnerToShard?: Record<string, unknown> };
     };
-    const nodeToRunner = inst.shardAssignments?.nodeToRunner || {};
     const runnerIds = Object.keys(inst.shardAssignments?.runnerToShard || {});
-    const totalNodes = runnerIds.length;
 
-    // Build per-node status and extract error messages from RunnerFailed
-    const perNodeStatus: PerNodeRunnerStatus[] = [];
-    const statuses: string[] = [];
-    const failedErrors: string[] = [];
-    for (const [nodeId, runnerId] of Object.entries(nodeToRunner)) {
-      const r = runnersData[runnerId];
-      let status: string | null = null;
-      if (r) {
-        const [kind, runnerData] = getTagged(r);
-        status = kind ? RUNNER_STATUS_MAP[kind] || null : null;
-        // Extract error message from RunnerFailed
-        if (
-          kind === "RunnerFailed" &&
-          runnerData &&
-          typeof runnerData === "object"
-        ) {
-          const rd = runnerData as { errorMessage?: string };
-          if (rd.errorMessage)
-            failedErrors.push(`${getNodeName(nodeId)}: ${rd.errorMessage}`);
-        }
-      }
-      if (status) {
-        statuses.push(status);
-        perNodeStatus.push({
-          nodeId,
-          nodeName: getNodeName(nodeId),
-          status: RUNNER_STATUS_DISPLAY[status] || status,
-        });
-      }
-    }
+    const statuses = runnerIds
+      .map((rid) => {
+        const r = runnersData[rid];
+        if (!r) return null;
+        const [kind] = getTagged(r);
+        const statusMap: Record<string, string> = {
+          RunnerWaitingForInitialization: "WaitingForInitialization",
+          RunnerInitializingBackend: "InitializingBackend",
+          RunnerWaitingForModel: "WaitingForModel",
+          RunnerLoading: "Loading",
+          RunnerLoaded: "Loaded",
+          RunnerWarmingUp: "WarmingUp",
+          RunnerReady: "Ready",
+          RunnerRunning: "Running",
+          RunnerShutdown: "Shutdown",
+          RunnerFailed: "Failed",
+        };
+        return kind ? statusMap[kind] || null : null;
+      })
+      .filter((s): s is string => s !== null);
 
     const has = (s: string) => statuses.includes(s);
-    const count = (s: string) => statuses.filter((v) => v === s).length;
 
     if (statuses.length === 0)
-      return {
-        statusText: "PREPARING",
-        statusClass: "inactive",
-        perNodeStatus,
-        errorMessage: null,
-      };
-    if (has("Failed"))
-      return {
-        statusText: "FAILED",
-        statusClass: "failed",
-        perNodeStatus,
-        errorMessage: failedErrors.length > 0 ? failedErrors.join("; ") : null,
-      };
+      return { statusText: "PREPARING", statusClass: "inactive" };
+    if (has("Failed")) return { statusText: "FAILED", statusClass: "failed" };
     if (has("Shutdown"))
-      return {
-        statusText: "SHUTDOWN",
-        statusClass: "inactive",
-        perNodeStatus,
-        errorMessage: null,
-      };
-
-    // For loading/warming states, show node progress when multi-node
-    if (has("Loading")) {
-      const readyCount = count("Ready") + count("Running") + count("Loaded");
-      const statusText =
-        totalNodes > 1
-          ? `LOADING (${readyCount}/${totalNodes} nodes ready)`
-          : "LOADING";
-      return {
-        statusText,
-        statusClass: "starting",
-        perNodeStatus,
-        errorMessage: null,
-      };
-    }
-    if (has("WarmingUp")) {
-      const readyCount = count("Ready") + count("Running");
-      const statusText =
-        totalNodes > 1
-          ? `WARMING UP (${readyCount}/${totalNodes} nodes ready)`
-          : "WARMING UP";
-      return {
-        statusText,
-        statusClass: "starting",
-        perNodeStatus,
-        errorMessage: null,
-      };
-    }
-
+      return { statusText: "SHUTDOWN", statusClass: "inactive" };
+    if (has("Loading"))
+      return { statusText: "LOADING", statusClass: "starting" };
+    if (has("WarmingUp"))
+      return { statusText: "WARMING UP", statusClass: "starting" };
     if (has("Running"))
-      return {
-        statusText: "RUNNING",
-        statusClass: "running",
-        perNodeStatus,
-        errorMessage: null,
-      };
-    if (has("Ready"))
-      return {
-        statusText: "READY",
-        statusClass: "loaded",
-        perNodeStatus,
-        errorMessage: null,
-      };
-    if (has("Loaded"))
-      return {
-        statusText: "LOADED",
-        statusClass: "loaded",
-        perNodeStatus,
-        errorMessage: null,
-      };
+      return { statusText: "RUNNING", statusClass: "running" };
+    if (has("Ready")) return { statusText: "READY", statusClass: "loaded" };
+    if (has("Loaded")) return { statusText: "LOADED", statusClass: "loaded" };
     if (has("WaitingForModel"))
-      return {
-        statusText: "WAITING",
-        statusClass: "starting",
-        perNodeStatus,
-        errorMessage: null,
-      };
+      return { statusText: "WAITING", statusClass: "starting" };
     if (has("InitializingBackend"))
-      return {
-        statusText: "INITIALIZING",
-        statusClass: "starting",
-        perNodeStatus,
-        errorMessage: null,
-      };
+      return { statusText: "INITIALIZING", statusClass: "starting" };
     if (has("WaitingForInitialization"))
-      return {
-        statusText: "INITIALIZING",
-        statusClass: "starting",
-        perNodeStatus,
-        errorMessage: null,
-      };
+      return { statusText: "INITIALIZING", statusClass: "starting" };
 
-    return {
-      statusText: "RUNNING",
-      statusClass: "active",
-      perNodeStatus,
-      errorMessage: null,
-    };
+    return { statusText: "RUNNING", statusClass: "active" };
   }
 
   function getBytes(value: unknown): number {
@@ -1671,75 +1467,6 @@
     }
   }
 
-  async function deleteMetaInstance(metaInstanceId: string) {
-    const meta = metaInstancesData[metaInstanceId];
-    const modelId = meta?.modelId ?? "unknown";
-    if (!confirm(`Delete model ${modelId}?`)) return;
-
-    const wasSelected = selectedChatModel() === modelId;
-
-    try {
-      const response = await fetch(`/meta_instance/${metaInstanceId}`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-      });
-
-      if (!response.ok) {
-        console.error("Failed to delete meta instance:", response.status);
-      } else if (wasSelected) {
-        // Switch to another available model or clear selection
-        const remainingInstances = Object.entries(instanceData).filter(
-          ([id]) => id !== getBackingInstanceId(metaInstanceId),
-        );
-        if (remainingInstances.length > 0) {
-          const [, lastInstance] =
-            remainingInstances[remainingInstances.length - 1];
-          const newModelId = getInstanceModelId(lastInstance);
-          if (
-            newModelId &&
-            newModelId !== "Unknown" &&
-            newModelId !== "Unknown Model"
-          ) {
-            setSelectedChatModel(newModelId);
-          } else {
-            setSelectedChatModel("");
-          }
-        } else {
-          setSelectedChatModel("");
-        }
-      }
-    } catch (error) {
-      console.error("Error deleting meta instance:", error);
-    }
-  }
-
-  // Find the backing Instance ID for a MetaInstance by scanning instances
-  function getBackingInstanceId(metaInstanceId: string): string | null {
-    for (const [id, inst] of Object.entries(instanceData)) {
-      const [, inner] = getTagged(inst);
-      if (
-        inner &&
-        typeof inner === "object" &&
-        (inner as Record<string, unknown>).metaInstanceId === metaInstanceId
-      ) {
-        return id;
-      }
-    }
-    return null;
-  }
-
-  // Get orphan Instance IDs (not backing any MetaInstance)
-  function getOrphanInstanceIds(): string[] {
-    return Object.keys(instanceData).filter((id) => {
-      const [, inner] = getTagged(instanceData[id]);
-      return (
-        !inner ||
-        typeof inner !== "object" ||
-        !(inner as Record<string, unknown>).metaInstanceId
-      );
-    });
-  }
-
   // Helper to unwrap tagged unions like { MlxRingInstance: {...} }
   function getTagged(obj: unknown): [string | null, unknown] {
     if (!obj || typeof obj !== "object") return [null, null];
@@ -1780,7 +1507,11 @@
     // Instance type from tag
     let instanceType = "Unknown";
     if (instanceTag === "MlxRingInstance") instanceType = "MLX Ring";
-    else if (instanceTag === "MlxJacclInstance") instanceType = "MLX RDMA";
+    else if (
+      instanceTag === "MlxIbvInstance" ||
+      instanceTag === "MlxJacclInstance"
+    )
+      instanceType = "MLX RDMA";
 
     const inst = instance as {
       shardAssignments?: {
@@ -2128,51 +1859,7 @@
   }
 
   const nodeCount = $derived(data ? Object.keys(data.nodes).length : 0);
-  const metaInstanceCount = $derived(Object.keys(metaInstancesData).length);
-  const orphanInstanceIds = $derived(getOrphanInstanceIds());
-  const instanceCount = $derived(metaInstanceCount + orphanInstanceIds.length);
-
-  // Unified display items: MetaInstances first, then orphan Instances
-  interface DisplayItem {
-    id: string; // MetaInstance ID or Instance ID (used as key and displayed)
-    modelId: string;
-    instance: unknown | null; // The backing/orphan instance (tagged union) or null if placing
-    instanceId: string | null; // The actual Instance ID (for topology hover)
-    isMetaInstance: boolean;
-    sharding: string | null; // From MetaInstance constraints (used when instance is null)
-    instanceMeta: string | null; // From MetaInstance constraints (used when instance is null)
-  }
-
-  const unifiedDisplayItems = $derived.by((): DisplayItem[] => {
-    const items: DisplayItem[] = [];
-    // MetaInstances
-    for (const [metaId, meta] of Object.entries(metaInstancesData)) {
-      const backingId = getBackingInstanceId(metaId);
-      items.push({
-        id: metaId,
-        modelId: meta.modelId,
-        instance: backingId ? instanceData[backingId] : null,
-        instanceId: backingId,
-        isMetaInstance: true,
-        sharding: meta.sharding,
-        instanceMeta: meta.instanceMeta,
-      });
-    }
-    // Orphan Instances
-    for (const orphanId of getOrphanInstanceIds()) {
-      const inst = instanceData[orphanId];
-      items.push({
-        id: orphanId,
-        modelId: getInstanceModelId(inst),
-        instance: inst,
-        instanceId: orphanId,
-        isMetaInstance: false,
-        sharding: null,
-        instanceMeta: null,
-      });
-    }
-    return items;
-  });
+  const instanceCount = $derived(Object.keys(instanceData).length);
 
   // Helper to get the number of nodes in a placement preview
   function getPreviewNodeCount(preview: PlacementPreview): number {
@@ -2290,71 +1977,8 @@
 </script>
 
 {#snippet clusterWarnings()}
-  {#if tbBridgeCycles.length > 0 || macosVersionMismatch || (tb5WithoutRdma && !tb5InfoDismissed) || (jacclError && jacclError !== jacclDismissedError)}
+  {#if tbBridgeCycles.length > 0 || macosVersionMismatch || (tb5WithoutRdma && !tb5InfoDismissed)}
     <div class="absolute top-4 left-4 flex flex-col gap-2 z-40">
-      {#if jacclError && jacclError !== jacclDismissedError}
-        <div class="group relative" role="alert">
-          <div
-            class="flex items-center gap-2 px-3 py-2 rounded border border-red-500/50 bg-red-500/10 backdrop-blur-sm cursor-help"
-          >
-            <svg
-              class="w-5 h-5 text-red-400 flex-shrink-0"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d={warningIconPath}
-              />
-            </svg>
-            <span class="text-sm font-mono text-red-200">
-              JACCL RDMA ERROR
-            </span>
-            <button
-              type="button"
-              onclick={() => (jacclDismissedError = jacclError)}
-              class="ml-1 text-red-300/60 hover:text-red-200 transition-colors cursor-pointer"
-              title="Dismiss"
-            >
-              <svg
-                class="w-4 h-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
-          </div>
-
-          <!-- Tooltip on hover -->
-          <div
-            class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-red-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
-          >
-            <p class="text-xs text-white/80 mb-2">
-              A macOS RDMA driver error was detected. This is a known issue with
-              the experimental RDMA driver in macOS.
-            </p>
-            <p class="text-xs text-white/60 mb-2">
-              <span class="text-red-300">Error:</span>
-              {jacclError}
-            </p>
-            <p class="text-xs text-white/60">
-              <span class="text-red-300">To fix:</span> Restart the affected machine.
-              There is currently no other workaround for this issue.
-            </p>
-          </div>
-        </div>
-      {/if}
-
       {#if tbBridgeCycles.length > 0}
         {@const cycle = tbBridgeCycles[0]}
         {@const serviceName = getTbBridgeServiceName(cycle)}
@@ -2523,29 +2147,8 @@
 {/snippet}
 
 {#snippet clusterWarningsCompact()}
-  {#if tbBridgeCycles.length > 0 || macosVersionMismatch || (tb5WithoutRdma && !tb5InfoDismissed) || (jacclError && jacclError !== jacclDismissedError)}
+  {#if tbBridgeCycles.length > 0 || macosVersionMismatch || (tb5WithoutRdma && !tb5InfoDismissed)}
     <div class="absolute top-2 left-2 flex flex-col gap-1">
-      {#if jacclError && jacclError !== jacclDismissedError}
-        <div
-          class="flex items-center gap-1.5 px-2 py-1 rounded border border-red-500/50 bg-red-500/10 backdrop-blur-sm"
-          title="JACCL RDMA driver error — restart affected machine"
-        >
-          <svg
-            class="w-3.5 h-3.5 text-red-400"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              d={warningIconPath}
-            />
-          </svg>
-          <span class="text-[10px] font-mono text-red-200">JACCL ERROR</span>
-        </div>
-      {/if}
       {#if tbBridgeCycles.length > 0}
         <div
           class="flex items-center gap-1.5 px-2 py-1 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm"
@@ -3948,57 +3551,26 @@
                   bind:this={instancesContainerRef}
                   class="max-h-72 xl:max-h-96 space-y-3 overflow-y-auto overflow-x-hidden py-px"
                 >
-                  {#each unifiedDisplayItems as item (item.id)}
-                    {@const id = item.id}
-                    {@const instance = item.instance}
-                    {@const downloadInfo = instance
-                      ? getInstanceDownloadStatus(
-                          item.instanceId ?? id,
-                          instance,
-                        )
-                      : getMetaInstancePlacingStatus(id)}
-                    {@const metaData = item.isMetaInstance
-                      ? metaInstancesData[id]
-                      : null}
-                    {@const retryError =
-                      metaData?.lastFailureError && !downloadInfo.isFailed
-                        ? metaData.consecutiveFailures > 0
-                          ? `(${((metaData.consecutiveFailures - 1) % 3) + 1}/3) ${metaData.lastFailureError}`
-                          : metaData.lastFailureError
-                        : null}
+                  {#each Object.entries(instanceData) as [id, instance]}
+                    {@const downloadInfo = getInstanceDownloadStatus(
+                      id,
+                      instance,
+                    )}
                     {@const statusText = downloadInfo.statusText}
                     {@const isDownloading = downloadInfo.isDownloading}
-                    {@const isFailed =
-                      statusText === "FAILED" ||
-                      statusText === "PLACEMENT FAILED"}
+                    {@const isFailed = statusText === "FAILED"}
                     {@const isLoading =
-                      statusText.startsWith("LOADING") ||
-                      statusText.startsWith("WARMING UP") ||
-                      statusText === "WAITING" ||
-                      statusText === "PLACING" ||
-                      statusText.startsWith("RETRYING")}
+                      statusText === "LOADING" ||
+                      statusText === "WARMING UP" ||
+                      statusText === "WAITING"}
                     {@const isReady =
                       statusText === "READY" || statusText === "LOADED"}
                     {@const isRunning = statusText === "RUNNING"}
                     <!-- Instance Card -->
-                    {@const instanceModelId = item.modelId}
-                    {@const instanceInfo = instance
-                      ? getInstanceInfo(instance)
-                      : {
-                          instanceType:
-                            item.instanceMeta === "MlxRing"
-                              ? "MLX Ring"
-                              : item.instanceMeta === "MlxJaccl"
-                                ? "MLX RDMA"
-                                : "Unknown",
-                          sharding: item.sharding ?? "Unknown",
-                          nodeNames: [] as string[],
-                          nodeIds: [] as string[],
-                          nodeCount: 0,
-                        }}
-                    {@const instanceConnections = instance
-                      ? getInstanceConnections(instance)
-                      : []}
+                    {@const instanceModelId = getInstanceModelId(instance)}
+                    {@const instanceInfo = getInstanceInfo(instance)}
+                    {@const instanceConnections =
+                      getInstanceConnections(instance)}
                     <div
                       class="relative group cursor-pointer"
                       role="button"
@@ -4103,10 +3675,7 @@
                             >
                           </div>
                           <button
-                            onclick={() =>
-                              item.isMetaInstance
-                                ? deleteMetaInstance(id)
-                                : deleteInstance(id)}
+                            onclick={() => deleteInstance(id)}
                             class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
                           >
                             DELETE
@@ -4116,7 +3685,7 @@
                           <div
                             class="text-exo-yellow text-xs font-mono tracking-wide truncate"
                           >
-                            {instanceModelId}
+                            {getInstanceModelId(instance)}
                           </div>
                           <div
                             class="flex items-center gap-2 text-white/60 text-xs font-mono"
@@ -4433,30 +4002,6 @@
                                 class="text-xs text-red-400/80 font-mono mt-1 break-words"
                               >
                                 {downloadInfo.errorMessage}
-                              </div>
-                            {:else if retryError}
-                              <div
-                                class="text-xs text-orange-400/80 font-mono mt-1 break-words"
-                              >
-                                Retrying after error: {retryError}
-                              </div>
-                            {/if}
-                            {#if downloadInfo.perNodeStatus.length > 1 && (statusText.startsWith("LOADING") || statusText.startsWith("WARMING UP") || statusText === "WAITING" || statusText === "INITIALIZING")}
-                              <div class="mt-1.5 space-y-0.5">
-                                {#each downloadInfo.perNodeStatus as node}
-                                  <div
-                                    class="flex items-center justify-between text-[10px] font-mono"
-                                  >
-                                    <span class="text-white/60 truncate pr-2"
-                                      >{node.nodeName}</span
-                                    >
-                                    <span
-                                      class={getStatusColor(
-                                        node.status.toUpperCase(),
-                                      )}>{node.status}</span
-                                    >
-                                  </div>
-                                {/each}
                               </div>
                             {/if}
                           {/if}

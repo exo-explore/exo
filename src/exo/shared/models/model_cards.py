@@ -44,7 +44,8 @@ async def _refresh_card_cache():
         async for toml_file in path.rglob("*.toml"):
             try:
                 card = await ModelCard.load_from_path(toml_file)
-                _card_cache[card.model_id] = card
+                if card.model_id not in _card_cache:
+                    _card_cache[card.model_id] = card
             except (ValidationError, TOMLKitError):
                 pass
 
@@ -182,6 +183,7 @@ class ConfigData(BaseModel):
     def supports_tensor(self) -> bool:
         return self.architectures in [
             ["Glm4MoeLiteForCausalLM"],
+            ["GlmMoeDsaForCausalLM"],
             ["DeepseekV32ForCausalLM"],
             ["DeepseekV3ForCausalLM"],
             ["Qwen3NextForCausalLM"],

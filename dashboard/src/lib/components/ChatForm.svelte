@@ -105,7 +105,7 @@
   const modelSupportsThinking = $derived(() => {
     if (!currentModel) return false;
     const caps = modelCapabilities[currentModel] || [];
-    return caps.includes("thinking") && caps.includes("text");
+    return caps.includes("thinking_toggle") && caps.includes("text");
   });
 
   const isEditOnlyWithoutImage = $derived(

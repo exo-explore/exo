@@ -125,7 +125,9 @@ class MpSender[T]:
             self._state.buffer.put(item, block=True)
 
     async def send_async(self, item: T) -> None:
-        await to_thread.run_sync(self.send, item, limiter=CapacityLimiter(1))
+        await to_thread.run_sync(
+            self.send, item, limiter=CapacityLimiter(1), abandon_on_cancel=True
+        )
 
     def close(self) -> None:
         if not self._state.closed.is_set():

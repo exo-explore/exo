@@ -1,12 +1,12 @@
 import time
 from collections.abc import Generator
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from exo.shared.models.model_cards import ModelCard, ModelId
-from exo.shared.types.common import CommandId, MetaInstanceId, NodeId
+from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
@@ -262,24 +262,25 @@ class DeleteInstanceResponse(BaseModel):
     instance_id: InstanceId
 
 
-class CreateMetaInstanceParams(BaseModel):
-    model_id: ModelId
-    sharding: Sharding = Sharding.Pipeline
-    instance_meta: InstanceMeta = InstanceMeta.MlxRing
-    min_nodes: int = 1
-    node_ids: list[NodeId] | None = None
+ImageSize = Literal[
+    "auto",
+    "512x512",
+    "768x768",
+    "1024x768",
+    "768x1024",
+    "1024x1024",
+    "1024x1536",
+    "1536x1024",
+]
 
 
-class CreateMetaInstanceResponse(BaseModel):
-    message: str
-    command_id: CommandId
-    meta_instance_id: MetaInstanceId
-
-
-class DeleteMetaInstanceResponse(BaseModel):
-    message: str
-    command_id: CommandId
-    meta_instance_id: MetaInstanceId
+def normalize_image_size(v: object) -> ImageSize:
+    """Shared validator for ImageSize fields: maps None → "auto" and rejects invalid values."""
+    if v is None:
+        return "auto"
+    if v not in get_args(ImageSize):
+        raise ValueError(f"Invalid size: {v!r}. Must be one of {get_args(ImageSize)}")
+    return v  # pyright: ignore[reportReturnType]
 
 
 class AdvancedImageParams(BaseModel):
@@ -301,13 +302,18 @@ class ImageGenerationTaskParams(BaseModel):
     partial_images: int | None = 0
     quality: Literal["high", "medium", "low"] | None = "medium"
     response_format: Literal["url", "b64_json"] | None = "b64_json"
-    size: str | None = "1024x1024"
+    size: ImageSize = "auto"
     stream: bool | None = False
     style: str | None = "vivid"
     user: str | None = None
     advanced_params: AdvancedImageParams | None = None
     # Internal flag for benchmark mode - set by API, preserved through serialization
     bench: bool = False
+
+    @field_validator("size", mode="before")
+    @classmethod
+    def normalize_size(cls, v: object) -> ImageSize:
+        return normalize_image_size(v)
 
 
 class BenchImageGenerationTaskParams(ImageGenerationTaskParams):
@@ -325,12 +331,17 @@ class ImageEditsTaskParams(BaseModel):
     quality: Literal["high", "medium", "low"] | None = "medium"
     output_format: Literal["png", "jpeg", "webp"] = "png"
     response_format: Literal["url", "b64_json"] | None = "b64_json"
-    size: str | None = "1024x1024"
+    size: ImageSize = "auto"
     image_strength: float | None = 0.7
     stream: bool = False
     partial_images: int | None = 0
     advanced_params: AdvancedImageParams | None = None
     bench: bool = False
+
+    @field_validator("size", mode="before")
+    @classmethod
+    def normalize_size(cls, v: object) -> ImageSize:
+        return normalize_image_size(v)
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
         for name, value in super().__repr_args__():  # pyright: ignore[reportAny]
