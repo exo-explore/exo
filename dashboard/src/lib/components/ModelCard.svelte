@@ -6,36 +6,41 @@
     TopologyEdge,
   } from "$lib/stores/app.svelte";
   import { debugMode, topologyData } from "$lib/stores/app.svelte";
-  import { browser } from '$app/environment';
+  import { browser } from "$app/environment";
 
   // Theme detection
   let isDark = $state(true);
 
   $effect(() => {
     if (!browser) return;
-    const update = () => { isDark = document.documentElement.classList.contains('dark'); };
+    const update = () => {
+      isDark = document.documentElement.classList.contains("dark");
+    };
     update();
     const observer = new MutationObserver(update);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
     return () => observer.disconnect();
   });
 
   // Theme-aware colors
   let tc = $derived({
-    accent: isDark ? '#FFD700' : '#1a1a1a',
-    accentDim: isDark ? 'rgba(255,215,0,0.1)' : 'rgba(26,26,26,0.06)',
-    accentGlow: isDark ? 'rgba(255,215,0,0.1)' : 'rgba(0,0,0,0.03)',
-    outlineActive: isDark ? '#FFD700' : '#374151',
-    outlineInactive: isDark ? '#4B5563' : '#d1d5db',
-    strokeActive: isDark ? '#FFD700' : '#374151',
-    strokeInactive: isDark ? '#4B5563' : '#d1d5db',
-    caseFill: isDark ? '#0a0a0a' : '#f3f4f6',
-    caseDetail: isDark ? '#374151' : '#d1d5db',
-    errorDot: isDark ? '#f87171' : '#dc2626',
-    statusInactive: isDark ? '#4B5563' : '#9ca3af',
-    connGood: isDark ? 'rgba(255,255,255,0.85)' : 'rgba(30,30,30,0.85)',
-    connBad: isDark ? 'rgba(248,113,113,0.85)' : 'rgba(220,38,38,0.85)',
-    scanlineColor: isDark ? 'rgba(255,215,0,0.02)' : 'rgba(0,0,0,0.01)',
+    accent: isDark ? "#FFD700" : "#1a1a1a",
+    accentDim: isDark ? "rgba(255,215,0,0.1)" : "rgba(26,26,26,0.06)",
+    accentGlow: isDark ? "rgba(255,215,0,0.1)" : "rgba(0,0,0,0.03)",
+    outlineActive: isDark ? "#FFD700" : "#374151",
+    outlineInactive: isDark ? "#4B5563" : "#d1d5db",
+    strokeActive: isDark ? "#FFD700" : "#374151",
+    strokeInactive: isDark ? "#4B5563" : "#d1d5db",
+    caseFill: isDark ? "#0a0a0a" : "#f3f4f6",
+    caseDetail: isDark ? "#374151" : "#d1d5db",
+    errorDot: isDark ? "#f87171" : "#dc2626",
+    statusInactive: isDark ? "#4B5563" : "#9ca3af",
+    connGood: isDark ? "rgba(255,255,255,0.85)" : "rgba(30,30,30,0.85)",
+    connBad: isDark ? "rgba(248,113,113,0.85)" : "rgba(220,38,38,0.85)",
+    scanlineColor: isDark ? "rgba(255,215,0,0.02)" : "rgba(0,0,0,0.01)",
   });
 
   interface Props {
@@ -702,7 +707,9 @@
                   y1={node.y}
                   x2={node2.x}
                   y2={node2.y}
-                  stroke={node.isUsed && node2.isUsed ? tc.strokeActive : tc.strokeInactive}
+                  stroke={node.isUsed && node2.isUsed
+                    ? tc.strokeActive
+                    : tc.strokeInactive}
                   stroke-width="1"
                   stroke-dasharray={node.isUsed && node2.isUsed ? "4,2" : "2,4"}
                   opacity={node.isUsed && node2.isUsed ? 0.4 : 0.15}
@@ -738,9 +745,7 @@
                   dominant-baseline="hanging"
                   font-size="6"
                   font-family="SF Mono, Monaco, monospace"
-                  fill={conn.iface
-                    ? tc.connGood
-                    : tc.connBad}
+                  fill={conn.iface ? tc.connGood : tc.connBad}
                 >
                   {conn.arrow}
                   {isRdma
@@ -757,9 +762,7 @@
                   dominant-baseline="hanging"
                   font-size="6"
                   font-family="SF Mono, Monaco, monospace"
-                  fill={conn.iface
-                    ? tc.connGood
-                    : tc.connBad}
+                  fill={conn.iface ? tc.connGood : tc.connBad}
                 >
                   {conn.arrow}
                   {isRdma
@@ -778,9 +781,7 @@
                   dominant-baseline="auto"
                   font-size="6"
                   font-family="SF Mono, Monaco, monospace"
-                  fill={conn.iface
-                    ? tc.connGood
-                    : tc.connBad}
+                  fill={conn.iface ? tc.connGood : tc.connBad}
                 >
                   {conn.arrow}
                   {isRdma
@@ -799,9 +800,7 @@
                   dominant-baseline="auto"
                   font-size="6"
                   font-family="SF Mono, Monaco, monospace"
-                  fill={conn.iface
-                    ? tc.connGood
-                    : tc.connBad}
+                  fill={conn.iface ? tc.connGood : tc.connBad}
                 >
                   {conn.arrow}
                   {isRdma

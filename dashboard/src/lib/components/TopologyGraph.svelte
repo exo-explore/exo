@@ -38,60 +38,79 @@
 
   // Theme-aware colors - read from CSS custom properties
   function getThemeColors() {
-    if (typeof document === 'undefined') return getDefaultColors();
+    if (typeof document === "undefined") return getDefaultColors();
     const style = getComputedStyle(document.documentElement);
-    const isDark = document.documentElement.classList.contains('dark');
+    const isDark = document.documentElement.classList.contains("dark");
     return {
-      accent: style.getPropertyValue('--exo-yellow').trim() || (isDark ? 'oklch(0.85 0.18 85)' : 'oklch(0.20 0.02 85)'),
-      accentRgb: isDark ? '255,215,0' : '30,28,20',
-      deviceCase: isDark ? '#1a1a1a' : '#e8e8e8',
-      deviceCaseDark: isDark ? '#2c2c2c' : '#d4d4d4',
-      deviceScreen: isDark ? '#0a0a12' : '#f0f0f5',
-      deviceScreenFill: isDark ? 'rgba(0,20,40,0.9)' : 'rgba(240,242,248,0.95)',
-      labelWhite: isDark ? '#FFFFFF' : '#1a1a1a',
-      labelMuted: isDark ? 'rgba(179,179,179,0.9)' : 'rgba(80,80,80,0.9)',
-      labelDim: isDark ? 'rgba(179,179,179,0.7)' : 'rgba(100,100,100,0.7)',
-      wireDefault: isDark ? 'rgba(179,179,179,0.8)' : 'rgba(120,120,120,0.6)',
-      wireBright: isDark ? 'rgba(255,255,255,0.9)' : 'rgba(30,30,30,0.9)',
-      wireFiltered: isDark ? 'rgba(140,140,140,0.6)' : 'rgba(160,160,160,0.5)',
-      gridStroke: isDark ? 'var(--exo-light-gray, #B3B3B3)' : 'var(--exo-light-gray, #888888)',
-      errorText: isDark ? 'rgba(248,113,113,0.9)' : 'rgba(220,38,38,0.9)',
-      normalText: isDark ? 'rgba(255,255,255,0.85)' : 'rgba(30,30,30,0.85)',
-      gpuChip: isDark ? 'rgba(80, 80, 90, 0.7)' : 'rgba(180, 180, 190, 0.7)',
-      detailOverlay: isDark ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.08)',
-      deviceShadow: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.06)',
-      deviceHighlight: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.5)',
-      tbActive: isDark ? 'rgba(234,179,8,0.9)' : 'rgba(30,28,20,0.9)',
-      tbInactive: isDark ? 'rgba(100,100,100,0.7)' : 'rgba(160,160,160,0.7)',
-      deviceDetail: isDark ? '#374151' : '#c0c0c0',
+      accent:
+        style.getPropertyValue("--exo-yellow").trim() ||
+        (isDark ? "oklch(0.85 0.18 85)" : "oklch(0.20 0.02 85)"),
+      accentRgb: isDark ? "255,215,0" : "30,28,20",
+      deviceCase: isDark ? "#1a1a1a" : "#e8e8e8",
+      deviceCaseDark: isDark ? "#2c2c2c" : "#d4d4d4",
+      deviceScreen: isDark ? "#0a0a12" : "#f0f0f5",
+      deviceScreenFill: isDark ? "rgba(0,20,40,0.9)" : "rgba(240,242,248,0.95)",
+      labelWhite: isDark ? "#FFFFFF" : "#1a1a1a",
+      labelMuted: isDark ? "rgba(179,179,179,0.9)" : "rgba(80,80,80,0.9)",
+      labelDim: isDark ? "rgba(179,179,179,0.7)" : "rgba(100,100,100,0.7)",
+      wireDefault: isDark ? "rgba(179,179,179,0.8)" : "rgba(120,120,120,0.6)",
+      wireBright: isDark ? "rgba(255,255,255,0.9)" : "rgba(30,30,30,0.9)",
+      wireFiltered: isDark ? "rgba(140,140,140,0.6)" : "rgba(160,160,160,0.5)",
+      gridStroke: isDark
+        ? "var(--exo-light-gray, #B3B3B3)"
+        : "var(--exo-light-gray, #888888)",
+      errorText: isDark ? "rgba(248,113,113,0.9)" : "rgba(220,38,38,0.9)",
+      normalText: isDark ? "rgba(255,255,255,0.85)" : "rgba(30,30,30,0.85)",
+      gpuChip: isDark ? "rgba(80, 80, 90, 0.7)" : "rgba(180, 180, 190, 0.7)",
+      detailOverlay: isDark ? "rgba(0,0,0,0.35)" : "rgba(0,0,0,0.08)",
+      deviceShadow: isDark ? "rgba(0,0,0,0.2)" : "rgba(0,0,0,0.06)",
+      deviceHighlight: isDark
+        ? "rgba(255,255,255,0.08)"
+        : "rgba(255,255,255,0.5)",
+      tbActive: isDark ? "rgba(234,179,8,0.9)" : "rgba(30,28,20,0.9)",
+      tbInactive: isDark ? "rgba(100,100,100,0.7)" : "rgba(160,160,160,0.7)",
+      deviceDetail: isDark ? "#374151" : "#c0c0c0",
     };
   }
 
   function getDefaultColors() {
     return {
-      accent: 'oklch(0.85 0.18 85)', accentRgb: '255,215,0',
-      deviceCase: '#1a1a1a', deviceCaseDark: '#2c2c2c', deviceScreen: '#0a0a12',
-      deviceScreenFill: 'rgba(0,20,40,0.9)', labelWhite: '#FFFFFF',
-      labelMuted: 'rgba(179,179,179,0.9)', labelDim: 'rgba(179,179,179,0.7)',
-      wireDefault: 'rgba(179,179,179,0.8)', wireBright: 'rgba(255,255,255,0.9)',
-      wireFiltered: 'rgba(140,140,140,0.6)',
-      gridStroke: 'var(--exo-light-gray, #B3B3B3)',
-      errorText: 'rgba(248,113,113,0.9)', normalText: 'rgba(255,255,255,0.85)',
-      gpuChip: 'rgba(80, 80, 90, 0.7)', detailOverlay: 'rgba(0,0,0,0.35)',
-      deviceShadow: 'rgba(0,0,0,0.2)', deviceHighlight: 'rgba(255,255,255,0.08)',
-      tbActive: 'rgba(234,179,8,0.9)', tbInactive: 'rgba(100,100,100,0.7)',
-      deviceDetail: '#374151',
+      accent: "oklch(0.85 0.18 85)",
+      accentRgb: "255,215,0",
+      deviceCase: "#1a1a1a",
+      deviceCaseDark: "#2c2c2c",
+      deviceScreen: "#0a0a12",
+      deviceScreenFill: "rgba(0,20,40,0.9)",
+      labelWhite: "#FFFFFF",
+      labelMuted: "rgba(179,179,179,0.9)",
+      labelDim: "rgba(179,179,179,0.7)",
+      wireDefault: "rgba(179,179,179,0.8)",
+      wireBright: "rgba(255,255,255,0.9)",
+      wireFiltered: "rgba(140,140,140,0.6)",
+      gridStroke: "var(--exo-light-gray, #B3B3B3)",
+      errorText: "rgba(248,113,113,0.9)",
+      normalText: "rgba(255,255,255,0.85)",
+      gpuChip: "rgba(80, 80, 90, 0.7)",
+      detailOverlay: "rgba(0,0,0,0.35)",
+      deviceShadow: "rgba(0,0,0,0.2)",
+      deviceHighlight: "rgba(255,255,255,0.08)",
+      tbActive: "rgba(234,179,8,0.9)",
+      tbInactive: "rgba(100,100,100,0.7)",
+      deviceDetail: "#374151",
     };
   }
 
   let themeColors = $state(getThemeColors());
 
   $effect(() => {
-    if (typeof document === 'undefined') return;
+    if (typeof document === "undefined") return;
     const observer = new MutationObserver(() => {
       themeColors = getThemeColors();
     });
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
     return () => observer.disconnect();
   });
 

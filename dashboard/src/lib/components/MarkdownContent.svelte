@@ -1193,7 +1193,9 @@
     background: rgba(0, 0, 0, 0.02);
   }
 
-  :global(html:not(.dark)) .markdown-content :global(.math-display-wrapper:hover) {
+  :global(html:not(.dark))
+    .markdown-content
+    :global(.math-display-wrapper:hover) {
     border-color: rgba(0, 0, 0, 0.18);
     box-shadow: 0 0 12px rgba(0, 0, 0, 0.05);
   }
@@ -1208,15 +1210,21 @@
   }
 
   /* --- Math scrollbar (light mode) --- */
-  :global(html:not(.dark)) .markdown-content :global(.math-display-content::-webkit-scrollbar-track) {
+  :global(html:not(.dark))
+    .markdown-content
+    :global(.math-display-content::-webkit-scrollbar-track) {
     background: rgba(0, 0, 0, 0.04);
   }
 
-  :global(html:not(.dark)) .markdown-content :global(.math-display-content::-webkit-scrollbar-thumb) {
+  :global(html:not(.dark))
+    .markdown-content
+    :global(.math-display-content::-webkit-scrollbar-thumb) {
     background: rgba(0, 0, 0, 0.15);
   }
 
-  :global(html:not(.dark)) .markdown-content :global(.math-display-content::-webkit-scrollbar-thumb:hover) {
+  :global(html:not(.dark))
+    .markdown-content
+    :global(.math-display-content::-webkit-scrollbar-thumb:hover) {
     background: rgba(0, 0, 0, 0.25);
   }
 
@@ -1239,7 +1247,9 @@
     color: oklch(0.2 0 0);
   }
 
-  :global(html:not(.dark)) .markdown-content :global(.latex-proof-content::after) {
+  :global(html:not(.dark))
+    .markdown-content
+    :global(.latex-proof-content::after) {
     color: oklch(0.4 0 0);
   }
 
@@ -1254,7 +1264,9 @@
   }
 
   /* --- LaTeX diagram/figure placeholder --- */
-  :global(html:not(.dark)) .markdown-content :global(.latex-diagram-placeholder) {
+  :global(html:not(.dark))
+    .markdown-content
+    :global(.latex-diagram-placeholder) {
     background: rgba(0, 0, 0, 0.02);
     border: 1px dashed rgba(0, 0, 0, 0.2);
     color: rgba(0, 0, 0, 0.45);

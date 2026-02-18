@@ -98,10 +98,14 @@
     <button
       onclick={() => toggleMode()}
       class="p-2 rounded border border-exo-medium-gray/40 hover:border-exo-yellow/50 transition-colors cursor-pointer"
-      title={currentMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-      aria-label={currentMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      title={currentMode === "dark"
+        ? "Switch to light mode"
+        : "Switch to dark mode"}
+      aria-label={currentMode === "dark"
+        ? "Switch to light mode"
+        : "Switch to dark mode"}
     >
-      {#if currentMode === 'dark'}
+      {#if currentMode === "dark"}
         <!-- Sun icon - click to go light -->
         <svg
           class="w-4 h-4 text-exo-light-gray hover:text-exo-yellow transition-colors"
@@ -111,7 +115,10 @@
           stroke-width="2"
         >
           <circle cx="12" cy="12" r="5" />
-          <path stroke-linecap="round" d="M12 1v2m0 18v2m-9-11H1m22 0h-2m-2.636-6.364l-1.414 1.414M6.05 6.05L4.636 4.636m0 14.728l1.414-1.414m11.314 1.414l1.414 1.414" />
+          <path
+            stroke-linecap="round"
+            d="M12 1v2m0 18v2m-9-11H1m22 0h-2m-2.636-6.364l-1.414 1.414M6.05 6.05L4.636 4.636m0 14.728l1.414-1.414m11.314 1.414l1.414 1.414"
+          />
         </svg>
       {:else}
         <!-- Moon icon - click to go dark -->
@@ -122,7 +129,11 @@
           stroke="currentColor"
           stroke-width="2"
         >
-          <path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 1111.21 3a7 7 0 009.79 9.79z" />
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M21 12.79A9 9 0 1111.21 3a7 7 0 009.79 9.79z"
+          />
         </svg>
       {/if}
     </button>
