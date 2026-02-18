@@ -14,6 +14,7 @@ from exo.download.download_utils import (
     map_repo_download_progress_to_download_progress_data,
 )
 from exo.download.shard_downloader import ShardDownloader
+from exo.shared.constants import EXO_MODELS_DIR
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
     CancelDownload,
@@ -63,6 +64,9 @@ class DownloadCoordinator:
         self.event_sender, self.event_receiver = channel[Event]()
         self.shard_downloader.on_progress(self._download_progress_callback)
 
+    def _model_dir(self, model_id: ModelId) -> str:
+        return str(EXO_MODELS_DIR / model_id.normalize())
+
     async def _download_progress_callback(
         self, callback_shard: ShardMetadata, progress: RepoDownloadProgress
     ) -> None:
@@ -74,6 +78,7 @@ class DownloadCoordinator:
                 shard_metadata=callback_shard,
                 node_id=self.node_id,
                 total_bytes=progress.total_bytes,
+                model_directory=self._model_dir(model_id),
             )
             self.download_status[model_id] = completed
             await self.event_sender.send(
@@ -93,6 +98,7 @@ class DownloadCoordinator:
                 download_progress=map_repo_download_progress_to_download_progress_data(
                     progress
                 ),
+                model_directory=self._model_dir(model_id),
             )
             self.download_status[model_id] = ongoing
             await self.event_sender.send(
@@ -170,7 +176,11 @@ class DownloadCoordinator:
                 return
 
         # Emit pending status
-        progress = DownloadPending(shard_metadata=shard, node_id=self.node_id)
+        progress = DownloadPending(
+            shard_metadata=shard,
+            node_id=self.node_id,
+            model_directory=self._model_dir(model_id),
+        )
         self.download_status[model_id] = progress
         await self.event_sender.send(NodeDownloadProgress(download_progress=progress))
 
@@ -184,6 +194,7 @@ class DownloadCoordinator:
                 shard_metadata=shard,
                 node_id=self.node_id,
                 total_bytes=initial_progress.total_bytes,
+                model_directory=self._model_dir(model_id),
             )
             self.download_status[model_id] = completed
             await self.event_sender.send(
@@ -206,6 +217,7 @@ class DownloadCoordinator:
             download_progress=map_repo_download_progress_to_download_progress_data(
                 initial_progress
             ),
+            model_directory=self._model_dir(model_id),
         )
         self.download_status[model_id] = status
         self.event_sender.send_nowait(NodeDownloadProgress(download_progress=status))
@@ -219,6 +231,7 @@ class DownloadCoordinator:
                     shard_metadata=shard,
                     node_id=self.node_id,
                     error_message=str(e),
+                    model_directory=self._model_dir(model_id),
                 )
                 self.download_status[model_id] = failed
                 await self.event_sender.send(
@@ -253,6 +266,7 @@ class DownloadCoordinator:
             pending = DownloadPending(
                 shard_metadata=current_status.shard_metadata,
                 node_id=self.node_id,
+                model_directory=self._model_dir(model_id),
             )
             await self.event_sender.send(
                 NodeDownloadProgress(download_progress=pending)
@@ -295,11 +309,18 @@ class DownloadCoordinator:
                             node_id=self.node_id,
                             shard_metadata=progress.shard,
                             total_bytes=progress.total_bytes,
+                            model_directory=self._model_dir(
+                                progress.shard.model_card.model_id
+                            ),
                         )
                     elif progress.status in ["in_progress", "not_started"]:
                         if progress.downloaded_bytes_this_session.in_bytes == 0:
                             status = DownloadPending(
-                                node_id=self.node_id, shard_metadata=progress.shard
+                                node_id=self.node_id,
+                                shard_metadata=progress.shard,
+                                model_directory=self._model_dir(
+                                    progress.shard.model_card.model_id
+                                ),
                             )
                         else:
                             status = DownloadOngoing(
@@ -307,6 +328,9 @@ class DownloadCoordinator:
                                 shard_metadata=progress.shard,
                                 download_progress=map_repo_download_progress_to_download_progress_data(
                                     progress
+                                ),
+                                model_directory=self._model_dir(
+                                    progress.shard.model_card.model_id
                                 ),
                             )
                     else:
