@@ -103,7 +103,7 @@ def prefill(
         max_tokens=1,
         sampler=sampler,
         prompt_cache=cache,
-        prefill_step_size=8192,
+        prefill_step_size=4096,
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
         prompt_progress_callback=progress_callback,

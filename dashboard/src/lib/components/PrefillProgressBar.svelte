@@ -14,7 +14,8 @@
       : 0,
   );
 
-  function formatTokenCount(count: number): string {
+  function formatTokenCount(count: number | undefined): string {
+    if (count == null) return "0";
     if (count >= 1000) {
       return `${(count / 1000).toFixed(1)}k`;
     }

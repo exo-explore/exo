@@ -544,11 +544,9 @@ class API:
 
             with recv as token_chunks:
                 async for chunk in token_chunks:
-                    # Skip prefill progress data
+                    yield chunk
                     if isinstance(chunk, PrefillProgressData):
                         continue
-
-                    yield chunk
                     if chunk.finish_reason is not None:
                         break
 

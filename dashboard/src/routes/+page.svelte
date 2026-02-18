@@ -932,13 +932,6 @@
     };
   }
 
-  // Debug: Log downloads data when it changes
-  $effect(() => {
-    if (downloadsData && Object.keys(downloadsData).length > 0) {
-      console.log("[Download Debug] Current downloads:", downloadsData);
-    }
-  });
-
   // Helper to get download status for an instance
   function getInstanceDownloadStatus(
     instanceId: string,
