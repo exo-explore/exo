@@ -78,17 +78,11 @@ from exo.worker.engines.image import (
     initialize_image_model,
     warmup_image_generator,
 )
+from exo.worker.engines.base_engine import Engine, KVCache
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.cache import KVPrefixCache
-from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
-from exo.worker.engines.mlx.utils_mlx import (
-    apply_chat_template,
-    detect_thinking_prompt_suffix,
-    initialize_mlx,
-    load_mlx_items,
-    mlx_force_oom,
-    mx_any,
-)
+from exo.worker.engines.mlx_engine import MlxEngine
+from exo.worker.engines.mlx.utils_mlx import mlx_force_oom
 from exo.worker.runner.bootstrap import logger
 
 from .tool_parsers import ToolParser, make_mlx_parser
@@ -140,8 +134,11 @@ def main(
     tokenizer = None
     tool_parser: ToolParser | None = None
     group = None
-    kv_prefix_cache: KVPrefixCache | None = None
+    kv_prefix_cache: KVCache | None = None
     check_for_cancel_every: int | None = None
+
+    # Initialize engine (currently MLX, but can be swapped for PyTorch/etc)
+    engine: Engine = MlxEngine()
 
     current_status: RunnerStatus = RunnerIdle()
     logger.info("runner created")
@@ -170,7 +167,7 @@ def main(
                         )
                     )
                     event_sender.send(TaskAcknowledged(task_id=task.task_id))
-                    group = initialize_mlx(bound_instance)
+                    group = engine.initialize_distributed_group(bound_instance)
 
                     logger.info("runner connected")
                     current_status = RunnerConnected()
@@ -200,7 +197,7 @@ def main(
                         time.sleep(0.5)
 
                     if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
-                        inference_model, tokenizer = load_mlx_items(
+                        inference_model, tokenizer = engine.load_model_and_tokenizer(
                             bound_instance, group, on_timeout=on_model_load_timeout
                         )
                         logger.info(
@@ -215,7 +212,7 @@ def main(
                                 tokenizer.tool_call_end,
                                 tokenizer.tool_parser,  # pyright: ignore[reportAny]
                             )
-                        kv_prefix_cache = KVPrefixCache(group)
+                        kv_prefix_cache = engine.create_kv_cache(group)
 
                     elif (
                         ModelTask.TextToImage in shard_metadata.model_card.tasks
@@ -244,7 +241,7 @@ def main(
                         assert tokenizer
 
                         t = time.monotonic()
-                        toks = warmup_inference(
+                        toks = engine.warmup_inference(
                             model=inference_model,
                             tokenizer=tokenizer,
                             group=group,
@@ -253,7 +250,8 @@ def main(
                         check_for_cancel_every = min(
                             math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
                         )
-                        if group is not None:
+                        # MLX-specific: sync cancel check interval across nodes
+                        if group is not None and isinstance(engine, MlxEngine):
                             check_for_cancel_every = int(
                                 mx.max(
                                     mx.distributed.all_gather(
@@ -301,34 +299,35 @@ def main(
                         _check_for_debug_prompts(task_params)
 
                         # Build prompt once - used for both generation and thinking detection
-                        prompt = apply_chat_template(tokenizer, task_params)
+                        prompt = engine.apply_chat_template(tokenizer, task_params)
 
-                        # Generate responses using the actual MLX generation
-                        mlx_generator = mlx_generate(
+                        # Generate responses using the engine
+                        generator = engine.generate(
                             model=inference_model,
                             tokenizer=tokenizer,
                             task=task_params,
                             prompt=prompt,
-                            kv_prefix_cache=kv_prefix_cache,
+                            kv_cache=kv_prefix_cache,
                             group=group,
                         )
 
                         # For other thinking models (GLM, etc.), check if we need to
                         # prepend the thinking tag that was consumed by the chat template
-                        if detect_thinking_prompt_suffix(prompt, tokenizer):
-                            mlx_generator = parse_thinking_models(
-                                mlx_generator, tokenizer
+                        if engine.detect_thinking_prompt_suffix(prompt, tokenizer):
+                            generator = parse_thinking_models(
+                                generator, tokenizer
                             )
 
                         # GPT-OSS specific parsing to match other model formats.
+                        # Note: GptOssModel check is MLX-specific, but works since we use MlxEngine
                         if isinstance(inference_model, GptOssModel):
-                            mlx_generator = parse_gpt_oss(mlx_generator)
+                            generator = parse_gpt_oss(generator)
                         elif tool_parser:
-                            mlx_generator = parse_tool_calls(mlx_generator, tool_parser)
+                            generator = parse_tool_calls(generator, tool_parser)
 
                         completion_tokens = 0
                         tokens_since_last_cancel_check = 0
-                        for response in mlx_generator:
+                        for response in generator:
                             tokens_since_last_cancel_check += 1
                             if tokens_since_last_cancel_check >= check_for_cancel_every:
                                 tokens_since_last_cancel_check = 0
@@ -336,7 +335,7 @@ def main(
                                 want_to_cancel = (task.task_id in cancelled_tasks) or (
                                     TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
                                 )
-                                if mx_any(want_to_cancel, group):
+                                if engine.any_cancel(want_to_cancel, group):
                                     break
 
                             match response:
@@ -564,10 +563,7 @@ def main(
             )
             if isinstance(current_status, RunnerShutdown):
                 del inference_model, image_model, tokenizer, group
-                mx.clear_cache()
-                import gc
-
-                gc.collect()
+                engine.cleanup()
                 break
 
 
