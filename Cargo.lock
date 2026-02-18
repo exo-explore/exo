@@ -2767,6 +2767,7 @@ dependencies = [
  "keccak-const",
  "libp2p",
  "log",
+ "pin-project",
  "tokio",
  "tracing-subscriber",
  "util",
