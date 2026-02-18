@@ -1,11 +1,10 @@
 import argparse
-import itertools
 import multiprocessing as mp
 import os
 import resource
 import signal
 from dataclasses import dataclass, field
-from typing import Iterator, Self
+from typing import Self
 
 import anyio
 from anyio.abc import TaskGroup
@@ -38,12 +37,11 @@ class Node:
     api: API | None
 
     node_id: NodeId
-    event_index_counter: Iterator[int]
     offline: bool
     _tg: TaskGroup = field(init=False, default_factory=anyio.create_task_group)
 
     @classmethod
-    async def create(cls, args: "Args") -> "Self":
+    async def create(cls, args: "Args") -> Self:
         keypair = get_node_id_keypair()
         node_id = NodeId(keypair.to_node_id())
         session_id = SessionId(master_node_id=node_id, election_clock=0)
@@ -57,9 +55,6 @@ class Node:
 
         logger.info(f"Starting node {node_id}")
 
-        # Create shared event index counter for Worker and DownloadCoordinator
-        event_index_counter = itertools.count()
-
         # Create DownloadCoordinator (unless --no-downloads)
         if not args.no_downloads:
             download_coordinator = DownloadCoordinator(
@@ -68,7 +63,6 @@ class Node:
                 exo_shard_downloader(),
                 download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
                 local_event_sender=router.sender(topics.LOCAL_EVENTS),
-                event_index_counter=event_index_counter,
                 offline=args.offline,
             )
         else:
@@ -95,7 +89,6 @@ class Node:
                 local_event_sender=router.sender(topics.LOCAL_EVENTS),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
-                event_index_counter=event_index_counter,
             )
         else:
             worker = None
@@ -133,7 +126,6 @@ class Node:
             master,
             api,
             node_id,
-            event_index_counter,
             args.offline,
         )
 
@@ -212,8 +204,6 @@ class Node:
                     )
                 if result.is_new_master:
                     await anyio.sleep(0)
-                    # Fresh counter for new session (buffer expects indices from 0)
-                    self.event_index_counter = itertools.count()
                     if self.download_coordinator:
                         self.download_coordinator.shutdown()
                         self.download_coordinator = DownloadCoordinator(
@@ -224,7 +214,6 @@ class Node:
                                 topics.DOWNLOAD_COMMANDS
                             ),
                             local_event_sender=self.router.sender(topics.LOCAL_EVENTS),
-                            event_index_counter=self.event_index_counter,
                             offline=self.offline,
                         )
                         self._tg.start_soon(self.download_coordinator.run)
@@ -242,7 +231,6 @@ class Node:
                             download_command_sender=self.router.sender(
                                 topics.DOWNLOAD_COMMANDS
                             ),
-                            event_index_counter=self.event_index_counter,
                         )
                         self._tg.start_soon(self.worker.run)
                     if self.api:

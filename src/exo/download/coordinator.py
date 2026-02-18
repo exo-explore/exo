@@ -1,7 +1,6 @@
 import asyncio
 import socket
 from dataclasses import dataclass, field
-from typing import Iterator
 
 import anyio
 from anyio import current_time
@@ -22,10 +21,10 @@ from exo.shared.types.commands import (
     ForwarderDownloadCommand,
     StartDownload,
 )
-from exo.shared.types.common import NodeId, SessionId
+from exo.shared.types.common import NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     Event,
-    ForwarderEvent,
+    LocalForwarderEvent,
     NodeDownloadProgress,
 )
 from exo.shared.types.worker.downloads import (
@@ -45,9 +44,9 @@ class DownloadCoordinator:
     session_id: SessionId
     shard_downloader: ShardDownloader
     download_command_receiver: Receiver[ForwarderDownloadCommand]
-    local_event_sender: Sender[ForwarderEvent]
-    event_index_counter: Iterator[int]
+    local_event_sender: Sender[LocalForwarderEvent]
     offline: bool = False
+    _system_id: SystemId = field(default_factory=SystemId)
 
     # Local state
     download_status: dict[ModelId, DownloadProgress] = field(default_factory=dict)
@@ -298,15 +297,16 @@ class DownloadCoordinator:
             del self.download_status[model_id]
 
     async def _forward_events(self) -> None:
+        idx = 0
         with self.event_receiver as events:
             async for event in events:
-                idx = next(self.event_index_counter)
-                fe = ForwarderEvent(
+                fe = LocalForwarderEvent(
                     origin_idx=idx,
-                    origin=self.node_id,
+                    origin=self._system_id,
                     session=self.session_id,
                     event=event,
                 )
+                idx += 1
                 logger.debug(
                     f"DownloadCoordinator published event {idx}: {str(event)[:100]}"
                 )

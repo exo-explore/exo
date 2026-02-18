@@ -1,7 +1,6 @@
 from collections import defaultdict
 from datetime import datetime, timezone
 from random import random
-from typing import Iterator
 
 import anyio
 from anyio import CancelScope, create_task_group, fail_after
@@ -17,13 +16,14 @@ from exo.shared.types.commands import (
     RequestEventLog,
     StartDownload,
 )
-from exo.shared.types.common import CommandId, NodeId, SessionId
+from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     Event,
     EventId,
-    ForwarderEvent,
+    GlobalForwarderEvent,
     IndexedEvent,
     InputChunkReceived,
+    LocalForwarderEvent,
     NodeGatheredInfo,
     TaskCreated,
     TaskStatusUpdated,
@@ -58,24 +58,22 @@ class Worker:
         node_id: NodeId,
         session_id: SessionId,
         *,
-        global_event_receiver: Receiver[ForwarderEvent],
-        local_event_sender: Sender[ForwarderEvent],
+        global_event_receiver: Receiver[GlobalForwarderEvent],
+        local_event_sender: Sender[LocalForwarderEvent],
         # This is for requesting updates. It doesn't need to be a general command sender right now,
         # but I think it's the correct way to be thinking about commands
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
-        event_index_counter: Iterator[int],
     ):
         self.node_id: NodeId = node_id
         self.session_id: SessionId = session_id
 
         self.global_event_receiver = global_event_receiver
         self.local_event_sender = local_event_sender
-        self.event_index_counter = event_index_counter
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.event_buffer = OrderedBuffer[Event]()
-        self.out_for_delivery: dict[EventId, ForwarderEvent] = {}
+        self.out_for_delivery: dict[EventId, LocalForwarderEvent] = {}
 
         self.state: State = State()
         self.runners: dict[RunnerId, RunnerSupervisor] = {}
@@ -85,6 +83,8 @@ class Worker:
         self._nack_attempts: int = 0
         self._nack_base_seconds: float = 0.5
         self._nack_cap_seconds: float = 10.0
+
+        self._system_id = SystemId()
 
         self.event_sender, self.event_receiver = channel[Event]()
 
@@ -132,6 +132,8 @@ class Worker:
     async def _event_applier(self):
         with self.global_event_receiver as events:
             async for f_event in events:
+                if f_event.session != self.session_id:
+                    continue
                 if f_event.origin != self.session_id.master_node_id:
                     continue
                 self.event_buffer.ingest(f_event.origin_idx, f_event.event)
@@ -212,7 +214,7 @@ class Worker:
 
                     await self.download_command_sender.send(
                         ForwarderDownloadCommand(
-                            origin=self.node_id,
+                            origin=self._system_id,
                             command=StartDownload(
                                 target_node_id=self.node_id,
                                 shard_metadata=shard,
@@ -317,7 +319,7 @@ class Worker:
                 )
                 await self.command_sender.send(
                     ForwarderCommand(
-                        origin=self.node_id,
+                        origin=self._system_id,
                         command=RequestEventLog(since_idx=since_idx),
                     )
                 )
@@ -344,15 +346,16 @@ class Worker:
         return runner
 
     async def _forward_events(self) -> None:
+        idx = 0
         with self.event_receiver as events:
             async for event in events:
-                idx = next(self.event_index_counter)
-                fe = ForwarderEvent(
+                fe = LocalForwarderEvent(
                     origin_idx=idx,
-                    origin=self.node_id,
+                    origin=self._system_id,
                     session=self.session_id,
                     event=event,
                 )
+                idx += 1
                 logger.debug(f"Worker published event {idx}: {str(event)[:100]}")
                 await self.local_event_sender.send(fe)
                 self.out_for_delivery[event.event_id] = fe
