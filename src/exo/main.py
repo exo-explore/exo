@@ -39,6 +39,7 @@ class Node:
 
     node_id: NodeId
     event_index_counter: Iterator[int]
+    offline: bool
     _tg: TaskGroup = field(init=False, default_factory=anyio.create_task_group)
 
     @classmethod
@@ -68,6 +69,7 @@ class Node:
                 download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
                 local_event_sender=router.sender(topics.LOCAL_EVENTS),
                 event_index_counter=event_index_counter,
+                offline=args.offline,
             )
         else:
             download_coordinator = None
@@ -132,6 +134,7 @@ class Node:
             api,
             node_id,
             event_index_counter,
+            args.offline,
         )
 
     async def run(self):
@@ -222,6 +225,7 @@ class Node:
                             ),
                             local_event_sender=self.router.sender(topics.LOCAL_EVENTS),
                             event_index_counter=self.event_index_counter,
+                            offline=self.offline,
                         )
                         self._tg.start_soon(self.download_coordinator.run)
                     if self.worker:
@@ -260,6 +264,9 @@ def main():
     logger.info("Starting EXO")
     logger.info(f"EXO_LIBP2P_NAMESPACE: {os.getenv('EXO_LIBP2P_NAMESPACE')}")
 
+    if args.offline:
+        logger.info("Running in OFFLINE mode — no internet checks, local models only")
+
     # Set FAST_SYNCH override env var for runner subprocesses
     if args.fast_synch is True:
         os.environ["EXO_FAST_SYNCH"] = "on"
@@ -282,6 +289,7 @@ class Args(CamelCaseModel):
     tb_only: bool = False
     no_worker: bool = False
     no_downloads: bool = False
+    offline: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
 
     @classmethod
@@ -328,6 +336,13 @@ class Args(CamelCaseModel):
             "--no-downloads",
             action="store_true",
             help="Disable the download coordinator (node won't download models)",
+        )
+        parser.add_argument(
+            "--offline",
+            action="store_true",
+            default=os.getenv("EXO_OFFLINE") == "1"
+            or os.getenv("HF_HUB_OFFLINE") == "1",
+            help="Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models (env: EXO_OFFLINE=1 or HF_HUB_OFFLINE=1)",
         )
         fast_synch_group = parser.add_mutually_exclusive_group()
         fast_synch_group.add_argument(
