@@ -448,12 +448,13 @@ async def download_file_with_retry(
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
     on_connection_lost: Callable[[], None] = lambda: None,
+    skip_internet: bool = False,
 ) -> Path:
     n_attempts = 3
     for attempt in range(n_attempts):
         try:
             return await _download_file(
-                model_id, revision, path, target_dir, on_progress
+                model_id, revision, path, target_dir, on_progress, skip_internet
             )
         except HuggingFaceAuthenticationError:
             raise
@@ -487,10 +488,14 @@ async def _download_file(
     path: str,
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
+    skip_internet: bool = False,
 ) -> Path:
     target_path = target_dir / path
 
     if await aios.path.exists(target_path):
+        if skip_internet:
+            return target_path
+
         local_size = (await aios.stat(target_path)).st_size
 
         # Try to verify against remote, but allow offline operation
@@ -509,6 +514,11 @@ async def _download_file(
                 f"Could not verify {path} against remote (offline?): {e}, using local file"
             )
             return target_path
+
+    if skip_internet:
+        raise FileNotFoundError(
+            f"File {path} not found locally and cannot download in offline mode"
+        )
 
     await aios.makedirs((target_dir / path).parent, exist_ok=True)
     length, etag = await file_meta(model_id, revision, path)
@@ -814,6 +824,7 @@ async def download_shard(
                     file, curr_bytes, total_bytes, is_renamed
                 ),
                 on_connection_lost=on_connection_lost,
+                skip_internet=skip_internet,
             )
 
     if not skip_download:
