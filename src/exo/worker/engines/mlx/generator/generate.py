@@ -57,7 +57,7 @@ def prefill(
     sampler: Callable[[mx.array], mx.array],
     prompt_tokens: mx.array,
     cache: KVCacheType,
-    group: mx.distributed.Group | None = None,
+    group: mx.distributed.Group | None,
 ) -> tuple[float, int, list[CacheSnapshot]]:
     """Prefill the KV cache with prompt tokens.
 
@@ -133,7 +133,7 @@ def prefill(
 def warmup_inference(
     model: Model,
     tokenizer: TokenizerWrapper,
-    group: mx.distributed.Group | None = None,
+    group: mx.distributed.Group | None,
 ) -> int:
     content = "Prompt to warm up the inference engine. Repeat this."
 
@@ -255,8 +255,8 @@ def mlx_generate(
     tokenizer: TokenizerWrapper,
     task: TextGenerationTaskParams,
     prompt: str,
-    kv_prefix_cache: KVPrefixCache | None = None,
-    group: mx.distributed.Group | None = None,
+    kv_prefix_cache: KVPrefixCache | None,
+    group: mx.distributed.Group | None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
