@@ -6,7 +6,7 @@ tasks = ["TextGeneration"]
 family = "step"
 quantization = "4bit"
 base_model = "Step 3.5 Flash"
-capabilities = ["text", "thinking"]
+capabilities = ["text", "thinking", "thinking_toggle"]
 
 [storage_size]
 in_bytes = 114572190076
