@@ -1,5 +1,20 @@
+# type: ignore
 #!/usr/bin/env python3
-# pyright: reportAny=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
+"""Tool-calling eval for exo's OpenAI-compatible API.
+
+Tests whether models correctly:
+- Trigger tool calls when appropriate
+- Return valid JSON arguments matching function schemas
+- Handle multi-turn tool use (call -> result -> final answer)
+- Avoid calling tools when unnecessary
+
+Start exo with a model first, then run:
+    uv run python tool_call_eval.py --model <model-id>
+    uv run python tool_call_eval.py --model <model-id> --host 10.0.0.5 --port 52415
+    uv run python tool_call_eval.py --model <model-id> --repeat 3
+    uv run python tool_call_eval.py --model <model-id> --scenarios weather_simple calculator_multi_turn
+"""
+
 from __future__ import annotations
 
 import argparse
