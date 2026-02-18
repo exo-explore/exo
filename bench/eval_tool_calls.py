@@ -7,7 +7,9 @@ import json
 import os
 import sys
 import time
+import tomllib
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 import httpx
@@ -23,75 +25,7 @@ from harness import (
     wait_for_instance_ready,
 )
 
-WEATHER_TOOL: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "get_current_weather",
-        "description": "Get the current weather in a given location",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "location": {
-                    "type": "string",
-                    "description": "City and state, e.g. San Francisco, CA",
-                },
-                "unit": {
-                    "type": "string",
-                    "enum": ["celsius", "fahrenheit"],
-                    "description": "Temperature unit",
-                },
-            },
-            "required": ["location"],
-        },
-    },
-}
-
-CALCULATOR_TOOL: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "calculate",
-        "description": "Evaluate a mathematical expression and return the numeric result",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "expression": {
-                    "type": "string",
-                    "description": "The math expression to evaluate, e.g. '2 + 3 * 4'",
-                },
-            },
-            "required": ["expression"],
-        },
-    },
-}
-
-SEARCH_TOOL: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "search_products",
-        "description": "Search for products in a catalog by query, category, and price",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query string",
-                },
-                "category": {
-                    "type": "string",
-                    "enum": ["electronics", "clothing", "food", "books"],
-                    "description": "Product category to filter by",
-                },
-                "max_price": {
-                    "type": "number",
-                    "description": "Maximum price in USD",
-                },
-            },
-            "required": ["query"],
-        },
-    },
-}
-
-ALL_TOOLS: list[dict[str, Any]] = [WEATHER_TOOL, CALCULATOR_TOOL, SEARCH_TOOL]
+SCENARIOS_PATH = Path(__file__).parent / "scenarios.toml"
 
 
 @dataclass
@@ -103,235 +37,79 @@ class Scenario:
     expect_tool_call: bool
     expected_function: str | None = None
     required_arg_keys: list[str] | None = None
-    # For multi-turn: fake tool result to inject, then verify the follow-up.
     tool_result: str | None = None
 
 
-SCENARIOS: list[Scenario] = [
-    # -- Should call a tool --------------------------------------------------
-    Scenario(
-        name="weather_simple",
-        description="Basic weather query -> get_current_weather",
-        messages=[
-            {"role": "user", "content": "What's the weather like in Tokyo right now?"}
-        ],
-        tools=ALL_TOOLS,
-        expect_tool_call=True,
-        expected_function="get_current_weather",
-        required_arg_keys=["location"],
-    ),
-    Scenario(
-        name="calculator_simple",
-        description="Math question -> calculate",
-        messages=[
-            {
-                "role": "user",
-                "content": "Use the calculator to compute 3847 * 926 + 17293",
-            }
-        ],
-        tools=ALL_TOOLS,
-        expect_tool_call=True,
-        expected_function="calculate",
-        required_arg_keys=["expression"],
-    ),
-    Scenario(
-        name="search_with_filters",
-        description="Product search with category and price filter",
-        messages=[{"role": "user", "content": "Find me electronics under $50"}],
-        tools=ALL_TOOLS,
-        expect_tool_call=True,
-        expected_function="search_products",
-        required_arg_keys=["query"],
-    ),
-    # -- Multi-turn: tool call then follow-up --------------------------------
-    Scenario(
-        name="weather_multi_turn",
-        description="Weather query -> tool result -> natural language summary",
-        messages=[{"role": "user", "content": "What's the weather in Paris?"}],
-        tools=ALL_TOOLS,
-        expect_tool_call=True,
-        expected_function="get_current_weather",
-        required_arg_keys=["location"],
-        tool_result=json.dumps(
-            {
-                "temperature": "18C",
-                "condition": "partly cloudy",
-                "humidity": "65%",
-                "wind": "12 km/h NW",
-            }
-        ),
-    ),
-    Scenario(
-        name="calculator_multi_turn",
-        description="Math query -> tool result -> model reports the answer",
-        messages=[
-            {
-                "role": "user",
-                "content": "Use the calculator to compute 1847 * 263 + 5921",
-            }
-        ],
-        tools=ALL_TOOLS,
-        expect_tool_call=True,
-        expected_function="calculate",
-        required_arg_keys=["expression"],
-        tool_result=json.dumps({"result": 491682}),
-    ),
-    Scenario(
-        name="search_multi_turn",
-        description="Search query -> tool result -> model summarizes products",
-        messages=[
-            {"role": "user", "content": "Search for books about machine learning"}
-        ],
-        tools=ALL_TOOLS,
-        expect_tool_call=True,
-        expected_function="search_products",
-        required_arg_keys=["query"],
-        tool_result=json.dumps(
-            {
-                "results": [
+def load_scenarios(path: Path) -> list[Scenario]:
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
+
+    tools_data = data.get("tools", {})
+    all_tools: list[dict[str, Any]] = []
+    tool_by_name: dict[str, dict[str, Any]] = {}
+    for name, defn in tools_data.items():
+        tool: dict[str, Any] = {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": defn.get("description", ""),
+                "parameters": {
+                    "type": "object",
+                    "properties": defn.get("properties", {}),
+                    "required": defn.get("required", []),
+                },
+            },
+        }
+        all_tools.append(tool)
+        tool_by_name[name] = tool
+
+    scenarios: list[Scenario] = []
+    for s in data.get("scenarios", []):
+        if "tools" in s:
+            scenario_tools = [tool_by_name[t] for t in s["tools"]]
+        else:
+            scenario_tools = list(all_tools)
+
+        messages: list[dict[str, Any]] = []
+        for msg in s.get("messages", []):
+            m: dict[str, Any] = {"role": msg["role"]}
+            if "content" in msg:
+                m["content"] = msg["content"]
+            if "tool_calls" in msg:
+                m["tool_calls"] = [
                     {
-                        "name": "Hands-On Machine Learning",
-                        "price": 45.99,
-                        "rating": 4.8,
-                    },
-                    {
-                        "name": "Deep Learning with Python",
-                        "price": 39.99,
-                        "rating": 4.6,
-                    },
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": json.dumps(tc["arguments"]),
+                        },
+                    }
+                    for tc in msg["tool_calls"]
                 ]
-            }
-        ),
-    ),
-    # -- Sequential tool calls: thinking + tool call, NO final answer ----------
-    Scenario(
-        name="chained_tool_calls_same",
-        description="Thinking + weather(Tokyo) -> result -> model must call weather(London)",
-        messages=[
-            {"role": "user", "content": "Compare the weather in Tokyo and London."},
-            {
-                "role": "assistant",
-                "content": "I'll check both cities. Let me start with Tokyo.",
-                "tool_calls": [
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {
-                            "name": "get_current_weather",
-                            "arguments": json.dumps({"location": "Tokyo"}),
-                        },
-                    }
-                ],
-            },
-            {
-                "role": "tool",
-                "tool_call_id": "call_1",
-                "content": json.dumps({"temperature": "25C", "condition": "sunny"}),
-            },
-        ],
-        tools=ALL_TOOLS,
-        expect_tool_call=True,
-        expected_function="get_current_weather",
-        required_arg_keys=["location"],
-    ),
-    Scenario(
-        name="chained_tool_calls_different",
-        description="Thinking + weather(Berlin) -> result -> model must call calculator",
-        messages=[
-            {
-                "role": "user",
-                "content": "What's the weather in Berlin, and also use the calculator to compute 4819 * 37 + 291.",
-            },
-            {
-                "role": "assistant",
-                "content": "I'll handle both. Let me check Berlin's weather first.",
-                "tool_calls": [
-                    {
-                        "id": "call_2",
-                        "type": "function",
-                        "function": {
-                            "name": "get_current_weather",
-                            "arguments": json.dumps({"location": "Berlin"}),
-                        },
-                    }
-                ],
-            },
-            {
-                "role": "tool",
-                "tool_call_id": "call_2",
-                "content": json.dumps({"temperature": "12C", "condition": "rainy"}),
-            },
-        ],
-        tools=ALL_TOOLS,
-        expect_tool_call=True,
-        expected_function="calculate",
-        required_arg_keys=["expression"],
-    ),
-    Scenario(
-        name="chained_tool_calls_three",
-        description="Two prior thinking+tool calls -> results -> model must make a third",
-        messages=[
-            {"role": "user", "content": "Compare weather in Tokyo, Paris, and London."},
-            {
-                "role": "assistant",
-                "content": "I'll check all three cities. Starting with Tokyo.",
-                "tool_calls": [
-                    {
-                        "id": "call_3",
-                        "type": "function",
-                        "function": {
-                            "name": "get_current_weather",
-                            "arguments": json.dumps({"location": "Tokyo"}),
-                        },
-                    }
-                ],
-            },
-            {
-                "role": "tool",
-                "tool_call_id": "call_3",
-                "content": json.dumps({"temperature": "25C", "condition": "sunny"}),
-            },
-            {
-                "role": "assistant",
-                "content": "Got Tokyo. Now checking Paris.",
-                "tool_calls": [
-                    {
-                        "id": "call_4",
-                        "type": "function",
-                        "function": {
-                            "name": "get_current_weather",
-                            "arguments": json.dumps({"location": "Paris"}),
-                        },
-                    }
-                ],
-            },
-            {
-                "role": "tool",
-                "tool_call_id": "call_4",
-                "content": json.dumps({"temperature": "18C", "condition": "cloudy"}),
-            },
-        ],
-        tools=ALL_TOOLS,
-        expect_tool_call=True,
-        expected_function="get_current_weather",
-        required_arg_keys=["location"],
-    ),
-    # -- Should NOT call a tool ----------------------------------------------
-    Scenario(
-        name="no_tool_joke",
-        description="Joke request should NOT trigger any tool",
-        messages=[{"role": "user", "content": "Tell me a funny joke about cats."}],
-        tools=ALL_TOOLS,
-        expect_tool_call=False,
-    ),
-    Scenario(
-        name="no_tool_factual",
-        description="Factual question answerable from training data",
-        messages=[{"role": "user", "content": "What is the capital of Japan?"}],
-        tools=ALL_TOOLS,
-        expect_tool_call=False,
-    ),
-]
+            if "tool_call_id" in msg:
+                m["tool_call_id"] = msg["tool_call_id"]
+            messages.append(m)
+
+        tool_result: str | None = None
+        if "tool_result" in s:
+            tool_result = json.dumps(s["tool_result"])
+
+        scenarios.append(
+            Scenario(
+                name=s["name"],
+                description=s["description"],
+                messages=messages,
+                tools=scenario_tools,
+                expect_tool_call=s["expect_tool_call"],
+                expected_function=s.get("expected_function"),
+                required_arg_keys=s.get("required_arg_keys"),
+                tool_result=tool_result,
+            )
+        )
+
+    return scenarios
+
 
 ApiName = Literal["openai", "claude", "responses"]
 
@@ -1029,12 +807,13 @@ def result_to_dict(result: ScenarioResult) -> dict[str, Any]:
     }
 
 
-_PLACEMENT_PRIORITY: dict[tuple[str, str], int] = {
+_MULTI_NODE_PRIORITY: dict[tuple[str, str], int] = {
     ("tensor", "jaccl"): 0,
-    ("pipeline", "jaccl"): 1,
-    ("pipeline", "ring"): 2,
-    ("tensor", "ring"): 3,
+    ("pipeline", "jaccl"): 2,
+    ("pipeline", "ring"): 3,
+    ("tensor", "ring"): 4,
 }
+_SINGLE_NODE_PRIORITY = 1
 
 
 def _placement_sort_key(p: dict[str, Any]) -> tuple[int, int]:
@@ -1044,9 +823,11 @@ def _placement_sort_key(p: dict[str, Any]) -> tuple[int, int]:
         "tensor" if "tensor" in sharding else "pipeline",
         "jaccl" if "jaccl" in meta else "ring",
     )
-    priority = _PLACEMENT_PRIORITY.get(kind, 99)
     n_nodes = nodes_used_in_instance(p["instance"])
-    return (priority, n_nodes)
+    if n_nodes == 1:
+        return (_SINGLE_NODE_PRIORITY, -n_nodes)
+    priority = _MULTI_NODE_PRIORITY.get(kind, 99)
+    return (priority, -n_nodes)
 
 
 def main() -> None:
@@ -1096,15 +877,17 @@ Examples:
     )
     args = parser.parse_args()
 
-    scenarios = SCENARIOS
+    all_scenarios = load_scenarios(SCENARIOS_PATH)
     if args.scenarios:
-        scenarios = [s for s in SCENARIOS if s.name in args.scenarios]
+        scenarios = [s for s in all_scenarios if s.name in args.scenarios]
         if not scenarios:
             print(
-                f"No matching scenarios. Available: {[s.name for s in SCENARIOS]}",
+                f"No matching scenarios. Available: {[s.name for s in all_scenarios]}",
                 file=sys.stderr,
             )
             sys.exit(1)
+    else:
+        scenarios = all_scenarios
 
     api_names: list[ApiName] = (
         ["openai", "claude", "responses"] if args.api == "all" else [args.api]
