@@ -48,7 +48,7 @@ from exo.worker.runner.bootstrap import logger
 
 generation_stream = mx.new_stream(mx.default_device())
 
-_MIN_PREFIX_HIT_TO_UPDATE = 1000
+_MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
 
 
 def prefill(
@@ -57,7 +57,7 @@ def prefill(
     sampler: Callable[[mx.array], mx.array],
     prompt_tokens: mx.array,
     cache: KVCacheType,
-    group: mx.distributed.Group | None = None,
+    group: mx.distributed.Group | None,
 ) -> tuple[float, int, list[CacheSnapshot]]:
     """Prefill the KV cache with prompt tokens.
 
@@ -133,7 +133,7 @@ def prefill(
 def warmup_inference(
     model: Model,
     tokenizer: TokenizerWrapper,
-    group: mx.distributed.Group | None = None,
+    group: mx.distributed.Group | None,
 ) -> int:
     content = "Prompt to warm up the inference engine. Repeat this."
 
@@ -255,8 +255,8 @@ def mlx_generate(
     tokenizer: TokenizerWrapper,
     task: TextGenerationTaskParams,
     prompt: str,
-    kv_prefix_cache: KVPrefixCache | None = None,
-    group: mx.distributed.Group | None = None,
+    kv_prefix_cache: KVPrefixCache | None,
+    group: mx.distributed.Group | None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -436,9 +436,14 @@ def mlx_generate(
                 full_prompt_tokens = mx.concatenate(
                     [all_prompt_tokens, generated_tokens_array]
                 )
+                hit_ratio = (
+                    prefix_hit_length / len(all_prompt_tokens)
+                    if len(all_prompt_tokens) > 0
+                    else 0.0
+                )
                 if (
                     matched_index is not None
-                    and prefix_hit_length >= _MIN_PREFIX_HIT_TO_UPDATE
+                    and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
                 ):
                     kv_prefix_cache.update_kv_cache(
                         matched_index,

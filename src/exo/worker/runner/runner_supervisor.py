@@ -103,7 +103,7 @@ class RunnerSupervisor:
         self._event_sender.close()
         self._cancel_sender.send(TaskId("CANCEL_CURRENT_TASK"))
         self._cancel_sender.close()
-        self.runner_process.join(1)
+        self.runner_process.join(5)
         if not self.runner_process.is_alive():
             logger.info("Runner process succesfully terminated")
             return
