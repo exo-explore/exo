@@ -466,6 +466,12 @@ html:not(.dark) {
 	& .text-green-400 {
 		color: oklch(0.50 0.18 155) !important;
 	}
+	& .text-blue-200 {
+		color: oklch(0.50 0.16 250) !important;
+	}
+	& .text-blue-300 {
+		color: oklch(0.50 0.17 250) !important;
+	}
 	& .text-blue-400 {
 		color: oklch(0.50 0.18 250) !important;
 	}
