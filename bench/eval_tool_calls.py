@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -10,6 +11,17 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import httpx
+from harness import (
+    ExoClient,
+    ExoHttpError,
+    add_common_instance_args,
+    instance_id_from_instance,
+    nodes_used_in_instance,
+    resolve_model_short_id,
+    settle_and_fetch_placements,
+    wait_for_instance_gone,
+    wait_for_instance_ready,
+)
 
 WEATHER_TOOL: dict[str, Any] = {
     "type": "function",
@@ -1017,6 +1029,26 @@ def result_to_dict(result: ScenarioResult) -> dict[str, Any]:
     }
 
 
+_PLACEMENT_PRIORITY: dict[tuple[str, str], int] = {
+    ("tensor", "jaccl"): 0,
+    ("pipeline", "jaccl"): 1,
+    ("pipeline", "ring"): 2,
+    ("tensor", "ring"): 3,
+}
+
+
+def _placement_sort_key(p: dict[str, Any]) -> tuple[int, int]:
+    sharding = p.get("sharding", "").lower()
+    meta = p.get("instance_meta", "").lower()
+    kind = (
+        "tensor" if "tensor" in sharding else "pipeline",
+        "jaccl" if "jaccl" in meta else "ring",
+    )
+    priority = _PLACEMENT_PRIORITY.get(kind, 99)
+    n_nodes = nodes_used_in_instance(p["instance"])
+    return (priority, n_nodes)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Multi-API tool-calling eval for exo",
@@ -1029,29 +1061,12 @@ Examples:
   %(prog)s --model my-model --stdout
 """,
     )
-    parser.add_argument("--model", required=True, help="Model ID to test")
-    parser.add_argument(
-        "--host",
-        default=os.environ.get("EXO_HOST", "localhost"),
-        help="API host (default: $EXO_HOST or localhost)",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=int(os.environ.get("EXO_PORT", "52415")),
-        help="API port (default: $EXO_PORT or 52415)",
-    )
+    add_common_instance_args(parser)
     parser.add_argument(
         "--api",
         choices=["openai", "claude", "responses", "all"],
         default="all",
         help="Which API adapter(s) to test (default: all)",
-    )
-    parser.add_argument(
-        "--timeout",
-        type=float,
-        default=120,
-        help="Per-request timeout in seconds (default: 120)",
     )
     parser.add_argument(
         "--repeat",
@@ -1081,7 +1096,6 @@ Examples:
     )
     args = parser.parse_args()
 
-    # Select scenarios
     scenarios = SCENARIOS
     if args.scenarios:
         scenarios = [s for s in SCENARIOS if s.name in args.scenarios]
@@ -1092,60 +1106,96 @@ Examples:
             )
             sys.exit(1)
 
-    # Select APIs
     api_names: list[ApiName] = (
         ["openai", "claude", "responses"] if args.api == "all" else [args.api]
     )
 
-    total_runs = len(scenarios) * args.repeat * len(api_names)
     log = sys.stderr if args.stdout else sys.stdout
+    exo = ExoClient(args.host, args.port, timeout_s=args.timeout)
+    _short_id, full_model_id = resolve_model_short_id(exo, args.model)
 
-    print(f"Model:     {args.model}", file=log)
+    selected = settle_and_fetch_placements(
+        exo, full_model_id, args, settle_timeout=args.settle_timeout
+    )
+    if not selected:
+        print("No valid placements matched your filters.", file=sys.stderr)
+        sys.exit(1)
+
+    selected.sort(key=_placement_sort_key)
+    preview = selected[0]
+    instance = preview["instance"]
+    instance_id = instance_id_from_instance(instance)
+    sharding = str(preview["sharding"])
+    instance_meta = str(preview["instance_meta"])
+    n_nodes = nodes_used_in_instance(instance)
+
+    print(f"Model:     {full_model_id}", file=log)
+    print(f"Placement: {sharding} / {instance_meta} / {n_nodes} nodes", file=log)
     print(f"Endpoint:  http://{args.host}:{args.port}", file=log)
     print(f"APIs:      {', '.join(api_names)}", file=log)
+
+    total_runs = len(scenarios) * args.repeat * len(api_names)
     print(
         f"Scenarios: {len(scenarios)} x {args.repeat} repeats x {len(api_names)} APIs = {total_runs} runs",
         file=log,
     )
     print("=" * 72, file=log)
 
+    exo.request_json("POST", "/instance", body={"instance": instance})
+    try:
+        wait_for_instance_ready(exo, instance_id)
+    except (RuntimeError, TimeoutError) as e:
+        print(f"Failed to initialize placement: {e}", file=sys.stderr)
+        with contextlib.suppress(ExoHttpError):
+            exo.request_json("DELETE", f"/instance/{instance_id}")
+        sys.exit(1)
+
+    time.sleep(1)
     all_results: list[ScenarioResult] = []
 
-    with httpx.Client() as client:
-        for run_idx in range(args.repeat):
-            if args.repeat > 1:
-                print(f"\n--- Run {run_idx + 1}/{args.repeat} ---", file=log)
+    try:
+        with httpx.Client() as http_client:
+            for run_idx in range(args.repeat):
+                if args.repeat > 1:
+                    print(f"\n--- Run {run_idx + 1}/{args.repeat} ---", file=log)
 
-            for scenario in scenarios:
-                for api_name in api_names:
-                    print(
-                        f"\n  [{api_name:>9}] {scenario.name}: {scenario.description}",
-                        file=log,
-                    )
-
-                    scenario_results = run_scenario(
-                        client,
-                        args.host,
-                        args.port,
-                        args.model,
-                        scenario,
-                        api_name,
-                        args.timeout,
-                        args.verbose,
-                    )
-                    all_results.extend(scenario_results)
-
-                    for r in scenario_results:
-                        status = "PASS" if r.passed else "FAIL"
+                for scenario in scenarios:
+                    for api_name in api_names:
                         print(
-                            f"    [{r.phase:>10}] {status}  ({r.latency_ms:.0f}ms)",
+                            f"\n  [{api_name:>9}] {scenario.name}: {scenario.description}",
                             file=log,
                         )
-                        for check_name, check_ok in r.checks.items():
-                            mark = "+" if check_ok else "-"
-                            print(f"      {mark} {check_name}", file=log)
-                        if r.error:
-                            print(f"      ! {r.error}", file=log)
+
+                        scenario_results = run_scenario(
+                            http_client,
+                            args.host,
+                            args.port,
+                            full_model_id,
+                            scenario,
+                            api_name,
+                            args.timeout,
+                            args.verbose,
+                        )
+                        all_results.extend(scenario_results)
+
+                        for r in scenario_results:
+                            status = "PASS" if r.passed else "FAIL"
+                            print(
+                                f"    [{r.phase:>10}] {status}  ({r.latency_ms:.0f}ms)",
+                                file=log,
+                            )
+                            for check_name, check_ok in r.checks.items():
+                                mark = "+" if check_ok else "-"
+                                print(f"      {mark} {check_name}", file=log)
+                            if r.error:
+                                print(f"      ! {r.error}", file=log)
+    finally:
+        try:
+            exo.request_json("DELETE", f"/instance/{instance_id}")
+        except ExoHttpError as e:
+            if e.status != 404:
+                raise
+        wait_for_instance_gone(exo, instance_id)
 
     # --- Summary ---
     print(f"\n{'=' * 72}", file=log)
@@ -1167,7 +1217,6 @@ Examples:
         print(f"Follow-up:   {fu_passed}/{len(follow_up_results)} passed", file=log)
     print(f"Avg latency: {avg_latency:.0f}ms", file=log)
 
-    # Per-API breakdown
     for api_name in api_names:
         api_results = [r for r in all_results if r.api == api_name]
         api_passed = sum(1 for r in api_results if r.passed)
