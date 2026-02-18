@@ -17,6 +17,7 @@ from exo.shared.types.api import (
     LogprobsContentItem,
     StreamingChoiceResponse,
     ToolCall,
+    Usage,
 )
 from exo.shared.types.chunks import (
     ErrorChunk,
@@ -127,23 +128,22 @@ def chunk_to_response(
 
 async def generate_chat_stream(
     command_id: CommandId,
-    event_stream: AsyncGenerator[
+    chunk_stream: AsyncGenerator[
         PrefillProgressData | ErrorChunk | ToolCallChunk | TokenChunk, None
     ],
 ) -> AsyncGenerator[str, None]:
-    """Generate Chat Completions API streaming events from StreamEvents.
+    """Generate Chat Completions API streaming events from chunks."""
+    last_usage: Usage | None = None
 
-    Handles PrefillProgressData, ErrorChunk, ToolCallChunk, and TokenChunk.
-    """
-    async for event in event_stream:
-        match event:
+    async for chunk in chunk_stream:
+        match chunk:
             case PrefillProgressData():
-                yield f"event: prefill_progress\ndata: {event.model_dump_json()}\n\n"
+                yield f"event: prefill_progress\ndata: {chunk.model_dump_json()}\n\n"
 
             case ErrorChunk():
                 error_response = ErrorResponse(
                     error=ErrorInfo(
-                        message=event.error_message or "Internal server error",
+                        message=chunk.error_message or "Internal server error",
                         type="InternalServerError",
                         code=500,
                     )
@@ -153,18 +153,20 @@ async def generate_chat_stream(
                 return
 
             case ToolCallChunk():
+                last_usage = chunk.usage or last_usage
+
                 tool_call_deltas = [
                     ToolCall(
                         id=tool.id,
                         index=i,
                         function=tool,
                     )
-                    for i, tool in enumerate(event.tool_calls)
+                    for i, tool in enumerate(chunk.tool_calls)
                 ]
                 tool_response = ChatCompletionResponse(
                     id=command_id,
                     created=int(time.time()),
-                    model=event.model,
+                    model=chunk.model,
                     choices=[
                         StreamingChoiceResponse(
                             index=0,
@@ -175,23 +177,34 @@ async def generate_chat_stream(
                             finish_reason="tool_calls",
                         )
                     ],
+                    usage=last_usage,
                 )
                 yield f"data: {tool_response.model_dump_json()}\n\n"
                 yield "data: [DONE]\n\n"
                 return
 
             case TokenChunk():
-                chunk_response = chunk_to_response(event, command_id)
+                last_usage = chunk.usage or last_usage
+
+                chunk_response = chunk_to_response(chunk, command_id)
+                if chunk.finish_reason is not None:
+                    chunk_response = chunk_response.model_copy(
+                        update={"usage": last_usage}
+                    )
                 yield f"data: {chunk_response.model_dump_json()}\n\n"
 
-                if event.finish_reason is not None:
+                if chunk.finish_reason is not None:
                     yield "data: [DONE]\n\n"
 
 
 async def collect_chat_response(
     command_id: CommandId,
-    chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
-) -> ChatCompletionResponse:
+    chunk_stream: AsyncGenerator[
+        ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressData, None
+    ],
+) -> AsyncGenerator[str]:
+    # This is an AsyncGenerator[str] rather than returning a ChatCompletionReponse because
+    # FastAPI handles the cancellation better but wouldn't auto-serialize for some reason
     """Collect all token chunks and return a single ChatCompletionResponse."""
     text_parts: list[str] = []
     tool_calls: list[ToolCall] = []
@@ -199,14 +212,20 @@ async def collect_chat_response(
     model: str | None = None
     finish_reason: FinishReason | None = None
     error_message: str | None = None
+    last_usage: Usage | None = None
 
     async for chunk in chunk_stream:
+        if isinstance(chunk, PrefillProgressData):
+            continue
+
         if isinstance(chunk, ErrorChunk):
             error_message = chunk.error_message or "Internal server error"
             break
 
         if model is None:
             model = chunk.model
+
+        last_usage = chunk.usage or last_usage
 
         if isinstance(chunk, TokenChunk):
             text_parts.append(chunk.text)
@@ -238,7 +257,7 @@ async def collect_chat_response(
     combined_text = "".join(text_parts)
     assert model is not None
 
-    return ChatCompletionResponse(
+    yield ChatCompletionResponse(
         id=command_id,
         created=int(time.time()),
         model=model,
@@ -256,4 +275,6 @@ async def collect_chat_response(
                 finish_reason=finish_reason,
             )
         ],
-    )
+        usage=last_usage,
+    ).model_dump_json()
+    return

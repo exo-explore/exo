@@ -64,8 +64,6 @@ from exo.worker.runner.bootstrap import logger
 Group = mx.distributed.Group
 
 
-# TODO: Test this
-#  ALSO https://github.com/exo-explore/exo/pull/233#discussion_r2549683673
 def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
     return Memory.from_float_kb(
         (model_shard_meta.end_layer - model_shard_meta.start_layer)
@@ -81,30 +79,6 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
 
 class ModelLoadingTimeoutError(Exception):
     pass
-
-
-def mx_barrier(group: Group | None = None):
-    mx.eval(
-        mx.distributed.all_sum(
-            mx.array(1.0),
-            stream=mx.default_stream(mx.Device(mx.cpu)),
-            group=group,
-        )
-    )
-
-
-def broadcast_from_zero(value: int, group: Group | None = None):
-    if group is None:
-        return value
-
-    if group.rank() == 0:
-        a = mx.array([value], dtype=mx.int32)
-    else:
-        a = mx.array([0], dtype=mx.int32)
-
-    m = mx.distributed.all_sum(a, stream=mx.Device(mx.DeviceType.cpu), group=group)
-    mx.eval(m)
-    return int(m.item())
 
 
 class HostList(RootModel[list[str]]):
@@ -311,11 +285,15 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     model_id_lower = model_id.lower()
     if "kimi-k2" in model_id_lower:
         return [163586]
-    elif "glm-4.7-flash" in model_id_lower:
+    elif "glm-5" in model_id_lower or "glm-4.7" in model_id_lower:
+        # For GLM-5 and GLM-4.7
         # 154820: <|endoftext|>, 154827: <|user|>, 154829: <|observation|>
         return [154820, 154827, 154829]
     elif "glm" in model_id_lower:
+        # For GLM-4.5 and older
         return [151336, 151329, 151338]
+    elif "gpt-oss" in model_id_lower:
+        return [200002, 200012]
     return None
 
 
@@ -379,7 +357,13 @@ def load_tokenizer_for_model_id(
             return list(hf_tokenizer.model.encode(text, allowed_special="all"))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
         hf_tokenizer.encode = _patched_encode
-        return TokenizerWrapper(hf_tokenizer, eos_token_ids=eos_token_ids)
+        return TokenizerWrapper(
+            hf_tokenizer,
+            eos_token_ids=eos_token_ids,
+            tool_call_start="<|tool_calls_section_begin|>",
+            tool_call_end="<|tool_calls_section_end|>",
+            tool_parser=_parse_kimi_tool_calls,
+        )
 
     tokenizer = load_tokenizer(
         model_path,
@@ -591,3 +575,61 @@ def mlx_cleanup(
     import gc
 
     gc.collect()
+
+
+def mx_any(bool_: bool, group: Group | None) -> bool:
+    if group is None:
+        return bool_
+    num_true = mx.distributed.all_sum(
+        mx.array(bool_), group=group, stream=mx.default_stream(mx.Device(mx.cpu))
+    )
+    mx.eval(num_true)
+    return num_true.item() > 0
+
+
+def mx_barrier(group: Group | None):
+    if group is None:
+        return
+    mx.eval(
+        mx.distributed.all_sum(
+            mx.array(1.0), group=group, stream=mx.default_stream(mx.Device(mx.cpu))
+        )
+    )
+
+
+def _parse_kimi_tool_calls(text: str):
+    import regex as re
+
+    # kimi has a fixed function naming scheme, with a json formatted arg
+    #   functions.multiply:0<|tool_call_argument_begin|>{"a": 2, "b": 3}
+    _func_name_regex = re.compile(
+        r"^\s*((?:functions\.)?(.+?):\d+)\s*<\|tool_call_argument_begin\|>", re.DOTALL
+    )
+    _func_arg_regex = re.compile(r"<\|tool_call_argument_begin\|>\s*(.*)\s*", re.DOTALL)
+    _tool_call_split_regex = re.compile(
+        r"<\|tool_call_begin\|>(.*?)<\|tool_call_end\|>", re.DOTALL
+    )
+
+    def _parse_single_tool(text: str) -> dict[str, Any]:
+        func_name_match = _func_name_regex.search(text)
+        if func_name_match is None:
+            raise ValueError("No tool call found.")
+        tool_call_id = func_name_match.group(1)  # e.g. "functions.get_weather:0"
+        func_name = func_name_match.group(2)  # e.g. "get_weather"
+
+        func_args_match = _func_arg_regex.search(text)
+        if func_args_match is None:
+            raise ValueError("No tool call arguments found.")
+        func_args = func_args_match.group(1)
+        try:
+            arg_dct = json.loads(func_args)  # pyright: ignore[reportAny]
+        except Exception:
+            arg_dct = None
+
+        return dict(id=tool_call_id, name=func_name, arguments=arg_dct)
+
+    tool_matches = _tool_call_split_regex.findall(text)
+    if tool_matches:
+        return [_parse_single_tool(match) for match in tool_matches]  # pyright: ignore[reportAny]
+    else:
+        return [_parse_single_tool(text)]

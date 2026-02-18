@@ -17,7 +17,6 @@
 
 extern crate core;
 mod allow_threading;
-mod examples;
 pub(crate) mod networking;
 pub(crate) mod pylibp2p;
 
@@ -25,7 +24,6 @@ use crate::networking::networking_submodule;
 use crate::pylibp2p::ident::ident_submodule;
 use crate::pylibp2p::multiaddr::multiaddr_submodule;
 use pyo3::prelude::PyModule;
-use pyo3::prelude::*;
 use pyo3::{Bound, PyResult, pyclass, pymodule};
 use pyo3_stub_gen::define_stub_info_gatherer;
 
@@ -36,14 +34,10 @@ pub(crate) mod r#const {
 
 /// Namespace for all the type/trait aliases used by this crate.
 pub(crate) mod alias {
-    use std::error::Error;
     use std::marker::Tuple;
 
     pub trait SendFn<Args: Tuple + Send + 'static, Output> =
         Fn<Args, Output = Output> + Send + 'static;
-
-    pub type AnyError = Box<dyn Error + Send + Sync + 'static>;
-    pub type AnyResult<T> = Result<T, AnyError>;
 }
 
 /// Namespace for crate-wide extension traits/methods
@@ -51,7 +45,6 @@ pub(crate) mod ext {
     use crate::allow_threading::AllowThreads;
     use extend::ext;
     use pyo3::exceptions::{PyConnectionError, PyRuntimeError};
-    use pyo3::marker::Ungil;
     use pyo3::types::PyBytes;
     use pyo3::{Py, PyErr, PyResult, Python};
     use tokio::runtime::Runtime;
@@ -62,7 +55,7 @@ pub(crate) mod ext {
     #[ext(pub, name = ByteArrayExt)]
     impl [u8] {
         fn pybytes(&self) -> Py<PyBytes> {
-            Python::with_gil(|py| PyBytes::new(py, self).unbind())
+            Python::attach(|py| PyBytes::new(py, self).unbind())
         }
     }
 
@@ -98,7 +91,7 @@ pub(crate) mod ext {
     #[ext(pub, name = PyResultExt)]
     impl<T> PyResult<T> {
         fn write_unraisable(self) -> Option<T> {
-            Python::with_gil(|py| self.write_unraisable_with(py))
+            Python::attach(|py| self.write_unraisable_with(py))
         }
 
         fn write_unraisable_with(self, py: Python<'_>) -> Option<T> {
@@ -172,24 +165,6 @@ pub(crate) mod ext {
                 Err(TryRecvError::Disconnected) => Err(PyErr::receiver_channel_closed()),
             }
         }
-    }
-}
-
-pub(crate) mod private {
-    use std::marker::Sized;
-
-    /// Sealed traits support
-    pub trait Sealed {}
-    impl<T: ?Sized> Sealed for T {}
-}
-
-/// A wrapper around [`Py`] that implements [`Clone`] using [`Python::with_gil`].
-#[repr(transparent)]
-pub(crate) struct ClonePy<T>(pub Py<T>);
-
-impl<T> Clone for ClonePy<T> {
-    fn clone(&self) -> Self {
-        Python::with_gil(|py| Self(self.0.clone_ref(py)))
     }
 }
 

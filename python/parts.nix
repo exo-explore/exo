@@ -14,7 +14,9 @@
 
       # Override overlay to inject Nix-built components
       exoOverlay = final: prev: {
-        # Replace workspace exo_pyo3_bindings with Nix-built wheel
+        # Replace workspace exo_pyo3_bindings with Nix-built wheel.
+        # Preserve passthru so mkVirtualEnv can resolve dependency groups.
+        # Copy .pyi stub + py.typed marker so basedpyright can find the types.
         exo-pyo3-bindings = pkgs.stdenv.mkDerivation {
           pname = "exo-pyo3-bindings";
           version = "0.1.0";
@@ -22,6 +24,12 @@
           # Install from pre-built wheel
           nativeBuildInputs = [ final.pyprojectWheelHook ];
           dontStrip = true;
+          passthru = prev.exo-pyo3-bindings.passthru or { };
+          postInstall = ''
+            local siteDir=$out/${final.python.sitePackages}/exo_pyo3_bindings
+            cp ${inputs.self}/rust/exo_pyo3_bindings/exo_pyo3_bindings.pyi $siteDir/
+            touch $siteDir/py.typed
+          '';
         };
       };
 
@@ -29,16 +37,46 @@
 
       # Overlay to provide build systems and custom packages
       buildSystemsOverlay = final: prev: {
-        # Use our pure Nix-built MLX with Metal support
-        mlx = self'.packages.mlx;
-
         # mlx-lm is a git dependency that needs setuptools
         mlx-lm = prev.mlx-lm.overrideAttrs (old: {
           nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
             final.setuptools
           ];
         });
+      } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+        # Use our pure Nix-built MLX with Metal support (macOS only)
+        mlx = self'.packages.mlx;
       };
+
+      # Additional overlay for Linux-specific fixes (type checking env).
+      # Native wheels have shared lib dependencies we don't need at type-check time.
+      linuxOverlay = final: prev:
+        let
+          ignoreMissing = drv: drv.overrideAttrs { autoPatchelfIgnoreMissingDeps = [ "*" ]; };
+          nvidiaPackages = lib.filterAttrs (name: _: lib.hasPrefix "nvidia-" name) prev;
+        in
+        lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
+          (lib.mapAttrs (_: ignoreMissing) nvidiaPackages) // {
+            mlx = ignoreMissing prev.mlx;
+            mlx-cuda-13 = prev.mlx-cuda-13.overrideAttrs (old: {
+              buildInputs = (old.buildInputs or [ ]) ++ [
+                final.nvidia-cublas
+                final.nvidia-cuda-nvrtc
+                final.nvidia-cudnn-cu13
+                final.nvidia-nccl-cu13
+              ];
+              preFixup = ''
+                addAutoPatchelfSearchPath ${final.nvidia-cublas}
+                addAutoPatchelfSearchPath ${final.nvidia-cuda-nvrtc}
+                addAutoPatchelfSearchPath ${final.nvidia-cudnn-cu13}
+                addAutoPatchelfSearchPath ${final.nvidia-nccl-cu13}
+              '';
+              autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
+            });
+            torch = ignoreMissing prev.torch;
+            triton = ignoreMissing prev.triton;
+          }
+        );
 
       pythonSet = (pkgs.callPackage inputs.pyproject-nix.build.packages {
         inherit python;
@@ -48,16 +86,28 @@
           overlay
           exoOverlay
           buildSystemsOverlay
+          linuxOverlay
         ]
       );
-      exoVenv = pythonSet.mkVirtualEnv "exo-env" workspace.deps.default;
+      # mlx-cpu and mlx-cuda-13 both ship mlx/ site-packages files; keep first.
+      # mlx-cpu/mlx-cuda-13 and nvidia-cudnn-cu12/cu13 ship overlapping files.
+      venvCollisionPaths = lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+        "lib/python3.13/site-packages/mlx*"
+        "lib/python3.13/site-packages/nvidia*"
+      ];
+
+      exoVenv = (pythonSet.mkVirtualEnv "exo-env" workspace.deps.default).overrideAttrs {
+        venvIgnoreCollisions = venvCollisionPaths;
+      };
 
       # Virtual environment with dev dependencies for testing
-      testVenv = pythonSet.mkVirtualEnv "exo-test-env" (
+      testVenv = (pythonSet.mkVirtualEnv "exo-test-env" (
         workspace.deps.default // {
           exo = [ "dev" ]; # Include pytest, pytest-asyncio, pytest-env
         }
-      );
+      )).overrideAttrs {
+        venvIgnoreCollisions = venvCollisionPaths;
+      };
 
       mkPythonScript = name: path: pkgs.writeShellApplication {
         inherit name;
@@ -108,6 +158,7 @@
           exo-test-env = testVenv;
         } // {
         exo-bench = mkBenchScript "exo-bench" (inputs.self + /bench/exo_bench.py);
+        exo-eval-tool-calls = mkBenchScript "exo-eval-tool-calls" (inputs.self + /bench/eval_tool_calls.py);
         exo-get-all-models-on-cluster = mkSimplePythonScript "exo-get-all-models-on-cluster" (inputs.self + /tests/get_all_models_on_cluster.py);
       };
 
@@ -118,6 +169,21 @@
           ${pkgs.ruff}/bin/ruff check ${inputs.self}
           touch $out
         '';
+
+        # Hermetic basedpyright type checking
+        typecheck = pkgs.runCommand "typecheck"
+          {
+            nativeBuildInputs = [
+              testVenv
+              pkgs.basedpyright
+            ];
+          }
+          ''
+            cd ${inputs.self}
+            export HOME=$TMPDIR
+            basedpyright --pythonpath ${testVenv}/bin/python
+            touch $out
+          '';
       };
     };
 }

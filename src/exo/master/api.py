@@ -85,6 +85,7 @@ from exo.shared.types.api import (
     ImageGenerationTaskParams,
     ImageListItem,
     ImageListResponse,
+    ImageSize,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
@@ -100,6 +101,7 @@ from exo.shared.types.api import (
     TraceRankStats,
     TraceResponse,
     TraceStatsResponse,
+    normalize_image_size,
 )
 from exo.shared.types.chunks import (
     ErrorChunk,
@@ -126,6 +128,7 @@ from exo.shared.types.commands import (
     PlaceInstance,
     SendInputChunk,
     StartDownload,
+    TaskCancelled,
     TaskFinished,
     TextGeneration,
 )
@@ -144,6 +147,7 @@ from exo.shared.types.openai_responses import (
     ResponsesResponse,
 )
 from exo.shared.types.state import State
+from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
@@ -524,12 +528,12 @@ class API:
             instance_id=instance_id,
         )
 
-    async def _stream_events(
+    async def _token_chunk_stream(
         self, command_id: CommandId
     ) -> AsyncGenerator[
         TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressData, None
     ]:
-        """Yield stream events for a command.
+        """Yield chunks for a given command until completion.
 
         This is the internal low-level stream used by all API adapters.
         """
@@ -538,36 +542,27 @@ class API:
                 TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressData
             ]()
 
-            with recv as events:
-                async for event in events:
-                    yield event
-                    if (
-                        isinstance(event, TokenChunk)
-                        and event.finish_reason is not None
-                    ):
+            with recv as token_chunks:
+                async for chunk in token_chunks:
+                    # Skip prefill progress data
+                    if isinstance(chunk, PrefillProgressData):
+                        continue
+
+                    yield chunk
+                    if chunk.finish_reason is not None:
                         break
 
         except anyio.get_cancelled_exc_class():
-            # TODO: TaskCancelled
-            """
-            self.command_sender.send_nowait(
-                ForwarderCommand(origin=self.node_id, command=command)
-            )
-            """
+            command = TaskCancelled(cancelled_command_id=command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(origin=self.node_id, command=command)
+                )
             raise
         finally:
-            command = TaskFinished(finished_command_id=command_id)
-            await self._send(command)
+            await self._send(TaskFinished(finished_command_id=command_id))
             if command_id in self._text_generation_queues:
                 del self._text_generation_queues[command_id]
-
-    async def _chunk_stream(
-        self, command_id: CommandId
-    ) -> AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None]:
-        """Yield chunks, filtering out prefill progress events."""
-        async for event in self._stream_events(command_id):
-            if not isinstance(event, PrefillProgressData):
-                yield event
 
     async def _collect_text_generation_with_stats(
         self, command_id: CommandId
@@ -579,7 +574,10 @@ class API:
 
         stats: GenerationStats | None = None
 
-        async for chunk in self._chunk_stream(command_id):
+        async for chunk in self._token_chunk_stream(command_id):
+            if isinstance(chunk, PrefillProgressData):
+                continue
+
             if chunk.finish_reason == "error":
                 raise HTTPException(
                     status_code=500,
@@ -651,7 +649,7 @@ class API:
             return StreamingResponse(
                 generate_chat_stream(
                     command.command_id,
-                    self._stream_events(command.command_id),
+                    self._token_chunk_stream(command.command_id),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -660,14 +658,14 @@ class API:
                     "X-Accel-Buffering": "no",
                 },
             )
-
-        try:
-            return await collect_chat_response(
-                command.command_id,
-                self._chunk_stream(command.command_id),
+        else:
+            return StreamingResponse(
+                collect_chat_response(
+                    command.command_id,
+                    self._token_chunk_stream(command.command_id),
+                ),
+                media_type="application/json",
             )
-        except ValueError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
 
     async def bench_chat_completions(
         self, payload: BenchChatCompletionRequest
@@ -683,8 +681,7 @@ class API:
         command = TextGeneration(task_params=task_params)
         await self._send(command)
 
-        response = await self._collect_text_generation_with_stats(command.command_id)
-        return response
+        return await self._collect_text_generation_with_stats(command.command_id)
 
     async def _resolve_and_validate_text_model(self, model_id: ModelId) -> ModelId:
         """Validate a text model exists and return the resolved model ID.
@@ -769,9 +766,11 @@ class API:
         When stream=True and partial_images > 0, returns a StreamingResponse
         with SSE-formatted events for partial and final images.
         """
-        payload.model = await self._validate_image_model(ModelId(payload.model))
         payload = payload.model_copy(
-            update={"advanced_params": _ensure_seed(payload.advanced_params)}
+            update={
+                "model": await self._validate_image_model(ModelId(payload.model)),
+                "advanced_params": _ensure_seed(payload.advanced_params),
+            }
         )
 
         command = ImageGeneration(
@@ -902,6 +901,11 @@ class API:
                         del image_metadata[key]
 
         except anyio.get_cancelled_exc_class():
+            command = TaskCancelled(cancelled_command_id=command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(origin=self.node_id, command=command)
+                )
             raise
         finally:
             await self._send(TaskFinished(finished_command_id=command_id))
@@ -983,6 +987,11 @@ class API:
 
             return (images, stats if capture_stats else None)
         except anyio.get_cancelled_exc_class():
+            command = TaskCancelled(cancelled_command_id=command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(origin=self.node_id, command=command)
+                )
             raise
         finally:
             await self._send(TaskFinished(finished_command_id=command_id))
@@ -1017,12 +1026,13 @@ class API:
     async def bench_image_generations(
         self, request: Request, payload: BenchImageGenerationTaskParams
     ) -> BenchImageGenerationResponse:
-        payload.model = await self._validate_image_model(ModelId(payload.model))
-
-        payload.stream = False
-        payload.partial_images = 0
         payload = payload.model_copy(
-            update={"advanced_params": _ensure_seed(payload.advanced_params)}
+            update={
+                "model": await self._validate_image_model(ModelId(payload.model)),
+                "stream": False,
+                "partial_images": 0,
+                "advanced_params": _ensure_seed(payload.advanced_params),
+            }
         )
 
         command = ImageGeneration(
@@ -1043,7 +1053,7 @@ class API:
         prompt: str,
         model: ModelId,
         n: int,
-        size: str,
+        size: ImageSize,
         response_format: Literal["url", "b64_json"],
         input_fidelity: Literal["low", "high"],
         stream: bool,
@@ -1113,7 +1123,7 @@ class API:
         prompt: str = Form(...),
         model: str = Form(...),
         n: int = Form(1),
-        size: str = Form("1024x1024"),
+        size: str | None = Form(None),
         response_format: Literal["url", "b64_json"] = Form("b64_json"),
         input_fidelity: Literal["low", "high"] = Form("low"),
         stream: str = Form("false"),
@@ -1139,7 +1149,7 @@ class API:
             prompt=prompt,
             model=ModelId(model),
             n=n,
-            size=size,
+            size=normalize_image_size(size),
             response_format=response_format,
             input_fidelity=input_fidelity,
             stream=stream_bool,
@@ -1175,7 +1185,7 @@ class API:
         prompt: str = Form(...),
         model: str = Form(...),
         n: int = Form(1),
-        size: str = Form("1024x1024"),
+        size: str | None = Form(None),
         response_format: Literal["url", "b64_json"] = Form("b64_json"),
         input_fidelity: Literal["low", "high"] = Form("low"),
         quality: Literal["high", "medium", "low"] = Form("medium"),
@@ -1195,7 +1205,7 @@ class API:
             prompt=prompt,
             model=ModelId(model),
             n=n,
-            size=size,
+            size=normalize_image_size(size),
             response_format=response_format,
             input_fidelity=input_fidelity,
             stream=False,
@@ -1231,7 +1241,7 @@ class API:
                 generate_claude_stream(
                     command.command_id,
                     payload.model,
-                    self._chunk_stream(command.command_id),
+                    self._token_chunk_stream(command.command_id),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1240,15 +1250,15 @@ class API:
                     "X-Accel-Buffering": "no",
                 },
             )
-
-        try:
-            return await collect_claude_response(
-                command.command_id,
-                payload.model,
-                self._chunk_stream(command.command_id),
+        else:
+            return StreamingResponse(
+                collect_claude_response(
+                    command.command_id,
+                    payload.model,
+                    self._token_chunk_stream(command.command_id),
+                ),
+                media_type="application/json",
             )
-        except ValueError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
 
     async def openai_responses(
         self, payload: ResponsesRequest
@@ -1266,7 +1276,7 @@ class API:
                 generate_responses_stream(
                     command.command_id,
                     payload.model,
-                    self._chunk_stream(command.command_id),
+                    self._token_chunk_stream(command.command_id),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1276,14 +1286,15 @@ class API:
                 },
             )
 
-        try:
-            return await collect_responses_response(
-                command.command_id,
-                payload.model,
-                self._chunk_stream(command.command_id),
+        else:
+            return StreamingResponse(
+                collect_responses_response(
+                    command.command_id,
+                    payload.model,
+                    self._token_chunk_stream(command.command_id),
+                ),
+                media_type="application/json",
             )
-        except ValueError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
 
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
@@ -1294,8 +1305,18 @@ class API:
 
         return total_available
 
-    async def get_models(self) -> ModelList:
-        """Returns list of available models."""
+    async def get_models(self, status: str | None = Query(default=None)) -> ModelList:
+        """Returns list of available models, optionally filtered by being downloaded."""
+        cards = await get_model_cards()
+
+        if status == "downloaded":
+            downloaded_model_ids: set[str] = set()
+            for node_downloads in self.state.downloads.values():
+                for dl in node_downloads:
+                    if isinstance(dl, DownloadCompleted):
+                        downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
+            cards = [c for c in cards if c.model_id in downloaded_model_ids]
+
         return ModelList(
             data=[
                 ModelListModel(
@@ -1313,7 +1334,7 @@ class API:
                     base_model=card.base_model,
                     capabilities=card.capabilities,
                 )
-                for card in await get_model_cards()
+                for card in cards
             ]
         )
 

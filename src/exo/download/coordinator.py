@@ -14,6 +14,7 @@ from exo.download.download_utils import (
     map_repo_download_progress_to_download_progress_data,
 )
 from exo.download.shard_downloader import ShardDownloader
+from exo.shared.constants import EXO_MODELS_DIR
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
     CancelDownload,
@@ -46,6 +47,7 @@ class DownloadCoordinator:
     download_command_receiver: Receiver[ForwarderDownloadCommand]
     local_event_sender: Sender[ForwarderEvent]
     event_index_counter: Iterator[int]
+    offline: bool = False
 
     # Local state
     download_status: dict[ModelId, DownloadProgress] = field(default_factory=dict)
@@ -61,7 +63,12 @@ class DownloadCoordinator:
 
     def __post_init__(self) -> None:
         self.event_sender, self.event_receiver = channel[Event]()
+        if self.offline:
+            self.shard_downloader.set_internet_connection(False)
         self.shard_downloader.on_progress(self._download_progress_callback)
+
+    def _model_dir(self, model_id: ModelId) -> str:
+        return str(EXO_MODELS_DIR / model_id.normalize())
 
     async def _download_progress_callback(
         self, callback_shard: ShardMetadata, progress: RepoDownloadProgress
@@ -74,6 +81,7 @@ class DownloadCoordinator:
                 shard_metadata=callback_shard,
                 node_id=self.node_id,
                 total_bytes=progress.total_bytes,
+                model_directory=self._model_dir(model_id),
             )
             self.download_status[model_id] = completed
             await self.event_sender.send(
@@ -93,6 +101,7 @@ class DownloadCoordinator:
                 download_progress=map_repo_download_progress_to_download_progress_data(
                     progress
                 ),
+                model_directory=self._model_dir(model_id),
             )
             self.download_status[model_id] = ongoing
             await self.event_sender.send(
@@ -101,23 +110,30 @@ class DownloadCoordinator:
             self._last_progress_time[model_id] = current_time()
 
     async def run(self) -> None:
-        logger.info("Starting DownloadCoordinator")
-        self._test_internet_connection()
+        logger.info(
+            f"Starting DownloadCoordinator{' (offline mode)' if self.offline else ''}"
+        )
+        if not self.offline:
+            self._test_internet_connection()
         async with self._tg as tg:
             tg.start_soon(self._command_processor)
             tg.start_soon(self._forward_events)
             tg.start_soon(self._emit_existing_download_progress)
-            tg.start_soon(self._check_internet_connection)
+            if not self.offline:
+                tg.start_soon(self._check_internet_connection)
 
     def _test_internet_connection(self) -> None:
-        try:
-            socket.create_connection(("1.1.1.1", 443), timeout=3).close()
-            self.shard_downloader.set_internet_connection(True)
-        except OSError:
-            self.shard_downloader.set_internet_connection(False)
-        logger.debug(
-            f"Internet connectivity: {self.shard_downloader.internet_connection}"
-        )
+        # Try multiple endpoints since some ISPs/networks block specific IPs
+        for host in ("1.1.1.1", "8.8.8.8", "1.0.0.1"):
+            try:
+                socket.create_connection((host, 443), timeout=3).close()
+                self.shard_downloader.set_internet_connection(True)
+                logger.debug(f"Internet connectivity: True (via {host})")
+                return
+            except OSError:
+                continue
+        self.shard_downloader.set_internet_connection(False)
+        logger.debug("Internet connectivity: False")
 
     async def _check_internet_connection(self) -> None:
         first_connection = True
@@ -170,7 +186,11 @@ class DownloadCoordinator:
                 return
 
         # Emit pending status
-        progress = DownloadPending(shard_metadata=shard, node_id=self.node_id)
+        progress = DownloadPending(
+            shard_metadata=shard,
+            node_id=self.node_id,
+            model_directory=self._model_dir(model_id),
+        )
         self.download_status[model_id] = progress
         await self.event_sender.send(NodeDownloadProgress(download_progress=progress))
 
@@ -184,11 +204,26 @@ class DownloadCoordinator:
                 shard_metadata=shard,
                 node_id=self.node_id,
                 total_bytes=initial_progress.total_bytes,
+                model_directory=self._model_dir(model_id),
             )
             self.download_status[model_id] = completed
             await self.event_sender.send(
                 NodeDownloadProgress(download_progress=completed)
             )
+            return
+
+        if self.offline:
+            logger.warning(
+                f"Offline mode: model {model_id} is not fully available locally, cannot download"
+            )
+            failed = DownloadFailed(
+                shard_metadata=shard,
+                node_id=self.node_id,
+                error_message=f"Model files not found locally in offline mode: {model_id}",
+                model_directory=self._model_dir(model_id),
+            )
+            self.download_status[model_id] = failed
+            await self.event_sender.send(NodeDownloadProgress(download_progress=failed))
             return
 
         # Start actual download
@@ -206,6 +241,7 @@ class DownloadCoordinator:
             download_progress=map_repo_download_progress_to_download_progress_data(
                 initial_progress
             ),
+            model_directory=self._model_dir(model_id),
         )
         self.download_status[model_id] = status
         self.event_sender.send_nowait(NodeDownloadProgress(download_progress=status))
@@ -219,6 +255,7 @@ class DownloadCoordinator:
                     shard_metadata=shard,
                     node_id=self.node_id,
                     error_message=str(e),
+                    model_directory=self._model_dir(model_id),
                 )
                 self.download_status[model_id] = failed
                 await self.event_sender.send(
@@ -253,6 +290,7 @@ class DownloadCoordinator:
             pending = DownloadPending(
                 shard_metadata=current_status.shard_metadata,
                 node_id=self.node_id,
+                model_directory=self._model_dir(model_id),
             )
             await self.event_sender.send(
                 NodeDownloadProgress(download_progress=pending)
@@ -295,11 +333,18 @@ class DownloadCoordinator:
                             node_id=self.node_id,
                             shard_metadata=progress.shard,
                             total_bytes=progress.total_bytes,
+                            model_directory=self._model_dir(
+                                progress.shard.model_card.model_id
+                            ),
                         )
                     elif progress.status in ["in_progress", "not_started"]:
                         if progress.downloaded_bytes_this_session.in_bytes == 0:
                             status = DownloadPending(
-                                node_id=self.node_id, shard_metadata=progress.shard
+                                node_id=self.node_id,
+                                shard_metadata=progress.shard,
+                                model_directory=self._model_dir(
+                                    progress.shard.model_card.model_id
+                                ),
                             )
                         else:
                             status = DownloadOngoing(
@@ -307,6 +352,9 @@ class DownloadCoordinator:
                                 shard_metadata=progress.shard,
                                 download_progress=map_repo_download_progress_to_download_progress_data(
                                     progress
+                                ),
+                                model_directory=self._model_dir(
+                                    progress.shard.model_card.model_id
                                 ),
                             )
                     else:

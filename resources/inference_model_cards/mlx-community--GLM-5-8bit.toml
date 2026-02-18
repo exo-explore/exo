@@ -1,0 +1,12 @@
+model_id = "mlx-community/GLM-5-8bit-MXFP8"
+n_layers = 78
+hidden_size = 6144
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "glm"
+quantization = "8bit"
+base_model = "GLM-5"
+capabilities = ["text", "thinking"]
+
+[storage_size]
+in_bytes = 790517400864
