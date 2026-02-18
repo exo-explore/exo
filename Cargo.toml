@@ -3,7 +3,6 @@ resolver = "3"
 members = [
     "rust/networking",
     "rust/exo_pyo3_bindings",
-    "rust/util",
 ]
 
 [workspace.package]
@@ -24,7 +23,6 @@ opt-level = 3
 [workspace.dependencies]
 ## Crate members as common dependencies
 networking = { path = "rust/networking" }
-util = { path = "rust/util" }
 
 # Macro dependecies
 extend = "1.2"

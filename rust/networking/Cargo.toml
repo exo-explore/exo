@@ -5,7 +5,6 @@ edition = { workspace = true }
 publish = false
 
 [lib]
-doctest = false
 name = "networking"
 path = "src/lib.rs"
 
@@ -13,20 +12,14 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-# datastructures
-either = { workspace = true }
-
 # macro dependencies
 extend = { workspace = true }
-delegate = { workspace = true }
 
 # async
 tokio = { workspace = true, features = ["full"] }
-futures = { workspace = true }
-futures-timer = { workspace = true }
+futures-lite = { workspace = true }
 
 # utility dependencies
-util = { workspace = true }
 tracing-subscriber = { version = "0.3.19", features = ["default", "env-filter"] }
 keccak-const = { workspace = true }
 
