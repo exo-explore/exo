@@ -560,7 +560,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
                 layer.parameters(), timeout_seconds / len(model.layers), on_timeout
             )
 
-            # Shard attention heads
+            # Shard the self attention
             if layer.self_attn.q_lora_rank is None:
                 layer.self_attn.q_proj = self.all_to_sharded_linear(
                     layer.self_attn.q_proj
@@ -575,6 +575,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
             )
             layer.self_attn.num_heads //= self.N
 
+            # Logic from upstream mlx
             num_heads = layer.self_attn.num_heads
             sh = self.group.rank() * num_heads
             eh = sh + num_heads
@@ -591,6 +592,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
                 layer.mlp.down_proj = self.sharded_to_all_linear(layer.mlp.down_proj)
                 layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
 
+            # Shard the MoE.
             else:
                 if getattr(layer.mlp, "shared_experts", None) is not None:
                     self.all_to_sharded_linear_in_place(
@@ -794,8 +796,7 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
 
             layer.self_attn = WrappedMiniMaxAttention(layer.self_attn, self.group)  # pyright: ignore[reportAttributeAccessIssue,reportArgumentType]
 
-            # Shard the MoE. Shard in place since the MoE should be responsible
-            # for aggregating the results.
+            # Shard the MoE.
             self.all_to_sharded_linear_in_place(
                 layer.block_sparse_moe.switch_mlp.gate_proj
             )
@@ -908,8 +909,7 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                     layer.self_attn.num_attention_heads //= self.N
                     layer.self_attn.num_key_value_heads //= self.N
 
-            # Shard the MoE. Shard in place since the MoE should be responsible
-            # for aggregating the results.
+            # Shard the MoE.
             if isinstance(layer.mlp, (Qwen3MoeSparseMoeBlock, Qwen3NextSparseMoeBlock)):
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
                 self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
