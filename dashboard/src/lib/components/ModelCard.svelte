@@ -21,7 +21,7 @@
     } | null;
     nodes?: Record<string, NodeInfo>;
     sharding?: "Pipeline" | "Tensor";
-    runtime?: "MlxRing" | "MlxJaccl";
+    runtime?: "MlxRing" | "MlxIbv" | "MlxJaccl";
     onLaunch?: () => void;
     tags?: string[];
     apiPreview?: PlacementPreview | null;
@@ -348,7 +348,7 @@
   // Debug mode state
   const isDebugMode = $derived(debugMode());
   const topology = $derived(topologyData());
-  const isRdma = $derived(runtime === "MlxJaccl");
+  const isRdma = $derived(runtime === "MlxIbv" || runtime === "MlxJaccl");
 
   // Get interface name for an IP from node data
   function getInterfaceForIp(nodeId: string, ip?: string): string | null {
@@ -575,7 +575,7 @@
       >
         {runtime === "MlxRing"
           ? "MLX Ring"
-          : runtime === "MlxJaccl"
+          : runtime === "MlxIbv" || runtime === "MlxJaccl"
             ? "MLX RDMA"
             : runtime}
       </span>

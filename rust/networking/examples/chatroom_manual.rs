@@ -24,8 +24,8 @@ use libp2p::{
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux,
 };
+use std::error::Error;
 use std::time::Duration;
-use std::{error::Error, hash::Hash};
 use tokio::{io, io::AsyncBufReadExt, select};
 use tracing_subscriber::EnvFilter;
 
