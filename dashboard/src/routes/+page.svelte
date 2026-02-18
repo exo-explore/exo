@@ -369,7 +369,7 @@
     onboardingStep = 5;
     // Launch via API
     try {
-      const response = await fetch("/meta_instance", {
+      const response = await fetch("/instance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2597,7 +2597,9 @@
     <!-- ═══════════════════════════════════════════════════════ -->
     <!-- FULL-SCREEN ONBOARDING WIZARD                          -->
     <!-- ═══════════════════════════════════════════════════════ -->
-    <div class="flex-1 flex items-center justify-center relative z-10 bg-exo-black">
+    <div
+      class="flex-1 flex items-center justify-center relative z-10 bg-exo-black"
+    >
       {#if onboardingStep === 1}
         <!-- Step 1: Welcome -->
         <div
