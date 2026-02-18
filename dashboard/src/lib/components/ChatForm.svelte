@@ -103,7 +103,7 @@
   const modelSupportsThinking = $derived(() => {
     if (!currentModel) return false;
     const caps = modelCapabilities[currentModel] || [];
-    return caps.includes("thinking_toggle") && caps.includes("text");
+    return caps.includes("thinking") && caps.includes("text");
   });
 
   const isEditOnlyWithoutImage = $derived(
@@ -659,7 +659,7 @@
         class="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-xs tracking-[0.1em] sm:tracking-[0.15em] uppercase font-medium transition-all duration-200 whitespace-nowrap
 					{!canSend || loading || isEditOnlyWithoutImage
           ? 'bg-exo-medium-gray/50 text-exo-light-gray cursor-not-allowed'
-          : 'bg-exo-yellow text-exo-black hover:bg-exo-yellow-darker hover:shadow-[0_0_20px_rgba(255,215,0,0.3)]'}"
+          : 'bg-exo-yellow text-exo-black hover:bg-exo-yellow-darker hover:shadow-[0_0_20px_var(--exo-glow-yellow)]'}"
         aria-label={shouldShowEditMode
           ? "Edit image"
           : isImageModel()

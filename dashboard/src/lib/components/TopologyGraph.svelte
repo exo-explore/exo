@@ -36,6 +36,65 @@
   const rdmaCtlData = $derived(nodeRdmaCtl());
   const identitiesData = $derived(nodeIdentities());
 
+  // Theme-aware colors - read from CSS custom properties
+  function getThemeColors() {
+    if (typeof document === 'undefined') return getDefaultColors();
+    const style = getComputedStyle(document.documentElement);
+    const isDark = document.documentElement.classList.contains('dark');
+    return {
+      accent: style.getPropertyValue('--exo-yellow').trim() || (isDark ? 'oklch(0.85 0.18 85)' : 'oklch(0.20 0.02 85)'),
+      accentRgb: isDark ? '255,215,0' : '30,28,20',
+      deviceCase: isDark ? '#1a1a1a' : '#e8e8e8',
+      deviceCaseDark: isDark ? '#2c2c2c' : '#d4d4d4',
+      deviceScreen: isDark ? '#0a0a12' : '#f0f0f5',
+      deviceScreenFill: isDark ? 'rgba(0,20,40,0.9)' : 'rgba(240,242,248,0.95)',
+      labelWhite: isDark ? '#FFFFFF' : '#1a1a1a',
+      labelMuted: isDark ? 'rgba(179,179,179,0.9)' : 'rgba(80,80,80,0.9)',
+      labelDim: isDark ? 'rgba(179,179,179,0.7)' : 'rgba(100,100,100,0.7)',
+      wireDefault: isDark ? 'rgba(179,179,179,0.8)' : 'rgba(120,120,120,0.6)',
+      wireBright: isDark ? 'rgba(255,255,255,0.9)' : 'rgba(30,30,30,0.9)',
+      wireFiltered: isDark ? 'rgba(140,140,140,0.6)' : 'rgba(160,160,160,0.5)',
+      gridStroke: isDark ? 'var(--exo-light-gray, #B3B3B3)' : 'var(--exo-light-gray, #888888)',
+      errorText: isDark ? 'rgba(248,113,113,0.9)' : 'rgba(220,38,38,0.9)',
+      normalText: isDark ? 'rgba(255,255,255,0.85)' : 'rgba(30,30,30,0.85)',
+      gpuChip: isDark ? 'rgba(80, 80, 90, 0.7)' : 'rgba(180, 180, 190, 0.7)',
+      detailOverlay: isDark ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.08)',
+      deviceShadow: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.06)',
+      deviceHighlight: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.5)',
+      tbActive: isDark ? 'rgba(234,179,8,0.9)' : 'rgba(30,28,20,0.9)',
+      tbInactive: isDark ? 'rgba(100,100,100,0.7)' : 'rgba(160,160,160,0.7)',
+      deviceDetail: isDark ? '#374151' : '#c0c0c0',
+    };
+  }
+
+  function getDefaultColors() {
+    return {
+      accent: 'oklch(0.85 0.18 85)', accentRgb: '255,215,0',
+      deviceCase: '#1a1a1a', deviceCaseDark: '#2c2c2c', deviceScreen: '#0a0a12',
+      deviceScreenFill: 'rgba(0,20,40,0.9)', labelWhite: '#FFFFFF',
+      labelMuted: 'rgba(179,179,179,0.9)', labelDim: 'rgba(179,179,179,0.7)',
+      wireDefault: 'rgba(179,179,179,0.8)', wireBright: 'rgba(255,255,255,0.9)',
+      wireFiltered: 'rgba(140,140,140,0.6)',
+      gridStroke: 'var(--exo-light-gray, #B3B3B3)',
+      errorText: 'rgba(248,113,113,0.9)', normalText: 'rgba(255,255,255,0.85)',
+      gpuChip: 'rgba(80, 80, 90, 0.7)', detailOverlay: 'rgba(0,0,0,0.35)',
+      deviceShadow: 'rgba(0,0,0,0.2)', deviceHighlight: 'rgba(255,255,255,0.08)',
+      tbActive: 'rgba(234,179,8,0.9)', tbInactive: 'rgba(100,100,100,0.7)',
+      deviceDetail: '#374151',
+    };
+  }
+
+  let themeColors = $state(getThemeColors());
+
+  $effect(() => {
+    if (typeof document === 'undefined') return;
+    const observer = new MutationObserver(() => {
+      themeColors = getThemeColors();
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  });
+
   function getNodeLabel(nodeId: string): string {
     const node = data?.nodes?.[nodeId];
     return node?.friendly_name || nodeId.slice(0, 8);
@@ -127,7 +186,7 @@
 
   function getTemperatureColor(temp: number): string {
     // Default for N/A temp - light gray
-    if (isNaN(temp) || temp === null) return "rgba(179, 179, 179, 0.8)";
+    if (isNaN(temp) || temp === null) return themeColors.wireDefault;
 
     const coolTemp = 45; // Temp for pure blue
     const midTemp = 57.5; // Temp for pure yellow
@@ -208,7 +267,7 @@
       .append("path")
       .attr("d", "M 0 0 L 10 5 L 0 10")
       .attr("fill", "none")
-      .attr("stroke", "var(--exo-light-gray, #B3B3B3)")
+      .attr("stroke", themeColors.gridStroke)
       .attr("stroke-width", "1.6")
       .attr("stroke-linecap", "round")
       .attr("stroke-linejoin", "round")
@@ -221,7 +280,7 @@
         .attr("y", centerY)
         .attr("text-anchor", "middle")
         .attr("dominant-baseline", "middle")
-        .attr("fill", "rgba(255,215,0,0.4)")
+        .attr("fill", `rgba(${themeColors.accentRgb},0.4)`)
         .attr("font-size", isMinimized ? 10 : 12)
         .attr("font-family", "SF Mono, monospace")
         .attr("letter-spacing", "0.1em")
@@ -505,8 +564,8 @@
               .attr(
                 "fill",
                 conn.missingIface
-                  ? "rgba(248,113,113,0.9)"
-                  : "rgba(255,255,255,0.85)",
+                  ? themeColors.errorText
+                  : themeColors.normalText,
               )
               .text(label);
             currentY += isTop ? lineHeight : -lineHeight;
@@ -565,22 +624,22 @@
 
       // Holographic wireframe colors - bright yellow for filter, subtle yellow for hover, grey for filtered out
       const wireColor = isInFilter
-        ? "rgba(255,215,0,1)" // Bright yellow for filter selection
+        ? `rgba(${themeColors.accentRgb},1)` // Bright yellow for filter selection
         : isHovered
-          ? "rgba(255,215,0,0.7)" // Subtle yellow for hover
+          ? `rgba(${themeColors.accentRgb},0.7)` // Subtle yellow for hover
           : isHighlighted
-            ? "rgba(255,215,0,0.9)" // Yellow for instance highlight
+            ? `rgba(${themeColors.accentRgb},0.9)` // Yellow for instance highlight
             : isFilteredOut
-              ? "rgba(140,140,140,0.6)" // Grey for filtered out
-              : "rgba(179,179,179,0.8)"; // Default
-      const wireColorBright = "rgba(255,255,255,0.9)";
+              ? themeColors.wireFiltered // Grey for filtered out
+              : themeColors.wireDefault; // Default
+      const wireColorBright = themeColors.wireBright;
       const fillColor = isInFilter
-        ? "rgba(255,215,0,0.25)"
+        ? `rgba(${themeColors.accentRgb},0.25)`
         : isHovered
-          ? "rgba(255,215,0,0.12)"
+          ? `rgba(${themeColors.accentRgb},0.12)`
           : isHighlighted
-            ? "rgba(255,215,0,0.15)"
-            : "rgba(255,215,0,0.08)";
+            ? `rgba(${themeColors.accentRgb},0.15)`
+            : `rgba(${themeColors.accentRgb},0.08)`;
       const strokeWidth = isInFilter
         ? 3
         : isHovered
@@ -588,8 +647,8 @@
           : isHighlighted
             ? 2.5
             : 1.5;
-      const screenFill = "rgba(0,20,40,0.9)";
-      const glowColor = "rgba(255,215,0,0.3)";
+      const screenFill = themeColors.deviceScreenFill;
+      const glowColor = `rgba(${themeColors.accentRgb},0.3)`;
 
       const nodeG = nodesGroup
         .append("g")
@@ -653,7 +712,7 @@
           .attr("width", iconBaseWidth)
           .attr("height", iconBaseHeight)
           .attr("rx", cornerRadius)
-          .attr("fill", "#1a1a1a")
+          .attr("fill", themeColors.deviceCase)
           .attr("stroke", wireColor)
           .attr("stroke-width", strokeWidth);
 
@@ -671,12 +730,12 @@
             )
             .attr("width", iconBaseWidth)
             .attr("height", memFillActualHeight)
-            .attr("fill", "rgba(255,215,0,0.75)")
+            .attr("fill", `rgba(${themeColors.accentRgb},0.75)`)
             .attr("clip-path", `url(#${studioClipId})`);
         }
 
         // Front panel details - vertical slots
-        const detailColor = "rgba(0,0,0,0.35)";
+        const detailColor = themeColors.detailOverlay;
         const slotHeight = iconBaseHeight * 0.14;
         const vSlotWidth = iconBaseWidth * 0.05;
         const vSlotY =
@@ -736,7 +795,7 @@
           .attr("width", iconBaseWidth)
           .attr("height", iconBaseHeight)
           .attr("rx", cornerRadius)
-          .attr("fill", "#1a1a1a")
+          .attr("fill", themeColors.deviceCase)
           .attr("stroke", wireColor)
           .attr("stroke-width", strokeWidth);
 
@@ -754,12 +813,12 @@
             )
             .attr("width", iconBaseWidth)
             .attr("height", memFillActualHeight)
-            .attr("fill", "rgba(255,215,0,0.75)")
+            .attr("fill", `rgba(${themeColors.accentRgb},0.75)`)
             .attr("clip-path", `url(#${miniClipId})`);
         }
 
         // Front panel details - vertical slots (no horizontal slot for Mini)
-        const detailColor = "rgba(0,0,0,0.35)";
+        const detailColor = themeColors.detailOverlay;
         const slotHeight = iconBaseHeight * 0.2;
         const vSlotWidth = iconBaseWidth * 0.045;
         const vSlotY =
@@ -814,7 +873,7 @@
           .attr("width", screenWidth)
           .attr("height", screenHeight)
           .attr("rx", 3)
-          .attr("fill", "#1a1a1a")
+          .attr("fill", themeColors.deviceCase)
           .attr("stroke", wireColor)
           .attr("stroke-width", strokeWidth);
 
@@ -826,7 +885,7 @@
           .attr("width", screenWidth - screenBezel * 2)
           .attr("height", screenHeight - screenBezel * 2)
           .attr("rx", 2)
-          .attr("fill", "#0a0a12");
+          .attr("fill", themeColors.deviceScreen);
 
         // Memory fill on screen (fills from bottom up - classic style)
         if (ramUsagePercent > 0) {
@@ -842,7 +901,7 @@
             )
             .attr("width", screenWidth - screenBezel * 2)
             .attr("height", memFillActualHeight)
-            .attr("fill", "rgba(255,215,0,0.85)")
+            .attr("fill", `rgba(${themeColors.accentRgb},0.85)`)
             .attr("clip-path", `url(#${screenClipId})`);
         }
 
@@ -859,7 +918,7 @@
             "transform",
             `translate(${logoX}, ${logoY}) scale(${logoScale})`,
           )
-          .attr("fill", "#FFFFFF")
+          .attr("fill", themeColors.labelWhite)
           .attr("opacity", 0.9);
 
         // Base (keyboard) - trapezoidal
@@ -875,7 +934,7 @@
             "d",
             `M ${baseTopX} ${baseY} L ${baseTopX + baseTopWidth} ${baseY} L ${baseBottomX + baseBottomWidth} ${baseY + baseHeight} L ${baseBottomX} ${baseY + baseHeight} Z`,
           )
-          .attr("fill", "#2c2c2c")
+          .attr("fill", themeColors.deviceCaseDark)
           .attr("stroke", wireColor)
           .attr("stroke-width", 1);
 
@@ -890,7 +949,7 @@
           .attr("y", keyboardY)
           .attr("width", keyboardWidth)
           .attr("height", keyboardHeight)
-          .attr("fill", "rgba(0,0,0,0.2)")
+          .attr("fill", themeColors.deviceShadow)
           .attr("rx", 2);
 
         // Trackpad
@@ -904,7 +963,7 @@
           .attr("y", trackpadY)
           .attr("width", trackpadWidth)
           .attr("height", trackpadHeight)
-          .attr("fill", "rgba(255,255,255,0.08)")
+          .attr("fill", themeColors.deviceHighlight)
           .attr("rx", 2);
       } else {
         // Default/Unknown - holographic hexagon
@@ -942,7 +1001,7 @@
           .attr("y", gpuBarY)
           .attr("width", gpuBarWidth)
           .attr("height", gpuBarHeight)
-          .attr("fill", "rgba(80, 80, 90, 0.7)")
+          .attr("fill", themeColors.gpuChip)
           .attr("rx", 2);
 
         // GPU Bar Fill (from bottom up, colored by temperature)
@@ -979,7 +1038,7 @@
           .attr("y", gpuTextY - lineSpacing)
           .attr("text-anchor", "middle")
           .attr("dominant-baseline", "middle")
-          .attr("fill", "#FFFFFF")
+          .attr("fill", themeColors.labelWhite)
           .attr("font-size", gpuTextFontSize)
           .attr("font-weight", "700")
           .attr("font-family", "SF Mono, Monaco, monospace")
@@ -992,7 +1051,7 @@
           .attr("y", gpuTextY)
           .attr("text-anchor", "middle")
           .attr("dominant-baseline", "middle")
-          .attr("fill", "#FFFFFF")
+          .attr("fill", themeColors.labelWhite)
           .attr("font-size", gpuTextFontSize)
           .attr("font-weight", "700")
           .attr("font-family", "SF Mono, Monaco, monospace")
@@ -1005,7 +1064,7 @@
           .attr("y", gpuTextY + lineSpacing)
           .attr("text-anchor", "middle")
           .attr("dominant-baseline", "middle")
-          .attr("fill", "#FFFFFF")
+          .attr("fill", themeColors.labelWhite)
           .attr("font-size", gpuTextFontSize)
           .attr("font-weight", "700")
           .attr("font-family", "SF Mono, Monaco, monospace")
@@ -1033,7 +1092,7 @@
           .attr("y", nameY)
           .attr("text-anchor", "middle")
           .attr("dominant-baseline", "middle")
-          .attr("fill", "#FFD700")
+          .attr("fill", themeColors.accent)
           .attr("font-size", fontSize)
           .attr("font-weight", 500)
           .attr("font-family", "SF Mono, Monaco, monospace")
@@ -1050,15 +1109,15 @@
           .attr("font-family", "SF Mono, Monaco, monospace");
         memText
           .append("tspan")
-          .attr("fill", "rgba(255,215,0,0.9)")
+          .attr("fill", `rgba(${themeColors.accentRgb},0.9)`)
           .text(`${formatBytes(ramUsed)}`);
         memText
           .append("tspan")
-          .attr("fill", "rgba(179,179,179,0.9)")
+          .attr("fill", themeColors.labelMuted)
           .text(`/${formatBytes(ramTotal)}`);
         memText
           .append("tspan")
-          .attr("fill", "rgba(179,179,179,0.7)")
+          .attr("fill", themeColors.labelDim)
           .text(` (${ramUsagePercent.toFixed(0)}%)`);
       } else if (showCompactLabels) {
         // COMPACT MODE: Just name and basic info (4+ nodes)
@@ -1075,7 +1134,7 @@
           .attr("x", nodeInfo.x)
           .attr("y", nameY)
           .attr("text-anchor", "middle")
-          .attr("fill", "#FFD700")
+          .attr("fill", themeColors.accent)
           .attr("font-size", fontSize)
           .attr("font-family", "SF Mono, Monaco, monospace")
           .text(shortName);
@@ -1087,7 +1146,7 @@
           .attr("x", nodeInfo.x)
           .attr("y", statsY)
           .attr("text-anchor", "middle")
-          .attr("fill", "rgba(255,215,0,0.7)")
+          .attr("fill", `rgba(${themeColors.accentRgb},0.7)`)
           .attr("font-size", fontSize * 0.85)
           .attr("font-family", "SF Mono, Monaco, monospace")
           .text(
@@ -1108,7 +1167,7 @@
           .attr("x", nodeInfo.x)
           .attr("y", nameY)
           .attr("text-anchor", "middle")
-          .attr("fill", "#FFD700")
+          .attr("fill", themeColors.accent)
           .attr("font-size", fontSize)
           .attr("font-weight", "500")
           .attr("font-family", "SF Mono, Monaco, monospace")
@@ -1125,15 +1184,15 @@
           .attr("font-family", "SF Mono, Monaco, monospace");
         memTextMini
           .append("tspan")
-          .attr("fill", "rgba(255,215,0,0.9)")
+          .attr("fill", `rgba(${themeColors.accentRgb},0.9)`)
           .text(`${formatBytes(ramUsed)}`);
         memTextMini
           .append("tspan")
-          .attr("fill", "rgba(179,179,179,0.9)")
+          .attr("fill", themeColors.labelMuted)
           .text(`/${formatBytes(ramTotal)}`);
         memTextMini
           .append("tspan")
-          .attr("fill", "rgba(179,179,179,0.7)")
+          .attr("fill", themeColors.labelDim)
           .text(` (${ramUsagePercent.toFixed(0)}%)`);
       }
 
@@ -1149,8 +1208,8 @@
         const tbStatus = tbBridgeData[nodeInfo.id];
         if (tbStatus) {
           const tbColor = tbStatus.enabled
-            ? "rgba(234,179,8,0.9)"
-            : "rgba(100,100,100,0.7)";
+            ? themeColors.tbActive
+            : themeColors.tbInactive;
           const tbText = tbStatus.enabled ? "TB:ON" : "TB:OFF";
           nodeG
             .append("text")
@@ -1168,7 +1227,7 @@
         if (rdmaStatus !== undefined) {
           const rdmaColor = rdmaStatus.enabled
             ? "rgba(74,222,128,0.9)"
-            : "rgba(100,100,100,0.7)";
+            : themeColors.tbInactive;
           const rdmaText = rdmaStatus.enabled ? "RDMA:ON" : "RDMA:OFF";
           nodeG
             .append("text")
@@ -1189,7 +1248,7 @@
             .attr("x", nodeInfo.x)
             .attr("y", debugLabelY)
             .attr("text-anchor", "middle")
-            .attr("fill", "rgba(179,179,179,0.7)")
+            .attr("fill", themeColors.labelDim)
             .attr("font-size", debugFontSize)
             .attr("font-family", "SF Mono, Monaco, monospace")
             .text(
@@ -1206,6 +1265,7 @@
     const _hoveredNodeId = hoveredNodeId;
     const _filteredNodes = filteredNodes;
     const _highlightedNodes = highlightedNodes;
+    const _themeColors = themeColors;
     if (_data) {
       renderGraph();
     }

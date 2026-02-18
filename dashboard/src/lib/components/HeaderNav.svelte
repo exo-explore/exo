@@ -1,11 +1,22 @@
 <script lang="ts">
   import { browser } from "$app/environment";
+  import { toggleMode, mode } from "mode-watcher";
 
-  export let showHome = true;
-  export let onHome: (() => void) | null = null;
-  export let showSidebarToggle = false;
-  export let sidebarVisible = true;
-  export let onToggleSidebar: (() => void) | null = null;
+  let {
+    showHome = true,
+    onHome = null,
+    showSidebarToggle = false,
+    sidebarVisible = true,
+    onToggleSidebar = null,
+  }: {
+    showHome?: boolean;
+    onHome?: (() => void) | null;
+    showSidebarToggle?: boolean;
+    sidebarVisible?: boolean;
+    onToggleSidebar?: (() => void) | null;
+  } = $props();
+
+  const currentMode = $derived(mode.current);
 
   function handleHome(): void {
     if (onHome) {
@@ -75,14 +86,47 @@
     <img
       src="/exo-logo.png"
       alt="EXO"
-      class="h-18 drop-shadow-[0_0_20px_rgba(255,215,0,0.5)]"
+      class="h-18 drop-shadow-[0_0_20px_color-mix(in_oklch,var(--exo-yellow)_50%,transparent)]"
     />
   </button>
 
-  <!-- Right: Home + Downloads -->
+  <!-- Right: Theme Toggle + Home + Downloads -->
   <div
     class="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-4"
   >
+    <!-- Theme Toggle Button -->
+    <button
+      onclick={() => toggleMode()}
+      class="p-2 rounded border border-exo-medium-gray/40 hover:border-exo-yellow/50 transition-colors cursor-pointer"
+      title={currentMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      aria-label={currentMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+    >
+      {#if currentMode === 'dark'}
+        <!-- Sun icon - click to go light -->
+        <svg
+          class="w-4 h-4 text-exo-light-gray hover:text-exo-yellow transition-colors"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <circle cx="12" cy="12" r="5" />
+          <path stroke-linecap="round" d="M12 1v2m0 18v2m-9-11H1m22 0h-2m-2.636-6.364l-1.414 1.414M6.05 6.05L4.636 4.636m0 14.728l1.414-1.414m11.314 1.414l1.414 1.414" />
+        </svg>
+      {:else}
+        <!-- Moon icon - click to go dark -->
+        <svg
+          class="w-4 h-4 text-exo-light-gray hover:text-exo-yellow transition-colors"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 1111.21 3a7 7 0 009.79 9.79z" />
+        </svg>
+      {/if}
+    </button>
+
     {#if showHome}
       <button
         onclick={handleHome}

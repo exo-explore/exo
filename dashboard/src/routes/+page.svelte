@@ -2299,7 +2299,7 @@
               <!-- Panel Header -->
               <div class="flex items-center gap-2 mb-4">
                 <div
-                  class="w-2 h-2 bg-exo-yellow rounded-full shadow-[0_0_8px_rgba(255,215,0,0.6)] animate-pulse"
+                  class="w-2 h-2 bg-exo-yellow rounded-full shadow-[0_0_8px_var(--exo-glow-yellow)] animate-pulse"
                 ></div>
                 <h3
                   class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase"
@@ -2948,7 +2948,7 @@
                       <!-- Dot -->
                       <span
                         class="rounded-full transition-all {isSelected
-                          ? 'w-6 h-6 bg-exo-yellow shadow-[0_0_10px_rgba(255,215,0,0.6)]'
+                          ? 'w-6 h-6 bg-exo-yellow shadow-[0_0_10px_var(--exo-glow-yellow)]'
                           : isValid
                             ? 'w-4 h-4 bg-exo-light-gray/70 mt-1'
                             : 'w-3 h-3 bg-exo-medium-gray/50 mt-1.5'}"
@@ -3114,7 +3114,7 @@
                 <!-- Panel Header -->
                 <div class="flex items-center gap-2 mb-4">
                   <div
-                    class="w-2 h-2 bg-exo-yellow rounded-full shadow-[0_0_8px_rgba(255,215,0,0.6)] animate-pulse"
+                    class="w-2 h-2 bg-exo-yellow rounded-full shadow-[0_0_8px_var(--exo-glow-yellow)] animate-pulse"
                   ></div>
                   <h3
                     class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase"

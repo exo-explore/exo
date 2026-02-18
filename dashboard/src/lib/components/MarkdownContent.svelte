@@ -1051,4 +1051,219 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
+
+  /* ============================================
+     LIGHT MODE OVERRIDES
+     All dark-mode-specific hardcoded colors are
+     overridden below for light backgrounds.
+     ============================================ */
+
+  /* --- Inline code --- */
+  :global(html:not(.dark)) .markdown-content :global(.inline-code) {
+    background: rgba(0, 0, 0, 0.06);
+    color: var(--exo-yellow, #b8860b);
+  }
+
+  /* --- Blockquote --- */
+  :global(html:not(.dark)) .markdown-content :global(blockquote) {
+    background: rgba(0, 0, 0, 0.03);
+  }
+
+  /* --- Tables --- */
+  :global(html:not(.dark)) .markdown-content :global(th) {
+    background: rgba(0, 0, 0, 0.05);
+    border: 1px solid rgba(0, 0, 0, 0.12);
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(td) {
+    border: 1px solid rgba(0, 0, 0, 0.1);
+  }
+
+  /* --- Horizontal rule --- */
+  :global(html:not(.dark)) .markdown-content :global(hr) {
+    border-top: 1px solid rgba(0, 0, 0, 0.12);
+  }
+
+  /* --- Code block wrapper --- */
+  :global(html:not(.dark)) .markdown-content :global(.code-block-wrapper) {
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    background: rgba(0, 0, 0, 0.03);
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.code-block-header) {
+    background: rgba(0, 0, 0, 0.04);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  }
+
+  /* --- Syntax highlighting - light theme --- */
+  :global(html:not(.dark)) .markdown-content :global(.hljs) {
+    color: #1f2937;
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.hljs-keyword),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-selector-tag),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-literal),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-section),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-link) {
+    color: #7c3aed;
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.hljs-string),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-title),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-name),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-type),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-attribute),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-symbol),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-bullet),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-addition),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-variable),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-template-tag),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-template-variable) {
+    color: #b45309;
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.hljs-comment),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-quote),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-deletion),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-meta) {
+    color: #9ca3af;
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.hljs-number),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-regexp),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-literal),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-built_in) {
+    color: #059669;
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.hljs-function),
+  :global(html:not(.dark)) .markdown-content :global(.hljs-class .hljs-title) {
+    color: #2563eb;
+  }
+
+  /* --- KaTeX math - light mode --- */
+  :global(html:not(.dark)) .markdown-content :global(.katex) {
+    color: oklch(0.2 0 0);
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.katex .mord),
+  :global(html:not(.dark)) .markdown-content :global(.katex .minner),
+  :global(html:not(.dark)) .markdown-content :global(.katex .mop),
+  :global(html:not(.dark)) .markdown-content :global(.katex .mbin),
+  :global(html:not(.dark)) .markdown-content :global(.katex .mrel),
+  :global(html:not(.dark)) .markdown-content :global(.katex .mpunct) {
+    color: oklch(0.2 0 0);
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.katex .frac-line),
+  :global(html:not(.dark)) .markdown-content :global(.katex .overline-line),
+  :global(html:not(.dark)) .markdown-content :global(.katex .underline-line),
+  :global(html:not(.dark)) .markdown-content :global(.katex .hline),
+  :global(html:not(.dark)) .markdown-content :global(.katex .rule) {
+    border-color: oklch(0.25 0 0) !important;
+    background: oklch(0.25 0 0);
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.katex .sqrt-line) {
+    border-color: oklch(0.25 0 0) !important;
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.katex svg) {
+    fill: oklch(0.25 0 0);
+    stroke: oklch(0.25 0 0);
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.katex svg path) {
+    stroke: oklch(0.25 0 0);
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.katex .delimsizing),
+  :global(html:not(.dark)) .markdown-content :global(.katex .delim-size1),
+  :global(html:not(.dark)) .markdown-content :global(.katex .delim-size2),
+  :global(html:not(.dark)) .markdown-content :global(.katex .delim-size3),
+  :global(html:not(.dark)) .markdown-content :global(.katex .delim-size4),
+  :global(html:not(.dark)) .markdown-content :global(.katex .mopen),
+  :global(html:not(.dark)) .markdown-content :global(.katex .mclose) {
+    color: oklch(0.35 0 0);
+  }
+
+  /* --- Display math wrapper --- */
+  :global(html:not(.dark)) .markdown-content :global(.math-display-wrapper) {
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    background: rgba(0, 0, 0, 0.02);
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.math-display-wrapper:hover) {
+    border-color: rgba(0, 0, 0, 0.18);
+    box-shadow: 0 0 12px rgba(0, 0, 0, 0.05);
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.math-display-header) {
+    background: rgba(0, 0, 0, 0.03);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.math-label) {
+    color: rgba(0, 0, 0, 0.5);
+  }
+
+  /* --- Math scrollbar (light mode) --- */
+  :global(html:not(.dark)) .markdown-content :global(.math-display-content::-webkit-scrollbar-track) {
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.math-display-content::-webkit-scrollbar-thumb) {
+    background: rgba(0, 0, 0, 0.15);
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.math-display-content::-webkit-scrollbar-thumb:hover) {
+    background: rgba(0, 0, 0, 0.25);
+  }
+
+  /* --- Inline math hover --- */
+  :global(html:not(.dark)) .markdown-content :global(.math-inline:hover) {
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  /* --- LaTeX proof environment --- */
+  :global(html:not(.dark)) .markdown-content :global(.latex-proof) {
+    background: rgba(0, 0, 0, 0.02);
+    border-left: 3px solid rgba(0, 0, 0, 0.25);
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.latex-proof-header) {
+    color: oklch(0.25 0 0);
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.latex-proof-content) {
+    color: oklch(0.2 0 0);
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.latex-proof-content::after) {
+    color: oklch(0.4 0 0);
+  }
+
+  /* --- LaTeX theorem-like environments --- */
+  :global(html:not(.dark)) .markdown-content :global(.latex-theorem) {
+    background: rgba(0, 0, 0, 0.02);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+  }
+
+  :global(html:not(.dark)) .markdown-content :global(.latex-theorem-content) {
+    color: oklch(0.2 0 0);
+  }
+
+  /* --- LaTeX diagram/figure placeholder --- */
+  :global(html:not(.dark)) .markdown-content :global(.latex-diagram-placeholder) {
+    background: rgba(0, 0, 0, 0.02);
+    border: 1px dashed rgba(0, 0, 0, 0.2);
+    color: rgba(0, 0, 0, 0.45);
+  }
+
+  /* --- Math error (light mode) --- */
+  :global(html:not(.dark)) .markdown-content :global(.math-error) {
+    color: #dc2626;
+    background: rgba(220, 38, 38, 0.08);
+    border: 1px solid rgba(220, 38, 38, 0.15);
+  }
 </style>

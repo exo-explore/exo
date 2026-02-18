@@ -382,7 +382,7 @@
                 class="group border-b border-exo-medium-gray/20 hover:bg-exo-medium-gray/10 transition-colors"
               >
                 <td
-                  class="sticky left-0 z-10 bg-exo-dark-gray group-hover:bg-[oklch(0.18_0_0)] transition-colors px-4 py-3 whitespace-nowrap border-r border-exo-medium-gray/20"
+                  class="sticky left-0 z-10 bg-exo-dark-gray group-hover:bg-[var(--exo-bg-hover)] transition-colors px-4 py-3 whitespace-nowrap border-r border-exo-medium-gray/20"
                 >
                   <div class="flex items-center gap-2">
                     <div class="min-w-0">
