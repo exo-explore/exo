@@ -8,9 +8,10 @@ mod allow_threading;
 mod ident;
 mod networking;
 
-use crate::ident::ident_submodule;
+use crate::ident::PyKeypair;
 use crate::networking::networking_submodule;
 use pyo3::prelude::PyModule;
+use pyo3::types::PyModuleMethods;
 use pyo3::{Bound, PyResult, pyclass, pymodule};
 use pyo3_stub_gen::define_stub_info_gatherer;
 
@@ -158,7 +159,7 @@ fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // TODO: for now this is all NOT a submodule, but figure out how to make the submodule system
     //       work with maturin, where the types generate correctly, in the right folder, without
     //       too many importing issues...
-    ident_submodule(m)?;
+    m.add_class::<PyKeypair>()?;
     networking_submodule(m)?;
 
     // top-level constructs
