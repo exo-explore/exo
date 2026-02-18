@@ -57,6 +57,7 @@ def prefill(
     sampler: Callable[[mx.array], mx.array],
     prompt_tokens: mx.array,
     cache: KVCacheType,
+    group: mx.distributed.Group | None = None,
 ) -> tuple[float, int, list[CacheSnapshot]]:
     """Prefill the KV cache with prompt tokens.
 
@@ -85,6 +86,9 @@ def prefill(
             snapshots.append(snapshot_ssm_states(cache))
 
     set_pipeline_prefill(model, is_prefill=True)
+
+    mx_barrier(group)
+    logger.info("Starting prefill")
 
     # Use max_tokens=1 because max_tokens=0 does not work.
     # We just throw away the generated token - we only care about filling the cache
@@ -305,16 +309,9 @@ def mlx_generate(
     )
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
-    mx_barrier(group)
-    logger.info("Ready to prefill")
-
     # Prefill cache with all tokens except the last one
     prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
-        model,
-        tokenizer,
-        sampler,
-        prompt_tokens[:-1],
-        caches,
+        model, tokenizer, sampler, prompt_tokens[:-1], caches, group
     )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 
@@ -331,6 +328,7 @@ def mlx_generate(
     think_start = tokenizer.think_start
     think_end = tokenizer.think_end
 
+    logger.info("Starting decode")
     mx_barrier(group)
 
     for completion_tokens, out in enumerate(
@@ -393,10 +391,11 @@ def mlx_generate(
                     f"Model generated unexpected finish_reason: {out.finish_reason}"
                 )
 
+            total_prompt_tokens = len(all_prompt_tokens)
             usage = Usage(
-                prompt_tokens=int(out.prompt_tokens),
+                prompt_tokens=total_prompt_tokens,
                 completion_tokens=completion_tokens,
-                total_tokens=int(out.prompt_tokens) + completion_tokens,
+                total_tokens=total_prompt_tokens + completion_tokens,
                 prompt_tokens_details=PromptTokensDetails(
                     cached_tokens=prefix_hit_length
                 ),

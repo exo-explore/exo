@@ -85,6 +85,7 @@ from exo.shared.types.api import (
     ImageGenerationTaskParams,
     ImageListItem,
     ImageListResponse,
+    ImageSize,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
@@ -100,6 +101,7 @@ from exo.shared.types.api import (
     TraceRankStats,
     TraceResponse,
     TraceStatsResponse,
+    normalize_image_size,
 )
 from exo.shared.types.chunks import (
     ErrorChunk,
@@ -125,6 +127,7 @@ from exo.shared.types.commands import (
     PlaceInstance,
     SendInputChunk,
     StartDownload,
+    TaskCancelled,
     TaskFinished,
     TextGeneration,
 )
@@ -540,16 +543,14 @@ class API:
                         break
 
         except anyio.get_cancelled_exc_class():
-            # TODO: TaskCancelled
-            """
-            self.command_sender.send_nowait(
-                ForwarderCommand(origin=self.node_id, command=command)
-            )
-            """
+            command = TaskCancelled(cancelled_command_id=command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(origin=self.node_id, command=command)
+                )
             raise
         finally:
-            command = TaskFinished(finished_command_id=command_id)
-            await self._send(command)
+            await self._send(TaskFinished(finished_command_id=command_id))
             if command_id in self._text_generation_queues:
                 del self._text_generation_queues[command_id]
 
@@ -644,11 +645,14 @@ class API:
                     "X-Accel-Buffering": "no",
                 },
             )
-
-        return await collect_chat_response(
-            command.command_id,
-            self._token_chunk_stream(command.command_id),
-        )
+        else:
+            return StreamingResponse(
+                collect_chat_response(
+                    command.command_id,
+                    self._token_chunk_stream(command.command_id),
+                ),
+                media_type="application/json",
+            )
 
     async def bench_chat_completions(
         self, payload: BenchChatCompletionRequest
@@ -664,8 +668,7 @@ class API:
         command = TextGeneration(task_params=task_params)
         await self._send(command)
 
-        response = await self._collect_text_generation_with_stats(command.command_id)
-        return response
+        return await self._collect_text_generation_with_stats(command.command_id)
 
     async def _resolve_and_validate_text_model(self, model_id: ModelId) -> ModelId:
         """Validate a text model exists and return the resolved model ID.
@@ -750,9 +753,11 @@ class API:
         When stream=True and partial_images > 0, returns a StreamingResponse
         with SSE-formatted events for partial and final images.
         """
-        payload.model = await self._validate_image_model(ModelId(payload.model))
         payload = payload.model_copy(
-            update={"advanced_params": _ensure_seed(payload.advanced_params)}
+            update={
+                "model": await self._validate_image_model(ModelId(payload.model)),
+                "advanced_params": _ensure_seed(payload.advanced_params),
+            }
         )
 
         command = ImageGeneration(
@@ -883,6 +888,11 @@ class API:
                         del image_metadata[key]
 
         except anyio.get_cancelled_exc_class():
+            command = TaskCancelled(cancelled_command_id=command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(origin=self.node_id, command=command)
+                )
             raise
         finally:
             await self._send(TaskFinished(finished_command_id=command_id))
@@ -964,6 +974,11 @@ class API:
 
             return (images, stats if capture_stats else None)
         except anyio.get_cancelled_exc_class():
+            command = TaskCancelled(cancelled_command_id=command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(origin=self.node_id, command=command)
+                )
             raise
         finally:
             await self._send(TaskFinished(finished_command_id=command_id))
@@ -998,12 +1013,13 @@ class API:
     async def bench_image_generations(
         self, request: Request, payload: BenchImageGenerationTaskParams
     ) -> BenchImageGenerationResponse:
-        payload.model = await self._validate_image_model(ModelId(payload.model))
-
-        payload.stream = False
-        payload.partial_images = 0
         payload = payload.model_copy(
-            update={"advanced_params": _ensure_seed(payload.advanced_params)}
+            update={
+                "model": await self._validate_image_model(ModelId(payload.model)),
+                "stream": False,
+                "partial_images": 0,
+                "advanced_params": _ensure_seed(payload.advanced_params),
+            }
         )
 
         command = ImageGeneration(
@@ -1024,7 +1040,7 @@ class API:
         prompt: str,
         model: ModelId,
         n: int,
-        size: str,
+        size: ImageSize,
         response_format: Literal["url", "b64_json"],
         input_fidelity: Literal["low", "high"],
         stream: bool,
@@ -1094,7 +1110,7 @@ class API:
         prompt: str = Form(...),
         model: str = Form(...),
         n: int = Form(1),
-        size: str = Form("1024x1024"),
+        size: str | None = Form(None),
         response_format: Literal["url", "b64_json"] = Form("b64_json"),
         input_fidelity: Literal["low", "high"] = Form("low"),
         stream: str = Form("false"),
@@ -1120,7 +1136,7 @@ class API:
             prompt=prompt,
             model=ModelId(model),
             n=n,
-            size=size,
+            size=normalize_image_size(size),
             response_format=response_format,
             input_fidelity=input_fidelity,
             stream=stream_bool,
@@ -1156,7 +1172,7 @@ class API:
         prompt: str = Form(...),
         model: str = Form(...),
         n: int = Form(1),
-        size: str = Form("1024x1024"),
+        size: str | None = Form(None),
         response_format: Literal["url", "b64_json"] = Form("b64_json"),
         input_fidelity: Literal["low", "high"] = Form("low"),
         quality: Literal["high", "medium", "low"] = Form("medium"),
@@ -1176,7 +1192,7 @@ class API:
             prompt=prompt,
             model=ModelId(model),
             n=n,
-            size=size,
+            size=normalize_image_size(size),
             response_format=response_format,
             input_fidelity=input_fidelity,
             stream=False,
@@ -1221,12 +1237,15 @@ class API:
                     "X-Accel-Buffering": "no",
                 },
             )
-
-        return await collect_claude_response(
-            command.command_id,
-            payload.model,
-            self._token_chunk_stream(command.command_id),
-        )
+        else:
+            return StreamingResponse(
+                collect_claude_response(
+                    command.command_id,
+                    payload.model,
+                    self._token_chunk_stream(command.command_id),
+                ),
+                media_type="application/json",
+            )
 
     async def openai_responses(
         self, payload: ResponsesRequest
@@ -1254,11 +1273,15 @@ class API:
                 },
             )
 
-        return await collect_responses_response(
-            command.command_id,
-            payload.model,
-            self._token_chunk_stream(command.command_id),
-        )
+        else:
+            return StreamingResponse(
+                collect_responses_response(
+                    command.command_id,
+                    payload.model,
+                    self._token_chunk_stream(command.command_id),
+                ),
+                media_type="application/json",
+            )
 
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""

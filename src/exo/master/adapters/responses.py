@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 from itertools import count
 from typing import Any
 
+from exo.shared.types.api import Usage
 from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import CommandId
 from exo.shared.types.openai_responses import (
@@ -121,13 +122,15 @@ async def collect_responses_response(
     command_id: CommandId,
     model: str,
     chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
-) -> ResponsesResponse:
+) -> AsyncGenerator[str]:
+    # This is an AsyncGenerator[str] rather than returning a ChatCompletionReponse because
+    # FastAPI handles the cancellation better but wouldn't auto-serialize for some reason
     """Collect all token chunks and return a single ResponsesResponse."""
     response_id = f"resp_{command_id}"
     item_id = f"item_{command_id}"
     accumulated_text = ""
     function_call_items: list[ResponseFunctionCallItem] = []
-    last_stats = None
+    last_usage: Usage | None = None
     error_message: str | None = None
 
     async for chunk in chunk_stream:
@@ -135,32 +138,32 @@ async def collect_responses_response(
             error_message = chunk.error_message or "Internal server error"
             break
 
+        last_usage = chunk.usage or last_usage
+
         if isinstance(chunk, ToolCallChunk):
             for tool in chunk.tool_calls:
                 function_call_items.append(
                     ResponseFunctionCallItem(
-                        id=f"fc_{tool.id}",
-                        call_id=f"call_{tool.id}",
+                        id=tool.id,
+                        call_id=tool.id,
                         name=tool.name,
                         arguments=tool.arguments,
                     )
                 )
-            last_stats = chunk.stats or last_stats
             continue
 
         accumulated_text += chunk.text
-        last_stats = chunk.stats or last_stats
 
     if error_message is not None:
         raise ValueError(error_message)
 
-    # Create usage from stats if available
+    # Create usage from usage data if available
     usage = None
-    if last_stats is not None:
+    if last_usage is not None:
         usage = ResponseUsage(
-            input_tokens=last_stats.prompt_tokens,
-            output_tokens=last_stats.generation_tokens,
-            total_tokens=last_stats.prompt_tokens + last_stats.generation_tokens,
+            input_tokens=last_usage.prompt_tokens,
+            output_tokens=last_usage.completion_tokens,
+            total_tokens=last_usage.total_tokens,
         )
 
     output: list[ResponseItem] = [
@@ -172,14 +175,15 @@ async def collect_responses_response(
     ]
     output.extend(function_call_items)
 
-    return ResponsesResponse(
+    yield ResponsesResponse(
         id=response_id,
         model=model,
         status="completed",
         output=output,
         output_text=accumulated_text,
         usage=usage,
-    )
+    ).model_dump_json()
+    return
 
 
 async def generate_responses_stream(
@@ -235,15 +239,16 @@ async def generate_responses_stream(
 
     accumulated_text = ""
     function_call_items: list[ResponseFunctionCallItem] = []
-    last_stats = None
+    last_usage: Usage | None = None
     next_output_index = 1  # message item is at 0
 
     async for chunk in chunk_stream:
         if isinstance(chunk, ErrorChunk):
             break
 
+        last_usage = chunk.usage or last_usage
+
         if isinstance(chunk, ToolCallChunk):
-            last_stats = chunk.stats or last_stats
             for tool in chunk.tool_calls:
                 fc_id = f"fc_{tool.id}"
                 call_id = f"call_{tool.id}"
@@ -302,7 +307,6 @@ async def generate_responses_stream(
             continue
 
         accumulated_text += chunk.text
-        last_stats = chunk.stats or last_stats
 
         # response.output_text.delta
         delta_event = ResponseTextDeltaEvent(
@@ -346,13 +350,13 @@ async def generate_responses_stream(
     )
     yield f"event: response.output_item.done\ndata: {item_done.model_dump_json()}\n\n"
 
-    # Create usage from stats if available
+    # Create usage from usage data if available
     usage = None
-    if last_stats is not None:
+    if last_usage is not None:
         usage = ResponseUsage(
-            input_tokens=last_stats.prompt_tokens,
-            output_tokens=last_stats.generation_tokens,
-            total_tokens=last_stats.prompt_tokens + last_stats.generation_tokens,
+            input_tokens=last_usage.prompt_tokens,
+            output_tokens=last_usage.completion_tokens,
+            total_tokens=last_usage.total_tokens,
         )
 
     # response.completed

@@ -306,13 +306,14 @@ const IMAGE_PARAMS_STORAGE_KEY = "exo-image-generation-params";
 export interface ImageGenerationParams {
   // Basic params
   size:
+    | "auto"
     | "512x512"
     | "768x768"
     | "1024x1024"
     | "1024x768"
     | "768x1024"
-    | "1024x1365"
-    | "1365x1024";
+    | "1024x1536"
+    | "1536x1024";
   quality: "low" | "medium" | "high";
   outputFormat: "png" | "jpeg";
   numImages: number;
@@ -336,7 +337,7 @@ export interface EditingImage {
 }
 
 const DEFAULT_IMAGE_PARAMS: ImageGenerationParams = {
-  size: "1024x1024",
+  size: "auto",
   quality: "medium",
   outputFormat: "png",
   numImages: 1,
