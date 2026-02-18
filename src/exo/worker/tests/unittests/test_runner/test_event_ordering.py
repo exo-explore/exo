@@ -178,6 +178,9 @@ def _run(tasks: Iterable[Task]):
         # this is some c++ nonsense
         task_receiver.close = nothin
         task_receiver.join = nothin
+        cancel_receiver.close = nothin
+        cancel_receiver.join = nothin
+
         with unittest.mock.patch(
             "exo.worker.runner.runner.mx.distributed.all_gather",
             make_nothin(mx.array([1])),

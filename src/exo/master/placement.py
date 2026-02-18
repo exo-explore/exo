@@ -6,11 +6,11 @@ from typing import Sequence
 from exo.master.placement_utils import (
     Cycle,
     filter_cycles_by_memory,
+    get_largest_cycles,
     get_mlx_jaccl_coordinators,
     get_mlx_jaccl_devices_matrix,
     get_mlx_ring_hosts_by_node,
     get_shard_assignments,
-    get_smallest_cycles,
 )
 from exo.shared.models.model_cards import ModelId
 from exo.shared.topology import Topology
@@ -106,23 +106,27 @@ def place_instance(
             "Pipeline parallelism is not supported for DeepSeek V3.1 (8-bit)"
         )
 
-    smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
+    largest_cycles = get_largest_cycles(cycles_with_sufficient_memory)
 
-    smallest_rdma_cycles = [
-        cycle for cycle in smallest_cycles if topology.is_rdma_cycle(cycle)
+    largest_rdma_cycles = [
+        cycle for cycle in largest_cycles if topology.is_rdma_cycle(cycle)
     ]
 
-    if command.instance_meta == InstanceMeta.MlxJaccl and smallest_rdma_cycles != []:
-        smallest_cycles = smallest_rdma_cycles
+    if command.instance_meta == InstanceMeta.MlxJaccl:
+        if not largest_rdma_cycles:
+            raise ValueError(
+                "Requested RDMA (MlxJaccl) but no RDMA-connected cycles available"
+            )
+        largest_cycles = largest_rdma_cycles
 
     cycles_with_leaf_nodes: list[Cycle] = [
         cycle
-        for cycle in smallest_cycles
+        for cycle in largest_cycles
         if any(topology.node_is_leaf(node_id) for node_id in cycle)
     ]
 
     selected_cycle = max(
-        cycles_with_leaf_nodes if cycles_with_leaf_nodes != [] else smallest_cycles,
+        cycles_with_leaf_nodes if cycles_with_leaf_nodes != [] else largest_cycles,
         key=lambda cycle: sum(
             (node_memory[node_id].ram_available for node_id in cycle),
             start=Memory(),
