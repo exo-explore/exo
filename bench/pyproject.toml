@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Benchmarking tool for exo distributed inference"
 requires-python = ">=3.13"
 dependencies = [
+    "httpx>=0.27.0",
     "loguru>=0.7.3",
     "transformers>=5.0.0",
     "huggingface-hub>=0.33.4",

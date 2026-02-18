@@ -5,6 +5,7 @@ import mlx.core as mx
 import psutil
 from mlx_lm.models.cache import (
     ArraysCache,
+    CacheList,
     KVCache,
     QuantizedKVCache,
     RotatingKVCache,
@@ -17,10 +18,22 @@ from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
 from exo.worker.runner.bootstrap import logger
 
-# Fraction of device memory above which LRU eviction kicks in
-_DEFAULT_MEMORY_THRESHOLD = 0.9
+
+# Fraction of device memory above which LRU eviction kicks in.
+# Smaller machines need more aggressive eviction.
+def _default_memory_threshold() -> float:
+    total_gb = psutil.virtual_memory().total / (1024**3)
+    if total_gb >= 128:
+        return 0.85
+    if total_gb >= 64:
+        return 0.80
+    if total_gb >= 32:
+        return 0.75
+    return 0.70
+
+
 _MEMORY_THRESHOLD = float(
-    os.environ.get("EXO_MEMORY_THRESHOLD", _DEFAULT_MEMORY_THRESHOLD)
+    os.environ.get("EXO_MEMORY_THRESHOLD", _default_memory_threshold())
 )
 
 
@@ -64,7 +77,7 @@ def has_non_kv_caches(cache: KVCacheType) -> bool:
 
 
 class KVPrefixCache:
-    def __init__(self, group: mx.distributed.Group | None = None):
+    def __init__(self, group: mx.distributed.Group | None):
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
         self.caches: list[KVCacheType] = []
         self._snapshots: list[list[CacheSnapshot] | None] = []
@@ -156,15 +169,15 @@ class KVPrefixCache:
         best_length = 0
         is_exact = False
 
-        # Find best cache
+        # Find best cache match
         for i, cached_prompt in enumerate(self.prompts):
             length = get_prefix_length(prompt_tokens, cached_prompt)
+            if length >= max_length - 1:
+                best_index, best_length = i, length
+                is_exact = True
+                break
             if length > best_length:
                 best_index, best_length = i, length
-            if length == max_length:
-                is_exact = True
-                best_index, best_length = i, length
-                break
 
         if best_index is None:
             return make_kv_cache(model), prompt_tokens, None
@@ -172,11 +185,12 @@ class KVPrefixCache:
         # For exact match: trim to max_length-1 so remaining has the last token
         # For partial match: trim to best_length, remaining has suffix to prefill
         # This ensures stream_generate always has at least one token to start with
-        target = (max_length - 1) if is_exact else best_length
+        has_ssm = has_non_kv_caches(self.caches[best_index])
+        target = (max_length - 1) if is_exact and not has_ssm else best_length
         restore_pos, restore_snap = self._get_snapshot(best_index, target)
 
         # No usable snapshot — need fresh cache
-        if restore_snap is None and has_non_kv_caches(self.caches[best_index]):
+        if restore_snap is None and has_ssm:
             return make_kv_cache(model), prompt_tokens, None
 
         prompt_cache = deepcopy(self.caches[best_index])
@@ -257,10 +271,21 @@ def encode_prompt(tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
     return mx.array(prompt_tokens)
 
 
+def _entry_length(
+    c: KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList,
+) -> int:
+    # Use .offset attribute which KVCache types have (len() not implemented in older QuantizedKVCache).
+    if hasattr(c, "offset"):
+        return c.offset
+    # For CacheList
+    if hasattr(c, "size"):
+        return int(c.size())  # type: ignore
+    return 0
+
+
 def cache_length(cache: KVCacheType) -> int:
     """Get the number of tokens in a KV cache."""
-    # Use .offset attribute which KVCache types have (len() not implemented in older QuantizedKVCache).
-    return max(getattr(c, "offset", 0) for c in cache)
+    return max(_entry_length(c) for c in cache)
 
 
 def get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
