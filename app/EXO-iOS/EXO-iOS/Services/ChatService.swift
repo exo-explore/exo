@@ -91,7 +91,9 @@ final class ChatService {
 
         let modelId: String
         if clusterService.isConnected {
-            guard let clusterId = conversations[index].modelId ?? clusterService.availableModels.first?.id
+            guard
+                let clusterId = conversations[index].modelId
+                    ?? clusterService.availableModels.first?.id
             else {
                 let errorMessage = StoredMessage(
                     role: "assistant", content: "No model selected. Please select a model first.")

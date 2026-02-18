@@ -15,11 +15,15 @@ struct ModelSelectorView: View {
                     modelsList
                 }
             }
-            .navigationTitle("Select Model")
+            .scrollContentBackground(.hidden)
+            .background(Color.exoBlack)
+            .navigationTitle("SELECT MODEL")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .font(.exoSubheadline)
+                        .foregroundStyle(Color.exoYellow)
                 }
             }
         }
@@ -31,6 +35,8 @@ struct ModelSelectorView: View {
             systemImage: "cpu",
             description: Text("Connect to an EXO cluster to see available models.")
         )
+        .foregroundStyle(Color.exoLightGray)
+        .listRowBackground(Color.exoBlack)
     }
 
     private var modelsList: some View {
@@ -42,6 +48,7 @@ struct ModelSelectorView: View {
                 modelRow(model)
             }
             .tint(.primary)
+            .listRowBackground(Color.exoDarkGray)
         }
     }
 
@@ -49,17 +56,19 @@ struct ModelSelectorView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.displayName)
-                    .fontWeight(.medium)
+                    .font(.exoSubheadline)
+                    .foregroundStyle(Color.exoForeground)
                 Text(model.id)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.exoCaption)
+                    .foregroundStyle(Color.exoLightGray)
             }
 
             Spacer()
 
             if model.id == selectedModelId {
                 Image(systemName: "checkmark")
-                    .foregroundStyle(Color.accentColor)
+                    .font(.exoSubheadline)
+                    .foregroundStyle(Color.exoYellow)
             }
         }
     }

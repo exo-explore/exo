@@ -11,14 +11,15 @@ struct ChatView: View {
         VStack(spacing: 0) {
             modelBar
 
-            Divider()
+            GradientDivider()
 
             messageList
 
-            Divider()
+            GradientDivider()
 
             inputBar
         }
+        .background(Color.exoBlack)
         .sheet(isPresented: $showModelSelector) {
             ModelSelectorView(
                 models: clusterService.availableModels,
@@ -26,6 +27,7 @@ struct ChatView: View {
             ) { modelId in
                 chatService.setModelForActiveConversation(modelId)
             }
+            .presentationBackground(Color.exoDarkGray)
         }
     }
 
@@ -43,41 +45,46 @@ struct ChatView: View {
         } label: {
             HStack {
                 Image(systemName: useLocalModel ? "iphone" : "cpu")
-                    .foregroundStyle(useLocalModel ? .blue : .secondary)
+                    .font(.exoCaption)
+                    .foregroundStyle(useLocalModel ? Color.exoYellow : Color.exoLightGray)
 
                 if useLocalModel {
                     Text(localInferenceService.defaultModelId)
-                        .font(.subheadline)
+                        .font(.exoSubheadline)
+                        .foregroundStyle(Color.exoForeground)
                         .lineLimit(1)
                 } else if let modelId = chatService.activeConversation?.modelId {
                     Text(modelId)
-                        .font(.subheadline)
+                        .font(.exoSubheadline)
+                        .foregroundStyle(Color.exoForeground)
                         .lineLimit(1)
                 } else {
-                    Text("Select Model")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    Text("SELECT MODEL")
+                        .font(.exoSubheadline)
+                        .tracking(1.5)
+                        .foregroundStyle(Color.exoLightGray)
                 }
 
                 Spacer()
 
                 if useLocalModel {
-                    Text("On-Device")
-                        .font(.caption2)
-                        .foregroundStyle(.blue)
+                    Text("ON-DEVICE")
+                        .font(.exoCaption)
+                        .tracking(1)
+                        .foregroundStyle(Color.exoYellow)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(.blue.opacity(0.1))
+                        .background(Color.exoYellow.opacity(0.15))
                         .clipShape(Capsule())
                 } else {
                     Image(systemName: "chevron.right")
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Color.exoLightGray)
                 }
             }
             .padding(.horizontal)
             .padding(.vertical, 10)
-            .background(Color(.secondarySystemBackground))
+            .background(Color.exoDarkGray)
         }
         .tint(.primary)
         .disabled(useLocalModel)
@@ -100,6 +107,7 @@ struct ChatView: View {
                 }
                 .padding()
             }
+            .background(Color.exoBlack)
             .onChange(of: chatService.activeMessages.last?.content) {
                 if let lastId = chatService.activeMessages.last?.id {
                     withAnimation(.easeOut(duration: 0.2)) {
@@ -111,18 +119,34 @@ struct ChatView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 16) {
             Spacer(minLength: 80)
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 48))
-                .foregroundStyle(.tertiary)
-            Text("Start a conversation")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-            Text("Send a message to begin chatting with the model.")
-                .font(.subheadline)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
+
+            ZStack {
+                Circle()
+                    .stroke(Color.exoYellow.opacity(0.15), lineWidth: 1)
+                    .frame(width: 80, height: 80)
+                Circle()
+                    .stroke(Color.exoYellow.opacity(0.3), lineWidth: 1)
+                    .frame(width: 56, height: 56)
+                Circle()
+                    .fill(Color.exoYellow.opacity(0.15))
+                    .frame(width: 32, height: 32)
+                Circle()
+                    .fill(Color.exoYellow)
+                    .frame(width: 8, height: 8)
+                    .shadow(color: Color.exoYellow.opacity(0.6), radius: 6)
+            }
+
+            Text("AWAITING INPUT")
+                .font(.exoSubheadline)
+                .tracking(3)
+                .foregroundStyle(Color.exoLightGray)
+
+            Text("Send a message to begin.")
+                .font(.exoCaption)
+                .foregroundStyle(Color.exoLightGray.opacity(0.6))
+
             Spacer(minLength: 80)
         }
         .padding()
@@ -133,11 +157,13 @@ struct ChatView: View {
     private var inputBar: some View {
         HStack(alignment: .bottom, spacing: 8) {
             TextField("Message...", text: $inputText, axis: .vertical)
+                .font(.exoBody)
                 .lineLimit(1...6)
                 .textFieldStyle(.plain)
                 .padding(10)
-                .background(Color(.tertiarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 20))
+                .background(Color.exoMediumGray)
+                .foregroundStyle(Color.exoForeground)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
 
             if chatService.isGenerating {
                 Button {
@@ -145,7 +171,7 @@ struct ChatView: View {
                 } label: {
                     Image(systemName: "stop.circle.fill")
                         .font(.title2)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.exoDestructive)
                 }
             } else {
                 Button {
@@ -153,15 +179,21 @@ struct ChatView: View {
                     inputText = ""
                     chatService.sendMessage(text)
                 } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(canSend ? Color.accentColor : Color.gray)
+                    Text("SEND")
+                        .font(.exoMono(12, weight: .bold))
+                        .tracking(1)
+                        .foregroundStyle(canSend ? Color.exoBlack : Color.exoLightGray)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(canSend ? Color.exoYellow : Color.exoMediumGray)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 .disabled(!canSend)
             }
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
+        .background(Color.exoDarkGray)
     }
 
     private var canSend: Bool {

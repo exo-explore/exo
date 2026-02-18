@@ -72,12 +72,17 @@ final class DiscoveryService {
             let didResume = OSAllocatedUnfairLock(initialState: false)
             let connection = NWConnection(to: cluster.endpoint, using: .tcp)
             connection.stateUpdateHandler = { state in
-                guard didResume.withLock({ guard !$0 else { return false }; $0 = true; return true })
+                guard
+                    didResume.withLock({
+                        guard !$0 else { return false }
+                        $0 = true
+                        return true
+                    })
                 else { return }
                 switch state {
                 case .ready:
                     if let innerEndpoint = connection.currentPath?.remoteEndpoint,
-                       case .hostPort(let host, let port) = innerEndpoint
+                        case .hostPort(let host, let port) = innerEndpoint
                     {
                         var hostString: String
                         switch host {

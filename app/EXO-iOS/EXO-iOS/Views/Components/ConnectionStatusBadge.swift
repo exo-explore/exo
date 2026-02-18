@@ -16,25 +16,31 @@ struct ConnectionStatusBadge: View {
             Circle()
                 .fill(dotColor)
                 .frame(width: 8, height: 8)
+                .shadow(color: dotColor.opacity(0.6), radius: 4)
 
-            Text(label)
-                .font(.caption)
-                .fontWeight(.medium)
+            Text(label.uppercased())
+                .font(.exoMono(10, weight: .medium))
+                .tracking(1)
+                .foregroundStyle(Color.exoForeground)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(backgroundColor)
         .clipShape(Capsule())
+        .overlay(
+            Capsule()
+                .stroke(dotColor.opacity(0.3), lineWidth: 1)
+        )
     }
 
     private var dotColor: Color {
         if isLocalReady {
-            return .blue
+            return .exoYellow
         }
         switch connectionState {
         case .connected: return .green
         case .connecting: return .orange
-        case .disconnected: return .gray
+        case .disconnected: return .exoLightGray
         }
     }
 
@@ -44,19 +50,19 @@ struct ConnectionStatusBadge: View {
         }
         switch connectionState {
         case .connected: return "Connected"
-        case .connecting: return "Connecting..."
+        case .connecting: return "Connecting"
         case .disconnected: return "Disconnected"
         }
     }
 
     private var backgroundColor: Color {
         if isLocalReady {
-            return .blue.opacity(0.15)
+            return Color.exoYellow.opacity(0.1)
         }
         switch connectionState {
-        case .connected: return .green.opacity(0.15)
-        case .connecting: return .orange.opacity(0.15)
-        case .disconnected: return .gray.opacity(0.15)
+        case .connected: return .green.opacity(0.1)
+        case .connecting: return .orange.opacity(0.1)
+        case .disconnected: return Color.exoMediumGray.opacity(0.5)
         }
     }
 }

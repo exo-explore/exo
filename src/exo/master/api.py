@@ -1400,11 +1400,21 @@ class API:
         service_name = f"EXO Cluster ({self.node_id[:8]})"
         try:
             proc = subprocess.Popen(
-                ["dns-sd", "-R", service_name, "_exo._tcp", "local", str(self.port), f"node_id={self.node_id}"],
+                [
+                    "dns-sd",
+                    "-R",
+                    service_name,
+                    "_exo._tcp",
+                    "local",
+                    str(self.port),
+                    f"node_id={self.node_id}",
+                ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            logger.info(f"Registered Bonjour service _exo._tcp on port {self.port} (pid {proc.pid})")
+            logger.info(
+                f"Registered Bonjour service _exo._tcp on port {self.port} (pid {proc.pid})"
+            )
 
             def cleanup() -> None:
                 proc.terminate()

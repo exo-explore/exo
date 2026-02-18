@@ -30,16 +30,20 @@ struct RootView: View {
                             showSettings = true
                         } label: {
                             Image(systemName: "gear")
+                                .foregroundStyle(Color.exoYellow)
                         }
                     }
                 }
         }
+        .tint(Color.exoYellow)
         .sheet(isPresented: $showSettings) {
             SettingsView()
                 .environment(discoveryService)
+                .presentationBackground(Color.exoDarkGray)
         }
         .sheet(isPresented: $showConversations) {
             conversationList
+                .presentationBackground(Color.exoDarkGray)
         }
     }
 
@@ -51,12 +55,14 @@ struct RootView: View {
                 showConversations = true
             } label: {
                 Image(systemName: "sidebar.left")
+                    .foregroundStyle(Color.exoYellow)
             }
 
             Button {
                 chatService.createConversation()
             } label: {
                 Image(systemName: "square.and.pencil")
+                    .foregroundStyle(Color.exoYellow)
             }
         }
     }
@@ -66,30 +72,38 @@ struct RootView: View {
             List {
                 if chatService.conversations.isEmpty {
                     Text("No conversations yet")
-                        .foregroundStyle(.secondary)
+                        .font(.exoBody)
+                        .foregroundStyle(Color.exoLightGray)
+                        .listRowBackground(Color.exoDarkGray)
                 } else {
                     ForEach(chatService.conversations) { conversation in
+                        let isActive = conversation.id == chatService.activeConversationId
                         Button {
                             chatService.setActiveConversation(id: conversation.id)
                             showConversations = false
                         } label: {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(conversation.title)
-                                    .fontWeight(
-                                        conversation.id == chatService.activeConversationId
-                                            ? .semibold : .regular
+                                    .font(.exoSubheadline)
+                                    .fontWeight(isActive ? .semibold : .regular)
+                                    .foregroundStyle(
+                                        isActive ? Color.exoYellow : Color.exoForeground
                                     )
                                     .lineLimit(1)
 
                                 if let modelId = conversation.modelId {
                                     Text(modelId)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                        .font(.exoCaption)
+                                        .foregroundStyle(Color.exoLightGray)
                                         .lineLimit(1)
                                 }
                             }
                         }
-                        .tint(.primary)
+                        .listRowBackground(
+                            isActive
+                                ? Color.exoYellow.opacity(0.1)
+                                : Color.exoDarkGray
+                        )
                     }
                     .onDelete { indexSet in
                         for index in indexSet {
@@ -98,17 +112,22 @@ struct RootView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.exoBlack)
             .navigationTitle("Conversations")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { showConversations = false }
+                        .font(.exoSubheadline)
+                        .foregroundStyle(Color.exoYellow)
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         chatService.createConversation()
                     } label: {
                         Image(systemName: "plus")
+                            .foregroundStyle(Color.exoYellow)
                     }
                 }
             }

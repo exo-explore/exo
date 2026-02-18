@@ -16,42 +16,63 @@ struct SettingsView: View {
                 connectionSection
                 statusSection
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.exoBlack)
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
+                        .font(.exoSubheadline)
+                        .foregroundStyle(Color.exoYellow)
                 }
             }
         }
     }
+
+    // MARK: - Section Headers
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.exoMono(10, weight: .semibold))
+            .tracking(2)
+            .foregroundStyle(Color.exoYellow)
+    }
+
+    // MARK: - Local Model
 
     private var localModelSection: some View {
         Section {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(localInferenceService.defaultModelId)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
+                        .font(.exoSubheadline)
+                        .foregroundStyle(Color.exoForeground)
 
                     Text(localModelStatusText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.exoCaption)
+                        .foregroundStyle(Color.exoLightGray)
                 }
 
                 Spacer()
 
                 localModelActionButton
             }
+            .listRowBackground(Color.exoDarkGray)
 
             if case .downloading(let progress) = localInferenceService.modelState {
                 ProgressView(value: progress)
-                    .tint(.blue)
+                    .tint(Color.exoYellow)
+                    .listRowBackground(Color.exoDarkGray)
             }
         } header: {
-            Text("Local Model")
+            sectionHeader("Local Model")
         } footer: {
-            Text("When disconnected from a cluster, messages are processed on-device using this model.")
+            Text(
+                "When disconnected from a cluster, messages are processed on-device using this model."
+            )
+            .font(.exoCaption)
+            .foregroundStyle(Color.exoLightGray.opacity(0.7))
         }
     }
 
@@ -71,38 +92,51 @@ struct SettingsView: View {
     private var localModelActionButton: some View {
         switch localInferenceService.modelState {
         case .notDownloaded:
-            Button("Download") {
+            exoButton("Download") {
                 Task { await localInferenceService.prepareModel() }
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
         case .downloading:
             ProgressView()
                 .controlSize(.small)
+                .tint(Color.exoYellow)
         case .downloaded:
-            Button("Load") {
+            exoButton("Load") {
                 Task { await localInferenceService.prepareModel() }
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
         case .loading:
             ProgressView()
                 .controlSize(.small)
+                .tint(Color.exoYellow)
         case .ready, .generating:
-            Button("Unload") {
+            exoButton("Unload") {
                 localInferenceService.unloadModel()
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
         case .error:
-            Button("Retry") {
+            exoButton("Retry", destructive: true) {
                 Task { await localInferenceService.prepareModel() }
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .tint(.red)
         }
     }
+
+    private func exoButton(_ title: String, destructive: Bool = false, action: @escaping () -> Void)
+        -> some View
+    {
+        let borderColor = destructive ? Color.exoDestructive : Color.exoYellow
+        return Button(action: action) {
+            Text(title.uppercased())
+                .font(.exoMono(11, weight: .semibold))
+                .tracking(1)
+                .foregroundStyle(borderColor)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(borderColor, lineWidth: 1)
+                )
+        }
+    }
+
+    // MARK: - Nearby Clusters
 
     private var nearbyClustersSection: some View {
         Section {
@@ -110,23 +144,29 @@ struct SettingsView: View {
                 if discoveryService.isSearching {
                     HStack {
                         ProgressView()
+                            .tint(Color.exoYellow)
                             .padding(.trailing, 8)
                         Text("Searching for clusters...")
-                            .foregroundStyle(.secondary)
+                            .font(.exoBody)
+                            .foregroundStyle(Color.exoLightGray)
                     }
+                    .listRowBackground(Color.exoDarkGray)
                 } else {
                     Text("No clusters found")
-                        .foregroundStyle(.secondary)
+                        .font(.exoBody)
+                        .foregroundStyle(Color.exoLightGray)
+                        .listRowBackground(Color.exoDarkGray)
                 }
             } else {
                 ForEach(discoveryService.discoveredClusters) { cluster in
                     HStack {
                         VStack(alignment: .leading) {
                             Text(cluster.name)
-                                .font(.body)
+                                .font(.exoBody)
+                                .foregroundStyle(Color.exoForeground)
                         }
                         Spacer()
-                        Button("Connect") {
+                        exoButton("Connect") {
                             Task {
                                 await clusterService.connectToDiscoveredCluster(
                                     cluster, using: discoveryService
@@ -136,27 +176,34 @@ struct SettingsView: View {
                                 }
                             }
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
                     }
+                    .listRowBackground(Color.exoDarkGray)
                 }
             }
         } header: {
-            Text("Nearby Clusters")
+            sectionHeader("Nearby Clusters")
         }
     }
 
+    // MARK: - Manual Connection
+
     private var connectionSection: some View {
-        Section("Manual Connection") {
+        Section {
             TextField("IP Address (e.g. 192.168.1.42)", text: $host)
+                .font(.exoBody)
                 .keyboardType(.decimalPad)
                 .textContentType(.URL)
                 .autocorrectionDisabled()
+                .foregroundStyle(Color.exoForeground)
+                .listRowBackground(Color.exoDarkGray)
 
             TextField("Port", text: $port)
+                .font(.exoBody)
                 .keyboardType(.numberPad)
+                .foregroundStyle(Color.exoForeground)
+                .listRowBackground(Color.exoDarkGray)
 
-            Button(clusterService.isConnected ? "Reconnect" : "Connect") {
+            Button {
                 Task {
                     let portNum = Int(port) ?? ConnectionInfo.defaultPort
                     let info = ConnectionInfo(host: host, port: portNum, nodeId: nil)
@@ -165,33 +212,103 @@ struct SettingsView: View {
                         dismiss()
                     }
                 }
+            } label: {
+                Text(clusterService.isConnected ? "RECONNECT" : "CONNECT")
+                    .font(.exoMono(13, weight: .semibold))
+                    .tracking(1.5)
+                    .foregroundStyle(
+                        host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? Color.exoLightGray : Color.exoYellow
+                    )
+                    .frame(maxWidth: .infinity)
             }
             .disabled(host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .listRowBackground(Color.exoDarkGray)
+        } header: {
+            sectionHeader("Manual Connection")
         }
     }
 
-    private var statusSection: some View {
-        Section("Status") {
-            if let connection = clusterService.currentConnection {
-                LabeledContent("Host", value: connection.host)
-                LabeledContent("Port", value: "\(connection.port)")
-                if let nodeId = connection.nodeId {
-                    LabeledContent("Node ID", value: String(nodeId.prefix(12)) + "...")
-                }
-                LabeledContent("Models", value: "\(clusterService.availableModels.count)")
+    // MARK: - Status
 
-                Button("Disconnect", role: .destructive) {
-                    clusterService.disconnect()
+    private var statusSection: some View {
+        Section {
+            if let connection = clusterService.currentConnection {
+                LabeledContent {
+                    Text(connection.host)
+                        .font(.exoCaption)
+                        .foregroundStyle(Color.exoForeground)
+                } label: {
+                    Text("Host")
+                        .font(.exoCaption)
+                        .foregroundStyle(Color.exoLightGray)
                 }
+                .listRowBackground(Color.exoDarkGray)
+
+                LabeledContent {
+                    Text("\(connection.port)")
+                        .font(.exoCaption)
+                        .foregroundStyle(Color.exoForeground)
+                } label: {
+                    Text("Port")
+                        .font(.exoCaption)
+                        .foregroundStyle(Color.exoLightGray)
+                }
+                .listRowBackground(Color.exoDarkGray)
+
+                if let nodeId = connection.nodeId {
+                    LabeledContent {
+                        Text(String(nodeId.prefix(12)) + "...")
+                            .font(.exoCaption)
+                            .foregroundStyle(Color.exoForeground)
+                    } label: {
+                        Text("Node ID")
+                            .font(.exoCaption)
+                            .foregroundStyle(Color.exoLightGray)
+                    }
+                    .listRowBackground(Color.exoDarkGray)
+                }
+
+                LabeledContent {
+                    Text("\(clusterService.availableModels.count)")
+                        .font(.exoCaption)
+                        .foregroundStyle(Color.exoForeground)
+                } label: {
+                    Text("Models")
+                        .font(.exoCaption)
+                        .foregroundStyle(Color.exoLightGray)
+                }
+                .listRowBackground(Color.exoDarkGray)
+
+                Button(role: .destructive) {
+                    clusterService.disconnect()
+                } label: {
+                    Text("DISCONNECT")
+                        .font(.exoMono(13, weight: .semibold))
+                        .tracking(1.5)
+                        .foregroundStyle(Color.exoDestructive)
+                        .frame(maxWidth: .infinity)
+                }
+                .listRowBackground(Color.exoDarkGray)
             } else {
                 if let error = clusterService.lastError {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.red)
+                    Label {
+                        Text(error)
+                            .font(.exoCaption)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                    }
+                    .foregroundStyle(Color.exoDestructive)
+                    .listRowBackground(Color.exoDarkGray)
                 } else {
                     Text("Not connected")
-                        .foregroundStyle(.secondary)
+                        .font(.exoBody)
+                        .foregroundStyle(Color.exoLightGray)
+                        .listRowBackground(Color.exoDarkGray)
                 }
             }
+        } header: {
+            sectionHeader("Status")
         }
     }
 }

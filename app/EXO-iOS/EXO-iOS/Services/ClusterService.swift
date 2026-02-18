@@ -69,7 +69,9 @@ final class ClusterService {
         }
     }
 
-    func connectToDiscoveredCluster(_ cluster: DiscoveredCluster, using discoveryService: DiscoveryService) async {
+    func connectToDiscoveredCluster(
+        _ cluster: DiscoveredCluster, using discoveryService: DiscoveryService
+    ) async {
         guard case .disconnected = connectionState else { return }
         connectionState = .connecting
         lastError = nil
