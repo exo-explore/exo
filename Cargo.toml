@@ -34,6 +34,7 @@ delegate = "0.13"
 keccak-const = "0.2"
 
 # Async dependencies
+async-stream = "0.3"
 tokio = "1.46"
 futures-lite = "2.6.1"
 futures-timer = "3.0"
