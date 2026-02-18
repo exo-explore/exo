@@ -3487,6 +3487,15 @@
           </div>
         </div>
       {/if}
+
+      <!-- Skip link — visible on all onboarding steps -->
+      <button
+        type="button"
+        onclick={completeOnboarding}
+        class="absolute bottom-6 text-xs font-sans text-white/25 hover:text-white/50 transition-colors cursor-pointer"
+      >
+        Skip
+      </button>
     </div>
 
     <!-- Model Picker Modal (available during onboarding step 4) -->
