@@ -6,7 +6,7 @@ tasks = ["TextGeneration"]
 family = "minimax"
 quantization = "8bit"
 base_model = "MiniMax M2.1"
-capabilities = ["text", "thinking"]
+capabilities = ["text", "thinking", "thinking_toggle"]
 
 [storage_size]
 in_bytes = 242986745856
