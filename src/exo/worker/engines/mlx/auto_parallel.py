@@ -165,12 +165,12 @@ class PipelineLastLayer(CustomMlxLayer):
             if cache is not None:
                 # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
                 # doesn't have .keys directly; access via first sub-cache.
-                dep_cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
-                dep_cache.keys = mx.depends(dep_cache.keys, output)  # type: ignore[reportUnknownMemberType]
+                _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
+                _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
             if self.is_prefill:
                 mx.eval(output)
                 if cache is not None:
-                    mx.eval(dep_cache.keys)  # type: ignore
+                    mx.eval(_cache.keys)  # type: ignore
 
         if not self.is_prefill:
             output = mx.distributed.all_gather(output, group=self.group)[
