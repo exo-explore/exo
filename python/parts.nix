@@ -158,6 +158,7 @@
           exo-test-env = testVenv;
         } // {
         exo-bench = mkBenchScript "exo-bench" (inputs.self + /bench/exo_bench.py);
+        exo-eval-tool-calls = mkBenchScript "exo-eval-tool-calls" (inputs.self + /bench/eval_tool_calls.py);
         exo-get-all-models-on-cluster = mkSimplePythonScript "exo-get-all-models-on-cluster" (inputs.self + /tests/get_all_models_on_cluster.py);
       };
 

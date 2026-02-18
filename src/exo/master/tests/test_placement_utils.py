@@ -3,10 +3,10 @@ import pytest
 from exo.master.placement_utils import (
     allocate_layers_proportionally,
     filter_cycles_by_memory,
-    get_largest_cycles,
     get_mlx_jaccl_coordinators,
     get_shard_assignments,
     get_shard_assignments_for_pipeline_parallel,
+    get_smallest_cycles,
 )
 from exo.master.tests.conftest import (
     create_node_memory,
@@ -143,7 +143,7 @@ def test_filter_multiple_cycles_by_memory():
     }
 
 
-def test_get_largest_cycles():
+def test_get_smallest_cycles():
     # arrange
     node_a_id = NodeId()
     node_b_id = NodeId()
@@ -175,12 +175,12 @@ def test_get_largest_cycles():
     cycles = [c for c in topology.get_cycles() if len(c) != 1]  # ignore singletons
 
     # act
-    largest_cycles = get_largest_cycles(cycles)
+    smallest_cycles = get_smallest_cycles(cycles)
 
     # assert
-    assert len(largest_cycles) == 1
-    assert len(largest_cycles[0]) == 3
-    assert set(n for n in largest_cycles[0]) == {node_a_id, node_b_id, node_c_id}
+    assert len(smallest_cycles) == 1
+    assert len(smallest_cycles[0]) == 2
+    assert set(n for n in smallest_cycles[0]) == {node_a_id, node_b_id}
 
 
 @pytest.mark.parametrize(

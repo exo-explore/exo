@@ -11,6 +11,7 @@ from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     HarmonyEncodingName,
+    HarmonyError,  # pyright: ignore[reportUnknownVariableType]
     Role,
     StreamableParser,
     load_harmony_encoding,
@@ -243,7 +244,7 @@ def main(
                         assert inference_model
                         assert tokenizer
 
-                        t = time.perf_counter()
+                        t = time.monotonic()
                         toks = warmup_inference(
                             model=inference_model,
                             tokenizer=tokenizer,
@@ -251,7 +252,7 @@ def main(
                         )
                         logger.info(f"warmed up by generating {toks} tokens")
                         check_for_cancel_every = min(
-                            math.ceil(toks / max(time.perf_counter() - t, 0.001)), 100
+                            math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
                         )
                         if group is not None:
                             check_for_cancel_every = int(
@@ -588,7 +589,11 @@ def parse_gpt_oss(
 
     for response in responses:
         assert isinstance(response, GenerationResponse)
-        stream.process(response.token)
+        try:
+            stream.process(response.token)
+        except HarmonyError:
+            logger.error("Encountered critical Harmony Error, returning early")
+            return
 
         delta = stream.last_content_delta
         ch = stream.current_channel

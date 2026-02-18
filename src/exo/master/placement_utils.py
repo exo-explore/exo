@@ -37,11 +37,11 @@ def filter_cycles_by_memory(
     return filtered_cycles
 
 
-def get_largest_cycles(
+def get_smallest_cycles(
     cycles: list[Cycle],
 ) -> list[Cycle]:
-    max_nodes = max(len(cycle) for cycle in cycles)
-    return [cycle for cycle in cycles if len(cycle) == max_nodes]
+    min_nodes = min(len(cycle) for cycle in cycles)
+    return [cycle for cycle in cycles if len(cycle) == min_nodes]
 
 
 def allocate_layers_proportionally(
