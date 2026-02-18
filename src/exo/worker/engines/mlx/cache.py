@@ -5,6 +5,7 @@ import mlx.core as mx
 import psutil
 from mlx_lm.models.cache import (
     ArraysCache,
+    CacheList,
     KVCache,
     QuantizedKVCache,
     RotatingKVCache,
@@ -270,10 +271,21 @@ def encode_prompt(tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
     return mx.array(prompt_tokens)
 
 
+def _entry_length(
+    c: KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList,
+) -> int:
+    # Use .offset attribute which KVCache types have (len() not implemented in older QuantizedKVCache).
+    if hasattr(c, "offset"):
+        return c.offset
+    # For CacheList
+    if hasattr(c, "size"):
+        return int(c.size())  # type: ignore
+    return 0
+
+
 def cache_length(cache: KVCacheType) -> int:
     """Get the number of tokens in a KV cache."""
-    # Use .offset attribute which KVCache types have (len() not implemented in older QuantizedKVCache).
-    return max(getattr(c, "offset", 0) for c in cache)
+    return max(_entry_length(c) for c in cache)
 
 
 def get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
