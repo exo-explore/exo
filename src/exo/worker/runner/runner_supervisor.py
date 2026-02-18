@@ -191,7 +191,7 @@ class RunnerSupervisor:
         logger.info("Checking runner's status")
         if self.runner_process.is_alive():
             logger.info("Runner was found to be alive, attempting to join process")
-            await to_thread.run_sync(self.runner_process.join, 1)
+            await to_thread.run_sync(self.runner_process.join, 5)
         rc = self.runner_process.exitcode
         logger.info(f"RunnerSupervisor exited with exit code {rc}")
         if rc == 0:

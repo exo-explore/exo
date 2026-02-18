@@ -183,6 +183,7 @@ class ConfigData(BaseModel):
     def supports_tensor(self) -> bool:
         return self.architectures in [
             ["Glm4MoeLiteForCausalLM"],
+            ["GlmMoeDsaForCausalLM"],
             ["DeepseekV32ForCausalLM"],
             ["DeepseekV3ForCausalLM"],
             ["Qwen3NextForCausalLM"],
