@@ -47,6 +47,7 @@ class DownloadCoordinator:
     download_command_receiver: Receiver[ForwarderDownloadCommand]
     local_event_sender: Sender[ForwarderEvent]
     event_index_counter: Iterator[int]
+    offline: bool = False
 
     # Local state
     download_status: dict[ModelId, DownloadProgress] = field(default_factory=dict)
@@ -62,6 +63,8 @@ class DownloadCoordinator:
 
     def __post_init__(self) -> None:
         self.event_sender, self.event_receiver = channel[Event]()
+        if self.offline:
+            self.shard_downloader.set_internet_connection(False)
         self.shard_downloader.on_progress(self._download_progress_callback)
 
     def _model_dir(self, model_id: ModelId) -> str:
@@ -107,13 +110,17 @@ class DownloadCoordinator:
             self._last_progress_time[model_id] = current_time()
 
     async def run(self) -> None:
-        logger.info("Starting DownloadCoordinator")
-        self._test_internet_connection()
+        logger.info(
+            f"Starting DownloadCoordinator{' (offline mode)' if self.offline else ''}"
+        )
+        if not self.offline:
+            self._test_internet_connection()
         async with self._tg as tg:
             tg.start_soon(self._command_processor)
             tg.start_soon(self._forward_events)
             tg.start_soon(self._emit_existing_download_progress)
-            tg.start_soon(self._check_internet_connection)
+            if not self.offline:
+                tg.start_soon(self._check_internet_connection)
 
     def _test_internet_connection(self) -> None:
         try:
@@ -200,6 +207,20 @@ class DownloadCoordinator:
             await self.event_sender.send(
                 NodeDownloadProgress(download_progress=completed)
             )
+            return
+
+        if self.offline:
+            logger.warning(
+                f"Offline mode: model {model_id} is not fully available locally, cannot download"
+            )
+            failed = DownloadFailed(
+                shard_metadata=shard,
+                node_id=self.node_id,
+                error_message=f"Model files not found locally in offline mode: {model_id}",
+                model_directory=self._model_dir(model_id),
+            )
+            self.download_status[model_id] = failed
+            await self.event_sender.send(NodeDownloadProgress(download_progress=failed))
             return
 
         # Start actual download
