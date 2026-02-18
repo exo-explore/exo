@@ -340,9 +340,7 @@ class Args(CamelCaseModel):
         parser.add_argument(
             "--offline",
             action="store_true",
-            default=os.getenv("EXO_OFFLINE") == "1"
-            or os.getenv("HF_HUB_OFFLINE") == "1",
-            help="Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models (env: EXO_OFFLINE=1 or HF_HUB_OFFLINE=1)",
+            help="Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models",
         )
         fast_synch_group = parser.add_mutually_exclusive_group()
         fast_synch_group.add_argument(
