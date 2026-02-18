@@ -146,15 +146,37 @@ class ResumableShardDownloader(ShardDownloader):
     ) -> Path:
         allow_patterns = ["config.json"] if config_only else None
 
-        target_dir, _ = await download_shard(
-            shard,
-            self.on_progress_wrapper,
-            max_parallel_downloads=self.max_parallel_downloads,
-            allow_patterns=allow_patterns,
-            skip_internet=not self.internet_connection,
-            on_connection_lost=lambda: self.set_internet_connection(False),
-        )
-        return target_dir
+        try:
+            target_dir, _ = await download_shard(
+                shard,
+                self.on_progress_wrapper,
+                max_parallel_downloads=self.max_parallel_downloads,
+                allow_patterns=allow_patterns,
+                skip_internet=not self.internet_connection,
+                on_connection_lost=lambda: self.set_internet_connection(False),
+            )
+            return target_dir
+        except FileNotFoundError as e:
+            # If download failed with skip_internet=True (no cache/local files),
+            # retry without skip_internet to get actual network error.
+            # This helps diagnose connectivity issues vs. missing files.
+            if not self.internet_connection:
+                logger.info(
+                    f"Retrying download for {shard.model_card.model_id} "
+                    f"without skip_internet to get actual network error"
+                )
+                target_dir, _ = await download_shard(
+                    shard,
+                    self.on_progress_wrapper,
+                    max_parallel_downloads=self.max_parallel_downloads,
+                    allow_patterns=allow_patterns,
+                    skip_internet=False,  # Force attempt to get real error
+                    on_connection_lost=lambda: self.set_internet_connection(False),
+                )
+                return target_dir
+            else:
+                # Already tried with internet; re-raise original error
+                raise
 
     async def get_shard_download_status(
         self,
@@ -194,11 +216,30 @@ class ResumableShardDownloader(ShardDownloader):
     async def get_shard_download_status_for_shard(
         self, shard: ShardMetadata
     ) -> RepoDownloadProgress:
-        _, progress = await download_shard(
-            shard,
-            self.on_progress_wrapper,
-            skip_download=True,
-            skip_internet=not self.internet_connection,
-            on_connection_lost=lambda: self.set_internet_connection(False),
-        )
-        return progress
+        try:
+            _, progress = await download_shard(
+                shard,
+                self.on_progress_wrapper,
+                skip_download=True,
+                skip_internet=not self.internet_connection,
+                on_connection_lost=lambda: self.set_internet_connection(False),
+            )
+            return progress
+        except FileNotFoundError:
+            # If status check failed with skip_internet=True, retry without it
+            # to get actual network error details.
+            if not self.internet_connection:
+                logger.debug(
+                    f"Retrying status check for {shard.model_card.model_id} "
+                    f"without skip_internet"
+                )
+                _, progress = await download_shard(
+                    shard,
+                    self.on_progress_wrapper,
+                    skip_download=True,
+                    skip_internet=False,
+                    on_connection_lost=lambda: self.set_internet_connection(False),
+                )
+                return progress
+            else:
+                raise
