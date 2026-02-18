@@ -17,6 +17,7 @@ from exo_pyo3_bindings import (
     MessageTooLargeError,
     NetworkingHandle,
     NoPeersSubscribedToTopicError,
+    PyFromSwarm,
 )
 from filelock import FileLock
 from loguru import logger
@@ -121,7 +122,8 @@ class Router:
             send = self.networking_receiver.clone_sender()
         router = TopicRouter[T](topic, send)
         self.topic_routers[topic.topic] = cast(TopicRouter[CamelCaseModel], router)
-        await self._networking_subscribe(str(topic.topic))
+        if self._tg.is_running():
+            await self._networking_subscribe(topic.topic)
 
     def sender[T: CamelCaseModel](self, topic: TypedTopic[T]) -> Sender[T]:
         router = self.topic_routers.get(topic.topic, None)
@@ -152,8 +154,10 @@ class Router:
                     router = self.topic_routers[topic]
                     tg.start_soon(router.run)
                 tg.start_soon(self._networking_recv)
-                tg.start_soon(self._networking_recv_connection_messages)
                 tg.start_soon(self._networking_publish)
+                # subscribe to pending topics
+                for topic in self.topic_routers:
+                    await self._networking_subscribe(topic)
                 # Router only shuts down if you cancel it.
                 await sleep_forever()
         finally:
@@ -175,27 +179,33 @@ class Router:
 
     async def _networking_recv(self):
         while True:
-            topic, data = await self._net.gossipsub_recv()
-            logger.trace(f"Received message on {topic} with payload {data}")
-            if topic not in self.topic_routers:
-                logger.warning(f"Received message on unknown or inactive topic {topic}")
-                continue
+            from_swarm = await self._net.recv()
+            logger.debug(from_swarm)
+            match from_swarm:
+                case PyFromSwarm.Message(origin, topic, data):
+                    logger.trace(
+                        f"Received message on {topic} from {origin} with payload {data}"
+                    )
+                    if topic not in self.topic_routers:
+                        logger.warning(
+                            f"Received message on unknown or inactive topic {topic}"
+                        )
+                        continue
 
-            router = self.topic_routers[topic]
-            await router.publish_bytes(data)
-
-    async def _networking_recv_connection_messages(self):
-        while True:
-            update = await self._net.connection_update_recv()
-            message = ConnectionMessage.from_update(update)
-            logger.trace(
-                f"Received message on connection_messages with payload {message}"
-            )
-            if CONNECTION_MESSAGES.topic in self.topic_routers:
-                router = self.topic_routers[CONNECTION_MESSAGES.topic]
-                assert router.topic.model_type == ConnectionMessage
-                router = cast(TopicRouter[ConnectionMessage], router)
-                await router.publish(message)
+                    router = self.topic_routers[topic]
+                    await router.publish_bytes(data)
+                case PyFromSwarm.Connection():
+                    message = ConnectionMessage.from_update(from_swarm)
+                    logger.trace(
+                        f"Received message on connection_messages with payload {message}"
+                    )
+                    if CONNECTION_MESSAGES.topic in self.topic_routers:
+                        router = self.topic_routers[CONNECTION_MESSAGES.topic]
+                        assert router.topic.model_type == ConnectionMessage
+                        router = cast(TopicRouter[ConnectionMessage], router)
+                        await router.publish(message)
+                case _:
+                    raise AssertionError("exhaustive net messages have been checked")
 
     async def _networking_publish(self):
         with self.networking_receiver as networked_items:

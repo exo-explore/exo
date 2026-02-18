@@ -1,7 +1,7 @@
 import pytest
 from anyio import create_task_group, fail_after, move_on_after
 
-from exo.routing.connection_message import ConnectionMessage, ConnectionMessageType
+from exo.routing.connection_message import ConnectionMessage
 from exo.shared.election import Election, ElectionMessage, ElectionResult
 from exo.shared.types.commands import ForwarderCommand, TestCommand
 from exo.shared.types.common import NodeId, SessionId, SystemId
@@ -327,14 +327,7 @@ async def test_connection_message_triggers_new_round_broadcast() -> None:
             tg.start_soon(election.run)
 
             # Send any connection message object; we close quickly to cancel before result creation
-            await cm_tx.send(
-                ConnectionMessage(
-                    node_id=NodeId(),
-                    connection_type=ConnectionMessageType.Connected,
-                    remote_ipv4="",
-                    remote_tcp_port=0,
-                )
-            )
+            await cm_tx.send(ConnectionMessage(node_id=NodeId(), connected=True))
 
             # Expect a broadcast for the new round at clock=1
             while True:
