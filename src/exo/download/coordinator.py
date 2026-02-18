@@ -123,14 +123,17 @@ class DownloadCoordinator:
                 tg.start_soon(self._check_internet_connection)
 
     def _test_internet_connection(self) -> None:
-        try:
-            socket.create_connection(("1.1.1.1", 443), timeout=3).close()
-            self.shard_downloader.set_internet_connection(True)
-        except OSError:
-            self.shard_downloader.set_internet_connection(False)
-        logger.debug(
-            f"Internet connectivity: {self.shard_downloader.internet_connection}"
-        )
+        # Try multiple endpoints since some ISPs/networks block specific IPs
+        for host in ("1.1.1.1", "8.8.8.8", "1.0.0.1"):
+            try:
+                socket.create_connection((host, 443), timeout=3).close()
+                self.shard_downloader.set_internet_connection(True)
+                logger.debug(f"Internet connectivity: True (via {host})")
+                return
+            except OSError:
+                continue
+        self.shard_downloader.set_internet_connection(False)
+        logger.debug("Internet connectivity: False")
 
     async def _check_internet_connection(self) -> None:
         first_connection = True
