@@ -39,7 +39,7 @@
   <div class="flex flex-wrap gap-2 mb-3 px-1">
     {#each files as file (file.id)}
       <div
-        class="group relative flex items-center gap-2 bg-exo-dark-gray/80 border border-exo-yellow/30 rounded px-2.5 py-1.5 text-xs font-mono transition-all hover:border-exo-yellow/50 hover:shadow-[0_0_10px_rgba(255,215,0,0.1)]"
+        class="group relative flex items-center gap-2 bg-exo-dark-gray/80 border border-exo-yellow/30 rounded px-2.5 py-1.5 text-xs font-mono transition-all hover:border-exo-yellow/50 hover:shadow-[0_0_10px_var(--exo-glow-yellow)]"
       >
         <!-- File preview or icon -->
         {#if file.preview && getFileCategory(file.type, file.name) === "image"}
