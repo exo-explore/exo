@@ -99,6 +99,7 @@
       onclick={() => toggleMode()}
       class="p-2 rounded border border-exo-medium-gray/40 hover:border-exo-yellow/50 transition-colors cursor-pointer"
       title={currentMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      aria-label={currentMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
     >
       {#if currentMode === 'dark'}
         <!-- Sun icon - click to go light -->

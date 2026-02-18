@@ -63,7 +63,6 @@
       deviceHighlight: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.5)',
       tbActive: isDark ? 'rgba(234,179,8,0.9)' : 'rgba(30,28,20,0.9)',
       tbInactive: isDark ? 'rgba(100,100,100,0.7)' : 'rgba(160,160,160,0.7)',
-      tempMid: isDark ? '#FFD700' : '#B8860B',
       deviceDetail: isDark ? '#374151' : '#c0c0c0',
     };
   }
@@ -81,7 +80,7 @@
       gpuChip: 'rgba(80, 80, 90, 0.7)', detailOverlay: 'rgba(0,0,0,0.35)',
       deviceShadow: 'rgba(0,0,0,0.2)', deviceHighlight: 'rgba(255,255,255,0.08)',
       tbActive: 'rgba(234,179,8,0.9)', tbInactive: 'rgba(100,100,100,0.7)',
-      tempMid: '#FFD700', deviceDetail: '#374151',
+      deviceDetail: '#374151',
     };
   }
 
@@ -194,7 +193,7 @@
     const hotTemp = 75; // Temp for pure red
 
     const coolColor = { r: 93, g: 173, b: 226 }; // #5DADE2 (Blue)
-    const midColor = { r: 255, g: 215, b: 0 }; // themed via tempMid for interpolation
+    const midColor = { r: 255, g: 215, b: 0 }; // #FFD700 (Yellow)
     const hotColor = { r: 244, g: 67, b: 54 }; // #F44336 (Red)
 
     let r: number, g: number, b: number;

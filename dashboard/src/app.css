@@ -338,18 +338,19 @@ html:not(.dark) {
 	& .text-white\/90,
 	& .text-white\/80,
 	& .text-white\/70,
-	& .text-white\/60,
-	& .text-white\/50,
-	& .text-white\/40,
-	& .text-white\/30 {
+	& .text-white\/60 {
 		color: var(--foreground) !important;
 	}
 
-	/* Reduce opacity for truly muted variants */
-	& .text-white\/50,
-	& .text-white\/40,
+	/* Muted text-white variants → dark text with reduced alpha via color-mix */
+	& .text-white\/50 {
+		color: color-mix(in oklch, var(--foreground) 50%, transparent) !important;
+	}
+	& .text-white\/40 {
+		color: color-mix(in oklch, var(--foreground) 40%, transparent) !important;
+	}
 	& .text-white\/30 {
-		opacity: 0.6;
+		color: color-mix(in oklch, var(--foreground) 30%, transparent) !important;
 	}
 
 	/* bg-black variants → light bg */
