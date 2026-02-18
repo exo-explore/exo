@@ -254,14 +254,14 @@
   // ── Step 2 animation state: "Add more devices, run bigger models" ──
   let deviceAnimPhase = $state(0); // 0=waiting, 1=macbook, 2=studio joins, 3=connection+mid unlock, 4=big unlock
   let showContinueStep2 = $state(false);
-  const studioX = tweened(540, { duration: 700, easing: cubicOut });
+  const studioX = tweened(580, { duration: 700, easing: cubicOut });
   const studioOpacity = tweened(0, { duration: 700, easing: cubicOut });
 
   $effect(() => {
     if (onboardingStep === 3) {
       deviceAnimPhase = 0;
       showContinueStep2 = false;
-      studioX.set(540, { duration: 0 });
+      studioX.set(580, { duration: 0 });
       studioOpacity.set(0, { duration: 0 });
 
       const t1 = setTimeout(() => {
@@ -269,7 +269,7 @@
       }, 100);
       const t2 = setTimeout(() => {
         deviceAnimPhase = 2;
-        studioX.set(340);
+        studioX.set(370);
         studioOpacity.set(1);
       }, 900);
       const t3 = setTimeout(() => {
@@ -2659,9 +2659,9 @@
           </div>
 
           <!-- Animation stage -->
-          <div class="relative w-full" style="height: 380px;">
+          <div class="relative w-full" style="height: 420px;">
             <svg
-              viewBox="0 0 600 380"
+              viewBox="0 0 600 420"
               class="w-full h-full"
               xmlns="http://www.w3.org/2000/svg"
             >
@@ -2690,179 +2690,191 @@
                     <feMergeNode in="SourceGraphic" />
                   </feMerge>
                 </filter>
-                <filter
-                  id="onb-device-glow"
-                  x="-50%"
-                  y="-50%"
-                  width="200%"
-                  height="200%"
-                >
-                  <feGaussianBlur stdDeviation="4" result="blur" />
-                  <feFlood
-                    flood-color="#FFD700"
-                    flood-opacity="0.3"
-                    result="color"
-                  />
-                  <feComposite
-                    in="color"
-                    in2="blur"
-                    operator="in"
-                    result="glow"
-                  />
-                  <feMerge>
-                    <feMergeNode in="glow" />
-                    <feMergeNode in="SourceGraphic" />
-                  </feMerge>
-                </filter>
+                <!-- Clip paths for memory fills -->
+                <clipPath id="onb-macbook-screen-clip">
+                  <rect x="3" y="3" width="114" height="60" rx="2" />
+                </clipPath>
+                <clipPath id="onb-studio-body-clip">
+                  <rect x="0" y="13" width="100" height="72" rx="3" />
+                </clipPath>
               </defs>
 
-              <!-- MacBook Device (left side) -->
+              <!-- MacBook Pro Device (left side) - matches TopologyGraph rendering -->
               {#if deviceAnimPhase >= 1}
-                <g transform="translate(135, 30)" in:fade={{ duration: 600 }}>
-                  <!-- Screen bezel -->
+                <g transform="translate(90, 30)" in:fade={{ duration: 600 }}>
+                  <!-- Screen outer frame -->
                   <rect
                     x="0"
                     y="0"
-                    width="84"
-                    height="56"
-                    rx="4"
-                    fill="none"
-                    stroke="#FFD700"
+                    width="120"
+                    height="66"
+                    rx="3"
+                    fill="#1a1a1a"
+                    stroke="rgba(179,179,179,0.8)"
                     stroke-width="1.5"
-                    filter="url(#onb-device-glow)"
                   />
-                  <!-- Screen interior -->
+                  <!-- Screen inner (dark) -->
                   <rect
-                    x="4"
+                    x="3"
                     y="3"
-                    width="76"
-                    height="48"
+                    width="114"
+                    height="60"
                     rx="2"
-                    fill="#0a0a0a"
+                    fill="#0a0a12"
                   />
-                  <!-- Memory bar inside screen -->
+                  <!-- Memory fill on screen (60% used = 36GB used of ~60GB-ish feel) -->
                   <rect
-                    x="10"
-                    y="36"
-                    width="30"
-                    height="8"
-                    rx="2"
-                    fill="#374151"
+                    x="3"
+                    y={3 + 60 * 0.4}
+                    width="114"
+                    height={60 * 0.6}
+                    fill="rgba(255,215,0,0.85)"
+                    clip-path="url(#onb-macbook-screen-clip)"
                   />
-                  <rect
-                    x="10"
-                    y="36"
-                    width="18"
-                    height="8"
-                    rx="2"
-                    fill="rgba(255,215,0,0.4)"
-                  />
-                  <!-- Keyboard base -->
+                  <!-- Apple logo on screen -->
+                  <g transform="translate(49, 20) scale(0.014)">
+                    <path
+                      d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76.5 0-103.7 40.8-165.9 40.8s-105.6-57-155.5-127C46.7 790.7 0 663 0 541.8c0-194.4 126.4-297.5 250.8-297.5 66.1 0 121.2 43.4 162.7 43.4 39.5 0 101.1-46 176.3-46 28.5 0 130.9 2.6 198.3 99.2zm-234-181.5c31.1-36.9 53.1-88.1 53.1-139.3 0-7.1-.6-14.3-1.9-20.1-50.6 1.9-110.8 33.7-147.1 75.8-28.5 32.4-55.1 83.6-55.1 135.5 0 7.8 1.3 15.6 1.9 18.1 3.2.6 8.4 1.3 13.6 1.3 45.4 0 102.5-30.4 135.5-71.3z"
+                      fill="#FFFFFF"
+                      opacity="0.9"
+                    />
+                  </g>
+                  <!-- Keyboard base (trapezoidal) -->
                   <path
-                    d="M -6 60 L 90 60 L 84 70 L 0 70 Z"
-                    fill="none"
-                    stroke="#FFD700"
-                    stroke-width="1.5"
+                    d="M 9 66 L 111 66 L 120 90 L 0 90 Z"
+                    fill="#2c2c2c"
+                    stroke="rgba(179,179,179,0.8)"
+                    stroke-width="1"
                   />
-                  <!-- Label -->
+                  <!-- Keyboard area -->
+                  <rect
+                    x="15"
+                    y="69"
+                    width="90"
+                    height="12"
+                    fill="rgba(0,0,0,0.2)"
+                    rx="2"
+                  />
+                  <!-- Trackpad -->
+                  <rect
+                    x="36"
+                    y="83"
+                    width="48"
+                    height="5"
+                    fill="rgba(255,255,255,0.08)"
+                    rx="2"
+                  />
+                  <!-- Device name (above) -->
                   <text
-                    x="42"
-                    y="92"
+                    x="60"
+                    y="-8"
                     text-anchor="middle"
-                    fill="rgba(255,255,255,0.7)"
-                    style="font-size: 13px; font-family: system-ui, sans-serif;"
+                    fill="rgba(255,215,0,0.9)"
+                    style="font-size: 12px; font-family: 'SF Mono', ui-monospace, monospace; font-weight: 500;"
                   >
                     MacBook Pro
                   </text>
+                  <!-- Memory info (below) -->
                   <text
-                    x="42"
+                    x="60"
                     y="108"
                     text-anchor="middle"
-                    fill="rgba(255,255,255,0.35)"
-                    style="font-size: 11px; font-family: 'SF Mono', monospace;"
+                    style="font-size: 11px; font-family: 'SF Mono', ui-monospace, monospace;"
                   >
-                    36 GB
+                    <tspan fill="rgba(255,215,0,0.9)">36</tspan><tspan
+                      fill="rgba(179,179,179,0.9)">GB</tspan
+                    >
                   </text>
                 </g>
               {/if}
 
-              <!-- Mac Studio Device (right side) - tweened fly-in -->
+              <!-- Mac Studio Device (right side) - tweened fly-in, matches TopologyGraph -->
               <g transform="translate({$studioX}, 30)" opacity={$studioOpacity}>
-                <!-- Studio box -->
+                <!-- Main body -->
                 <rect
                   x="0"
                   y="0"
-                  width="78"
-                  height="62"
-                  rx="6"
-                  fill="none"
-                  stroke="#FFD700"
-                  stroke-width="1.5"
-                  filter="url(#onb-device-glow)"
-                />
-                <!-- Inner face -->
-                <rect
-                  x="5"
-                  y="5"
-                  width="68"
-                  height="52"
+                  width="100"
+                  height="85"
                   rx="4"
-                  fill="#0a0a0a"
+                  fill="#1a1a1a"
+                  stroke="rgba(179,179,179,0.8)"
+                  stroke-width="1.5"
                 />
-                <!-- Memory bar inside -->
+                <!-- Memory fill (fills from bottom up, ~80% used) -->
                 <rect
-                  x="12"
-                  y="40"
-                  width="54"
-                  height="8"
-                  rx="2"
-                  fill="#374151"
+                  x="0"
+                  y={13 + 72 * 0.2}
+                  width="100"
+                  height={72 * 0.8}
+                  fill="rgba(255,215,0,0.75)"
+                  clip-path="url(#onb-studio-body-clip)"
+                />
+                <!-- Top surface divider -->
+                <line
+                  x1="0"
+                  y1="13"
+                  x2="100"
+                  y2="13"
+                  stroke="rgba(179,179,179,0.3)"
+                  stroke-width="0.5"
+                />
+                <!-- Front panel: vertical slots -->
+                <rect
+                  x="15.5"
+                  y="55"
+                  width="5"
+                  height="12"
+                  fill="rgba(0,0,0,0.35)"
+                  rx="1.5"
                 />
                 <rect
-                  x="12"
-                  y="40"
-                  width="42"
-                  height="8"
-                  rx="2"
-                  fill="rgba(255,215,0,0.4)"
+                  x="25.5"
+                  y="55"
+                  width="5"
+                  height="12"
+                  fill="rgba(0,0,0,0.35)"
+                  rx="1.5"
                 />
-                <!-- Front circle detail -->
-                <circle
-                  cx="39"
-                  cy="56"
-                  r="3.5"
-                  fill="none"
-                  stroke="rgba(255,215,0,0.4)"
-                  stroke-width="1"
+                <!-- Front panel: horizontal SD slot -->
+                <rect
+                  x="40"
+                  y="55"
+                  width="20"
+                  height="7"
+                  fill="rgba(0,0,0,0.35)"
+                  rx="1"
                 />
-                <!-- Label -->
+                <!-- Device name (above) -->
                 <text
-                  x="39"
-                  y="86"
+                  x="50"
+                  y="-8"
                   text-anchor="middle"
-                  fill="rgba(255,255,255,0.7)"
-                  style="font-size: 13px; font-family: system-ui, sans-serif;"
+                  fill="rgba(255,215,0,0.9)"
+                  style="font-size: 12px; font-family: 'SF Mono', ui-monospace, monospace; font-weight: 500;"
                 >
                   Mac Studio
                 </text>
+                <!-- Memory info (below) -->
                 <text
-                  x="39"
-                  y="102"
+                  x="50"
+                  y="103"
                   text-anchor="middle"
-                  fill="rgba(255,255,255,0.35)"
-                  style="font-size: 11px; font-family: 'SF Mono', monospace;"
+                  style="font-size: 11px; font-family: 'SF Mono', ui-monospace, monospace;"
                 >
-                  192 GB
+                  <tspan fill="rgba(255,215,0,0.9)">192</tspan><tspan
+                    fill="rgba(179,179,179,0.9)">{" "}GB</tspan
+                  >
                 </text>
               </g>
 
               <!-- Connection line between devices -->
               {#if deviceAnimPhase >= 3}
                 <line
-                  x1="223"
-                  y1="62"
-                  x2="340"
-                  y2="62"
+                  x1="215"
+                  y1="75"
+                  x2={$studioX - 5}
+                  y2="75"
                   class="onboarding-connection-line"
                   in:fade={{ duration: 400 }}
                 />
@@ -2871,11 +2883,11 @@
               <!-- Combined memory label -->
               {#if deviceAnimPhase >= 3}
                 <text
-                  x="282"
-                  y="50"
+                  x={(215 + $studioX - 5) / 2}
+                  y="62"
                   text-anchor="middle"
                   fill="rgba(255,215,0,0.7)"
-                  style="font-size: 11px; font-family: 'SF Mono', monospace;"
+                  style="font-size: 11px; font-family: 'SF Mono', ui-monospace, monospace;"
                   in:fade={{ duration: 400 }}
                 >
                   228 GB combined
@@ -2883,13 +2895,13 @@
               {/if}
 
               <!-- Model cards row -->
-              <g transform="translate(0, 200)">
+              <g transform="translate(0, 230)">
                 <!-- Arrows from devices to models -->
                 {#if deviceAnimPhase >= 3}
                   <line
-                    x1="177"
-                    y1="-50"
-                    x2="177"
+                    x1="150"
+                    y1="-70"
+                    x2="150"
                     y2="-8"
                     stroke="rgba(255,215,0,0.15)"
                     stroke-width="1"
@@ -2897,9 +2909,9 @@
                     in:fade={{ duration: 300 }}
                   />
                   <line
-                    x1="379"
-                    y1="-50"
-                    x2="379"
+                    x1={$studioX + 50}
+                    y1="-70"
+                    x2={$studioX + 50}
                     y2="-8"
                     stroke="rgba(255,215,0,0.15)"
                     stroke-width="1"
