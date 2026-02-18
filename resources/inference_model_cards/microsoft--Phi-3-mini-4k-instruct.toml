@@ -1,0 +1,13 @@
+model_id = "microsoft/Phi-3-mini-4k-instruct"
+n_layers = 32
+hidden_size = 3072
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "phi"
+quantization = ""
+base_model = "Phi 3 Mini"
+capabilities = ["text", "code"]
+tags = ["pytorch"]
+
+[storage_size]
+in_bytes = 7620000000

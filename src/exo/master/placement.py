@@ -1,3 +1,4 @@
+import logging
 import random
 from collections.abc import Mapping
 from copy import deepcopy
@@ -41,8 +42,11 @@ from exo.shared.types.worker.instances import (
     InstanceMeta,
     MlxJacclInstance,
     MlxRingInstance,
+    PytorchInstance,
 )
 from exo.shared.types.worker.shards import Sharding
+
+logger = logging.getLogger(__name__)
 
 
 def random_ephemeral_port() -> int:
@@ -138,7 +142,9 @@ def place_instance(
     instance_id = InstanceId()
     target_instances = dict(deepcopy(current_instances))
 
-    if len(selected_cycle) == 1:
+    if len(selected_cycle) == 1 and command.instance_meta == InstanceMeta.MlxJaccl:
+        # This is expected behavior for single-node setups - use debug level
+        logger.debug("Single node with MlxJaccl requested; falling back to MlxRing")
         command.instance_meta = InstanceMeta.MlxRing
 
     # TODO: Single node instances
@@ -173,6 +179,13 @@ def place_instance(
                 shard_assignments=shard_assignments,
                 hosts_by_node=hosts_by_node,
                 ephemeral_port=ephemeral_port,
+            )
+        case InstanceMeta.Pytorch:
+            target_instances[instance_id] = PytorchInstance(
+                instance_id=instance_id,
+                shard_assignments=shard_assignments,
+                hosts_by_node={},
+                ephemeral_port=random_ephemeral_port(),
             )
 
     return target_instances

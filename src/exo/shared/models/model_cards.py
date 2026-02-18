@@ -90,6 +90,7 @@ class ModelCard(CamelCaseModel):
     base_model: str = ""
     capabilities: list[str] = []
     uses_cfg: bool = False
+    tags: list[str] | None = None  # Engine compatibility tags: "mlx", "pytorch"
 
     @field_validator("tasks", mode="before")
     @classmethod
