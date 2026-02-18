@@ -654,6 +654,12 @@ def run_scenario(
     # --- Phase 1: initial request ---
     path, body = build_request(model, scenario.messages, scenario.tools)
 
+    if verbose:
+        print(
+            f"    [{api_name}] request: {path} {json.dumps(body, indent=2)}",
+            file=sys.stderr,
+        )
+
     try:
         data, latency = call_api(client, host, port, path, body, timeout)
     except Exception as exc:
@@ -742,6 +748,12 @@ def run_scenario(
             parsed,
             scenario.tool_result,
         )
+
+        if verbose:
+            print(
+                f"    [{api_name}] follow_up request: {followup_path} {json.dumps(followup_body, indent=2)}",
+                file=sys.stderr,
+            )
 
         try:
             data2, latency2 = call_api(
