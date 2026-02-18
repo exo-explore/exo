@@ -220,9 +220,7 @@ class DownloadCoordinator:
                 model_directory=self._model_dir(model_id),
             )
             self.download_status[model_id] = failed
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=failed)
-            )
+            await self.event_sender.send(NodeDownloadProgress(download_progress=failed))
             return
 
         # Start actual download

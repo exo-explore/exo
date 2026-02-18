@@ -202,9 +202,7 @@ class TestFetchFileListOffline:
             "metadata": {},
             "weight_map": {"model.layers.0.weight": "model.safetensors"},
         }
-        async with aiofiles.open(
-            model_dir / "model.safetensors.index.json", "w"
-        ) as f:
+        async with aiofiles.open(model_dir / "model.safetensors.index.json", "w") as f:
             await f.write(json.dumps(index_data))
 
         async with aiofiles.open(model_dir / "model.safetensors", "wb") as f:
@@ -229,6 +227,4 @@ class TestFetchFileListOffline:
         """When skip_internet=True and neither cache nor local files exist,
         raise FileNotFoundError."""
         with pytest.raises(FileNotFoundError, match="No internet"):
-            await fetch_file_list_with_cache(
-                model_id, "main", skip_internet=True
-            )
+            await fetch_file_list_with_cache(model_id, "main", skip_internet=True)
