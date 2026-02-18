@@ -1,5 +1,6 @@
-import base64
+﻿import base64
 import math
+import os
 import resource
 import time
 from collections.abc import Generator
@@ -71,7 +72,7 @@ from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
     ShardMetadata,
 )
-from exo.utils.channels import MpReceiver, MpSender
+from exo.utils.channels import MpReceiver, MpSender, WouldBlock
 from exo.worker.engines.image import (
     DistributedImageModel,
     generate_image,
@@ -80,7 +81,11 @@ from exo.worker.engines.image import (
 )
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.cache import KVPrefixCache
-from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
+from exo.worker.engines.mlx.generator.generate import (
+    mlx_batch_generate,
+    mlx_generate,
+    warmup_inference,
+)
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     detect_thinking_prompt_suffix,
@@ -149,8 +154,48 @@ def main(
         RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
     )
     seen = set[TaskId]()
+    batch_max_size = max(1, int(os.environ.get("EXO_BATCH_MAX_SIZE", "4")))
+    batch_max_wait_s = max(
+        0.0, float(os.environ.get("EXO_BATCH_MAX_WAIT_S", "0.005"))
+    )
+
+    def _is_batchable_text_task(task_params: TextGenerationTaskParams) -> bool:
+        model_name = str(task_params.model).lower()
+        needs_single_path_processing = (
+            "gpt-oss" in model_name or "gpt_oss" in model_name or tool_parser is not None
+        )
+        return (
+            not task_params.stream
+            and task_params.tools is None
+            and not task_params.logprobs
+            and task_params.top_logprobs is None
+            and task_params.stop is None
+            and not task_params.enable_thinking
+            and not needs_single_path_processing
+        )
+
+    def _same_batch_settings(
+        a: TextGenerationTaskParams, b: TextGenerationTaskParams
+    ) -> bool:
+        return (
+            a.temperature == b.temperature
+            and a.top_p == b.top_p
+            and a.top_k == b.top_k
+            and a.seed == b.seed
+            and a.model == b.model
+        )
+
+    pending: list[Task] = []
     with task_receiver as tasks:
-        for task in tasks:
+        while True:
+            if pending:
+                task = pending.pop(0)
+            else:
+                try:
+                    task = next(tasks)
+                except StopIteration:
+                    break
+
             if task.task_id in seen:
                 logger.warning("repeat task - potential error")
             seen.add(task.task_id)
@@ -284,7 +329,38 @@ def main(
                 case TextGeneration(task_params=task_params, command_id=command_id) if (
                     isinstance(current_status, RunnerReady)
                 ):
-                    logger.info(f"received chat request: {task}")
+                    batch: list[TextGeneration] = [task]
+                    if _is_batchable_text_task(task_params) and batch_max_size > 1:
+                        start = time.perf_counter()
+                        while len(batch) < batch_max_size:
+                            if time.perf_counter() - start >= batch_max_wait_s:
+                                break
+                            try:
+                                nxt = tasks.receive_nowait()
+                            except WouldBlock:
+                                time.sleep(0.0005)
+                                continue
+
+                            if nxt.task_id in seen:
+                                logger.warning("repeat task - potential error")
+                            seen.add(nxt.task_id)
+                            event_sender.send(
+                                TaskStatusUpdated(
+                                    task_id=nxt.task_id, task_status=TaskStatus.Running
+                                )
+                            )
+
+                            match nxt:
+                                case TextGeneration(task_params=nxt_params) if (
+                                    _is_batchable_text_task(nxt_params)
+                                    and _same_batch_settings(task_params, nxt_params)
+                                ):
+                                    batch.append(nxt)
+                                case _:
+                                    pending.append(nxt)
+                                    break
+
+                    logger.info(f"received chat request(s): batch_size={len(batch)}")
                     current_status = RunnerRunning()
                     logger.info("runner running")
                     event_sender.send(
@@ -292,118 +368,193 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
-                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
+                    for b in batch:
+                        event_sender.send(TaskAcknowledged(task_id=b.task_id))
                     assert inference_model
                     assert tokenizer
                     assert check_for_cancel_every
 
+                    active_command_ids: list[CommandId] = [command_id]
                     try:
-                        _check_for_debug_prompts(task_params)
+                        if len(batch) > 1:
+                            batch_prompts: list[str] = []
+                            batch_params: list[TextGenerationTaskParams] = []
+                            batch_task_ids: list[TaskId] = []
+                            batch_command_ids = [b.command_id for b in batch]
+                            active_command_ids = batch_command_ids
 
-                        # Build prompt once - used for both generation and thinking detection
-                        prompt = apply_chat_template(tokenizer, task_params)
+                            for b in batch:
+                                _check_for_debug_prompts(b.task_params)
+                                batch_prompts.append(
+                                    apply_chat_template(tokenizer, b.task_params)
+                                )
+                                batch_params.append(b.task_params)
+                                batch_task_ids.append(b.task_id)
 
-                        # Generate responses using the actual MLX generation
-                        mlx_generator = mlx_generate(
-                            model=inference_model,
-                            tokenizer=tokenizer,
-                            task=task_params,
-                            prompt=prompt,
-                            kv_prefix_cache=kv_prefix_cache,
-                            group=group,
-                        )
+                            tokens_since_last_cancel_check = 0
+                            for idx, response in mlx_batch_generate(
+                                model=inference_model,
+                                tokenizer=tokenizer,
+                                tasks=batch_params,
+                                prompts=batch_prompts,
+                                group=group,
+                            ):
+                                tokens_since_last_cancel_check += 1
+                                if tokens_since_last_cancel_check >= check_for_cancel_every:
+                                    tokens_since_last_cancel_check = 0
+                                    cancelled_tasks.update(cancel_receiver.collect())
+                                    want_to_cancel = (
+                                        TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
+                                    ) or all(t in cancelled_tasks for t in batch_task_ids)
+                                    if mx_any(want_to_cancel, group):
+                                        break
 
-                        # For other thinking models (GLM, etc.), check if we need to
-                        # prepend the thinking tag that was consumed by the chat template
-                        if detect_thinking_prompt_suffix(prompt, tokenizer):
-                            mlx_generator = parse_thinking_models(
-                                mlx_generator, tokenizer
+                                if device_rank != 0:
+                                    continue
+                                if batch_task_ids[idx] in cancelled_tasks:
+                                    continue
+
+                                cmd_id = batch_command_ids[idx]
+                                if response.finish_reason == "error":
+                                    event_sender.send(
+                                        ChunkGenerated(
+                                            command_id=cmd_id,
+                                            chunk=ErrorChunk(
+                                                error_message=response.text,
+                                                model=shard_metadata.model_card.model_id,
+                                            ),
+                                        )
+                                    )
+                                    continue
+
+                                assert response.finish_reason not in (
+                                    "error",
+                                    "tool_calls",
+                                    "function_call",
+                                )
+                                event_sender.send(
+                                    ChunkGenerated(
+                                        command_id=cmd_id,
+                                        chunk=TokenChunk(
+                                            model=shard_metadata.model_card.model_id,
+                                            text=response.text,
+                                            token_id=response.token,
+                                            usage=response.usage,
+                                            finish_reason=response.finish_reason,
+                                            stats=response.stats,
+                                            logprob=response.logprob,
+                                            top_logprobs=response.top_logprobs,
+                                        ),
+                                    )
+                                )
+                        else:
+                            _check_for_debug_prompts(task_params)
+                            prompt = apply_chat_template(tokenizer, task_params)
+                            mlx_generator = mlx_generate(
+                                model=inference_model,
+                                tokenizer=tokenizer,
+                                task=task_params,
+                                prompt=prompt,
+                                kv_prefix_cache=kv_prefix_cache,
+                                group=group,
                             )
 
-                        # GPT-OSS specific parsing to match other model formats.
-                        if isinstance(inference_model, GptOssModel):
-                            mlx_generator = parse_gpt_oss(mlx_generator)
-                        elif tool_parser:
-                            mlx_generator = parse_tool_calls(mlx_generator, tool_parser)
-
-                        completion_tokens = 0
-                        tokens_since_last_cancel_check = 0
-                        for response in mlx_generator:
-                            tokens_since_last_cancel_check += 1
-                            if tokens_since_last_cancel_check >= check_for_cancel_every:
-                                tokens_since_last_cancel_check = 0
-                                cancelled_tasks.update(cancel_receiver.collect())
-                                want_to_cancel = (task.task_id in cancelled_tasks) or (
-                                    TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
+                            if detect_thinking_prompt_suffix(prompt, tokenizer):
+                                mlx_generator = parse_thinking_models(
+                                    mlx_generator, tokenizer
                                 )
-                                if mx_any(want_to_cancel, group):
-                                    break
 
-                            match response:
-                                case GenerationResponse():
-                                    completion_tokens += 1
-                                    if (
-                                        device_rank == 0
-                                        and response.finish_reason == "error"
-                                    ):
-                                        event_sender.send(
-                                            ChunkGenerated(
-                                                command_id=command_id,
-                                                chunk=ErrorChunk(
-                                                    error_message=response.text,
-                                                    model=shard_metadata.model_card.model_id,
-                                                ),
-                                            )
-                                        )
+                            if isinstance(inference_model, GptOssModel):
+                                mlx_generator = parse_gpt_oss(mlx_generator)
+                            elif tool_parser:
+                                mlx_generator = parse_tool_calls(
+                                    mlx_generator, tool_parser
+                                )
 
-                                    elif device_rank == 0:
-                                        assert response.finish_reason not in (
-                                            "error",
-                                            "tool_calls",
-                                            "function_call",
-                                        )
-                                        event_sender.send(
-                                            ChunkGenerated(
-                                                command_id=command_id,
-                                                chunk=TokenChunk(
-                                                    model=shard_metadata.model_card.model_id,
-                                                    text=response.text,
-                                                    token_id=response.token,
-                                                    usage=response.usage,
-                                                    finish_reason=response.finish_reason,
-                                                    stats=response.stats,
-                                                    logprob=response.logprob,
-                                                    top_logprobs=response.top_logprobs,
-                                                ),
+                            completion_tokens = 0
+                            tokens_since_last_cancel_check = 0
+                            for response in mlx_generator:
+                                tokens_since_last_cancel_check += 1
+                                if tokens_since_last_cancel_check >= check_for_cancel_every:
+                                    tokens_since_last_cancel_check = 0
+                                    cancelled_tasks.update(cancel_receiver.collect())
+                                    want_to_cancel = (task.task_id in cancelled_tasks) or (
+                                        TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
+                                    )
+                                    if mx_any(want_to_cancel, group):
+                                        break
+
+                                match response:
+                                    case GenerationResponse():
+                                        completion_tokens += 1
+                                        if (
+                                            device_rank == 0
+                                            and response.finish_reason == "error"
+                                        ):
+                                            event_sender.send(
+                                                ChunkGenerated(
+                                                    command_id=command_id,
+                                                    chunk=ErrorChunk(
+                                                        error_message=response.text,
+                                                        model=shard_metadata.model_card.model_id,
+                                                    ),
+                                                )
                                             )
-                                        )
-                                case ToolCallResponse():
-                                    if device_rank == 0:
-                                        event_sender.send(
-                                            ChunkGenerated(
-                                                command_id=command_id,
-                                                chunk=ToolCallChunk(
-                                                    tool_calls=response.tool_calls,
-                                                    model=shard_metadata.model_card.model_id,
-                                                    usage=response.usage,
-                                                    stats=response.stats,
-                                                ),
+                                        elif device_rank == 0:
+                                            assert response.finish_reason not in (
+                                                "error",
+                                                "tool_calls",
+                                                "function_call",
                                             )
-                                        )
+                                            event_sender.send(
+                                                ChunkGenerated(
+                                                    command_id=command_id,
+                                                    chunk=TokenChunk(
+                                                        model=shard_metadata.model_card.model_id,
+                                                        text=response.text,
+                                                        token_id=response.token,
+                                                        usage=response.usage,
+                                                        finish_reason=response.finish_reason,
+                                                        stats=response.stats,
+                                                        logprob=response.logprob,
+                                                        top_logprobs=response.top_logprobs,
+                                                    ),
+                                                )
+                                            )
+                                    case ToolCallResponse():
+                                        if device_rank == 0:
+                                            event_sender.send(
+                                                ChunkGenerated(
+                                                    command_id=command_id,
+                                                    chunk=ToolCallChunk(
+                                                        tool_calls=response.tool_calls,
+                                                        model=shard_metadata.model_card.model_id,
+                                                        usage=response.usage,
+                                                        stats=response.stats,
+                                                    ),
+                                                )
+                                            )
 
                     # can we make this more explicit?
                     except Exception as e:
                         if device_rank == 0:
-                            event_sender.send(
-                                ChunkGenerated(
-                                    command_id=command_id,
-                                    chunk=ErrorChunk(
-                                        model=shard_metadata.model_card.model_id,
-                                        finish_reason="error",
-                                        error_message=str(e),
-                                    ),
+                            for active_command_id in active_command_ids:
+                                event_sender.send(
+                                    ChunkGenerated(
+                                        command_id=active_command_id,
+                                        chunk=ErrorChunk(
+                                            model=shard_metadata.model_card.model_id,
+                                            finish_reason="error",
+                                            error_message=str(e),
+                                        ),
+                                    )
                                 )
+                        if len(active_command_ids) > 1:
+                            logger.exception(
+                                "batch generation failed; sent errors to all batched requests"
                             )
+                            current_status = RunnerReady()
+                            continue
                         raise
 
                     current_status = RunnerReady()

@@ -3,7 +3,7 @@ from copy import deepcopy
 from typing import Callable, Generator, cast, get_args
 
 import mlx.core as mx
-from mlx_lm.generate import stream_generate
+from mlx_lm.generate import BatchGenerator, stream_generate
 from mlx_lm.models.cache import ArraysCache, RotatingKVCache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
@@ -49,6 +49,102 @@ from exo.worker.runner.bootstrap import logger
 generation_stream = mx.new_stream(mx.default_device())
 
 _MIN_PREFIX_HIT_TO_UPDATE = 1000
+_DEFAULT_COMPLETION_BATCH_SIZE = 8
+_DEFAULT_PREFILL_BATCH_SIZE = 8
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int((__import__("os").environ.get(name) or "").strip() or default)
+    except Exception:
+        return default
+
+
+def mlx_batch_generate(
+    *,
+    model: Model,
+    tokenizer: TokenizerWrapper,
+    tasks: list[TextGenerationTaskParams],
+    prompts: list[str],
+    group: mx.distributed.Group | None = None,
+) -> Generator[tuple[int, GenerationResponse]]:
+    """Batch-generate tokens for multiple prompts and multiplex results.
+
+    This is a best-effort batching helper intended for high-throughput,
+    non-tool-calling, non-logprobs use cases. Callers should ensure tasks
+    are compatible (same sampling params, no stop sequences, etc.).
+    """
+    assert len(tasks) == len(prompts)
+    if not tasks:
+        return
+
+    mx.reset_peak_memory()
+    seed = tasks[0].seed or 42
+    mx.random.seed(seed)
+
+    # All tasks are assumed to have identical sampling params (caller checked).
+    sampler = make_sampler(
+        temp=tasks[0].temperature if tasks[0].temperature is not None else 0.7,
+        top_p=tasks[0].top_p if tasks[0].top_p is not None else 1.0,
+        top_k=tasks[0].top_k if tasks[0].top_k is not None else 0,
+    )
+
+    prompt_tokens_batch: list[list[int]] = []
+    max_tokens_batch: list[int] = []
+    for task, prompt in zip(tasks, prompts, strict=True):
+        toks_arr = encode_prompt(tokenizer, prompt)
+        toks_arr = fix_unmatched_think_end_tokens(toks_arr, tokenizer)
+        prompt_tokens_batch.append([int(x) for x in toks_arr.tolist()])
+        max_tokens_batch.append(int(task.max_output_tokens or MAX_TOKENS))
+
+    completion_batch_size = max(
+        1, _env_int("EXO_BATCH_COMPLETION_SIZE", _DEFAULT_COMPLETION_BATCH_SIZE)
+    )
+    prefill_batch_size = max(
+        1, _env_int("EXO_BATCH_PREFILL_SIZE", _DEFAULT_PREFILL_BATCH_SIZE)
+    )
+
+    mx_barrier(group)
+
+    gen = BatchGenerator(
+        model=model,
+        sampler=sampler,
+        completion_batch_size=completion_batch_size,
+        prefill_batch_size=prefill_batch_size,
+        prefill_step_size=2048,
+    )
+    uids = gen.insert(prompt_tokens_batch, max_tokens=max_tokens_batch)
+    uid_to_index: dict[int, int] = {int(uid): i for i, uid in enumerate(uids)}
+    finished: set[int] = set()
+
+    while len(finished) < len(uids):
+        responses = gen.next()
+        for r in responses:
+            uid = int(r.uid)
+            if uid in finished:
+                continue
+
+            idx = uid_to_index[uid]
+            token_id = int(r.token)
+            text = tokenizer.decode([token_id])
+
+            finish_reason: FinishReason | None = cast(
+                FinishReason | None, r.finish_reason
+            )
+            if finish_reason is not None:
+                finished.add(uid)
+
+            yield idx, GenerationResponse(
+                text=text,
+                token=token_id,
+                finish_reason=finish_reason
+                if finish_reason in get_args(FinishReason)
+                else None,
+                stats=None,
+                usage=None,
+            )
+
+    mx_barrier(group)
 
 
 def prefill(
