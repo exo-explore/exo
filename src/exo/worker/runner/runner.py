@@ -162,7 +162,11 @@ def main(
     def _is_batchable_text_task(task_params: TextGenerationTaskParams) -> bool:
         model_name = str(task_params.model).lower()
         needs_single_path_processing = (
-            "gpt-oss" in model_name or "gpt_oss" in model_name or tool_parser is not None
+            "kimi" in model_name
+            or "glm" in model_name
+            or "gpt-oss" in model_name
+            or "gpt_oss" in model_name
+            or tool_parser is not None
         )
         return (
             not task_params.stream

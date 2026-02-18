@@ -1,3 +1,4 @@
+import os
 import time
 from copy import deepcopy
 from typing import Callable, Generator, cast, get_args
@@ -55,7 +56,7 @@ _DEFAULT_PREFILL_BATCH_SIZE = 8
 
 def _env_int(name: str, default: int) -> int:
     try:
-        return int((__import__("os").environ.get(name) or "").strip() or default)
+        return int((os.environ.get(name) or "").strip() or default)
     except Exception:
         return default
 
