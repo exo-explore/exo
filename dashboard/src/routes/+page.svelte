@@ -258,7 +258,7 @@
   const studioOpacity = tweened(0, { duration: 700, easing: cubicOut });
 
   $effect(() => {
-    if (onboardingStep === 2) {
+    if (onboardingStep === 3) {
       deviceAnimPhase = 0;
       showContinueStep2 = false;
       studioX.set(540, { duration: 0 });
@@ -954,6 +954,8 @@
     selectPreviewModel(modelId);
     saveLaunchDefaults();
     isModelPickerOpen = false;
+    // Auto-launch the model so it begins downloading immediately
+    launchInstance(modelId);
   }
 
   async function launchInstance(
@@ -2639,8 +2641,8 @@
             </svg>
           </button>
         </div>
-      {:else if onboardingStep === 2}
-        <!-- Step 2: Add more devices, run bigger models -->
+      {:else if onboardingStep === 3}
+        <!-- Step 3: Add more devices, run bigger models -->
         <div
           class="flex flex-col items-center w-full max-w-2xl px-8"
           in:fade={{ duration: 400 }}
@@ -3157,7 +3159,7 @@
           {#if showContinueStep2}
             <button
               type="button"
-              onclick={() => (onboardingStep = 3)}
+              onclick={() => (onboardingStep = 4)}
               class="inline-flex items-center gap-2 px-8 py-3 mt-2 bg-exo-yellow text-exo-black font-sans text-sm font-semibold rounded-full hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.2)] transition-all duration-200 cursor-pointer"
               in:fade={{ duration: 400 }}
             >
@@ -3178,8 +3180,8 @@
             </button>
           {/if}
         </div>
-      {:else if onboardingStep === 3}
-        <!-- Step 3: Your Devices -->
+      {:else if onboardingStep === 2}
+        <!-- Step 2: Your Devices -->
         <div
           class="flex flex-col items-center w-full max-w-4xl px-8"
           in:fade={{ duration: 400 }}
@@ -3216,7 +3218,7 @@
           </p>
           <button
             type="button"
-            onclick={() => (onboardingStep = 4)}
+            onclick={() => (onboardingStep = 3)}
             class="inline-flex items-center gap-2 px-8 py-3 mt-6 bg-exo-yellow text-exo-black font-sans text-sm font-semibold rounded-full hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.2)] transition-all duration-200 cursor-pointer"
           >
             Continue
@@ -3429,7 +3431,7 @@
         >
           <!-- Subtle branding -->
           <div
-            class="text-2xl font-mono text-gray-200 font-bold tracking-wider mb-8"
+            class="text-2xl font-mono text-gray-300 font-bold tracking-wider mb-8"
           >
             exo
           </div>
@@ -3513,7 +3515,7 @@
       <HeaderNav
         showHome={chatStarted}
         onHome={handleGoHome}
-        showSidebarToggle={true}
+        showSidebarToggle={chatStarted}
         {sidebarVisible}
         onToggleSidebar={toggleChatSidebarVisible}
         downloadProgress={activeDownloadSummary}
@@ -3522,8 +3524,8 @@
 
     <!-- Main Content -->
     <main class="flex-1 flex overflow-hidden relative">
-      <!-- Left: Conversation History Sidebar (hidden in topology-only mode or when toggled off) -->
-      {#if !topologyOnlyEnabled && sidebarVisible}
+      <!-- Left: Conversation History Sidebar (hidden in topology-only mode, welcome state, or when toggled off) -->
+      {#if !topologyOnlyEnabled && sidebarVisible && chatStarted}
         <div
           class="w-80 flex-shrink-0 border-r border-exo-yellow/10"
           role="complementary"
