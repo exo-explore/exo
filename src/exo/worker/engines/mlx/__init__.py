@@ -11,22 +11,15 @@ using the MLX framework. It handles all MLX-specific logic including:
 """
 
 from collections.abc import Generator
-from functools import cache
 from typing import Any
 
 import loguru
 import mlx.core as mx
 import mlx.nn as nn
 from mlx_lm.models.cache import KVCache
+from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
-from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
-    HarmonyEncodingName,
-    HarmonyError,  # pyright: ignore[reportUnknownVariableType]
-    Role,
-    StreamableParser,
-    load_harmony_encoding,
-)
 
 from exo.shared.types.api import ImageEditsTaskParams, ImageGenerationTaskParams
 from exo.shared.types.text_generation import TextGenerationTaskParams
@@ -35,7 +28,6 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
     ImageGenerationResponse,
     PartialImageResponse,
-    ToolCallItem,
     ToolCallResponse,
 )
 from exo.worker.engines.base_engine import Engine, TimeoutCallback
@@ -48,6 +40,11 @@ from exo.worker.engines.mlx.utils_mlx import (
     load_mlx_items,
     mlx_force_oom,
     mx_any,
+)
+from exo.worker.runner.tool_parsers import (
+    parse_deepseek_v32,
+    parse_gpt_oss,
+    parse_thinking_models,
 )
 
 # Re-export for type stubs - MLX doesn't provide strong typing guarantees
@@ -68,12 +65,6 @@ class Model(nn.Module):
 
 
 logger: "loguru.Logger" = loguru.logger
-
-
-@cache
-def _get_gpt_oss_encoding():
-    """Get the GPT-OSS encoding for parsing."""
-    return load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
 
 
 class MlxEngine(Engine):
@@ -151,14 +142,12 @@ class MlxEngine(Engine):
             )
         )
 
-        # Apply thinking model wrapper if needed
-        if (
-            detect_thinking_prompt_suffix(prompt, tokenizer)
-            and tokenizer.think_start is not None
-            and tokenizer.think_start_id is not None
-        ):
-            mlx_generator = self._wrap_thinking_output(
-                mlx_generator, tokenizer.think_start, tokenizer.think_start_id
+        # Apply thinking model wrapper if needed (sets is_thinking flag)
+        if tokenizer.has_thinking:
+            mlx_generator = parse_thinking_models(
+                mlx_generator,
+                tokenizer,
+                starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
             )
 
         # Apply model-specific patches
@@ -172,11 +161,13 @@ class MlxEngine(Engine):
         elif "glm" in model_id_lower:
             self._patch_glm_tokenizer(tokenizer)
         elif isinstance(self.model, GptOssModel):
-            encoding = _get_gpt_oss_encoding()
-            mlx_generator = self._parse_gpt_oss(mlx_generator, encoding)
+            mlx_generator = parse_gpt_oss(mlx_generator)  # type: ignore[arg-type]
+        elif isinstance(self.model, DeepseekV32Model):
+            mlx_generator = parse_deepseek_v32(mlx_generator)  # type: ignore[arg-type]
 
-        # Apply tool call parsing if enabled (and not GPT-OSS which has its own)
-        if tokenizer.has_tool_calling and not isinstance(self.model, GptOssModel):
+        # Apply tool call parsing if enabled (and not models with their own parsing)
+        has_custom_parsing = isinstance(self.model, (GptOssModel, DeepseekV32Model))
+        if tokenizer.has_tool_calling and not has_custom_parsing:
             assert tokenizer.tool_call_start
             assert tokenizer.tool_call_end
             assert tokenizer.tool_parser
@@ -246,71 +237,6 @@ class MlxEngine(Engine):
     # =========================================================================
     # MLX-specific private methods
     # =========================================================================
-
-    def _parse_gpt_oss(
-        self,
-        responses: Generator[GenerationResponse | ToolCallResponse, None, None],
-        encoding: Any,
-    ) -> Generator[GenerationResponse | ToolCallResponse, None, None]:
-        """Parse GPT-OSS model outputs to match standard format."""
-        stream = StreamableParser(encoding, role=Role.ASSISTANT)
-        thinking = False
-        current_tool_name: str | None = None
-        tool_arg_parts: list[str] = []
-
-        for response in responses:
-            if isinstance(response, ToolCallResponse):
-                yield response
-                continue
-
-            try:
-                stream.process(response.token)
-            except HarmonyError:
-                logger.error("Encountered critical Harmony Error, returning early")
-                return
-
-            delta = stream.last_content_delta
-            ch = stream.current_channel
-            recipient = stream.current_recipient
-
-            if recipient != current_tool_name:
-                if current_tool_name is not None:
-                    prefix = "functions."
-                    if current_tool_name.startswith(prefix):
-                        current_tool_name = current_tool_name[len(prefix) :]
-                    yield ToolCallResponse(
-                        tool_calls=[
-                            ToolCallItem(
-                                name=current_tool_name,
-                                arguments="".join(tool_arg_parts).strip(),
-                            )
-                        ],
-                        usage=response.usage,
-                    )
-                    tool_arg_parts = []
-                current_tool_name = recipient
-
-            # If inside a tool call, accumulate arguments
-            if current_tool_name is not None:
-                if delta:
-                    tool_arg_parts.append(delta)
-                continue
-
-            if ch == "analysis" and not thinking:
-                thinking = True
-                yield response.model_copy(update={"text": "<think>"})
-
-            if ch != "analysis" and thinking:
-                thinking = False
-                yield response.model_copy(update={"text": "</think>"})
-
-            if delta:
-                yield response.model_copy(update={"text": delta})
-
-            if response.finish_reason is not None:
-                if thinking:
-                    yield response.model_copy(update={"text": "</think>"})
-                yield response
 
     @staticmethod
     def _patch_kimi_tokenizer(tokenizer: TokenizerWrapper) -> None:

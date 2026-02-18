@@ -25,7 +25,6 @@ import resource
 import time
 from typing import Literal
 
-
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE, EXO_TRACING_ENABLED
 from exo.shared.models.model_cards import ModelId, ModelTask
 from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
@@ -33,7 +32,6 @@ from exo.shared.types.api import ImageGenerationStats
 from exo.shared.types.chunks import (
     ErrorChunk,
     ImageChunk,
-    PrefillProgressChunk,
     TokenChunk,
     ToolCallChunk,
 )
@@ -296,6 +294,7 @@ def main(
                                                     stats=response.stats,
                                                     logprob=response.logprob,
                                                     top_logprobs=response.top_logprobs,
+                                                    is_thinking=response.is_thinking,
                                                 ),
                                             )
                                         )
@@ -482,8 +481,6 @@ def main(
             if isinstance(current_status, RunnerShutdown):
                 engine.cleanup()
                 break
-
-
 
 
 def _send_image_chunk(
