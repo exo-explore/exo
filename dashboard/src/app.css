@@ -16,8 +16,8 @@
 	/* Gotham-inspired accent colors */
 	--exo-grid: oklch(0.25 0 0);
 	--exo-scanline: oklch(0.15 0 0);
-	--exo-glow-yellow: 0 0 20px oklch(0.85 0.18 85 / 0.3);
-	--exo-glow-yellow-strong: 0 0 40px oklch(0.85 0.18 85 / 0.5);
+	--exo-glow-yellow: oklch(0.85 0.18 85 / 0.3);
+	--exo-glow-yellow-strong: oklch(0.85 0.18 85 / 0.5);
 	
 	/* Theme Variables */
 	--radius: 0.375rem;
@@ -39,6 +39,67 @@
 	--border: oklch(0.22 0 0);
 	--input: oklch(0.22 0 0);
 	--ring: var(--exo-yellow);
+
+	/* Adaptive text colors (used via utility classes below) */
+	--text-primary: oklch(0.9 0 0);
+	--text-secondary: oklch(0.9 0 0 / 0.9);
+	--text-muted: oklch(0.9 0 0 / 0.7);
+	--text-faint: oklch(0.9 0 0 / 0.5);
+	--text-ghost: oklch(0.9 0 0 / 0.4);
+	--text-subtle: oklch(0.9 0 0 / 0.6);
+	--text-dim: oklch(0.9 0 0 / 0.3);
+	--text-whisper: oklch(0.9 0 0 / 0.8);
+	--exo-bg-hover: oklch(0.18 0 0);
+}
+
+/* ============================================================
+   LIGHT THEME - Applied when html does NOT have .dark class
+   ============================================================ */
+html:not(.dark) {
+	/* Override EXO brand colors for light mode */
+	--exo-black: oklch(0.97 0 0);
+	--exo-dark-gray: oklch(0.94 0 0);
+	--exo-medium-gray: oklch(0.88 0 0);
+	--exo-light-gray: oklch(0.45 0 0);
+	--exo-yellow: oklch(0.20 0.02 85);
+	--exo-yellow-darker: oklch(0.15 0.02 85);
+	--exo-yellow-glow: oklch(0.30 0.03 85);
+
+	--exo-grid: oklch(0.88 0 0);
+	--exo-scanline: oklch(0.92 0 0);
+	--exo-glow-yellow: oklch(0.20 0.02 85 / 0.08);
+	--exo-glow-yellow-strong: oklch(0.20 0.02 85 / 0.12);
+
+	/* Theme Variables */
+	--background: oklch(0.97 0 0);
+	--foreground: oklch(0.15 0 0);
+	--card: oklch(0.94 0 0);
+	--card-foreground: oklch(0.15 0 0);
+	--popover: oklch(0.96 0 0);
+	--popover-foreground: oklch(0.15 0 0);
+	--primary: oklch(0.20 0.02 85);
+	--primary-foreground: oklch(0.97 0 0);
+	--secondary: oklch(0.90 0 0);
+	--secondary-foreground: oklch(0.15 0 0);
+	--muted: oklch(0.92 0 0);
+	--muted-foreground: oklch(0.45 0 0);
+	--accent: oklch(0.90 0 0);
+	--accent-foreground: oklch(0.15 0 0);
+	--destructive: oklch(0.55 0.25 25);
+	--border: oklch(0.85 0 0);
+	--input: oklch(0.88 0 0);
+	--ring: oklch(0.20 0.02 85);
+
+	/* Adaptive text colors for light mode */
+	--text-primary: oklch(0.15 0 0);
+	--text-secondary: oklch(0.15 0 0 / 0.9);
+	--text-muted: oklch(0.15 0 0 / 0.7);
+	--text-faint: oklch(0.15 0 0 / 0.5);
+	--text-ghost: oklch(0.15 0 0 / 0.4);
+	--text-subtle: oklch(0.15 0 0 / 0.6);
+	--text-dim: oklch(0.15 0 0 / 0.3);
+	--text-whisper: oklch(0.15 0 0 / 0.8);
+	--exo-bg-hover: oklch(0.90 0 0);
 }
 
 @theme inline {
@@ -264,6 +325,327 @@
 input:focus, textarea:focus {
 	outline: none;
 	box-shadow: none;
+}
+
+/* ============================================================
+   LIGHT MODE: Override hardcoded white/black text colors
+   Components use text-white/XX extensively - in light mode these
+   need to become dark text. We override at the CSS level so we
+   don't have to touch every single component.
+   ============================================================ */
+html:not(.dark) {
+	/* text-white variants → dark text */
+	& .text-white\/90,
+	& .text-white\/80,
+	& .text-white\/70,
+	& .text-white\/60 {
+		color: var(--foreground) !important;
+	}
+
+	/* Muted text-white variants → dark text with reduced alpha via color-mix */
+	& .text-white\/50 {
+		color: color-mix(in oklch, var(--foreground) 50%, transparent) !important;
+	}
+	& .text-white\/40 {
+		color: color-mix(in oklch, var(--foreground) 40%, transparent) !important;
+	}
+	& .text-white\/30 {
+		color: color-mix(in oklch, var(--foreground) 30%, transparent) !important;
+	}
+
+	/* bg-black variants → light bg */
+	& .bg-black\/40,
+	& .bg-black\/50,
+	& .bg-black\/60,
+	& .bg-black\/80 {
+		background-color: oklch(0.92 0 0 / 0.5) !important;
+	}
+
+	/* bg-exo-black opacity variants */
+	& [class*="bg-exo-black/"] {
+		background-color: oklch(0.92 0 0 / 0.5) !important;
+	}
+
+	/* shadow-black → softer shadow */
+	& [class*="shadow-black"] {
+		--tw-shadow-color: oklch(0 0 0 / 0.08) !important;
+	}
+
+	/* Scrollbar light mode */
+	& ::-webkit-scrollbar-track {
+		background: oklch(0.94 0 0) !important;
+	}
+	& ::-webkit-scrollbar-thumb {
+		background: oklch(0.78 0 0) !important;
+	}
+	& ::-webkit-scrollbar-thumb:hover {
+		background: oklch(0.40 0 0) !important;
+	}
+
+	/* Command panel light mode */
+	& .command-panel {
+		background: linear-gradient(
+			180deg,
+			oklch(0.96 0 0 / 0.95) 0%,
+			oklch(0.94 0 0 / 0.98) 100%
+		) !important;
+		border-color: oklch(0.85 0 0) !important;
+		box-shadow: 
+			inset 0 1px 0 oklch(1 0 0 / 0.5),
+			0 4px 20px oklch(0 0 0 / 0.08) !important;
+	}
+
+	/* Glow text - no glow in light mode, just subtle shadow */
+	& .glow-text {
+		text-shadow: 
+			0 0 10px oklch(0 0 0 / 0.06),
+			0 0 20px oklch(0 0 0 / 0.03) !important;
+	}
+
+	/* Grid bg */
+	& .grid-bg {
+		background-image: 
+			linear-gradient(oklch(0.85 0 0 / 0.3) 1px, transparent 1px),
+			linear-gradient(90deg, oklch(0.85 0 0 / 0.3) 1px, transparent 1px) !important;
+	}
+
+	/* Scanlines - very subtle in light mode */
+	& .scanlines::before {
+		background: repeating-linear-gradient(
+			0deg,
+			transparent,
+			transparent 2px,
+			oklch(0 0 0 / 0.015) 2px,
+			oklch(0 0 0 / 0.015) 4px
+		) !important;
+	}
+
+	/* CRT screen effect */
+	& .crt-screen {
+		background: radial-gradient(
+			ellipse at center,
+			oklch(0.96 0 0) 0%,
+			oklch(0.94 0 0) 50%,
+			oklch(0.92 0 0) 100%
+		) !important;
+		box-shadow:
+			inset 0 0 100px oklch(0 0 0 / 0.05),
+			0 0 50px oklch(0 0 0 / 0.03) !important;
+	}
+
+	/* Graph links */
+	& .graph-link {
+		stroke: oklch(0.35 0 0 / 0.5) !important;
+		filter: none !important;
+	}
+
+	& .graph-link-active {
+		stroke: oklch(0.20 0 0 / 0.8) !important;
+		filter: none !important;
+	}
+
+	/* Shooting stars - hide in light mode */
+	& .shooting-stars {
+		display: none !important;
+	}
+
+	/* Logo: invert white→black + subtle dark shadow */
+	& img[alt="EXO"] {
+		filter: invert(1) drop-shadow(0 0 10px oklch(0 0 0 / 0.15)) !important;
+	}
+
+	/* Status indicator colors */
+	& .bg-exo-yellow.rounded-full {
+		box-shadow: 0 0 6px oklch(0 0 0 / 0.15);
+	}
+
+	/* Red/green/blue semantic colors stay mostly the same but darken slightly */
+	& .text-red-400 {
+		color: oklch(0.55 0.22 25) !important;
+	}
+	& .text-green-400 {
+		color: oklch(0.50 0.18 155) !important;
+	}
+	& .text-blue-200 {
+		color: oklch(0.50 0.16 250) !important;
+	}
+	& .text-blue-300 {
+		color: oklch(0.50 0.17 250) !important;
+	}
+	& .text-blue-400 {
+		color: oklch(0.50 0.18 250) !important;
+	}
+
+	/* bg-red variants */
+	& .bg-red-500\/10 {
+		background-color: oklch(0.55 0.22 25 / 0.08) !important;
+	}
+	& .bg-red-500\/20 {
+		background-color: oklch(0.55 0.22 25 / 0.12) !important;
+	}
+	& .bg-red-500\/30 {
+		background-color: oklch(0.55 0.22 25 / 0.15) !important;
+	}
+
+	/* Input/textarea backgrounds */
+	& textarea,
+	& input[type="text"] {
+		color: var(--foreground) !important;
+	}
+	& textarea::placeholder,
+	& input::placeholder {
+		color: oklch(0.45 0 0 / 0.5) !important;
+	}
+
+	/* KaTeX / Math colors in light mode */
+	& .katex,
+	& .katex .mord,
+	& .katex .minner,
+	& .katex .mop,
+	& .katex .mbin,
+	& .katex .mrel,
+	& .katex .mpunct {
+		color: oklch(0.15 0 0) !important;
+	}
+
+	& .katex .frac-line,
+	& .katex .overline-line,
+	& .katex .underline-line,
+	& .katex .hline,
+	& .katex .rule {
+		border-color: oklch(0.25 0 0) !important;
+		background: oklch(0.25 0 0) !important;
+	}
+
+	& .katex .sqrt-line {
+		border-color: oklch(0.25 0 0) !important;
+	}
+
+	& .katex svg {
+		fill: oklch(0.25 0 0) !important;
+		stroke: oklch(0.25 0 0) !important;
+	}
+
+	& .katex svg path {
+		stroke: oklch(0.25 0 0) !important;
+	}
+
+	& .katex .delimsizing,
+	& .katex .delim-size1,
+	& .katex .delim-size2,
+	& .katex .delim-size3,
+	& .katex .delim-size4,
+	& .katex .mopen,
+	& .katex .mclose {
+		color: oklch(0.35 0 0) !important;
+	}
+
+	/* Code blocks in light mode */
+	& .hljs {
+		color: oklch(0.25 0 0) !important;
+	}
+
+	& .code-block-wrapper,
+	& .math-display-wrapper {
+		background: oklch(0.96 0 0) !important;
+		border-color: oklch(0.85 0 0) !important;
+	}
+
+	& .code-block-header,
+	& .math-display-header {
+		background: oklch(0.93 0 0) !important;
+		border-color: oklch(0.87 0 0) !important;
+	}
+
+	/* Inline code */
+	& .inline-code {
+		background: oklch(0.90 0 0) !important;
+		color: oklch(0.25 0 0) !important;
+	}
+
+	/* Blockquote */
+	& blockquote {
+		background: oklch(0.94 0 0) !important;
+	}
+
+	/* Table */
+	& th {
+		background: oklch(0.92 0 0) !important;
+		border-color: oklch(0.82 0 0) !important;
+	}
+	& td {
+		border-color: oklch(0.85 0 0) !important;
+	}
+	& hr {
+		border-color: oklch(0.85 0 0) !important;
+	}
+
+	/* hljs syntax colors for light mode */
+	& .hljs-keyword,
+	& .hljs-selector-tag,
+	& .hljs-literal,
+	& .hljs-section,
+	& .hljs-link {
+		color: oklch(0.50 0.25 300) !important;
+	}
+
+	& .hljs-string,
+	& .hljs-title,
+	& .hljs-name,
+	& .hljs-type,
+	& .hljs-attribute,
+	& .hljs-symbol,
+	& .hljs-bullet,
+	& .hljs-addition,
+	& .hljs-variable,
+	& .hljs-template-tag,
+	& .hljs-template-variable {
+		color: oklch(0.45 0.12 55) !important;
+	}
+
+	& .hljs-comment,
+	& .hljs-quote,
+	& .hljs-deletion,
+	& .hljs-meta {
+		color: oklch(0.55 0 0) !important;
+	}
+
+	& .hljs-number,
+	& .hljs-regexp,
+	& .hljs-built_in {
+		color: oklch(0.45 0.16 160) !important;
+	}
+
+	& .hljs-function,
+	& .hljs-class .hljs-title {
+		color: oklch(0.45 0.18 250) !important;
+	}
+
+	/* LaTeX proof/theorem blocks */
+	& .latex-proof {
+		background: oklch(0.97 0 0) !important;
+		border-left-color: oklch(0.70 0 0) !important;
+	}
+	& .latex-proof-header {
+		color: oklch(0.25 0 0) !important;
+	}
+	& .latex-proof-content {
+		color: oklch(0.15 0 0) !important;
+	}
+	& .latex-proof-content::after {
+		color: oklch(0.45 0 0) !important;
+	}
+
+	& .latex-theorem {
+		background: oklch(0.95 0 0) !important;
+		border-color: oklch(0.82 0 0) !important;
+	}
+
+	& .latex-diagram-placeholder {
+		background: oklch(0.97 0 0) !important;
+		border-color: oklch(0.82 0 0) !important;
+		color: oklch(0.35 0 0) !important;
+	}
 }
 
 /* Shooting Stars Animation */
