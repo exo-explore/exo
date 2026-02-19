@@ -19,7 +19,12 @@ from exo.shared.types.api import (
     ToolCall,
     Usage,
 )
-from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
+from exo.shared.types.chunks import (
+    ErrorChunk,
+    PrefillProgressChunk,
+    TokenChunk,
+    ToolCallChunk,
+)
 from exo.shared.types.common import CommandId
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 
@@ -123,67 +128,81 @@ def chunk_to_response(
 
 async def generate_chat_stream(
     command_id: CommandId,
-    chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
+    chunk_stream: AsyncGenerator[
+        PrefillProgressChunk | ErrorChunk | ToolCallChunk | TokenChunk, None
+    ],
 ) -> AsyncGenerator[str, None]:
     """Generate Chat Completions API streaming events from chunks."""
     last_usage: Usage | None = None
 
     async for chunk in chunk_stream:
-        if isinstance(chunk, ErrorChunk):
-            error_response = ErrorResponse(
-                error=ErrorInfo(
-                    message=chunk.error_message or "Internal server error",
-                    type="InternalServerError",
-                    code=500,
-                )
-            )
-            yield f"data: {error_response.model_dump_json()}\n\n"
-            yield "data: [DONE]\n\n"
-            return
+        match chunk:
+            case PrefillProgressChunk():
+                # Use SSE comment so third-party clients ignore it
+                yield f": prefill_progress {chunk.model_dump_json()}\n\n"
 
-        last_usage = chunk.usage or last_usage
-
-        if isinstance(chunk, ToolCallChunk):
-            tool_call_deltas = [
-                ToolCall(
-                    id=tool.id,
-                    index=i,
-                    function=tool,
-                )
-                for i, tool in enumerate(chunk.tool_calls)
-            ]
-            tool_response = ChatCompletionResponse(
-                id=command_id,
-                created=int(time.time()),
-                model=chunk.model,
-                choices=[
-                    StreamingChoiceResponse(
-                        index=0,
-                        delta=ChatCompletionMessage(
-                            role="assistant",
-                            tool_calls=tool_call_deltas,
-                        ),
-                        finish_reason="tool_calls",
+            case ErrorChunk():
+                error_response = ErrorResponse(
+                    error=ErrorInfo(
+                        message=chunk.error_message or "Internal server error",
+                        type="InternalServerError",
+                        code=500,
                     )
-                ],
-                usage=last_usage,
-            )
-            yield f"data: {tool_response.model_dump_json()}\n\n"
-            yield "data: [DONE]\n\n"
-            return
+                )
+                yield f"data: {error_response.model_dump_json()}\n\n"
+                yield "data: [DONE]\n\n"
+                return
 
-        chunk_response = chunk_to_response(chunk, command_id)
-        if chunk.finish_reason is not None:
-            chunk_response = chunk_response.model_copy(update={"usage": last_usage})
-        yield f"data: {chunk_response.model_dump_json()}\n\n"
+            case ToolCallChunk():
+                last_usage = chunk.usage or last_usage
 
-        if chunk.finish_reason is not None:
-            yield "data: [DONE]\n\n"
+                tool_call_deltas = [
+                    ToolCall(
+                        id=tool.id,
+                        index=i,
+                        function=tool,
+                    )
+                    for i, tool in enumerate(chunk.tool_calls)
+                ]
+                tool_response = ChatCompletionResponse(
+                    id=command_id,
+                    created=int(time.time()),
+                    model=chunk.model,
+                    choices=[
+                        StreamingChoiceResponse(
+                            index=0,
+                            delta=ChatCompletionMessage(
+                                role="assistant",
+                                tool_calls=tool_call_deltas,
+                            ),
+                            finish_reason="tool_calls",
+                        )
+                    ],
+                    usage=last_usage,
+                )
+                yield f"data: {tool_response.model_dump_json()}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            case TokenChunk():
+                last_usage = chunk.usage or last_usage
+
+                chunk_response = chunk_to_response(chunk, command_id)
+                if chunk.finish_reason is not None:
+                    chunk_response = chunk_response.model_copy(
+                        update={"usage": last_usage}
+                    )
+                yield f"data: {chunk_response.model_dump_json()}\n\n"
+
+                if chunk.finish_reason is not None:
+                    yield "data: [DONE]\n\n"
 
 
 async def collect_chat_response(
     command_id: CommandId,
-    chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
+    chunk_stream: AsyncGenerator[
+        ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressChunk, None
+    ],
 ) -> AsyncGenerator[str]:
     # This is an AsyncGenerator[str] rather than returning a ChatCompletionReponse because
     # FastAPI handles the cancellation better but wouldn't auto-serialize for some reason
@@ -197,38 +216,43 @@ async def collect_chat_response(
     last_usage: Usage | None = None
 
     async for chunk in chunk_stream:
-        if isinstance(chunk, ErrorChunk):
-            error_message = chunk.error_message or "Internal server error"
-            break
+        match chunk:
+            case PrefillProgressChunk():
+                continue
 
-        if model is None:
-            model = chunk.model
+            case ErrorChunk():
+                error_message = chunk.error_message or "Internal server error"
+                break
 
-        last_usage = chunk.usage or last_usage
-
-        if isinstance(chunk, TokenChunk):
-            text_parts.append(chunk.text)
-            if chunk.logprob is not None:
-                logprobs_content.append(
-                    LogprobsContentItem(
-                        token=chunk.text,
-                        logprob=chunk.logprob,
-                        top_logprobs=chunk.top_logprobs or [],
+            case TokenChunk():
+                if model is None:
+                    model = chunk.model
+                last_usage = chunk.usage or last_usage
+                text_parts.append(chunk.text)
+                if chunk.logprob is not None:
+                    logprobs_content.append(
+                        LogprobsContentItem(
+                            token=chunk.text,
+                            logprob=chunk.logprob,
+                            top_logprobs=chunk.top_logprobs or [],
+                        )
                     )
-                )
+                if chunk.finish_reason is not None:
+                    finish_reason = chunk.finish_reason
 
-        if isinstance(chunk, ToolCallChunk):
-            tool_calls.extend(
-                ToolCall(
-                    id=tool.id,
-                    index=i,
-                    function=tool,
+            case ToolCallChunk():
+                if model is None:
+                    model = chunk.model
+                last_usage = chunk.usage or last_usage
+                tool_calls.extend(
+                    ToolCall(
+                        id=tool.id,
+                        index=i,
+                        function=tool,
+                    )
+                    for i, tool in enumerate(chunk.tool_calls)
                 )
-                for i, tool in enumerate(chunk.tool_calls)
-            )
-
-        if chunk.finish_reason is not None:
-            finish_reason = chunk.finish_reason
+                finish_reason = chunk.finish_reason
 
     if error_message is not None:
         raise ValueError(error_message)

@@ -126,11 +126,37 @@ final class ExoProcessController: ObservableObject {
             return
         }
         process.terminationHandler = nil
-        if process.isRunning {
-            process.terminate()
-        }
-        self.process = nil
         status = .stopped
+
+        guard process.isRunning else {
+            self.process = nil
+            return
+        }
+
+        let proc = process
+        self.process = nil
+
+        Task.detached {
+            proc.interrupt()
+
+            for _ in 0..<50 {
+                if !proc.isRunning { return }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+
+            if proc.isRunning {
+                proc.terminate()
+            }
+
+            for _ in 0..<30 {
+                if !proc.isRunning { return }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+
+            if proc.isRunning {
+                kill(proc.processIdentifier, SIGKILL)
+            }
+        }
     }
 
     func restart() {

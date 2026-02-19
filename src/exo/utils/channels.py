@@ -1,3 +1,4 @@
+import contextlib
 import multiprocessing as mp
 from dataclasses import dataclass, field
 from math import inf
@@ -132,7 +133,8 @@ class MpSender[T]:
     def close(self) -> None:
         if not self._state.closed.is_set():
             self._state.closed.set()
-        self._state.buffer.put(_MpEndOfStream())
+        with contextlib.suppress(Exception):
+            self._state.buffer.put_nowait(_MpEndOfStream())
         self._state.buffer.close()
 
     # == unique to Mp channels ==
@@ -204,6 +206,8 @@ class MpReceiver[T]:
     def close(self) -> None:
         if not self._state.closed.is_set():
             self._state.closed.set()
+        with contextlib.suppress(Exception):
+            self._state.buffer.put_nowait(_MpEndOfStream())
         self._state.buffer.close()
 
     # == unique to Mp channels ==

@@ -7,7 +7,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from mlx.core import MX_ARRAY_TREE
 
 def tree_map(
-    fn: Callable, tree: Any, *rest: Any, is_leaf: Optional[Callable] = ...
+    fn: Callable[..., Any],
+    tree: Any,
+    *rest: Any,
+    is_leaf: Callable[..., bool] | None = ...,
 ) -> Any:
     """Applies ``fn`` to the leaves of the Python tree ``tree`` and
     returns a new collection with the results.
@@ -44,11 +47,11 @@ def tree_map(
     """
 
 def tree_map_with_path(
-    fn: Callable,
+    fn: Callable[..., Any],
     tree: Any,
     *rest: Any,
-    is_leaf: Optional[Callable] = ...,
-    path: Optional[Any] = ...,
+    is_leaf: Callable[..., bool] | None = ...,
+    path: str | None = ...,
 ) -> Any:
     """Applies ``fn`` to the path and leaves of the Python tree ``tree`` and
     returns a new collection with the results.
@@ -80,9 +83,9 @@ def tree_map_with_path(
 def tree_flatten(
     tree: Any,
     prefix: str = ...,
-    is_leaf: Optional[Callable] = ...,
-    destination: Optional[Union[List[Tuple[str, Any]], Dict[str, Any]]] = ...,
-) -> Union[List[Tuple[str, Any]], Dict[str, Any]]:
+    is_leaf: Callable[..., bool] | None = ...,
+    destination: list[tuple[str, Any]] | dict[str, Any] | None = ...,
+) -> list[tuple[str, Any]] | dict[str, Any]:
     """Flattens a Python tree to a list of key, value tuples.
 
     The keys are using the dot notation to define trees of arbitrary depth and
@@ -118,7 +121,7 @@ def tree_flatten(
             the Python tree.
     """
 
-def tree_unflatten(tree: Union[List[Tuple[str, Any]], Dict[str, Any]]) -> Any:
+def tree_unflatten(tree: list[tuple[str, Any]] | dict[str, Any]) -> Any:
     """Recreate a Python tree from its flat representation.
 
     .. code-block:: python

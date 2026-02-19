@@ -241,6 +241,11 @@ class Worker:
                     cancelled_task_id=cancelled_task_id, runner_id=runner_id
                 ):
                     await self.runners[runner_id].cancel_task(cancelled_task_id)
+                    await self.event_sender.send(
+                        TaskStatusUpdated(
+                            task_id=task.task_id, task_status=TaskStatus.Complete
+                        )
+                    )
                 case ImageEdits() if task.task_params.total_input_chunks > 0:
                     # Assemble image from chunks and inject into task
                     cmd_id = task.command_id

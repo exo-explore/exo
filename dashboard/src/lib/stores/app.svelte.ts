@@ -273,6 +273,11 @@ export interface TokenData {
   topLogprobs: TopLogprob[];
 }
 
+export interface PrefillProgress {
+  processed: number;
+  total: number;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant" | "system";
@@ -306,13 +311,14 @@ const IMAGE_PARAMS_STORAGE_KEY = "exo-image-generation-params";
 export interface ImageGenerationParams {
   // Basic params
   size:
+    | "auto"
     | "512x512"
     | "768x768"
     | "1024x1024"
     | "1024x768"
     | "768x1024"
-    | "1024x1365"
-    | "1365x1024";
+    | "1024x1536"
+    | "1536x1024";
   quality: "low" | "medium" | "high";
   outputFormat: "png" | "jpeg";
   numImages: number;
@@ -336,7 +342,7 @@ export interface EditingImage {
 }
 
 const DEFAULT_IMAGE_PARAMS: ImageGenerationParams = {
-  size: "1024x1024",
+  size: "auto",
   quality: "medium",
   outputFormat: "png",
   numImages: 1,
@@ -519,6 +525,10 @@ class AppStore {
   ttftMs = $state<number | null>(null); // Time to first token in ms
   tps = $state<number | null>(null); // Tokens per second
   totalTokens = $state<number>(0); // Total tokens in current response
+  prefillProgress = $state<PrefillProgress | null>(null);
+
+  // Abort controller for stopping generation
+  private currentAbortController: AbortController | null = null;
 
   // Topology state
   topologyData = $state<TopologyData | null>(null);
@@ -2004,6 +2014,7 @@ class AppStore {
     reader: ReadableStreamDefaultReader<Uint8Array>,
     targetConversationId: string,
     onChunk: (parsed: T) => void,
+    onEvent?: Record<string, (data: unknown) => void>,
   ): Promise<void> {
     const decoder = new TextDecoder();
     let buffer = "";
@@ -2023,6 +2034,24 @@ class AppStore {
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
+
+        // Handle SSE comments (": key json") for prefill progress etc.
+        if (trimmed.startsWith(": ") && onEvent) {
+          const comment = trimmed.slice(2);
+          const spaceIdx = comment.indexOf(" ");
+          if (spaceIdx > 0) {
+            const key = comment.slice(0, spaceIdx);
+            if (onEvent[key]) {
+              try {
+                const parsed = JSON.parse(comment.slice(spaceIdx + 1));
+                onEvent[key](parsed);
+              } catch {
+                // Skip malformed JSON in comment
+              }
+            }
+          }
+          continue;
+        }
 
         if (trimmed.startsWith("data: ")) {
           const data = trimmed.slice(6);
@@ -2255,6 +2284,9 @@ class AppStore {
       let firstTokenTime: number | null = null;
       let tokenCount = 0;
 
+      const abortController = new AbortController();
+      this.currentAbortController = abortController;
+
       const response = await fetch("/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -2271,6 +2303,7 @@ class AppStore {
             enable_thinking: enableThinking,
           }),
         }),
+        signal: abortController.signal,
       });
 
       if (!response.ok) {
@@ -2308,6 +2341,11 @@ class AppStore {
         reader,
         targetConversationId,
         (parsed) => {
+          // Clear prefill progress when first token data arrives
+          if (this.prefillProgress) {
+            this.prefillProgress = null;
+          }
+
           const choice = parsed.choices?.[0];
           const tokenContent = choice?.delta?.content;
 
@@ -2370,7 +2408,25 @@ class AppStore {
             this.persistConversation(targetConversationId);
           }
         },
+        {
+          prefill_progress: (data) => {
+            // TaggedModel wraps as {"PrefillProgressChunk": {...}}
+            // model_dump_json() uses snake_case (by_alias defaults to False)
+            const raw = data as Record<string, unknown>;
+            const inner = (raw["PrefillProgressChunk"] ?? raw) as {
+              processed_tokens: number;
+              total_tokens: number;
+            };
+            this.prefillProgress = {
+              processed: inner.processed_tokens,
+              total: inner.total_tokens,
+            };
+          },
+        },
       );
+
+      // Clear prefill progress after stream ends
+      this.prefillProgress = null;
 
       // Calculate final TPS
       if (firstTokenTime !== null && tokenCount > 1) {
@@ -2402,18 +2458,29 @@ class AppStore {
         this.persistConversation(targetConversationId);
       }
     } catch (error) {
-      console.error("Error sending message:", error);
-      this.handleStreamingError(
-        error,
-        targetConversationId,
-        assistantMessage.id,
-        "Failed to get response",
-      );
+      if (error instanceof DOMException && error.name === "AbortError") {
+        // User stopped generation — not an error
+      } else {
+        console.error("Error sending message:", error);
+        this.handleStreamingError(
+          error,
+          targetConversationId,
+          assistantMessage.id,
+          "Failed to get response",
+        );
+      }
     } finally {
+      this.currentAbortController = null;
+      this.prefillProgress = null;
       this.isLoading = false;
       this.currentResponse = "";
       this.saveConversationsToStorage();
     }
+  }
+
+  stopGeneration(): void {
+    this.currentAbortController?.abort();
+    this.currentAbortController = null;
   }
 
   /**
@@ -3042,6 +3109,7 @@ export const isLoading = () => appStore.isLoading;
 export const ttftMs = () => appStore.ttftMs;
 export const tps = () => appStore.tps;
 export const totalTokens = () => appStore.totalTokens;
+export const prefillProgress = () => appStore.prefillProgress;
 export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
 export const runners = () => appStore.runners;
@@ -3059,6 +3127,7 @@ export const topologyOnlyMode = () => appStore.getTopologyOnlyMode();
 export const chatSidebarVisible = () => appStore.getChatSidebarVisible();
 
 // Actions
+export const stopGeneration = () => appStore.stopGeneration();
 export const startChat = () => appStore.startChat();
 export const sendMessage = (
   content: string,

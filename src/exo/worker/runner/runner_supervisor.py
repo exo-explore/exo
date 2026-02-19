@@ -103,7 +103,7 @@ class RunnerSupervisor:
         self._event_sender.close()
         self._cancel_sender.send(TaskId("CANCEL_CURRENT_TASK"))
         self._cancel_sender.close()
-        self.runner_process.join(1)
+        self.runner_process.join(5)
         if not self.runner_process.is_alive():
             logger.info("Runner process succesfully terminated")
             return
@@ -191,7 +191,7 @@ class RunnerSupervisor:
         logger.info("Checking runner's status")
         if self.runner_process.is_alive():
             logger.info("Runner was found to be alive, attempting to join process")
-            await to_thread.run_sync(self.runner_process.join, 1)
+            await to_thread.run_sync(self.runner_process.join, 5)
         rc = self.runner_process.exitcode
         logger.info(f"RunnerSupervisor exited with exit code {rc}")
         if rc == 0:

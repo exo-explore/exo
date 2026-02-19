@@ -1,8 +1,7 @@
 use crate::ext::MultiaddrExt;
-use crate::keep_alive;
 use delegate::delegate;
 use either::Either;
-use futures::FutureExt;
+use futures_lite::FutureExt;
 use futures_timer::Delay;
 use libp2p::core::transport::PortUse;
 use libp2p::core::{ConnectedPoint, Endpoint};
@@ -363,7 +362,7 @@ impl NetworkBehaviour for Behaviour {
         }
 
         // retry connecting to all mDNS peers periodically (fails safely if already connected)
-        if self.retry_delay.poll_unpin(cx).is_ready() {
+        if self.retry_delay.poll(cx).is_ready() {
             for (p, mas) in self.mdns_discovered.clone() {
                 for ma in mas {
                     self.dial(p, ma)
