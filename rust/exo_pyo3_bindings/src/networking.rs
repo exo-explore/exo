@@ -8,7 +8,7 @@
 use crate::r#const::MPSC_CHANNEL_SIZE;
 use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _};
 use crate::ext::{ResultExt as _, TokioMpscReceiverExt as _, TokioMpscSenderExt as _};
-use crate::ident::{PyKeypair, PyPeerId};
+use crate::ident::PyKeypair;
 use crate::pyclass;
 use libp2p::futures::StreamExt as _;
 use libp2p::gossipsub;
@@ -119,7 +119,7 @@ struct PyConnectionUpdate {
 
     /// Identity of the peer that we have connected to or disconnected from.
     #[pyo3(get)]
-    peer_id: PyPeerId,
+    peer_id: String,
 
     /// Remote connection's IPv4 address.
     #[pyo3(get)]
@@ -251,7 +251,7 @@ async fn networking_task(
                         // send connection event to channel (or exit if connection closed)
                         if let Err(e) = connection_update_tx.send(PyConnectionUpdate {
                             update_type: PyConnectionUpdateType::Connected,
-                            peer_id: PyPeerId(peer_id),
+                            peer_id: peer_id.to_base58(),
                             remote_ipv4,
                             remote_tcp_port,
                         }).await {
@@ -272,7 +272,7 @@ async fn networking_task(
                         // send disconnection event to channel (or exit if connection closed)
                         if let Err(e) = connection_update_tx.send(PyConnectionUpdate {
                             update_type: PyConnectionUpdateType::Disconnected,
-                            peer_id: PyPeerId(peer_id),
+                            peer_id: peer_id.to_base58(),
                             remote_ipv4,
                             remote_tcp_port,
                         }).await {
