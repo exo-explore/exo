@@ -232,11 +232,11 @@ def shard_and_load(
 
     # Estimate timeout based on model size (5x default for large queued workloads)
     base_timeout = float(os.environ.get("EXO_MODEL_LOAD_TIMEOUT", "300"))
-    model_size_gb = get_weights_size(shard_metadata).in_bytes / (1024**3)
-    timeout_seconds = base_timeout + model_size_gb
+    model_size = get_weights_size(shard_metadata)
+    timeout_seconds = base_timeout + model_size.in_gb
     logger.info(
         f"Evaluating model parameters with timeout of {timeout_seconds:.0f}s "
-        f"(model size: {model_size_gb:.1f}GB)"
+        f"(model size: {model_size.in_gb:.1f}GB)"
     )
 
     match shard_metadata:
@@ -642,18 +642,17 @@ def set_wired_limit_for_model(model_size: Memory):
     if not mx.metal.is_available():
         return
 
-    model_bytes = model_size.in_bytes
-    max_rec_size = int(mx.metal.device_info()["max_recommended_working_set_size"])
-    if model_bytes > 0.9 * max_rec_size:
-        model_mb = model_bytes // 2**20
-        max_rec_mb = max_rec_size // 2**20
+    max_rec_size = Memory.from_bytes(
+        int(mx.metal.device_info()["max_recommended_working_set_size"])
+    )
+    if model_size > 0.9 * max_rec_size:
         logger.warning(
-            f"Generating with a model that requires {model_mb} MB "
-            f"which is close to the maximum recommended size of {max_rec_mb} "
+            f"Generating with a model that requires {model_size.in_float_mb:.1f} MB "
+            f"which is close to the maximum recommended size of {max_rec_size.in_float_mb:.1f} "
             "MB. This can be slow. See the documentation for possible work-arounds: "
             "https://github.com/ml-explore/mlx-lm/tree/main#large-models"
         )
-    mx.set_wired_limit(max_rec_size)
+    mx.set_wired_limit(max_rec_size.in_bytes)
     logger.info(f"Wired limit set to {max_rec_size}.")
 
 

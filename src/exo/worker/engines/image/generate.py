@@ -166,7 +166,7 @@ def generate_image(
                             else 0.0
                         )
 
-                        peak_memory_gb = mx.get_peak_memory() / (1024**3)
+                        peak_memory = Memory.from_bytes(mx.get_peak_memory())
 
                         stats = ImageGenerationStats(
                             seconds_per_step=seconds_per_step,
@@ -175,7 +175,7 @@ def generate_image(
                             num_images=num_images,
                             image_width=width,
                             image_height=height,
-                            peak_memory_usage=Memory.from_gb(peak_memory_gb),
+                            peak_memory_usage=peak_memory,
                         )
 
                     buffer = io.BytesIO()

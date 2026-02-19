@@ -14,7 +14,7 @@ def test_apply_node_download_progress():
     event = DownloadCompleted(
         node_id=NodeId("node-1"),
         shard_metadata=shard1,
-        total_bytes=Memory(),
+        total=Memory(),
     )
 
     new_state = apply_node_download_progress(
@@ -30,12 +30,12 @@ def test_apply_two_node_download_progress():
     event1 = DownloadCompleted(
         node_id=NodeId("node-1"),
         shard_metadata=shard1,
-        total_bytes=Memory(),
+        total=Memory(),
     )
     event2 = DownloadCompleted(
         node_id=NodeId("node-1"),
         shard_metadata=shard2,
-        total_bytes=Memory(),
+        total=Memory(),
     )
     state = State(downloads={NodeId("node-1"): [event1]})
 

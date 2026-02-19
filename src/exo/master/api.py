@@ -1322,7 +1322,7 @@ class API:
                     name=card.model_id.short(),
                     description="",
                     tags=[],
-                    storage_size_megabytes=int(card.storage_size.in_mb),
+                    storage_size_megabytes=card.storage_size.in_mb,
                     supports_tensor=card.supports_tensor,
                     tasks=[task.value for task in card.tasks],
                     is_custom=is_custom_card(card.model_id),

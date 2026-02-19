@@ -10,9 +10,9 @@ from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
 class DownloadProgressData(CamelCaseModel):
-    total_bytes: Memory
-    downloaded_bytes: Memory
-    downloaded_bytes_this_session: Memory
+    total: Memory
+    downloaded: Memory
+    downloaded_this_session: Memory
 
     completed_files: int
     total_files: int
@@ -34,7 +34,7 @@ class DownloadPending(BaseDownloadProgress):
 
 
 class DownloadCompleted(BaseDownloadProgress):
-    total_bytes: Memory
+    total: Memory
 
 
 class DownloadFailed(BaseDownloadProgress):
@@ -86,9 +86,9 @@ class RepoDownloadProgress(BaseModel):
     shard: ShardMetadata
     completed_files: int
     total_files: int
-    downloaded_bytes: Memory
-    downloaded_bytes_this_session: Memory
-    total_bytes: Memory
+    downloaded: Memory
+    downloaded_this_session: Memory
+    total: Memory
     overall_speed: float
     overall_eta: timedelta
     status: Literal["not_started", "in_progress", "complete"]
