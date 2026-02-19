@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -407,6 +408,56 @@ def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
                 func["arguments"] = json.loads(args)
 
 
+def _collect_nested_property_names(schema: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    properties: dict[str, Any] = schema.get("properties", {})  # type: ignore[reportAny]
+    for prop_spec in properties.values():  # pyright: ignore[reportAny]
+        if not isinstance(prop_spec, dict):
+            continue
+        if prop_spec.get("type") == "array":  # type: ignore[reportAny]
+            items: dict[str, Any] | None = prop_spec.get("items")  # type: ignore[reportAny]
+            if isinstance(items, dict) and items.get("type") == "object":  # type: ignore[reportAny]
+                inner_props: dict[str, Any] = items.get("properties", {})  # type: ignore[reportAny]
+                for k in inner_props:  # pyright: ignore[reportUnknownVariableType]
+                    names.add(str(k))  # pyright: ignore[reportUnknownArgumentType]
+                names.update(_collect_nested_property_names(items))  # pyright: ignore[reportUnknownArgumentType]
+    return names
+
+
+def _schemas_lost_in_prompt(prompt: str, tools: list[dict[str, Any]]) -> bool:
+    """Return True if nested property names from any tool schema are absent."""
+    for tool in tools:
+        fn: dict[str, Any] = tool.get("function", {})  # type: ignore
+        params: dict[str, Any] = fn.get("parameters", {})  # type: ignore
+        nested = _collect_nested_property_names(params)
+        if nested and not all(name in prompt for name in nested):
+            return True
+    return False
+
+
+_LOSSY_TEMPLATE_PATTERN = re.compile(
+    r"""inner_type\s*==\s*["']object \| object["']\s*or\s*inner_type\|length\s*>\s*\d+""",
+)
+
+
+def _patch_lossy_chat_template(template: str) -> str | None:
+    """Patch chat templates that collapse nested object schemas to ``any[]``.
+
+    Some templates (e.g., GPT-OSS) have a guard like::
+
+        inner_type == "object | object" or inner_type|length > 50
+
+    The length check silently drops complex array-of-object schemas.
+    We remove the length guard, keeping only the object-union check.
+    Returns the patched template, or *None* if no patch was needed.
+    """
+    patched, n = _LOSSY_TEMPLATE_PATTERN.subn(
+        lambda m: m.group(0).split(" or ")[0],  # keep only the object-union check
+        template,
+    )
+    return patched if n > 0 else None
+
+
 def apply_chat_template(
     tokenizer: TokenizerWrapper,
     task_params: TextGenerationTaskParams,
@@ -453,13 +504,25 @@ def apply_chat_template(
         extra_kwargs["enable_thinking"] = task_params.enable_thinking
         extra_kwargs["thinking"] = task_params.enable_thinking
 
+    patched_template: str | None = None
+    if task_params.tools:
+        original_template: str | None = getattr(tokenizer, "chat_template", None)
+        if isinstance(original_template, str):
+            patched_template = _patch_lossy_chat_template(original_template)
+            if patched_template is not None:
+                logger.info("Patched lossy chat template (removed inner_type length guard)")
+
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
         tools=task_params.tools,
+        **({"chat_template": patched_template} if patched_template is not None else {}),
         **extra_kwargs,
     )
+
+    if task_params.tools and _schemas_lost_in_prompt(prompt, task_params.tools):
+        logger.warning("Chat template lost nested tool schemas even after patching")
 
     if partial_assistant_content:
         prompt += partial_assistant_content

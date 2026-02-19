@@ -38,6 +38,8 @@ class Scenario:
     expected_function: str | None = None
     required_arg_keys: list[str] | None = None
     tool_result: str | None = None
+    nested_array_key: str | None = None
+    required_item_keys: list[str] | None = None
 
 
 def load_scenarios(path: Path) -> list[Scenario]:
@@ -105,6 +107,8 @@ def load_scenarios(path: Path) -> list[Scenario]:
                 expected_function=s.get("expected_function"),
                 required_arg_keys=s.get("required_arg_keys"),
                 tool_result=tool_result,
+                nested_array_key=s.get("nested_array_key"),
+                required_item_keys=s.get("required_item_keys"),
             )
         )
 
@@ -144,6 +148,32 @@ def validate_args(args_str: str, required_keys: list[str]) -> tuple[bool, str | 
     missing = [k for k in required_keys if k not in args]
     if missing:
         return False, f"Missing keys: {missing}"
+    return True, None
+
+
+def validate_nested_args(
+    args_str: str,
+    array_key: str,
+    required_item_keys: list[str],
+) -> tuple[bool, str | None]:
+    """Check that args[array_key] is a list of objects with required keys."""
+    try:
+        args = json.loads(args_str)
+    except (json.JSONDecodeError, TypeError) as exc:
+        return False, f"Invalid JSON: {exc}"
+    if not isinstance(args, dict):
+        return False, f"Expected dict, got {type(args).__name__}"
+    arr = args.get(array_key)
+    if not isinstance(arr, list):
+        return False, f"'{array_key}' is not an array (got {type(arr).__name__})"
+    if len(arr) == 0:
+        return False, f"'{array_key}' is empty"
+    for i, item in enumerate(arr):
+        if not isinstance(item, dict):
+            return False, f"'{array_key}[{i}]' is not an object (got {type(item).__name__})"
+        missing = [k for k in required_item_keys if k not in item]
+        if missing:
+            return False, f"'{array_key}[{i}]' missing keys: {missing}"
     return True, None
 
 
@@ -699,6 +729,15 @@ def run_scenario(
                 checks["valid_arguments"] = ok
             else:
                 checks["valid_arguments"] = True
+            if scenario.nested_array_key and scenario.required_item_keys:
+                ok, nested_err = validate_nested_args(
+                    parsed.tool_call["arguments"],
+                    scenario.nested_array_key,
+                    scenario.required_item_keys,
+                )
+                checks["valid_nested_structure"] = ok
+                if not ok:
+                    args_err = nested_err
         else:
             checks["correct_function"] = False
             checks["valid_arguments"] = False

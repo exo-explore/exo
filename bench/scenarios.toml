@@ -39,6 +39,30 @@ description = "Product category to filter by"
 type = "number"
 description = "Maximum price in USD"
 
+[tools.create_todos]
+description = "Create a structured todo list"
+required = ["todos"]
+
+[tools.create_todos.properties.todos]
+type = "array"
+description = "List of todo items"
+
+[tools.create_todos.properties.todos.items]
+type = "object"
+required = ["content", "status", "priority"]
+
+[tools.create_todos.properties.todos.items.properties.content]
+type = "string"
+description = "The todo item text"
+
+[tools.create_todos.properties.todos.items.properties.status]
+type = "string"
+description = "Status: pending, in_progress, or completed"
+
+[tools.create_todos.properties.todos.items.properties.priority]
+type = "string"
+description = "Priority: low, normal, or high"
+
 # -- Should call a tool --
 
 [[scenarios]]
@@ -218,6 +242,48 @@ arguments = { location = "Paris" }
 role = "tool"
 tool_call_id = "call_4"
 content = '{"temperature": "18C", "condition": "cloudy"}'
+
+# -- Nested object schema (regression for lossy chat template rendering) --
+
+[[scenarios]]
+name = "nested_schema_tool_call"
+description = "Tool call with nested object array schema -> create_todos"
+expect_tool_call = true
+expected_function = "create_todos"
+required_arg_keys = ["todos"]
+nested_array_key = "todos"
+required_item_keys = ["content", "status", "priority"]
+tools = ["create_todos"]
+
+[[scenarios.messages]]
+role = "user"
+content = "Create a todo list with 3 items to learn Python"
+
+# -- Tool name integrity (regression for harmony token leaking into name) --
+
+[tools.glob]
+description = "Search for files matching a glob pattern in the codebase"
+required = ["pattern"]
+
+[tools.glob.properties.pattern]
+type = "string"
+description = "The glob pattern to match files against, e.g. '**/*.py'"
+
+[tools.glob.properties.path]
+type = "string"
+description = "The directory to search in"
+
+[[scenarios]]
+name = "tool_name_integrity"
+description = "Tool name must not contain harmony tokens like <|channel|>"
+expect_tool_call = true
+expected_function = "glob"
+required_arg_keys = ["pattern"]
+tools = ["glob"]
+
+[[scenarios.messages]]
+role = "user"
+content = "Find all Python files in the src directory"
 
 # -- Should NOT call a tool --
 
