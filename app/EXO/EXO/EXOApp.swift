@@ -70,7 +70,7 @@ struct EXOApp: App {
             menuBarIcon
                 .onReceive(controller.$isFirstLaunchReady) { ready in
                     if ready {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                             self.firstLaunchPopout.onComplete = { [weak controller] in
                                 controller?.markOnboardingCompleted()
                             }

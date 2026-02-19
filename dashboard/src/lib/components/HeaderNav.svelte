@@ -37,7 +37,7 @@
     <div class="absolute left-6 top-1/2 -translate-y-1/2">
       <button
         onclick={handleToggleSidebar}
-        class="p-2 rounded border border-exo-medium-gray/40 hover:border-exo-yellow/50 transition-colors cursor-pointer"
+        class="p-2 rounded border border-exo-light-gray/30 hover:border-exo-yellow/50 hover:bg-exo-medium-gray/30 transition-colors cursor-pointer"
         title={sidebarVisible ? "Hide sidebar" : "Show sidebar"}
         aria-label={sidebarVisible
           ? "Hide conversation sidebar"
@@ -83,7 +83,7 @@
     <img
       src="/exo-logo.png"
       alt="EXO"
-      class="h-18 drop-shadow-[0_0_20px_rgba(255,215,0,0.5)]"
+      class="h-18 drop-shadow-[0_0_4px_rgba(255,215,0,0.3)]"
     />
   </button>
 
