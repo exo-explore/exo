@@ -1,6 +1,7 @@
 """Claude Messages API adapter for converting requests/responses."""
 
 import json
+import re
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -61,6 +62,22 @@ def _extract_tool_result_text(block: ClaudeToolResultBlock) -> str:
     return "".join(sub_block.text for sub_block in block.content)
 
 
+# Matches "x-anthropic-billing-header: ...;" (with optional trailing newline)
+# or similar telemetry headers that change every request and break KV prefix caching.
+_VOLATILE_HEADER_RE = re.compile(r"^x-anthropic-[^\n]*;\n?", re.MULTILINE)
+
+
+def _strip_volatile_headers(text: str) -> str:
+    """Remove Anthropic billing/telemetry headers from system prompt text.
+
+    Claude Code prepends headers like 'x-anthropic-billing-header: cc_version=...;
+    cc_entrypoint=...; cch=...;' that contain per-request content hashes. These
+    change every request and break KV prefix caching (the prefix diverges at ~20
+    tokens instead of matching thousands of conversation tokens).
+    """
+    return _VOLATILE_HEADER_RE.sub("", text)
+
+
 def claude_request_to_text_generation(
     request: ClaudeMessagesRequest,
 ) -> TextGenerationTaskParams:
@@ -73,6 +90,8 @@ def claude_request_to_text_generation(
             instructions = request.system
         else:
             instructions = "".join(block.text for block in request.system)
+
+        instructions = _strip_volatile_headers(instructions)
         chat_template_messages.append({"role": "system", "content": instructions})
 
     # Convert messages to input
