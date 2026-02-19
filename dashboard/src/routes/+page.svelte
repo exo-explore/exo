@@ -140,23 +140,35 @@
       if (!edge.sourceRdmaIface && !edge.sinkRdmaIface) continue;
 
       const sourceNode = data?.nodes?.[edge.source];
-      if (isMacStudio(sourceNode) && edge.sourceRdmaIface === "rdma_en2" && rdmaCtl[edge.source]?.enabled) {
+      if (
+        isMacStudio(sourceNode) &&
+        edge.sourceRdmaIface === "rdma_en2" &&
+        rdmaCtl[edge.source]?.enabled
+      ) {
         affectedConnections.push({
           nodeId: edge.source,
-          nodeName: sourceNode?.friendly_name || edge.source.slice(0, 8) + "...",
+          nodeName:
+            sourceNode?.friendly_name || edge.source.slice(0, 8) + "...",
           peerNodeId: edge.target,
-          peerNodeName: data?.nodes?.[edge.target]?.friendly_name || edge.target.slice(0, 8) + "...",
+          peerNodeName:
+            data?.nodes?.[edge.target]?.friendly_name ||
+            edge.target.slice(0, 8) + "...",
           rdmaIface: "en2",
         });
       }
 
       const sinkNode = data?.nodes?.[edge.target];
-      if (isMacStudio(sinkNode) && edge.sinkRdmaIface === "rdma_en2" && rdmaCtl[edge.target]?.enabled) {
+      if (
+        isMacStudio(sinkNode) &&
+        edge.sinkRdmaIface === "rdma_en2" &&
+        rdmaCtl[edge.target]?.enabled
+      ) {
         affectedConnections.push({
           nodeId: edge.target,
           nodeName: sinkNode?.friendly_name || edge.target.slice(0, 8) + "...",
           peerNodeId: edge.source,
-          peerNodeName: sourceNode?.friendly_name || edge.source.slice(0, 8) + "...",
+          peerNodeName:
+            sourceNode?.friendly_name || edge.source.slice(0, 8) + "...",
           rdmaIface: "en2",
         });
       }
@@ -2032,7 +2044,8 @@
             class="absolute top-full left-0 mt-2 w-96 p-4 rounded border border-red-500/30 bg-[#1a1a1a]/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
           >
             <p class="text-xs text-white/80 mb-3">
-              The Thunderbolt 5 port next to the Ethernet port on Mac Studio does
+              The Thunderbolt 5 port next to the Ethernet port on Mac Studio
+              does
               <span class="text-red-400 font-semibold">not support RDMA</span>.
               Move the cable to one of the other three TB5 ports.
             </p>
@@ -2051,49 +2064,181 @@
 
             <!-- Mac Studio back panel illustration -->
             <div class="bg-black/40 rounded p-3 mb-3">
-              <p class="text-[10px] font-mono text-white/30 uppercase tracking-wider mb-2">Mac Studio — Rear Panel</p>
-              <svg viewBox="0 0 320 72" class="w-full" xmlns="http://www.w3.org/2000/svg">
-                <rect x="1" y="1" width="318" height="70" rx="6" ry="6"
-                  fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+              <p
+                class="text-[10px] font-mono text-white/30 uppercase tracking-wider mb-2"
+              >
+                Mac Studio — Rear Panel
+              </p>
+              <svg
+                viewBox="0 0 320 72"
+                class="w-full"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <rect
+                  x="1"
+                  y="1"
+                  width="318"
+                  height="70"
+                  rx="6"
+                  ry="6"
+                  fill="none"
+                  stroke="rgba(255,255,255,0.12)"
+                  stroke-width="1"
+                />
                 <!-- TB5 port 1 -->
-                <rect x="24" y="22" width="28" height="14" rx="4"
-                  fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1"/>
-                <text x="38" y="52" text-anchor="middle"
-                  fill="rgba(255,255,255,0.25)" style="font-size:7px;font-family:ui-monospace,monospace;">TB5</text>
+                <rect
+                  x="24"
+                  y="22"
+                  width="28"
+                  height="14"
+                  rx="4"
+                  fill="none"
+                  stroke="rgba(255,255,255,0.3)"
+                  stroke-width="1"
+                />
+                <text
+                  x="38"
+                  y="52"
+                  text-anchor="middle"
+                  fill="rgba(255,255,255,0.25)"
+                  style="font-size:7px;font-family:ui-monospace,monospace;"
+                  >TB5</text
+                >
                 <!-- TB5 port 2 -->
-                <rect x="62" y="22" width="28" height="14" rx="4"
-                  fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1"/>
-                <text x="76" y="52" text-anchor="middle"
-                  fill="rgba(255,255,255,0.25)" style="font-size:7px;font-family:ui-monospace,monospace;">TB5</text>
+                <rect
+                  x="62"
+                  y="22"
+                  width="28"
+                  height="14"
+                  rx="4"
+                  fill="none"
+                  stroke="rgba(255,255,255,0.3)"
+                  stroke-width="1"
+                />
+                <text
+                  x="76"
+                  y="52"
+                  text-anchor="middle"
+                  fill="rgba(255,255,255,0.25)"
+                  style="font-size:7px;font-family:ui-monospace,monospace;"
+                  >TB5</text
+                >
                 <!-- TB5 port 3 -->
-                <rect x="100" y="22" width="28" height="14" rx="4"
-                  fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1"/>
-                <text x="114" y="52" text-anchor="middle"
-                  fill="rgba(255,255,255,0.25)" style="font-size:7px;font-family:ui-monospace,monospace;">TB5</text>
+                <rect
+                  x="100"
+                  y="22"
+                  width="28"
+                  height="14"
+                  rx="4"
+                  fill="none"
+                  stroke="rgba(255,255,255,0.3)"
+                  stroke-width="1"
+                />
+                <text
+                  x="114"
+                  y="52"
+                  text-anchor="middle"
+                  fill="rgba(255,255,255,0.25)"
+                  style="font-size:7px;font-family:ui-monospace,monospace;"
+                  >TB5</text
+                >
                 <!-- TB5 port 4: INCOMPATIBLE (en2) — equally spaced with ports 1-3 -->
-                <rect x="138" y="22" width="28" height="14" rx="4"
-                  fill="rgba(239,68,68,0.1)" stroke="rgba(239,68,68,0.7)" stroke-width="1.5"/>
-                <line x1="142" y1="25" x2="162" y2="33" stroke="rgba(239,68,68,0.8)" stroke-width="1.5" stroke-linecap="round"/>
-                <line x1="162" y1="25" x2="142" y2="33" stroke="rgba(239,68,68,0.8)" stroke-width="1.5" stroke-linecap="round"/>
-                <text x="152" y="52" text-anchor="middle"
-                  fill="rgba(239,68,68,0.6)" style="font-size:7px;font-family:ui-monospace,monospace;font-weight:600;">en2</text>
+                <rect
+                  x="138"
+                  y="22"
+                  width="28"
+                  height="14"
+                  rx="4"
+                  fill="rgba(239,68,68,0.1)"
+                  stroke="rgba(239,68,68,0.7)"
+                  stroke-width="1.5"
+                />
+                <line
+                  x1="142"
+                  y1="25"
+                  x2="162"
+                  y2="33"
+                  stroke="rgba(239,68,68,0.8)"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                />
+                <line
+                  x1="162"
+                  y1="25"
+                  x2="142"
+                  y2="33"
+                  stroke="rgba(239,68,68,0.8)"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                />
+                <text
+                  x="152"
+                  y="52"
+                  text-anchor="middle"
+                  fill="rgba(239,68,68,0.6)"
+                  style="font-size:7px;font-family:ui-monospace,monospace;font-weight:600;"
+                  >en2</text
+                >
                 <!-- Ethernet port -->
-                <rect x="196" y="19" width="24" height="20" rx="2"
-                  fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
-                <rect x="200" y="23" width="16" height="12" rx="1"
-                  fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="0.75"/>
-                <text x="208" y="52" text-anchor="middle"
-                  fill="rgba(255,255,255,0.25)" style="font-size:7px;font-family:ui-monospace,monospace;">ETH</text>
+                <rect
+                  x="196"
+                  y="19"
+                  width="24"
+                  height="20"
+                  rx="2"
+                  fill="none"
+                  stroke="rgba(255,255,255,0.2)"
+                  stroke-width="1"
+                />
+                <rect
+                  x="200"
+                  y="23"
+                  width="16"
+                  height="12"
+                  rx="1"
+                  fill="none"
+                  stroke="rgba(255,255,255,0.12)"
+                  stroke-width="0.75"
+                />
+                <text
+                  x="208"
+                  y="52"
+                  text-anchor="middle"
+                  fill="rgba(255,255,255,0.25)"
+                  style="font-size:7px;font-family:ui-monospace,monospace;"
+                  >ETH</text
+                >
                 <!-- Green checkmarks on working ports -->
-                <circle cx="38" cy="62" r="3" fill="none" stroke="rgba(74,222,128,0.5)" stroke-width="0.75"/>
-                <circle cx="76" cy="62" r="3" fill="none" stroke="rgba(74,222,128,0.5)" stroke-width="0.75"/>
-                <circle cx="114" cy="62" r="3" fill="none" stroke="rgba(74,222,128,0.5)" stroke-width="0.75"/>
+                <circle
+                  cx="38"
+                  cy="62"
+                  r="3"
+                  fill="none"
+                  stroke="rgba(74,222,128,0.5)"
+                  stroke-width="0.75"
+                />
+                <circle
+                  cx="76"
+                  cy="62"
+                  r="3"
+                  fill="none"
+                  stroke="rgba(74,222,128,0.5)"
+                  stroke-width="0.75"
+                />
+                <circle
+                  cx="114"
+                  cy="62"
+                  r="3"
+                  fill="none"
+                  stroke="rgba(74,222,128,0.5)"
+                  stroke-width="0.75"
+                />
               </svg>
             </div>
 
             <p class="text-xs text-white/50">
-              <span class="text-green-400">Fix:</span> Move the Thunderbolt cable to any of the
-              three leftmost ports (all support RDMA).
+              <span class="text-green-400">Fix:</span> Move the Thunderbolt cable
+              to any of the three leftmost ports (all support RDMA).
             </p>
           </div>
         </div>
