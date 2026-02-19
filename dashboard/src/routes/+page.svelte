@@ -2084,11 +2084,6 @@
                   fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="0.75"/>
                 <text x="208" y="52" text-anchor="middle"
                   fill="rgba(255,255,255,0.25)" style="font-size:7px;font-family:ui-monospace,monospace;">ETH</text>
-                <!-- HDMI port -->
-                <rect x="248" y="21" width="26" height="16" rx="3"
-                  fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="0.75"/>
-                <text x="261" y="52" text-anchor="middle"
-                  fill="rgba(255,255,255,0.15)" style="font-size:7px;font-family:ui-monospace,monospace;">HDMI</text>
                 <!-- Green checkmarks on working ports -->
                 <circle cx="38" cy="62" r="3" fill="none" stroke="rgba(74,222,128,0.5)" stroke-width="0.75"/>
                 <circle cx="76" cy="62" r="3" fill="none" stroke="rgba(74,222,128,0.5)" stroke-width="0.75"/>
