@@ -562,6 +562,8 @@ class API:
             if command_id in self._text_generation_queues:
                 del self._text_generation_queues[command_id]
 
+
+
     async def _collect_text_generation_with_stats(
         self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
