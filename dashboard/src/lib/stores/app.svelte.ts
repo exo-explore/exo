@@ -527,6 +527,9 @@ class AppStore {
   totalTokens = $state<number>(0); // Total tokens in current response
   prefillProgress = $state<PrefillProgress | null>(null);
 
+  // Abort controller for stopping generation
+  private currentAbortController: AbortController | null = null;
+
   // Topology state
   topologyData = $state<TopologyData | null>(null);
   instances = $state<Record<string, unknown>>({});
@@ -2281,6 +2284,9 @@ class AppStore {
       let firstTokenTime: number | null = null;
       let tokenCount = 0;
 
+      const abortController = new AbortController();
+      this.currentAbortController = abortController;
+
       const response = await fetch("/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -2297,6 +2303,7 @@ class AppStore {
             enable_thinking: enableThinking,
           }),
         }),
+        signal: abortController.signal,
       });
 
       if (!response.ok) {
@@ -2451,18 +2458,29 @@ class AppStore {
         this.persistConversation(targetConversationId);
       }
     } catch (error) {
-      console.error("Error sending message:", error);
-      this.handleStreamingError(
-        error,
-        targetConversationId,
-        assistantMessage.id,
-        "Failed to get response",
-      );
+      if (error instanceof DOMException && error.name === "AbortError") {
+        // User stopped generation — not an error
+      } else {
+        console.error("Error sending message:", error);
+        this.handleStreamingError(
+          error,
+          targetConversationId,
+          assistantMessage.id,
+          "Failed to get response",
+        );
+      }
     } finally {
+      this.currentAbortController = null;
+      this.prefillProgress = null;
       this.isLoading = false;
       this.currentResponse = "";
       this.saveConversationsToStorage();
     }
+  }
+
+  stopGeneration(): void {
+    this.currentAbortController?.abort();
+    this.currentAbortController = null;
   }
 
   /**
@@ -3109,6 +3127,7 @@ export const topologyOnlyMode = () => appStore.getTopologyOnlyMode();
 export const chatSidebarVisible = () => appStore.getChatSidebarVisible();
 
 // Actions
+export const stopGeneration = () => appStore.stopGeneration();
 export const startChat = () => appStore.startChat();
 export const sendMessage = (
   content: string,

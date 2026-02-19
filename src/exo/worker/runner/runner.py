@@ -82,7 +82,11 @@ from exo.worker.engines.image import (
 )
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.cache import KVPrefixCache
-from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
+from exo.worker.engines.mlx.generator.generate import (
+    PrefillCancelled,
+    mlx_generate,
+    warmup_inference,
+)
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     detect_thinking_prompt_suffix,
@@ -299,8 +303,14 @@ def main(
                     assert tokenizer
                     assert check_for_cancel_every
 
-                    # Define callback to send prefill progress events directly
-                    def on_prefill_progress(processed: int, total: int) -> None:
+                    # Define callback to send prefill progress events
+                    # and check for cancellation between prefill chunks.
+                    def on_prefill_progress(
+                        processed: int,
+                        total: int,
+                        _task_id: TaskId = task.task_id,
+                        _group: mx.distributed.Group | None = group,
+                    ) -> None:
                         if device_rank == 0:
                             event_sender.send(
                                 PrefillProgress(
@@ -310,6 +320,12 @@ def main(
                                     total_tokens=total,
                                 )
                             )
+                        cancelled_tasks.update(cancel_receiver.collect())
+                        want_to_cancel = (_task_id in cancelled_tasks) or (
+                            TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
+                        )
+                        if mx_any(want_to_cancel, _group):
+                            raise PrefillCancelled()
 
                     try:
                         _check_for_debug_prompts(task_params)
@@ -406,6 +422,8 @@ def main(
                                             )
                                         )
 
+                    except PrefillCancelled:
+                        logger.info(f"Prefill cancelled for task {task.task_id}")
                     # can we make this more explicit?
                     except Exception as e:
                         if device_rank == 0:
