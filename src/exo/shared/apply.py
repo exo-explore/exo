@@ -42,6 +42,7 @@ from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import (
+    LiteNodeRegistration,
     MacmonMetrics,
     MacThunderboltConnections,
     MacThunderboltIdentifiers,
@@ -243,6 +244,11 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
     node_rdma_ctl = {
         key: value for key, value in state.node_rdma_ctl.items() if key != event.node_id
     }
+    node_identities = {
+        key: value
+        for key, value in state.node_identities.items()
+        if key != event.node_id
+    }
     # Only recompute cycles if the leaving node had TB bridge enabled
     leaving_node_status = state.node_thunderbolt_bridge.get(event.node_id)
     leaving_node_had_tb_enabled = (
@@ -265,6 +271,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
             "node_thunderbolt": node_thunderbolt,
             "node_thunderbolt_bridge": node_thunderbolt_bridge,
             "node_rdma_ctl": node_rdma_ctl,
+            "node_identities": node_identities,
             "thunderbolt_bridge_cycles": thunderbolt_bridge_cycles,
         }
     )
@@ -370,6 +377,30 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             update["node_rdma_ctl"] = {
                 **state.node_rdma_ctl,
                 event.node_id: NodeRdmaCtlStatus(enabled=info.enabled),
+            }
+        case LiteNodeRegistration():
+            current_identity = state.node_identities.get(event.node_id, NodeIdentity())
+            new_identity = current_identity.model_copy(
+                update={
+                    "model_id": info.model,
+                    "chip_id": info.chip,
+                    "os_version": info.os_version,
+                    "friendly_name": info.friendly_name,
+                    "node_type": "lite",
+                }
+            )
+            update["node_identities"] = {
+                **state.node_identities,
+                event.node_id: new_identity,
+            }
+            update["node_memory"] = {
+                **state.node_memory,
+                event.node_id: MemoryUsage.from_bytes(
+                    ram_total=info.ram_total,
+                    ram_available=info.ram_available,
+                    swap_total=0,
+                    swap_available=0,
+                ),
             }
 
     return state.model_copy(update=update)

@@ -334,6 +334,17 @@ class NodeDiskUsage(TaggedModel):
         )
 
 
+class LiteNodeRegistration(TaggedModel):
+    """Device info reported by a lite node (e.g. iPhone) via heartbeat."""
+
+    model: str  # e.g. "iPhone 16 Pro"
+    chip: str  # e.g. "Apple A18 Pro"
+    os_version: str  # e.g. "18.3"
+    friendly_name: str  # e.g. "Sami's iPhone"
+    ram_total: int  # bytes
+    ram_available: int  # bytes
+
+
 async def _gather_iface_map() -> dict[str, str] | None:
     proc = await anyio.run_process(
         ["networksetup", "-listallhardwareports"], check=False
@@ -366,6 +377,7 @@ GatheredInfo = (
     | MiscData
     | StaticNodeInformation
     | NodeDiskUsage
+    | LiteNodeRegistration
 )
 
 

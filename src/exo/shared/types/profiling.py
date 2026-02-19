@@ -68,6 +68,8 @@ class SystemPerformanceProfile(CamelCaseModel):
 
 InterfaceType = Literal["wifi", "ethernet", "maybe_ethernet", "thunderbolt", "unknown"]
 
+NodeType = Literal["full", "lite"]
+
 
 class NetworkInterfaceInfo(CamelCaseModel):
     name: str
@@ -83,6 +85,7 @@ class NodeIdentity(CamelCaseModel):
     friendly_name: str = "Unknown"
     os_version: str = "Unknown"
     os_build_version: str = "Unknown"
+    node_type: NodeType = "full"
 
 
 class NodeNetworkInfo(CamelCaseModel):

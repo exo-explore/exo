@@ -85,6 +85,7 @@ from exo.shared.types.api import (
     ImageGenerationTaskParams,
     ImageListItem,
     ImageListResponse,
+    LiteNodeHeartbeatRequest,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
@@ -122,6 +123,7 @@ from exo.shared.types.commands import (
     ForwarderDownloadCommand,
     ImageEdits,
     ImageGeneration,
+    LiteNodeHeartbeat,
     PlaceInstance,
     SendInputChunk,
     StartDownload,
@@ -148,6 +150,7 @@ from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
+from exo.utils.info_gatherer.info_gatherer import LiteNodeRegistration
 
 _API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
 
@@ -303,6 +306,7 @@ class API:
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
         self.app.get("/v1/traces/{task_id}/stats")(self.get_trace_stats)
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
+        self.app.post("/v1/lite_node/heartbeat")(self.lite_node_heartbeat)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -365,6 +369,7 @@ class API:
                 node_network=self.state.node_network,
                 topology=self.state.topology,
                 current_instances=self.state.instances,
+                node_identities=self.state.node_identities,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -390,7 +395,14 @@ class API:
         previews: list[PlacementPreview] = []
         required_nodes = set(node_ids) if node_ids else None
 
-        if len(list(self.state.topology.list_nodes())) == 0:
+        full_node_count = sum(
+            1
+            for nid in self.state.topology.list_nodes()
+            if self.state.node_identities.get(nid) is None
+            or self.state.node_identities[nid].node_type != "lite"
+        )
+
+        if full_node_count == 0:
             return PlacementPreviewResponse(previews=[])
 
         try:
@@ -405,9 +417,7 @@ class API:
                 instance_combinations.extend(
                     [
                         (sharding, instance_meta, i)
-                        for i in range(
-                            1, len(list(self.state.topology.list_nodes())) + 1
-                        )
+                        for i in range(1, full_node_count + 1)
                     ]
                 )
         # TODO: PDD
@@ -427,6 +437,7 @@ class API:
                     topology=self.state.topology,
                     current_instances=self.state.instances,
                     required_nodes=required_nodes,
+                    node_identities=self.state.node_identities,
                 )
             except ValueError as exc:
                 if (model_card.model_id, sharding, instance_meta, 0) not in seen:
@@ -1278,11 +1289,30 @@ class API:
                 media_type="application/json",
             )
 
+    async def lite_node_heartbeat(self, payload: LiteNodeHeartbeatRequest) -> JSONResponse:
+        info = LiteNodeRegistration(
+            model=payload.model,
+            chip=payload.chip,
+            os_version=payload.os_version,
+            friendly_name=payload.friendly_name,
+            ram_total=payload.ram_total,
+            ram_available=payload.ram_available,
+        )
+        command = LiteNodeHeartbeat(
+            target_node_id=NodeId(payload.node_id),
+            info=info,
+        )
+        await self._send(command)
+        return JSONResponse({"status": "ok"})
+
     def _calculate_total_available_memory(self) -> Memory:
-        """Calculate total available memory across all nodes in bytes."""
+        """Calculate total available memory across all non-lite nodes in bytes."""
         total_available = Memory()
 
-        for memory in self.state.node_memory.values():
+        for node_id, memory in self.state.node_memory.items():
+            identity = self.state.node_identities.get(node_id)
+            if identity is not None and identity.node_type == "lite":
+                continue
             total_available += memory.ram_available
 
         return total_available

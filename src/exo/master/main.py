@@ -21,6 +21,7 @@ from exo.shared.types.commands import (
     ForwarderDownloadCommand,
     ImageEdits,
     ImageGeneration,
+    LiteNodeHeartbeat,
     PlaceInstance,
     RequestEventLog,
     SendInputChunk,
@@ -299,6 +300,7 @@ class Master:
                                 self.state.instances,
                                 self.state.node_memory,
                                 self.state.node_network,
+                                node_identities=self.state.node_identities,
                             )
                             transition_events = get_transition_events(
                                 self.state.instances, placement, self.state.tasks
@@ -343,6 +345,14 @@ class Master:
                             )
                             self.command_task_mapping.pop(
                                 command.finished_command_id, None
+                            )
+                        case LiteNodeHeartbeat():
+                            generated_events.append(
+                                NodeGatheredInfo(
+                                    node_id=command.target_node_id,
+                                    when=str(datetime.now(tz=timezone.utc)),
+                                    info=command.info,
+                                )
                             )
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages

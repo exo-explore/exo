@@ -554,6 +554,7 @@
       const clipPathId = `clip-${nodeInfo.id.replace(/[^a-zA-Z0-9]/g, "-")}`;
 
       const modelLower = modelId.toLowerCase();
+      const isLiteNode = node.node_type === "lite";
 
       // Check node states for styling
       const isHighlighted = highlightedNodes.has(nodeInfo.id);
@@ -906,6 +907,94 @@
           .attr("height", trackpadHeight)
           .attr("fill", "rgba(255,255,255,0.08)")
           .attr("rx", 2);
+      } else if (modelLower.includes("iphone")) {
+        // iPhone - rounded rectangle phone shape with Dynamic Island
+        iconBaseWidth = nodeRadius * 0.7;
+        iconBaseHeight = nodeRadius * 1.4;
+        const x = nodeInfo.x - iconBaseWidth / 2;
+        const y = nodeInfo.y - iconBaseHeight / 2;
+        const cornerRadius = iconBaseWidth * 0.2;
+        const bezel = 3;
+
+        // Phone body (outer frame)
+        nodeG
+          .append("rect")
+          .attr("class", "node-outline")
+          .attr("x", x)
+          .attr("y", y)
+          .attr("width", iconBaseWidth)
+          .attr("height", iconBaseHeight)
+          .attr("rx", cornerRadius)
+          .attr("fill", "#1a1a1a")
+          .attr("stroke", wireColor)
+          .attr("stroke-width", strokeWidth);
+
+        // Screen area (inner)
+        const screenClipId = `iphone-clip-${nodeInfo.id.replace(/[^a-zA-Z0-9]/g, "-")}`;
+        defs
+          .append("clipPath")
+          .attr("id", screenClipId)
+          .append("rect")
+          .attr("x", x + bezel)
+          .attr("y", y + bezel)
+          .attr("width", iconBaseWidth - bezel * 2)
+          .attr("height", iconBaseHeight - bezel * 2)
+          .attr("rx", cornerRadius - 1);
+
+        nodeG
+          .append("rect")
+          .attr("x", x + bezel)
+          .attr("y", y + bezel)
+          .attr("width", iconBaseWidth - bezel * 2)
+          .attr("height", iconBaseHeight - bezel * 2)
+          .attr("rx", cornerRadius - 1)
+          .attr("fill", screenFill);
+
+        // Memory fill on screen (fills from bottom up)
+        if (ramUsagePercent > 0) {
+          const memFillTotalHeight = iconBaseHeight - bezel * 2;
+          const memFillActualHeight =
+            (ramUsagePercent / 100) * memFillTotalHeight;
+          nodeG
+            .append("rect")
+            .attr("x", x + bezel)
+            .attr(
+              "y",
+              y + bezel + (memFillTotalHeight - memFillActualHeight),
+            )
+            .attr("width", iconBaseWidth - bezel * 2)
+            .attr("height", memFillActualHeight)
+            .attr("fill", "rgba(255,215,0,0.85)")
+            .attr("clip-path", `url(#${screenClipId})`);
+        }
+
+        // Dynamic Island notch (centered near top)
+        const diWidth = iconBaseWidth * 0.3;
+        const diHeight = iconBaseHeight * 0.04;
+        nodeG
+          .append("rect")
+          .attr("x", nodeInfo.x - diWidth / 2)
+          .attr("y", y + bezel + 4)
+          .attr("width", diWidth)
+          .attr("height", diHeight)
+          .attr("rx", diHeight / 2)
+          .attr("fill", "#000000");
+
+        // Apple logo on screen (centered)
+        const targetLogoHeight = iconBaseHeight * 0.14;
+        const logoScale = targetLogoHeight / LOGO_NATIVE_HEIGHT;
+        const logoX = nodeInfo.x - (LOGO_NATIVE_WIDTH * logoScale) / 2;
+        const logoY =
+          nodeInfo.y - (LOGO_NATIVE_HEIGHT * logoScale) / 2;
+        nodeG
+          .append("path")
+          .attr("d", APPLE_LOGO_PATH)
+          .attr(
+            "transform",
+            `translate(${logoX}, ${logoY}) scale(${logoScale})`,
+          )
+          .attr("fill", "#FFFFFF")
+          .attr("opacity", 0.9);
       } else {
         // Default/Unknown - holographic hexagon
         const hexRadius = nodeRadius * 0.6;
@@ -924,9 +1013,43 @@
           .attr("stroke-width", strokeWidth);
       }
 
+      // --- LITE badge for lite nodes ---
+      if (isLiteNode) {
+        const badgeX = nodeInfo.x + iconBaseWidth / 2 + 4;
+        const badgeY = nodeInfo.y - iconBaseHeight / 2 - 2;
+        const badgeFontSize = Math.max(9, nodeRadius * 0.12);
+        const badgePadH = 4;
+        const badgePadV = 2;
+        const badgeWidth = badgeFontSize * 2.8 + badgePadH * 2;
+        const badgeHeight = badgeFontSize + badgePadV * 2;
+
+        nodeG
+          .append("rect")
+          .attr("x", badgeX)
+          .attr("y", badgeY)
+          .attr("width", badgeWidth)
+          .attr("height", badgeHeight)
+          .attr("rx", 3)
+          .attr("fill", "rgba(255,215,0,0.15)")
+          .attr("stroke", "rgba(255,215,0,0.6)")
+          .attr("stroke-width", 1);
+
+        nodeG
+          .append("text")
+          .attr("x", badgeX + badgeWidth / 2)
+          .attr("y", badgeY + badgeHeight / 2)
+          .attr("text-anchor", "middle")
+          .attr("dominant-baseline", "central")
+          .attr("fill", "rgba(255,215,0,0.9)")
+          .attr("font-size", badgeFontSize)
+          .attr("font-weight", "700")
+          .attr("font-family", "SF Mono, Monaco, monospace")
+          .text("LITE");
+      }
+
       // --- Vertical GPU Bar (right side of icon) ---
-      // Show in both full mode and minimized mode (scaled appropriately)
-      if (showFullLabels || isMinimized) {
+      // Show in both full mode and minimized mode (scaled appropriately), but not for lite nodes
+      if ((showFullLabels || isMinimized) && !isLiteNode) {
         const gpuBarWidth = isMinimized
           ? Math.max(16, nodeRadius * 0.32)
           : Math.max(28, nodeRadius * 0.3);

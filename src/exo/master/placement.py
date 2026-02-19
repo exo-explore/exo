@@ -29,7 +29,7 @@ from exo.shared.types.events import (
     TaskStatusUpdated,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
+from exo.shared.types.profiling import MemoryUsage, NodeIdentity, NodeNetworkInfo
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
     DownloadOngoing,
@@ -67,8 +67,21 @@ def place_instance(
     node_memory: Mapping[NodeId, MemoryUsage],
     node_network: Mapping[NodeId, NodeNetworkInfo],
     required_nodes: set[NodeId] | None = None,
+    node_identities: Mapping[NodeId, NodeIdentity] = {},
 ) -> dict[InstanceId, Instance]:
+    lite_node_ids = {
+        nid
+        for nid, identity in node_identities.items()
+        if identity.node_type == "lite"
+    }
     cycles = topology.get_cycles()
+    if lite_node_ids:
+        filtered_cycles: list[Cycle] = []
+        for cycle in cycles:
+            filtered_nodes = [nid for nid in cycle.node_ids if nid not in lite_node_ids]
+            if filtered_nodes:
+                filtered_cycles.append(Cycle(filtered_nodes))
+        cycles = filtered_cycles
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
 
     # Filter to cycles containing all required nodes (subset matching)

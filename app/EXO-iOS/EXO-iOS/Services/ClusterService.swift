@@ -21,6 +21,7 @@ final class ClusterService {
     private let session: URLSession
     private let decoder: JSONDecoder
     private var pollingTask: Task<Void, Never>?
+    private var heartbeatTask: Task<Void, Never>?
 
     private static let connectionInfoKey = "exo_last_connection_info"
 
@@ -62,6 +63,7 @@ final class ClusterService {
             connectionState = .connected(info)
             persistConnection(info)
             startPolling()
+            startHeartbeat()
             await fetchModels(baseURL: info.baseURL)
         } catch {
             connectionState = .disconnected
@@ -87,6 +89,7 @@ final class ClusterService {
 
     func disconnect() {
         stopPolling()
+        stopHeartbeat()
         connectionState = .disconnected
         availableModels = []
         lastError = nil
@@ -116,6 +119,49 @@ final class ClusterService {
     private func stopPolling() {
         pollingTask?.cancel()
         pollingTask = nil
+    }
+
+    // MARK: - Heartbeat
+
+    private func startHeartbeat(interval: TimeInterval = 10.0) {
+        stopHeartbeat()
+        heartbeatTask = Task { [weak self] in
+            // Send immediately, then on interval
+            if let self, let connection = self.currentConnection {
+                await self.sendHeartbeat(baseURL: connection.baseURL)
+            }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(interval))
+                guard let self, !Task.isCancelled else { return }
+                guard let connection = self.currentConnection else { return }
+                await self.sendHeartbeat(baseURL: connection.baseURL)
+            }
+        }
+    }
+
+    private func stopHeartbeat() {
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
+    }
+
+    private func sendHeartbeat(baseURL: URL) async {
+        do {
+            let deviceInfo = DeviceInfoService.gather()
+            let url = baseURL.appendingPathComponent("v1/lite_node/heartbeat")
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.timeoutInterval = 5
+            request.httpBody = try JSONEncoder().encode(deviceInfo)
+            let (_, response) = try await session.data(for: request)
+
+            if let httpResponse = response as? HTTPURLResponse,
+               !(200..<300).contains(httpResponse.statusCode) {
+                // Heartbeat failed silently — will retry on next interval
+            }
+        } catch {
+            // Heartbeat failed silently — will retry on next interval
+        }
     }
 
     // MARK: - API

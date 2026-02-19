@@ -186,7 +186,9 @@
   // topology payload is missing them. Topology order is preserved exactly so
   // that the mini preview matches the main TopologyGraph layout.
   const nodeList = $derived(() => {
-    const nodesFromTopology = Object.keys(nodes).map((id) => {
+    const nodesFromTopology = Object.keys(nodes)
+      .filter((id) => nodes[id].node_type !== "lite")
+      .map((id) => {
       const info = nodes[id];
       const totalBytes =
         info.macmon_info?.memory?.ram_total ?? info.system_info?.memory ?? 0;

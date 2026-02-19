@@ -50,6 +50,7 @@ export interface NodeInfo {
   last_macmon_update: number;
   friendly_name?: string;
   os_version?: string;
+  node_type?: string;
 }
 
 export interface TopologyEdge {
@@ -81,6 +82,7 @@ interface RawNodeIdentity {
   friendlyName?: string;
   osVersion?: string;
   osBuildVersion?: string;
+  nodeType?: string;
 }
 
 interface RawMemoryUsage {
@@ -445,6 +447,7 @@ function transformTopology(
       last_macmon_update: Date.now() / 1000,
       friendly_name: identity?.friendlyName,
       os_version: identity?.osVersion,
+      node_type: identity?.nodeType,
     };
   }
 

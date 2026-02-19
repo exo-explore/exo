@@ -10,6 +10,7 @@ from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
+from exo.utils.info_gatherer.info_gatherer import GatheredInfo
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
@@ -62,6 +63,11 @@ class SendInputChunk(BaseCommand):
     chunk: InputImageChunk
 
 
+class LiteNodeHeartbeat(BaseCommand):
+    target_node_id: NodeId
+    info: GatheredInfo
+
+
 class RequestEventLog(BaseCommand):
     since_idx: int
 
@@ -96,6 +102,7 @@ Command = (
     | TaskCancelled
     | TaskFinished
     | SendInputChunk
+    | LiteNodeHeartbeat
 )
 
 

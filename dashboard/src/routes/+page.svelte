@@ -79,8 +79,9 @@
   const macosVersionMismatch = $derived.by(() => {
     if (!identitiesData) return null;
     const entries = Object.entries(identitiesData);
-    // Filter to macOS nodes (version starts with a digit, e.g. "15.3")
+    // Filter to full macOS nodes (version starts with a digit, e.g. "15.3"), excluding lite nodes
     const macosNodes = entries.filter(([_, id]) => {
+      if (id.nodeType === "lite") return false;
       const v = id.osVersion;
       return v && v !== "Unknown" && /^\d/.test(v);
     });
@@ -638,7 +639,9 @@
         models = data.data || [];
         // Restore last launch defaults if available
         const currentNodeCount = topologyData()
-          ? Object.keys(topologyData()!.nodes).length
+          ? Object.values(topologyData()!.nodes).filter(
+              (n) => n.node_type !== "lite",
+            ).length
           : 1;
         applyLaunchDefaults(models, currentNodeCount);
       }
@@ -1646,7 +1649,12 @@
     saveLaunchDefaults();
   }
 
-  const nodeCount = $derived(data ? Object.keys(data.nodes).length : 0);
+  const totalNodeCount = $derived(data ? Object.keys(data.nodes).length : 0);
+  const fullNodeCount = $derived(
+    data
+      ? Object.values(data.nodes).filter((n) => n.node_type !== "lite").length
+      : 0,
+  );
   const instanceCount = $derived(Object.keys(instanceData).length);
 
   // Helper to get the number of nodes in a placement preview
@@ -1659,7 +1667,7 @@
   }
 
   // Available min nodes options based on topology (like old dashboard)
-  const availableMinNodes = $derived(Math.max(1, nodeCount));
+  const availableMinNodes = $derived(Math.max(1, fullNodeCount));
 
   // Compute which min node values have valid previews for the current model/sharding/instance type
   // A minNodes value N is valid if there exists a placement with nodeCount >= N
@@ -1752,15 +1760,17 @@
   // Calculate total memory usage across all nodes
   const clusterMemory = $derived(() => {
     if (!data) return { used: 0, total: 0 };
-    return Object.values(data.nodes).reduce(
-      (acc, n) => {
-        const total =
-          n.macmon_info?.memory?.ram_total ?? n.system_info?.memory ?? 0;
-        const used = n.macmon_info?.memory?.ram_usage ?? 0;
-        return { used: acc.used + used, total: acc.total + total };
-      },
-      { used: 0, total: 0 },
-    );
+    return Object.values(data.nodes)
+      .filter((n) => n.node_type !== "lite")
+      .reduce(
+        (acc, n) => {
+          const total =
+            n.macmon_info?.memory?.ram_total ?? n.system_info?.memory ?? 0;
+          const used = n.macmon_info?.memory?.ram_usage ?? 0;
+          return { used: acc.used + used, total: acc.total + total };
+        },
+        { used: 0, total: 0 },
+      );
   });
 </script>
 
@@ -3091,7 +3101,7 @@
                   TOPOLOGY
                 </div>
                 <span class="text-xs text-white/70 tabular-nums"
-                  >{nodeCount} {nodeCount === 1 ? "NODE" : "NODES"}</span
+                  >{totalNodeCount} {totalNodeCount === 1 ? "NODE" : "NODES"}</span
                 >
               </div>
 

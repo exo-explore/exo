@@ -406,3 +406,13 @@ class TraceListItem(CamelCaseModel):
 
 class TraceListResponse(CamelCaseModel):
     traces: list[TraceListItem]
+
+
+class LiteNodeHeartbeatRequest(CamelCaseModel):
+    node_id: str
+    model: str
+    chip: str
+    os_version: str
+    friendly_name: str
+    ram_total: int
+    ram_available: int
