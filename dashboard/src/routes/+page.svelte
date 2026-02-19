@@ -114,6 +114,16 @@
   });
   let tb5InfoDismissed = $state(false);
 
+  // Whether the cluster has >=2 nodes with RDMA-capable (TB5) hardware
+  const hasRdmaCapableNodes = $derived.by(() => {
+    const ids = tbIdentifiers;
+    if (!ids) return false;
+    const tb5NodeCount = Object.values(ids).filter(
+      (node) => node.interfaces.length > 0,
+    ).length;
+    return tb5NodeCount >= 2;
+  });
+
   // Helper to get friendly node name from node ID
   function getNodeName(nodeId: string): string {
     const node = data?.nodes?.[nodeId];
@@ -2882,28 +2892,48 @@
                     </span>
                     MLX Ring
                   </button>
-                  <button
-                    onclick={() => {
-                      selectedInstanceType = "MlxIbv";
-                      saveLaunchDefaults();
-                    }}
-                    class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
-                    'MlxIbv'
-                      ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                      : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-                  >
-                    <span
-                      class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
-                      'MlxIbv'
-                        ? 'border-exo-yellow'
-                        : 'border-exo-medium-gray'}"
+                  <div class="group relative">
+                    <button
+                      onclick={() => {
+                        if (!hasRdmaCapableNodes) return;
+                        selectedInstanceType = "MlxIbv";
+                        saveLaunchDefaults();
+                      }}
+                      disabled={!hasRdmaCapableNodes}
+                      class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 {hasRdmaCapableNodes
+                        ? 'cursor-pointer'
+                        : 'cursor-not-allowed opacity-40'} {selectedInstanceType ===
+                        'MlxIbv' && hasRdmaCapableNodes
+                        ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                        : 'bg-transparent text-white/70 border-exo-medium-gray/50'} {hasRdmaCapableNodes &&
+                      selectedInstanceType !== 'MlxIbv'
+                        ? 'hover:border-exo-yellow/50'
+                        : ''}"
                     >
-                      {#if selectedInstanceType === "MlxIbv"}
-                        <span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
-                      {/if}
-                    </span>
-                    MLX RDMA
-                  </button>
+                      <span
+                        class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
+                          'MlxIbv' && hasRdmaCapableNodes
+                          ? 'border-exo-yellow'
+                          : 'border-exo-medium-gray'}"
+                      >
+                        {#if selectedInstanceType === "MlxIbv" && hasRdmaCapableNodes}
+                          <span class="w-2 h-2 rounded-full bg-exo-yellow"
+                          ></span>
+                        {/if}
+                      </span>
+                      MLX RDMA
+                    </button>
+                    {#if !hasRdmaCapableNodes}
+                      <div
+                        class="absolute top-full left-0 mt-2 w-64 p-3 rounded border border-blue-400/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+                      >
+                        <p class="text-xs text-white/80">
+                          RDMA requires Thunderbolt 5 hardware on at least 2
+                          nodes. Your devices do not have Thunderbolt 5.
+                        </p>
+                      </div>
+                    {/if}
+                  </div>
                 </div>
               </div>
 
