@@ -20,6 +20,7 @@ from harness import (
     instance_id_from_instance,
     nodes_used_in_instance,
     resolve_model_short_id,
+    run_planning_phase,
     settle_and_fetch_placements,
     wait_for_instance_gone,
     wait_for_instance_ready,
@@ -962,6 +963,21 @@ Examples:
 
     selected.sort(key=_placement_sort_key)
     preview = selected[0]
+
+    settle_deadline = (
+        time.monotonic() + args.settle_timeout if args.settle_timeout > 0 else None
+    )
+
+    print("Planning phase: checking downloads...", file=log)
+    run_planning_phase(
+        exo,
+        full_model_id,
+        preview,
+        args.danger_delete_downloads,
+        args.timeout,
+        settle_deadline,
+    )
+
     instance = preview["instance"]
     instance_id = instance_id_from_instance(instance)
     sharding = str(preview["sharding"])

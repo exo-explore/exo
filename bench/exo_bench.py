@@ -35,6 +35,7 @@ from harness import (
     instance_id_from_instance,
     nodes_used_in_instance,
     resolve_model_short_id,
+    run_planning_phase,
     settle_and_fetch_placements,
     wait_for_instance_gone,
     wait_for_instance_ready,
@@ -331,6 +332,20 @@ def main() -> int:
 
     if args.dry_run:
         return 0
+
+    settle_deadline = (
+        time.monotonic() + args.settle_timeout if args.settle_timeout > 0 else None
+    )
+
+    logger.info("Planning phase: checking downloads...")
+    run_planning_phase(
+        client,
+        full_model_id,
+        selected[0],
+        args.danger_delete_downloads,
+        args.timeout,
+        settle_deadline,
+    )
 
     all_rows: list[dict[str, Any]] = []
 
