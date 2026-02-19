@@ -76,14 +76,11 @@ class InputImageChunk(BaseChunk):
                 yield name, value
 
 
-GenerationChunk = TokenChunk | ImageChunk | ToolCallChunk | ErrorChunk
-
-
-class PrefillProgressChunk(TaggedModel):
+class PrefillProgressChunk(BaseChunk):
     """Data class for prefill progress events during streaming."""
 
     processed_tokens: int
     total_tokens: int
 
 
-StreamEvent = TokenChunk | PrefillProgressChunk
+GenerationChunk = TokenChunk | ImageChunk | ToolCallChunk | ErrorChunk | PrefillProgressChunk

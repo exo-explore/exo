@@ -1463,6 +1463,7 @@ class API:
                             try:
                                 await queue.send(
                                     PrefillProgressChunk(
+                                        model=event.model,
                                         processed_tokens=event.processed_tokens,
                                         total_tokens=event.total_tokens,
                                     )
