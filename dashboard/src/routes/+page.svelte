@@ -47,10 +47,14 @@
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
     nodeIdentities,
+    metaInstances,
+    deleteMetaInstance,
     type DownloadProgress,
     type PlacementPreview,
+    type MetaInstance,
   } from "$lib/stores/app.svelte";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
+  import MetaInstanceCard from "$lib/components/MetaInstanceCard.svelte";
   import { fade, fly } from "svelte/transition";
   import { cubicInOut } from "svelte/easing";
   import { onMount } from "svelte";
@@ -67,6 +71,8 @@
   const loadingPreviews = $derived(isLoadingPreviews());
   const debugEnabled = $derived(debugMode());
   const topologyOnlyEnabled = $derived(topologyOnlyMode());
+  const metaInstanceData = $derived(metaInstances());
+  const metaInstanceCount = $derived(Object.keys(metaInstanceData).length);
   const sidebarVisible = $derived(chatSidebarVisible());
   const tbBridgeCycles = $derived(thunderboltBridgeCycles());
   const tbBridgeData = $derived(nodeThunderboltBridge());
@@ -3056,6 +3062,39 @@
             </div>
           {/if}
 
+          <!-- Meta-Instances Panel -->
+          {#if metaInstanceCount > 0}
+            <div class="p-4 flex-shrink-0 border-t border-exo-yellow/10">
+              <!-- Panel Header -->
+              <div class="flex items-center gap-2 mb-4">
+                <div
+                  class="w-2 h-2 border border-purple-400/60 rotate-45"
+                ></div>
+                <h3
+                  class="text-xs text-purple-400 font-mono tracking-[0.2em] uppercase"
+                >
+                  Meta-Instances
+                </h3>
+                <div
+                  class="flex-1 h-px bg-gradient-to-r from-purple-400/30 to-transparent"
+                ></div>
+                <span class="text-[10px] text-white/40 font-mono"
+                  >{metaInstanceCount}</span
+                >
+              </div>
+
+              <div class="space-y-3">
+                {#each Object.entries(metaInstanceData) as [id, mi]}
+                  <MetaInstanceCard
+                    metaInstance={mi}
+                    onDelete={(metaInstanceId) =>
+                      deleteMetaInstance(metaInstanceId)}
+                  />
+                {/each}
+              </div>
+            </div>
+          {/if}
+
           <!-- Models Panel - Scrollable -->
           <div class="p-4 flex-1 overflow-y-auto">
             <!-- Panel Header -->
@@ -3874,6 +3913,34 @@
                         </div>
                       </div>
                     </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            <!-- Meta-Instances Section (chat sidebar) -->
+            {#if metaInstanceCount > 0}
+              <div class="p-4 border-t border-exo-yellow/10">
+                <div class="flex items-center gap-2 mb-4">
+                  <div
+                    class="w-2 h-2 border border-purple-400/60 rotate-45"
+                  ></div>
+                  <h3
+                    class="text-xs text-purple-400 font-mono tracking-[0.2em] uppercase"
+                  >
+                    Meta-Instances
+                  </h3>
+                  <div
+                    class="flex-1 h-px bg-gradient-to-r from-purple-400/30 to-transparent"
+                  ></div>
+                </div>
+                <div class="space-y-3">
+                  {#each Object.entries(metaInstanceData) as [id, mi]}
+                    <MetaInstanceCard
+                      metaInstance={mi}
+                      onDelete={(metaInstanceId) =>
+                        deleteMetaInstance(metaInstanceId)}
+                    />
                   {/each}
                 </div>
               </div>

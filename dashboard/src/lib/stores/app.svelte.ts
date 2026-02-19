@@ -72,7 +72,22 @@ export interface Instance {
     runnerToShard?: Record<string, unknown>;
     nodeToRunner?: Record<string, string>;
   };
+  metaInstanceId?: string | null;
 }
+
+export interface MetaInstance {
+  metaInstanceId: string;
+  modelId: string;
+  sharding: "Pipeline" | "Tensor";
+  instanceMeta: "MlxRing" | "MlxJaccl";
+  minNodes: number;
+  nodeIds: string[] | null;
+  placementError: string | null;
+  consecutiveFailures: number;
+  lastFailureError: string | null;
+}
+
+export type MetaInstanceStatus = "active" | "provisioning" | "error";
 
 // Granular node state types from the new state structure
 interface RawNodeIdentity {
@@ -223,6 +238,7 @@ interface RawStateResponse {
       MlxJacclInstance?: Instance;
     }
   >;
+  metaInstances?: Record<string, MetaInstance>;
   runners?: Record<string, unknown>;
   downloads?: Record<string, unknown[]>;
   // New granular node state fields
@@ -533,6 +549,7 @@ class AppStore {
   // Topology state
   topologyData = $state<TopologyData | null>(null);
   instances = $state<Record<string, unknown>>({});
+  metaInstances = $state<Record<string, MetaInstance>>({});
   runners = $state<Record<string, unknown>>({});
   downloads = $state<Record<string, unknown[]>>({});
   nodeDisk = $state<
@@ -1268,6 +1285,9 @@ class AppStore {
         this.instances = data.instances;
         this.refreshConversationModelFromInstances();
       }
+      if (data.metaInstances) {
+        this.metaInstances = data.metaInstances;
+      }
       if (data.runners) {
         this.runners = data.runners;
       }
@@ -1291,6 +1311,79 @@ class AppStore {
     } catch (error) {
       console.error("Error fetching state:", error);
     }
+  }
+
+  async createMetaInstance(
+    modelId: string,
+    sharding: "Pipeline" | "Tensor" = "Pipeline",
+    instanceMeta: "MlxRing" | "MlxJaccl" = "MlxRing",
+    minNodes: number = 1,
+    nodeIds: string[] | null = null,
+  ) {
+    try {
+      const response = await fetch("/meta_instance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model_id: modelId,
+          sharding,
+          instance_meta: instanceMeta,
+          min_nodes: minNodes,
+          node_ids: nodeIds,
+        }),
+      });
+      if (!response.ok) {
+        console.error("Failed to create meta-instance:", response.status);
+      }
+      await this.fetchState();
+    } catch (error) {
+      console.error("Error creating meta-instance:", error);
+    }
+  }
+
+  async deleteMetaInstance(metaInstanceId: string) {
+    try {
+      const response = await fetch(`/meta_instance/${metaInstanceId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!response.ok) {
+        console.error("Failed to delete meta-instance:", response.status);
+      }
+      await this.fetchState();
+    } catch (error) {
+      console.error("Error deleting meta-instance:", error);
+    }
+  }
+
+  getMetaInstanceStatus(
+    metaInstance: MetaInstance,
+  ): MetaInstanceStatus {
+    // Check if any running instance is bound to this meta-instance
+    for (const instanceWrapper of Object.values(this.instances)) {
+      if (!instanceWrapper || typeof instanceWrapper !== "object") continue;
+      const keys = Object.keys(instanceWrapper as Record<string, unknown>);
+      if (keys.length !== 1) continue;
+      const inner = (instanceWrapper as Record<string, unknown>)[keys[0]];
+      if (inner && typeof inner === "object" && (inner as Instance).metaInstanceId === metaInstance.metaInstanceId) {
+        return "active";
+      }
+    }
+    if (metaInstance.placementError) return "error";
+    return "provisioning";
+  }
+
+  getMetaInstanceBackingNodes(metaInstance: MetaInstance): string[] {
+    for (const instanceWrapper of Object.values(this.instances)) {
+      if (!instanceWrapper || typeof instanceWrapper !== "object") continue;
+      const keys = Object.keys(instanceWrapper as Record<string, unknown>);
+      if (keys.length !== 1) continue;
+      const inner = (instanceWrapper as Record<string, unknown>)[keys[0]] as Instance;
+      if (inner?.metaInstanceId === metaInstance.metaInstanceId && inner?.shardAssignments?.nodeToRunner) {
+        return Object.keys(inner.shardAssignments.nodeToRunner);
+      }
+    }
+    return [];
   }
 
   async fetchPlacementPreviews(modelId: string, showLoading = true) {
@@ -3154,6 +3247,7 @@ export const totalTokens = () => appStore.totalTokens;
 export const prefillProgress = () => appStore.prefillProgress;
 export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
+export const metaInstances = () => appStore.metaInstances;
 export const runners = () => appStore.runners;
 export const downloads = () => appStore.downloads;
 export const nodeDisk = () => appStore.nodeDisk;
@@ -3241,6 +3335,21 @@ export const toggleChatSidebarVisible = () =>
 export const setChatSidebarVisible = (visible: boolean) =>
   appStore.setChatSidebarVisible(visible);
 export const refreshState = () => appStore.fetchState();
+
+// Meta-instance actions
+export const createMetaInstance = (
+  modelId: string,
+  sharding?: "Pipeline" | "Tensor",
+  instanceMeta?: "MlxRing" | "MlxJaccl",
+  minNodes?: number,
+  nodeIds?: string[] | null,
+) => appStore.createMetaInstance(modelId, sharding, instanceMeta, minNodes, nodeIds);
+export const deleteMetaInstance = (metaInstanceId: string) =>
+  appStore.deleteMetaInstance(metaInstanceId);
+export const getMetaInstanceStatus = (metaInstance: MetaInstance) =>
+  appStore.getMetaInstanceStatus(metaInstance);
+export const getMetaInstanceBackingNodes = (metaInstance: MetaInstance) =>
+  appStore.getMetaInstanceBackingNodes(metaInstance);
 
 // Node identities (for OS version mismatch detection)
 export const nodeIdentities = () => appStore.nodeIdentities;
