@@ -74,7 +74,6 @@
     if (typeof value === "number") return value;
     if (value && typeof value === "object") {
       const v = value as Record<string, unknown>;
-      if (typeof v.in_bytes === "number") return v.in_bytes;
       if (typeof v.inBytes === "number") return v.inBytes;
     }
     return 0;
@@ -231,23 +230,14 @@
             undefined;
           let cell: CellStatus;
           if (tag === "DownloadCompleted") {
-            const totalBytes = getBytes(
-              payload.total_bytes ?? payload.totalBytes,
-            );
+            const totalBytes = getBytes(payload.total);
             cell = { kind: "completed", totalBytes, modelDirectory };
           } else if (tag === "DownloadOngoing") {
             const rawProgress =
               payload.download_progress ?? payload.downloadProgress ?? {};
             const prog = rawProgress as Record<string, unknown>;
-            const totalBytes = getBytes(
-              prog.total_bytes ??
-                prog.totalBytes ??
-                payload.total_bytes ??
-                payload.totalBytes,
-            );
-            const downloadedBytes = getBytes(
-              prog.downloaded_bytes ?? prog.downloadedBytes,
-            );
+            const totalBytes = getBytes(prog.total ?? payload.total);
+            const downloadedBytes = getBytes(prog.downloaded);
             const speed = (prog.speed as number) ?? 0;
             const etaMs =
               (prog.eta_ms as number) ?? (prog.etaMs as number) ?? 0;

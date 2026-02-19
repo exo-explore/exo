@@ -250,6 +250,11 @@ interface RawStateResponse {
   >;
   // Thunderbolt bridge cycles (nodes with bridge enabled forming loops)
   thunderboltBridgeCycles?: string[][];
+  // Disk usage per node
+  nodeDisk?: Record<
+    string,
+    { total: { inBytes: number }; available: { inBytes: number } }
+  >;
 }
 
 export interface MessageAttachment {

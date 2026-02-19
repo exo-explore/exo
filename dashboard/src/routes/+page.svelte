@@ -790,10 +790,8 @@
     if (!progress || typeof progress !== "object") return null;
 
     const prog = progress as Record<string, unknown>;
-    const totalBytes = getBytes(prog.total_bytes ?? prog.totalBytes);
-    const downloadedBytes = getBytes(
-      prog.downloaded_bytes ?? prog.downloadedBytes,
-    );
+    const totalBytes = getBytes(prog.total);
+    const downloadedBytes = getBytes(prog.downloaded);
     const speed = (prog.speed as number) ?? 0;
     const completedFiles =
       (prog.completed_files as number) ?? (prog.completedFiles as number) ?? 0;
@@ -806,8 +804,8 @@
     for (const [fileName, fileData] of Object.entries(filesObj)) {
       if (!fileData || typeof fileData !== "object") continue;
       const fd = fileData as Record<string, unknown>;
-      const fTotal = getBytes(fd.total_bytes ?? fd.totalBytes);
-      const fDownloaded = getBytes(fd.downloaded_bytes ?? fd.downloadedBytes);
+      const fTotal = getBytes(fd.total);
+      const fDownloaded = getBytes(fd.downloaded);
       files.push({
         name: fileName,
         totalBytes: fTotal,
@@ -1196,7 +1194,6 @@
     if (typeof value === "number") return value;
     if (value && typeof value === "object") {
       const v = value as Record<string, unknown>;
-      if (typeof v.in_bytes === "number") return v.in_bytes;
       if (typeof v.inBytes === "number") return v.inBytes;
     }
     return 0;

@@ -80,7 +80,7 @@ class DownloadCoordinator:
             completed = DownloadCompleted(
                 shard_metadata=callback_shard,
                 node_id=self.node_id,
-                total_bytes=progress.total_bytes,
+                total=progress.total,
                 model_directory=self._model_dir(model_id),
             )
             self.download_status[model_id] = completed
@@ -203,7 +203,7 @@ class DownloadCoordinator:
             completed = DownloadCompleted(
                 shard_metadata=shard,
                 node_id=self.node_id,
-                total_bytes=initial_progress.total_bytes,
+                total=initial_progress.total,
                 model_directory=self._model_dir(model_id),
             )
             self.download_status[model_id] = completed
@@ -332,13 +332,13 @@ class DownloadCoordinator:
                         status: DownloadProgress = DownloadCompleted(
                             node_id=self.node_id,
                             shard_metadata=progress.shard,
-                            total_bytes=progress.total_bytes,
+                            total=progress.total,
                             model_directory=self._model_dir(
                                 progress.shard.model_card.model_id
                             ),
                         )
                     elif progress.status in ["in_progress", "not_started"]:
-                        if progress.downloaded_bytes_this_session.in_bytes == 0:
+                        if progress.downloaded_this_session.in_bytes == 0:
                             status = DownloadPending(
                                 node_id=self.node_id,
                                 shard_metadata=progress.shard,
