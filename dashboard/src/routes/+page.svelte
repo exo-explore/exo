@@ -2258,7 +2258,7 @@
     <!-- FULL-SCREEN ONBOARDING WIZARD                          -->
     <!-- ═══════════════════════════════════════════════════════ -->
     <div
-      class="flex-1 flex items-center justify-center relative z-10 bg-exo-black"
+      class="flex-1 flex items-center justify-center relative z-10 bg-white"
     >
       {#if onboardingStep === 1}
         <!-- Step 1: Welcome -->
@@ -2269,23 +2269,23 @@
         >
           <div class="mb-8">
             <div
-              class="text-5xl font-mono font-bold text-exo-yellow tracking-wider mb-4"
+              class="text-5xl font-mono font-bold text-exo-yellow-darker tracking-wider mb-4"
             >
               exo
             </div>
             <h1
-              class="text-2xl font-sans font-light text-white mb-3 tracking-wide"
+              class="text-2xl font-sans font-light text-gray-900 mb-3 tracking-wide"
             >
               Welcome to exo
             </h1>
-            <p class="text-base font-sans text-white/50 leading-relaxed">
+            <p class="text-base font-sans text-gray-500 leading-relaxed">
               Run AI models locally, across all your devices.
             </p>
           </div>
           <button
             type="button"
             onclick={() => (onboardingStep = 2)}
-            class="inline-flex items-center gap-2 px-8 py-3 bg-exo-yellow text-exo-black font-sans text-sm font-semibold rounded-full hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.2)] transition-all duration-200 cursor-pointer"
+            class="inline-flex items-center gap-2 px-8 py-3 bg-gray-900 text-white font-sans text-sm font-semibold rounded-full hover:bg-gray-800 transition-all duration-200 cursor-pointer"
           >
             Get Started
             <svg
@@ -2312,7 +2312,7 @@
         >
           <div class="text-center mb-4">
             <h1
-              class="text-2xl font-sans font-light text-white mb-2 tracking-wide"
+              class="text-2xl font-sans font-light text-gray-900 mb-2 tracking-wide"
             >
               Add more devices, run bigger models
             </h1>
@@ -2834,7 +2834,7 @@
             <button
               type="button"
               onclick={() => (onboardingStep = 4)}
-              class="inline-flex items-center gap-2 px-8 py-3 mt-2 bg-exo-yellow text-exo-black font-sans text-sm font-semibold rounded-full hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.2)] transition-all duration-200 cursor-pointer"
+              class="inline-flex items-center gap-2 px-8 py-3 mt-2 bg-gray-900 text-white font-sans text-sm font-semibold rounded-full hover:bg-gray-800 transition-all duration-200 cursor-pointer"
               in:fade={{ duration: 400 }}
             >
               Continue
@@ -2863,11 +2863,11 @@
         >
           <div class="text-center mb-6">
             <h1
-              class="text-2xl font-sans font-light text-white mb-2 tracking-wide"
+              class="text-2xl font-sans font-light text-gray-900 mb-2 tracking-wide"
             >
               Your devices
             </h1>
-            <p class="text-sm font-sans text-white/50">
+            <p class="text-sm font-sans text-gray-500">
               {nodeCount} device{nodeCount !== 1 ? "s" : ""} connected
               {#if clusterTotalMemoryGB() > 0}
                 · {clusterTotalMemoryGB().toFixed(0)} GB total memory
@@ -2875,7 +2875,7 @@
             </p>
           </div>
           <div
-            class="w-full h-80 bg-exo-dark-gray rounded-lg overflow-hidden border border-white/10 mb-8"
+            class="w-full h-80 bg-exo-dark-gray rounded-lg overflow-hidden border border-gray-200 mb-8"
           >
             <TopologyGraph
               class="w-full h-full"
@@ -2885,7 +2885,7 @@
             />
           </div>
           <p
-            class="text-sm font-sans text-white/40 mt-2 max-w-md text-center leading-relaxed"
+            class="text-sm font-sans text-gray-400 mt-2 max-w-md text-center leading-relaxed"
           >
             Install exo on more devices on your network to combine their power —
             they connect automatically.
@@ -2893,7 +2893,7 @@
           <button
             type="button"
             onclick={() => (onboardingStep = 3)}
-            class="inline-flex items-center gap-2 px-8 py-3 mt-6 bg-exo-yellow text-exo-black font-sans text-sm font-semibold rounded-full hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.2)] transition-all duration-200 cursor-pointer"
+            class="inline-flex items-center gap-2 px-8 py-3 mt-6 bg-gray-900 text-white font-sans text-sm font-semibold rounded-full hover:bg-gray-800 transition-all duration-200 cursor-pointer"
           >
             Continue
             <svg
@@ -2920,18 +2920,18 @@
         >
           <div class="text-center mb-8">
             <h1
-              class="text-2xl font-sans font-light text-white mb-2 tracking-wide"
+              class="text-2xl font-sans font-light text-gray-900 mb-2 tracking-wide"
             >
               Choose a model
             </h1>
-            <p class="text-sm font-sans text-white/50">
+            <p class="text-sm font-sans text-gray-500">
               Pick a model to download and run locally.
             </p>
           </div>
 
           {#if onboardingError}
             <div
-              class="w-full mb-6 px-4 py-3 rounded-lg border border-red-500/30 bg-red-500/10 text-sm font-mono text-red-400"
+              class="w-full mb-6 px-4 py-3 rounded-lg border border-red-400/30 bg-red-50 text-sm font-mono text-red-600"
               in:fade={{ duration: 200 }}
             >
               {onboardingError}
@@ -2940,7 +2940,7 @@
 
           {#if onboardingModels.length === 0}
             <div class="text-center py-8">
-              <div class="text-sm text-white/40 font-sans animate-pulse">
+              <div class="text-sm text-gray-400 font-sans animate-pulse">
                 Loading models...
               </div>
             </div>
@@ -2954,32 +2954,32 @@
                   type="button"
                   onclick={() => onboardingLaunchModel(model.id)}
                   class="w-full flex items-center justify-between gap-4 px-5 py-4 rounded-xl border transition-all duration-200 cursor-pointer {fitsNow
-                    ? 'border-white/10 bg-white/5 hover:border-exo-yellow/50 hover:bg-exo-yellow/5'
-                    : 'border-white/10 bg-white/[0.02] hover:border-white/20 opacity-60'}"
+                    ? 'border-gray-200 bg-gray-50 hover:border-gray-900 hover:bg-gray-100'
+                    : 'border-gray-200 bg-gray-50/50 hover:border-gray-300 opacity-60'}"
                 >
                   <div class="flex flex-col items-start gap-1 min-w-0">
                     <div class="flex items-center gap-2">
                       <span
-                        class="text-sm font-sans font-medium text-white truncate"
+                        class="text-sm font-sans font-medium text-gray-900 truncate"
                         >{model.name || model.id}</span
                       >
                       {#each tags as tag}
                         <span
-                          class="text-[10px] font-sans font-medium px-1.5 py-0.5 rounded-full bg-exo-yellow/10 text-exo-yellow/80"
+                          class="text-[10px] font-sans font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700"
                           >{tag}</span
                         >
                       {/each}
                     </div>
-                    <span class="text-xs font-mono text-white/40 truncate"
+                    <span class="text-xs font-mono text-gray-400 truncate"
                       >{model.id}</span
                     >
                   </div>
                   <div class="flex items-center gap-3 flex-shrink-0">
-                    <span class="text-xs font-mono text-white/50"
+                    <span class="text-xs font-mono text-gray-500"
                       >{sizeGB >= 1 ? sizeGB.toFixed(0) : sizeGB.toFixed(1)} GB</span
                     >
                     <svg
-                      class="w-4 h-4 text-white/40"
+                      class="w-4 h-4 text-gray-400"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -3002,7 +3002,7 @@
             onclick={() => {
               isModelPickerOpen = true;
             }}
-            class="text-sm font-sans text-white/40 hover:text-exo-yellow transition-colors cursor-pointer underline underline-offset-4 decoration-white/20 hover:decoration-exo-yellow/30"
+            class="text-sm font-sans text-gray-400 hover:text-gray-900 transition-colors cursor-pointer underline underline-offset-4 decoration-gray-300 hover:decoration-gray-900"
           >
             Browse all models
           </button>
@@ -3016,13 +3016,13 @@
         >
           <div class="mb-8">
             <h1
-              class="text-2xl font-sans font-light text-white mb-2 tracking-wide"
+              class="text-2xl font-sans font-light text-gray-900 mb-2 tracking-wide"
             >
               Downloading
             </h1>
-            <p class="text-sm text-white/50">
+            <p class="text-sm text-gray-500">
               {#if onboardingModelId}
-                <span class="text-exo-yellow">{onboardingModelId}</span>
+                <span class="text-gray-900 font-medium">{onboardingModelId}</span>
               {/if}
             </p>
           </div>
@@ -3030,21 +3030,21 @@
           {#if onboardingDownloadProgress}
             <div class="w-full max-w-md mx-auto space-y-4">
               <div
-                class="relative h-2 bg-white/10 rounded-full overflow-hidden"
+                class="relative h-2 bg-gray-200 rounded-full overflow-hidden"
               >
                 <div
-                  class="absolute inset-y-0 left-0 bg-gradient-to-r from-exo-yellow to-amber-400 rounded-full transition-all duration-500"
+                  class="absolute inset-y-0 left-0 bg-gradient-to-r from-gray-900 to-gray-700 rounded-full transition-all duration-500"
                   style="width: {onboardingDownloadProgress.percentage}%"
                 ></div>
               </div>
-              <div class="flex justify-between text-xs font-mono text-white/50">
+              <div class="flex justify-between text-xs font-mono text-gray-500">
                 <span>{onboardingDownloadProgress.percentage.toFixed(1)}%</span>
                 <span
                   >{formatBytes(onboardingDownloadProgress.downloadedBytes)} /
                   {formatBytes(onboardingDownloadProgress.totalBytes)}</span
                 >
               </div>
-              <div class="flex justify-between text-xs font-mono text-white/40">
+              <div class="flex justify-between text-xs font-mono text-gray-400">
                 <span>{formatSpeed(onboardingDownloadProgress.speed)}</span>
                 <span>ETA: {formatEta(onboardingDownloadProgress.etaMs)}</span>
               </div>
@@ -3052,19 +3052,19 @@
           {:else}
             <div class="w-full max-w-md mx-auto">
               <div
-                class="relative h-2 bg-white/10 rounded-full overflow-hidden"
+                class="relative h-2 bg-gray-200 rounded-full overflow-hidden"
               >
                 <div
-                  class="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-exo-yellow to-amber-400 rounded-full animate-pulse"
+                  class="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-gray-900 to-gray-700 rounded-full animate-pulse"
                 ></div>
               </div>
-              <p class="text-xs font-mono text-white/40 mt-4">
+              <p class="text-xs font-mono text-gray-400 mt-4">
                 Preparing download...
               </p>
             </div>
           {/if}
 
-          <p class="text-xs font-sans text-white/30 mt-8">
+          <p class="text-xs font-sans text-gray-400 mt-8">
             This may take a few minutes depending on your connection.
           </p>
         </div>
@@ -3077,24 +3077,24 @@
         >
           <div class="mb-8">
             <h1
-              class="text-2xl font-sans font-light text-white mb-2 tracking-wide"
+              class="text-2xl font-sans font-light text-gray-900 mb-2 tracking-wide"
             >
               Loading into memory
             </h1>
-            <p class="text-sm text-white/50">
+            <p class="text-sm text-gray-500">
               {#if onboardingModelId}
-                <span class="text-exo-yellow">{onboardingModelId}</span>
+                <span class="text-gray-900 font-medium">{onboardingModelId}</span>
               {/if}
             </p>
           </div>
 
           <div class="flex justify-center mb-6">
             <div
-              class="w-12 h-12 border-2 border-exo-yellow/30 border-t-exo-yellow rounded-full animate-spin"
+              class="w-12 h-12 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin"
             ></div>
           </div>
 
-          <p class="text-sm text-white/40 font-sans">Almost ready...</p>
+          <p class="text-sm text-gray-400 font-sans">Almost ready...</p>
         </div>
       {:else if onboardingStep === 7}
         <!-- Step 7: Chat — centered input auto-appears, first message transitions to dashboard -->
@@ -3105,20 +3105,20 @@
         >
           <!-- Subtle branding -->
           <div
-            class="text-2xl font-mono text-white/30 font-bold tracking-wider mb-8"
+            class="text-2xl font-mono text-gray-300 font-bold tracking-wider mb-8"
           >
             exo
           </div>
 
           <!-- Model name -->
           {#if onboardingModelId}
-            <p class="text-sm text-white/40 font-sans mb-4">
+            <p class="text-sm text-gray-400 font-sans mb-4">
               {onboardingModelId.split("/").pop() ?? onboardingModelId}
             </p>
           {/if}
 
           <!-- Centered ChatForm — first message completes onboarding -->
-          <div class="w-full bg-exo-dark-gray rounded-xl p-4">
+          <div class="w-full bg-gray-100 rounded-xl p-4">
             <ChatForm
               placeholder="Ask anything"
               autofocus={true}
@@ -3139,7 +3139,7 @@
                   sendMessage(chip);
                   completeOnboarding();
                 }}
-                class="px-4 py-2 rounded-full border border-white/10 bg-white/5 text-[13px] font-sans text-white/50 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all duration-200 cursor-pointer"
+                class="px-4 py-2 rounded-full border border-gray-200 bg-gray-50 text-[13px] font-sans text-gray-500 hover:bg-gray-100 hover:text-gray-900 hover:border-gray-300 transition-all duration-200 cursor-pointer"
               >
                 {chip}
               </button>
@@ -3152,7 +3152,7 @@
       <button
         type="button"
         onclick={completeOnboarding}
-        class="absolute bottom-6 text-xs font-sans text-white/25 hover:text-white/50 transition-colors cursor-pointer"
+        class="absolute bottom-6 text-xs font-sans text-gray-400 hover:text-gray-600 transition-colors cursor-pointer"
       >
         Skip
       </button>
@@ -3198,7 +3198,7 @@
       <HeaderNav
         showHome={chatStarted}
         onHome={handleGoHome}
-        showSidebarToggle={chatStarted}
+        showSidebarToggle={true}
         {sidebarVisible}
         onToggleSidebar={toggleChatSidebarVisible}
         downloadProgress={activeDownloadSummary}

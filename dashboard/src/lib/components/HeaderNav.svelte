@@ -83,7 +83,7 @@
     <img
       src="/exo-logo.png"
       alt="EXO"
-      class="h-18 drop-shadow-[0_0_20px_rgba(255,215,0,0.5)]"
+      class="h-18 drop-shadow-[0_0_4px_rgba(255,215,0,0.3)]"
     />
   </button>
 

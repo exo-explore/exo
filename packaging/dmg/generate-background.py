@@ -21,7 +21,7 @@ from PIL import Image, ImageDraw
 
 # Retina dimensions (2× logical 800×400)
 WIDTH = 1600
-HEIGHT = 740
+HEIGHT = 800
 
 # Icon positions in logical coords → retina coords
 # App icon at (200, 190), Applications at (600, 190)
