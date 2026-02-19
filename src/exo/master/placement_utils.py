@@ -102,22 +102,21 @@ def _allocate_and_validate_layers(
     layer_allocations = allocate_layers_proportionally(
         total_layers=model_card.n_layers,
         memory_fractions=[
-            node_memory[node_id].ram_available.in_bytes / total_memory.in_bytes
-            for node_id in node_ids
+            node_memory[node_id].ram_available / total_memory for node_id in node_ids
         ],
     )
 
-    total_storage_bytes = model_card.storage_size.in_bytes
+    total_storage = model_card.storage_size
     total_layers = model_card.n_layers
     for i, node_id in enumerate(node_ids):
         node_layers = layer_allocations[i]
-        required_memory = (total_storage_bytes * node_layers) // total_layers
-        available_memory = node_memory[node_id].ram_available.in_bytes
+        required_memory = (total_storage * node_layers) // total_layers
+        available_memory = node_memory[node_id].ram_available
         if required_memory > available_memory:
             raise ValueError(
                 f"Node {i} ({node_id}) has insufficient memory: "
-                f"requires {required_memory / (1024**3):.2f} GB for {node_layers} layers, "
-                f"but only has {available_memory / (1024**3):.2f} GB available"
+                f"requires {required_memory.in_gb:.2f} GB for {node_layers} layers, "
+                f"but only has {available_memory.in_gb:.2f} GB available"
             )
 
     return layer_allocations
