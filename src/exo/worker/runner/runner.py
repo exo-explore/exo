@@ -573,6 +573,13 @@ def main(
                 case Shutdown():
                     current_status = RunnerShuttingDown()
                     logger.info("runner shutting down")
+
+                    del inference_model, image_model, tokenizer, group
+                    mx.clear_cache()
+                    import gc
+
+                    gc.collect()
+
                     event_sender.send(
                         RunnerStatusUpdated(
                             runner_id=runner_id, runner_status=current_status
@@ -581,6 +588,7 @@ def main(
                     event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
                     current_status = RunnerShutdown()
+                    break
                 case _:
                     raise ValueError(
                         f"Received {task.__class__.__name__} outside of state machine in {current_status=}"
@@ -597,13 +605,6 @@ def main(
             event_sender.send(
                 RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
             )
-            if isinstance(current_status, RunnerShutdown):
-                del inference_model, image_model, tokenizer, group
-                mx.clear_cache()
-                import gc
-
-                gc.collect()
-                break
 
 
 @cache
