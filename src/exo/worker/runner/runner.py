@@ -1,5 +1,6 @@
 import base64
 import math
+import os
 import resource
 import time
 from collections.abc import Generator
@@ -859,6 +860,7 @@ def parse_tool_calls(
 EXO_RUNNER_MUST_FAIL = "EXO RUNNER MUST FAIL"
 EXO_RUNNER_MUST_OOM = "EXO RUNNER MUST OOM"
 EXO_RUNNER_MUST_TIMEOUT = "EXO RUNNER MUST TIMEOUT"
+EXO_RUNNER_MUST_DIE = "EXO RUNNER MUST DIE"
 
 
 def _check_for_debug_prompts(task_params: TextGenerationTaskParams) -> None:
@@ -874,6 +876,9 @@ def _check_for_debug_prompts(task_params: TextGenerationTaskParams) -> None:
     if not prompt:
         return
 
+    if EXO_RUNNER_MUST_DIE in prompt:
+        logger.info("Abrupt process death triggered (simulates OOM kill)")
+        os._exit(1)
     if EXO_RUNNER_MUST_FAIL in prompt:
         logger.info("raising exception")
         raise Exception("Artificial runner exception - for testing purposes only.")

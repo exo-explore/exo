@@ -1,0 +1,12 @@
+model_id = "mlx-community/SmolLM2-135M-Instruct"
+n_layers = 30
+hidden_size = 576
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "llama"
+quantization = "bf16"
+base_model = "SmolLM2 135M"
+capabilities = ["text"]
+
+[storage_size]
+in_bytes = 269060381

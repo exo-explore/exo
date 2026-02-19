@@ -1,4 +1,8 @@
+from __future__ import annotations
+
 import os
+import threading
+from multiprocessing.sharedctypes import Synchronized
 
 import loguru
 
@@ -10,6 +14,15 @@ from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 
 logger: "loguru.Logger" = loguru.logger
 
+HEARTBEAT_INTERVAL_SECONDS = 0.5
+
+
+def _heartbeat_loop(heartbeat: Synchronized[int], stop: threading.Event) -> None:
+    """Daemon thread that periodically increments the heartbeat counter."""
+    while not stop.is_set():
+        heartbeat.value += 1
+        stop.wait(HEARTBEAT_INTERVAL_SECONDS)
+
 
 def entrypoint(
     bound_instance: BoundInstance,
@@ -17,6 +30,7 @@ def entrypoint(
     task_receiver: MpReceiver[Task],
     cancel_receiver: MpReceiver[TaskId],
     _logger: "loguru.Logger",
+    heartbeat: Synchronized[int] | None = None,
 ) -> None:
     fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
     if fast_synch_override == "on" or (
@@ -34,6 +48,17 @@ def entrypoint(
     logger = _logger
 
     logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
+
+    # Start heartbeat thread so the supervisor can detect if we freeze.
+    stop_heartbeat = threading.Event()
+    heartbeat_thread: threading.Thread | None = None
+    if heartbeat is not None:
+        heartbeat_thread = threading.Thread(
+            target=_heartbeat_loop,
+            args=(heartbeat, stop_heartbeat),
+            daemon=True,
+        )
+        heartbeat_thread.start()
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:
@@ -53,6 +78,9 @@ def entrypoint(
             )
         )
     finally:
+        stop_heartbeat.set()
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=1)
         try:
             event_sender.close()
             task_receiver.close()

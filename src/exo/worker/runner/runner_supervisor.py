@@ -1,12 +1,17 @@
+from __future__ import annotations
+
 import contextlib
+import multiprocessing
 import signal
 from dataclasses import dataclass, field
 from multiprocessing import Process
+from multiprocessing.sharedctypes import Synchronized
 from typing import Self
 
 import anyio
 from anyio import (
     BrokenResourceError,
+    CancelScope,
     ClosedResourceError,
     to_thread,
 )
@@ -26,6 +31,7 @@ from exo.shared.types.worker.runners import (
     RunnerIdle,
     RunnerLoading,
     RunnerRunning,
+    RunnerShutdown,
     RunnerShuttingDown,
     RunnerStatus,
     RunnerWarmingUp,
@@ -36,6 +42,8 @@ from exo.worker.runner.bootstrap import entrypoint
 
 PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5
+HEALTH_CHECK_INTERVAL_SECONDS = 1
+HEARTBEAT_STALE_CHECKS = 10
 
 
 @dataclass(eq=False)
@@ -48,10 +56,14 @@ class RunnerSupervisor:
     _task_sender: MpSender[Task]
     _event_sender: Sender[Event]
     _cancel_sender: MpSender[TaskId]
+    _heartbeat: Synchronized[int]
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
     completed: set[TaskId] = field(default_factory=set, init=False)
     cancelled: set[TaskId] = field(default_factory=set, init=False)
+    _death_handled: bool = field(default=False, init=False)
+    _last_heartbeat_value: int = field(default=0, init=False)
+    _heartbeat_stale_count: int = field(default=0, init=False)
 
     @classmethod
     def create(
@@ -65,6 +77,8 @@ class RunnerSupervisor:
         task_sender, task_recv = mp_channel[Task]()
         cancel_sender, cancel_recv = mp_channel[TaskId]()
 
+        heartbeat: Synchronized[int] = multiprocessing.Value("Q", 0)
+
         runner_process = Process(
             target=entrypoint,
             args=(
@@ -73,6 +87,7 @@ class RunnerSupervisor:
                 task_recv,
                 cancel_recv,
                 logger,
+                heartbeat,
             ),
             daemon=True,
         )
@@ -88,13 +103,16 @@ class RunnerSupervisor:
             _task_sender=task_sender,
             _cancel_sender=cancel_sender,
             _event_sender=event_sender,
+            _heartbeat=heartbeat,
         )
 
         return self
 
     async def run(self):
         self.runner_process.start()
-        await self._forward_events()
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(self._forward_events)
+            tg.start_soon(self._health_check, tg.cancel_scope)
 
     def shutdown(self):
         logger.info("Runner supervisor shutting down")
@@ -177,9 +195,99 @@ class RunnerSupervisor:
                         self.completed.add(event.task_id)
                     await self._event_sender.send(event)
             except (ClosedResourceError, BrokenResourceError) as e:
-                await self._check_runner(e)
-                for tid in self.pending:
-                    self.pending[tid].set()
+                if not self._death_handled:
+                    self._death_handled = True
+                    await self._check_runner(e)
+                    for tid in self.pending:
+                        self.pending[tid].set()
+
+    async def _health_check(self, cancel_scope: CancelScope) -> None:
+        """Periodically check if the runner process is alive and responsive.
+
+        Detects two failure modes:
+        1. Process death (e.g. OOM kill) without cleanly closing the event
+           channel, which would leave _forward_events blocked on queue.get().
+        2. Unresponsive process (e.g. frozen by OS memory pressure, deadlock)
+           detected via a stale heartbeat counter.
+        """
+        while True:
+            await anyio.sleep(HEALTH_CHECK_INTERVAL_SECONDS)
+
+            if not self.runner_process.is_alive():
+                self._handle_process_exit(cancel_scope)
+                return
+
+            # Check heartbeat counter — if it hasn't changed between
+            # consecutive checks, the subprocess may be frozen.
+            current = self._heartbeat.value
+            if current > 0:
+                if current == self._last_heartbeat_value:
+                    self._heartbeat_stale_count += 1
+                    if self._heartbeat_stale_count >= HEARTBEAT_STALE_CHECKS:
+                        logger.error(
+                            f"Health check: runner process unresponsive "
+                            f"(heartbeat stale for {self._heartbeat_stale_count} checks), killing"
+                        )
+                        self._handle_unresponsive(cancel_scope)
+                        return
+                else:
+                    self._heartbeat_stale_count = 0
+                self._last_heartbeat_value = current
+
+    def _handle_process_exit(self, cancel_scope: CancelScope) -> None:
+        """Handle runner process that has exited."""
+        if not self._death_handled:
+            self._death_handled = True
+            if isinstance(
+                self.status, (RunnerShutdown, RunnerShuttingDown, RunnerFailed)
+            ):
+                logger.info("Health check: runner process exited (expected)")
+            else:
+                rc = self.runner_process.exitcode
+                if isinstance(rc, int) and rc < 0:
+                    sig = -rc
+                    try:
+                        cause = f"signal={sig} ({signal.strsignal(sig)})"
+                    except Exception:
+                        cause = f"signal={sig}"
+                else:
+                    cause = f"exitcode={rc}"
+
+                logger.error(
+                    f"Health check: runner process died unexpectedly ({cause})"
+                )
+                self._event_sender.send_nowait(
+                    RunnerStatusUpdated(
+                        runner_id=self.bound_instance.bound_runner_id,
+                        runner_status=RunnerFailed(
+                            error_message=f"Terminated ({cause})"
+                        ),
+                    )
+                )
+                self.shutdown()
+
+            for tid in self.pending:
+                self.pending[tid].set()
+
+        cancel_scope.cancel()
+
+    def _handle_unresponsive(self, cancel_scope: CancelScope) -> None:
+        """Handle runner process that is alive but unresponsive."""
+        if not self._death_handled:
+            self._death_handled = True
+            self._event_sender.send_nowait(
+                RunnerStatusUpdated(
+                    runner_id=self.bound_instance.bound_runner_id,
+                    runner_status=RunnerFailed(
+                        error_message="Runner process unresponsive (heartbeat timeout)"
+                    ),
+                )
+            )
+            for tid in self.pending:
+                self.pending[tid].set()
+            self.shutdown()
+
+        cancel_scope.cancel()
 
     def __del__(self) -> None:
         if self.runner_process.is_alive():
