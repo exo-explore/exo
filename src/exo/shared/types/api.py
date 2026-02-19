@@ -77,7 +77,7 @@ class ChatCompletionMessage(BaseModel):
     content: (
         str | ChatCompletionMessageText | list[ChatCompletionMessageText] | None
     ) = None
-    thinking: str | None = None  # Added for GPT-OSS harmony format support
+    reasoning_content: str | None = None
     name: str | None = None
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
