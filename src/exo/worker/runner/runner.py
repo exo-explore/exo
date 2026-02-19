@@ -26,6 +26,7 @@ from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
+    PrefillProgress,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
@@ -298,6 +299,18 @@ def main(
                     assert tokenizer
                     assert check_for_cancel_every
 
+                    # Define callback to send prefill progress events directly
+                    def on_prefill_progress(processed: int, total: int) -> None:
+                        if device_rank == 0:
+                            event_sender.send(
+                                PrefillProgress(
+                                    command_id=command_id,
+                                    model=shard_metadata.model_card.model_id,
+                                    processed_tokens=processed,
+                                    total_tokens=total,
+                                )
+                            )
+
                     try:
                         _check_for_debug_prompts(task_params)
 
@@ -311,6 +324,7 @@ def main(
                             task=task_params,
                             prompt=prompt,
                             kv_prefix_cache=kv_prefix_cache,
+                            on_prefill_progress=on_prefill_progress,
                             group=group,
                         )
 
@@ -599,11 +613,21 @@ def parse_gpt_oss(
         ch = stream.current_channel
         recipient = stream.current_recipient
 
+        # Debug: log every token with state
+        logger.debug(
+            f"parse_gpt_oss token={response.token} text={response.text!r} "
+            f"recipient={recipient!r} ch={ch!r} delta={delta!r} "
+            f"state={stream.state} current_tool={current_tool_name!r}"
+        )
+
         if recipient != current_tool_name:
             if current_tool_name is not None:
                 prefix = "functions."
                 if current_tool_name.startswith(prefix):
                     current_tool_name = current_tool_name[len(prefix) :]
+                logger.info(
+                    f"parse_gpt_oss yielding tool call: name={current_tool_name!r}"
+                )
                 yield ToolCallResponse(
                     tool_calls=[
                         ToolCallItem(

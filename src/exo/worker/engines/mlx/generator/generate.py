@@ -58,6 +58,7 @@ def prefill(
     prompt_tokens: mx.array,
     cache: KVCacheType,
     group: mx.distributed.Group | None,
+    on_prefill_progress: Callable[[int, int], None] | None,
 ) -> tuple[float, int, list[CacheSnapshot]]:
     """Prefill the KV cache with prompt tokens.
 
@@ -85,6 +86,9 @@ def prefill(
         if has_ssm:
             snapshots.append(snapshot_ssm_states(cache))
 
+        if on_prefill_progress is not None:
+            on_prefill_progress(processed, total)
+
     set_pipeline_prefill(model, is_prefill=True)
 
     mx_barrier(group)
@@ -99,7 +103,7 @@ def prefill(
         max_tokens=1,
         sampler=sampler,
         prompt_cache=cache,
-        prefill_step_size=8192,
+        prefill_step_size=4096,
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
         prompt_progress_callback=progress_callback,
@@ -257,6 +261,7 @@ def mlx_generate(
     prompt: str,
     kv_prefix_cache: KVPrefixCache | None,
     group: mx.distributed.Group | None,
+    on_prefill_progress: Callable[[int, int], None] | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -311,7 +316,13 @@ def mlx_generate(
 
     # Prefill cache with all tokens except the last one
     prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
-        model, tokenizer, sampler, prompt_tokens[:-1], caches, group
+        model,
+        tokenizer,
+        sampler,
+        prompt_tokens[:-1],
+        caches,
+        group,
+        on_prefill_progress,
     )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 

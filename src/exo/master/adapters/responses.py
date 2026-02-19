@@ -5,7 +5,12 @@ from itertools import count
 from typing import Any
 
 from exo.shared.types.api import Usage
-from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
+from exo.shared.types.chunks import (
+    ErrorChunk,
+    PrefillProgressChunk,
+    TokenChunk,
+    ToolCallChunk,
+)
 from exo.shared.types.common import CommandId
 from exo.shared.types.openai_responses import (
     FunctionCallInputItem,
@@ -121,7 +126,9 @@ def responses_request_to_text_generation(
 async def collect_responses_response(
     command_id: CommandId,
     model: str,
-    chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
+    chunk_stream: AsyncGenerator[
+        ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressChunk, None
+    ],
 ) -> AsyncGenerator[str]:
     # This is an AsyncGenerator[str] rather than returning a ChatCompletionReponse because
     # FastAPI handles the cancellation better but wouldn't auto-serialize for some reason
@@ -134,6 +141,9 @@ async def collect_responses_response(
     error_message: str | None = None
 
     async for chunk in chunk_stream:
+        if isinstance(chunk, PrefillProgressChunk):
+            continue
+
         if isinstance(chunk, ErrorChunk):
             error_message = chunk.error_message or "Internal server error"
             break
@@ -189,7 +199,9 @@ async def collect_responses_response(
 async def generate_responses_stream(
     command_id: CommandId,
     model: str,
-    chunk_stream: AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None],
+    chunk_stream: AsyncGenerator[
+        ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressChunk, None
+    ],
 ) -> AsyncGenerator[str, None]:
     """Generate OpenAI Responses API streaming events from TokenChunks."""
     response_id = f"resp_{command_id}"
@@ -243,6 +255,9 @@ async def generate_responses_stream(
     next_output_index = 1  # message item is at 0
 
     async for chunk in chunk_stream:
+        if isinstance(chunk, PrefillProgressChunk):
+            continue
+
         if isinstance(chunk, ErrorChunk):
             break
 

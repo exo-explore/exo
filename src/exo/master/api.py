@@ -107,6 +107,7 @@ from exo.shared.types.chunks import (
     ErrorChunk,
     ImageChunk,
     InputImageChunk,
+    PrefillProgressChunk,
     TokenChunk,
     ToolCallChunk,
 )
@@ -137,6 +138,7 @@ from exo.shared.types.events import (
     Event,
     ForwarderEvent,
     IndexedEvent,
+    PrefillProgress,
     TracesMerged,
 )
 from exo.shared.types.memory import Memory
@@ -221,7 +223,8 @@ class API:
         )
 
         self._text_generation_queues: dict[
-            CommandId, Sender[TokenChunk | ErrorChunk | ToolCallChunk]
+            CommandId,
+            Sender[TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk],
         ] = {}
         self._image_generation_queues: dict[
             CommandId, Sender[ImageChunk | ErrorChunk]
@@ -527,19 +530,23 @@ class API:
 
     async def _token_chunk_stream(
         self, command_id: CommandId
-    ) -> AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None]:
+    ) -> AsyncGenerator[
+        TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk, None
+    ]:
         """Yield chunks for a given command until completion.
 
         This is the internal low-level stream used by all API adapters.
         """
         try:
             self._text_generation_queues[command_id], recv = channel[
-                ErrorChunk | ToolCallChunk | TokenChunk
+                TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk
             ]()
 
             with recv as token_chunks:
                 async for chunk in token_chunks:
                     yield chunk
+                    if isinstance(chunk, PrefillProgressChunk):
+                        continue
                     if chunk.finish_reason is not None:
                         break
 
@@ -566,6 +573,9 @@ class API:
         stats: GenerationStats | None = None
 
         async for chunk in self._token_chunk_stream(command_id):
+            if isinstance(chunk, PrefillProgressChunk):
+                continue
+
             if chunk.finish_reason == "error":
                 raise HTTPException(
                     status_code=500,
@@ -1443,6 +1453,21 @@ class API:
                             assert not isinstance(event.chunk, ImageChunk)
                             try:
                                 await queue.send(event.chunk)
+                            except BrokenResourceError:
+                                self._text_generation_queues.pop(event.command_id, None)
+
+                    elif isinstance(event, PrefillProgress):
+                        if queue := self._text_generation_queues.get(
+                            event.command_id, None
+                        ):
+                            try:
+                                await queue.send(
+                                    PrefillProgressChunk(
+                                        model=event.model,
+                                        processed_tokens=event.processed_tokens,
+                                        total_tokens=event.total_tokens,
+                                    )
+                                )
                             except BrokenResourceError:
                                 self._text_generation_queues.pop(event.command_id, None)
 
