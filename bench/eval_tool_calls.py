@@ -170,7 +170,10 @@ def validate_nested_args(
         return False, f"'{array_key}' is empty"
     for i, item in enumerate(arr):
         if not isinstance(item, dict):
-            return False, f"'{array_key}[{i}]' is not an object (got {type(item).__name__})"
+            return (
+                False,
+                f"'{array_key}[{i}]' is not an object (got {type(item).__name__})",
+            )
         missing = [k for k in required_item_keys if k not in item]
         if missing:
             return False, f"'{array_key}[{i}]' missing keys: {missing}"

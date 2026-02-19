@@ -510,7 +510,9 @@ def apply_chat_template(
         if isinstance(original_template, str):
             patched_template = _patch_lossy_chat_template(original_template)
             if patched_template is not None:
-                logger.info("Patched lossy chat template (removed inner_type length guard)")
+                logger.info(
+                    "Patched lossy chat template (removed inner_type length guard)"
+                )
 
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,

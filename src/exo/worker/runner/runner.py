@@ -625,7 +625,9 @@ def parse_gpt_oss(
                 prefix = "functions."
                 if current_tool_name.startswith(prefix):
                     current_tool_name = current_tool_name[len(prefix) :]
-                logger.info(f"parse_gpt_oss yielding tool call: name={current_tool_name!r}")
+                logger.info(
+                    f"parse_gpt_oss yielding tool call: name={current_tool_name!r}"
+                )
                 yield ToolCallResponse(
                     tool_calls=[
                         ToolCallItem(

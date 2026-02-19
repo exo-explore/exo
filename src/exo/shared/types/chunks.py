@@ -83,4 +83,6 @@ class PrefillProgressChunk(BaseChunk):
     total_tokens: int
 
 
-GenerationChunk = TokenChunk | ImageChunk | ToolCallChunk | ErrorChunk | PrefillProgressChunk
+GenerationChunk = (
+    TokenChunk | ImageChunk | ToolCallChunk | ErrorChunk | PrefillProgressChunk
+)
