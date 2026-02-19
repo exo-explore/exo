@@ -12,6 +12,8 @@ from exo.shared.types.events import (
     InputChunkReceived,
     InstanceCreated,
     InstanceDeleted,
+    JacclSideChannelData,
+    JacclSideChannelGathered,
     NodeDownloadProgress,
     NodeGatheredInfo,
     NodeTimedOut,
@@ -66,6 +68,8 @@ def event_apply(event: Event, state: State) -> State:
             | InputChunkReceived()
             | TracesCollected()
             | TracesMerged()
+            | JacclSideChannelData()
+            | JacclSideChannelGathered()
         ):  # Pass-through events that don't modify state
             return state
         case InstanceCreated():

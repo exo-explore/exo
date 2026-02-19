@@ -17,6 +17,7 @@ def entrypoint(
     task_receiver: MpReceiver[Task],
     cancel_receiver: MpReceiver[TaskId],
     _logger: "loguru.Logger",
+    pipe_fifo_paths: tuple[str, str] | None = None,
 ) -> None:
     fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
     if fast_synch_override == "on" or (
@@ -29,6 +30,16 @@ def entrypoint(
         os.environ["MLX_METAL_FAST_SYNCH"] = "1"
     else:
         os.environ["MLX_METAL_FAST_SYNCH"] = "0"
+
+    # Open JACCL FIFOs by path and set env vars for C++ SideChannel.
+    # Named pipes (FIFOs) work across multiprocessing spawn (macOS default).
+    if pipe_fifo_paths is not None:
+        fifo_c2p, fifo_p2c = pipe_fifo_paths
+        # C++ reads gathered data from p2c (PIPE_IN), writes local data to c2p (PIPE_OUT)
+        pipe_in_fd = os.open(fifo_p2c, os.O_RDONLY)
+        pipe_out_fd = os.open(fifo_c2p, os.O_WRONLY)
+        os.environ["MLX_JACCL_PIPE_IN"] = str(pipe_in_fd)
+        os.environ["MLX_JACCL_PIPE_OUT"] = str(pipe_out_fd)
 
     global logger
     logger = _logger

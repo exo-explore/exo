@@ -667,6 +667,11 @@ def mlx_cleanup(
 
 
 def mx_any(bool_: bool, group: Group | None) -> bool:
+    """Synchronize a boolean across all distributed nodes.
+
+    Returns True if any node has bool_=True.  Uses all_sum so every
+    node participates in the collective — preventing GPU deadlocks.
+    """
     if group is None:
         return bool_
     num_true = mx.distributed.all_sum(
