@@ -80,9 +80,9 @@ def map_repo_file_download_progress_to_download_progress_data(
     repo_file_download_progress: RepoFileDownloadProgress,
 ) -> DownloadProgressData:
     return DownloadProgressData(
-        downloaded_bytes=repo_file_download_progress.downloaded,
-        downloaded_bytes_this_session=repo_file_download_progress.downloaded_this_session,
-        total_bytes=repo_file_download_progress.total,
+        downloaded=repo_file_download_progress.downloaded,
+        downloaded_this_session=repo_file_download_progress.downloaded_this_session,
+        total=repo_file_download_progress.total,
         completed_files=1 if repo_file_download_progress.status == "complete" else 0,
         total_files=1,
         speed=repo_file_download_progress.speed,
@@ -95,9 +95,9 @@ def map_repo_download_progress_to_download_progress_data(
     repo_download_progress: RepoDownloadProgress,
 ) -> DownloadProgressData:
     return DownloadProgressData(
-        total_bytes=repo_download_progress.total_bytes,
-        downloaded_bytes=repo_download_progress.downloaded_bytes,
-        downloaded_bytes_this_session=repo_download_progress.downloaded_bytes_this_session,
+        total=repo_download_progress.total,
+        downloaded=repo_download_progress.downloaded,
+        downloaded_this_session=repo_download_progress.downloaded_this_session,
         completed_files=repo_download_progress.completed_files,
         total_files=repo_download_progress.total_files,
         speed=repo_download_progress.overall_speed,
@@ -578,19 +578,20 @@ def calculate_repo_progress(
     file_progress: dict[str, RepoFileDownloadProgress],
     all_start_time: float,
 ) -> RepoDownloadProgress:
-    all_total_bytes = sum((p.total.in_bytes for p in file_progress.values()), 0)
-    all_downloaded_bytes = sum(
-        (p.downloaded.in_bytes for p in file_progress.values()), 0
+    all_total = sum((p.total for p in file_progress.values()), Memory.from_bytes(0))
+    all_downloaded = sum(
+        (p.downloaded for p in file_progress.values()), Memory.from_bytes(0)
     )
-    all_downloaded_bytes_this_session = sum(
-        (p.downloaded_this_session.in_bytes for p in file_progress.values()), 0
+    all_downloaded_this_session = sum(
+        (p.downloaded_this_session for p in file_progress.values()),
+        Memory.from_bytes(0),
     )
     elapsed_time = time.time() - all_start_time
     all_speed = (
-        all_downloaded_bytes_this_session / elapsed_time if elapsed_time > 0 else 0
+        all_downloaded_this_session.in_bytes / elapsed_time if elapsed_time > 0 else 0
     )
     all_eta = (
-        timedelta(seconds=(all_total_bytes - all_downloaded_bytes) / all_speed)
+        timedelta(seconds=(all_total - all_downloaded).in_bytes / all_speed)
         if all_speed > 0
         else timedelta(seconds=0)
     )
@@ -609,11 +610,9 @@ def calculate_repo_progress(
             [p for p in file_progress.values() if p.downloaded == p.total]
         ),
         total_files=len(file_progress),
-        downloaded_bytes=Memory.from_bytes(all_downloaded_bytes),
-        downloaded_bytes_this_session=Memory.from_bytes(
-            all_downloaded_bytes_this_session
-        ),
-        total_bytes=Memory.from_bytes(all_total_bytes),
+        downloaded=all_downloaded,
+        downloaded_this_session=all_downloaded_this_session,
+        total=all_total,
         overall_speed=all_speed,
         overall_eta=all_eta,
         status=status,
