@@ -254,7 +254,9 @@
 
   // ── Steps 1-5 animation state: cinematic SVG story ──
   const SIMULATED_STUDIO_GB = 256; // simulated Mac Studio memory
-  const onboardingCombinedGB = $derived(Math.round(clusterTotalMemoryGB() + SIMULATED_STUDIO_GB));
+  const onboardingCombinedGB = $derived(
+    Math.round(clusterTotalMemoryGB() + SIMULATED_STUDIO_GB),
+  );
 
   // User device info from topology
   const userDeviceInfo = $derived.by(() => {
@@ -262,7 +264,10 @@
       return { name: "MacBook Pro", memoryGB: 36, deviceType: "macbook pro" };
     }
     const firstNode = Object.values(data.nodes)[0];
-    const totalMem = firstNode.macmon_info?.memory?.ram_total ?? firstNode.system_info?.memory ?? 0;
+    const totalMem =
+      firstNode.macmon_info?.memory?.ram_total ??
+      firstNode.system_info?.memory ??
+      0;
     const memGB = Math.round(totalMem / (1024 * 1024 * 1024));
     const name = firstNode.friendly_name || "Your Mac";
     const deviceType = (firstNode.device_type || "macbook pro").toLowerCase();
@@ -289,7 +294,7 @@
   $effect(() => {
     if (onboardingStep === 1) {
       showContinueButton = false;
-      stepTitle = "Your device";
+      stepTitle = "";
       // Reset all tweens to initial
       device1X.set(350, { duration: 0 });
       device1Opacity.set(0, { duration: 0 });
@@ -303,20 +308,23 @@
 
       const t1 = setTimeout(() => {
         device1Opacity.set(1);
-      }, 300);
+      }, 400);
       const t2 = setTimeout(() => {
         showContinueButton = true;
-      }, 1200);
+      }, 1800);
 
-      return () => { clearTimeout(t1); clearTimeout(t2); };
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
     }
   });
 
-  // ── Step 2: "A new device joins" — device 1 slides left, Mac Studio enters right ──
+  // ── Step 2: "More devices, larger models" — device 1 slides left, Mac Studio enters right ──
   $effect(() => {
     if (onboardingStep === 2) {
       showContinueButton = false;
-      stepTitle = "A new device joins";
+      stepTitle = "More devices = Larger models";
 
       const t1 = setTimeout(() => {
         device1X.set(220);
@@ -335,17 +343,23 @@
       }, 1600);
       const t5 = setTimeout(() => {
         showContinueButton = true;
-      }, 2200);
+      }, 2400);
 
-      return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4); clearTimeout(t5); };
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+        clearTimeout(t4);
+        clearTimeout(t5);
+      };
     }
   });
 
-  // ── Step 3: "exo splits the model" — model block appears, splits to each device ──
+  // ── Step 3: "exo splits the model" — model block appears, splits — AUTO-ADVANCE ──
   $effect(() => {
     if (onboardingStep === 3) {
       showContinueButton = false;
-      stepTitle = "exo splits the model";
+      stepTitle = "exo splits models across devices";
 
       const t1 = setTimeout(() => {
         modelBlockOpacity.set(1);
@@ -354,19 +368,24 @@
       const t2 = setTimeout(() => {
         modelSplitProgress.set(1);
       }, 1200);
+      // Auto-advance to step 4 (no continue button)
       const t3 = setTimeout(() => {
-        showContinueButton = true;
-      }, 2200);
+        onboardingStep = 4;
+      }, 3200);
 
-      return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
     }
   });
 
-  // ── Step 4: "A device disconnects" — connection goes red, X mark, device 2 fades ──
+  // ── Step 4: "A device disconnects" — connection goes red, X mark — AUTO-ADVANCE ──
   $effect(() => {
     if (onboardingStep === 4) {
       showContinueButton = false;
-      stepTitle = "A device disconnects";
+      stepTitle = "If a device disconnects...";
 
       const t1 = setTimeout(() => {
         connectionIsRed.set(1);
@@ -380,19 +399,25 @@
         disconnectXOpacity.set(0);
         combinedLabelOpacity.set(0);
       }, 1600);
+      // Auto-advance to step 5 (no continue button)
       const t4 = setTimeout(() => {
-        showContinueButton = true;
-      }, 2400);
+        onboardingStep = 5;
+      }, 3000);
 
-      return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4); };
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+        clearTimeout(t4);
+      };
     }
   });
 
-  // ── Step 5: "exo heals automatically" — device 1 re-centers, model halves merge ──
+  // ── Step 5: "exo self-heals" — device 1 re-centers, model halves merge ──
   $effect(() => {
     if (onboardingStep === 5) {
       showContinueButton = false;
-      stepTitle = "exo heals automatically";
+      stepTitle = "exo self-heals";
 
       const t1 = setTimeout(() => {
         device1X.set(350);
@@ -404,9 +429,13 @@
       }, 900);
       const t3 = setTimeout(() => {
         showContinueButton = true;
-      }, 2000);
+      }, 2200);
 
-      return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
     }
   });
 
@@ -485,17 +514,22 @@
     onboardingError = null;
     selectPreviewModel(modelId);
     onboardingStep = 7;
-    // Launch via API
+    // Launch via standard placement API (same as main dashboard)
     try {
+      const placementResponse = await fetch(
+        `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${selectedSharding}&instance_meta=${selectedInstanceType}&min_nodes=1`,
+      );
+      if (!placementResponse.ok) {
+        const errorText = await placementResponse.text();
+        onboardingError = `Failed to get placement: ${errorText}`;
+        onboardingStep = 6;
+        return;
+      }
+      const instanceData = await placementResponse.json();
       const response = await fetch("/instance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model_id: modelId,
-          sharding: selectedSharding,
-          instance_meta: selectedInstanceType,
-          min_nodes: 1,
-        }),
+        body: JSON.stringify({ instance: instanceData }),
       });
       if (!response.ok) {
         const errorText = await response.text();
@@ -2722,99 +2756,172 @@
         <!-- Steps 1-5: Cinematic SVG animation story -->
         <div
           class="flex flex-col items-center w-full max-w-2xl px-8"
-          in:fade={{ duration: 400 }}
-          out:fade={{ duration: 200 }}
+          style="transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1);"
         >
-          <!-- Step title -->
-          <div class="text-center mb-6">
+          <!-- Logo + Step title -->
+          <div class="text-center mb-8" style="transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);">
             {#if onboardingStep === 1}
-              <div class="text-4xl font-mono font-bold text-exo-yellow tracking-wider mb-3">exo</div>
+              <img
+                src="/exo-logo.png"
+                alt="exo"
+                class="w-16 h-16 mx-auto mb-5 rounded-2xl"
+                style="opacity: 0; animation: onb-fade-in 0.8s ease forwards 0.2s;"
+              />
+              <p
+                class="text-lg font-sans text-white/60 leading-relaxed max-w-sm mx-auto"
+                style="opacity: 0; animation: onb-fade-in 0.8s ease forwards 0.6s;"
+              >
+                Run AI models across your devices — together, they're more powerful than alone.
+              </p>
+            {:else}
+              <h1
+                class="text-xl font-sans font-light text-white/90 tracking-wide"
+                style="opacity: 0; animation: onb-fade-in 0.5s ease forwards;"
+              >
+                {stepTitle}
+              </h1>
+              {#if onboardingStep === 2}
+                <p class="text-sm font-sans text-white/40 mt-2" style="opacity: 0; animation: onb-fade-in 0.5s ease forwards 0.3s;">
+                  Combine memory across devices to run models too large for any single machine.
+                </p>
+              {:else if onboardingStep === 5}
+                <p class="text-sm font-sans text-white/40 mt-2" style="opacity: 0; animation: onb-fade-in 0.5s ease forwards 0.3s;">
+                  Devices can disconnect anytime. exo automatically redistributes work so inference never stops.
+                </p>
+              {/if}
             {/if}
-            <h1 class="text-2xl font-sans font-light text-white mb-2 tracking-wide">
-              {stepTitle}
-            </h1>
           </div>
 
-          <!-- Persistent SVG canvas -->
-          <div class="relative w-full" style="height: 300px;">
+          <!-- Persistent SVG canvas — BIGGER -->
+          <div class="relative w-full" style="height: 360px;">
             <svg
-              viewBox="0 0 700 300"
+              viewBox="0 0 700 360"
               class="w-full h-full"
               xmlns="http://www.w3.org/2000/svg"
             >
               <!-- Device 1 (User's device) -->
-              <g transform="translate({$device1X}, 150)" opacity={$device1Opacity}>
-                <DeviceIcon deviceType={userDeviceInfo.deviceType} cx={0} cy={0} size={55} ramPercent={60} uid="onb-d1" />
+              <g
+                transform="translate({$device1X}, 180)"
+                opacity={$device1Opacity}
+                style="transition: opacity 0.6s ease;"
+              >
+                <DeviceIcon
+                  deviceType={userDeviceInfo.deviceType}
+                  cx={0}
+                  cy={0}
+                  size={75}
+                  ramPercent={60}
+                  uid="onb-d1"
+                />
                 <text
                   x="0"
-                  y="-58"
+                  y="-76"
                   text-anchor="middle"
-                  fill="rgba(255,255,255,0.85)"
-                  style="font-size: 12px; font-family: 'SF Mono', ui-monospace, monospace; font-weight: 500;"
+                  fill="rgba(255,255,255,0.9)"
+                  style="font-size: 13px; font-family: system-ui, -apple-system, sans-serif; font-weight: 500;"
                 >
                   {userDeviceInfo.name}
                 </text>
                 <text
                   x="0"
-                  y="58"
+                  y="76"
                   text-anchor="middle"
-                  style="font-size: 11px; font-family: 'SF Mono', ui-monospace, monospace;"
+                  style="font-size: 12px; font-family: 'SF Mono', ui-monospace, monospace;"
                 >
-                  <tspan fill="rgba(255,255,255,0.7)">{userDeviceInfo.memoryGB}</tspan><tspan fill="rgba(255,255,255,0.45)">{" "}GB</tspan>
+                  <tspan fill="rgba(255,215,0,0.9)">{userDeviceInfo.memoryGB}</tspan><tspan fill="rgba(255,255,255,0.4)">{" "}GB</tspan>
                 </text>
               </g>
 
               <!-- Device 2 (Mac Studio) -->
-              <g transform="translate({$device2X}, 150)" opacity={$device2Opacity}>
-                <DeviceIcon deviceType="mac studio" cx={0} cy={0} size={55} ramPercent={80} uid="onb-d2" />
+              <g
+                transform="translate({$device2X}, 180)"
+                opacity={$device2Opacity}
+                style="transition: opacity 0.6s ease;"
+              >
+                <DeviceIcon
+                  deviceType="mac studio"
+                  cx={0}
+                  cy={0}
+                  size={75}
+                  ramPercent={80}
+                  uid="onb-d2"
+                />
                 <text
                   x="0"
-                  y="-58"
+                  y="-76"
                   text-anchor="middle"
-                  fill="rgba(255,255,255,0.85)"
-                  style="font-size: 12px; font-family: 'SF Mono', ui-monospace, monospace; font-weight: 500;"
+                  fill="rgba(255,255,255,0.9)"
+                  style="font-size: 13px; font-family: system-ui, -apple-system, sans-serif; font-weight: 500;"
                 >
                   Mac Studio
                 </text>
                 <text
                   x="0"
-                  y="58"
+                  y="76"
                   text-anchor="middle"
-                  style="font-size: 11px; font-family: 'SF Mono', ui-monospace, monospace;"
+                  style="font-size: 12px; font-family: 'SF Mono', ui-monospace, monospace;"
                 >
-                  <tspan fill="rgba(255,255,255,0.7)">{SIMULATED_STUDIO_GB}</tspan><tspan fill="rgba(255,255,255,0.45)">{" "}GB</tspan>
+                  <tspan fill="rgba(255,215,0,0.9)">{SIMULATED_STUDIO_GB}</tspan><tspan fill="rgba(255,255,255,0.4)">{" "}GB</tspan>
                 </text>
               </g>
 
               <!-- Connection line between devices -->
               <line
-                x1={$device1X + 45}
-                y1={150}
-                x2={$device2X - 45}
-                y2={150}
-                stroke={$connectionIsRed > 0.5 ? "rgba(220,38,38,0.7)" : "rgba(255,255,255,0.15)"}
+                x1={$device1X + 60}
+                y1={180}
+                x2={$device2X - 60}
+                y2={180}
+                stroke={$connectionIsRed > 0.5
+                  ? "rgba(220,38,38,0.7)"
+                  : "rgba(255,255,255,0.15)"}
                 stroke-width="1.5"
                 stroke-dasharray="6,6"
                 opacity={$connectionOpacity}
-                class={$connectionIsRed > 0.5 ? "onboarding-connection-line-red" : "onboarding-connection-line"}
+                class={$connectionIsRed > 0.5
+                  ? "onboarding-connection-line-red"
+                  : "onboarding-connection-line"}
               />
 
               <!-- Disconnect X mark -->
               {#if $disconnectXOpacity > 0.01}
-                <g transform="translate({($device1X + $device2X) / 2}, 150)" opacity={$disconnectXOpacity}>
-                  <circle r="14" fill="rgba(220,38,38,0.1)" stroke="rgba(220,38,38,0.6)" stroke-width="1.5" />
-                  <line x1="-6" y1="-6" x2="6" y2="6" stroke="rgba(220,38,38,0.8)" stroke-width="2" stroke-linecap="round" />
-                  <line x1="6" y1="-6" x2="-6" y2="6" stroke="rgba(220,38,38,0.8)" stroke-width="2" stroke-linecap="round" />
+                <g
+                  transform="translate({($device1X + $device2X) / 2}, 180)"
+                  opacity={$disconnectXOpacity}
+                >
+                  <circle
+                    r="16"
+                    fill="rgba(220,38,38,0.1)"
+                    stroke="rgba(220,38,38,0.6)"
+                    stroke-width="1.5"
+                  />
+                  <line
+                    x1="-7"
+                    y1="-7"
+                    x2="7"
+                    y2="7"
+                    stroke="rgba(220,38,38,0.8)"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                  />
+                  <line
+                    x1="7"
+                    y1="-7"
+                    x2="-7"
+                    y2="7"
+                    stroke="rgba(220,38,38,0.8)"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                  />
                 </g>
               {/if}
 
               <!-- Combined memory label -->
               <text
                 x={($device1X + $device2X) / 2}
-                y={125}
+                y={130}
                 text-anchor="middle"
-                fill="rgba(255,255,255,0.5)"
-                style="font-size: 11px; font-family: 'SF Mono', ui-monospace, monospace;"
+                fill="rgba(255,215,0,0.7)"
+                style="font-size: 13px; font-family: 'SF Mono', ui-monospace, monospace; font-weight: 500;"
                 opacity={$combinedLabelOpacity}
               >
                 {onboardingCombinedGB} GB combined
@@ -2824,36 +2931,86 @@
               {#if $modelBlockOpacity > 0.01}
                 {#if $modelSplitProgress < 0.05}
                   <!-- Unified model block (centered above devices) -->
-                  <g transform="translate({($device1X + $device2X) / 2}, {$modelBlockY})" opacity={$modelBlockOpacity}>
-                    <rect x="-60" y="-16" width="120" height="32" rx="6"
-                      fill="rgba(180,140,0,0.12)" stroke="rgba(180,140,0,0.5)" stroke-width="1.5" />
-                    <text x="0" y="5" text-anchor="middle" fill="rgba(220,180,40,1)"
-                      style="font-size: 12px; font-family: system-ui, sans-serif; font-weight: 500;">
-                      LLM Model
+                  <g
+                    transform="translate({($device1X + $device2X) /
+                      2}, {$modelBlockY})"
+                    opacity={$modelBlockOpacity}
+                  >
+                    <rect
+                      x="-55"
+                      y="-16"
+                      width="110"
+                      height="32"
+                      rx="8"
+                      fill="rgba(180,140,0,0.1)"
+                      stroke="rgba(180,140,0,0.45)"
+                      stroke-width="1.5"
+                    />
+                    <text
+                      x="0"
+                      y="5"
+                      text-anchor="middle"
+                      fill="rgba(220,180,40,0.9)"
+                      style="font-size: 12px; font-family: system-ui, sans-serif; font-weight: 500;"
+                    >
+                      LLM
                     </text>
                   </g>
                 {:else}
                   <!-- Split model halves flowing down to each device -->
-                  {@const splitX = $modelSplitProgress * (($device2X - $device1X) / 2)}
+                  {@const splitX =
+                    $modelSplitProgress * (($device2X - $device1X) / 2)}
                   {@const centerX = ($device1X + $device2X) / 2}
-                  {@const splitY = $modelBlockY + $modelSplitProgress * 50}
+                  {@const splitY = $modelBlockY + $modelSplitProgress * 60}
 
                   <!-- Left half → Device 1 -->
-                  <g transform="translate({centerX - splitX}, {splitY})" opacity={$modelBlockOpacity}>
-                    <rect x="-50" y="-14" width="100" height="28" rx="5"
-                      fill="rgba(180,140,0,0.12)" stroke="rgba(180,140,0,0.4)" stroke-width="1" />
-                    <text x="0" y="4" text-anchor="middle" fill="rgba(220,180,40,0.8)"
-                      style="font-size: 11px; font-family: system-ui, sans-serif;">
+                  <g
+                    transform="translate({centerX - splitX}, {splitY})"
+                    opacity={$modelBlockOpacity}
+                  >
+                    <rect
+                      x="-46"
+                      y="-14"
+                      width="92"
+                      height="28"
+                      rx="6"
+                      fill="rgba(180,140,0,0.1)"
+                      stroke="rgba(180,140,0,0.35)"
+                      stroke-width="1"
+                    />
+                    <text
+                      x="0"
+                      y="4"
+                      text-anchor="middle"
+                      fill="rgba(220,180,40,0.75)"
+                      style="font-size: 11px; font-family: system-ui, sans-serif;"
+                    >
                       Shard 1/2
                     </text>
                   </g>
 
                   <!-- Right half → Device 2 -->
-                  <g transform="translate({centerX + splitX}, {splitY})" opacity={$modelBlockOpacity * $device2Opacity}>
-                    <rect x="-50" y="-14" width="100" height="28" rx="5"
-                      fill="rgba(180,140,0,0.12)" stroke="rgba(180,140,0,0.4)" stroke-width="1" />
-                    <text x="0" y="4" text-anchor="middle" fill="rgba(220,180,40,0.8)"
-                      style="font-size: 11px; font-family: system-ui, sans-serif;">
+                  <g
+                    transform="translate({centerX + splitX}, {splitY})"
+                    opacity={$modelBlockOpacity * $device2Opacity}
+                  >
+                    <rect
+                      x="-46"
+                      y="-14"
+                      width="92"
+                      height="28"
+                      rx="6"
+                      fill="rgba(180,140,0,0.1)"
+                      stroke="rgba(180,140,0,0.35)"
+                      stroke-width="1"
+                    />
+                    <text
+                      x="0"
+                      y="4"
+                      text-anchor="middle"
+                      fill="rgba(220,180,40,0.75)"
+                      style="font-size: 11px; font-family: system-ui, sans-serif;"
+                    >
                       Shard 2/2
                     </text>
                   </g>
@@ -2862,13 +3019,14 @@
             </svg>
           </div>
 
-          <!-- Continue button -->
+          <!-- Continue button (only shown for steps that need it) -->
           {#if showContinueButton}
             <button
               type="button"
-              onclick={() => (onboardingStep = onboardingStep < 5 ? onboardingStep + 1 : 6)}
-              class="inline-flex items-center gap-2 px-8 py-3 mt-2 bg-exo-yellow text-exo-black font-sans text-sm font-semibold rounded-full hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.2)] transition-all duration-200 cursor-pointer"
-              in:fade={{ duration: 400 }}
+              onclick={() =>
+                (onboardingStep = onboardingStep < 5 ? onboardingStep + 1 : 6)}
+              class="inline-flex items-center gap-2 px-8 py-3 mt-2 bg-exo-yellow text-exo-black font-sans text-sm font-semibold rounded-full hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.15)] cursor-pointer"
+              style="opacity: 0; animation: onb-fade-in 0.4s ease forwards; transition: transform 0.2s ease, box-shadow 0.2s ease;"
             >
               {onboardingStep === 5 ? "Choose a Model" : "Continue"}
               <svg
@@ -2891,17 +3049,16 @@
         <!-- Step 6: Choose a Model -->
         <div
           class="flex flex-col items-center w-full max-w-2xl px-8"
-          in:fade={{ duration: 400 }}
-          out:fade={{ duration: 200 }}
+          style="opacity: 0; animation: onb-fade-in 0.5s ease forwards;"
         >
           <div class="text-center mb-8">
             <h1
-              class="text-2xl font-sans font-light text-white mb-2 tracking-wide"
+              class="text-xl font-sans font-light text-white/90 mb-2 tracking-wide"
             >
               Choose a model
             </h1>
-            <p class="text-sm font-sans text-white/50">
-              Pick a model to download and run locally.
+            <p class="text-sm font-sans text-white/40">
+              Pick a model to download and run locally on your device.
             </p>
           </div>
 
@@ -2987,20 +3144,19 @@
         <!-- Step 7: Downloading -->
         <div
           class="text-center max-w-lg px-8"
-          in:fade={{ duration: 400 }}
-          out:fade={{ duration: 200 }}
+          style="opacity: 0; animation: onb-fade-in 0.5s ease forwards;"
         >
           <div class="mb-8">
             <h1
-              class="text-2xl font-sans font-light text-white mb-2 tracking-wide"
+              class="text-xl font-sans font-light text-white/90 mb-2 tracking-wide"
             >
               Downloading
             </h1>
-            <p class="text-sm text-white/50">
-              {#if onboardingModelId}
-                <span class="text-exo-yellow font-medium">{onboardingModelId}</span>
-              {/if}
-            </p>
+            {#if onboardingModelId}
+              <p class="text-sm text-white/40 font-sans">
+                {onboardingModelId.split("/").pop() ?? onboardingModelId}
+              </p>
+            {/if}
           </div>
 
           {#if onboardingDownloadProgress}
@@ -3048,55 +3204,53 @@
         <!-- Step 8: Loading into memory -->
         <div
           class="text-center max-w-lg px-8"
-          in:fade={{ duration: 400 }}
-          out:fade={{ duration: 200 }}
+          style="opacity: 0; animation: onb-fade-in 0.5s ease forwards;"
         >
           <div class="mb-8">
             <h1
-              class="text-2xl font-sans font-light text-white mb-2 tracking-wide"
+              class="text-xl font-sans font-light text-white/90 mb-2 tracking-wide"
             >
               Loading into memory
             </h1>
-            <p class="text-sm text-white/50">
-              {#if onboardingModelId}
-                <span class="text-exo-yellow font-medium">{onboardingModelId}</span>
-              {/if}
-            </p>
+            {#if onboardingModelId}
+              <p class="text-sm text-white/40 font-sans">
+                {onboardingModelId.split("/").pop() ?? onboardingModelId}
+              </p>
+            {/if}
           </div>
 
           <div class="flex justify-center mb-6">
             <div
-              class="w-12 h-12 border-2 border-exo-yellow/20 border-t-exo-yellow rounded-full animate-spin"
+              class="w-10 h-10 border-2 border-exo-yellow/15 border-t-exo-yellow/70 rounded-full animate-spin"
             ></div>
           </div>
 
-          <p class="text-sm text-white/40 font-sans">Almost ready...</p>
+          <p class="text-sm text-white/30 font-sans">Almost ready...</p>
         </div>
       {:else if onboardingStep === 9}
         <!-- Step 9: Chat — centered input auto-appears, first message transitions to dashboard -->
         <div
           class="flex flex-col items-center justify-center w-full max-w-2xl px-8"
-          in:fade={{ duration: 400 }}
-          out:fade={{ duration: 200 }}
+          style="opacity: 0; animation: onb-fade-in 0.6s ease forwards;"
         >
-          <!-- Subtle branding -->
-          <div
-            class="text-2xl font-mono text-exo-yellow/30 font-bold tracking-wider mb-8"
-          >
-            exo
-          </div>
+          <!-- Logo -->
+          <img
+            src="/exo-logo.png"
+            alt="exo"
+            class="w-10 h-10 rounded-xl mb-6 opacity-30"
+          />
 
           <!-- Model name -->
           {#if onboardingModelId}
-            <p class="text-sm text-white/40 font-sans mb-4">
-              {onboardingModelId.split("/").pop() ?? onboardingModelId}
+            <p class="text-sm text-white/50 font-sans mb-6">
+              Running <span class="text-exo-yellow/80 font-medium">{onboardingModelId.split("/").pop() ?? onboardingModelId}</span>
             </p>
           {/if}
 
           <!-- Centered ChatForm — first message completes onboarding -->
-          <div class="w-full bg-white/5 rounded-xl p-4">
+          <div class="w-full bg-white/[0.03] border border-white/[0.06] rounded-2xl p-5">
             <ChatForm
-              placeholder="Ask anything"
+              placeholder="Ask anything..."
               autofocus={true}
               showHelperText={false}
               showModelSelector={false}
@@ -3107,15 +3261,15 @@
           </div>
 
           <!-- Suggestion chips -->
-          <div class="flex flex-wrap justify-center gap-2.5 mt-8">
-            {#each ["Write a poem about the ocean", "Explain quantum computing simply", "Help me debug my code", "Tell me a creative story"] as chip}
+          <div class="flex flex-wrap justify-center gap-2 mt-6">
+            {#each ["Write a poem about the ocean", "Explain quantum computing", "Help me debug my code", "Tell me a creative story"] as chip}
               <button
                 type="button"
                 onclick={() => {
                   sendMessage(chip);
                   completeOnboarding();
                 }}
-                class="px-4 py-2 rounded-full border border-white/10 bg-white/5 text-[13px] font-sans text-white/50 hover:bg-white/10 hover:text-white/70 hover:border-white/20 transition-all duration-200 cursor-pointer"
+                class="px-4 py-2 rounded-full border border-white/8 bg-white/[0.03] text-[13px] font-sans text-white/40 hover:bg-white/[0.06] hover:text-white/60 hover:border-white/15 transition-all duration-300 cursor-pointer"
               >
                 {chip}
               </button>
@@ -3128,7 +3282,7 @@
       <button
         type="button"
         onclick={completeOnboarding}
-        class="absolute bottom-6 text-xs font-sans text-white/20 hover:text-white/40 transition-colors cursor-pointer"
+        class="absolute bottom-8 text-xs font-sans text-white/15 hover:text-white/35 transition-colors duration-300 cursor-pointer"
       >
         Skip
       </button>
@@ -3317,7 +3471,7 @@
       {:else if !chatStarted}
         <!-- WELCOME STATE: Topology + Instance Controls (no left sidebar for cleaner look) -->
         <div
-          class="flex-1 flex overflow-visible relative"
+          class="flex-1 flex overflow-hidden relative"
           in:fade={{ duration: 300 }}
           out:fade={{ duration: 200 }}
         >

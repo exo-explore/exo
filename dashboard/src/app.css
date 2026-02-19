@@ -338,6 +338,12 @@ input:focus, textarea:focus {
 	}
 }
 
+/* Onboarding smooth fade-in */
+@keyframes onb-fade-in {
+	from { opacity: 0; transform: translateY(8px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+
 /* Respect reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
 	.shooting-star,
@@ -359,6 +365,10 @@ input:focus, textarea:focus {
 	}
 	.onboarding-connection-line-red {
 		animation: none;
+	}
+	[style*="onb-fade-in"] {
+		animation: none !important;
+		opacity: 1 !important;
 	}
 	*,
 	*::before,
