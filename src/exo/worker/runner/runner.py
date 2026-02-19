@@ -347,11 +347,15 @@ def main(
                             group=group,
                         )
 
-                        # For other thinking models (GLM, etc.), check if we need to
-                        # prepend the thinking tag that was consumed by the chat template
-                        if detect_thinking_prompt_suffix(prompt, tokenizer):
+                        if tokenizer.has_thinking:
                             mlx_generator = parse_thinking_models(
-                                mlx_generator, tokenizer
+                                mlx_generator,
+                                tokenizer,
+                                # For other thinking models (GLM, etc.), check if we need to
+                                # prepend the thinking tag that was consumed by the chat template
+                                starts_in_thinking=detect_thinking_prompt_suffix(
+                                    prompt, tokenizer
+                                ),
                             )
 
                         # Model-specific output parsing for tool calls.
@@ -848,24 +852,30 @@ def _could_be_dsml_prefix(text: str) -> bool:
 def parse_thinking_models(
     responses: Generator[GenerationResponse],
     tokenizer: TokenizerWrapper,
+    starts_in_thinking: bool = True,
 ) -> Generator[GenerationResponse]:
+    """Route thinking tokens via is_thinking flag.
+
+    Swallows think tag tokens, sets is_thinking on all others.
+    Always yields tokens with finish_reason to avoid hanging the chunk stream.
     """
-    For models that inject thinking tags in the prompt (like GLM-4.7),
-    mark thinking tokens with is_thinking=True until the think_end token
-    is encountered, then switch to regular content.
-    """
-    in_thinking = True  # Prompt ended with <think>, so we start in thinking mode
+    in_thinking = starts_in_thinking
     for response in responses:
         if isinstance(response, ToolCallResponse):
             yield response
             continue
-        # Detect the end-of-thinking token and skip it
-        if (
-            in_thinking
-            and tokenizer.think_end is not None
-            and response.text == tokenizer.think_end
-        ):
-            in_thinking = False
+
+        is_think_tag = (
+            tokenizer.think_end is not None and response.text == tokenizer.think_end
+        ) or (
+            tokenizer.think_start is not None and response.text == tokenizer.think_start
+        )
+
+        if is_think_tag:
+            in_thinking = response.text != tokenizer.think_end
+            # Never swallow finish_reason — the chunk stream needs it to terminate.
+            if response.finish_reason is not None:
+                yield response.model_copy(update={"text": "", "is_thinking": False})
             continue
         yield response.model_copy(update={"is_thinking": in_thinking})
 

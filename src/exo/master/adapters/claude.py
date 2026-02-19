@@ -157,6 +157,10 @@ def claude_request_to_text_generation(
             for tool in request.tools
         ]
 
+    enable_thinking: bool | None = None
+    if request.thinking is not None:
+        enable_thinking = request.thinking.type in ("enabled", "adaptive")
+
     return TextGenerationTaskParams(
         model=request.model,
         input=input_messages
@@ -170,6 +174,7 @@ def claude_request_to_text_generation(
         stop=request.stop_sequences,
         stream=request.stream,
         tools=tools,
+        enable_thinking=enable_thinking,
         chat_template_messages=chat_template_messages
         if chat_template_messages
         else None,

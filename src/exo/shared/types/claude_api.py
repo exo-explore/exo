@@ -96,6 +96,11 @@ class ClaudeMessage(BaseModel, frozen=True):
     content: str | list[ClaudeInputContentBlock]
 
 
+class ClaudeThinkingConfig(BaseModel, frozen=True):
+    type: Literal["enabled", "disabled", "adaptive"]
+    budget_tokens: int | None = None
+
+
 class ClaudeMessagesRequest(BaseModel):
     """Request body for Claude Messages API."""
 
@@ -110,6 +115,7 @@ class ClaudeMessagesRequest(BaseModel):
     top_k: int | None = None
     tools: list[ClaudeToolDefinition] | None = None
     metadata: dict[str, str] | None = None
+    thinking: ClaudeThinkingConfig | None = None
 
 
 # Response types
