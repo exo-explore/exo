@@ -14,6 +14,21 @@
       : 0,
   );
 
+  const etaText = $derived.by(() => {
+    if (progress.processed <= 0 || progress.total <= 0) return null;
+    const elapsedMs = performance.now() - progress.startedAt;
+    if (elapsedMs < 200) return null; // need a minimum sample window
+    const tokensPerMs = progress.processed / elapsedMs;
+    const remainingTokens = progress.total - progress.processed;
+    const remainingMs = remainingTokens / tokensPerMs;
+    const remainingSec = Math.ceil(remainingMs / 1000);
+    if (remainingSec <= 0) return null;
+    if (remainingSec < 60) return `~${remainingSec}s remaining`;
+    const mins = Math.floor(remainingSec / 60);
+    const secs = remainingSec % 60;
+    return `~${mins}m ${secs}s remaining`;
+  });
+
   function formatTokenCount(count: number | undefined): string {
     if (count == null) return "0";
     if (count >= 1000) {
@@ -40,8 +55,11 @@
       style="width: {percentage}%"
     ></div>
   </div>
-  <div class="text-right text-xs text-exo-light-gray/70 mt-0.5 font-mono">
-    {percentage}%
+  <div
+    class="flex items-center justify-between text-xs text-exo-light-gray/70 mt-0.5 font-mono"
+  >
+    <span>{etaText ?? ""}</span>
+    <span>{percentage}%</span>
   </div>
 </div>
 

@@ -276,6 +276,8 @@ export interface TokenData {
 export interface PrefillProgress {
   processed: number;
   total: number;
+  /** Timestamp (performance.now()) when prefill started. */
+  startedAt: number;
 }
 
 export interface Message {
@@ -2459,6 +2461,7 @@ class AppStore {
             this.prefillProgress = {
               processed: inner.processed_tokens,
               total: inner.total_tokens,
+              startedAt: this.prefillProgress?.startedAt ?? performance.now(),
             };
           },
         },
