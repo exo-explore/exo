@@ -1,10 +1,9 @@
-import contextlib
 from collections import defaultdict
 from datetime import datetime, timezone
 from random import random
 
 import anyio
-from anyio import CancelScope, ClosedResourceError, fail_after
+from anyio import CancelScope, fail_after
 from loguru import logger
 
 from exo.download.download_utils import resolve_model_in_path
@@ -120,8 +119,7 @@ class Worker:
             self.command_sender.close()
             self.download_command_sender.close()
             for runner in self.runners.values():
-                with contextlib.suppress(ClosedResourceError):
-                    runner.shutdown()
+                runner.shutdown()
 
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
@@ -267,8 +265,7 @@ class Worker:
                             )
                         )
                     finally:
-                        with contextlib.suppress(ClosedResourceError):
-                            runner.shutdown()
+                        runner.shutdown()
                 case CancelTask(
                     cancelled_task_id=cancelled_task_id, runner_id=runner_id
                 ):
