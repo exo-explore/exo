@@ -130,11 +130,7 @@
     }> = [];
 
     const isMacStudio = (node: (typeof data.nodes)[string] | undefined) =>
-      node?.friendly_name?.toLowerCase().includes("mac studio") ||
-      node?.system_info?.model_id?.startsWith("Mac14,13") ||
-      node?.system_info?.model_id?.startsWith("Mac14,14") ||
-      node?.system_info?.model_id?.startsWith("Mac15,13") ||
-      node?.system_info?.model_id?.startsWith("Mac15,14");
+      node?.system_info?.model_id === "Mac Studio";
 
     for (const edge of edges) {
       if (!edge.sourceRdmaIface && !edge.sinkRdmaIface) continue;
