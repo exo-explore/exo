@@ -305,6 +305,7 @@ def main(
 
                     # Define callback to send prefill progress events
                     # and check for cancellation between prefill chunks.
+                    # TODO(evan): kill the callbacks/runner refactor
                     def on_prefill_progress(
                         processed: int,
                         total: int,

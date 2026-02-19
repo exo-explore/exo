@@ -81,6 +81,7 @@ def prefill(
     has_ssm = has_non_kv_caches(cache)
     snapshots: list[CacheSnapshot] = []
 
+    # TODO(evan): kill the callbacks/runner refactor
     def progress_callback(processed: int, total: int) -> None:
         elapsed = time.perf_counter() - start_time
         tok_per_sec = processed / elapsed if elapsed > 0 else 0
