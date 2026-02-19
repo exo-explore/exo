@@ -177,9 +177,20 @@ class RunnerSupervisor:
                         self.completed.add(event.task_id)
                     await self._event_sender.send(event)
             except (ClosedResourceError, BrokenResourceError) as e:
+                # Runner process died or channel closed (e.g. segfault during warmup).
+                # Handle gracefully so main process does not traceback.
+                logger.debug("Runner event channel closed: {}", type(e).__name__)
                 await self._check_runner(e)
                 for tid in self.pending:
                     self.pending[tid].set()
+            except Exception as e:
+                if type(e).__name__ in ("ClosedResourceError", "BrokenResourceError"):
+                    logger.debug("Runner event channel closed: {}", type(e).__name__)
+                    await self._check_runner(e)
+                    for tid in self.pending:
+                        self.pending[tid].set()
+                else:
+                    raise
 
     def __del__(self) -> None:
         if self.runner_process.is_alive():
