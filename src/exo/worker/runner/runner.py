@@ -22,12 +22,17 @@ from exo.shared.constants import EXO_MAX_CHUNK_SIZE, EXO_TRACING_ENABLED
 from exo.shared.models.model_cards import ModelId, ModelTask
 from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
 from exo.shared.types.api import ImageGenerationStats
-from exo.shared.types.chunks import ErrorChunk, ImageChunk, TokenChunk, ToolCallChunk
+from exo.shared.types.chunks import (
+    ErrorChunk,
+    ImageChunk,
+    PrefillProgressChunk,
+    TokenChunk,
+    ToolCallChunk,
+)
 from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
-    PrefillProgress,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
@@ -316,11 +321,13 @@ def main(
                     ) -> None:
                         if device_rank == 0:
                             event_sender.send(
-                                PrefillProgress(
+                                ChunkGenerated(
                                     command_id=command_id,
-                                    model=shard_metadata.model_card.model_id,
-                                    processed_tokens=processed,
-                                    total_tokens=total,
+                                    chunk=PrefillProgressChunk(
+                                        model=shard_metadata.model_card.model_id,
+                                        processed_tokens=processed,
+                                        total_tokens=total,
+                                    ),
                                 )
                             )
                         cancelled_tasks.update(cancel_receiver.collect())
