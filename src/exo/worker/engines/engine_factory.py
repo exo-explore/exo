@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from typing import Any
+from pydantic import BaseModel
 
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
@@ -13,8 +14,7 @@ side-effects during runtime. This is critical since we are working with
 heterogenuous consumer-grade devices.
 """
 
-@dataclass(frozen=True)
-class Engine:
+class Engine(BaseModel, frozen=True)
     # (BoundInstance) -> context
     initialize: Callable[[BoundInstance], Any]
 

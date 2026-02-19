@@ -1,4 +1,3 @@
-
 from . import ArchitectureSpec, register
 
 QWEN_DENSE_SPEC = ArchitectureSpec(
