@@ -100,7 +100,8 @@ class RunnerSupervisor:
         logger.info("Runner supervisor shutting down")
         self._ev_recv.close()
         self._task_sender.close()
-        self._cancel_sender.send(TaskId("CANCEL_CURRENT_TASK"))
+        with contextlib.suppress(ClosedResourceError):
+            self._cancel_sender.send(TaskId("CANCEL_CURRENT_TASK"))
         self._cancel_sender.close()
         self.runner_process.join(5)
         if not self.runner_process.is_alive():

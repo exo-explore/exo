@@ -341,6 +341,7 @@ def _find_ip_prioritised(
     other_node_id: NodeId,
     cycle_digraph: Topology,
     node_network: Mapping[NodeId, NodeNetworkInfo],
+    ring: bool,
 ) -> str | None:
     """Find an IP address between nodes with prioritization.
 
@@ -353,13 +354,27 @@ def _find_ip_prioritised(
     ip_to_type = {
         iface.ip_address: iface.interface_type for iface in other_network.interfaces
     }
-    priority = {
-        "ethernet": 0,
-        "wifi": 1,
-        "unknown": 2,
-        "maybe_ethernet": 3,
-        "thunderbolt": 4,
-    }
+
+    # Ring should prioritise fastest connection. As a best-effort, we prioritise TB.
+    # TODO: Profile and get actual connection speeds.
+    if ring:
+        priority = {
+            "thunderbolt": 0,
+            "maybe_ethernet": 1,
+            "ethernet": 2,
+            "wifi": 3,
+            "unknown": 4,
+        }
+
+    # RDMA prefers ethernet coordinator
+    else:
+        priority = {
+            "ethernet": 0,
+            "wifi": 1,
+            "unknown": 2,
+            "maybe_ethernet": 3,
+            "thunderbolt": 4,
+        }
     return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2))
 
 
@@ -399,7 +414,7 @@ def get_mlx_ring_hosts_by_node(
                 continue
 
             connection_ip = _find_ip_prioritised(
-                node_id, other_node_id, cycle_digraph, node_network
+                node_id, other_node_id, cycle_digraph, node_network, ring=True
             )
             if connection_ip is None:
                 raise ValueError(
@@ -430,7 +445,9 @@ def get_mlx_jaccl_coordinators(
         if n == coordinator:
             return "0.0.0.0"
 
-        ip = _find_ip_prioritised(n, coordinator, cycle_digraph, node_network)
+        ip = _find_ip_prioritised(
+            n, coordinator, cycle_digraph, node_network, ring=False
+        )
         if ip is not None:
             return ip
 
