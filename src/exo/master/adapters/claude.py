@@ -87,12 +87,15 @@ def claude_request_to_text_generation(
 
         # Process structured content blocks
         text_parts: list[str] = []
+        thinking_parts: list[str] = []
         tool_calls: list[dict[str, Any]] = []
         tool_results: list[ClaudeToolResultBlock] = []
 
         for block in msg.content:
             if isinstance(block, ClaudeTextBlock):
                 text_parts.append(block.text)
+            elif isinstance(block, ClaudeThinkingBlock):
+                thinking_parts.append(block.thinking)
             elif isinstance(block, ClaudeToolUseBlock):
                 tool_calls.append(
                     {
@@ -108,6 +111,7 @@ def claude_request_to_text_generation(
                 tool_results.append(block)
 
         content = "".join(text_parts)
+        reasoning_content = "".join(thinking_parts) if thinking_parts else None
 
         # Build InputMessage from text content
         if msg.role in ("user", "assistant"):
@@ -115,9 +119,14 @@ def claude_request_to_text_generation(
 
         # Build chat_template_messages preserving tool structure
         if tool_calls:
-            chat_template_messages.append(
-                {"role": "assistant", "content": content, "tool_calls": tool_calls}
-            )
+            chat_msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": content,
+                "tool_calls": tool_calls,
+            }
+            if reasoning_content:
+                chat_msg["reasoning_content"] = reasoning_content
+            chat_template_messages.append(chat_msg)
         elif tool_results:
             for tr in tool_results:
                 chat_template_messages.append(
@@ -128,7 +137,10 @@ def claude_request_to_text_generation(
                     }
                 )
         else:
-            chat_template_messages.append({"role": msg.role, "content": content})
+            chat_msg = {"role": msg.role, "content": content}
+            if reasoning_content:
+                chat_msg["reasoning_content"] = reasoning_content
+            chat_template_messages.append(chat_msg)
 
     # Convert Claude tool definitions to OpenAI-style function tools
     tools: list[dict[str, Any]] | None = None

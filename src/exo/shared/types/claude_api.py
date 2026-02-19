@@ -52,6 +52,7 @@ class ClaudeThinkingBlock(BaseModel, frozen=True):
 
     type: Literal["thinking"] = "thinking"
     thinking: str
+    signature: str | None = None
 
 
 class ClaudeToolUseBlock(BaseModel, frozen=True):
@@ -79,7 +80,11 @@ ClaudeContentBlock = (
 
 # Input content blocks can also include tool_result (sent by user after tool_use)
 ClaudeInputContentBlock = (
-    ClaudeTextBlock | ClaudeImageBlock | ClaudeToolUseBlock | ClaudeToolResultBlock
+    ClaudeTextBlock
+    | ClaudeImageBlock
+    | ClaudeThinkingBlock
+    | ClaudeToolUseBlock
+    | ClaudeToolResultBlock
 )
 
 
