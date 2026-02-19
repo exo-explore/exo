@@ -2403,10 +2403,10 @@ class AppStore {
         },
         {
           prefill_progress: (data) => {
-            // TaggedModel wraps as {"PrefillProgressData": {...}}
-            // model_dump_json() uses snake_case by default
+            // TaggedModel wraps as {"PrefillProgressChunk": {...}}
+            // model_dump_json() uses snake_case (by_alias defaults to False)
             const raw = data as Record<string, unknown>;
-            const inner = (raw["PrefillProgressData"] ?? raw) as {
+            const inner = (raw["PrefillProgressChunk"] ?? raw) as {
               processed_tokens: number;
               total_tokens: number;
             };

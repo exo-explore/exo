@@ -107,7 +107,7 @@ from exo.shared.types.chunks import (
     ErrorChunk,
     ImageChunk,
     InputImageChunk,
-    PrefillProgressData,
+    PrefillProgressChunk,
     TokenChunk,
     ToolCallChunk,
 )
@@ -224,7 +224,7 @@ class API:
 
         self._text_generation_queues: dict[
             CommandId,
-            Sender[TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressData],
+            Sender[TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk],
         ] = {}
         self._image_generation_queues: dict[
             CommandId, Sender[ImageChunk | ErrorChunk]
@@ -531,7 +531,7 @@ class API:
     async def _token_chunk_stream(
         self, command_id: CommandId
     ) -> AsyncGenerator[
-        TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressData, None
+        TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk, None
     ]:
         """Yield chunks for a given command until completion.
 
@@ -539,13 +539,13 @@ class API:
         """
         try:
             self._text_generation_queues[command_id], recv = channel[
-                TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressData
+                TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk
             ]()
 
             with recv as token_chunks:
                 async for chunk in token_chunks:
                     yield chunk
-                    if isinstance(chunk, PrefillProgressData):
+                    if isinstance(chunk, PrefillProgressChunk):
                         continue
                     if chunk.finish_reason is not None:
                         break
@@ -573,7 +573,7 @@ class API:
         stats: GenerationStats | None = None
 
         async for chunk in self._token_chunk_stream(command_id):
-            if isinstance(chunk, PrefillProgressData):
+            if isinstance(chunk, PrefillProgressChunk):
                 continue
 
             if chunk.finish_reason == "error":
@@ -1462,7 +1462,7 @@ class API:
                         ):
                             try:
                                 await queue.send(
-                                    PrefillProgressData(
+                                    PrefillProgressChunk(
                                         processed_tokens=event.processed_tokens,
                                         total_tokens=event.total_tokens,
                                     )

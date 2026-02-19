@@ -7,7 +7,7 @@ from typing import Any
 from exo.shared.types.api import Usage
 from exo.shared.types.chunks import (
     ErrorChunk,
-    PrefillProgressData,
+    PrefillProgressChunk,
     TokenChunk,
     ToolCallChunk,
 )
@@ -127,7 +127,7 @@ async def collect_responses_response(
     command_id: CommandId,
     model: str,
     chunk_stream: AsyncGenerator[
-        ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressData, None
+        ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressChunk, None
     ],
 ) -> AsyncGenerator[str]:
     # This is an AsyncGenerator[str] rather than returning a ChatCompletionReponse because
@@ -141,7 +141,7 @@ async def collect_responses_response(
     error_message: str | None = None
 
     async for chunk in chunk_stream:
-        if isinstance(chunk, PrefillProgressData):
+        if isinstance(chunk, PrefillProgressChunk):
             continue
 
         if isinstance(chunk, ErrorChunk):
@@ -200,7 +200,7 @@ async def generate_responses_stream(
     command_id: CommandId,
     model: str,
     chunk_stream: AsyncGenerator[
-        ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressData, None
+        ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressChunk, None
     ],
 ) -> AsyncGenerator[str, None]:
     """Generate OpenAI Responses API streaming events from TokenChunks."""
@@ -255,7 +255,7 @@ async def generate_responses_stream(
     next_output_index = 1  # message item is at 0
 
     async for chunk in chunk_stream:
-        if isinstance(chunk, PrefillProgressData):
+        if isinstance(chunk, PrefillProgressChunk):
             continue
 
         if isinstance(chunk, ErrorChunk):

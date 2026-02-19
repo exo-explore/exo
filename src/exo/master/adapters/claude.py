@@ -7,7 +7,7 @@ from typing import Any
 from exo.shared.types.api import FinishReason, Usage
 from exo.shared.types.chunks import (
     ErrorChunk,
-    PrefillProgressData,
+    PrefillProgressChunk,
     TokenChunk,
     ToolCallChunk,
 )
@@ -166,7 +166,7 @@ async def collect_claude_response(
     command_id: CommandId,
     model: str,
     chunk_stream: AsyncGenerator[
-        ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressData, None
+        ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressChunk, None
     ],
 ) -> AsyncGenerator[str]:
     # This is an AsyncGenerator[str] rather than returning a ChatCompletionReponse because
@@ -179,7 +179,7 @@ async def collect_claude_response(
     error_message: str | None = None
 
     async for chunk in chunk_stream:
-        if isinstance(chunk, PrefillProgressData):
+        if isinstance(chunk, PrefillProgressChunk):
             continue
 
         if isinstance(chunk, ErrorChunk):
@@ -241,7 +241,7 @@ async def generate_claude_stream(
     command_id: CommandId,
     model: str,
     chunk_stream: AsyncGenerator[
-        ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressData, None
+        ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressChunk, None
     ],
 ) -> AsyncGenerator[str, None]:
     """Generate Claude Messages API streaming events from TokenChunks."""
@@ -268,7 +268,7 @@ async def generate_claude_stream(
     next_block_index = 1  # text block is 0, tool blocks start at 1
 
     async for chunk in chunk_stream:
-        if isinstance(chunk, PrefillProgressData):
+        if isinstance(chunk, PrefillProgressChunk):
             continue
 
         if isinstance(chunk, ErrorChunk):

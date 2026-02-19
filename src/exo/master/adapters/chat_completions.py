@@ -21,7 +21,7 @@ from exo.shared.types.api import (
 )
 from exo.shared.types.chunks import (
     ErrorChunk,
-    PrefillProgressData,
+    PrefillProgressChunk,
     TokenChunk,
     ToolCallChunk,
 )
@@ -129,7 +129,7 @@ def chunk_to_response(
 async def generate_chat_stream(
     command_id: CommandId,
     chunk_stream: AsyncGenerator[
-        PrefillProgressData | ErrorChunk | ToolCallChunk | TokenChunk, None
+        PrefillProgressChunk | ErrorChunk | ToolCallChunk | TokenChunk, None
     ],
 ) -> AsyncGenerator[str, None]:
     """Generate Chat Completions API streaming events from chunks."""
@@ -137,7 +137,7 @@ async def generate_chat_stream(
 
     async for chunk in chunk_stream:
         match chunk:
-            case PrefillProgressData():
+            case PrefillProgressChunk():
                 # Use SSE comment so third-party clients ignore it
                 yield f": prefill_progress {chunk.model_dump_json()}\n\n"
 
@@ -201,7 +201,7 @@ async def generate_chat_stream(
 async def collect_chat_response(
     command_id: CommandId,
     chunk_stream: AsyncGenerator[
-        ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressData, None
+        ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressChunk, None
     ],
 ) -> AsyncGenerator[str]:
     # This is an AsyncGenerator[str] rather than returning a ChatCompletionReponse because
@@ -216,41 +216,43 @@ async def collect_chat_response(
     last_usage: Usage | None = None
 
     async for chunk in chunk_stream:
-        if isinstance(chunk, PrefillProgressData):
-            continue
+        match chunk:
+            case PrefillProgressChunk():
+                continue
 
-        if isinstance(chunk, ErrorChunk):
-            error_message = chunk.error_message or "Internal server error"
-            break
+            case ErrorChunk():
+                error_message = chunk.error_message or "Internal server error"
+                break
 
-        if model is None:
-            model = chunk.model
-
-        last_usage = chunk.usage or last_usage
-
-        if isinstance(chunk, TokenChunk):
-            text_parts.append(chunk.text)
-            if chunk.logprob is not None:
-                logprobs_content.append(
-                    LogprobsContentItem(
-                        token=chunk.text,
-                        logprob=chunk.logprob,
-                        top_logprobs=chunk.top_logprobs or [],
+            case TokenChunk():
+                if model is None:
+                    model = chunk.model
+                last_usage = chunk.usage or last_usage
+                text_parts.append(chunk.text)
+                if chunk.logprob is not None:
+                    logprobs_content.append(
+                        LogprobsContentItem(
+                            token=chunk.text,
+                            logprob=chunk.logprob,
+                            top_logprobs=chunk.top_logprobs or [],
+                        )
                     )
-                )
+                if chunk.finish_reason is not None:
+                    finish_reason = chunk.finish_reason
 
-        if isinstance(chunk, ToolCallChunk):
-            tool_calls.extend(
-                ToolCall(
-                    id=tool.id,
-                    index=i,
-                    function=tool,
+            case ToolCallChunk():
+                if model is None:
+                    model = chunk.model
+                last_usage = chunk.usage or last_usage
+                tool_calls.extend(
+                    ToolCall(
+                        id=tool.id,
+                        index=i,
+                        function=tool,
+                    )
+                    for i, tool in enumerate(chunk.tool_calls)
                 )
-                for i, tool in enumerate(chunk.tool_calls)
-            )
-
-        if chunk.finish_reason is not None:
-            finish_reason = chunk.finish_reason
+                finish_reason = chunk.finish_reason
 
     if error_message is not None:
         raise ValueError(error_message)
