@@ -138,7 +138,6 @@ from exo.shared.types.events import (
     Event,
     ForwarderEvent,
     IndexedEvent,
-    PrefillProgress,
     TracesMerged,
 )
 from exo.shared.types.memory import Memory
@@ -1455,22 +1454,6 @@ class API:
                                 await queue.send(event.chunk)
                             except BrokenResourceError:
                                 self._text_generation_queues.pop(event.command_id, None)
-
-                    elif isinstance(event, PrefillProgress):
-                        if queue := self._text_generation_queues.get(
-                            event.command_id, None
-                        ):
-                            try:
-                                await queue.send(
-                                    PrefillProgressChunk(
-                                        model=event.model,
-                                        processed_tokens=event.processed_tokens,
-                                        total_tokens=event.total_tokens,
-                                    )
-                                )
-                            except BrokenResourceError:
-                                self._text_generation_queues.pop(event.command_id, None)
-
                     if isinstance(event, TracesMerged):
                         self._save_merged_trace(event)
 

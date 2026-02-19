@@ -4,9 +4,10 @@ import resource
 import time
 from collections.abc import Generator
 from functools import cache
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import mlx.core as mx
+from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
@@ -21,12 +22,17 @@ from exo.shared.constants import EXO_MAX_CHUNK_SIZE, EXO_TRACING_ENABLED
 from exo.shared.models.model_cards import ModelId, ModelTask
 from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
 from exo.shared.types.api import ImageGenerationStats
-from exo.shared.types.chunks import ErrorChunk, ImageChunk, TokenChunk, ToolCallChunk
+from exo.shared.types.chunks import (
+    ErrorChunk,
+    ImageChunk,
+    PrefillProgressChunk,
+    TokenChunk,
+    ToolCallChunk,
+)
 from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
-    PrefillProgress,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
@@ -315,11 +321,13 @@ def main(
                     ) -> None:
                         if device_rank == 0:
                             event_sender.send(
-                                PrefillProgress(
+                                ChunkGenerated(
                                     command_id=command_id,
-                                    model=shard_metadata.model_card.model_id,
-                                    processed_tokens=processed,
-                                    total_tokens=total,
+                                    chunk=PrefillProgressChunk(
+                                        model=shard_metadata.model_card.model_id,
+                                        processed_tokens=processed,
+                                        total_tokens=total,
+                                    ),
                                 )
                             )
                         cancelled_tasks.update(cancel_receiver.collect())
@@ -346,16 +354,22 @@ def main(
                             group=group,
                         )
 
-                        # For other thinking models (GLM, etc.), check if we need to
-                        # prepend the thinking tag that was consumed by the chat template
-                        if detect_thinking_prompt_suffix(prompt, tokenizer):
+                        if tokenizer.has_thinking:
                             mlx_generator = parse_thinking_models(
-                                mlx_generator, tokenizer
+                                mlx_generator,
+                                tokenizer,
+                                # For other thinking models (GLM, etc.), check if we need to
+                                # prepend the thinking tag that was consumed by the chat template
+                                starts_in_thinking=detect_thinking_prompt_suffix(
+                                    prompt, tokenizer
+                                ),
                             )
 
-                        # GPT-OSS specific parsing to match other model formats.
+                        # Model-specific output parsing for tool calls.
                         if isinstance(inference_model, GptOssModel):
                             mlx_generator = parse_gpt_oss(mlx_generator)
+                        elif isinstance(inference_model, DeepseekV32Model):
+                            mlx_generator = parse_deepseek_v32(mlx_generator)
                         elif tool_parser:
                             mlx_generator = parse_tool_calls(mlx_generator, tool_parser)
 
@@ -407,6 +421,7 @@ def main(
                                                     stats=response.stats,
                                                     logprob=response.logprob,
                                                     top_logprobs=response.top_logprobs,
+                                                    is_thinking=response.is_thinking,
                                                 ),
                                             )
                                         )
@@ -573,6 +588,13 @@ def main(
                 case Shutdown():
                     current_status = RunnerShuttingDown()
                     logger.info("runner shutting down")
+                    if not TYPE_CHECKING:
+                        del inference_model, image_model, tokenizer, group
+                        mx.clear_cache()
+                        import gc
+
+                        gc.collect()
+
                     event_sender.send(
                         RunnerStatusUpdated(
                             runner_id=runner_id, runner_status=current_status
@@ -597,12 +619,8 @@ def main(
             event_sender.send(
                 RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
             )
-            if isinstance(current_status, RunnerShutdown):
-                del inference_model, image_model, tokenizer, group
-                mx.clear_cache()
-                import gc
 
-                gc.collect()
+            if isinstance(current_status, RunnerShutdown):
                 break
 
 
@@ -668,44 +686,208 @@ def parse_gpt_oss(
 
         if ch == "analysis" and not thinking:
             thinking = True
-            yield response.model_copy(update={"text": "<think>"})
 
         if ch != "analysis" and thinking:
             thinking = False
-            yield response.model_copy(update={"text": "</think>"})
 
         if delta:
-            yield response.model_copy(update={"text": delta})
+            yield response.model_copy(update={"text": delta, "is_thinking": thinking})
 
         if response.finish_reason is not None:
-            if thinking:
-                yield response.model_copy(update={"text": "</think>"})
             yield response
+
+
+def parse_deepseek_v32(
+    responses: Generator[GenerationResponse],
+) -> Generator[GenerationResponse | ToolCallResponse]:
+    """Parse DeepSeek V3.2 DSML tool calls from the generation stream.
+
+    Uses accumulated-text matching (not per-token marker checks) because
+    DSML markers like <｜DSML｜function_calls> may span multiple tokens.
+    Also handles <think>...</think> blocks for thinking mode.
+    """
+    from exo.worker.engines.mlx.dsml_encoding import (
+        THINKING_END,
+        THINKING_START,
+        TOOL_CALLS_END,
+        TOOL_CALLS_START,
+        parse_dsml_output,
+    )
+
+    accumulated = ""
+    in_tool_call = False
+    thinking = False
+    # Tokens buffered while we detect the start of a DSML block
+    pending_buffer: list[GenerationResponse] = []
+    # Text accumulated during a tool call block
+    tool_call_text = ""
+
+    for response in responses:
+        assert isinstance(response, GenerationResponse)
+
+        # ── Handle thinking tags ──
+        if not thinking and THINKING_START in response.text:
+            thinking = True
+            # Yield any text before the <think> tag
+            before = response.text[: response.text.index(THINKING_START)]
+            if before:
+                yield response.model_copy(update={"text": before})
+            continue
+
+        if thinking and THINKING_END in response.text:
+            thinking = False
+            # Yield any text after the </think> tag
+            after = response.text[
+                response.text.index(THINKING_END) + len(THINKING_END) :
+            ]
+            if after:
+                yield response.model_copy(update={"text": after, "is_thinking": False})
+            continue
+
+        if thinking:
+            yield response.model_copy(update={"is_thinking": True})
+            continue
+
+        # ── Handle tool call accumulation ──
+        if in_tool_call:
+            tool_call_text += response.text
+            if TOOL_CALLS_END in tool_call_text:
+                # Parse the accumulated DSML block
+                parsed = parse_dsml_output(tool_call_text)
+                if parsed is not None:
+                    logger.info(f"parsed DSML tool calls: {parsed}")
+                    yield ToolCallResponse(
+                        tool_calls=parsed,
+                        usage=response.usage,
+                        stats=response.stats,
+                    )
+                else:
+                    logger.warning(
+                        f"DSML tool call parsing failed for: {tool_call_text}"
+                    )
+                    yield response.model_copy(update={"text": tool_call_text})
+                in_tool_call = False
+                tool_call_text = ""
+                continue
+
+            # EOS reached before end marker — yield buffered text as-is
+            if response.finish_reason is not None:
+                logger.info("DSML tool call parsing interrupted by EOS")
+                yield response.model_copy(update={"text": tool_call_text})
+                in_tool_call = False
+                tool_call_text = ""
+            continue
+
+        # ── Detect start of tool call block ──
+        accumulated += response.text
+
+        if TOOL_CALLS_START in accumulated:
+            # The start marker might be split across pending_buffer + current token
+            start_idx = accumulated.index(TOOL_CALLS_START)
+            # Yield any pending tokens that are purely before the marker
+            pre_text = accumulated[:start_idx]
+            if pre_text:
+                # Flush pending buffer tokens that contributed text before the marker
+                for buf_resp in pending_buffer:
+                    if pre_text:
+                        chunk = buf_resp.text
+                        if len(chunk) <= len(pre_text):
+                            yield buf_resp
+                            pre_text = pre_text[len(chunk) :]
+                        else:
+                            yield buf_resp.model_copy(update={"text": pre_text})
+                            pre_text = ""
+            pending_buffer = []
+            tool_call_text = accumulated[start_idx:]
+            accumulated = ""
+
+            # Check if the end marker is already present (entire tool call in one token)
+            if TOOL_CALLS_END in tool_call_text:
+                parsed = parse_dsml_output(tool_call_text)
+                if parsed is not None:
+                    logger.info(f"parsed DSML tool calls: {parsed}")
+                    yield ToolCallResponse(
+                        tool_calls=parsed,
+                        usage=response.usage,
+                        stats=response.stats,
+                    )
+                else:
+                    logger.warning(
+                        f"DSML tool call parsing failed for: {tool_call_text}"
+                    )
+                    yield response.model_copy(update={"text": tool_call_text})
+                tool_call_text = ""
+            else:
+                in_tool_call = True
+            continue
+
+        # Check if accumulated text might be the start of a DSML marker
+        # Buffer tokens if we see a partial match at the end
+        if _could_be_dsml_prefix(accumulated):
+            pending_buffer.append(response)
+            continue
+
+        # No partial match — flush all pending tokens and the current one
+        for buf_resp in pending_buffer:
+            yield buf_resp
+        pending_buffer = []
+        accumulated = ""
+        yield response
+
+    # Flush any remaining pending buffer at generator end
+    for buf_resp in pending_buffer:
+        yield buf_resp
+
+
+def _could_be_dsml_prefix(text: str) -> bool:
+    """Check if the end of text could be the start of a DSML function_calls marker.
+
+    We look for suffixes of text that are prefixes of the TOOL_CALLS_START pattern.
+    This allows us to buffer tokens until we can determine if a tool call is starting.
+    """
+    from exo.worker.engines.mlx.dsml_encoding import TOOL_CALLS_START
+
+    # Only check the last portion of text that could overlap with the marker
+    max_check = len(TOOL_CALLS_START)
+    tail = text[-max_check:] if len(text) > max_check else text
+
+    # Check if any suffix of tail is a prefix of TOOL_CALLS_START
+    for i in range(len(tail)):
+        suffix = tail[i:]
+        if TOOL_CALLS_START.startswith(suffix):
+            return True
+    return False
 
 
 def parse_thinking_models(
     responses: Generator[GenerationResponse],
     tokenizer: TokenizerWrapper,
+    starts_in_thinking: bool = True,
 ) -> Generator[GenerationResponse]:
+    """Route thinking tokens via is_thinking flag.
+
+    Swallows think tag tokens, sets is_thinking on all others.
+    Always yields tokens with finish_reason to avoid hanging the chunk stream.
     """
-    For models that inject thinking tags in the prompt (like GLM-4.7),
-    prepend the thinking tag to the output stream so the frontend
-    can properly parse thinking content.
-    """
-    first = True
+    in_thinking = starts_in_thinking
     for response in responses:
         if isinstance(response, ToolCallResponse):
             yield response
             continue
-        if first:
-            first = False
-            yield response.model_copy(
-                update={
-                    "text": tokenizer.think_start,
-                    "token": tokenizer.think_start_id,
-                }
-            )
-        yield response
+
+        is_think_tag = (
+            tokenizer.think_end is not None and response.text == tokenizer.think_end
+        ) or (
+            tokenizer.think_start is not None and response.text == tokenizer.think_start
+        )
+
+        if is_think_tag:
+            in_thinking = response.text != tokenizer.think_end
+            # Never swallow finish_reason — the chunk stream needs it to terminate.
+            if response.finish_reason is not None:
+                yield response.model_copy(update={"text": "", "is_thinking": False})
+            continue
+        yield response.model_copy(update={"is_thinking": in_thinking})
 
 
 def _send_image_chunk(
