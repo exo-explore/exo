@@ -72,11 +72,18 @@ There are two ways to run exo:
 
 ### Run from Source (macOS)
 
-If you have [Nix](https://nixos.org/) installed, you can skip most of the steps below and run exo directly (after accepting the Cachix cache):
+If you have [Nix](https://nixos.org/) installed, you can skip most of the steps below and run exo directly:
 
 ```bash
 nix run .#exo
 ```
+
+**Note:** To accept the Cachix binary cache (and avoid the Xcode Metal ToolChain), add to `/etc/nix/nix.conf`:
+```
+trusted-users = root    (or your username)
+experimental-features = nix-command flakes
+```
+Then restart the Nix daemon: `sudo launchctl kickstart -k system/org.nixos.nix-daemon`
 
 **Prerequisites:**
 - [Xcode](https://developer.apple.com/xcode/) (provides the Metal ToolChain required for MLX compilation)
