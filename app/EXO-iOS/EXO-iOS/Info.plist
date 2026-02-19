@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
+	<key>CFBundleDisplayName</key>
+	<string>EXO</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>EXO needs local network access to connect to your EXO cluster.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_exo._tcp</string>
+		<string>_p2p._tcp</string>
+		<string>_p2p._udp</string>
+		<string>_libp2p._udp</string>
+	</array>
+</dict>
+</plist>

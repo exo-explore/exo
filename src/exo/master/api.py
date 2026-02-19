@@ -1393,6 +1393,7 @@ class API:
     async def run(self):
         shutdown_ev = anyio.Event()
 
+        bonjour_cleanup = self._register_bonjour_service()
         try:
             async with create_task_group() as tg:
                 self._tg = tg
@@ -1408,9 +1409,47 @@ class API:
                     with anyio.CancelScope(shield=True):
                         shutdown_ev.set()
         finally:
+            bonjour_cleanup()
             self._event_log.close()
             self.command_sender.close()
             self.global_event_receiver.close()
+
+    def _register_bonjour_service(self) -> Callable[[], None]:
+        """Register a Bonjour service via the system mDNSResponder. Returns a cleanup function."""
+        import subprocess
+        import sys
+
+        if sys.platform != "darwin":
+            logger.info("Bonjour service registration is only supported on macOS")
+            return lambda: None
+
+        service_name = f"EXO Cluster ({self.node_id[:8]})"
+        try:
+            proc = subprocess.Popen(
+                [
+                    "dns-sd",
+                    "-R",
+                    service_name,
+                    "_exo._tcp",
+                    "local",
+                    str(self.port),
+                    f"node_id={self.node_id}",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info(
+                f"Registered Bonjour service _exo._tcp on port {self.port} (pid {proc.pid})"
+            )
+
+            def cleanup() -> None:
+                proc.terminate()
+                proc.wait()
+
+            return cleanup
+        except Exception as e:
+            logger.warning(f"Failed to register Bonjour service: {e}")
+            return lambda: None
 
     async def run_api(self, ev: anyio.Event):
         cfg = Config()
