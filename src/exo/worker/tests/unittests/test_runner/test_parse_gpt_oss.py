@@ -149,12 +149,23 @@ class TestParseGptOssThinkingThenToolCall:
     def test_thinking_then_tool_call(self):
         results = _collect(THINKING_THEN_TOOL_TOKENS)
 
-        # Should have thinking tags + content + tool call
-        text_parts = [r.text for r in results if isinstance(r, GenerationResponse)]
-        combined = "".join(text_parts)
-        assert "<think>" in combined
-        assert "</think>" in combined
-        assert "Let me think about this." in combined
+        # Thinking tokens should have is_thinking=True and no <think> tags
+        thinking_responses = [
+            r for r in results if isinstance(r, GenerationResponse) and r.is_thinking
+        ]
+        thinking_text = "".join(r.text for r in thinking_responses)
+        assert "Let me think about this." in thinking_text
+        assert "<think>" not in thinking_text
+        assert "</think>" not in thinking_text
+
+        # Non-thinking tokens should have is_thinking=False
+        non_thinking = [
+            r
+            for r in results
+            if isinstance(r, GenerationResponse) and not r.is_thinking
+        ]
+        non_thinking_text = "".join(r.text for r in non_thinking)
+        assert "<think>" not in non_thinking_text
 
         # And the tool call
         tc = _get_tool_call(results)
