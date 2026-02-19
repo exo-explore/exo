@@ -510,12 +510,12 @@ def apply_chat_template(
         formatted_messages = formatted_messages[:-1]
 
     if _needs_dsml_encoding(task_params):
-        from exo.worker.engines.mlx.dsml_encoding import encode_dsml_messages
+        from exo.worker.engines.mlx.dsml_encoding import encode_messages
 
-        prompt = encode_dsml_messages(
+        prompt = encode_messages(
             messages=formatted_messages,
+            thinking_mode="thinking" if task_params.enable_thinking else "chat",
             tools=task_params.tools,
-            enable_thinking=task_params.enable_thinking,
         )
         if partial_assistant_content:
             prompt += partial_assistant_content

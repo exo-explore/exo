@@ -16,7 +16,7 @@ from exo.worker.engines.mlx.dsml_encoding import (
     TOOL_CALLS_END,
     TOOL_CALLS_START,
     USER_TOKEN,
-    encode_dsml_messages,
+    encode_messages,
     parse_dsml_output,
 )
 from exo.worker.runner.runner import parse_deepseek_v32
@@ -88,7 +88,7 @@ class TestE2EStandardResponse:
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "What's the weather in NYC?"},
         ]
-        prompt = encode_dsml_messages(messages, tools=_WEATHER_TOOLS)
+        prompt = encode_messages(messages, thinking_mode="chat", tools=_WEATHER_TOOLS)
 
         # Verify prompt structure
         assert BOS_TOKEN in prompt
@@ -135,7 +135,7 @@ class TestE2EToolCallResponse:
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "What's the weather in San Francisco?"},
         ]
-        prompt = encode_dsml_messages(messages, tools=_WEATHER_TOOLS)
+        prompt = encode_messages(messages, thinking_mode="chat", tools=_WEATHER_TOOLS)
         assert "get_weather" in prompt
 
         # Step 2: Simulate realistic token-by-token model output
@@ -182,7 +182,7 @@ class TestE2EToolCallResponse:
             {"role": "system", "content": "You are helpful."},
             {"role": "user", "content": "Weather in NYC and time in EST?"},
         ]
-        prompt = encode_dsml_messages(messages, tools=_WEATHER_TOOLS)
+        prompt = encode_messages(messages, thinking_mode="chat", tools=_WEATHER_TOOLS)
         assert "get_weather" in prompt
         assert "get_time" in prompt
 
@@ -243,7 +243,7 @@ class TestE2EMultiTurnToolUse:
             {"role": "tool", "content": '{"temperature": 72, "condition": "sunny"}'},
         ]
 
-        prompt = encode_dsml_messages(messages, tools=_WEATHER_TOOLS)
+        prompt = encode_messages(messages, thinking_mode="chat", tools=_WEATHER_TOOLS)
 
         # Verify multi-turn structure
         assert BOS_TOKEN in prompt
@@ -305,7 +305,7 @@ class TestE2EMultiTurnToolUse:
             {"role": "tool", "content": "3:42 PM PST"},
         ]
 
-        prompt = encode_dsml_messages(messages, tools=_WEATHER_TOOLS)
+        prompt = encode_messages(messages, thinking_mode="chat", tools=_WEATHER_TOOLS)
 
         # Should have one function_results block with two results
         assert prompt.count("<function_results>") == 1
@@ -325,8 +325,8 @@ class TestE2EThinkingAndToolCall:
         messages: list[dict[str, Any]] = [
             {"role": "user", "content": "What's the weather?"},
         ]
-        prompt = encode_dsml_messages(
-            messages, tools=_WEATHER_TOOLS, enable_thinking=True
+        prompt = encode_messages(
+            messages, tools=_WEATHER_TOOLS, thinking_mode="thinking"
         )
         # Thinking mode: prompt should end with <think>
         assert prompt.endswith(THINKING_START)
@@ -377,14 +377,14 @@ class TestE2EThinkingAndToolCall:
         ]
 
         # With thinking enabled
-        prompt_think = encode_dsml_messages(
-            messages, tools=_WEATHER_TOOLS, enable_thinking=True
+        prompt_think = encode_messages(
+            messages, tools=_WEATHER_TOOLS, thinking_mode="thinking"
         )
         assert prompt_think.endswith(THINKING_START)
 
         # With thinking disabled
-        prompt_no_think = encode_dsml_messages(
-            messages, tools=_WEATHER_TOOLS, enable_thinking=False
+        prompt_no_think = encode_messages(
+            messages, tools=_WEATHER_TOOLS, thinking_mode="chat"
         )
         assert prompt_no_think.endswith(THINKING_END)
 
@@ -418,7 +418,7 @@ class TestE2ERoundTrip:
             },
         ]
 
-        prompt = encode_dsml_messages(messages, tools=_WEATHER_TOOLS)
+        prompt = encode_messages(messages, thinking_mode="chat", tools=_WEATHER_TOOLS)
 
         # Extract the DSML function_calls block from the prompt
         start = prompt.index(TOOL_CALLS_START)
@@ -460,7 +460,7 @@ class TestE2ERoundTrip:
             },
         ]
 
-        prompt = encode_dsml_messages(messages, tools=_WEATHER_TOOLS)
+        prompt = encode_messages(messages, thinking_mode="chat", tools=_WEATHER_TOOLS)
 
         start = prompt.index(TOOL_CALLS_START)
         end = prompt.index(TOOL_CALLS_END) + len(TOOL_CALLS_END)
@@ -575,8 +575,8 @@ class TestE2EFullRoundTrip:
             {"role": "system", "content": "You are a weather assistant."},
             {"role": "user", "content": "How's the weather in Hangzhou?"},
         ]
-        prompt_1 = encode_dsml_messages(
-            messages, tools=_WEATHER_TOOLS, enable_thinking=True
+        prompt_1 = encode_messages(
+            messages, tools=_WEATHER_TOOLS, thinking_mode="thinking"
         )
         assert prompt_1.endswith(THINKING_START)
         assert "## Tools" in prompt_1
@@ -635,8 +635,8 @@ class TestE2EFullRoundTrip:
         )
 
         # Encode prompt for turn 1.2
-        prompt_2 = encode_dsml_messages(
-            messages, tools=_WEATHER_TOOLS, enable_thinking=True
+        prompt_2 = encode_messages(
+            messages, tools=_WEATHER_TOOLS, thinking_mode="thinking"
         )
 
         # Verify: prompt has the full conversation structure
@@ -681,8 +681,8 @@ class TestE2EFullRoundTrip:
             {"role": "system", "content": "You help with weather and time."},
             {"role": "user", "content": "Weather in NYC and time in EST?"},
         ]
-        prompt_1 = encode_dsml_messages(
-            messages, tools=_WEATHER_TOOLS, enable_thinking=True
+        prompt_1 = encode_messages(
+            messages, tools=_WEATHER_TOOLS, thinking_mode="thinking"
         )
         assert prompt_1.endswith(THINKING_START)
 
@@ -737,8 +737,8 @@ class TestE2EFullRoundTrip:
         messages.append({"role": "tool", "content": "72°F, sunny"})
         messages.append({"role": "tool", "content": "2:30 PM EST"})
 
-        prompt_2 = encode_dsml_messages(
-            messages, tools=_WEATHER_TOOLS, enable_thinking=True
+        prompt_2 = encode_messages(
+            messages, tools=_WEATHER_TOOLS, thinking_mode="thinking"
         )
 
         # Verify multi-tool result encoding
@@ -801,8 +801,8 @@ class TestE2EFullRoundTrip:
             {"role": "user", "content": "What about Beijing?"},
         ]
 
-        prompt = encode_dsml_messages(
-            messages, tools=_WEATHER_TOOLS, enable_thinking=True
+        prompt = encode_messages(
+            messages, tools=_WEATHER_TOOLS, thinking_mode="thinking"
         )
 
         # Old reasoning_content from turn 1 assistants should be STRIPPED
@@ -850,8 +850,8 @@ class TestE2EFullRoundTrip:
             {"role": "user", "content": "What's the weather in Hangzhou tomorrow?"},
         ]
 
-        prompt_1 = encode_dsml_messages(
-            messages, tools=_WEATHER_TOOLS, enable_thinking=True
+        prompt_1 = encode_messages(
+            messages, tools=_WEATHER_TOOLS, thinking_mode="thinking"
         )
         assert prompt_1.endswith(THINKING_START)
 
@@ -892,8 +892,8 @@ class TestE2EFullRoundTrip:
         )
         messages.append({"role": "tool", "content": "2025-12-01 14:30 CST"})
 
-        prompt_2 = encode_dsml_messages(
-            messages, tools=_WEATHER_TOOLS, enable_thinking=True
+        prompt_2 = encode_messages(
+            messages, tools=_WEATHER_TOOLS, thinking_mode="thinking"
         )
         assert "<result>2025-12-01 14:30 CST</result>" in prompt_2
         assert prompt_2.endswith(THINKING_START)
@@ -936,8 +936,8 @@ class TestE2EFullRoundTrip:
         )
         messages.append({"role": "tool", "content": "Sunny, 5~12°C"})
 
-        prompt_3 = encode_dsml_messages(
-            messages, tools=_WEATHER_TOOLS, enable_thinking=True
+        prompt_3 = encode_messages(
+            messages, tools=_WEATHER_TOOLS, thinking_mode="thinking"
         )
         # Should have both function_results blocks (one per tool round)
         # Count is 3: 1 in _TOOLS_SYSTEM_TEMPLATE example + 2 in conversation
