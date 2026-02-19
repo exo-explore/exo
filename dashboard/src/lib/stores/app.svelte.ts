@@ -1652,11 +1652,12 @@ class AppStore {
       if (!reader) throw new Error("No response body");
 
       let fullContent = prefixText;
+      let streamedThinking = "";
       const collectedTokens: TokenData[] = [...tokensToKeep];
 
       interface ChatCompletionChunk {
         choices?: Array<{
-          delta?: { content?: string };
+          delta?: { content?: string; reasoning_content?: string };
           logprobs?: {
             content?: Array<{
               token: string;
@@ -1677,6 +1678,7 @@ class AppStore {
         (parsed) => {
           const choice = parsed.choices?.[0];
           const delta = choice?.delta?.content;
+          const thinkingDelta = choice?.delta?.reasoning_content;
 
           // Collect logprobs data
           const logprobsContent = choice?.logprobs?.content;
@@ -1695,7 +1697,11 @@ class AppStore {
             }
           }
 
-          if (delta) {
+          if (thinkingDelta) {
+            streamedThinking += thinkingDelta;
+          }
+
+          if (delta || thinkingDelta) {
             if (firstTokenTime === null) {
               firstTokenTime = performance.now();
               this.ttftMs = firstTokenTime - requestStartTime;
@@ -1709,9 +1715,14 @@ class AppStore {
               this.tps = ((tokenCount - tokensToKeep.length) / elapsed) * 1000;
             }
 
-            fullContent += delta;
-            const { displayContent, thinkingContent } =
+            if (delta) {
+              fullContent += delta;
+            }
+            const { displayContent, thinkingContent: tagThinking } =
               this.stripThinkingTags(fullContent);
+            const combinedThinking = [streamedThinking, tagThinking]
+              .filter(Boolean)
+              .join("\n\n");
 
             if (this.activeConversationId === targetConversationId) {
               this.currentResponse = displayContent;
@@ -1723,7 +1734,7 @@ class AppStore {
               messageId,
               (m) => {
                 m.content = displayContent;
-                m.thinking = thinkingContent || undefined;
+                m.thinking = combinedThinking || undefined;
                 m.tokens = [...collectedTokens];
               },
             );
@@ -1735,11 +1746,14 @@ class AppStore {
 
       // Final update
       if (this.conversationExists(targetConversationId)) {
-        const { displayContent, thinkingContent } =
+        const { displayContent, thinkingContent: tagThinking } =
           this.stripThinkingTags(fullContent);
+        const finalThinking = [streamedThinking, tagThinking]
+          .filter(Boolean)
+          .join("\n\n");
         this.updateConversationMessage(targetConversationId, messageId, (m) => {
           m.content = displayContent;
-          m.thinking = thinkingContent || undefined;
+          m.thinking = finalThinking || undefined;
           m.tokens = [...collectedTokens];
           if (this.ttftMs !== null) m.ttftMs = this.ttftMs;
           if (this.tps !== null) m.tps = this.tps;
@@ -1847,11 +1861,12 @@ class AppStore {
       }
 
       let streamedContent = "";
+      let streamedThinking = "";
       const collectedTokens: TokenData[] = [];
 
       interface ChatCompletionChunk {
         choices?: Array<{
-          delta?: { content?: string };
+          delta?: { content?: string; reasoning_content?: string };
           logprobs?: {
             content?: Array<{
               token: string;
@@ -1872,6 +1887,7 @@ class AppStore {
         (parsed) => {
           const choice = parsed.choices?.[0];
           const delta = choice?.delta?.content;
+          const thinkingDelta = choice?.delta?.reasoning_content;
 
           // Collect logprobs data
           const logprobsContent = choice?.logprobs?.content;
@@ -1890,10 +1906,19 @@ class AppStore {
             }
           }
 
-          if (delta) {
-            streamedContent += delta;
-            const { displayContent, thinkingContent } =
+          if (thinkingDelta) {
+            streamedThinking += thinkingDelta;
+          }
+
+          if (delta || thinkingDelta) {
+            if (delta) {
+              streamedContent += delta;
+            }
+            const { displayContent, thinkingContent: tagThinking } =
               this.stripThinkingTags(streamedContent);
+            const combinedThinking = [streamedThinking, tagThinking]
+              .filter(Boolean)
+              .join("\n\n");
 
             // Only update currentResponse if target conversation is active
             if (this.activeConversationId === targetConversationId) {
@@ -1906,7 +1931,7 @@ class AppStore {
               assistantMessage.id,
               (msg) => {
                 msg.content = displayContent;
-                msg.thinking = thinkingContent || undefined;
+                msg.thinking = combinedThinking || undefined;
                 msg.tokens = [...collectedTokens];
               },
             );
@@ -1918,14 +1943,17 @@ class AppStore {
 
       // Final cleanup of the message (if conversation still exists)
       if (this.conversationExists(targetConversationId)) {
-        const { displayContent, thinkingContent } =
+        const { displayContent, thinkingContent: tagThinking } =
           this.stripThinkingTags(streamedContent);
+        const finalThinking = [streamedThinking, tagThinking]
+          .filter(Boolean)
+          .join("\n\n");
         this.updateConversationMessage(
           targetConversationId,
           assistantMessage.id,
           (msg) => {
             msg.content = displayContent;
-            msg.thinking = thinkingContent || undefined;
+            msg.thinking = finalThinking || undefined;
             msg.tokens = [...collectedTokens];
           },
         );
@@ -2317,10 +2345,11 @@ class AppStore {
       }
 
       let streamedContent = "";
+      let streamedThinking = "";
 
       interface ChatCompletionChunk {
         choices?: Array<{
-          delta?: { content?: string };
+          delta?: { content?: string; reasoning_content?: string };
           logprobs?: {
             content?: Array<{
               token: string;
@@ -2348,6 +2377,7 @@ class AppStore {
 
           const choice = parsed.choices?.[0];
           const tokenContent = choice?.delta?.content;
+          const thinkingContent = choice?.delta?.reasoning_content;
 
           // Collect logprobs data
           const logprobsContent = choice?.logprobs?.content;
@@ -2366,7 +2396,11 @@ class AppStore {
             }
           }
 
-          if (tokenContent) {
+          if (thinkingContent) {
+            streamedThinking += thinkingContent;
+          }
+
+          if (tokenContent || thinkingContent) {
             // Track first token for TTFT
             if (firstTokenTime === null) {
               firstTokenTime = performance.now();
@@ -2383,11 +2417,16 @@ class AppStore {
               this.tps = (tokenCount / elapsed) * 1000;
             }
 
-            streamedContent += tokenContent;
+            if (tokenContent) {
+              streamedContent += tokenContent;
+            }
 
-            // Strip thinking tags for display and extract thinking content
-            const { displayContent, thinkingContent } =
+            // Use stripThinkingTags as fallback for any <think> tags still in content
+            const { displayContent, thinkingContent: tagThinking } =
               this.stripThinkingTags(streamedContent);
+            const combinedThinking = [streamedThinking, tagThinking]
+              .filter(Boolean)
+              .join("\n\n");
 
             // Only update currentResponse if target conversation is active
             if (this.activeConversationId === targetConversationId) {
@@ -2400,7 +2439,7 @@ class AppStore {
               assistantMessage.id,
               (msg) => {
                 msg.content = displayContent;
-                msg.thinking = thinkingContent || undefined;
+                msg.thinking = combinedThinking || undefined;
                 msg.tokens = [...collectedTokens];
               },
             );
@@ -2436,14 +2475,17 @@ class AppStore {
 
       // Final cleanup of the message (if conversation still exists)
       if (this.conversationExists(targetConversationId)) {
-        const { displayContent, thinkingContent } =
+        const { displayContent, thinkingContent: tagThinking } =
           this.stripThinkingTags(streamedContent);
+        const finalThinking = [streamedThinking, tagThinking]
+          .filter(Boolean)
+          .join("\n\n");
         this.updateConversationMessage(
           targetConversationId,
           assistantMessage.id,
           (msg) => {
             msg.content = displayContent;
-            msg.thinking = thinkingContent || undefined;
+            msg.thinking = finalThinking || undefined;
             msg.tokens = [...collectedTokens];
             // Store performance metrics on the message
             if (this.ttftMs !== null) {

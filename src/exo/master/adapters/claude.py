@@ -28,6 +28,8 @@ from exo.shared.types.claude_api import (
     ClaudeStopReason,
     ClaudeTextBlock,
     ClaudeTextDelta,
+    ClaudeThinkingBlock,
+    ClaudeThinkingDelta,
     ClaudeToolResultBlock,
     ClaudeToolUseBlock,
     ClaudeUsage,
@@ -173,6 +175,7 @@ async def collect_claude_response(
     # FastAPI handles the cancellation better but wouldn't auto-serialize for some reason
     """Collect all token chunks and return a single ClaudeMessagesResponse."""
     text_parts: list[str] = []
+    thinking_parts: list[str] = []
     tool_use_blocks: list[ClaudeToolUseBlock] = []
     stop_reason: ClaudeStopReason | None = None
     last_usage: Usage | None = None
@@ -200,7 +203,10 @@ async def collect_claude_response(
             stop_reason = "tool_use"
             continue
 
-        text_parts.append(chunk.text)
+        if chunk.is_thinking:
+            thinking_parts.append(chunk.text)
+        else:
+            text_parts.append(chunk.text)
 
         if chunk.finish_reason is not None:
             stop_reason = finish_reason_to_claude_stop_reason(chunk.finish_reason)
@@ -209,9 +215,12 @@ async def collect_claude_response(
         raise ValueError(error_message)
 
     combined_text = "".join(text_parts)
+    combined_thinking = "".join(thinking_parts)
 
     # Build content blocks
     content: list[ClaudeContentBlock] = []
+    if combined_thinking:
+        content.append(ClaudeThinkingBlock(thinking=combined_thinking))
     if combined_text:
         content.append(ClaudeTextBlock(text=combined_text))
     content.extend(tool_use_blocks)
@@ -256,16 +265,16 @@ async def generate_claude_stream(
     start_event = ClaudeMessageStartEvent(message=initial_message)
     yield f"event: message_start\ndata: {start_event.model_dump_json()}\n\n"
 
-    # content_block_start for text block at index 0
-    block_start = ClaudeContentBlockStartEvent(
-        index=0, content_block=ClaudeTextBlock(text="")
-    )
-    yield f"event: content_block_start\ndata: {block_start.model_dump_json()}\n\n"
-
     output_tokens = 0
     stop_reason: ClaudeStopReason | None = None
     last_usage: Usage | None = None
-    next_block_index = 1  # text block is 0, tool blocks start at 1
+    next_block_index = 0
+
+    # Track whether we've started thinking/text blocks
+    thinking_block_started = False
+    thinking_block_index = -1
+    text_block_started = False
+    text_block_index = -1
 
     async for chunk in chunk_stream:
         if isinstance(chunk, PrefillProgressChunk):
@@ -310,12 +319,45 @@ async def generate_claude_stream(
 
         output_tokens += 1  # Count each chunk as one token
 
-        # content_block_delta
-        delta_event = ClaudeContentBlockDeltaEvent(
-            index=0,
-            delta=ClaudeTextDelta(text=chunk.text),
-        )
-        yield f"event: content_block_delta\ndata: {delta_event.model_dump_json()}\n\n"
+        if chunk.is_thinking:
+            # Start thinking block on first thinking token
+            if not thinking_block_started:
+                thinking_block_started = True
+                thinking_block_index = next_block_index
+                next_block_index += 1
+                block_start = ClaudeContentBlockStartEvent(
+                    index=thinking_block_index,
+                    content_block=ClaudeThinkingBlock(thinking=""),
+                )
+                yield f"event: content_block_start\ndata: {block_start.model_dump_json()}\n\n"
+
+            delta_event = ClaudeContentBlockDeltaEvent(
+                index=thinking_block_index,
+                delta=ClaudeThinkingDelta(thinking=chunk.text),
+            )
+            yield f"event: content_block_delta\ndata: {delta_event.model_dump_json()}\n\n"
+        else:
+            # Close thinking block when transitioning to text
+            if thinking_block_started and text_block_index == -1:
+                block_stop = ClaudeContentBlockStopEvent(index=thinking_block_index)
+                yield f"event: content_block_stop\ndata: {block_stop.model_dump_json()}\n\n"
+
+            # Start text block on first text token
+            if not text_block_started:
+                text_block_started = True
+                text_block_index = next_block_index
+                next_block_index += 1
+                block_start = ClaudeContentBlockStartEvent(
+                    index=text_block_index,
+                    content_block=ClaudeTextBlock(text=""),
+                )
+                yield f"event: content_block_start\ndata: {block_start.model_dump_json()}\n\n"
+
+            delta_event = ClaudeContentBlockDeltaEvent(
+                index=text_block_index,
+                delta=ClaudeTextDelta(text=chunk.text),
+            )
+            yield f"event: content_block_delta\ndata: {delta_event.model_dump_json()}\n\n"
 
         if chunk.finish_reason is not None:
             stop_reason = finish_reason_to_claude_stop_reason(chunk.finish_reason)
@@ -324,9 +366,22 @@ async def generate_claude_stream(
     if last_usage is not None:
         output_tokens = last_usage.completion_tokens
 
-    # content_block_stop for text block
-    block_stop = ClaudeContentBlockStopEvent(index=0)
-    yield f"event: content_block_stop\ndata: {block_stop.model_dump_json()}\n\n"
+    # Close any open blocks
+    if thinking_block_started and text_block_index == -1:
+        block_stop = ClaudeContentBlockStopEvent(index=thinking_block_index)
+        yield f"event: content_block_stop\ndata: {block_stop.model_dump_json()}\n\n"
+
+    if text_block_started:
+        block_stop = ClaudeContentBlockStopEvent(index=text_block_index)
+        yield f"event: content_block_stop\ndata: {block_stop.model_dump_json()}\n\n"
+
+    if not thinking_block_started and not text_block_started:
+        empty_start = ClaudeContentBlockStartEvent(
+            index=0, content_block=ClaudeTextBlock(text="")
+        )
+        yield f"event: content_block_start\ndata: {empty_start.model_dump_json()}\n\n"
+        empty_stop = ClaudeContentBlockStopEvent(index=0)
+        yield f"event: content_block_stop\ndata: {empty_stop.model_dump_json()}\n\n"
 
     # message_delta
     message_delta = ClaudeMessageDeltaEvent(

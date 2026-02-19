@@ -458,6 +458,19 @@ def _patch_lossy_chat_template(template: str) -> str | None:
     return patched if n > 0 else None
 
 
+def _needs_dsml_encoding(task_params: TextGenerationTaskParams) -> bool:
+    if "deepseek-v3.2" not in task_params.model.lower():
+        return False
+    # Use DSML encoding when tools are provided or tool results are in the conversation
+    if task_params.tools:
+        return True
+    if task_params.chat_template_messages:
+        return any(
+            msg.get("role") == "tool" for msg in task_params.chat_template_messages
+        )
+    return False
+
+
 def apply_chat_template(
     tokenizer: TokenizerWrapper,
     task_params: TextGenerationTaskParams,
@@ -469,7 +482,6 @@ def apply_chat_template(
 
     When chat_template_messages is available (from Chat Completions API),
     uses those directly to preserve tool_calls, thinking, and other fields.
-    Otherwise builds messages from the task params input/instructions.
     """
     formatted_messages: list[dict[str, Any]] = []
     if task_params.chat_template_messages is not None:
@@ -496,6 +508,19 @@ def apply_chat_template(
     if formatted_messages and formatted_messages[-1].get("role") == "assistant":
         partial_assistant_content = cast(str, formatted_messages[-1].get("content", ""))
         formatted_messages = formatted_messages[:-1]
+
+    if _needs_dsml_encoding(task_params):
+        from exo.worker.engines.mlx.dsml_encoding import encode_dsml_messages
+
+        prompt = encode_dsml_messages(
+            messages=formatted_messages,
+            tools=task_params.tools,
+            enable_thinking=task_params.enable_thinking,
+        )
+        if partial_assistant_content:
+            prompt += partial_assistant_content
+        logger.info(prompt)
+        return prompt
 
     extra_kwargs: dict[str, Any] = {}
     if task_params.enable_thinking is not None:
