@@ -5,6 +5,7 @@
     ChatMessages,
     ChatSidebar,
     ModelCard,
+    MetaInstancePanel,
     ModelPickerModal,
   } from "$lib/components";
   import {
@@ -24,6 +25,7 @@
     lastUpdate,
     clearChat,
     instances,
+    metaInstances,
     runners,
     downloads,
     placementPreviews,
@@ -60,6 +62,7 @@
   const data = $derived(topologyData());
   const update = $derived(lastUpdate());
   const instanceData = $derived(instances());
+  const metaInstancesData = $derived(metaInstances());
   const runnersData = $derived(runners());
   const downloadsData = $derived(downloads());
   const previewsData = $derived(placementPreviews());
@@ -224,7 +227,7 @@
     return model.tasks.includes("ImageToImage");
   }
   let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
-  type InstanceMeta = "MlxRing" | "MlxIbv" | "MlxJaccl";
+  type InstanceMeta = "MlxRing" | "MlxJaccl";
 
   // Launch defaults persistence
   const LAUNCH_DEFAULTS_KEY = "exo-launch-defaults";
@@ -481,7 +484,7 @@
   const matchesSelectedRuntime = (runtime: InstanceMeta): boolean =>
     selectedInstanceType === "MlxRing"
       ? runtime === "MlxRing"
-      : runtime === "MlxIbv" || runtime === "MlxJaccl";
+      : runtime === "MlxJaccl";
 
   // Helper to check if a model can be launched (has valid placement with >= minNodes)
   function canModelFit(modelId: string): boolean {
@@ -1248,6 +1251,44 @@
     }
   }
 
+  async function deleteMetaInstance(metaInstanceId: string) {
+    if (!confirm(`Delete meta-instance ${metaInstanceId.slice(0, 8)}...?`))
+      return;
+    try {
+      const response = await fetch(`/meta_instance/${metaInstanceId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!response.ok) {
+        console.error("Failed to delete meta-instance:", response.status);
+      }
+    } catch (error) {
+      console.error("Error deleting meta-instance:", error);
+    }
+  }
+
+  async function createMetaInstance() {
+    if (!selectedModelId) return;
+    try {
+      const response = await fetch("/meta_instance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model_id: selectedModelId,
+          sharding: selectedSharding,
+          instance_meta: selectedInstanceType,
+          min_nodes: selectedMinNodes,
+          node_ids: nodeFilter.size > 0 ? Array.from(nodeFilter) : null,
+        }),
+      });
+      if (!response.ok) {
+        console.error("Failed to create meta-instance:", await response.text());
+      }
+    } catch (error) {
+      console.error("Error creating meta-instance:", error);
+    }
+  }
+
   // Helper to unwrap tagged unions like { MlxRingInstance: {...} }
   function getTagged(obj: unknown): [string | null, unknown] {
     if (!obj || typeof obj !== "object") return [null, null];
@@ -1288,11 +1329,7 @@
     // Instance type from tag
     let instanceType = "Unknown";
     if (instanceTag === "MlxRingInstance") instanceType = "MLX Ring";
-    else if (
-      instanceTag === "MlxIbvInstance" ||
-      instanceTag === "MlxJacclInstance"
-    )
-      instanceType = "MLX RDMA";
+    else if (instanceTag === "MlxJacclInstance") instanceType = "MLX RDMA";
 
     const inst = instance as {
       shardAssignments?: {
@@ -1641,6 +1678,7 @@
 
   const nodeCount = $derived(data ? Object.keys(data.nodes).length : 0);
   const instanceCount = $derived(Object.keys(instanceData).length);
+  const metaInstanceCount = $derived(Object.keys(metaInstancesData).length);
 
   // Helper to get the number of nodes in a placement preview
   function getPreviewNodeCount(preview: PlacementPreview): number {
@@ -2286,6 +2324,19 @@
         <aside
           class="w-80 border-l border-exo-yellow/10 bg-exo-dark-gray flex flex-col flex-shrink-0"
         >
+          <!-- Meta-Instances Panel -->
+          {#if metaInstanceCount > 0}
+            <div class="p-4 flex-shrink-0">
+              <MetaInstancePanel
+                metaInstances={metaInstancesData}
+                instances={instanceData}
+                onDelete={deleteMetaInstance}
+                onHoverNodes={(nodes) => (hoveredPreviewNodes = nodes)}
+                onHoverEnd={() => (hoveredPreviewNodes = new Set())}
+              />
+            </div>
+          {/if}
+
           <!-- Running Instances Panel (only shown when instances exist) - Scrollable -->
           {#if instanceCount > 0}
             <div class="p-4 flex-shrink-0">
@@ -2877,21 +2928,21 @@
                   </button>
                   <button
                     onclick={() => {
-                      selectedInstanceType = "MlxIbv";
+                      selectedInstanceType = "MlxJaccl";
                       saveLaunchDefaults();
                     }}
                     class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
-                    'MlxIbv'
+                    'MlxJaccl'
                       ? 'bg-transparent text-exo-yellow border-exo-yellow'
                       : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
                   >
                     <span
                       class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
-                      'MlxIbv'
+                      'MlxJaccl'
                         ? 'border-exo-yellow'
                         : 'border-exo-medium-gray'}"
                     >
-                      {#if selectedInstanceType === "MlxIbv"}
+                      {#if selectedInstanceType === "MlxJaccl"}
                         <span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
                       {/if}
                     </span>
@@ -3018,6 +3069,15 @@
                         />
                       </div>
                     {/each}
+                    {#if selectedModelId}
+                      <button
+                        type="button"
+                        onclick={createMetaInstance}
+                        class="w-full mt-3 py-2 px-4 text-xs font-mono tracking-wider uppercase border border-purple-500/30 text-purple-400 hover:bg-purple-500/20 hover:border-purple-500/50 transition-all duration-200 cursor-pointer"
+                      >
+                        CREATE PERSISTENT
+                      </button>
+                    {/if}
                   </div>
                 {:else if selectedModel}
                   <div class="text-center py-4">
@@ -3100,6 +3160,19 @@
                 {@render clusterWarningsCompact()}
               </div>
             </button>
+
+            <!-- Meta-Instances Section -->
+            {#if metaInstanceCount > 0}
+              <div class="p-4 flex-shrink-0">
+                <MetaInstancePanel
+                  metaInstances={metaInstancesData}
+                  instances={instanceData}
+                  onDelete={deleteMetaInstance}
+                  onHoverNodes={(nodes) => (hoveredPreviewNodes = nodes)}
+                  onHoverEnd={() => (hoveredPreviewNodes = new Set())}
+                />
+              </div>
+            {/if}
 
             <!-- Instances Section (only shown when instances exist) -->
             {#if instanceCount > 0}

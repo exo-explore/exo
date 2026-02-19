@@ -74,6 +74,18 @@ export interface Instance {
   };
 }
 
+export interface MetaInstance {
+  metaInstanceId: string;
+  modelId: string;
+  sharding: "Pipeline" | "Tensor";
+  instanceMeta: "MlxRing" | "MlxJaccl";
+  minNodes: number;
+  nodeIds: string[] | null;
+  placementError: string | null;
+  consecutiveFailures: number;
+  lastFailureError: string | null;
+}
+
 // Granular node state types from the new state structure
 interface RawNodeIdentity {
   modelId?: string;
@@ -168,7 +180,7 @@ export interface ModelDownloadStatus {
 export interface PlacementPreview {
   model_id: string;
   sharding: "Pipeline" | "Tensor";
-  instance_meta: "MlxRing" | "MlxIbv" | "MlxJaccl";
+  instance_meta: "MlxRing" | "MlxJaccl";
   instance: unknown | null;
   memory_delta_by_node: Record<string, number> | null;
   error: string | null;
@@ -219,10 +231,10 @@ interface RawStateResponse {
     string,
     {
       MlxRingInstance?: Instance;
-      MlxIbvInstance?: Instance;
       MlxJacclInstance?: Instance;
     }
   >;
+  metaInstances?: Record<string, MetaInstance>;
   runners?: Record<string, unknown>;
   downloads?: Record<string, unknown[]>;
   // New granular node state fields
@@ -533,6 +545,7 @@ class AppStore {
   // Topology state
   topologyData = $state<TopologyData | null>(null);
   instances = $state<Record<string, unknown>>({});
+  metaInstances = $state<Record<string, MetaInstance>>({});
   runners = $state<Record<string, unknown>>({});
   downloads = $state<Record<string, unknown[]>>({});
   nodeDisk = $state<
@@ -905,11 +918,7 @@ class AppStore {
 
     let instanceType: string | null = null;
     if (instanceTag === "MlxRingInstance") instanceType = "MLX Ring";
-    else if (
-      instanceTag === "MlxIbvInstance" ||
-      instanceTag === "MlxJacclInstance"
-    )
-      instanceType = "MLX RDMA";
+    else if (instanceTag === "MlxJacclInstance") instanceType = "MLX RDMA";
 
     let sharding: string | null = null;
     const inst = instance as {
@@ -1270,6 +1279,9 @@ class AppStore {
       }
       if (data.runners) {
         this.runners = data.runners;
+      }
+      if (data.metaInstances) {
+        this.metaInstances = data.metaInstances;
       }
       if (data.downloads) {
         this.downloads = data.downloads;
@@ -3112,6 +3124,7 @@ export const totalTokens = () => appStore.totalTokens;
 export const prefillProgress = () => appStore.prefillProgress;
 export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
+export const metaInstances = () => appStore.metaInstances;
 export const runners = () => appStore.runners;
 export const downloads = () => appStore.downloads;
 export const nodeDisk = () => appStore.nodeDisk;

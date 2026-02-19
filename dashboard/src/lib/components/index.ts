@@ -11,4 +11,5 @@ export { default as FamilySidebar } from "./FamilySidebar.svelte";
 export { default as HuggingFaceResultItem } from "./HuggingFaceResultItem.svelte";
 export { default as ModelFilterPopover } from "./ModelFilterPopover.svelte";
 export { default as ModelPickerGroup } from "./ModelPickerGroup.svelte";
+export { default as MetaInstancePanel } from "./MetaInstancePanel.svelte";
 export { default as ModelPickerModal } from "./ModelPickerModal.svelte";
