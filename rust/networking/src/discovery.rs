@@ -371,7 +371,11 @@ impl NetworkBehaviour for Behaviour {
                             Ok(rtt) => {
                                 // Reset failure counter on successful ping
                                 if self.ping_failures.remove(&e.connection).is_some() {
-                                    log::debug!("Ping recovered for peer {:?} (rtt={:?}), reset failure counter", e.peer, rtt);
+                                    log::debug!(
+                                        "Ping recovered for peer {:?} (rtt={:?}), reset failure counter",
+                                        e.peer,
+                                        rtt
+                                    );
                                 }
                                 log::trace!("Ping OK for peer {:?}: rtt={:?}", e.peer, rtt);
                             }
