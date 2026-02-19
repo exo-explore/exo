@@ -1,7 +1,6 @@
 import asyncio
 import socket
 from dataclasses import dataclass, field
-from typing import Iterator
 
 import anyio
 from anyio import current_time
@@ -22,10 +21,9 @@ from exo.shared.types.commands import (
     ForwarderDownloadCommand,
     StartDownload,
 )
-from exo.shared.types.common import NodeId, SessionId
+from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
     Event,
-    ForwarderEvent,
     NodeDownloadProgress,
 )
 from exo.shared.types.worker.downloads import (
@@ -36,33 +34,27 @@ from exo.shared.types.worker.downloads import (
     DownloadProgress,
 )
 from exo.shared.types.worker.shards import ShardMetadata
-from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.channels import Receiver, Sender
 
 
 @dataclass
 class DownloadCoordinator:
     node_id: NodeId
-    session_id: SessionId
     shard_downloader: ShardDownloader
     download_command_receiver: Receiver[ForwarderDownloadCommand]
-    local_event_sender: Sender[ForwarderEvent]
-    event_index_counter: Iterator[int]
+    event_sender: Sender[Event]
     offline: bool = False
 
     # Local state
     download_status: dict[ModelId, DownloadProgress] = field(default_factory=dict)
     active_downloads: dict[ModelId, asyncio.Task[None]] = field(default_factory=dict)
 
-    # Internal event channel for forwarding (initialized in __post_init__)
-    event_sender: Sender[Event] = field(init=False)
-    event_receiver: Receiver[Event] = field(init=False)
     _tg: TaskGroup = field(init=False, default_factory=anyio.create_task_group)
 
     # Per-model throttle for download progress events
     _last_progress_time: dict[ModelId, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        self.event_sender, self.event_receiver = channel[Event]()
         if self.offline:
             self.shard_downloader.set_internet_connection(False)
         self.shard_downloader.on_progress(self._download_progress_callback)
@@ -117,7 +109,6 @@ class DownloadCoordinator:
             self._test_internet_connection()
         async with self._tg as tg:
             tg.start_soon(self._command_processor)
-            tg.start_soon(self._forward_events)
             tg.start_soon(self._emit_existing_download_progress)
             if not self.offline:
                 tg.start_soon(self._check_internet_connection)
@@ -296,21 +287,6 @@ class DownloadCoordinator:
                 NodeDownloadProgress(download_progress=pending)
             )
             del self.download_status[model_id]
-
-    async def _forward_events(self) -> None:
-        with self.event_receiver as events:
-            async for event in events:
-                idx = next(self.event_index_counter)
-                fe = ForwarderEvent(
-                    origin_idx=idx,
-                    origin=self.node_id,
-                    session=self.session_id,
-                    event=event,
-                )
-                logger.debug(
-                    f"DownloadCoordinator published event {idx}: {str(event)[:100]}"
-                )
-                await self.local_event_sender.send(fe)
 
     async def _emit_existing_download_progress(self) -> None:
         try:

@@ -57,22 +57,7 @@ class Node:
 
         logger.info(f"Starting node {node_id}")
 
-        # Create shared event index counter for Worker and DownloadCoordinator
         event_index_counter = itertools.count()
-
-        # Create DownloadCoordinator (unless --no-downloads)
-        if not args.no_downloads:
-            download_coordinator = DownloadCoordinator(
-                node_id,
-                session_id,
-                exo_shard_downloader(),
-                download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
-                local_event_sender=router.sender(topics.LOCAL_EVENTS),
-                event_index_counter=event_index_counter,
-                offline=args.offline,
-            )
-        else:
-            download_coordinator = None
 
         if args.spawn_api:
             api = API(
@@ -99,6 +84,20 @@ class Node:
             )
         else:
             worker = None
+
+        # DownloadCoordinator sends events through the Worker's event channel
+        # so they get the same index sequence and retry mechanism
+        if not args.no_downloads:
+            assert worker is not None, "DownloadCoordinator requires a Worker"
+            download_coordinator = DownloadCoordinator(
+                node_id,
+                exo_shard_downloader(),
+                download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
+                event_sender=worker.event_sender.clone(),
+                offline=args.offline,
+            )
+        else:
+            download_coordinator = None
 
         # We start every node with a master
         master = Master(
@@ -214,20 +213,6 @@ class Node:
                     await anyio.sleep(0)
                     # Fresh counter for new session (buffer expects indices from 0)
                     self.event_index_counter = itertools.count()
-                    if self.download_coordinator:
-                        self.download_coordinator.shutdown()
-                        self.download_coordinator = DownloadCoordinator(
-                            self.node_id,
-                            result.session_id,
-                            exo_shard_downloader(),
-                            download_command_receiver=self.router.receiver(
-                                topics.DOWNLOAD_COMMANDS
-                            ),
-                            local_event_sender=self.router.sender(topics.LOCAL_EVENTS),
-                            event_index_counter=self.event_index_counter,
-                            offline=self.offline,
-                        )
-                        self._tg.start_soon(self.download_coordinator.run)
                     if self.worker:
                         self.worker.shutdown()
                         # TODO: add profiling etc to resource monitor
@@ -245,6 +230,19 @@ class Node:
                             event_index_counter=self.event_index_counter,
                         )
                         self._tg.start_soon(self.worker.run)
+                    if self.download_coordinator:
+                        self.download_coordinator.shutdown()
+                        assert self.worker is not None
+                        self.download_coordinator = DownloadCoordinator(
+                            self.node_id,
+                            exo_shard_downloader(),
+                            download_command_receiver=self.router.receiver(
+                                topics.DOWNLOAD_COMMANDS
+                            ),
+                            event_sender=self.worker.event_sender.clone(),
+                            offline=self.offline,
+                        )
+                        self._tg.start_soon(self.download_coordinator.run)
                     if self.api:
                         self.api.reset(result.session_id, result.won_clock)
                 else:
