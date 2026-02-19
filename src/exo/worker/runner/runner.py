@@ -4,7 +4,7 @@ import resource
 import time
 from collections.abc import Generator
 from functools import cache
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import mlx.core as mx
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
@@ -588,6 +588,13 @@ def main(
                 case Shutdown():
                     current_status = RunnerShuttingDown()
                     logger.info("runner shutting down")
+                    if not TYPE_CHECKING:
+                        del inference_model, image_model, tokenizer, group
+                        mx.clear_cache()
+                        import gc
+
+                        gc.collect()
+
                     event_sender.send(
                         RunnerStatusUpdated(
                             runner_id=runner_id, runner_status=current_status
@@ -612,12 +619,8 @@ def main(
             event_sender.send(
                 RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
             )
-            if isinstance(current_status, RunnerShutdown):
-                del inference_model, image_model, tokenizer, group
-                mx.clear_cache()
-                import gc
 
-                gc.collect()
+            if isinstance(current_status, RunnerShutdown):
                 break
 
 
