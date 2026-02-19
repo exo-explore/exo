@@ -216,5 +216,7 @@ class RunnerSupervisor:
                 )
             )
         except (ClosedResourceError, BrokenResourceError):
-            logger.warning("Event sender already closed, unable to report runner failure")
+            logger.warning(
+                "Event sender already closed, unable to report runner failure"
+            )
         self.shutdown()
