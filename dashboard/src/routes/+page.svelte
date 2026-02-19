@@ -2070,26 +2070,24 @@
                   fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1"/>
                 <text x="114" y="52" text-anchor="middle"
                   fill="rgba(255,255,255,0.25)" style="font-size:7px;font-family:ui-monospace,monospace;">TB5</text>
-                <!-- Separator -->
-                <line x1="152" y1="14" x2="152" y2="58" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
-                <!-- TB5 port 4: INCOMPATIBLE (en2) -->
-                <rect x="176" y="22" width="28" height="14" rx="4"
+                <!-- TB5 port 4: INCOMPATIBLE (en2) — equally spaced with ports 1-3 -->
+                <rect x="138" y="22" width="28" height="14" rx="4"
                   fill="rgba(239,68,68,0.1)" stroke="rgba(239,68,68,0.7)" stroke-width="1.5"/>
-                <line x1="180" y1="25" x2="200" y2="33" stroke="rgba(239,68,68,0.8)" stroke-width="1.5" stroke-linecap="round"/>
-                <line x1="200" y1="25" x2="180" y2="33" stroke="rgba(239,68,68,0.8)" stroke-width="1.5" stroke-linecap="round"/>
-                <text x="190" y="52" text-anchor="middle"
+                <line x1="142" y1="25" x2="162" y2="33" stroke="rgba(239,68,68,0.8)" stroke-width="1.5" stroke-linecap="round"/>
+                <line x1="162" y1="25" x2="142" y2="33" stroke="rgba(239,68,68,0.8)" stroke-width="1.5" stroke-linecap="round"/>
+                <text x="152" y="52" text-anchor="middle"
                   fill="rgba(239,68,68,0.6)" style="font-size:7px;font-family:ui-monospace,monospace;font-weight:600;">en2</text>
                 <!-- Ethernet port -->
-                <rect x="224" y="19" width="24" height="20" rx="2"
+                <rect x="196" y="19" width="24" height="20" rx="2"
                   fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
-                <rect x="228" y="23" width="16" height="12" rx="1"
+                <rect x="200" y="23" width="16" height="12" rx="1"
                   fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="0.75"/>
-                <text x="236" y="52" text-anchor="middle"
+                <text x="208" y="52" text-anchor="middle"
                   fill="rgba(255,255,255,0.25)" style="font-size:7px;font-family:ui-monospace,monospace;">ETH</text>
                 <!-- HDMI port -->
-                <rect x="268" y="21" width="26" height="16" rx="3"
+                <rect x="248" y="21" width="26" height="16" rx="3"
                   fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="0.75"/>
-                <text x="281" y="52" text-anchor="middle"
+                <text x="261" y="52" text-anchor="middle"
                   fill="rgba(255,255,255,0.15)" style="font-size:7px;font-family:ui-monospace,monospace;">HDMI</text>
                 <!-- Green checkmarks on working ports -->
                 <circle cx="38" cy="62" r="3" fill="none" stroke="rgba(74,222,128,0.5)" stroke-width="0.75"/>
