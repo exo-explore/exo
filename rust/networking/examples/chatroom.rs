@@ -1,4 +1,4 @@
-use futures::stream::StreamExt as _;
+use futures_lite::StreamExt;
 use libp2p::{gossipsub, identity, swarm::SwarmEvent};
 use networking::{discovery, swarm};
 use tokio::{io, io::AsyncBufReadExt as _, select};
@@ -38,19 +38,19 @@ async fn main() {
                     println!("Publish error: {e:?}");
                 }
             }
-            event = swarm.select_next_some() => match event {
+            event = swarm.next() => match event {
                 // on gossipsub incoming
-                SwarmEvent::Behaviour(swarm::BehaviourEvent::Gossipsub(gossipsub::Event::Message {
+                Some(SwarmEvent::Behaviour(swarm::BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                     propagation_source: peer_id,
                     message_id: id,
                     message,
-                })) => println!(
+                }))) => println!(
                         "\n\nGot message: '{}' with id: {id} from peer: {peer_id}\n\n",
                         String::from_utf8_lossy(&message.data),
                     ),
 
                 // on discovery
-                SwarmEvent::Behaviour(swarm::BehaviourEvent::Discovery(e)) => match e {
+                Some(SwarmEvent::Behaviour(swarm::BehaviourEvent::Discovery(e)) )=> match e {
                     discovery::Event::ConnectionEstablished {
                         peer_id, connection_id, remote_ip, remote_tcp_port
                     } => {
@@ -64,7 +64,7 @@ async fn main() {
                 }
 
                 // ignore outgoing errors: those are normal
-                e@SwarmEvent::OutgoingConnectionError { .. } => { log::debug!("Outgoing connection error: {e:?}"); }
+                e@Some(SwarmEvent::OutgoingConnectionError { .. }) => { log::debug!("Outgoing connection error: {e:?}"); }
 
                 // otherwise log any other event
                 e => { log::info!("Other event {e:?}"); }

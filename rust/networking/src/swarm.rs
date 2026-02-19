@@ -31,7 +31,7 @@ pub fn create_swarm(keypair: identity::Keypair) -> alias::AnyResult<Swarm> {
 mod transport {
     use crate::alias;
     use crate::swarm::{NETWORK_VERSION, OVERRIDE_VERSION_ENV_VAR};
-    use futures::{AsyncRead, AsyncWrite};
+    use futures_lite::{AsyncRead, AsyncWrite};
     use keccak_const::Sha3_256;
     use libp2p::core::muxing;
     use libp2p::core::transport::Boxed;

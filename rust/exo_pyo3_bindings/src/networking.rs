@@ -8,12 +8,12 @@
 use crate::r#const::MPSC_CHANNEL_SIZE;
 use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _};
 use crate::ext::{ResultExt as _, TokioMpscReceiverExt as _, TokioMpscSenderExt as _};
+use crate::ident::{PyKeypair, PyPeerId};
 use crate::pyclass;
-use crate::pylibp2p::ident::{PyKeypair, PyPeerId};
 use libp2p::futures::StreamExt as _;
+use libp2p::gossipsub;
 use libp2p::gossipsub::{IdentTopic, Message, MessageId, PublishError};
 use libp2p::swarm::SwarmEvent;
-use libp2p::{gossipsub, mdns};
 use networking::discovery;
 use networking::swarm::create_swarm;
 use pyo3::prelude::{PyModule, PyModuleMethods as _};
@@ -25,7 +25,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 
 mod exception {
     use pyo3::types::PyTuple;
-    use pyo3::{PyErrArguments, exceptions::PyException, prelude::*};
+    use pyo3::{exceptions::PyException, prelude::*};
     use pyo3_stub_gen::derive::*;
 
     #[gen_stub_pyclass]
@@ -155,7 +155,6 @@ async fn networking_task(
 ) {
     use SwarmEvent::*;
     use ToTask::*;
-    use mdns::Event::*;
     use networking::swarm::BehaviourEvent::*;
 
     log::info!("RUST: networking task started");
@@ -485,7 +484,7 @@ impl PyNetworkingHandle {
         let (tx, rx) = oneshot::channel();
 
         // send off request to subscribe
-        let data = Python::with_gil(|py| Vec::from(data.as_bytes(py)));
+        let data = Python::attach(|py| Vec::from(data.as_bytes(py)));
         self.to_task_tx()
             .send_py(ToTask::GossipsubPublish {
                 topic,

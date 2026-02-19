@@ -2,11 +2,10 @@
 //!
 
 use pin_project::pin_project;
-use pyo3::marker::Ungil;
 use pyo3::prelude::*;
 use std::{
     future::Future,
-    pin::{Pin, pin},
+    pin::Pin,
     task::{Context, Poll},
 };
 
@@ -26,15 +25,13 @@ where
 
 impl<F> Future for AllowThreads<F>
 where
-    F: Future + Ungil,
-    F::Output: Ungil,
+    F: Future + Send,
+    F::Output: Send,
 {
     type Output = F::Output;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let waker = cx.waker();
-        Python::with_gil(|py| {
-            py.allow_threads(|| self.project().0.poll(&mut Context::from_waker(waker)))
-        })
+        Python::attach(|py| py.detach(|| self.project().0.poll(&mut Context::from_waker(waker))))
     }
 }

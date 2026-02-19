@@ -11,6 +11,7 @@ from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     HarmonyEncodingName,
+    HarmonyError,  # pyright: ignore[reportUnknownVariableType]
     Role,
     StreamableParser,
     load_harmony_encoding,
@@ -25,6 +26,7 @@ from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
+    PrefillProgress,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
@@ -80,7 +82,11 @@ from exo.worker.engines.image import (
 )
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.cache import KVPrefixCache
-from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
+from exo.worker.engines.mlx.generator.generate import (
+    PrefillCancelled,
+    mlx_generate,
+    warmup_inference,
+)
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     detect_thinking_prompt_suffix,
@@ -297,6 +303,32 @@ def main(
                     assert tokenizer
                     assert check_for_cancel_every
 
+                    # Define callback to send prefill progress events
+                    # and check for cancellation between prefill chunks.
+                    # TODO(evan): kill the callbacks/runner refactor
+                    #  Specifically the part that this is literally duplicated code.
+                    def on_prefill_progress(
+                        processed: int,
+                        total: int,
+                        _task_id: TaskId = task.task_id,
+                        _group: mx.distributed.Group | None = group,
+                    ) -> None:
+                        if device_rank == 0:
+                            event_sender.send(
+                                PrefillProgress(
+                                    command_id=command_id,
+                                    model=shard_metadata.model_card.model_id,
+                                    processed_tokens=processed,
+                                    total_tokens=total,
+                                )
+                            )
+                        cancelled_tasks.update(cancel_receiver.collect())
+                        want_to_cancel = (_task_id in cancelled_tasks) or (
+                            TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
+                        )
+                        if mx_any(want_to_cancel, _group):
+                            raise PrefillCancelled()
+
                     try:
                         _check_for_debug_prompts(task_params)
 
@@ -310,6 +342,7 @@ def main(
                             task=task_params,
                             prompt=prompt,
                             kv_prefix_cache=kv_prefix_cache,
+                            on_prefill_progress=on_prefill_progress,
                             group=group,
                         )
 
@@ -391,6 +424,8 @@ def main(
                                             )
                                         )
 
+                    except PrefillCancelled:
+                        logger.info(f"Prefill cancelled for task {task.task_id}")
                     # can we make this more explicit?
                     except Exception as e:
                         if device_rank == 0:
@@ -588,17 +623,31 @@ def parse_gpt_oss(
 
     for response in responses:
         assert isinstance(response, GenerationResponse)
-        stream.process(response.token)
+        try:
+            stream.process(response.token)
+        except HarmonyError:
+            logger.error("Encountered critical Harmony Error, returning early")
+            return
 
         delta = stream.last_content_delta
         ch = stream.current_channel
         recipient = stream.current_recipient
+
+        # Debug: log every token with state
+        logger.debug(
+            f"parse_gpt_oss token={response.token} text={response.text!r} "
+            f"recipient={recipient!r} ch={ch!r} delta={delta!r} "
+            f"state={stream.state} current_tool={current_tool_name!r}"
+        )
 
         if recipient != current_tool_name:
             if current_tool_name is not None:
                 prefix = "functions."
                 if current_tool_name.startswith(prefix):
                     current_tool_name = current_tool_name[len(prefix) :]
+                logger.info(
+                    f"parse_gpt_oss yielding tool call: name={current_tool_name!r}"
+                )
                 yield ToolCallResponse(
                     tool_calls=[
                         ToolCallItem(
