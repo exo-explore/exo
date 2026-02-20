@@ -85,7 +85,8 @@ class OllamaGenerateResponse(BaseModel, frozen=True, strict=True):
 
 
 class OllamaShowRequest(BaseModel, frozen=True):
-    name: str
+    name: str | None = None
+    model: str | None = None
     verbose: bool | None = None
 
 
