@@ -183,6 +183,27 @@ Same schema as `/v1/chat/completions`.
 **Response:**
 Chat completion plus benchmarking metrics.
 
+### Cancel Command
+
+**POST** `/v1/cancel/{command_id}`
+
+Cancels an active generation command (text or image). Notifies workers and closes the stream.
+
+**Path parameters:**
+
+* `command_id`: string, ID of the command to cancel
+
+**Response (example):**
+
+```json
+{
+  "message": "Command cancelled.",
+  "command_id": "cmd-abc-123"
+}
+```
+
+Returns 404 if the command is not found or already completed.
+
 ## 5. Image Generation & Editing
 
 ### Image Generation
@@ -266,6 +287,7 @@ GET     /v1/models
 
 POST    /v1/chat/completions
 POST    /bench/chat/completions
+POST    /v1/cancel/{command_id}
 
 POST    /v1/images/generations
 POST    /bench/images/generations
