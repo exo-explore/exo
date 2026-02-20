@@ -307,10 +307,15 @@
         const aPriority = rowSortKey(a);
         const bPriority = rowSortKey(b);
         if (aPriority !== bPriority) return bPriority - aPriority;
-        // Within completed, sort by biggest size first
+        // Within completed or paused, sort by biggest size first
         if (aPriority === 3 && bPriority === 3) {
           const sizeDiff = totalCompletedBytes(b) - totalCompletedBytes(a);
           if (sizeDiff !== 0) return sizeDiff;
+        }
+        if (aPriority === 2 && bPriority === 2) {
+          const aSize = Math.max(...Object.values(a.cells).map((c) => c.kind === "pending" ? c.total : 0));
+          const bSize = Math.max(...Object.values(b.cells).map((c) => c.kind === "pending" ? c.total : 0));
+          if (aSize !== bSize) return bSize - aSize;
         }
         return a.modelId.localeCompare(b.modelId);
       });
