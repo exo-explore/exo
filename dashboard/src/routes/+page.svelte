@@ -1739,7 +1739,7 @@
     layersLoaded?: number;
     totalLayers?: number;
   } {
-    const [, instance] = getTagged(instanceWrapped);
+    const [instanceTag, instance] = getTagged(instanceWrapped);
     if (!instance || typeof instance !== "object") {
       return { statusText: "PREPARING", statusClass: "inactive" };
     }
@@ -1778,17 +1778,27 @@
     if (has("Shutdown"))
       return { statusText: "SHUTDOWN", statusClass: "inactive" };
     if (has("Loading")) {
-      let layersLoaded = 0, totalLayers = 0;
+      // Tensor parallel: each runner loads all layers — use max/min (bottleneck)
+      // Pipeline parallel: each runner loads a disjoint slice — use sum
+      const isTensor = instanceTag === "MlxJacclInstance";
+      let layersLoaded = isTensor ? Infinity : 0;
+      let totalLayers = 0;
       for (const rid of runnerIds) {
         const r = runnersData[rid];
         if (!r) continue;
         const [kind, payload] = getTagged(r);
         if (kind === "RunnerLoading" && payload && typeof payload === "object") {
           const p = payload as { layersLoaded?: number; totalLayers?: number };
-          layersLoaded += p.layersLoaded ?? 0;
-          totalLayers += p.totalLayers ?? 0;
+          if (isTensor) {
+            layersLoaded = Math.min(layersLoaded, p.layersLoaded ?? 0);
+            totalLayers = Math.max(totalLayers, p.totalLayers ?? 0);
+          } else {
+            layersLoaded += p.layersLoaded ?? 0;
+            totalLayers += p.totalLayers ?? 0;
+          }
         }
       }
+      if (isTensor && layersLoaded === Infinity) layersLoaded = 0;
       return { statusText: "LOADING", statusClass: "starting", layersLoaded, totalLayers };
     }
     if (has("WarmingUp"))
