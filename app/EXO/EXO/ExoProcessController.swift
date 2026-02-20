@@ -118,10 +118,8 @@ final class ExoProcessController: ObservableObject {
             process = child
             status = .running
 
-            // Show welcome popout if onboarding was never completed
-            if !UserDefaults.standard.bool(forKey: onboardingCompletedKey) {
-                isFirstLaunchReady = true
-            }
+            // Show welcome popout on every launch
+            isFirstLaunchReady = true
         } catch {
             process = nil
             status = .failed(message: "Launch error")
