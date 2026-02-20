@@ -1,7 +1,6 @@
 import asyncio
 import socket
 from dataclasses import dataclass, field
-from random import random
 
 import anyio
 from anyio import current_time
@@ -21,13 +20,9 @@ from exo.shared.types.commands import (
     ForwarderDownloadCommand,
     StartDownload,
 )
-from exo.shared.types.common import NodeId, SessionId, SystemId
+from exo.shared.types.common import NodeId, SystemId
 from exo.shared.types.events import (
     Event,
-    EventId,
-    # TODO(evan): just for acks, should delete this ASAP
-    GlobalForwarderEvent,
-    LocalForwarderEvent,
     NodeDownloadProgress,
 )
 from exo.shared.types.worker.downloads import (
@@ -45,15 +40,9 @@ from exo.utils.lazy_task_group import LazyTaskGroup
 @dataclass
 class DownloadCoordinator:
     node_id: NodeId
-    session_id: SessionId
     shard_downloader: ShardDownloader
     download_command_receiver: Receiver[ForwarderDownloadCommand]
-    local_event_sender: Sender[LocalForwarderEvent]
-
-    # ack stuff
-    _global_event_receiver: Receiver[GlobalForwarderEvent]
-    _out_for_delivery: dict[EventId, LocalForwarderEvent] = field(default_factory=dict)
-
+    event_sender: Sender[Event]
     offline: bool = False
 
     _system_id: SystemId = field(default_factory=SystemId)
@@ -62,9 +51,6 @@ class DownloadCoordinator:
     download_status: dict[ModelId, DownloadProgress] = field(default_factory=dict)
     active_downloads: dict[ModelId, asyncio.Task[None]] = field(default_factory=dict)
 
-    # Internal event channel for forwarding (initialized in __post_init__)
-    event_sender: Sender[Event] = field(init=False)
-    event_receiver: Receiver[Event] = field(init=False)
     _tg: LazyTaskGroup = field(init=False, default_factory=LazyTaskGroup)
 
     # Per-model throttle for download progress events
@@ -127,10 +113,7 @@ class DownloadCoordinator:
         try:
             async with self._tg as tg:
                 tg.start_soon(self._command_processor)
-                tg.start_soon(self._forward_events)
                 tg.start_soon(self._emit_existing_download_progress)
-                tg.start_soon(self._resend_out_for_delivery)
-                tg.start_soon(self._clear_ofd)
                 if not self.offline:
                     tg.start_soon(self._check_internet_connection)
         finally:
@@ -167,20 +150,6 @@ class DownloadCoordinator:
 
     def shutdown(self) -> None:
         self._tg.cancel_scope.cancel()
-
-    # directly copied from worker
-    async def _resend_out_for_delivery(self) -> None:
-        # This can also be massively tightened, we should check events are at least a certain age before resending.
-        # Exponential backoff would also certainly help here.
-        while True:
-            await anyio.sleep(1 + random())
-            for event in self._out_for_delivery.copy().values():
-                await self.local_event_sender.send(event)
-
-    async def _clear_ofd(self) -> None:
-        with self._global_event_receiver as events:
-            async for event in events:
-                self._out_for_delivery.pop(event.event.event_id, None)
 
     async def _command_processor(self) -> None:
         with self.download_command_receiver as commands:
@@ -325,23 +294,6 @@ class DownloadCoordinator:
                 NodeDownloadProgress(download_progress=pending)
             )
             del self.download_status[model_id]
-
-    async def _forward_events(self) -> None:
-        idx = 0
-        with self.event_receiver as events:
-            async for event in events:
-                fe = LocalForwarderEvent(
-                    origin_idx=idx,
-                    origin=self._system_id,
-                    session=self.session_id,
-                    event=event,
-                )
-                idx += 1
-                logger.debug(
-                    f"DownloadCoordinator published event {idx}: {str(event)[:100]}"
-                )
-                await self.local_event_sender.send(fe)
-                self._out_for_delivery[event.event_id] = fe
 
     async def _emit_existing_download_progress(self) -> None:
         try:
