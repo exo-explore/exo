@@ -20,7 +20,6 @@ from huggingface_hub import (
 )
 from loguru import logger
 from pydantic import (
-    DirectoryPath,
     TypeAdapter,
 )
 
@@ -31,7 +30,7 @@ from exo.download.huggingface_utils import (
     get_hf_endpoint,
     get_hf_token,
 )
-from exo.shared.constants import EXO_MODELS_DIR
+from exo.shared.constants import EXO_MODELS_DIR, EXO_MODELS_PATH
 from exo.shared.models.model_cards import ModelTask
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
@@ -111,7 +110,27 @@ def map_repo_download_progress_to_download_progress_data(
     )
 
 
-def build_model_path(model_id: ModelId) -> DirectoryPath:
+def resolve_model_in_path(model_id: ModelId) -> Path | None:
+    """Search EXO_MODELS_PATH directories for a pre-existing model.
+
+    Checks each directory for the normalized name (org--model).  A candidate
+    is only returned if ``is_model_directory_complete`` confirms all weight
+    files are present.
+    """
+    if EXO_MODELS_PATH is None:
+        return None
+    normalized = model_id.normalize()
+    for search_dir in EXO_MODELS_PATH:
+        candidate = search_dir / normalized
+        if candidate.is_dir() and is_model_directory_complete(candidate):
+            return candidate
+    return None
+
+
+def build_model_path(model_id: ModelId) -> Path:
+    found = resolve_model_in_path(model_id)
+    if found is not None:
+        return found
     return EXO_MODELS_DIR / model_id.normalize()
 
 
@@ -158,6 +177,72 @@ async def seed_models(seed_dir: str | Path):
                     logger.error(traceback.format_exc())
 
 
+def _scan_model_directory(
+    model_dir: Path, recursive: bool = False
+) -> list[FileListEntry] | None:
+    """Scan a local model directory and build a file list.
+
+    Requires at least one ``*.safetensors.index.json``.  Every weight file
+    referenced by the index that is missing on disk gets ``size=None``.
+    """
+    index_files = list(model_dir.glob("**/*.safetensors.index.json"))
+    if not index_files:
+        return None
+
+    entries_by_path: dict[str, FileListEntry] = {}
+
+    if recursive:
+        for dirpath, _, filenames in os.walk(model_dir):
+            for filename in filenames:
+                if filename.endswith(".partial"):
+                    continue
+                full_path = Path(dirpath) / filename
+                rel_path = str(full_path.relative_to(model_dir))
+                entries_by_path[rel_path] = FileListEntry(
+                    type="file",
+                    path=rel_path,
+                    size=full_path.stat().st_size,
+                )
+    else:
+        for item in model_dir.iterdir():
+            if item.is_file() and not item.name.endswith(".partial"):
+                entries_by_path[item.name] = FileListEntry(
+                    type="file",
+                    path=item.name,
+                    size=item.stat().st_size,
+                )
+
+    # Add expected weight files from index that haven't been downloaded yet
+    for index_file in index_files:
+        try:
+            index_data = ModelSafetensorsIndex.model_validate_json(
+                index_file.read_text()
+            )
+            relative_dir = index_file.parent.relative_to(model_dir)
+            for filename in set(index_data.weight_map.values()):
+                rel_path = (
+                    str(relative_dir / filename)
+                    if relative_dir != Path(".")
+                    else filename
+                )
+                if rel_path not in entries_by_path:
+                    entries_by_path[rel_path] = FileListEntry(
+                        type="file",
+                        path=rel_path,
+                        size=None,
+                    )
+        except Exception:
+            continue
+
+    return list(entries_by_path.values())
+
+
+def is_model_directory_complete(model_dir: Path) -> bool:
+    """Check if a model directory contains all required weight files."""
+    file_list = _scan_model_directory(model_dir, recursive=True)
+    return file_list is not None and all(f.size is not None for f in file_list)
+
+
 async def _build_file_list_from_local_directory(
     model_id: ModelId,
     recursive: bool = False,
@@ -172,59 +257,7 @@ async def _build_file_list_from_local_directory(
     if not await aios.path.exists(model_dir):
         return None
 
-    def _scan() -> list[FileListEntry] | None:
-        index_files = list(model_dir.glob("**/*.safetensors.index.json"))
-        if not index_files:
-            return None
-
-        entries_by_path: dict[str, FileListEntry] = {}
-
-        if recursive:
-            for dirpath, _, filenames in os.walk(model_dir):
-                for filename in filenames:
-                    if filename.endswith(".partial"):
-                        continue
-                    full_path = Path(dirpath) / filename
-                    rel_path = str(full_path.relative_to(model_dir))
-                    entries_by_path[rel_path] = FileListEntry(
-                        type="file",
-                        path=rel_path,
-                        size=full_path.stat().st_size,
-                    )
-        else:
-            for item in model_dir.iterdir():
-                if item.is_file() and not item.name.endswith(".partial"):
-                    entries_by_path[item.name] = FileListEntry(
-                        type="file",
-                        path=item.name,
-                        size=item.stat().st_size,
-                    )
-
-        # Add expected weight files from index that haven't been downloaded yet
-        for index_file in index_files:
-            try:
-                index_data = ModelSafetensorsIndex.model_validate_json(
-                    index_file.read_text()
-                )
-                relative_dir = index_file.parent.relative_to(model_dir)
-                for filename in set(index_data.weight_map.values()):
-                    rel_path = (
-                        str(relative_dir / filename)
-                        if relative_dir != Path(".")
-                        else filename
-                    )
-                    if rel_path not in entries_by_path:
-                        entries_by_path[rel_path] = FileListEntry(
-                            type="file",
-                            path=rel_path,
-                            size=None,
-                        )
-            except Exception:
-                continue
-
-        return list(entries_by_path.values())
-
-    file_list = await asyncio.to_thread(_scan)
+    file_list = await asyncio.to_thread(_scan_model_directory, model_dir, recursive)
     if not file_list:
         return None
     return file_list
