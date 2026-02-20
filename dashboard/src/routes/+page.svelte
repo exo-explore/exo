@@ -823,7 +823,7 @@
 
     // Apply sharding and instance type unconditionally
     selectedSharding = defaults.sharding;
-    selectedInstanceType = defaults.instanceType;
+    selectedInstanceType = defaults.instanceType === "MlxRing" ? "MlxRing" : "MlxJaccl";
 
     // Apply minNodes if valid (between 1 and maxNodes)
     if (
