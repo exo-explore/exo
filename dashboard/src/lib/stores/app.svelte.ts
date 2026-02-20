@@ -168,7 +168,7 @@ export interface ModelDownloadStatus {
 export interface PlacementPreview {
   model_id: string;
   sharding: "Pipeline" | "Tensor";
-  instance_meta: "MlxRing" | "MlxIbv" | "MlxJaccl";
+  instance_meta: "MlxRing" | "MlxJaccl";
   instance: unknown | null;
   memory_delta_by_node: Record<string, number> | null;
   error: string | null;
@@ -219,7 +219,6 @@ interface RawStateResponse {
     string,
     {
       MlxRingInstance?: Instance;
-      MlxIbvInstance?: Instance;
       MlxJacclInstance?: Instance;
     }
   >;
@@ -918,10 +917,7 @@ class AppStore {
 
     let instanceType: string | null = null;
     if (instanceTag === "MlxRingInstance") instanceType = "MLX Ring";
-    else if (
-      instanceTag === "MlxIbvInstance" ||
-      instanceTag === "MlxJacclInstance"
-    )
+    else if (instanceTag === "MlxJacclInstance")
       instanceType = "MLX RDMA";
 
     let sharding: string | null = null;
