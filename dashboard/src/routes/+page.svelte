@@ -1965,7 +1965,9 @@
                 d={warningIconPath}
               />
             </svg>
-            <span class="text-sm font-mono text-yellow-200"> RDMA NOT ENABLED </span>
+            <span class="text-sm font-mono text-yellow-200">
+              RDMA NOT ENABLED
+            </span>
             <button
               type="button"
               onclick={() => (tb5InfoDismissed = true)}
@@ -1992,8 +1994,8 @@
             class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
           >
             <p class="text-xs text-white/80 mb-2">
-              Thunderbolt 5 hardware detected on multiple nodes. Enable
-              RDMA for significantly faster inter-node communication.
+              Thunderbolt 5 hardware detected on multiple nodes. Enable RDMA for
+              significantly faster inter-node communication.
             </p>
             <p class="text-xs text-white/60 mb-1.5">
               <span class="text-yellow-300">To enable:</span>
@@ -2334,7 +2336,8 @@
               d={warningIconPath}
             />
           </svg>
-          <span class="text-[10px] font-mono text-yellow-200">RDMA NOT ENABLED</span
+          <span class="text-[10px] font-mono text-yellow-200"
+            >RDMA NOT ENABLED</span
           >
         </div>
       {/if}
@@ -2485,8 +2488,8 @@
                 class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
               >
                 <p class="text-xs text-white/80 mb-2">
-                  Thunderbolt 5 hardware detected on multiple nodes. Enable
-                  RDMA for significantly faster inter-node communication.
+                  Thunderbolt 5 hardware detected on multiple nodes. Enable RDMA
+                  for significantly faster inter-node communication.
                 </p>
                 <p class="text-xs text-white/60 mb-1.5">
                   <span class="text-yellow-300">To enable:</span>
@@ -2623,7 +2626,8 @@
                     <li>Boot to Recovery (hold power 10s → Options)</li>
                     <li>
                       Run
-                      <code class="text-yellow-300 bg-yellow-400/10 px-1 rounded"
+                      <code
+                        class="text-yellow-300 bg-yellow-400/10 px-1 rounded"
                         >rdma_ctl enable</code
                       >
                     </li>
