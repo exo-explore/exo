@@ -221,7 +221,7 @@ def get_node_id_keypair(
     Obtain the :class:`PeerId` by from it.
     """
     # TODO(evan): bring back node id persistence once we figure out how to deal with duplicates
-    return Keypair.generate_ed25519()
+    return Keypair.generate()
 
     def lock_path(path: str | bytes | PathLike[str] | PathLike[bytes]) -> Path:
         return Path(str(path) + ".lock")
@@ -235,12 +235,12 @@ def get_node_id_keypair(
                 protobuf_encoded = f.read()
 
                 try:  # if decoded successfully, save & return
-                    return Keypair.from_protobuf_encoding(protobuf_encoded)
+                    return Keypair.from_bytes(protobuf_encoded)
                 except ValueError as e:  # on runtime error, assume corrupt file
                     logger.warning(f"Encountered error when trying to get keypair: {e}")
 
         # if no valid credentials, create new ones and persist
         with open(path, "w+b") as f:
             keypair = Keypair.generate_ed25519()
-            f.write(keypair.to_protobuf_encoding())
+            f.write(keypair.to_bytes())
             return keypair

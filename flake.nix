@@ -74,7 +74,6 @@
       perSystem =
         { config, self', inputs', pkgs, lib, system, ... }:
         let
-          fenixToolchain = inputs'.fenix.packages.complete;
           # Use pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
           pkgsSwift = import inputs.nixpkgs-swift { inherit system; };
         in
@@ -115,7 +114,7 @@
           packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin (
             let
               uvLock = builtins.fromTOML (builtins.readFile ./uv.lock);
-              mlxPackage = builtins.head (builtins.filter (p: p.name == "mlx") uvLock.package);
+              mlxPackage = builtins.head (builtins.filter (p: p.name == "mlx" && p.source ? git) uvLock.package);
               uvLockMlxVersion = mlxPackage.version;
             in
             {

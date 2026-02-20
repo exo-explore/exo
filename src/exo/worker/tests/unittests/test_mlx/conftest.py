@@ -123,7 +123,12 @@ def run_gpt_oss_pipeline_device(
         generated_text = ""
 
         for response in mlx_generate(
-            model=model, tokenizer=tokenizer, task=task, prompt=prompt
+            model=model,
+            tokenizer=tokenizer,
+            task=task,
+            prompt=prompt,
+            kv_prefix_cache=None,
+            group=group,
         ):
             generated_text += response.text
             if response.finish_reason is not None:
@@ -194,6 +199,8 @@ def run_gpt_oss_tensor_parallel_device(
             tokenizer=tokenizer,
             task=task,
             prompt=prompt,
+            kv_prefix_cache=None,
+            group=group,
         ):
             generated_text += response.text
             if response.finish_reason is not None:

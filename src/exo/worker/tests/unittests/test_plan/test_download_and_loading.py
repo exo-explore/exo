@@ -90,14 +90,10 @@ def test_plan_loads_model_when_all_shards_downloaded_and_waiting():
 
     global_download_status = {
         NODE_A: [
-            DownloadCompleted(
-                shard_metadata=shard1, node_id=NODE_A, total_bytes=Memory()
-            )
+            DownloadCompleted(shard_metadata=shard1, node_id=NODE_A, total=Memory())
         ],
         NODE_B: [
-            DownloadCompleted(
-                shard_metadata=shard2, node_id=NODE_B, total_bytes=Memory()
-            )
+            DownloadCompleted(shard_metadata=shard2, node_id=NODE_B, total=Memory())
         ],
     }
 
@@ -138,9 +134,7 @@ def test_plan_does_not_request_download_when_shard_already_downloaded():
     # Global state shows shard is downloaded for NODE_A
     global_download_status: dict[NodeId, list[DownloadProgress]] = {
         NODE_A: [
-            DownloadCompleted(
-                shard_metadata=shard, node_id=NODE_A, total_bytes=Memory()
-            )
+            DownloadCompleted(shard_metadata=shard, node_id=NODE_A, total=Memory())
         ],
         NODE_B: [],
     }
@@ -187,9 +181,7 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
 
     global_download_status = {
         NODE_A: [
-            DownloadCompleted(
-                shard_metadata=shard1, node_id=NODE_A, total_bytes=Memory()
-            )
+            DownloadCompleted(shard_metadata=shard1, node_id=NODE_A, total=Memory())
         ],
         NODE_B: [],  # NODE_B has no downloads completed yet
     }
@@ -207,14 +199,10 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
 
     global_download_status = {
         NODE_A: [
-            DownloadCompleted(
-                shard_metadata=shard1, node_id=NODE_A, total_bytes=Memory()
-            )
+            DownloadCompleted(shard_metadata=shard1, node_id=NODE_A, total=Memory())
         ],
         NODE_B: [
-            DownloadCompleted(
-                shard_metadata=shard2, node_id=NODE_B, total_bytes=Memory()
-            )
+            DownloadCompleted(shard_metadata=shard2, node_id=NODE_B, total=Memory())
         ],  # NODE_B has no downloads completed yet
     }
 

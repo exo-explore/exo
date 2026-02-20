@@ -1,28 +1,34 @@
 import base64
-import json
 import math
 import resource
 import time
 from collections.abc import Generator
 from functools import cache
-from typing import Any, Callable, Literal
+from typing import TYPE_CHECKING, Literal
 
 import mlx.core as mx
+from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     HarmonyEncodingName,
+    HarmonyError,  # pyright: ignore[reportUnknownVariableType]
     Role,
     StreamableParser,
     load_harmony_encoding,
 )
-from pydantic import ValidationError
 
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE, EXO_TRACING_ENABLED
 from exo.shared.models.model_cards import ModelId, ModelTask
 from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
 from exo.shared.types.api import ImageGenerationStats
-from exo.shared.types.chunks import ErrorChunk, ImageChunk, TokenChunk, ToolCallChunk
+from exo.shared.types.chunks import (
+    ErrorChunk,
+    ImageChunk,
+    PrefillProgressChunk,
+    TokenChunk,
+    ToolCallChunk,
+)
 from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -82,7 +88,11 @@ from exo.worker.engines.image import (
 )
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.cache import KVPrefixCache
-from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
+from exo.worker.engines.mlx.generator.generate import (
+    PrefillCancelled,
+    mlx_generate,
+    warmup_inference,
+)
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     detect_thinking_prompt_suffix,
@@ -92,6 +102,8 @@ from exo.worker.engines.mlx.utils_mlx import (
     mx_any,
 )
 from exo.worker.runner.bootstrap import logger
+
+from .tool_parsers import ToolParser, make_mlx_parser
 
 
 def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:
@@ -138,6 +150,7 @@ def main(
     inference_model: Model | None = None
     image_model: DistributedImageModel | None = None
     tokenizer = None
+    tool_parser: ToolParser | None = None
     group = None
     kv_prefix_cache: KVPrefixCache | None = None
     check_for_cancel_every: int | None = None
@@ -203,8 +216,17 @@ def main(
                             bound_instance, group, on_timeout=on_model_load_timeout
                         )
                         logger.info(
-                            f"model has_tool_calling={tokenizer.has_tool_calling}"
+                            f"model has_tool_calling={tokenizer.has_tool_calling} using tokens {tokenizer.tool_call_start}, {tokenizer.tool_call_end}"
                         )
+                        if tokenizer.has_tool_calling:
+                            assert tokenizer.tool_call_start
+                            assert tokenizer.tool_call_end
+                            assert tokenizer.tool_parser  # pyright: ignore[reportAny]
+                            tool_parser = make_mlx_parser(
+                                tokenizer.tool_call_start,
+                                tokenizer.tool_call_end,
+                                tokenizer.tool_parser,  # pyright: ignore[reportAny]
+                            )
                         kv_prefix_cache = KVPrefixCache(group)
 
                     elif (
@@ -287,6 +309,34 @@ def main(
                     assert tokenizer
                     assert check_for_cancel_every
 
+                    # Define callback to send prefill progress events
+                    # and check for cancellation between prefill chunks.
+                    # TODO(evan): kill the callbacks/runner refactor
+                    #  Specifically the part that this is literally duplicated code.
+                    def on_prefill_progress(
+                        processed: int,
+                        total: int,
+                        _task_id: TaskId = task.task_id,
+                        _group: mx.distributed.Group | None = group,
+                    ) -> None:
+                        if device_rank == 0:
+                            event_sender.send(
+                                ChunkGenerated(
+                                    command_id=command_id,
+                                    chunk=PrefillProgressChunk(
+                                        model=shard_metadata.model_card.model_id,
+                                        processed_tokens=processed,
+                                        total_tokens=total,
+                                    ),
+                                )
+                            )
+                        cancelled_tasks.update(cancel_receiver.collect())
+                        want_to_cancel = (_task_id in cancelled_tasks) or (
+                            TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
+                        )
+                        if mx_any(want_to_cancel, _group):
+                            raise PrefillCancelled()
+
                     try:
                         _check_for_debug_prompts(task_params)
 
@@ -300,41 +350,28 @@ def main(
                             task=task_params,
                             prompt=prompt,
                             kv_prefix_cache=kv_prefix_cache,
+                            on_prefill_progress=on_prefill_progress,
                             group=group,
                         )
 
-                        # For other thinking models (GLM, etc.), check if we need to
-                        # prepend the thinking tag that was consumed by the chat template
-                        if detect_thinking_prompt_suffix(prompt, tokenizer):
+                        if tokenizer.has_thinking:
                             mlx_generator = parse_thinking_models(
-                                mlx_generator, tokenizer
-                            )
-
-                        # Kimi-K2 has tool call sections - we don't care about them
-                        if "kimi" in shard_metadata.model_card.model_id.lower():
-                            mlx_generator = filter_kimi_tokens(mlx_generator)
-                            patch_kimi_tokenizer(tokenizer)
-
-                        # GLM models need patched parser (upstream has bug with None regex match)
-                        elif "glm" in shard_metadata.model_card.model_id.lower():
-                            patch_glm_tokenizer(tokenizer)
-
-                        # GPT-OSS specific parsing to match other model formats.
-                        elif isinstance(inference_model, GptOssModel):
-                            mlx_generator = parse_gpt_oss(mlx_generator)
-
-                        if tokenizer.has_tool_calling and not isinstance(
-                            inference_model, GptOssModel
-                        ):
-                            assert tokenizer.tool_call_start
-                            assert tokenizer.tool_call_end
-                            assert tokenizer.tool_parser  # pyright: ignore[reportAny]
-                            mlx_generator = parse_tool_calls(
                                 mlx_generator,
-                                tokenizer.tool_call_start,
-                                tokenizer.tool_call_end,
-                                tokenizer.tool_parser,  # pyright: ignore[reportAny]
+                                tokenizer,
+                                # For other thinking models (GLM, etc.), check if we need to
+                                # prepend the thinking tag that was consumed by the chat template
+                                starts_in_thinking=detect_thinking_prompt_suffix(
+                                    prompt, tokenizer
+                                ),
                             )
+
+                        # Model-specific output parsing for tool calls.
+                        if isinstance(inference_model, GptOssModel):
+                            mlx_generator = parse_gpt_oss(mlx_generator)
+                        elif isinstance(inference_model, DeepseekV32Model):
+                            mlx_generator = parse_deepseek_v32(mlx_generator)
+                        elif tool_parser:
+                            mlx_generator = parse_tool_calls(mlx_generator, tool_parser)
 
                         completion_tokens = 0
                         tokens_since_last_cancel_check = 0
@@ -384,6 +421,7 @@ def main(
                                                     stats=response.stats,
                                                     logprob=response.logprob,
                                                     top_logprobs=response.top_logprobs,
+                                                    is_thinking=response.is_thinking,
                                                 ),
                                             )
                                         )
@@ -401,6 +439,8 @@ def main(
                                             )
                                         )
 
+                    except PrefillCancelled:
+                        logger.info(f"Prefill cancelled for task {task.task_id}")
                     # can we make this more explicit?
                     except Exception as e:
                         if device_rank == 0:
@@ -548,6 +588,13 @@ def main(
                 case Shutdown():
                     current_status = RunnerShuttingDown()
                     logger.info("runner shutting down")
+                    if not TYPE_CHECKING:
+                        del inference_model, image_model, tokenizer, group
+                        mx.clear_cache()
+                        import gc
+
+                        gc.collect()
+
                     event_sender.send(
                         RunnerStatusUpdated(
                             runner_id=runner_id, runner_status=current_status
@@ -572,12 +619,8 @@ def main(
             event_sender.send(
                 RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
             )
-            if isinstance(current_status, RunnerShutdown):
-                del inference_model, image_model, tokenizer, group
-                mx.clear_cache()
-                import gc
 
-                gc.collect()
+            if isinstance(current_status, RunnerShutdown):
                 break
 
 
@@ -587,21 +630,8 @@ def get_gpt_oss_encoding():
     return encoding
 
 
-def filter_kimi_tokens(
-    responses: Generator[GenerationResponse | ToolCallResponse],
-) -> Generator[GenerationResponse]:
-    for resp in responses:
-        assert isinstance(resp, GenerationResponse)
-        if (
-            resp.text == "<|tool_calls_section_begin|>"
-            or resp.text == "<|tool_calls_section_end|>"
-        ):
-            continue
-        yield resp
-
-
 def parse_gpt_oss(
-    responses: Generator[GenerationResponse | ToolCallResponse],
+    responses: Generator[GenerationResponse],
 ) -> Generator[GenerationResponse | ToolCallResponse]:
     encoding = get_gpt_oss_encoding()
     stream = StreamableParser(encoding, role=Role.ASSISTANT)
@@ -611,17 +641,31 @@ def parse_gpt_oss(
 
     for response in responses:
         assert isinstance(response, GenerationResponse)
-        stream.process(response.token)
+        try:
+            stream.process(response.token)
+        except HarmonyError:
+            logger.error("Encountered critical Harmony Error, returning early")
+            return
 
         delta = stream.last_content_delta
         ch = stream.current_channel
         recipient = stream.current_recipient
+
+        # Debug: log every token with state
+        logger.debug(
+            f"parse_gpt_oss token={response.token} text={response.text!r} "
+            f"recipient={recipient!r} ch={ch!r} delta={delta!r} "
+            f"state={stream.state} current_tool={current_tool_name!r}"
+        )
 
         if recipient != current_tool_name:
             if current_tool_name is not None:
                 prefix = "functions."
                 if current_tool_name.startswith(prefix):
                     current_tool_name = current_tool_name[len(prefix) :]
+                logger.info(
+                    f"parse_gpt_oss yielding tool call: name={current_tool_name!r}"
+                )
                 yield ToolCallResponse(
                     tool_calls=[
                         ToolCallItem(
@@ -642,44 +686,208 @@ def parse_gpt_oss(
 
         if ch == "analysis" and not thinking:
             thinking = True
-            yield response.model_copy(update={"text": "<think>"})
 
         if ch != "analysis" and thinking:
             thinking = False
-            yield response.model_copy(update={"text": "</think>"})
 
         if delta:
-            yield response.model_copy(update={"text": delta})
+            yield response.model_copy(update={"text": delta, "is_thinking": thinking})
 
         if response.finish_reason is not None:
-            if thinking:
-                yield response.model_copy(update={"text": "</think>"})
             yield response
 
 
-def parse_thinking_models(
-    responses: Generator[GenerationResponse | ToolCallResponse],
-    tokenizer: TokenizerWrapper,
+def parse_deepseek_v32(
+    responses: Generator[GenerationResponse],
 ) -> Generator[GenerationResponse | ToolCallResponse]:
+    """Parse DeepSeek V3.2 DSML tool calls from the generation stream.
+
+    Uses accumulated-text matching (not per-token marker checks) because
+    DSML markers like <｜DSML｜function_calls> may span multiple tokens.
+    Also handles <think>...</think> blocks for thinking mode.
     """
-    For models that inject thinking tags in the prompt (like GLM-4.7),
-    prepend the thinking tag to the output stream so the frontend
-    can properly parse thinking content.
+    from exo.worker.engines.mlx.dsml_encoding import (
+        THINKING_END,
+        THINKING_START,
+        TOOL_CALLS_END,
+        TOOL_CALLS_START,
+        parse_dsml_output,
+    )
+
+    accumulated = ""
+    in_tool_call = False
+    thinking = False
+    # Tokens buffered while we detect the start of a DSML block
+    pending_buffer: list[GenerationResponse] = []
+    # Text accumulated during a tool call block
+    tool_call_text = ""
+
+    for response in responses:
+        assert isinstance(response, GenerationResponse)
+
+        # ── Handle thinking tags ──
+        if not thinking and THINKING_START in response.text:
+            thinking = True
+            # Yield any text before the <think> tag
+            before = response.text[: response.text.index(THINKING_START)]
+            if before:
+                yield response.model_copy(update={"text": before})
+            continue
+
+        if thinking and THINKING_END in response.text:
+            thinking = False
+            # Yield any text after the </think> tag
+            after = response.text[
+                response.text.index(THINKING_END) + len(THINKING_END) :
+            ]
+            if after:
+                yield response.model_copy(update={"text": after, "is_thinking": False})
+            continue
+
+        if thinking:
+            yield response.model_copy(update={"is_thinking": True})
+            continue
+
+        # ── Handle tool call accumulation ──
+        if in_tool_call:
+            tool_call_text += response.text
+            if TOOL_CALLS_END in tool_call_text:
+                # Parse the accumulated DSML block
+                parsed = parse_dsml_output(tool_call_text)
+                if parsed is not None:
+                    logger.info(f"parsed DSML tool calls: {parsed}")
+                    yield ToolCallResponse(
+                        tool_calls=parsed,
+                        usage=response.usage,
+                        stats=response.stats,
+                    )
+                else:
+                    logger.warning(
+                        f"DSML tool call parsing failed for: {tool_call_text}"
+                    )
+                    yield response.model_copy(update={"text": tool_call_text})
+                in_tool_call = False
+                tool_call_text = ""
+                continue
+
+            # EOS reached before end marker — yield buffered text as-is
+            if response.finish_reason is not None:
+                logger.info("DSML tool call parsing interrupted by EOS")
+                yield response.model_copy(update={"text": tool_call_text})
+                in_tool_call = False
+                tool_call_text = ""
+            continue
+
+        # ── Detect start of tool call block ──
+        accumulated += response.text
+
+        if TOOL_CALLS_START in accumulated:
+            # The start marker might be split across pending_buffer + current token
+            start_idx = accumulated.index(TOOL_CALLS_START)
+            # Yield any pending tokens that are purely before the marker
+            pre_text = accumulated[:start_idx]
+            if pre_text:
+                # Flush pending buffer tokens that contributed text before the marker
+                for buf_resp in pending_buffer:
+                    if pre_text:
+                        chunk = buf_resp.text
+                        if len(chunk) <= len(pre_text):
+                            yield buf_resp
+                            pre_text = pre_text[len(chunk) :]
+                        else:
+                            yield buf_resp.model_copy(update={"text": pre_text})
+                            pre_text = ""
+            pending_buffer = []
+            tool_call_text = accumulated[start_idx:]
+            accumulated = ""
+
+            # Check if the end marker is already present (entire tool call in one token)
+            if TOOL_CALLS_END in tool_call_text:
+                parsed = parse_dsml_output(tool_call_text)
+                if parsed is not None:
+                    logger.info(f"parsed DSML tool calls: {parsed}")
+                    yield ToolCallResponse(
+                        tool_calls=parsed,
+                        usage=response.usage,
+                        stats=response.stats,
+                    )
+                else:
+                    logger.warning(
+                        f"DSML tool call parsing failed for: {tool_call_text}"
+                    )
+                    yield response.model_copy(update={"text": tool_call_text})
+                tool_call_text = ""
+            else:
+                in_tool_call = True
+            continue
+
+        # Check if accumulated text might be the start of a DSML marker
+        # Buffer tokens if we see a partial match at the end
+        if _could_be_dsml_prefix(accumulated):
+            pending_buffer.append(response)
+            continue
+
+        # No partial match — flush all pending tokens and the current one
+        for buf_resp in pending_buffer:
+            yield buf_resp
+        pending_buffer = []
+        accumulated = ""
+        yield response
+
+    # Flush any remaining pending buffer at generator end
+    for buf_resp in pending_buffer:
+        yield buf_resp
+
+
+def _could_be_dsml_prefix(text: str) -> bool:
+    """Check if the end of text could be the start of a DSML function_calls marker.
+
+    We look for suffixes of text that are prefixes of the TOOL_CALLS_START pattern.
+    This allows us to buffer tokens until we can determine if a tool call is starting.
     """
-    first = True
+    from exo.worker.engines.mlx.dsml_encoding import TOOL_CALLS_START
+
+    # Only check the last portion of text that could overlap with the marker
+    max_check = len(TOOL_CALLS_START)
+    tail = text[-max_check:] if len(text) > max_check else text
+
+    # Check if any suffix of tail is a prefix of TOOL_CALLS_START
+    for i in range(len(tail)):
+        suffix = tail[i:]
+        if TOOL_CALLS_START.startswith(suffix):
+            return True
+    return False
+
+
+def parse_thinking_models(
+    responses: Generator[GenerationResponse],
+    tokenizer: TokenizerWrapper,
+    starts_in_thinking: bool = True,
+) -> Generator[GenerationResponse]:
+    """Route thinking tokens via is_thinking flag.
+
+    Swallows think tag tokens, sets is_thinking on all others.
+    Always yields tokens with finish_reason to avoid hanging the chunk stream.
+    """
+    in_thinking = starts_in_thinking
     for response in responses:
         if isinstance(response, ToolCallResponse):
             yield response
             continue
-        if first:
-            first = False
-            yield response.model_copy(
-                update={
-                    "text": tokenizer.think_start,
-                    "token": tokenizer.think_start_id,
-                }
-            )
-        yield response
+
+        is_think_tag = (
+            tokenizer.think_end is not None and response.text == tokenizer.think_end
+        ) or (
+            tokenizer.think_start is not None and response.text == tokenizer.think_start
+        )
+
+        if is_think_tag:
+            in_thinking = response.text != tokenizer.think_end
+            # Never swallow finish_reason — the chunk stream needs it to terminate.
+            if response.finish_reason is not None:
+                yield response.model_copy(update={"text": "", "is_thinking": False})
+            continue
+        yield response.model_copy(update={"is_thinking": in_thinking})
 
 
 def _send_image_chunk(
@@ -781,219 +989,53 @@ def _process_image_response(
 
 
 def parse_tool_calls(
-    responses: Generator[GenerationResponse | ToolCallResponse],
-    tool_call_start: str,
-    tool_call_end: str,
-    tool_parser: Callable[[str], dict[str, Any] | list[dict[str, Any]]],
+    responses: Generator[GenerationResponse], tool_parser: ToolParser
 ) -> Generator[GenerationResponse | ToolCallResponse]:
     in_tool_call = False
     tool_call_text_parts: list[str] = []
     for response in responses:
-        assert isinstance(response, GenerationResponse)
-        # assumption: the tool call start is one token
-        if response.text == tool_call_start:
+        if response.text.startswith(tool_parser.start_parsing):
             in_tool_call = True
-            continue
-        # assumption: the tool call end is one token
-        if in_tool_call and response.text == tool_call_end:
-            try:
-                # tool_parser returns an arbitrarily nested python dictionary
-                # we actually don't want the python dictionary, we just want to
-                # parse the top level { function: ..., arguments: ... } structure
-                # as we're just gonna hand it back to the api anyway
-                parsed = tool_parser("".join(tool_call_text_parts).strip())
-                logger.info(f"parsed {tool_call_text_parts=} into {parsed=}")
-                if isinstance(parsed, list):
-                    tools = [_validate_single_tool(tool) for tool in parsed]
-                else:
-                    tools = [_validate_single_tool(parsed)]
-                yield ToolCallResponse(
-                    tool_calls=tools, usage=response.usage, stats=response.stats
-                )
-
-            except (
-                json.JSONDecodeError,
-                ValidationError,
-                ValueError,
-                AttributeError,
-            ) as e:
-                # ValueError: our parsers raise this for malformed tool calls
-                # AttributeError: upstream parsers (e.g. glm47) may raise this when regex doesn't match
-                logger.opt(exception=e).warning("tool call parsing failed")
-                # assumption: talking about tool calls, not making a tool call
-                response.text = (
-                    tool_call_start + "".join(tool_call_text_parts) + tool_call_end
-                )
-                yield response
-
-            in_tool_call = False
-            tool_call_text_parts = []
-            continue
 
         if in_tool_call:
             tool_call_text_parts.append(response.text)
+            if response.text.endswith(tool_parser.end_parsing):
+                # parse the actual tool calls from the tool call text
+                parsed = tool_parser.parse_tool_calls(
+                    "".join(tool_call_text_parts).strip()
+                )
+                logger.info(f"parsed {tool_call_text_parts=} into {parsed=}")
+                if parsed is not None:
+                    yield ToolCallResponse(
+                        tool_calls=parsed, usage=response.usage, stats=response.stats
+                    )
+                else:
+                    logger.warning(
+                        f"tool call parsing failed for text {''.join(tool_call_text_parts)}"
+                    )
+                    response.text = "".join(tool_call_text_parts)
+                    yield response
+
+                in_tool_call = False
+                tool_call_text_parts = []
+                continue
+
             if response.finish_reason is not None:
                 logger.info(
-                    "toll call parsing interrupted, yield partial tool call as text"
+                    "tool call parsing interrupted, yield partial tool call as text"
                 )
-                yield GenerationResponse(
-                    text=tool_call_start + "".join(tool_call_text_parts),
-                    token=0,
-                    finish_reason=response.finish_reason,
-                    usage=response.usage,
-                    stats=response.stats,
+                response = response.model_copy(
+                    update={
+                        "text": "".join(tool_call_text_parts),
+                        "token": 0,
+                    }
                 )
+                yield response
+
             continue
+
         # fallthrough
         yield response
-
-
-def patch_kimi_tokenizer(tokenizer: TokenizerWrapper):
-    """
-    Version of to-be-upstreamed kimi-k2 tool parser
-    """
-    import ast
-    import json
-    from typing import Any
-
-    import regex as re
-
-    # kimi has a fixed function naming scheme, with a json formatted arg
-    #   functions.multiply:0 <|tool_call_argument_begin|> {"a": 2, "b": 3}
-    #   Also needs to handle tools like call_0<|tool_call_argument_begin|>{"filePath": "..."}
-    _func_name_regex = re.compile(
-        r"^\s*(.+)[:](\d+)\s*<\|tool_call_argument_begin\|>", re.DOTALL
-    )
-    _func_arg_regex = re.compile(r"<\|tool_call_argument_begin\|>\s*(.*)\s*", re.DOTALL)
-
-    # kimi has a tool_calls_section - we're leaving this up to the caller to handle
-    tool_call_start = "<|tool_call_begin|>"
-    tool_call_end = "<|tool_call_end|>"
-
-    def _deserialize(value: str) -> Any:  # pyright: ignore[reportAny]
-        try:
-            return json.loads(value)  # pyright: ignore[reportAny]
-        except Exception:
-            pass
-
-        try:
-            return ast.literal_eval(value)  # pyright: ignore[reportAny]
-        except Exception:
-            pass
-        return value
-
-    def parse_tool_call(text: str, tools: Any | None = None):
-        func_name_match = _func_name_regex.search(text)
-        if func_name_match is None:
-            raise ValueError(f"Could not parse function name from tool call: {text!r}")
-        original_func_name = func_name_match.group(1)
-        tool_id = func_name_match.group(2)
-        # strip off the `functions.` prefix, if it exists.
-        func_name = original_func_name[original_func_name.find(".") + 1 :]
-
-        func_args_match = _func_arg_regex.search(text)
-        if func_args_match is None:
-            raise ValueError(f"Could not parse function args from tool call: {text!r}")
-        func_args = func_args_match.group(1)
-        # the args should be valid json - no need to check against our tools to deserialize
-        arg_dct = _deserialize(func_args)  # pyright: ignore[reportAny]
-
-        return dict(
-            id=f"{original_func_name}:{tool_id}",
-            name=func_name,
-            arguments=arg_dct,  # pyright: ignore[reportAny]
-        )
-
-    tokenizer._tool_call_start = tool_call_start
-    tokenizer._tool_call_end = tool_call_end
-    tokenizer._tool_parser = parse_tool_call
-
-
-def patch_glm_tokenizer(tokenizer: TokenizerWrapper):
-    """
-    Fixed version of mlx_lm's glm47 tool parser that handles regex match failures.
-    """
-    import ast
-    import json
-    from typing import Any
-
-    import regex as re
-
-    _func_name_regex = re.compile(r"^(.*?)<arg_key>", re.DOTALL)
-    _func_arg_regex = re.compile(
-        r"<arg_key>(.*?)</arg_key>(?:\n|\s)*<arg_value>(.*?)(?:</arg_value>|(?=<arg_key>)|$)",
-        re.DOTALL,
-    )
-
-    tool_call_start = "<tool_call>"
-    tool_call_end = "</tool_call>"
-
-    def _is_string_type(
-        tool_name: str,
-        arg_name: str,
-        tools: list[Any] | None,
-    ) -> bool:
-        if tools is None:
-            return False
-        for tool in tools:  # pyright: ignore[reportAny]
-            func = tool["function"]  # pyright: ignore[reportAny]
-            if func["name"] == tool_name:
-                params = func["parameters"]  # pyright: ignore[reportAny]
-                if params is None:
-                    return False
-                props = params.get("properties", {})  # pyright: ignore[reportAny]
-                arg_props = props.get(arg_name, {})  # pyright: ignore[reportAny]
-                arg_type = arg_props.get("type", None)  # pyright: ignore[reportAny]
-                return arg_type == "string"  # pyright: ignore[reportAny]
-        return False
-
-    def _deserialize(value: str) -> Any:  # pyright: ignore[reportAny]
-        try:
-            return json.loads(value)  # pyright: ignore[reportAny]
-        except Exception:
-            pass
-        try:
-            return ast.literal_eval(value)  # pyright: ignore[reportAny]
-        except Exception:
-            pass
-        return value
-
-    def parse_tool_call(text: str, tools: list[Any] | None = None):
-        func_name_match = _func_name_regex.search(text)
-        if func_name_match is None:
-            raise ValueError(f"Could not parse function name from tool call: {text!r}")
-        func_name = func_name_match.group(1)
-
-        pairs = _func_arg_regex.findall(text)
-        arg_dct: dict[str, Any] = {}
-        for key, value in pairs:  # pyright: ignore[reportAny]
-            arg_key = key.strip()  # pyright: ignore[reportAny]
-            arg_val = value.strip()  # pyright: ignore[reportAny]
-            if not _is_string_type(func_name, arg_key, tools):  # pyright: ignore[reportAny]
-                arg_val = _deserialize(arg_val)  # pyright: ignore[reportAny]
-            arg_dct[arg_key] = arg_val
-        return dict(name=func_name, arguments=arg_dct)
-
-    tokenizer._tool_call_start = tool_call_start
-    tokenizer._tool_call_end = tool_call_end
-    tokenizer._tool_parser = parse_tool_call
-
-
-def _validate_single_tool(obj: dict[str, Any]) -> ToolCallItem:
-    if (
-        ((name := obj.get("name")) is not None)
-        and ((args := obj.get("arguments")) is not None)
-        and isinstance(name, str)
-    ):
-        raw_id: object = obj.get("id")
-        extra = {"id": str(raw_id)} if raw_id is not None else {}
-        return ToolCallItem(
-            **extra,
-            name=name,
-            arguments=json.dumps(args),
-        )
-    else:
-        raise ValidationError
 
 
 EXO_RUNNER_MUST_FAIL = "EXO RUNNER MUST FAIL"

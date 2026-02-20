@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import webbrowser
 
 from exo.shared.constants import EXO_CONFIG_HOME
@@ -19,7 +20,6 @@ def _mark_first_run_done() -> None:
 
 
 def print_startup_banner(port: int) -> None:
-    """Print a prominent startup banner with API endpoint information."""
     dashboard_url = f"http://localhost:{port}"
     first_run = _is_first_run()
     banner = f"""
@@ -48,7 +48,7 @@ def print_startup_banner(port: int) -> None:
 
 """
 
-    print(banner)
+    print(banner, file=sys.stderr)
 
     if first_run:
         # Skip browser open when running inside the native macOS app —

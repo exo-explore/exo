@@ -250,6 +250,11 @@ interface RawStateResponse {
   >;
   // Thunderbolt bridge cycles (nodes with bridge enabled forming loops)
   thunderboltBridgeCycles?: string[][];
+  // Disk usage per node
+  nodeDisk?: Record<
+    string,
+    { total: { inBytes: number }; available: { inBytes: number } }
+  >;
 }
 
 export interface MessageAttachment {
@@ -271,6 +276,13 @@ export interface TokenData {
   logprob: number;
   probability: number;
   topLogprobs: TopLogprob[];
+}
+
+export interface PrefillProgress {
+  processed: number;
+  total: number;
+  /** Timestamp (performance.now()) when prefill started. */
+  startedAt: number;
 }
 
 export interface Message {
@@ -306,13 +318,14 @@ const IMAGE_PARAMS_STORAGE_KEY = "exo-image-generation-params";
 export interface ImageGenerationParams {
   // Basic params
   size:
+    | "auto"
     | "512x512"
     | "768x768"
     | "1024x1024"
     | "1024x768"
     | "768x1024"
-    | "1024x1365"
-    | "1365x1024";
+    | "1024x1536"
+    | "1536x1024";
   quality: "low" | "medium" | "high";
   outputFormat: "png" | "jpeg";
   numImages: number;
@@ -336,7 +349,7 @@ export interface EditingImage {
 }
 
 const DEFAULT_IMAGE_PARAMS: ImageGenerationParams = {
-  size: "1024x1024",
+  size: "auto",
   quality: "medium",
   outputFormat: "png",
   numImages: 1,
@@ -519,6 +532,10 @@ class AppStore {
   ttftMs = $state<number | null>(null); // Time to first token in ms
   tps = $state<number | null>(null); // Tokens per second
   totalTokens = $state<number>(0); // Total tokens in current response
+  prefillProgress = $state<PrefillProgress | null>(null);
+
+  // Abort controller for stopping generation
+  private currentAbortController: AbortController | null = null;
 
   // Topology state
   topologyData = $state<TopologyData | null>(null);
@@ -1660,11 +1677,12 @@ class AppStore {
       if (!reader) throw new Error("No response body");
 
       let fullContent = prefixText;
+      let streamedThinking = "";
       const collectedTokens: TokenData[] = [...tokensToKeep];
 
       interface ChatCompletionChunk {
         choices?: Array<{
-          delta?: { content?: string };
+          delta?: { content?: string; reasoning_content?: string };
           logprobs?: {
             content?: Array<{
               token: string;
@@ -1685,6 +1703,7 @@ class AppStore {
         (parsed) => {
           const choice = parsed.choices?.[0];
           const delta = choice?.delta?.content;
+          const thinkingDelta = choice?.delta?.reasoning_content;
 
           // Collect logprobs data
           const logprobsContent = choice?.logprobs?.content;
@@ -1703,7 +1722,11 @@ class AppStore {
             }
           }
 
-          if (delta) {
+          if (thinkingDelta) {
+            streamedThinking += thinkingDelta;
+          }
+
+          if (delta || thinkingDelta) {
             if (firstTokenTime === null) {
               firstTokenTime = performance.now();
               this.ttftMs = firstTokenTime - requestStartTime;
@@ -1717,9 +1740,14 @@ class AppStore {
               this.tps = ((tokenCount - tokensToKeep.length) / elapsed) * 1000;
             }
 
-            fullContent += delta;
-            const { displayContent, thinkingContent } =
+            if (delta) {
+              fullContent += delta;
+            }
+            const { displayContent, thinkingContent: tagThinking } =
               this.stripThinkingTags(fullContent);
+            const combinedThinking = [streamedThinking, tagThinking]
+              .filter(Boolean)
+              .join("\n\n");
 
             if (this.activeConversationId === targetConversationId) {
               this.currentResponse = displayContent;
@@ -1731,7 +1759,7 @@ class AppStore {
               messageId,
               (m) => {
                 m.content = displayContent;
-                m.thinking = thinkingContent || undefined;
+                m.thinking = combinedThinking || undefined;
                 m.tokens = [...collectedTokens];
               },
             );
@@ -1743,11 +1771,14 @@ class AppStore {
 
       // Final update
       if (this.conversationExists(targetConversationId)) {
-        const { displayContent, thinkingContent } =
+        const { displayContent, thinkingContent: tagThinking } =
           this.stripThinkingTags(fullContent);
+        const finalThinking = [streamedThinking, tagThinking]
+          .filter(Boolean)
+          .join("\n\n");
         this.updateConversationMessage(targetConversationId, messageId, (m) => {
           m.content = displayContent;
-          m.thinking = thinkingContent || undefined;
+          m.thinking = finalThinking || undefined;
           m.tokens = [...collectedTokens];
           if (this.ttftMs !== null) m.ttftMs = this.ttftMs;
           if (this.tps !== null) m.tps = this.tps;
@@ -1855,11 +1886,12 @@ class AppStore {
       }
 
       let streamedContent = "";
+      let streamedThinking = "";
       const collectedTokens: TokenData[] = [];
 
       interface ChatCompletionChunk {
         choices?: Array<{
-          delta?: { content?: string };
+          delta?: { content?: string; reasoning_content?: string };
           logprobs?: {
             content?: Array<{
               token: string;
@@ -1880,6 +1912,7 @@ class AppStore {
         (parsed) => {
           const choice = parsed.choices?.[0];
           const delta = choice?.delta?.content;
+          const thinkingDelta = choice?.delta?.reasoning_content;
 
           // Collect logprobs data
           const logprobsContent = choice?.logprobs?.content;
@@ -1898,10 +1931,19 @@ class AppStore {
             }
           }
 
-          if (delta) {
-            streamedContent += delta;
-            const { displayContent, thinkingContent } =
+          if (thinkingDelta) {
+            streamedThinking += thinkingDelta;
+          }
+
+          if (delta || thinkingDelta) {
+            if (delta) {
+              streamedContent += delta;
+            }
+            const { displayContent, thinkingContent: tagThinking } =
               this.stripThinkingTags(streamedContent);
+            const combinedThinking = [streamedThinking, tagThinking]
+              .filter(Boolean)
+              .join("\n\n");
 
             // Only update currentResponse if target conversation is active
             if (this.activeConversationId === targetConversationId) {
@@ -1914,7 +1956,7 @@ class AppStore {
               assistantMessage.id,
               (msg) => {
                 msg.content = displayContent;
-                msg.thinking = thinkingContent || undefined;
+                msg.thinking = combinedThinking || undefined;
                 msg.tokens = [...collectedTokens];
               },
             );
@@ -1926,14 +1968,17 @@ class AppStore {
 
       // Final cleanup of the message (if conversation still exists)
       if (this.conversationExists(targetConversationId)) {
-        const { displayContent, thinkingContent } =
+        const { displayContent, thinkingContent: tagThinking } =
           this.stripThinkingTags(streamedContent);
+        const finalThinking = [streamedThinking, tagThinking]
+          .filter(Boolean)
+          .join("\n\n");
         this.updateConversationMessage(
           targetConversationId,
           assistantMessage.id,
           (msg) => {
             msg.content = displayContent;
-            msg.thinking = thinkingContent || undefined;
+            msg.thinking = finalThinking || undefined;
             msg.tokens = [...collectedTokens];
           },
         );
@@ -2022,6 +2067,7 @@ class AppStore {
     reader: ReadableStreamDefaultReader<Uint8Array>,
     targetConversationId: string,
     onChunk: (parsed: T) => void,
+    onEvent?: Record<string, (data: unknown) => void>,
   ): Promise<void> {
     const decoder = new TextDecoder();
     let buffer = "";
@@ -2041,6 +2087,24 @@ class AppStore {
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
+
+        // Handle SSE comments (": key json") for prefill progress etc.
+        if (trimmed.startsWith(": ") && onEvent) {
+          const comment = trimmed.slice(2);
+          const spaceIdx = comment.indexOf(" ");
+          if (spaceIdx > 0) {
+            const key = comment.slice(0, spaceIdx);
+            if (onEvent[key]) {
+              try {
+                const parsed = JSON.parse(comment.slice(spaceIdx + 1));
+                onEvent[key](parsed);
+              } catch {
+                // Skip malformed JSON in comment
+              }
+            }
+          }
+          continue;
+        }
 
         if (trimmed.startsWith("data: ")) {
           const data = trimmed.slice(6);
@@ -2273,6 +2337,9 @@ class AppStore {
       let firstTokenTime: number | null = null;
       let tokenCount = 0;
 
+      const abortController = new AbortController();
+      this.currentAbortController = abortController;
+
       const response = await fetch("/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -2289,6 +2356,7 @@ class AppStore {
             enable_thinking: enableThinking,
           }),
         }),
+        signal: abortController.signal,
       });
 
       if (!response.ok) {
@@ -2302,10 +2370,11 @@ class AppStore {
       }
 
       let streamedContent = "";
+      let streamedThinking = "";
 
       interface ChatCompletionChunk {
         choices?: Array<{
-          delta?: { content?: string };
+          delta?: { content?: string; reasoning_content?: string };
           logprobs?: {
             content?: Array<{
               token: string;
@@ -2326,8 +2395,14 @@ class AppStore {
         reader,
         targetConversationId,
         (parsed) => {
+          // Clear prefill progress when first token data arrives
+          if (this.prefillProgress) {
+            this.prefillProgress = null;
+          }
+
           const choice = parsed.choices?.[0];
           const tokenContent = choice?.delta?.content;
+          const thinkingContent = choice?.delta?.reasoning_content;
 
           // Collect logprobs data
           const logprobsContent = choice?.logprobs?.content;
@@ -2346,7 +2421,11 @@ class AppStore {
             }
           }
 
-          if (tokenContent) {
+          if (thinkingContent) {
+            streamedThinking += thinkingContent;
+          }
+
+          if (tokenContent || thinkingContent) {
             // Track first token for TTFT
             if (firstTokenTime === null) {
               firstTokenTime = performance.now();
@@ -2363,11 +2442,16 @@ class AppStore {
               this.tps = (tokenCount / elapsed) * 1000;
             }
 
-            streamedContent += tokenContent;
+            if (tokenContent) {
+              streamedContent += tokenContent;
+            }
 
-            // Strip thinking tags for display and extract thinking content
-            const { displayContent, thinkingContent } =
+            // Use stripThinkingTags as fallback for any <think> tags still in content
+            const { displayContent, thinkingContent: tagThinking } =
               this.stripThinkingTags(streamedContent);
+            const combinedThinking = [streamedThinking, tagThinking]
+              .filter(Boolean)
+              .join("\n\n");
 
             // Only update currentResponse if target conversation is active
             if (this.activeConversationId === targetConversationId) {
@@ -2380,7 +2464,7 @@ class AppStore {
               assistantMessage.id,
               (msg) => {
                 msg.content = displayContent;
-                msg.thinking = thinkingContent || undefined;
+                msg.thinking = combinedThinking || undefined;
                 msg.tokens = [...collectedTokens];
               },
             );
@@ -2388,7 +2472,26 @@ class AppStore {
             this.persistConversation(targetConversationId);
           }
         },
+        {
+          prefill_progress: (data) => {
+            // TaggedModel wraps as {"PrefillProgressChunk": {...}}
+            // model_dump_json() uses snake_case (by_alias defaults to False)
+            const raw = data as Record<string, unknown>;
+            const inner = (raw["PrefillProgressChunk"] ?? raw) as {
+              processed_tokens: number;
+              total_tokens: number;
+            };
+            this.prefillProgress = {
+              processed: inner.processed_tokens,
+              total: inner.total_tokens,
+              startedAt: this.prefillProgress?.startedAt ?? performance.now(),
+            };
+          },
+        },
       );
+
+      // Clear prefill progress after stream ends
+      this.prefillProgress = null;
 
       // Calculate final TPS
       if (firstTokenTime !== null && tokenCount > 1) {
@@ -2398,14 +2501,17 @@ class AppStore {
 
       // Final cleanup of the message (if conversation still exists)
       if (this.conversationExists(targetConversationId)) {
-        const { displayContent, thinkingContent } =
+        const { displayContent, thinkingContent: tagThinking } =
           this.stripThinkingTags(streamedContent);
+        const finalThinking = [streamedThinking, tagThinking]
+          .filter(Boolean)
+          .join("\n\n");
         this.updateConversationMessage(
           targetConversationId,
           assistantMessage.id,
           (msg) => {
             msg.content = displayContent;
-            msg.thinking = thinkingContent || undefined;
+            msg.thinking = finalThinking || undefined;
             msg.tokens = [...collectedTokens];
             // Store performance metrics on the message
             if (this.ttftMs !== null) {
@@ -2420,18 +2526,29 @@ class AppStore {
         this.persistConversation(targetConversationId);
       }
     } catch (error) {
-      console.error("Error sending message:", error);
-      this.handleStreamingError(
-        error,
-        targetConversationId,
-        assistantMessage.id,
-        "Failed to get response",
-      );
+      if (error instanceof DOMException && error.name === "AbortError") {
+        // User stopped generation — not an error
+      } else {
+        console.error("Error sending message:", error);
+        this.handleStreamingError(
+          error,
+          targetConversationId,
+          assistantMessage.id,
+          "Failed to get response",
+        );
+      }
     } finally {
+      this.currentAbortController = null;
+      this.prefillProgress = null;
       this.isLoading = false;
       this.currentResponse = "";
       this.saveConversationsToStorage();
     }
+  }
+
+  stopGeneration(): void {
+    this.currentAbortController?.abort();
+    this.currentAbortController = null;
   }
 
   /**
@@ -3060,6 +3177,7 @@ export const isLoading = () => appStore.isLoading;
 export const ttftMs = () => appStore.ttftMs;
 export const tps = () => appStore.tps;
 export const totalTokens = () => appStore.totalTokens;
+export const prefillProgress = () => appStore.prefillProgress;
 export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
 export const runners = () => appStore.runners;
@@ -3077,6 +3195,7 @@ export const topologyOnlyMode = () => appStore.getTopologyOnlyMode();
 export const chatSidebarVisible = () => appStore.getChatSidebarVisible();
 
 // Actions
+export const stopGeneration = () => appStore.stopGeneration();
 export const startChat = () => appStore.startChat();
 export const sendMessage = (
   content: string,

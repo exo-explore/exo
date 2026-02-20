@@ -102,22 +102,21 @@ def _allocate_and_validate_layers(
     layer_allocations = allocate_layers_proportionally(
         total_layers=model_card.n_layers,
         memory_fractions=[
-            node_memory[node_id].ram_available.in_bytes / total_memory.in_bytes
-            for node_id in node_ids
+            node_memory[node_id].ram_available / total_memory for node_id in node_ids
         ],
     )
 
-    total_storage_bytes = model_card.storage_size.in_bytes
+    total_storage = model_card.storage_size
     total_layers = model_card.n_layers
     for i, node_id in enumerate(node_ids):
         node_layers = layer_allocations[i]
-        required_memory = (total_storage_bytes * node_layers) // total_layers
-        available_memory = node_memory[node_id].ram_available.in_bytes
+        required_memory = (total_storage * node_layers) // total_layers
+        available_memory = node_memory[node_id].ram_available
         if required_memory > available_memory:
             raise ValueError(
                 f"Node {i} ({node_id}) has insufficient memory: "
-                f"requires {required_memory / (1024**3):.2f} GB for {node_layers} layers, "
-                f"but only has {available_memory / (1024**3):.2f} GB available"
+                f"requires {required_memory.in_gb:.2f} GB for {node_layers} layers, "
+                f"but only has {available_memory.in_gb:.2f} GB available"
             )
 
     return layer_allocations
@@ -342,6 +341,7 @@ def _find_ip_prioritised(
     other_node_id: NodeId,
     cycle_digraph: Topology,
     node_network: Mapping[NodeId, NodeNetworkInfo],
+    ring: bool,
 ) -> str | None:
     """Find an IP address between nodes with prioritization.
 
@@ -354,13 +354,27 @@ def _find_ip_prioritised(
     ip_to_type = {
         iface.ip_address: iface.interface_type for iface in other_network.interfaces
     }
-    priority = {
-        "ethernet": 0,
-        "wifi": 1,
-        "unknown": 2,
-        "maybe_ethernet": 3,
-        "thunderbolt": 4,
-    }
+
+    # Ring should prioritise fastest connection. As a best-effort, we prioritise TB.
+    # TODO: Profile and get actual connection speeds.
+    if ring:
+        priority = {
+            "thunderbolt": 0,
+            "maybe_ethernet": 1,
+            "ethernet": 2,
+            "wifi": 3,
+            "unknown": 4,
+        }
+
+    # RDMA prefers ethernet coordinator
+    else:
+        priority = {
+            "ethernet": 0,
+            "wifi": 1,
+            "unknown": 2,
+            "maybe_ethernet": 3,
+            "thunderbolt": 4,
+        }
     return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2))
 
 
@@ -400,7 +414,7 @@ def get_mlx_ring_hosts_by_node(
                 continue
 
             connection_ip = _find_ip_prioritised(
-                node_id, other_node_id, cycle_digraph, node_network
+                node_id, other_node_id, cycle_digraph, node_network, ring=True
             )
             if connection_ip is None:
                 raise ValueError(
@@ -431,7 +445,9 @@ def get_mlx_jaccl_coordinators(
         if n == coordinator:
             return "0.0.0.0"
 
-        ip = _find_ip_prioritised(n, coordinator, cycle_digraph, node_network)
+        ip = _find_ip_prioritised(
+            n, coordinator, cycle_digraph, node_network, ring=False
+        )
         if ip is not None:
             return ip
 

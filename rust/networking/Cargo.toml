@@ -19,21 +19,14 @@ either = { workspace = true }
 # macro dependencies
 extend = { workspace = true }
 delegate = { workspace = true }
-impl-trait-for-tuples = { workspace = true }
-derive_more = { workspace = true }
 
 # async
 tokio = { workspace = true, features = ["full"] }
-futures = { workspace = true }
+futures-lite = { workspace = true }
 futures-timer = { workspace = true }
 
 # utility dependencies
 util = { workspace = true }
-thiserror = { workspace = true }
-#internment = { workspace = true }
-#recursion = { workspace = true }
-#generativity = { workspace = true }
-#itertools = { workspace = true }
 tracing-subscriber = { version = "0.3.19", features = ["default", "env-filter"] }
 keccak-const = { workspace = true }
 
