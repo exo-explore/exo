@@ -260,6 +260,20 @@
     Math.round(clusterTotalMemoryGB() + SIMULATED_STUDIO_GB),
   );
 
+  // Models unlocked by adding the second device (sorted ascending — small model first)
+  const unlockedModels = $derived.by(() => {
+    if (models.length === 0) return [];
+    const singleGB = clusterTotalMemoryGB();
+    const combinedGB = onboardingCombinedGB;
+    return models
+      .filter((m) => {
+        const sizeGB = getModelSizeGB(m);
+        return sizeGB > singleGB && sizeGB <= combinedGB;
+      })
+      .sort((a, b) => getModelSizeGB(a) - getModelSizeGB(b))
+      .slice(0, 3);
+  });
+
   // User device info from topology
   const userDeviceInfo = $derived.by(() => {
     if (!data || Object.keys(data.nodes).length === 0) {
@@ -280,14 +294,20 @@
   let stepTitle = $state("");
   let stepTransitioning = $state(false);
 
-  // Smooth step transition: fade out, change step, fade in
+  // Advance to the next onboarding step
   function advanceStep(target: number) {
     showContinueButton = false;
-    stepTransitioning = true;
-    setTimeout(() => {
+    if (target <= 5) {
+      // Steps 1-5 share a persistent SVG canvas — just set the step directly
       onboardingStep = target;
-      stepTransitioning = false;
-    }, 350);
+    } else {
+      // Leaving the cinematic sequence — fade out, then switch
+      stepTransitioning = true;
+      setTimeout(() => {
+        onboardingStep = target;
+        stepTransitioning = false;
+      }, 350);
+    }
   }
 
   // Tweened animation values for the persistent SVG canvas
@@ -302,6 +322,12 @@
   const modelSplitProgress = tweened(0, { duration: 800, easing: cubicInOut }); // 0=unified, 1=fully split
   const disconnectXOpacity = tweened(0, { duration: 400, easing: cubicOut });
   const device1Opacity = tweened(1, { duration: 600, easing: cubicOut });
+  const logoOpacity = tweened(1, { duration: 600, easing: cubicOut });
+  // Step 2 chip reveal phases: 0→1 chip0 appears, 1→2 chip0 unlocks, 2→3 chips1+2 appear, 3→4 chips1+2 unlock
+  const chipPhase = tweened(0, { duration: 600, easing: cubicOut });
+  const deviceCountOpacity = tweened(0, { duration: 600, easing: cubicOut });
+  const titleOpacity = tweened(0, { duration: 500, easing: cubicOut });
+  const subtitleOpacity = tweened(0, { duration: 500, easing: cubicOut });
 
   // ── Step 1: "Your device" — one device fades in, centered ──
   $effect(() => {
@@ -318,26 +344,50 @@
       modelBlockOpacity.set(0, { duration: 0 });
       modelSplitProgress.set(0, { duration: 0 });
       disconnectXOpacity.set(0, { duration: 0 });
+      logoOpacity.set(1, { duration: 0 });
+      titleOpacity.set(0, { duration: 0 });
+      subtitleOpacity.set(0, { duration: 0 });
+      chipPhase.set(0, { duration: 0 });
+      deviceCountOpacity.set(0, { duration: 0 });
 
       const t1 = setTimeout(() => {
         device1Opacity.set(1);
       }, 300);
       const t2 = setTimeout(() => {
+        titleOpacity.set(1);
+      }, 500);
+      const t3 = setTimeout(() => {
+        deviceCountOpacity.set(1);
+      }, 1200);
+      const t4 = setTimeout(() => {
         showContinueButton = true;
       }, 1400);
 
       return () => {
         clearTimeout(t1);
         clearTimeout(t2);
+        clearTimeout(t3);
+        clearTimeout(t4);
       };
     }
   });
 
-  // ── Step 2: "More devices, larger models" — device 1 slides left, Mac Studio enters — AUTO-ADVANCE ──
+  // ── Step 2: "Add devices to run larger models" — device 1 slides left, Mac Studio enters ──
   $effect(() => {
     if (onboardingStep === 2) {
       showContinueButton = false;
-      stepTitle = "More devices. Larger models.";
+
+      // Immediately transition out step 1 elements
+      logoOpacity.set(0);
+      deviceCountOpacity.set(0);
+      // Smoothly crossfade the title: fade old out, update text, fade new in
+      titleOpacity.set(0, { duration: 300 });
+      subtitleOpacity.set(0, { duration: 0 });
+
+      const t0 = setTimeout(() => {
+        stepTitle = "Add devices to run larger models";
+        titleOpacity.set(1, { duration: 400 });
+      }, 300);
 
       const t1 = setTimeout(() => {
         device1X.set(220);
@@ -354,38 +404,68 @@
       const t4 = setTimeout(() => {
         combinedLabelOpacity.set(1);
       }, 1600);
-      // Auto-advance to step 3 (no continue button needed)
-      const t5 = setTimeout(() => {
-        onboardingStep = 3;
-      }, 3200);
+      // Sequential chip reveal: first small model appears (locked)...
+      const t5a = setTimeout(() => {
+        chipPhase.set(1, { duration: 500 });
+      }, 1800);
+      // ...first model unlocks (lights up gold)
+      const t5b = setTimeout(() => {
+        chipPhase.set(2, { duration: 400 });
+      }, 2400);
+      // ...bigger models appear (locked)
+      const t5c = setTimeout(() => {
+        chipPhase.set(3, { duration: 500 });
+      }, 2900);
+      // ...bigger models unlock (light up)
+      const t5d = setTimeout(() => {
+        chipPhase.set(4, { duration: 400 });
+      }, 3500);
+      const t6 = setTimeout(() => {
+        showContinueButton = true;
+      }, 4000);
 
       return () => {
+        clearTimeout(t0);
         clearTimeout(t1);
         clearTimeout(t2);
         clearTimeout(t3);
         clearTimeout(t4);
-        clearTimeout(t5);
+        clearTimeout(t5a);
+        clearTimeout(t5b);
+        clearTimeout(t5c);
+        clearTimeout(t5d);
+        clearTimeout(t6);
       };
     }
   });
 
-  // ── Step 3: "exo splits the model" — model block appears, splits — AUTO-ADVANCE ──
+  // ── Step 3: "exo splits the model" — model block appears, splits ──
   $effect(() => {
     if (onboardingStep === 3) {
       showContinueButton = false;
-      stepTitle = "exo splits models across devices";
+      // Gently fade out the unlock chips
+      chipPhase.set(0, { duration: 600 });
 
+      // Crossfade title
+      titleOpacity.set(0, { duration: 250 });
+      subtitleOpacity.set(0, { duration: 250 });
+      setTimeout(() => {
+        stepTitle = "exo splits models across devices";
+        titleOpacity.set(1, { duration: 400 });
+        subtitleOpacity.set(1, { duration: 400 });
+      }, 250);
+
+      // Wait for chips to fade before showing model block
       const t1 = setTimeout(() => {
         modelBlockOpacity.set(1);
         modelBlockY.set(50);
-      }, 300);
+      }, 600);
       const t2 = setTimeout(() => {
         modelSplitProgress.set(1);
-      }, 1200);
-      // Auto-advance to step 4 (no continue button)
+      }, 1500);
       const t3 = setTimeout(() => {
-        onboardingStep = 4;
-      }, 3200);
+        showContinueButton = true;
+      }, 2300);
 
       return () => {
         clearTimeout(t1);
@@ -395,12 +475,21 @@
     }
   });
 
-  // ── Step 4: "A device disconnects" — connection goes red, X mark — AUTO-ADVANCE ──
+  // ── Step 4: "A device disconnects... exo self-heals" — full disconnect+heal sequence ──
   $effect(() => {
     if (onboardingStep === 4) {
       showContinueButton = false;
-      stepTitle = "When a device disconnects...";
 
+      // Crossfade title
+      titleOpacity.set(0, { duration: 250 });
+      subtitleOpacity.set(0, { duration: 250 });
+      setTimeout(() => {
+        stepTitle = "When a device disconnects...";
+        titleOpacity.set(1, { duration: 400 });
+        subtitleOpacity.set(1, { duration: 400 });
+      }, 250);
+
+      // Phase 1: Disconnect
       const t1 = setTimeout(() => {
         connectionIsRed.set(1);
       }, 400);
@@ -413,42 +502,43 @@
         disconnectXOpacity.set(0);
         combinedLabelOpacity.set(0);
       }, 1600);
-      // Auto-advance to step 5 (no continue button)
+
+      // Phase 2: Self-heal — crossfade title + subtitle
       const t4 = setTimeout(() => {
-        onboardingStep = 5;
-      }, 3000);
+        titleOpacity.set(0, { duration: 250 });
+        subtitleOpacity.set(0, { duration: 250 });
+      }, 2550);
+      const t4b = setTimeout(() => {
+        stepTitle = "exo self-heals";
+        titleOpacity.set(1, { duration: 400 });
+        subtitleOpacity.set(1, { duration: 400 });
+      }, 2800);
+      const t5 = setTimeout(() => {
+        device1X.set(350);
+        device2X.set(350);
+      }, 3100);
+      const t6 = setTimeout(() => {
+        modelSplitProgress.set(0);
+        modelBlockY.set(20); // Lift up while merging
+        connectionIsRed.set(0);
+      }, 3700);
+      const t7 = setTimeout(() => {
+        modelBlockY.set(115); // Settle back down just above the device
+      }, 4800);
+      const t8 = setTimeout(() => {
+        advanceStep(6);
+      }, 6200);
 
       return () => {
         clearTimeout(t1);
         clearTimeout(t2);
         clearTimeout(t3);
         clearTimeout(t4);
-      };
-    }
-  });
-
-  // ── Step 5: "exo self-heals" — device 1 re-centers, model halves merge ──
-  $effect(() => {
-    if (onboardingStep === 5) {
-      showContinueButton = false;
-      stepTitle = "exo self-heals when devices fail";
-
-      const t1 = setTimeout(() => {
-        device1X.set(350);
-        combinedLabelOpacity.set(0);
-      }, 300);
-      const t2 = setTimeout(() => {
-        modelSplitProgress.set(0);
-        connectionIsRed.set(0);
-      }, 900);
-      const t3 = setTimeout(() => {
-        showContinueButton = true;
-      }, 2200);
-
-      return () => {
-        clearTimeout(t1);
-        clearTimeout(t2);
-        clearTimeout(t3);
+        clearTimeout(t4b);
+        clearTimeout(t5);
+        clearTimeout(t6);
+        clearTimeout(t7);
+        clearTimeout(t8);
       };
     }
   });
@@ -526,6 +616,13 @@
       onboardingFadingOut = false;
     }, 500);
   }
+
+  // Auto-complete onboarding when user sends a message from step 9
+  $effect(() => {
+    if (onboardingStep === 9 && chatStarted) {
+      completeOnboarding();
+    }
+  });
 
   let onboardingError = $state<string | null>(null);
 
@@ -2072,6 +2169,13 @@
   const nodeCount = $derived(data ? Object.keys(data.nodes).length : 0);
   const instanceCount = $derived(Object.keys(instanceData).length);
 
+  const suggestedPrompts = [
+    "Write a poem about the ocean",
+    "Explain quantum computing simply",
+    "Help me debug my code",
+    "Tell me a creative story",
+  ];
+
   // Helper to get the number of nodes in a placement preview
   function getPreviewNodeCount(preview: PlacementPreview): number {
     if (!preview.memory_delta_by_node) return 0;
@@ -2731,12 +2835,21 @@
   {/if}
 {/snippet}
 
-<!-- Global event listeners for slider dragging -->
+<!-- Global event listeners for slider dragging + onboarding keyboard nav -->
 <svelte:window
   onmousemove={handleSliderMouseMove}
   onmouseup={handleSliderMouseUp}
   ontouchmove={handleSliderTouchMove}
   ontouchend={handleSliderTouchEnd}
+  onkeydown={(e) => {
+    if (!showOnboardingOverlay || stepTransitioning) return;
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'Enter') {
+      if (onboardingStep >= 1 && onboardingStep <= 4 && showContinueButton) {
+        e.preventDefault();
+        advanceStep(onboardingStep < 4 ? onboardingStep + 1 : 6);
+      }
+    }
+  }}
 />
 
 <div
@@ -2750,7 +2863,7 @@
   ></div>
 
   <!-- Shooting Stars Background -->
-  <div class="shooting-stars" style="transition: opacity 0.5s ease; opacity: {showOnboardingOverlay ? 0 : 1};">
+  <div class="shooting-stars" style="transition: opacity 0.5s ease; opacity: {showOnboardingOverlay ? 0.4 : 1};">
     <div
       class="shooting-star"
       style="top: 10%; left: 20%; --duration: 45s; --delay: 0s;"
@@ -2773,64 +2886,57 @@
       class="absolute inset-0 flex items-center justify-center z-30 bg-exo-black"
       style="transition: opacity 0.45s cubic-bezier(0.4, 0, 0.2, 1); opacity: {onboardingFadingOut ? 0 : 1};"
     >
-      {#if onboardingStep >= 1 && onboardingStep <= 5}
-        <!-- Steps 1-5: Cinematic SVG animation story -->
+      {#if onboardingStep >= 1 && onboardingStep <= 4}
+        <!-- Steps 1-4: Cinematic SVG animation story -->
         <div
           class="flex flex-col items-center w-full max-w-3xl px-8"
-          style="transition: opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1); opacity: {stepTransitioning ? 0 : 1};"
+          style="transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1), transform 0.6s cubic-bezier(0.4, 0, 0.2, 1); opacity: {stepTransitioning ? 0 : 1}; transform: scale({stepTransitioning ? 0.98 : 1});"
         >
           <!-- Logo + Step title -->
-          <div class="text-center mb-6" style="transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);">
-            {#if onboardingStep === 1}
-              <!-- exo Logo — large and prominent -->
+          <div class="text-center mb-8">
+            <!-- Logo — smoothly shrinks away when leaving step 1 -->
+            <div style="opacity: {$logoOpacity}; max-height: {$logoOpacity * 80}px; overflow: hidden; transition: max-height 0.6s cubic-bezier(0.4, 0, 0.2, 1);">
               <img
                 src="/exo-logo.png"
                 alt="exo"
-                class="w-20 h-20 mx-auto mb-6 rounded-2xl"
-                style="opacity: 0; animation: onb-fade-in 0.8s ease forwards 0.2s;"
+                class="w-36 mx-auto mb-10"
               />
-              <h1
-                class="text-2xl font-light text-white/90 mb-3 tracking-wide"
-                style="opacity: 0; animation: onb-fade-in 0.8s ease forwards 0.4s; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif;"
-              >
-                Your home AI cluster
-              </h1>
-              <p
-                class="text-base text-white/45 leading-relaxed max-w-md mx-auto"
-                style="opacity: 0; animation: onb-fade-in 0.8s ease forwards 0.7s; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; font-weight: 300;"
-              >
-                exo connects your devices into one powerful computer.
-                Run AI models that no single machine could handle alone.
-              </p>
-            {:else}
-              <h1
-                class="text-2xl font-light text-white/90 tracking-wide"
-                style="opacity: 0; animation: onb-fade-in 0.5s ease forwards; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; letter-spacing: 0.02em;"
-              >
-                {stepTitle}
-              </h1>
+            </div>
+
+            <!-- Title — single element, text updates instantly -->
+            <h1
+              class="text-2xl font-light text-white/90 tracking-wide"
+              style="opacity: {$titleOpacity}; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; letter-spacing: 0.02em;"
+            >
+              {onboardingStep === 1 ? 'EXO connects all your devices into an AI supercomputer.' : stepTitle}
+            </h1>
+
+            <!-- Subtitle — uses tweened opacity, reserves space to prevent layout shift -->
+            <p
+              class="text-sm mt-2 text-white/40 max-w-md mx-auto"
+              style="opacity: {$subtitleOpacity}; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; font-weight: 300; min-height: 1.5em;"
+            >
               {#if onboardingStep === 2}
-                <p class="text-sm text-white/40 mt-2 max-w-md mx-auto" style="opacity: 0; animation: onb-fade-in 0.5s ease forwards 0.3s; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; font-weight: 300;">
-                  Combine memory across devices to run models too large for any single machine.
-                </p>
+                &nbsp;
               {:else if onboardingStep === 3}
-                <p class="text-sm text-white/40 mt-2 max-w-md mx-auto" style="opacity: 0; animation: onb-fade-in 0.5s ease forwards 0.3s; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; font-weight: 300;">
-                  The model is automatically distributed — each device handles a piece.
-                </p>
+                The model is automatically distributed. Each device handles a piece.
               {:else if onboardingStep === 4}
-                <p class="text-sm text-white/40 mt-2 max-w-md mx-auto" style="opacity: 0; animation: onb-fade-in 0.5s ease forwards 0.3s; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; font-weight: 300;">
-                  Devices can leave anytime — laptops close, machines restart.
-                </p>
-              {:else if onboardingStep === 5}
-                <p class="text-sm text-white/40 mt-2 max-w-md mx-auto" style="opacity: 0; animation: onb-fade-in 0.5s ease forwards 0.3s; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; font-weight: 300;">
-                  exo automatically redistributes the model so inference continues without interruption.
-                </p>
+                {stepTitle === 'exo self-heals' ? 'exo automatically redistributes the model so inference continues without interruption.' : 'Devices can leave anytime. Laptops close, machines restart.'}
+              {:else}
+                &nbsp;
               {/if}
-            {/if}
+            </p>
           </div>
 
           <!-- Persistent SVG canvas — BIGGER devices -->
           <div class="relative w-full" style="height: 420px;">
+            <!-- Device count label — fades in on step 1, fades out on step 2 -->
+            <p
+              class="absolute left-0 right-0 text-center text-lg text-white/50 font-light tracking-wide"
+              style="top: 20px; opacity: {$deviceCountOpacity}; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; pointer-events: none;"
+            >
+              {Math.max(1, nodeCount)} {Math.max(1, nodeCount) === 1 ? 'Device' : 'Devices'} in your EXO network
+            </p>
             <svg
               viewBox="0 0 700 420"
               class="w-full h-full"
@@ -2964,6 +3070,132 @@
                 {onboardingCombinedGB} GB combined
               </text>
 
+              <!-- Glow filters for unlock effects -->
+              <defs>
+                <filter id="chip-glow" x="-50%" y="-50%" width="200%" height="200%">
+                  <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur" />
+                  <feColorMatrix in="blur" type="matrix"
+                    values="1 0.8 0 0 0  0.8 0.6 0 0 0  0 0 0 0 0  0 0 0 0.7 0"
+                    result="glow" />
+                  <feMerge>
+                    <feMergeNode in="glow" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+                <filter id="unlock-flash" x="-100%" y="-100%" width="300%" height="300%">
+                  <feGaussianBlur in="SourceGraphic" stdDeviation="12" result="blur" />
+                  <feColorMatrix in="blur" type="matrix"
+                    values="1 0.9 0 0 0.2  0.9 0.7 0 0 0.1  0 0 0 0 0  0 0 0 1 0"
+                    result="glow" />
+                  <feMerge>
+                    <feMergeNode in="glow" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+              </defs>
+
+              <!-- Step 2: Game-style model unlock animation -->
+              {#if unlockedModels.length > 0 && $chipPhase > 0.01}
+                {@const centerX = ($device1X + $device2X) / 2}
+                {@const chipW = 148}
+                {@const chipH = 34}
+                {@const chipGap = 16}
+                {@const totalW = unlockedModels.length * chipW + (unlockedModels.length - 1) * chipGap}
+                {@const startX = centerX - totalW / 2}
+                <!-- "MODELS UNLOCKED" header — scales in dramatically -->
+                {@const headerProgress = Math.max(0, Math.min(1, $chipPhase * 1.5))}
+                {@const headerScale = 0.85 + headerProgress * 0.15}
+                <g
+                  transform="translate({centerX}, 330) scale({headerScale})"
+                  opacity={headerProgress}
+                  filter={headerProgress > 0.3 && headerProgress < 0.9 ? "url(#unlock-flash)" : "none"}
+                >
+                  <text
+                    x="0"
+                    y="0"
+                    text-anchor="middle"
+                    dominant-baseline="middle"
+                    fill="rgba(255,215,0,{0.6 + headerProgress * 0.4})"
+                    style="font-size: 11px; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; font-weight: 600; letter-spacing: 0.15em;"
+                  >
+                    MODELS UNLOCKED
+                  </text>
+                </g>
+                <!-- Model chips -->
+                {#each unlockedModels as model, i}
+                  {@const appearAt = i === 0 ? 0 : 2}
+                  {@const unlockAt = i === 0 ? 1 : 3}
+                  {@const appearProgress = Math.max(0, Math.min(1, $chipPhase - appearAt))}
+                  {@const unlockProgress = Math.max(0, Math.min(1, $chipPhase - unlockAt))}
+                  {@const scaleIn = 0.92 + appearProgress * 0.08}
+                  {@const scalePop = unlockProgress > 0 && unlockProgress < 1 ? 1 + 0.08 * Math.sin(unlockProgress * Math.PI) : 1}
+                  {@const modelName = (model.name || model.id.split('/').pop() || '').slice(0, 18)}
+                  {@const modelSize = Math.round(getModelSizeGB(model))}
+                  {#if appearProgress > 0}
+                    {@const settled = unlockProgress >= 1}
+                    {@const flashing = unlockProgress > 0 && unlockProgress < 1}
+                    <g
+                      transform="translate({startX + i * (chipW + chipGap) + chipW / 2}, 362) scale({scaleIn * scalePop})"
+                      opacity={appearProgress}
+                      filter={flashing ? "url(#chip-glow)" : "none"}
+                    >
+                      <!-- Burst ring on unlock -->
+                      {#if flashing}
+                        {@const burstScale = 1 + unlockProgress * 0.5}
+                        {@const burstOpacity = Math.sin(unlockProgress * Math.PI) * 0.6}
+                        <rect
+                          x={-chipW / 2 - 4}
+                          y={-chipH / 2 - 4}
+                          width={chipW + 8}
+                          height={chipH + 8}
+                          rx="21"
+                          fill="none"
+                          stroke="rgba(255,215,0,{burstOpacity})"
+                          stroke-width="2"
+                          transform="scale({burstScale})"
+                          transform-origin="0 0"
+                        />
+                      {/if}
+                      <!-- Chip background — gold flash during unlock, then subtle dark settled -->
+                      <rect
+                        x={-chipW / 2}
+                        y={-chipH / 2}
+                        width={chipW}
+                        height={chipH}
+                        rx="17"
+                        fill={settled ? 'rgba(255,215,0,0.04)' : (flashing ? `rgba(255,215,0,${unlockProgress * 0.1})` : 'rgba(255,255,255,0.02)')}
+                        stroke={settled ? 'rgba(255,215,0,0.3)' : (flashing ? `rgba(255,215,0,${0.15 + unlockProgress * 0.35})` : 'rgba(255,255,255,0.1)')}
+                        stroke-width={settled ? 1 : 1 + unlockProgress * 0.5}
+                      />
+                      <!-- Model name — white when settled for readability -->
+                      <text
+                        x="0"
+                        y={modelSize ? -5 : 0}
+                        text-anchor="middle"
+                        dominant-baseline="middle"
+                        fill={settled ? 'rgba(255,255,255,0.9)' : (flashing ? `rgba(255,215,0,${0.4 + unlockProgress * 0.5})` : 'rgba(255,255,255,0.3)')}
+                        style="font-size: 10.5px; font-family: 'SF Mono', ui-monospace, monospace; font-weight: 600; letter-spacing: 0.02em;"
+                      >
+                        {modelName}
+                      </text>
+                      <!-- Model size -->
+                      {#if modelSize}
+                        <text
+                          x="0"
+                          y="8"
+                          text-anchor="middle"
+                          dominant-baseline="middle"
+                          fill={settled ? 'rgba(255,215,0,0.5)' : (flashing ? `rgba(255,215,0,${unlockProgress * 0.3})` : 'rgba(255,255,255,0.15)')}
+                          style="font-size: 8.5px; font-family: 'SF Mono', ui-monospace, monospace; font-weight: 400;"
+                        >
+                          {modelSize} GB
+                        </text>
+                      {/if}
+                    </g>
+                  {/if}
+                {/each}
+              {/if}
+
               <!-- Model block (unified or split) -->
               {#if $modelBlockOpacity > 0.01}
                 {#if $modelSplitProgress < 0.05}
@@ -3060,13 +3292,13 @@
           <div style="transition: opacity 0.4s ease, transform 0.4s cubic-bezier(0.4,0,0.2,1); opacity: {showContinueButton ? 1 : 0}; transform: translateY({showContinueButton ? '0px' : '12px'}); pointer-events: {showContinueButton ? 'auto' : 'none'}; margin-top: 0.5rem;">
             <button
               type="button"
-              onclick={() => advanceStep(onboardingStep < 5 ? onboardingStep + 1 : 6)}
+              onclick={() => advanceStep(onboardingStep < 4 ? onboardingStep + 1 : 6)}
               class="inline-flex items-center gap-2.5 px-10 py-3.5 bg-exo-yellow text-exo-black text-sm font-semibold rounded-full cursor-pointer"
               style="transition: transform 0.2s ease, box-shadow 0.3s ease, filter 0.2s ease; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; letter-spacing: 0.02em;"
               onmouseenter={(e) => { e.currentTarget.style.filter = 'brightness(1.08)'; e.currentTarget.style.boxShadow = '0 0 30px rgba(255,215,0,0.2)'; }}
               onmouseleave={(e) => { e.currentTarget.style.filter = 'brightness(1)'; e.currentTarget.style.boxShadow = 'none'; }}
             >
-              {onboardingStep === 5 ? "Choose a Model" : "Continue"}
+              Continue
               <svg
                 class="w-4 h-4"
                 fill="none"
@@ -3096,7 +3328,7 @@
               Choose a model
             </h1>
             <p class="text-sm font-sans text-white/40">
-              Pick a model to download and run locally on your device.
+              Showing recommended models for your devices ({Math.round(clusterMemory().total / (1024 * 1024 * 1024))} GB memory available).
             </p>
           </div>
 
@@ -3266,65 +3498,74 @@
           <p class="text-sm text-white/30 font-sans">Almost ready...</p>
         </div>
       {:else if onboardingStep === 9}
-        <!-- Step 9: Ready — model loaded, invite user to start -->
+        <!-- Step 9: Ready — centered input with suggestion chips -->
         <div
-          class="flex flex-col items-center justify-center w-full max-w-lg px-8"
+          class="flex flex-col items-center justify-center w-full max-w-2xl px-8"
           style="opacity: 0; animation: onb-fade-in 0.6s ease forwards;"
         >
           <img
             src="/exo-logo.png"
             alt="exo"
-            class="w-14 h-14 rounded-2xl mb-8"
+            class="w-28 mb-6"
             style="opacity: 0.8;"
           />
 
-          <h1
-            class="text-2xl font-light text-white/90 mb-3 tracking-wide"
-            style="font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif;"
-          >
-            You're all set
-          </h1>
-
           {#if onboardingModelId}
-            <p class="text-sm text-white/45 mb-10" style="font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; font-weight: 300;">
-              <span class="text-exo-yellow/80">{onboardingModelId.split("/").pop() ?? onboardingModelId}</span> is ready to use.
+            <p class="text-sm text-white/40 font-mono mb-6">
+              {onboardingModelId.split("/").pop() ?? onboardingModelId}
             </p>
           {/if}
 
-          <button
-            type="button"
-            onclick={completeOnboarding}
-            class="inline-flex items-center gap-2.5 px-10 py-3.5 bg-exo-yellow text-exo-black text-sm font-semibold rounded-full cursor-pointer"
-            style="transition: transform 0.2s ease, box-shadow 0.3s ease, filter 0.2s ease; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; letter-spacing: 0.02em;"
-            onmouseenter={(e) => { e.currentTarget.style.filter = 'brightness(1.08)'; e.currentTarget.style.boxShadow = '0 0 30px rgba(255,215,0,0.2)'; }}
-            onmouseleave={(e) => { e.currentTarget.style.filter = 'brightness(1)'; e.currentTarget.style.boxShadow = 'none'; }}
-          >
-            Start Chatting
-            <svg
-              class="w-4 h-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="2.5"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M13 7l5 5m0 0l-5 5m5-5H6"
-              />
-            </svg>
-          </button>
+          <div class="w-full">
+            <ChatForm
+              placeholder="Ask anything"
+              autofocus={true}
+              showHelperText={false}
+              showModelSelector={true}
+              modelTasks={modelTasks()}
+              modelCapabilities={modelCapabilities()}
+            />
+          </div>
+
+          <div class="flex flex-wrap justify-center gap-3 mt-6">
+            {#each suggestedPrompts as chip}
+              <button
+                type="button"
+                onclick={() => { completeOnboarding(); sendMessage(chip); }}
+                class="px-4 py-2 rounded-full border border-white/10 bg-white/5 text-sm text-white/60 hover:bg-white/10 hover:text-white/80 hover:border-white/20 transition-all duration-200 cursor-pointer"
+              >
+                {chip}
+              </button>
+            {/each}
+          </div>
         </div>
       {/if}
 
-      <!-- Skip link — visible on all onboarding steps -->
-      <button
-        type="button"
-        onclick={completeOnboarding}
-        class="absolute bottom-8 text-xs font-sans text-white/15 hover:text-white/35 transition-colors duration-300 cursor-pointer"
-      >
-        Skip
-      </button>
+      <!-- Replay / Skip — visible on all onboarding steps -->
+      <div class="absolute bottom-8 flex items-center gap-6">
+        <button
+          type="button"
+          onclick={() => { onboardingStep = 0; setTimeout(() => { onboardingStep = 1; }, 50); }}
+          class="flex items-center gap-1.5 text-xs font-sans text-white/15 hover:text-white/35 transition-colors duration-300 cursor-pointer"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2.5 2v5h5" />
+            <path d="M2.5 7a6.5 6.5 0 1 1 1.4-2.8" />
+          </svg>
+          Replay
+        </button>
+        <button
+          type="button"
+          onclick={completeOnboarding}
+          class="flex items-center gap-1.5 text-xs font-sans text-white/15 hover:text-white/35 transition-colors duration-300 cursor-pointer"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M3 2.5v11L9 8 3 2.5z" />
+            <rect x="10.5" y="2.5" width="2.5" height="11" rx="0.5" />
+          </svg>
+          Skip
+        </button>
+      </div>
     </div>
 
     <!-- Model Picker Modal (available during onboarding step 4) -->
@@ -3366,9 +3607,9 @@
   <!-- ═══════════════════════════════════════════════════════ -->
     {#if !topologyOnlyEnabled}
       <HeaderNav
-        showHome={chatStarted}
+        showHome={true}
         onHome={handleGoHome}
-        showSidebarToggle={chatStarted}
+        showSidebarToggle={true}
         {sidebarVisible}
         onToggleSidebar={toggleChatSidebarVisible}
         downloadProgress={activeDownloadSummary}
@@ -3378,7 +3619,7 @@
     <!-- Main Content -->
     <main class="flex-1 flex overflow-hidden relative">
       <!-- Left: Conversation History Sidebar (hidden in topology-only mode, welcome state, or when toggled off) -->
-      {#if !topologyOnlyEnabled && sidebarVisible && chatStarted}
+      {#if !topologyOnlyEnabled && sidebarVisible}
         <div
           class="w-80 flex-shrink-0 border-r border-exo-yellow/10"
           role="complementary"
@@ -3549,36 +3790,6 @@
                 </div>
               {/if}
 
-              <!-- Welcome overlay - shown when no instances are running -->
-              {#if instanceCount === 0 && update}
-                <div
-                  class="absolute bottom-4 left-0 right-0 flex justify-center pointer-events-none z-10"
-                  in:fade={{ duration: 400, delay: 200 }}
-                >
-                  <div class="text-center pointer-events-auto">
-                    <button
-                      type="button"
-                      onclick={() => (isModelPickerOpen = true)}
-                      class="inline-flex items-center gap-2 px-6 py-3 bg-exo-yellow text-exo-black font-sans text-sm font-semibold rounded-full hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.2)] transition-all duration-200 cursor-pointer"
-                    >
-                      <svg
-                        class="w-5 h-5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          d="M12 4v16m8-8H4"
-                        />
-                      </svg>
-                      Choose a Model
-                    </button>
-                  </div>
-                </div>
-              {/if}
 
               {@render clusterWarnings()}
 
