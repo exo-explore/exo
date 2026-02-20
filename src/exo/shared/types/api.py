@@ -1,9 +1,10 @@
 import time
 from collections.abc import Generator
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
+from pydantic_core import PydanticUseDefault
 
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.common import CommandId, NodeId
@@ -47,8 +48,6 @@ class ModelListModel(BaseModel):
     quantization: str = Field(default="")
     base_model: str = Field(default="")
     capabilities: list[str] = Field(default_factory=list)
-    lora_paths: list[str] = Field(default_factory=list)
-    lora_scales: list[float] = Field(default_factory=list)
 
 
 class ModelList(BaseModel):
@@ -79,7 +78,7 @@ class ChatCompletionMessage(BaseModel):
     content: (
         str | ChatCompletionMessageText | list[ChatCompletionMessageText] | None
     ) = None
-    reasoning_content: str | None = None
+    thinking: str | None = None  # Added for GPT-OSS harmony format support
     name: str | None = None
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
@@ -204,6 +203,7 @@ class ChatCompletionRequest(BaseModel):
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool | None = None
     user: str | None = None
+    conversation_id: str | None = None
 
 
 class BenchChatCompletionRequest(ChatCompletionRequest):
@@ -212,18 +212,6 @@ class BenchChatCompletionRequest(ChatCompletionRequest):
 
 class AddCustomModelParams(BaseModel):
     model_id: ModelId
-
-
-class CreateLoraModelParams(BaseModel):
-    base_model_id: ModelId
-    lora_repo: str
-    lora_scale: float = 1.0
-    custom_name: str | None = None
-
-
-class CreateLoraModelResponse(BaseModel):
-    model_id: str
-    message: str
 
 
 class HuggingFaceSearchResult(BaseModel):
@@ -240,6 +228,13 @@ class PlaceInstanceParams(BaseModel):
     sharding: Sharding = Sharding.Pipeline
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
     min_nodes: int = 1
+
+    @field_validator("sharding", "instance_meta", mode="plain")
+    @classmethod
+    def use_default(cls, v: object):
+        if not v or not isinstance(v, (Sharding, InstanceMeta)):
+            raise PydanticUseDefault()
+        return v
 
 
 class CreateInstanceParams(BaseModel):
@@ -276,27 +271,6 @@ class DeleteInstanceResponse(BaseModel):
     instance_id: InstanceId
 
 
-ImageSize = Literal[
-    "auto",
-    "512x512",
-    "768x768",
-    "1024x768",
-    "768x1024",
-    "1024x1024",
-    "1024x1536",
-    "1536x1024",
-]
-
-
-def normalize_image_size(v: object) -> ImageSize:
-    """Shared validator for ImageSize fields: maps None → "auto" and rejects invalid values."""
-    if v is None:
-        return "auto"
-    if v not in get_args(ImageSize):
-        raise ValueError(f"Invalid size: {v!r}. Must be one of {get_args(ImageSize)}")
-    return v  # pyright: ignore[reportReturnType]
-
-
 class AdvancedImageParams(BaseModel):
     seed: Annotated[int, Field(ge=0)] | None = None
     num_inference_steps: Annotated[int, Field(ge=1, le=100)] | None = None
@@ -316,18 +290,13 @@ class ImageGenerationTaskParams(BaseModel):
     partial_images: int | None = 0
     quality: Literal["high", "medium", "low"] | None = "medium"
     response_format: Literal["url", "b64_json"] | None = "b64_json"
-    size: ImageSize = "auto"
+    size: str | None = "1024x1024"
     stream: bool | None = False
     style: str | None = "vivid"
     user: str | None = None
     advanced_params: AdvancedImageParams | None = None
     # Internal flag for benchmark mode - set by API, preserved through serialization
     bench: bool = False
-
-    @field_validator("size", mode="before")
-    @classmethod
-    def normalize_size(cls, v: object) -> ImageSize:
-        return normalize_image_size(v)
 
 
 class BenchImageGenerationTaskParams(ImageGenerationTaskParams):
@@ -345,17 +314,12 @@ class ImageEditsTaskParams(BaseModel):
     quality: Literal["high", "medium", "low"] | None = "medium"
     output_format: Literal["png", "jpeg", "webp"] = "png"
     response_format: Literal["url", "b64_json"] | None = "b64_json"
-    size: ImageSize = "auto"
+    size: str | None = "1024x1024"
     image_strength: float | None = 0.7
     stream: bool = False
     partial_images: int | None = 0
     advanced_params: AdvancedImageParams | None = None
     bench: bool = False
-
-    @field_validator("size", mode="before")
-    @classmethod
-    def normalize_size(cls, v: object) -> ImageSize:
-        return normalize_image_size(v)
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
         for name, value in super().__repr_args__():  # pyright: ignore[reportAny]

@@ -32,25 +32,21 @@ from exo.master.adapters.claude import (
     collect_claude_response,
     generate_claude_stream,
 )
-from exo.master.adapters.ollama import (
-    collect_ollama_chat_response,
-    collect_ollama_generate_response,
-    generate_ollama_chat_stream,
-    generate_ollama_generate_stream,
-    ollama_generate_request_to_text_generation,
-    ollama_request_to_text_generation,
-)
 from exo.master.adapters.responses import (
     collect_responses_response,
     generate_responses_stream,
     responses_request_to_text_generation,
 )
+from exo.master.conversation_store import Conversation, ConversationMessage, ConversationStore
 from exo.master.event_log import DiskEventLog
+from exo.master.push_service import DeviceRegistrationRequest, PushService
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
+    EXO_CONVERSATIONS_DIR,
+    EXO_DEVICES_FILE,
     EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
@@ -61,7 +57,6 @@ from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
-    create_lora_card,
     delete_custom_card,
     get_model_cards,
     is_custom_card,
@@ -80,8 +75,6 @@ from exo.shared.types.api import (
     ChatCompletionResponse,
     CreateInstanceParams,
     CreateInstanceResponse,
-    CreateLoraModelParams,
-    CreateLoraModelResponse,
     DeleteDownloadResponse,
     DeleteInstanceResponse,
     ErrorInfo,
@@ -96,7 +89,6 @@ from exo.shared.types.api import (
     ImageGenerationTaskParams,
     ImageListItem,
     ImageListResponse,
-    ImageSize,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
@@ -112,13 +104,11 @@ from exo.shared.types.api import (
     TraceRankStats,
     TraceResponse,
     TraceStatsResponse,
-    normalize_image_size,
 )
 from exo.shared.types.chunks import (
     ErrorChunk,
     ImageChunk,
     InputImageChunk,
-    PrefillProgressChunk,
     TokenChunk,
     ToolCallChunk,
 )
@@ -139,38 +129,23 @@ from exo.shared.types.commands import (
     PlaceInstance,
     SendInputChunk,
     StartDownload,
-    TaskCancelled,
     TaskFinished,
     TextGeneration,
 )
-from exo.shared.types.common import CommandId, Id, NodeId, SessionId, SystemId
+from exo.shared.types.common import CommandId, Id, NodeId, SessionId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
-    GlobalForwarderEvent,
+    ForwarderEvent,
     IndexedEvent,
     TracesMerged,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.ollama_api import (
-    OllamaChatRequest,
-    OllamaChatResponse,
-    OllamaGenerateRequest,
-    OllamaGenerateResponse,
-    OllamaModelDetails,
-    OllamaModelTag,
-    OllamaPsModel,
-    OllamaPsResponse,
-    OllamaShowRequest,
-    OllamaShowResponse,
-    OllamaTagsResponse,
-)
 from exo.shared.types.openai_responses import (
     ResponsesRequest,
     ResponsesResponse,
 )
 from exo.shared.types.state import State
-from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
@@ -200,7 +175,8 @@ class API:
         session_id: SessionId,
         *,
         port: int,
-        global_event_receiver: Receiver[GlobalForwarderEvent],
+        # Ideally this would be a MasterForwarderEvent but type system says no :(
+        global_event_receiver: Receiver[ForwarderEvent],
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
@@ -208,7 +184,6 @@ class API:
     ) -> None:
         self.state = State()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
-        self._system_id = SystemId()
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.global_event_receiver = global_event_receiver
@@ -246,13 +221,15 @@ class API:
         )
 
         self._text_generation_queues: dict[
-            CommandId,
-            Sender[TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk],
+            CommandId, Sender[TokenChunk | ErrorChunk | ToolCallChunk]
         ] = {}
         self._image_generation_queues: dict[
             CommandId, Sender[ImageChunk | ErrorChunk]
         ] = {}
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
+        self._conversation_store = ConversationStore(EXO_CONVERSATIONS_DIR)
+        self._push_service = PushService(EXO_DEVICES_FILE)
+        self._command_conversation_map: dict[CommandId, str] = {}
         self._tg: TaskGroup | None = None
 
     def reset(self, new_session_id: SessionId, result_clock: int):
@@ -260,11 +237,12 @@ class API:
         self._event_log.close()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
         self.state = State()
-        self._system_id = SystemId()
         self.session_id = new_session_id
         self.event_buffer = OrderedBuffer[Event]()
         self._text_generation_queues = {}
         self._image_generation_queues = {}
+        self._command_conversation_map = {}
+        # Note: _conversation_store is NOT reset — conversations persist across resets
         self.unpause(result_clock)
 
     def unpause(self, result_clock: int):
@@ -309,7 +287,6 @@ class API:
         self.app.get("/models")(self.get_models)
         self.app.get("/v1/models")(self.get_models)
         self.app.post("/models/add")(self.add_custom_model)
-        self.app.post("/models/lora")(self.create_lora_model)
         self.app.delete("/models/custom/{model_id:path}")(self.delete_custom_model)
         self.app.get("/models/search")(self.search_models)
         self.app.post("/v1/chat/completions", response_model=None)(
@@ -326,25 +303,15 @@ class API:
         self.app.get("/images/{image_id}")(self.get_image)
         self.app.post("/v1/messages", response_model=None)(self.claude_messages)
         self.app.post("/v1/responses", response_model=None)(self.openai_responses)
-
-        # Ollama API
-        self.app.head("/ollama/")(self.ollama_version)
-        self.app.head("/ollama/api/version")(self.ollama_version)
-        self.app.post("/ollama/api/chat", response_model=None)(self.ollama_chat)
-        self.app.post("/ollama/api/api/chat", response_model=None)(self.ollama_chat)
-        self.app.post("/ollama/api/v1/chat", response_model=None)(self.ollama_chat)
-        self.app.post("/ollama/api/generate", response_model=None)(self.ollama_generate)
-        self.app.get("/ollama/api/tags")(self.ollama_tags)
-        self.app.get("/ollama/api/api/tags")(self.ollama_tags)
-        self.app.get("/ollama/api/v1/tags")(self.ollama_tags)
-        self.app.post("/ollama/api/show")(self.ollama_show)
-        self.app.get("/ollama/api/ps")(self.ollama_ps)
-        self.app.get("/ollama/api/version")(self.ollama_version)
-
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(self.stream_events)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
+        self.app.get("/v1/conversations/{conversation_id}")(self.get_conversation)
+        self.app.post("/v1/conversations/{conversation_id}/messages")(self.add_conversation_message)
+        self.app.delete("/v1/conversations/{conversation_id}")(self.delete_conversation)
+        self.app.post("/v1/devices/register")(self.register_device)
+        self.app.delete("/v1/devices/{device_token}")(self.unregister_device)
         self.app.get("/v1/traces")(self.list_traces)
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
         self.app.get("/v1/traces/{task_id}/stats")(self.get_trace_stats)
@@ -570,37 +537,71 @@ class API:
 
     async def _token_chunk_stream(
         self, command_id: CommandId
-    ) -> AsyncGenerator[
-        TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk, None
-    ]:
+    ) -> AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None]:
         """Yield chunks for a given command until completion.
 
         This is the internal low-level stream used by all API adapters.
         """
         try:
             self._text_generation_queues[command_id], recv = channel[
-                TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk
+                ErrorChunk | ToolCallChunk | TokenChunk
             ]()
 
             with recv as token_chunks:
                 async for chunk in token_chunks:
                     yield chunk
-                    if isinstance(chunk, PrefillProgressChunk):
-                        continue
                     if chunk.finish_reason is not None:
                         break
 
         except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
-            with anyio.CancelScope(shield=True):
-                await self.command_sender.send(
-                    ForwarderCommand(origin=self._system_id, command=command)
-                )
+            # TODO: TaskCancelled
+            """
+            self.command_sender.send_nowait(
+                ForwarderCommand(origin=self.node_id, command=command)
+            )
+            """
             raise
         finally:
-            await self._send(TaskFinished(finished_command_id=command_id))
+            command = TaskFinished(finished_command_id=command_id)
+            await self._send(command)
             if command_id in self._text_generation_queues:
                 del self._text_generation_queues[command_id]
+
+    async def _conversation_tracking_stream(
+        self, command_id: CommandId
+    ) -> AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None]:
+        """Wraps _token_chunk_stream to accumulate text and persist to ConversationStore."""
+        text_parts: list[str] = []
+        model: str | None = None
+        try:
+            async for chunk in self._token_chunk_stream(command_id):
+                if isinstance(chunk, TokenChunk):
+                    text_parts.append(chunk.text)
+                    if model is None:
+                        model = chunk.model
+                yield chunk
+        finally:
+            conv_id = self._command_conversation_map.pop(command_id, None)
+            if conv_id is not None and text_parts:
+                content = "".join(text_parts)
+                self._conversation_store.append_message(
+                    conversation_id=conv_id,
+                    role="assistant",
+                    content=content,
+                    model=model,
+                )
+                logger.debug(f"Saved assistant response to conversation {conv_id}")
+
+                # Send push notification with content for silent sync
+                if self._tg is not None:
+                    preview = content[:100] + ("..." if len(content) > 100 else "")
+                    self._tg.start_soon(
+                        self._push_service.send_notification,
+                        "Response Ready",
+                        preview,
+                        conv_id,
+                        content,
+                    )
 
     async def _collect_text_generation_with_stats(
         self, command_id: CommandId
@@ -613,9 +614,6 @@ class API:
         stats: GenerationStats | None = None
 
         async for chunk in self._token_chunk_stream(command_id):
-            if isinstance(chunk, PrefillProgressChunk):
-                continue
-
             if chunk.finish_reason == "error":
                 raise HTTPException(
                     status_code=500,
@@ -683,12 +681,15 @@ class API:
         command = TextGeneration(task_params=task_params)
         await self._send(command)
 
+        # Track conversation mapping for persistence
+        if payload.conversation_id is not None:
+            self._command_conversation_map[command.command_id] = payload.conversation_id
+
+        chunk_stream = self._conversation_tracking_stream(command.command_id)
+
         if payload.stream:
             return StreamingResponse(
-                generate_chat_stream(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
-                ),
+                generate_chat_stream(command.command_id, chunk_stream),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -696,14 +697,8 @@ class API:
                     "X-Accel-Buffering": "no",
                 },
             )
-        else:
-            return StreamingResponse(
-                collect_chat_response(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
-                ),
-                media_type="application/json",
-            )
+
+        return await collect_chat_response(command.command_id, chunk_stream)
 
     async def bench_chat_completions(
         self, payload: BenchChatCompletionRequest
@@ -719,7 +714,8 @@ class API:
         command = TextGeneration(task_params=task_params)
         await self._send(command)
 
-        return await self._collect_text_generation_with_stats(command.command_id)
+        response = await self._collect_text_generation_with_stats(command.command_id)
+        return response
 
     async def _resolve_and_validate_text_model(self, model_id: ModelId) -> ModelId:
         """Validate a text model exists and return the resolved model ID.
@@ -804,11 +800,9 @@ class API:
         When stream=True and partial_images > 0, returns a StreamingResponse
         with SSE-formatted events for partial and final images.
         """
+        payload.model = await self._validate_image_model(ModelId(payload.model))
         payload = payload.model_copy(
-            update={
-                "model": await self._validate_image_model(ModelId(payload.model)),
-                "advanced_params": _ensure_seed(payload.advanced_params),
-            }
+            update={"advanced_params": _ensure_seed(payload.advanced_params)}
         )
 
         command = ImageGeneration(
@@ -939,11 +933,6 @@ class API:
                         del image_metadata[key]
 
         except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
-            with anyio.CancelScope(shield=True):
-                await self.command_sender.send(
-                    ForwarderCommand(origin=self._system_id, command=command)
-                )
             raise
         finally:
             await self._send(TaskFinished(finished_command_id=command_id))
@@ -1025,11 +1014,6 @@ class API:
 
             return (images, stats if capture_stats else None)
         except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
-            with anyio.CancelScope(shield=True):
-                await self.command_sender.send(
-                    ForwarderCommand(origin=self._system_id, command=command)
-                )
             raise
         finally:
             await self._send(TaskFinished(finished_command_id=command_id))
@@ -1064,13 +1048,12 @@ class API:
     async def bench_image_generations(
         self, request: Request, payload: BenchImageGenerationTaskParams
     ) -> BenchImageGenerationResponse:
+        payload.model = await self._validate_image_model(ModelId(payload.model))
+
+        payload.stream = False
+        payload.partial_images = 0
         payload = payload.model_copy(
-            update={
-                "model": await self._validate_image_model(ModelId(payload.model)),
-                "stream": False,
-                "partial_images": 0,
-                "advanced_params": _ensure_seed(payload.advanced_params),
-            }
+            update={"advanced_params": _ensure_seed(payload.advanced_params)}
         )
 
         command = ImageGeneration(
@@ -1091,7 +1074,7 @@ class API:
         prompt: str,
         model: ModelId,
         n: int,
-        size: ImageSize,
+        size: str,
         response_format: Literal["url", "b64_json"],
         input_fidelity: Literal["low", "high"],
         stream: bool,
@@ -1161,7 +1144,7 @@ class API:
         prompt: str = Form(...),
         model: str = Form(...),
         n: int = Form(1),
-        size: str | None = Form(None),
+        size: str = Form("1024x1024"),
         response_format: Literal["url", "b64_json"] = Form("b64_json"),
         input_fidelity: Literal["low", "high"] = Form("low"),
         stream: str = Form("false"),
@@ -1187,7 +1170,7 @@ class API:
             prompt=prompt,
             model=ModelId(model),
             n=n,
-            size=normalize_image_size(size),
+            size=size,
             response_format=response_format,
             input_fidelity=input_fidelity,
             stream=stream_bool,
@@ -1223,7 +1206,7 @@ class API:
         prompt: str = Form(...),
         model: str = Form(...),
         n: int = Form(1),
-        size: str | None = Form(None),
+        size: str = Form("1024x1024"),
         response_format: Literal["url", "b64_json"] = Form("b64_json"),
         input_fidelity: Literal["low", "high"] = Form("low"),
         quality: Literal["high", "medium", "low"] = Form("medium"),
@@ -1243,7 +1226,7 @@ class API:
             prompt=prompt,
             model=ModelId(model),
             n=n,
-            size=normalize_image_size(size),
+            size=size,
             response_format=response_format,
             input_fidelity=input_fidelity,
             stream=False,
@@ -1288,15 +1271,12 @@ class API:
                     "X-Accel-Buffering": "no",
                 },
             )
-        else:
-            return StreamingResponse(
-                collect_claude_response(
-                    command.command_id,
-                    payload.model,
-                    self._token_chunk_stream(command.command_id),
-                ),
-                media_type="application/json",
-            )
+
+        return await collect_claude_response(
+            command.command_id,
+            payload.model,
+            self._token_chunk_stream(command.command_id),
+        )
 
     async def openai_responses(
         self, payload: ResponsesRequest
@@ -1324,172 +1304,11 @@ class API:
                 },
             )
 
-        else:
-            return StreamingResponse(
-                collect_responses_response(
-                    command.command_id,
-                    payload.model,
-                    self._token_chunk_stream(command.command_id),
-                ),
-                media_type="application/json",
-            )
-
-    async def _ollama_root(self) -> JSONResponse:
-        """Respond to HEAD / from Ollama CLI connectivity checks."""
-        return JSONResponse(content="Ollama is running")
-
-    async def ollama_chat(
-        self, request: Request
-    ) -> OllamaChatResponse | StreamingResponse:
-        """Ollama Chat API — accepts JSON regardless of Content-Type."""
-        body = await request.body()
-        payload = OllamaChatRequest.model_validate_json(body)
-        task_params = ollama_request_to_text_generation(payload)
-        resolved_model = await self._resolve_and_validate_text_model(
-            ModelId(task_params.model)
+        return await collect_responses_response(
+            command.command_id,
+            payload.model,
+            self._token_chunk_stream(command.command_id),
         )
-        task_params = task_params.model_copy(update={"model": resolved_model})
-
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
-
-        if payload.stream:
-            return StreamingResponse(
-                generate_ollama_chat_stream(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
-                ),
-                media_type="application/x-ndjson",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "close",
-                    "X-Accel-Buffering": "no",
-                },
-            )
-        else:
-            return StreamingResponse(
-                collect_ollama_chat_response(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
-                ),
-                media_type="application/json",
-            )
-
-    async def ollama_generate(
-        self, request: Request
-    ) -> OllamaGenerateResponse | StreamingResponse:
-        """Ollama Generate API — accepts JSON regardless of Content-Type."""
-        body = await request.body()
-        payload = OllamaGenerateRequest.model_validate_json(body)
-        task_params = ollama_generate_request_to_text_generation(payload)
-        resolved_model = await self._resolve_and_validate_text_model(
-            ModelId(task_params.model)
-        )
-        task_params = task_params.model_copy(update={"model": resolved_model})
-
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
-
-        if payload.stream:
-            return StreamingResponse(
-                generate_ollama_generate_stream(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
-                ),
-                media_type="application/x-ndjson",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "close",
-                    "X-Accel-Buffering": "no",
-                },
-            )
-        else:
-            return StreamingResponse(
-                collect_ollama_generate_response(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
-                ),
-                media_type="application/json",
-            )
-
-    async def ollama_tags(self) -> OllamaTagsResponse:
-        """Returns list of models in Ollama tags format. We return the downloaded ones only."""
-
-        def none_if_empty(value: str) -> str | None:
-            return value or None
-
-        downloaded_model_ids: set[str] = set()
-        for node_downloads in self.state.downloads.values():
-            for dl in node_downloads:
-                if isinstance(dl, DownloadCompleted):
-                    downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
-
-        cards = [
-            c for c in await get_model_cards() if c.model_id in downloaded_model_ids
-        ]
-
-        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        return OllamaTagsResponse(
-            models=[
-                OllamaModelTag(
-                    name=str(card.model_id),
-                    model=str(card.model_id),
-                    modified_at=now,
-                    size=card.storage_size.in_bytes,
-                    digest="sha256:000000000000",
-                    details=OllamaModelDetails(
-                        family=none_if_empty(card.family),
-                        quantization_level=none_if_empty(card.quantization),
-                    ),
-                )
-                for card in cards
-            ]
-        )
-
-    async def ollama_show(self, request: Request) -> OllamaShowResponse:
-        """Returns model information in Ollama show format."""
-        body = await request.body()
-        payload = OllamaShowRequest.model_validate_json(body)
-        model_name = payload.name or payload.model
-        if not model_name:
-            raise HTTPException(status_code=400, detail="name or model is required")
-        try:
-            card = await ModelCard.load(ModelId(model_name))
-        except Exception as exc:
-            raise HTTPException(
-                status_code=404, detail=f"Model not found: {model_name}"
-            ) from exc
-
-        return OllamaShowResponse(
-            modelfile=f"FROM {card.model_id}",
-            template="{{ .Prompt }}",
-            details=OllamaModelDetails(
-                family=card.family or None,
-                quantization_level=card.quantization or None,
-            ),
-        )
-
-    async def ollama_ps(self) -> OllamaPsResponse:
-        """Returns list of running models (active instances)."""
-        models: list[OllamaPsModel] = []
-        seen: set[str] = set()
-        for instance in self.state.instances.values():
-            model_id = str(instance.shard_assignments.model_id)
-            if model_id in seen:
-                continue
-            seen.add(model_id)
-            models.append(
-                OllamaPsModel(
-                    name=model_id,
-                    model=model_id,
-                    size=0,
-                )
-            )
-        return OllamaPsResponse(models=models)
-
-    async def ollama_version(self) -> dict[str, str]:
-        """Returns version information for Ollama API compatibility."""
-        return {"version": "exo v1.0"}
 
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
@@ -1500,18 +1319,8 @@ class API:
 
         return total_available
 
-    async def get_models(self, status: str | None = Query(default=None)) -> ModelList:
-        """Returns list of available models, optionally filtered by being downloaded."""
-        cards = await get_model_cards()
-
-        if status == "downloaded":
-            downloaded_model_ids: set[str] = set()
-            for node_downloads in self.state.downloads.values():
-                for dl in node_downloads:
-                    if isinstance(dl, DownloadCompleted):
-                        downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
-            cards = [c for c in cards if c.model_id in downloaded_model_ids]
-
+    async def get_models(self) -> ModelList:
+        """Returns list of available models."""
         return ModelList(
             data=[
                 ModelListModel(
@@ -1519,9 +1328,8 @@ class API:
                     hugging_face_id=card.model_id,
                     name=card.model_id.short(),
                     description="",
-                    context_length=card.context_length,
                     tags=[],
-                    storage_size_megabytes=card.storage_size.in_mb,
+                    storage_size_megabytes=int(card.storage_size.in_mb),
                     supports_tensor=card.supports_tensor,
                     tasks=[task.value for task in card.tasks],
                     is_custom=is_custom_card(card.model_id),
@@ -1529,10 +1337,8 @@ class API:
                     quantization=card.quantization,
                     base_model=card.base_model,
                     capabilities=card.capabilities,
-                    lora_paths=card.lora_paths,
-                    lora_scales=card.lora_scales,
                 )
-                for card in cards
+                for card in await get_model_cards()
             ]
         )
 
@@ -1555,27 +1361,6 @@ class API:
             supports_tensor=card.supports_tensor,
             tasks=[task.value for task in card.tasks],
             is_custom=True,
-        )
-
-    async def create_lora_model(
-        self, payload: CreateLoraModelParams
-    ) -> CreateLoraModelResponse:
-        """Create a LoRA model based on an existing model."""
-        try:
-            card = await create_lora_card(
-                base_model_id=payload.base_model_id,
-                lora_repo=payload.lora_repo,
-                lora_scale=payload.lora_scale,
-                custom_name=payload.custom_name,
-            )
-        except Exception as exc:
-            raise HTTPException(
-                status_code=400, detail=f"Failed to create LoRA model: {exc}"
-            ) from exc
-
-        return CreateLoraModelResponse(
-            model_id=card.model_id,
-            message=f"LoRA model created: {card.model_id}",
         )
 
     async def delete_custom_model(self, model_id: ModelId) -> JSONResponse:
@@ -1611,6 +1396,52 @@ class API:
             for m in results
         ]
 
+    # MARK: - Device Registration Endpoints
+
+    async def register_device(self, payload: DeviceRegistrationRequest) -> JSONResponse:
+        """Register a device for APNs push notifications."""
+        reg = self._push_service.register_device(
+            token=payload.device_token,
+            name=payload.device_name,
+            bundle_id=payload.bundle_id,
+        )
+        return JSONResponse(reg.model_dump())
+
+    async def unregister_device(self, device_token: str) -> JSONResponse:
+        """Remove a device from push notifications."""
+        removed = self._push_service.unregister_device(device_token)
+        if not removed:
+            raise HTTPException(status_code=404, detail="Device not found")
+        return JSONResponse({"message": "Device unregistered", "device_token": device_token})
+
+    # MARK: - Conversation Endpoints
+
+    async def get_conversation(self, conversation_id: str) -> JSONResponse:
+        """Return full conversation with all messages."""
+        conv = self._conversation_store.get(conversation_id)
+        if conv is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return JSONResponse(conv.model_dump())
+
+    async def add_conversation_message(
+        self, conversation_id: str, payload: ConversationMessage
+    ) -> JSONResponse:
+        """Append a client-pushed message (typically user role) to a conversation."""
+        conv = self._conversation_store.append_message(
+            conversation_id=conversation_id,
+            role=payload.role,
+            content=payload.content,
+            image_ids=payload.image_ids,
+        )
+        return JSONResponse(conv.model_dump())
+
+    async def delete_conversation(self, conversation_id: str) -> JSONResponse:
+        """Delete a conversation and unpin its images."""
+        deleted = self._conversation_store.delete(conversation_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return JSONResponse({"message": "Conversation deleted", "conversation_id": conversation_id})
+
     async def run(self):
         shutdown_ev = anyio.Event()
 
@@ -1632,6 +1463,7 @@ class API:
             self._event_log.close()
             self.command_sender.close()
             self.global_event_receiver.close()
+            await self._push_service.close()
 
     async def run_api(self, ev: anyio.Event):
         cfg = Config()
@@ -1650,8 +1482,6 @@ class API:
     async def _apply_state(self):
         with self.global_event_receiver as events:
             async for f_event in events:
-                if f_event.session != self.session_id:
-                    continue
                 if f_event.origin != self.session_id.master_node_id:
                     continue
                 self.event_buffer.ingest(f_event.origin_idx, f_event.event)
@@ -1678,6 +1508,7 @@ class API:
                                 await queue.send(event.chunk)
                             except BrokenResourceError:
                                 self._text_generation_queues.pop(event.command_id, None)
+
                     if isinstance(event, TracesMerged):
                         self._save_merged_trace(event)
 
@@ -1703,11 +1534,12 @@ class API:
                     self.paused = True
 
     async def _cleanup_expired_images(self):
-        """Periodically clean up expired images from the store."""
+        """Periodically clean up expired images, protecting conversation-pinned ones."""
         cleanup_interval_seconds = 300  # 5 minutes
         while True:
             await anyio.sleep(cleanup_interval_seconds)
-            removed = self._image_store.cleanup_expired()
+            pinned = self._conversation_store.pinned_image_ids()
+            removed = self._image_store.cleanup_expired(pinned_ids=pinned)
             if removed > 0:
                 logger.debug(f"Cleaned up {removed} expired images")
 
@@ -1715,12 +1547,12 @@ class API:
         while self.paused:
             await self.paused_ev.wait()
         await self.command_sender.send(
-            ForwarderCommand(origin=self._system_id, command=command)
+            ForwarderCommand(origin=self.node_id, command=command)
         )
 
     async def _send_download(self, command: DownloadCommand):
         await self.download_command_sender.send(
-            ForwarderDownloadCommand(origin=self._system_id, command=command)
+            ForwarderDownloadCommand(origin=self.node_id, command=command)
         )
 
     async def start_download(

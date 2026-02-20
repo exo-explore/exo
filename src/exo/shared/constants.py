@@ -79,3 +79,13 @@ EXO_ENABLE_IMAGE_MODELS = (
 )
 
 EXO_TRACING_ENABLED = os.getenv("EXO_TRACING_ENABLED", "false").lower() == "true"
+
+# Conversation persistence
+EXO_CONVERSATIONS_DIR = EXO_DATA_HOME / "conversations"
+EXO_DEVICES_FILE = EXO_DATA_HOME / "devices.json"
+
+# APNs push notification configuration (all optional — no-op when unset)
+EXO_APNS_KEY_PATH: str | None = os.environ.get("EXO_APNS_KEY_PATH")
+EXO_APNS_KEY_ID: str | None = os.environ.get("EXO_APNS_KEY_ID")
+EXO_APNS_TEAM_ID: str | None = os.environ.get("EXO_APNS_TEAM_ID")
+EXO_APNS_BUNDLE_ID: str | None = os.environ.get("EXO_APNS_BUNDLE_ID")

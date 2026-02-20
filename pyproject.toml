@@ -17,13 +17,14 @@ dependencies = [
     "loguru>=0.7.3",
     "exo_pyo3_bindings", # rust bindings
     "anyio==4.11.0",
-    "mlx; sys_platform == 'darwin'",
+    "mlx==0.30.6; sys_platform == 'darwin'",
     "mlx[cpu]==0.30.6; sys_platform == 'linux'",
-    "mlx-lm==0.30.7",
+    "mlx-lm==0.30.6",
     "tiktoken>=0.12.0", # required for kimi k2 tokenizer
     "hypercorn>=0.18.0",
     "openai-harmony>=0.0.8",
-    "httpx>=0.28.1",
+    "httpx[http2]>=0.28.1",
+    "PyJWT[crypto]>=2.10.0",
     "tomlkit>=0.14.0",
     "pillow>=11.0,<12.0", # compatibility with mflux
     "mflux==0.15.5",
@@ -64,7 +65,6 @@ members = [
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
-mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
 #mlx-lm = { git = "https://github.com/davidmcc73/mlx-lm", branch = "stable" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }
@@ -133,7 +133,7 @@ markers = [
 env = [
   "EXO_TESTS=1"
 ]
-addopts = "-m 'not slow' --ignore=tests/start_distributed_test.py"
+addopts = "-m 'not slow'"
 filterwarnings = [
     "ignore:builtin type Swig:DeprecationWarning",
 ]
