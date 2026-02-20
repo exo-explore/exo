@@ -245,6 +245,7 @@
     "M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z";
 
   let mounted = $state(false);
+  let localNodeId = $state<string | null>(null);
 
   // ── Onboarding wizard state ──
   const ONBOARDING_COMPLETE_KEY = "exo-onboarding-complete";
@@ -283,19 +284,20 @@
     return deduped.slice(0, 3);
   });
 
-  // User device info from topology
+  // User device info from topology — uses /node_id to find our own node
   const userDeviceInfo = $derived.by(() => {
     if (!data || Object.keys(data.nodes).length === 0) {
       return { name: "MacBook Pro", memoryGB: 36, deviceType: "macbook pro" };
     }
-    const firstNode = Object.values(data.nodes)[0];
+    const ourNode = localNodeId ? data.nodes[localNodeId] : undefined;
+    const node = ourNode ?? Object.values(data.nodes)[0];
     const totalMem =
-      firstNode.macmon_info?.memory?.ram_total ??
-      firstNode.system_info?.memory ??
+      node.macmon_info?.memory?.ram_total ??
+      node.system_info?.memory ??
       0;
     const memGB = Math.round(totalMem / (1024 * 1024 * 1024));
-    const name = firstNode.friendly_name || "Your Mac";
-    const modelId = (firstNode.system_info?.model_id || "macbook pro").toLowerCase();
+    const name = node.friendly_name || "Your Mac";
+    const modelId = (node.system_info?.model_id || "macbook pro").toLowerCase();
     return { name, memoryGB: memGB || 36, deviceType: modelId };
   });
 
@@ -1182,6 +1184,7 @@
   onMount(async () => {
     mounted = true;
     fetchModels();
+    fetch("/node_id").then((r) => r.ok ? r.json() : null).then((id) => { if (id) localNodeId = id; }).catch(() => {});
 
     // Handle reset-onboarding query parameter (triggered from native Settings)
     const params = new URLSearchParams(window.location.search);
