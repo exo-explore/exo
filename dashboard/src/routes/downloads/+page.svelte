@@ -538,7 +538,7 @@
                       <div
                         class="flex flex-col items-center gap-0.5"
                         title={cell.downloaded > 0
-                          ? `${formatBytes(cell.downloaded)} / ${formatBytes(cell.total)} downloaded`
+                          ? `${formatBytes(cell.downloaded)} / ${formatBytes(cell.total)} downloaded (paused)`
                           : "Download pending"}
                       >
                         {#if cell.downloaded > 0 && cell.total > 0}
@@ -558,12 +558,58 @@
                               ).toFixed(1)}%"
                             ></div>
                           </div>
-                          <span class="text-exo-light-gray/40 text-[9px]"
-                            >paused</span
-                          >
+                          {#if row.shardMetadata}
+                            <button
+                              type="button"
+                              class="text-exo-light-gray/50 hover:text-exo-yellow transition-colors"
+                              onclick={() =>
+                                startDownload(col.nodeId, row.shardMetadata!)}
+                              title="Resume download on this node"
+                            >
+                              <svg
+                                class="w-3.5 h-3.5"
+                                viewBox="0 0 20 20"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                              >
+                                <path
+                                  d="M10 3v10m0 0l-3-3m3 3l3-3M3 17h14"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                ></path>
+                              </svg>
+                            </button>
+                          {:else}
+                            <span class="text-exo-light-gray/40 text-[9px]"
+                              >paused</span
+                            >
+                          {/if}
                         {:else}
-                          <span class="text-exo-light-gray/50 text-sm">...</span
-                          >
+                          <span class="text-exo-light-gray/50 text-sm">...</span>
+                          {#if row.shardMetadata}
+                            <button
+                              type="button"
+                              class="text-exo-light-gray/30 hover:text-exo-yellow transition-colors mt-0.5"
+                              onclick={() =>
+                                startDownload(col.nodeId, row.shardMetadata!)}
+                              title="Start download on this node"
+                            >
+                              <svg
+                                class="w-3.5 h-3.5"
+                                viewBox="0 0 20 20"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                              >
+                                <path
+                                  d="M10 3v10m0 0l-3-3m3 3l3-3M3 17h14"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                ></path>
+                              </svg>
+                            </button>
+                          {/if}
                         {/if}
                       </div>
                     {:else if cell.kind === "failed"}
