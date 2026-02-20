@@ -289,8 +289,12 @@ def run_planning_phase(
     danger_delete: bool,
     timeout: float,
     settle_deadline: float | None,
-) -> None:
-    """Check disk space and ensure model is downloaded before benchmarking."""
+) -> float | None:
+    """Check disk space and ensure model is downloaded before benchmarking.
+
+    Returns the wall-clock download duration in seconds if a fresh download
+    was needed, or None if the model was already cached on all nodes.
+    """
     # Get model size from /models
     models = client.request_json("GET", "/models") or {}
     model_bytes = 0
@@ -303,7 +307,7 @@ def run_planning_phase(
         logger.warning(
             f"Could not determine size for {full_model_id}, skipping disk check"
         )
-        return
+        return None
 
     # Get nodes from preview
     inner = unwrap_instance(preview["instance"])
@@ -313,6 +317,8 @@ def run_planning_phase(
     state = client.request_json("GET", "/state")
     downloads = state.get("downloads", {})
     node_disk = state.get("nodeDisk", {})
+
+    needs_download = False
 
     for node_id in node_ids:
         node_downloads = downloads.get(node_id, [])
@@ -328,6 +334,8 @@ def run_planning_phase(
         )
         if already_downloaded:
             continue
+
+        needs_download = True
 
         # Wait for disk info if settle_deadline is set
         disk_info = node_disk.get(node_id, {})
@@ -379,6 +387,7 @@ def run_planning_phase(
             raise RuntimeError(f"Could not free enough space on {node_id}")
 
     # Start downloads (idempotent)
+    download_t0 = time.perf_counter() if needs_download else None
     for node_id in node_ids:
         runner_id = inner["shardAssignments"]["nodeToRunner"][node_id]
         shard = runner_to_shard[runner_id]
@@ -421,7 +430,9 @@ def run_planning_phase(
             if not done:
                 all_done = False
         if all_done:
-            return
+            if download_t0 is not None:
+                return time.perf_counter() - download_t0
+            return None
         time.sleep(1)
 
     raise TimeoutError("Downloads did not complete in time")

@@ -25,6 +25,10 @@ class NodeId(Id):
     pass
 
 
+class SystemId(Id):
+    pass
+
+
 class ModelId(Id):
     def normalize(self) -> str:
         return self.replace("/", "--")
