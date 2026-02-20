@@ -21,7 +21,7 @@
     } | null;
     nodes?: Record<string, NodeInfo>;
     sharding?: "Pipeline" | "Tensor";
-    runtime?: "MlxRing" | "MlxIbv" | "MlxJaccl";
+    runtime?: "MlxRing" | "MlxJaccl";
     onLaunch?: () => void;
     tags?: string[];
     apiPreview?: PlacementPreview | null;
@@ -348,7 +348,7 @@
   // Debug mode state
   const isDebugMode = $derived(debugMode());
   const topology = $derived(topologyData());
-  const isRdma = $derived(runtime === "MlxIbv" || runtime === "MlxJaccl");
+  const isRdma = $derived(runtime === "MlxJaccl");
 
   // Get interface name for an IP from node data
   function getInterfaceForIp(nodeId: string, ip?: string): string | null {
@@ -567,19 +567,45 @@
     <div class="flex items-center gap-1.5 mb-2">
       <span
         class="px-1.5 py-0.5 text-xs font-mono tracking-wider uppercase bg-exo-medium-gray/30 text-exo-light-gray border border-exo-medium-gray/40"
+        title={sharding === "Pipeline"
+          ? "Pipeline: splits model into sequential stages across devices. Lower network overhead."
+          : "Tensor: splits each layer across devices. Best with high-bandwidth connections (Thunderbolt)."}
       >
         {sharding}
       </span>
       <span
         class="px-1.5 py-0.5 text-xs font-mono tracking-wider uppercase bg-exo-medium-gray/30 text-exo-light-gray border border-exo-medium-gray/40"
+        title={runtime === "MlxRing"
+          ? "Ring: standard networking. Works over any connection (Wi-Fi, Ethernet, Thunderbolt)."
+          : "RDMA: direct memory access over Thunderbolt. Significantly faster for multi-device inference."}
       >
         {runtime === "MlxRing"
           ? "MLX Ring"
-          : runtime === "MlxIbv" || runtime === "MlxJaccl"
+          : runtime === "MlxJaccl"
             ? "MLX RDMA"
             : runtime}
       </span>
     </div>
+
+    <!-- Download Status -->
+    {#if isDownloading && progress}
+      <div class="mb-2 space-y-1">
+        <div class="flex items-center justify-between text-xs font-mono">
+          <span class="text-blue-400 tracking-wider uppercase">Downloading</span
+          >
+          <span class="text-white/60"
+            >{percentage.toFixed(1)}% &middot; {formatSpeed(progress.speed)}
+            &middot; {formatEta(progress.etaMs)}</span
+          >
+        </div>
+        <div class="h-1 bg-exo-medium-gray/30 rounded overflow-hidden">
+          <div
+            class="h-full bg-blue-500/70 transition-all duration-300"
+            style="width: {percentage}%"
+          ></div>
+        </div>
+      </div>
+    {/if}
 
     <!-- Mini Topology Preview -->
     {#if placementPreview().nodes.length > 0}

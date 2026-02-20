@@ -51,6 +51,7 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
+    EXO_CONFIG_HOME,
     EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
@@ -345,6 +346,8 @@ class API:
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
         self.app.get("/v1/traces/{task_id}/stats")(self.get_trace_stats)
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
+        self.app.get("/onboarding")(self.get_onboarding)
+        self.app.post("/onboarding")(self.complete_onboarding)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -1814,3 +1817,13 @@ class API:
             media_type="application/json",
             filename=f"trace_{task_id}.json",
         )
+
+    _ONBOARDING_FILE = EXO_CONFIG_HOME / "onboarding_complete"
+
+    async def get_onboarding(self) -> JSONResponse:
+        return JSONResponse({"completed": self._ONBOARDING_FILE.exists()})
+
+    async def complete_onboarding(self) -> JSONResponse:
+        self._ONBOARDING_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self._ONBOARDING_FILE.write_text("true")
+        return JSONResponse({"completed": True})
