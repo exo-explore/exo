@@ -543,17 +543,12 @@
     }
   });
 
-  // Recommended models for onboarding (sorted by fit, then size desc, limited to 6)
+  // Recommended models for onboarding (biggest to smallest that fit, limited to 6)
   const onboardingModels = $derived.by(() => {
     if (models.length === 0) return [];
     return [...models]
-      .filter((m) => getModelMemoryFitStatus(m) !== "too_large")
-      .sort((a, b) => {
-        const aFit = hasEnoughMemory(a) ? 0 : 1;
-        const bFit = hasEnoughMemory(b) ? 0 : 1;
-        if (aFit !== bFit) return aFit - bFit;
-        return getModelSizeGB(b) - getModelSizeGB(a);
-      })
+      .filter((m) => hasEnoughMemory(m) && getModelSizeGB(m) > 0)
+      .sort((a, b) => getModelSizeGB(b) - getModelSizeGB(a))
       .slice(0, 6);
   });
 
@@ -3499,9 +3494,10 @@
         </div>
       {:else if onboardingStep === 9}
         <!-- Step 9: Ready — centered input with suggestion chips -->
+        <!-- Uses onb-fade-opacity (no transform) so fixed-position dropdown in ChatForm works correctly -->
         <div
           class="flex flex-col items-center justify-center w-full max-w-2xl px-8"
-          style="opacity: 0; animation: onb-fade-in 0.6s ease forwards;"
+          style="opacity: 0; animation: onb-fade-opacity 0.6s ease forwards;"
         >
           <img
             src="/exo-logo.png"
