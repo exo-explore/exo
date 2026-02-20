@@ -7,6 +7,7 @@ from anyio import CancelScope, create_task_group, fail_after
 from anyio.abc import TaskGroup
 from loguru import logger
 
+from exo.download.download_utils import resolve_model_in_path
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.api import ImageEditsTaskParams
@@ -24,6 +25,7 @@ from exo.shared.types.events import (
     IndexedEvent,
     InputChunkReceived,
     LocalForwarderEvent,
+    NodeDownloadProgress,
     NodeGatheredInfo,
     TaskCreated,
     TaskStatusUpdated,
@@ -42,6 +44,7 @@ from exo.shared.types.tasks import (
     TaskStatus,
 )
 from exo.shared.types.topology import Connection, SocketConnection
+from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
@@ -212,20 +215,43 @@ class Worker:
                     model_id = shard.model_card.model_id
                     self._download_backoff.record_attempt(model_id)
 
-                    await self.download_command_sender.send(
-                        ForwarderDownloadCommand(
-                            origin=self._system_id,
-                            command=StartDownload(
-                                target_node_id=self.node_id,
-                                shard_metadata=shard,
-                            ),
+                    found_path = resolve_model_in_path(model_id)
+                    if found_path is not None:
+                        logger.info(
+                            f"Model {model_id} found in EXO_MODELS_PATH at {found_path}"
                         )
-                    )
-                    await self.event_sender.send(
-                        TaskStatusUpdated(
-                            task_id=task.task_id, task_status=TaskStatus.Running
+                        await self.event_sender.send(
+                            NodeDownloadProgress(
+                                download_progress=DownloadCompleted(
+                                    node_id=self.node_id,
+                                    shard_metadata=shard,
+                                    model_directory=str(found_path),
+                                    total=shard.model_card.storage_size,
+                                )
+                            )
                         )
-                    )
+                        await self.event_sender.send(
+                            TaskStatusUpdated(
+                                task_id=task.task_id,
+                                task_status=TaskStatus.Complete,
+                            )
+                        )
+                    else:
+                        await self.download_command_sender.send(
+                            ForwarderDownloadCommand(
+                                origin=self._system_id,
+                                command=StartDownload(
+                                    target_node_id=self.node_id,
+                                    shard_metadata=shard,
+                                ),
+                            )
+                        )
+                        await self.event_sender.send(
+                            TaskStatusUpdated(
+                                task_id=task.task_id,
+                                task_status=TaskStatus.Running,
+                            )
+                        )
                 case Shutdown(runner_id=runner_id):
                     runner = self.runners.pop(runner_id)
                     try:
