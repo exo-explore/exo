@@ -5,7 +5,6 @@ from random import random
 
 import anyio
 from anyio import current_time
-from anyio.abc import TaskGroup
 from loguru import logger
 
 from exo.download.download_utils import (
@@ -40,6 +39,7 @@ from exo.shared.types.worker.downloads import (
 )
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.lazy_task_group import LazyTaskGroup
 
 
 @dataclass
@@ -65,7 +65,7 @@ class DownloadCoordinator:
     # Internal event channel for forwarding (initialized in __post_init__)
     event_sender: Sender[Event] = field(init=False)
     event_receiver: Receiver[Event] = field(init=False)
-    _tg: TaskGroup = field(init=False, default_factory=anyio.create_task_group)
+    _tg: LazyTaskGroup = field(init=False, default_factory=LazyTaskGroup)
 
     # Per-model throttle for download progress events
     _last_progress_time: dict[ModelId, float] = field(default_factory=dict)
