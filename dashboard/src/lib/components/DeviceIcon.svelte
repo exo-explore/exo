@@ -247,15 +247,31 @@
 
   <!-- Keyboard base (trapezoidal) -->
   <path
-    d="M {mbBaseTopX} {mbBaseY} L {mbBaseTopX + mbBaseTopW} {mbBaseY} L {mbBaseBottomX + mbBaseBottomW} {mbBaseY + mbBaseH} L {mbBaseBottomX} {mbBaseY + mbBaseH} Z"
+    d="M {mbBaseTopX} {mbBaseY} L {mbBaseTopX +
+      mbBaseTopW} {mbBaseY} L {mbBaseBottomX + mbBaseBottomW} {mbBaseY +
+      mbBaseH} L {mbBaseBottomX} {mbBaseY + mbBaseH} Z"
     fill="#2c2c2c"
     stroke={wireColor}
     stroke-width="1"
   />
 
   <!-- Keyboard area -->
-  <rect x={mbKbX} y={mbKbY} width={mbKbW} height={mbKbH} fill="rgba(0,0,0,0.2)" rx="2" />
+  <rect
+    x={mbKbX}
+    y={mbKbY}
+    width={mbKbW}
+    height={mbKbH}
+    fill="rgba(0,0,0,0.2)"
+    rx="2"
+  />
 
   <!-- Trackpad -->
-  <rect x={mbTpX} y={mbTpY} width={mbTpW} height={mbTpH} fill="rgba(255,255,255,0.08)" rx="2" />
+  <rect
+    x={mbTpX}
+    y={mbTpY}
+    width={mbTpW}
+    height={mbTpH}
+    fill="rgba(255,255,255,0.08)"
+    rx="2"
+  />
 {/if}
