@@ -29,7 +29,12 @@
         etaMs: number;
         modelDirectory?: string;
       }
-    | { kind: "pending"; modelDirectory?: string }
+    | {
+        kind: "pending";
+        downloadedBytes: number;
+        totalBytes: number;
+        modelDirectory?: string;
+      }
     | { kind: "failed"; modelDirectory?: string }
     | { kind: "not_present" };
 
@@ -255,7 +260,18 @@
           } else if (tag === "DownloadFailed") {
             cell = { kind: "failed", modelDirectory };
           } else {
-            cell = { kind: "pending", modelDirectory };
+            const downloadedBytes = getBytes(
+              payload.downloaded_bytes ?? payload.downloadedBytes,
+            );
+            const totalBytes = getBytes(
+              payload.total_bytes ?? payload.totalBytes,
+            );
+            cell = {
+              kind: "pending",
+              downloadedBytes,
+              totalBytes,
+              modelDirectory,
+            };
           }
 
           const existing = row.cells[nodeId];
@@ -482,9 +498,34 @@
                     {:else if cell.kind === "pending"}
                       <div
                         class="flex flex-col items-center gap-0.5"
-                        title="Download pending"
+                        title={cell.downloadedBytes > 0
+                          ? `${formatBytes(cell.downloadedBytes)} / ${formatBytes(cell.totalBytes)} downloaded`
+                          : "Download pending"}
                       >
-                        <span class="text-exo-light-gray/50 text-sm">...</span>
+                        {#if cell.downloadedBytes > 0 && cell.totalBytes > 0}
+                          <span class="text-exo-light-gray/70 text-[10px]"
+                            >{formatBytes(cell.downloadedBytes)} / {formatBytes(
+                              cell.totalBytes,
+                            )}</span
+                          >
+                          <div
+                            class="w-full h-1 bg-white/10 rounded-full overflow-hidden"
+                          >
+                            <div
+                              class="h-full bg-exo-light-gray/40 rounded-full"
+                              style="width: {(
+                                (cell.downloadedBytes / cell.totalBytes) *
+                                100
+                              ).toFixed(1)}%"
+                            ></div>
+                          </div>
+                          <span class="text-exo-light-gray/40 text-[9px]"
+                            >paused</span
+                          >
+                        {:else}
+                          <span class="text-exo-light-gray/50 text-sm">...</span
+                          >
+                        {/if}
                       </div>
                     {:else if cell.kind === "failed"}
                       <div
