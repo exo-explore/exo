@@ -49,7 +49,7 @@
     onclick={() => onSelect(null)}
     class="group flex flex-col items-center justify-center p-2 rounded transition-all duration-200 cursor-pointer {selectedFamily ===
     null
-      ? 'bg-white/[0.08] border-l-2 border-exo-yellow'
+      ? 'bg-exo-yellow/20 border-l-2 border-exo-yellow'
       : 'hover:bg-white/5 border-l-2 border-transparent'}"
     title="All models"
   >
@@ -78,19 +78,19 @@
       onclick={() => onSelect("favorites")}
       class="group flex flex-col items-center justify-center p-2 rounded transition-all duration-200 cursor-pointer {selectedFamily ===
       'favorites'
-        ? 'bg-white/[0.08] border-l-2 border-exo-yellow'
+        ? 'bg-exo-yellow/20 border-l-2 border-exo-yellow'
         : 'hover:bg-white/5 border-l-2 border-transparent'}"
       title="Show favorited models"
     >
       <FamilyLogos
         family="favorites"
         class={selectedFamily === "favorites"
-          ? "text-exo-yellow"
-          : "text-white/50 group-hover:text-exo-yellow/70"}
+          ? "text-amber-400"
+          : "text-white/50 group-hover:text-amber-400/70"}
       />
       <span
         class="text-[9px] font-mono mt-0.5 {selectedFamily === 'favorites'
-          ? 'text-exo-yellow'
+          ? 'text-amber-400'
           : 'text-white/40 group-hover:text-white/60'}">Faves</span
       >
     </button>
@@ -103,7 +103,7 @@
       onclick={() => onSelect("recents")}
       class="group flex flex-col items-center justify-center p-2 rounded transition-all duration-200 cursor-pointer {selectedFamily ===
       'recents'
-        ? 'bg-white/[0.08] border-l-2 border-exo-yellow'
+        ? 'bg-exo-yellow/20 border-l-2 border-exo-yellow'
         : 'hover:bg-white/5 border-l-2 border-transparent'}"
       title="Recently launched models"
     >
@@ -144,7 +144,7 @@
     >
   </button>
 
-  <div class="h-px bg-white/[0.06] my-1"></div>
+  <div class="h-px bg-exo-yellow/10 my-1"></div>
 
   <!-- Model families -->
   {#each families as family}
@@ -153,7 +153,7 @@
       onclick={() => onSelect(family)}
       class="group flex flex-col items-center justify-center p-2 rounded transition-all duration-200 cursor-pointer {selectedFamily ===
       family
-        ? 'bg-white/[0.08] border-l-2 border-exo-yellow'
+        ? 'bg-exo-yellow/20 border-l-2 border-exo-yellow'
         : 'hover:bg-white/5 border-l-2 border-transparent'}"
       title={getFamilyName(family)}
     >

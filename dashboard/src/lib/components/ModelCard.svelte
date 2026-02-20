@@ -491,7 +491,7 @@
   <div
     class="bg-exo-dark-gray/60 border {canFit
       ? 'border-exo-yellow/20 group-hover:border-exo-yellow/40'
-      : 'border-red-500/20'} p-3 transition-all duration-200 group-hover:shadow-[0_0_15px_rgba(255,215,0,0.06)]"
+      : 'border-red-500/20'} p-3 transition-all duration-200 group-hover:shadow-[0_0_15px_rgba(255,215,0,0.1)]"
   >
     <!-- Model Name & Memory Required -->
     <div class="flex items-start justify-between gap-2 mb-2">
@@ -981,7 +981,7 @@
                       0.75} {node.iconSize /
                       2},{node.iconSize} 0,{node.iconSize *
                       0.75} 0,{node.iconSize * 0.25}"
-                    fill={node.isUsed ? "rgba(60,60,50,0.6)" : "#0a0a0a"}
+                    fill={node.isUsed ? "rgba(255,215,0,0.1)" : "#0a0a0a"}
                     stroke={node.isUsed ? "#FFD700" : "#4B5563"}
                     stroke-width="1.5"
                   />

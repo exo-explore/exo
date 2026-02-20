@@ -931,7 +931,7 @@
       >
         <span>Filters:</span>
         {#each filters.capabilities as cap}
-          <span class="px-1.5 py-0.5 bg-exo-medium-gray/60 text-exo-yellow rounded"
+          <span class="px-1.5 py-0.5 bg-exo-yellow/20 text-exo-yellow rounded"
             >{cap}</span
           >
         {/each}
@@ -941,7 +941,7 @@
           >
         {/if}
         {#if filters.sizeRange}
-          <span class="px-1.5 py-0.5 bg-exo-medium-gray/60 text-exo-yellow rounded">
+          <span class="px-1.5 py-0.5 bg-exo-yellow/20 text-exo-yellow rounded">
             {filters.sizeRange.min}GB - {filters.sizeRange.max}GB
           </span>
         {/if}

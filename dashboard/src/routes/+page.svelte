@@ -1551,7 +1551,7 @@
       case "WARMING UP":
       case "WAITING":
       case "INITIALIZING":
-        return "text-exo-yellow";
+        return "text-yellow-400";
       case "RUNNING":
         return "text-teal-400";
       case "READY":
@@ -2196,10 +2196,10 @@
         {@const disableCmd = `sudo networksetup -setnetworkserviceenabled "${serviceName}" off`}
         <div class="group relative" role="alert">
           <div
-            class="flex items-center gap-2 px-3 py-2 rounded border border-exo-yellow/20 bg-exo-medium-gray/50 backdrop-blur-sm cursor-help"
+            class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
           >
             <svg
-              class="w-5 h-5 text-exo-yellow flex-shrink-0"
+              class="w-5 h-5 text-yellow-400 flex-shrink-0"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -2211,25 +2211,25 @@
                 d={warningIconPath}
               />
             </svg>
-            <span class="text-sm font-mono text-exo-yellow">
+            <span class="text-sm font-mono text-yellow-200">
               THUNDERBOLT BRIDGE CYCLE DETECTED
             </span>
           </div>
 
           <!-- Tooltip on hover -->
           <div
-            class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-exo-yellow/15 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+            class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
           >
             <p class="text-xs text-white/80 mb-2">
               A network routing cycle was detected between nodes connected via
               Thunderbolt Bridge. This can cause connectivity issues.
             </p>
             <p class="text-xs text-white/60 mb-2">
-              <span class="text-exo-yellow">Affected nodes:</span>
+              <span class="text-yellow-300">Affected nodes:</span>
               {cycle.map(getNodeName).join(" → ")}
             </p>
             <p class="text-xs text-white/60 mb-1">
-              <span class="text-exo-yellow">To fix:</span> Disable the Thunderbolt
+              <span class="text-yellow-300">To fix:</span> Disable the Thunderbolt
               Bridge on one of the affected nodes:
             </p>
             <button
@@ -2268,10 +2268,10 @@
       {#if macosVersionMismatch}
         <div class="group relative" role="alert">
           <div
-            class="flex items-center gap-2 px-3 py-2 rounded border border-exo-yellow/20 bg-exo-medium-gray/50 backdrop-blur-sm cursor-help"
+            class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
           >
             <svg
-              class="w-5 h-5 text-exo-yellow flex-shrink-0"
+              class="w-5 h-5 text-yellow-400 flex-shrink-0"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -2283,21 +2283,21 @@
                 d={warningIconPath}
               />
             </svg>
-            <span class="text-sm font-mono text-exo-yellow">
+            <span class="text-sm font-mono text-yellow-200">
               INCOMPATIBLE macOS VERSIONS
             </span>
           </div>
 
           <!-- Tooltip on hover -->
           <div
-            class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-exo-yellow/15 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+            class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
           >
             <p class="text-xs text-white/80 mb-2">
               Nodes in this cluster are running different macOS versions. This
               may cause inference compatibility issues.
             </p>
             <div class="text-xs text-white/60 mb-2">
-              <span class="text-exo-yellow">Node versions:</span>
+              <span class="text-yellow-300">Node versions:</span>
               {#each macosVersionMismatch as node}
                 <div class="ml-2">
                   {node.friendlyName} — macOS {node.version} ({node.buildVersion})
@@ -2305,7 +2305,7 @@
               {/each}
             </div>
             <p class="text-xs text-white/60">
-              <span class="text-exo-yellow">Suggested action:</span> Update all nodes
+              <span class="text-yellow-300">Suggested action:</span> Update all nodes
               to the same macOS version for best compatibility.
             </p>
           </div>
@@ -2641,11 +2641,11 @@
     <div class="absolute top-2 left-2 flex flex-col gap-1">
       {#if tbBridgeCycles.length > 0}
         <div
-          class="flex items-center gap-1.5 px-2 py-1 rounded border border-exo-yellow/20 bg-exo-medium-gray/50 backdrop-blur-sm"
+          class="flex items-center gap-1.5 px-2 py-1 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm"
           title="Thunderbolt Bridge cycle detected"
         >
           <svg
-            class="w-3.5 h-3.5 text-exo-yellow"
+            class="w-3.5 h-3.5 text-yellow-400"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -2657,16 +2657,16 @@
               d={warningIconPath}
             />
           </svg>
-          <span class="text-[10px] font-mono text-exo-yellow">TB CYCLE</span>
+          <span class="text-[10px] font-mono text-yellow-200">TB CYCLE</span>
         </div>
       {/if}
       {#if macosVersionMismatch}
         <div
-          class="flex items-center gap-1.5 px-2 py-1 rounded border border-exo-yellow/20 bg-exo-medium-gray/50 backdrop-blur-sm"
+          class="flex items-center gap-1.5 px-2 py-1 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm"
           title="Incompatible macOS versions detected"
         >
           <svg
-            class="w-3.5 h-3.5 text-exo-yellow"
+            class="w-3.5 h-3.5 text-yellow-400"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -2678,7 +2678,7 @@
               d={warningIconPath}
             />
           </svg>
-          <span class="text-[10px] font-mono text-exo-yellow"
+          <span class="text-[10px] font-mono text-yellow-200"
             >macOS MISMATCH</span
           >
         </div>
@@ -3125,7 +3125,7 @@
                   type="button"
                   onclick={() => onboardingLaunchModel(model.id)}
                   class="w-full flex items-center justify-between gap-4 px-5 py-4 rounded-xl border transition-all duration-200 cursor-pointer {fitsNow
-                    ? 'border-white/10 bg-white/5 hover:border-exo-yellow/50 hover:bg-white/[0.06]'
+                    ? 'border-white/10 bg-white/5 hover:border-exo-yellow/50 hover:bg-exo-yellow/5'
                     : 'border-white/10 bg-white/[0.02] hover:border-white/20 opacity-60'}"
                 >
                   <div class="flex flex-col items-start gap-1 min-w-0">
@@ -3136,7 +3136,7 @@
                       >
                       {#each tags as tag}
                         <span
-                          class="text-[10px] font-sans font-medium px-1.5 py-0.5 rounded-full bg-exo-medium-gray/60 text-exo-yellow/80"
+                          class="text-[10px] font-sans font-medium px-1.5 py-0.5 rounded-full bg-exo-yellow/10 text-exo-yellow/80"
                           >{tag}</span
                         >
                       {/each}
@@ -3795,7 +3795,7 @@
                           : isFailed
                             ? 'border-red-500/50'
                             : isLoading
-                              ? 'border-exo-yellow/20'
+                              ? 'border-yellow-500/50'
                               : isReady
                                 ? 'border-green-500/50'
                                 : 'border-teal-500/50'}"
@@ -3806,7 +3806,7 @@
                           : isFailed
                             ? 'border-red-500/50'
                             : isLoading
-                              ? 'border-exo-yellow/20'
+                              ? 'border-yellow-500/50'
                               : isReady
                                 ? 'border-green-500/50'
                                 : 'border-teal-500/50'}"
@@ -3817,7 +3817,7 @@
                           : isFailed
                             ? 'border-red-500/50'
                             : isLoading
-                              ? 'border-exo-yellow/20'
+                              ? 'border-yellow-500/50'
                               : isReady
                                 ? 'border-green-500/50'
                                 : 'border-teal-500/50'}"
@@ -3828,7 +3828,7 @@
                           : isFailed
                             ? 'border-red-500/50'
                             : isLoading
-                              ? 'border-exo-yellow/20'
+                              ? 'border-yellow-500/50'
                               : isReady
                                 ? 'border-green-500/50'
                                 : 'border-teal-500/50'}"
@@ -3840,7 +3840,7 @@
                           : isFailed
                             ? 'border-red-500/30 border-l-red-400 group-hover:border-red-500/50'
                             : isLoading
-                              ? 'border-exo-yellow/30 border-l-exo-yellow group-hover:border-exo-yellow/50'
+                              ? 'border-exo-yellow/30 border-l-yellow-400 group-hover:border-exo-yellow/50'
                               : isReady
                                 ? 'border-green-500/30 border-l-green-400 group-hover:border-green-500/50'
                                 : 'border-teal-500/30 border-l-teal-400 group-hover:border-teal-500/50'} p-3"
@@ -3853,7 +3853,7 @@
                                 : isFailed
                                   ? 'bg-red-400'
                                   : isLoading
-                                    ? 'bg-exo-yellow animate-pulse'
+                                    ? 'bg-yellow-400 animate-pulse'
                                     : isReady
                                       ? 'bg-green-400'
                                       : 'bg-teal-400'} rounded-full shadow-[0_0_6px_currentColor]"
@@ -3888,7 +3888,7 @@
                                 : isFailed
                                   ? 'bg-red-500/15 text-red-400'
                                   : isLoading
-                                    ? 'bg-exo-medium-gray/60 text-exo-yellow'
+                                    ? 'bg-yellow-500/15 text-yellow-400'
                                     : isReady
                                       ? 'bg-green-500/15 text-green-400'
                                       : 'bg-teal-500/15 text-teal-400'}"
@@ -4698,7 +4698,7 @@
                             : isFailed
                               ? 'border-red-500/50'
                               : isLoading
-                                ? 'border-exo-yellow/20'
+                                ? 'border-yellow-500/50'
                                 : isReady
                                   ? 'border-green-500/50'
                                   : 'border-teal-500/50'}"
@@ -4709,7 +4709,7 @@
                             : isFailed
                               ? 'border-red-500/50'
                               : isLoading
-                                ? 'border-exo-yellow/20'
+                                ? 'border-yellow-500/50'
                                 : isReady
                                   ? 'border-green-500/50'
                                   : 'border-teal-500/50'}"
@@ -4720,7 +4720,7 @@
                             : isFailed
                               ? 'border-red-500/50'
                               : isLoading
-                                ? 'border-exo-yellow/20'
+                                ? 'border-yellow-500/50'
                                 : isReady
                                   ? 'border-green-500/50'
                                   : 'border-teal-500/50'}"
@@ -4731,7 +4731,7 @@
                             : isFailed
                               ? 'border-red-500/50'
                               : isLoading
-                                ? 'border-exo-yellow/20'
+                                ? 'border-yellow-500/50'
                                 : isReady
                                   ? 'border-green-500/50'
                                   : 'border-teal-500/50'}"
@@ -4743,7 +4743,7 @@
                             : isFailed
                               ? 'border-red-500/30 border-l-red-400'
                               : isLoading
-                                ? 'border-exo-yellow/30 border-l-exo-yellow'
+                                ? 'border-exo-yellow/30 border-l-yellow-400'
                                 : isReady
                                   ? 'border-green-500/30 border-l-green-400'
                                   : 'border-teal-500/30 border-l-teal-400'} p-3"
@@ -4758,7 +4758,7 @@
                                   : isFailed
                                     ? 'bg-red-400'
                                     : isLoading
-                                      ? 'bg-exo-yellow animate-pulse'
+                                      ? 'bg-yellow-400 animate-pulse'
                                       : isReady
                                         ? 'bg-green-400'
                                         : 'bg-teal-400'} rounded-full shadow-[0_0_6px_currentColor]"
@@ -4793,7 +4793,7 @@
                                   : isFailed
                                     ? 'bg-red-500/15 text-red-400'
                                     : isLoading
-                                      ? 'bg-exo-medium-gray/60 text-exo-yellow'
+                                      ? 'bg-yellow-500/15 text-yellow-400'
                                       : isReady
                                         ? 'bg-green-500/15 text-green-400'
                                         : 'bg-teal-500/15 text-teal-400'}"

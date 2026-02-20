@@ -378,7 +378,7 @@
                   handleSelectConversation(conversation.id)}
                 class="group w-full flex items-center justify-between p-2.5 rounded-lg mb-1 transition-all text-left cursor-pointer
 									{activeId === conversation.id
-                  ? 'bg-white/[0.05] border border-exo-yellow/20'
+                  ? 'bg-exo-yellow/5 border border-exo-yellow/30'
                   : 'hover:bg-white/[0.03] hover:border-white/10 border border-transparent'}"
               >
                 <div class="flex-1 min-w-0 pr-2">

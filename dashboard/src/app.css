@@ -80,7 +80,6 @@
 	}
 	html, body {
 		@apply bg-background text-foreground;
-		color-scheme: dark;
 		font-family: 'SF Mono', 'Fira Code', 'Monaco', 'Consolas', 'Liberation Mono', monospace;
 		letter-spacing: 0.02em;
 	}

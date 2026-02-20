@@ -221,7 +221,7 @@
         .attr("y", centerY)
         .attr("text-anchor", "middle")
         .attr("dominant-baseline", "middle")
-        .attr("fill", "rgba(179,179,179,0.5)")
+        .attr("fill", "rgba(255,215,0,0.4)")
         .attr("font-size", isMinimized ? 10 : 12)
         .attr("font-family", "SF Mono, monospace")
         .attr("letter-spacing", "0.1em")
@@ -575,12 +575,12 @@
               : "rgba(179,179,179,0.8)"; // Default
       const wireColorBright = "rgba(255,255,255,0.9)";
       const fillColor = isInFilter
-        ? "rgba(255,255,255,0.12)"
+        ? "rgba(255,215,0,0.25)"
         : isHovered
-          ? "rgba(255,255,255,0.06)"
+          ? "rgba(255,215,0,0.12)"
           : isHighlighted
-            ? "rgba(255,255,255,0.08)"
-            : "rgba(255,255,255,0.03)";
+            ? "rgba(255,215,0,0.15)"
+            : "rgba(255,215,0,0.08)";
       const strokeWidth = isInFilter
         ? 3
         : isHovered
