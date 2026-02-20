@@ -3,8 +3,7 @@ from datetime import datetime, timezone
 from random import random
 
 import anyio
-from anyio import CancelScope, create_task_group, fail_after
-from anyio.abc import TaskGroup
+from anyio import CancelScope, fail_after
 from loguru import logger
 
 from exo.shared.apply import apply
@@ -48,6 +47,7 @@ from exo.utils.event_buffer import OrderedBuffer
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
 from exo.utils.info_gatherer.net_profile import check_reachable
 from exo.utils.keyed_backoff import KeyedBackoff
+from exo.utils.lazy_task_group import LazyTaskGroup
 from exo.worker.plan import plan
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
@@ -77,7 +77,7 @@ class Worker:
 
         self.state: State = State()
         self.runners: dict[RunnerId, RunnerSupervisor] = {}
-        self._tg: TaskGroup = create_task_group()
+        self._tg: LazyTaskGroup = LazyTaskGroup()
 
         self._nack_cancel_scope: CancelScope | None = None
         self._nack_attempts: int = 0

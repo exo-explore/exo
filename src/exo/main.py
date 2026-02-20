@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from typing import Self
 
 import anyio
-from anyio.abc import TaskGroup
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -22,6 +21,7 @@ from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
+from exo.utils.lazy_task_group import LazyTaskGroup
 from exo.utils.pydantic_ext import CamelCaseModel
 from exo.worker.main import Worker
 
@@ -38,7 +38,7 @@ class Node:
 
     node_id: NodeId
     offline: bool
-    _tg: TaskGroup = field(init=False, default_factory=anyio.create_task_group)
+    _tg: LazyTaskGroup = field(init=False, default_factory=LazyTaskGroup)
 
     @classmethod
     async def create(cls, args: "Args") -> Self:
