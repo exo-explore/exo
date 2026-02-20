@@ -88,7 +88,7 @@
           <button
             type="button"
             class="px-2 py-1 text-xs font-mono rounded transition-colors {isSelected
-              ? 'bg-exo-medium-gray/60 text-exo-yellow border border-exo-yellow/25'
+              ? 'bg-exo-yellow/20 text-exo-yellow border border-exo-yellow/30'
               : 'bg-white/5 text-white/60 hover:bg-white/10 border border-transparent'}"
             onclick={() => toggleCapability(cap.id)}
           >
@@ -232,7 +232,7 @@
           <button
             type="button"
             class="px-2 py-1 text-xs font-mono rounded transition-colors {isSelected
-              ? 'bg-exo-medium-gray/60 text-exo-yellow border border-exo-yellow/25'
+              ? 'bg-exo-yellow/20 text-exo-yellow border border-exo-yellow/30'
               : 'bg-white/5 text-white/60 hover:bg-white/10 border border-transparent'}"
             onclick={() => selectSizeRange(range)}
           >

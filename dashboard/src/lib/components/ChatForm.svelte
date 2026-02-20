@@ -396,7 +396,7 @@
     <!-- Edit mode banner -->
     {#if isEditMode && currentEditingImage}
       <div
-        class="flex items-center gap-3 px-3 py-2 bg-exo-medium-gray/40 border-b border-exo-yellow/20"
+        class="flex items-center gap-3 px-3 py-2 bg-exo-yellow/10 border-b border-exo-yellow/30"
       >
         <img
           src={currentEditingImage.imageDataUrl}
@@ -551,7 +551,7 @@
             type="button"
             onclick={() => setConversationThinking(!thinkingEnabled)}
             class="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-mono tracking-wide transition-all duration-200 flex-shrink-0 cursor-pointer border {thinkingEnabled
-              ? 'bg-exo-medium-gray/50 border-exo-yellow/30 text-exo-yellow'
+              ? 'bg-exo-yellow/15 border-exo-yellow/40 text-exo-yellow'
               : 'bg-exo-medium-gray/30 border-exo-medium-gray/50 text-exo-light-gray/60 hover:text-exo-light-gray'}"
             title={thinkingEnabled
               ? "Thinking enabled — click to disable"

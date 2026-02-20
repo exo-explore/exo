@@ -767,7 +767,7 @@
                     'completed'
                       ? 'bg-green-500/10 text-green-400/80 border border-green-500/20'
                       : cellStatus.kind === 'downloading'
-                        ? 'bg-exo-medium-gray/50 text-exo-yellow/80 border border-exo-yellow/20'
+                        ? 'bg-exo-yellow/10 text-exo-yellow/80 border border-exo-yellow/20'
                         : cellStatus.kind === 'failed'
                           ? 'bg-red-500/10 text-red-400/80 border border-red-500/20'
                           : 'bg-white/5 text-white/50 border border-white/10'}"
