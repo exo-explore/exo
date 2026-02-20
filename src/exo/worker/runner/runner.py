@@ -143,7 +143,7 @@ def main(
     kv_prefix_cache: KVPrefixCache | None = None
     check_for_cancel_every: int | None = None
     context: Any = None                 # replaced group
-    kv_prefix_cache: Any = None         # (now, managed per-engine) KVPrefixCache | None 
+    kv_prefix_cache: Any = None         # (now, managed per-engine) KVPrefixCache | None
 
     current_status: RunnerStatus = RunnerIdle()
     logger.info("runner created")
@@ -255,6 +255,7 @@ def main(
                             math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
                         )
                         if group is not None:
+                            import mlx.core as mx
                             check_for_cancel_every = int(
                                 mx.max(
                                     mx.distributed.all_gather(
@@ -354,7 +355,7 @@ def main(
                                 want_to_cancel = (task.task_id in cancelled_tasks) or (
                                     TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
                                 )
-                                if mx_any(want_to_cancel, group):
+                                if any(want_to_cancel, group):
                                     break
 
                             match response:
@@ -582,7 +583,7 @@ def main(
             )
             if isinstance(current_status, RunnerShutdown):
                 del inference_model, image_model, tokenizer, group
-                mx.clear_cache()
+                engine.cleanup()
                 import gc
 
                 gc.collect()

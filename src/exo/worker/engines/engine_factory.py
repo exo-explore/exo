@@ -14,7 +14,7 @@ side-effects during runtime. This is critical since we are working with
 heterogenuous consumer-grade devices.
 """
 
-class Engine(BaseModel, frozen=True)
+class Engine(BaseModel, frozen=True):
     # (BoundInstance) -> context
     initialize: Callable[[BoundInstance], Any]
 
