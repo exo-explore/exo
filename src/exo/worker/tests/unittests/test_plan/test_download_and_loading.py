@@ -151,6 +151,41 @@ def test_plan_does_not_request_download_when_shard_already_downloaded():
     assert not isinstance(result, plan_mod.DownloadModel)
 
 
+def test_plan_loads_model_with_no_downloads_flag():
+    """
+    When no_downloads=True, plan() should skip download checks and proceed
+    to load the model even with empty global_download_status.
+    """
+    shard = get_pipeline_shard_metadata(model_id=MODEL_A_ID, device_rank=0)
+    instance = get_mlx_ring_instance(
+        instance_id=INSTANCE_1_ID,
+        model_id=MODEL_A_ID,
+        node_to_runner={NODE_A: RUNNER_1_ID},
+        runner_to_shard={RUNNER_1_ID: shard},
+    )
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
+    runner = FakeRunnerSupervisor(bound_instance=bound_instance, status=RunnerIdle())
+
+    runners = {RUNNER_1_ID: runner}
+    instances = {INSTANCE_1_ID: instance}
+    all_runners = {RUNNER_1_ID: RunnerIdle()}
+
+    result = plan_mod.plan(
+        node_id=NODE_A,
+        runners=runners,  # type: ignore
+        global_download_status={},
+        instances=instances,
+        all_runners=all_runners,
+        tasks={},
+        no_downloads=True,
+    )
+
+    assert isinstance(result, LoadModel)
+    assert result.instance_id == INSTANCE_1_ID
+
+
 def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
     """
     LoadModel should not be emitted while some shards are still missing from

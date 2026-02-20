@@ -51,15 +51,20 @@ def plan(
     tasks: Mapping[TaskId, Task],
     input_chunk_buffer: Mapping[CommandId, dict[int, str]] | None = None,
     input_chunk_counts: Mapping[CommandId, int] | None = None,
+    no_downloads: bool = False,
 ) -> Task | None:
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
         _cancel_tasks(runners, tasks)
         or _kill_runner(runners, all_runners, instances)
         or _create_runner(node_id, runners, instances)
-        or _model_needs_download(node_id, runners, global_download_status)
+        or (
+            None
+            if no_downloads
+            else _model_needs_download(node_id, runners, global_download_status)
+        )
         or _init_distributed_backend(runners, all_runners)
-        or _load_model(runners, all_runners, global_download_status)
+        or _load_model(runners, all_runners, global_download_status, no_downloads)
         or _ready_to_warmup(runners, all_runners)
         or _pending_tasks(runners, tasks, all_runners, input_chunk_buffer or {})
     )
@@ -192,22 +197,25 @@ def _load_model(
     runners: Mapping[RunnerId, RunnerSupervisor],
     all_runners: Mapping[RunnerId, RunnerStatus],
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+    no_downloads: bool = False,
 ) -> LoadModel | None:
     for runner in runners.values():
         instance = runner.bound_instance.instance
         shard_assignments = instance.shard_assignments
 
-        all_local_downloads_complete = all(
-            nid in global_download_status
-            and any(
-                isinstance(dp, DownloadCompleted)
-                and dp.shard_metadata.model_card.model_id == shard_assignments.model_id
-                for dp in global_download_status[nid]
+        if not no_downloads:
+            all_local_downloads_complete = all(
+                nid in global_download_status
+                and any(
+                    isinstance(dp, DownloadCompleted)
+                    and dp.shard_metadata.model_card.model_id
+                    == shard_assignments.model_id
+                    for dp in global_download_status[nid]
+                )
+                for nid in shard_assignments.node_to_runner
             )
-            for nid in shard_assignments.node_to_runner
-        )
-        if not all_local_downloads_complete:
-            continue
+            if not all_local_downloads_complete:
+                continue
 
         is_single_node_instance = len(instance.shard_assignments.runner_to_shard) == 1
         if is_single_node_instance and isinstance(runner.status, RunnerIdle):
