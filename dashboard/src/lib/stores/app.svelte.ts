@@ -239,6 +239,7 @@ interface RawStateResponse {
         domainUuid: string;
         linkSpeed: string;
       }>;
+      hasTb5?: boolean;
     }
   >;
   // RDMA ctl status per node
@@ -3253,6 +3254,28 @@ export const nodeIdentities = () => appStore.nodeIdentities;
 // Thunderbolt & RDMA status
 export const nodeThunderbolt = () => appStore.nodeThunderbolt;
 export const nodeRdmaCtl = () => appStore.nodeRdmaCtl;
+
+export const RDMA_REQUIRES_TB5_TOOLTIP =
+  "RDMA requires Thunderbolt 5; your device has Thunderbolt 4.";
+
+export function rdmaRequiresTb5Tooltip(
+  nodeThunderboltData: Record<
+    string,
+    { interfaces: unknown[]; hasTb5?: boolean }
+  > | null,
+  nodeId?: string
+): string | null {
+  if (!nodeThunderboltData) return null;
+  const entries = nodeId
+    ? [[nodeId, nodeThunderboltData[nodeId]]].filter(([, v]) => v != null)
+    : Object.entries(nodeThunderboltData);
+  for (const [, info] of entries) {
+    if (!info || !info.interfaces?.length) continue;
+    if (info.hasTb5 === true) continue;
+    return RDMA_REQUIRES_TB5_TOOLTIP;
+  }
+  return null;
+}
 export const thunderboltBridgeCycles = () => appStore.thunderboltBridgeCycles;
 export const nodeThunderboltBridge = () => appStore.nodeThunderboltBridge;
 

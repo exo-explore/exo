@@ -326,9 +326,15 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 event.node_id: NodeNetworkInfo(interfaces=info.ifaces),
             }
         case MacThunderboltIdentifiers():
+            has_tb5 = any(
+                "5" in (t.link_speed or "") for t in info.idents
+            )
             update["node_thunderbolt"] = {
                 **state.node_thunderbolt,
-                event.node_id: NodeThunderboltInfo(interfaces=info.idents),
+                event.node_id: NodeThunderboltInfo(
+                    interfaces=info.idents,
+                    has_tb5=has_tb5,
+                ),
             }
         case MacThunderboltConnections():
             conn_map = {

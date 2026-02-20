@@ -44,6 +44,7 @@
     toggleChatSidebarVisible,
     nodeThunderbolt,
     nodeRdmaCtl,
+    rdmaRequiresTb5Tooltip,
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
     nodeIdentities,
@@ -97,6 +98,11 @@
       buildVersion: id.osBuildVersion ?? "Unknown",
     }));
   });
+
+  // Tooltip when user has Thunderbolt 4 only (RDMA requires TB5)
+  const rdmaTb5Tooltip = $derived(
+    rdmaRequiresTb5Tooltip(tbIdentifiers ?? null)
+  );
 
   // Detect TB5 nodes where RDMA is not enabled
   const tb5WithoutRdma = $derived.by(() => {
@@ -3214,6 +3220,7 @@
                       selectedInstanceType = "MlxIbv";
                       saveLaunchDefaults();
                     }}
+                    title={rdmaTb5Tooltip ?? undefined}
                     class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
                     'MlxIbv'
                       ? 'bg-transparent text-exo-yellow border-exo-yellow'
