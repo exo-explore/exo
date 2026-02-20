@@ -36,6 +36,7 @@ class DownloadPending(BaseDownloadProgress):
 
 class DownloadCompleted(BaseDownloadProgress):
     total: Memory
+    read_only: bool = False
 
 
 class DownloadFailed(BaseDownloadProgress):

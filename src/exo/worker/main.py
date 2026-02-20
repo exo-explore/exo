@@ -227,6 +227,7 @@ class Worker:
                                     shard_metadata=shard,
                                     model_directory=str(found_path),
                                     total=shard.model_card.storage_size,
+                                    read_only=True,
                                 )
                             )
                         )

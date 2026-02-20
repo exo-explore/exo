@@ -12,10 +12,11 @@ from exo.download.download_utils import (
     RepoDownloadProgress,
     delete_model,
     map_repo_download_progress_to_download_progress_data,
+    resolve_model_in_path,
 )
 from exo.download.shard_downloader import ShardDownloader
-from exo.shared.constants import EXO_MODELS_DIR
-from exo.shared.models.model_cards import ModelId
+from exo.shared.constants import EXO_MODELS_DIR, EXO_MODELS_PATH
+from exo.shared.models.model_cards import ModelId, get_model_cards
 from exo.shared.types.commands import (
     CancelDownload,
     DeleteDownload,
@@ -38,7 +39,7 @@ from exo.shared.types.worker.downloads import (
     DownloadPending,
     DownloadProgress,
 )
-from exo.shared.types.worker.shards import ShardMetadata
+from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 from exo.utils.channels import Receiver, Sender, channel
 
 
@@ -214,6 +215,25 @@ class DownloadCoordinator:
                 )
                 return
 
+        # Check EXO_MODELS_PATH for pre-downloaded models
+        found_path = resolve_model_in_path(model_id)
+        if found_path is not None:
+            logger.info(
+                f"DownloadCoordinator: Model {model_id} found in EXO_MODELS_PATH at {found_path}"
+            )
+            completed = DownloadCompleted(
+                shard_metadata=shard,
+                node_id=self.node_id,
+                total=shard.model_card.storage_size,
+                model_directory=str(found_path),
+                read_only=True,
+            )
+            self.download_status[model_id] = completed
+            await self.event_sender.send(
+                NodeDownloadProgress(download_progress=completed)
+            )
+            return
+
         # Emit pending status
         progress = DownloadPending(
             shard_metadata=shard,
@@ -298,6 +318,15 @@ class DownloadCoordinator:
         self.active_downloads[model_id] = task
 
     async def _delete_download(self, model_id: ModelId) -> None:
+        # Protect read-only models (from EXO_MODELS_PATH) from deletion
+        if model_id in self.download_status:
+            current = self.download_status[model_id]
+            if isinstance(current, DownloadCompleted) and current.read_only:
+                logger.warning(
+                    f"Refusing to delete read-only model {model_id} (from EXO_MODELS_PATH)"
+                )
+                return
+
         # Cancel if active
         if model_id in self.active_downloads:
             logger.info(f"Cancelling active download for {model_id} before deletion")
@@ -397,6 +426,39 @@ class DownloadCoordinator:
                     await self.event_sender.send(
                         NodeDownloadProgress(download_progress=status)
                     )
+                # Scan EXO_MODELS_PATH for pre-downloaded models
+                if EXO_MODELS_PATH is not None:
+                    for card in await get_model_cards():
+                        mid = card.model_id
+                        if mid in self.active_downloads:
+                            continue
+                        if isinstance(
+                            self.download_status.get(mid),
+                            (DownloadCompleted, DownloadOngoing, DownloadFailed),
+                        ):
+                            continue
+                        found = resolve_model_in_path(mid)
+                        if found is not None:
+                            path_shard = PipelineShardMetadata(
+                                model_card=card,
+                                device_rank=0,
+                                world_size=1,
+                                start_layer=0,
+                                end_layer=card.n_layers,
+                                n_layers=card.n_layers,
+                            )
+                            path_completed: DownloadProgress = DownloadCompleted(
+                                node_id=self.node_id,
+                                shard_metadata=path_shard,
+                                total=card.storage_size,
+                                model_directory=str(found),
+                                read_only=True,
+                            )
+                            self.download_status[mid] = path_completed
+                            await self.event_sender.send(
+                                NodeDownloadProgress(download_progress=path_completed)
+                            )
+
                 logger.debug(
                     "DownloadCoordinator: Done emitting existing download progress."
                 )
