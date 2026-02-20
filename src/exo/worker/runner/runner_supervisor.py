@@ -100,8 +100,8 @@ class RunnerSupervisor:
         logger.info("Runner supervisor shutting down")
         self._ev_recv.close()
         self._task_sender.close()
-        self._event_sender.close()
-        self._cancel_sender.send(TaskId("CANCEL_CURRENT_TASK"))
+        with contextlib.suppress(ClosedResourceError):
+            self._cancel_sender.send(TaskId("CANCEL_CURRENT_TASK"))
         self._cancel_sender.close()
         self.runner_process.join(5)
         if not self.runner_process.is_alive():
@@ -180,6 +180,7 @@ class RunnerSupervisor:
                 await self._check_runner(e)
                 for tid in self.pending:
                     self.pending[tid].set()
+        self._event_sender.close()
 
     def __del__(self) -> None:
         if self.runner_process.is_alive():
@@ -208,10 +209,15 @@ class RunnerSupervisor:
 
         logger.opt(exception=e).error(f"Runner terminated ({cause})")
 
-        await self._event_sender.send(
-            RunnerStatusUpdated(
-                runner_id=self.bound_instance.bound_runner_id,
-                runner_status=RunnerFailed(error_message=f"Terminated ({cause})"),
+        try:
+            await self._event_sender.send(
+                RunnerStatusUpdated(
+                    runner_id=self.bound_instance.bound_runner_id,
+                    runner_status=RunnerFailed(error_message=f"Terminated ({cause})"),
+                )
             )
-        )
+        except (ClosedResourceError, BrokenResourceError):
+            logger.warning(
+                "Event sender already closed, unable to report runner failure"
+            )
         self.shutdown()

@@ -29,6 +29,12 @@ from exo.shared.types.openai_responses import (
     ResponseOutputItemAddedEvent,
     ResponseOutputItemDoneEvent,
     ResponseOutputText,
+    ResponseReasoningItem,
+    ResponseReasoningSummaryPartAddedEvent,
+    ResponseReasoningSummaryPartDoneEvent,
+    ResponseReasoningSummaryText,
+    ResponseReasoningSummaryTextDeltaEvent,
+    ResponseReasoningSummaryTextDoneEvent,
     ResponsesRequest,
     ResponsesResponse,
     ResponsesStreamEvent,
@@ -141,7 +147,9 @@ async def collect_responses_response(
     """Collect all token chunks and return a single ResponsesResponse."""
     response_id = f"resp_{command_id}"
     item_id = f"item_{command_id}"
+    reasoning_id = f"rs_{command_id}"
     accumulated_text = ""
+    thinking_parts: list[str] = []
     function_call_items: list[ResponseFunctionCallItem] = []
     last_usage: Usage | None = None
     error_message: str | None = None
@@ -168,6 +176,10 @@ async def collect_responses_response(
                 )
             continue
 
+        if chunk.is_thinking:
+            thinking_parts.append(chunk.text)
+            continue
+
         accumulated_text += chunk.text
 
     if error_message is not None:
@@ -182,13 +194,21 @@ async def collect_responses_response(
             total_tokens=last_usage.total_tokens,
         )
 
-    output: list[ResponseItem] = [
+    output: list[ResponseItem] = []
+    if thinking_parts:
+        output.append(
+            ResponseReasoningItem(
+                id=reasoning_id,
+                summary=[ResponseReasoningSummaryText(text="".join(thinking_parts))],
+            )
+        )
+    output.append(
         ResponseMessageItem(
             id=item_id,
             content=[ResponseOutputText(text=accumulated_text)],
             status="completed",
         )
-    ]
+    )
     output.extend(function_call_items)
 
     yield ResponsesResponse(
@@ -212,6 +232,7 @@ async def generate_responses_stream(
     """Generate OpenAI Responses API streaming events from TokenChunks."""
     response_id = f"resp_{command_id}"
     item_id = f"item_{command_id}"
+    reasoning_id = f"rs_{command_id}"
     seq = count(1)
 
     # response.created
@@ -233,32 +254,17 @@ async def generate_responses_stream(
     )
     yield _format_sse(in_progress_event)
 
-    # response.output_item.added
-    initial_item = ResponseMessageItem(
-        id=item_id,
-        content=[ResponseOutputText(text="")],
-        status="in_progress",
-    )
-    item_added = ResponseOutputItemAddedEvent(
-        sequence_number=next(seq), output_index=0, item=initial_item
-    )
-    yield _format_sse(item_added)
-
-    # response.content_part.added
-    initial_part = ResponseOutputText(text="")
-    part_added = ResponseContentPartAddedEvent(
-        sequence_number=next(seq),
-        item_id=item_id,
-        output_index=0,
-        content_index=0,
-        part=initial_part,
-    )
-    yield _format_sse(part_added)
-
     accumulated_text = ""
+    accumulated_thinking = ""
     function_call_items: list[ResponseFunctionCallItem] = []
     last_usage: Usage | None = None
-    next_output_index = 1  # message item is at 0
+    next_output_index = 0
+
+    # Track dynamic block creation
+    reasoning_started = False
+    reasoning_output_index = -1
+    message_started = False
+    message_output_index = -1
 
     async for chunk in chunk_stream:
         if isinstance(chunk, PrefillProgressChunk):
@@ -327,23 +333,184 @@ async def generate_responses_stream(
                 next_output_index += 1
             continue
 
+        if chunk.is_thinking:
+            # Start reasoning block on first thinking token
+            if not reasoning_started:
+                reasoning_started = True
+                reasoning_output_index = next_output_index
+                next_output_index += 1
+
+                # response.output_item.added for reasoning
+                reasoning_item = ResponseReasoningItem(
+                    id=reasoning_id,
+                    summary=[],
+                    status="in_progress",
+                )
+                rs_added = ResponseOutputItemAddedEvent(
+                    sequence_number=next(seq),
+                    output_index=reasoning_output_index,
+                    item=reasoning_item,
+                )
+                yield _format_sse(rs_added)
+
+                # response.reasoning_summary_part.added
+                part_added = ResponseReasoningSummaryPartAddedEvent(
+                    sequence_number=next(seq),
+                    item_id=reasoning_id,
+                    output_index=reasoning_output_index,
+                    summary_index=0,
+                    part=ResponseReasoningSummaryText(text=""),
+                )
+                yield _format_sse(part_added)
+
+            accumulated_thinking += chunk.text
+
+            # response.reasoning_summary_text.delta
+            rs_delta = ResponseReasoningSummaryTextDeltaEvent(
+                sequence_number=next(seq),
+                item_id=reasoning_id,
+                output_index=reasoning_output_index,
+                summary_index=0,
+                delta=chunk.text,
+            )
+            yield _format_sse(rs_delta)
+            continue
+
+        # Close reasoning block when transitioning to text
+        if reasoning_started and not message_started:
+            # response.reasoning_summary_text.done
+            rs_text_done = ResponseReasoningSummaryTextDoneEvent(
+                sequence_number=next(seq),
+                item_id=reasoning_id,
+                output_index=reasoning_output_index,
+                summary_index=0,
+                text=accumulated_thinking,
+            )
+            yield _format_sse(rs_text_done)
+
+            # response.reasoning_summary_part.done
+            rs_part_done = ResponseReasoningSummaryPartDoneEvent(
+                sequence_number=next(seq),
+                item_id=reasoning_id,
+                output_index=reasoning_output_index,
+                summary_index=0,
+                part=ResponseReasoningSummaryText(text=accumulated_thinking),
+            )
+            yield _format_sse(rs_part_done)
+
+            # response.output_item.done for reasoning
+            rs_item_done = ResponseOutputItemDoneEvent(
+                sequence_number=next(seq),
+                output_index=reasoning_output_index,
+                item=ResponseReasoningItem(
+                    id=reasoning_id,
+                    summary=[ResponseReasoningSummaryText(text=accumulated_thinking)],
+                ),
+            )
+            yield _format_sse(rs_item_done)
+
+        # Start message block on first text token
+        if not message_started:
+            message_started = True
+            message_output_index = next_output_index
+            next_output_index += 1
+
+            initial_item = ResponseMessageItem(
+                id=item_id,
+                content=[ResponseOutputText(text="")],
+                status="in_progress",
+            )
+            item_added = ResponseOutputItemAddedEvent(
+                sequence_number=next(seq),
+                output_index=message_output_index,
+                item=initial_item,
+            )
+            yield _format_sse(item_added)
+
+            initial_part = ResponseOutputText(text="")
+            part_added = ResponseContentPartAddedEvent(
+                sequence_number=next(seq),
+                item_id=item_id,
+                output_index=message_output_index,
+                content_index=0,
+                part=initial_part,
+            )
+            yield _format_sse(part_added)
+
         accumulated_text += chunk.text
 
         # response.output_text.delta
         delta_event = ResponseTextDeltaEvent(
             sequence_number=next(seq),
             item_id=item_id,
-            output_index=0,
+            output_index=message_output_index,
             content_index=0,
             delta=chunk.text,
         )
         yield _format_sse(delta_event)
 
+    # Close reasoning block if it was never followed by text
+    if reasoning_started and not message_started:
+        rs_text_done = ResponseReasoningSummaryTextDoneEvent(
+            sequence_number=next(seq),
+            item_id=reasoning_id,
+            output_index=reasoning_output_index,
+            summary_index=0,
+            text=accumulated_thinking,
+        )
+        yield _format_sse(rs_text_done)
+
+        rs_part_done = ResponseReasoningSummaryPartDoneEvent(
+            sequence_number=next(seq),
+            item_id=reasoning_id,
+            output_index=reasoning_output_index,
+            summary_index=0,
+            part=ResponseReasoningSummaryText(text=accumulated_thinking),
+        )
+        yield _format_sse(rs_part_done)
+
+        rs_item_done = ResponseOutputItemDoneEvent(
+            sequence_number=next(seq),
+            output_index=reasoning_output_index,
+            item=ResponseReasoningItem(
+                id=reasoning_id,
+                summary=[ResponseReasoningSummaryText(text=accumulated_thinking)],
+            ),
+        )
+        yield _format_sse(rs_item_done)
+
+    # If no message block was started, create one now (empty text)
+    if not message_started:
+        message_output_index = next_output_index
+        next_output_index += 1
+
+        initial_item = ResponseMessageItem(
+            id=item_id,
+            content=[ResponseOutputText(text="")],
+            status="in_progress",
+        )
+        item_added = ResponseOutputItemAddedEvent(
+            sequence_number=next(seq),
+            output_index=message_output_index,
+            item=initial_item,
+        )
+        yield _format_sse(item_added)
+
+        initial_part = ResponseOutputText(text="")
+        part_added_evt = ResponseContentPartAddedEvent(
+            sequence_number=next(seq),
+            item_id=item_id,
+            output_index=message_output_index,
+            content_index=0,
+            part=initial_part,
+        )
+        yield _format_sse(part_added_evt)
+
     # response.output_text.done
     text_done = ResponseTextDoneEvent(
         sequence_number=next(seq),
         item_id=item_id,
-        output_index=0,
+        output_index=message_output_index,
         content_index=0,
         text=accumulated_text,
     )
@@ -354,7 +521,7 @@ async def generate_responses_stream(
     part_done = ResponseContentPartDoneEvent(
         sequence_number=next(seq),
         item_id=item_id,
-        output_index=0,
+        output_index=message_output_index,
         content_index=0,
         part=final_part,
     )
@@ -367,7 +534,9 @@ async def generate_responses_stream(
         status="completed",
     )
     item_done = ResponseOutputItemDoneEvent(
-        sequence_number=next(seq), output_index=0, item=final_message_item
+        sequence_number=next(seq),
+        output_index=message_output_index,
+        item=final_message_item,
     )
     yield _format_sse(item_done)
 
@@ -381,7 +550,15 @@ async def generate_responses_stream(
         )
 
     # response.completed
-    output: list[ResponseItem] = [final_message_item]
+    output: list[ResponseItem] = []
+    if reasoning_started:
+        output.append(
+            ResponseReasoningItem(
+                id=reasoning_id,
+                summary=[ResponseReasoningSummaryText(text=accumulated_thinking)],
+            )
+        )
+    output.append(final_message_item)
     output.extend(function_call_items)
     final_response = ResponsesResponse(
         id=response_id,
