@@ -37,7 +37,7 @@ def entrypoint(
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:
-        from exo.worker.runner.runner import main
+        from exo.worker.runner.llm_inference.runner import main
 
         main(bound_instance, event_sender, task_receiver, cancel_receiver)
     except ClosedResourceError:

@@ -6,7 +6,7 @@ from typing import Callable
 import mlx.core as mx
 import pytest
 
-import exo.worker.runner.runner as mlx_runner
+import exo.worker.runner.llm_inference.runner as mlx_runner
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.events import (
     ChunkGenerated,
