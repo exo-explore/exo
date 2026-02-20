@@ -1948,32 +1948,12 @@
       {/if}
 
       {#if tb5WithoutRdma && !tb5InfoDismissed}
-        <div
-          class="flex items-center gap-2 px-3 py-2 rounded border border-blue-400/50 bg-blue-400/10 backdrop-blur-sm"
-          role="status"
-        >
-          <svg
-            class="w-5 h-5 text-blue-400 flex-shrink-0"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              d={infoIconPath}
-            />
-          </svg>
-          <span class="text-sm font-mono text-blue-200"> RDMA AVAILABLE </span>
-          <button
-            type="button"
-            onclick={() => (tb5InfoDismissed = true)}
-            class="ml-1 text-blue-300/60 hover:text-blue-200 transition-colors cursor-pointer"
-            title="Dismiss"
+        <div class="group relative" role="status">
+          <div
+            class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
           >
             <svg
-              class="w-4 h-4"
+              class="w-5 h-5 text-yellow-400 flex-shrink-0"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -1982,10 +1962,59 @@
               <path
                 stroke-linecap="round"
                 stroke-linejoin="round"
-                d="M6 18L18 6M6 6l12 12"
+                d={warningIconPath}
               />
             </svg>
-          </button>
+            <span class="text-sm font-mono text-yellow-200"> RDMA NOT ENABLED </span>
+            <button
+              type="button"
+              onclick={() => (tb5InfoDismissed = true)}
+              class="ml-1 text-yellow-300/60 hover:text-yellow-200 transition-colors cursor-pointer"
+              title="Dismiss"
+            >
+              <svg
+                class="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          </div>
+          <!-- Tooltip on hover -->
+          <div
+            class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+          >
+            <p class="text-xs text-white/80 mb-2">
+              Thunderbolt 5 hardware detected on multiple nodes. Enable
+              RDMA for significantly faster inter-node communication.
+            </p>
+            <p class="text-xs text-white/60 mb-1.5">
+              <span class="text-yellow-300">To enable:</span>
+            </p>
+            <ol
+              class="text-xs text-white/60 list-decimal list-inside space-y-0.5 mb-1.5"
+            >
+              <li>Connect nodes with TB5 cables</li>
+              <li>Boot to Recovery (hold power 10s → Options)</li>
+              <li>
+                Run
+                <code class="text-yellow-300 bg-yellow-400/10 px-1 rounded"
+                  >rdma_ctl enable</code
+                >
+              </li>
+              <li>Reboot</li>
+            </ol>
+            <p class="text-xs text-white/40">
+              Requires macOS 26.2+, TB5 cables, and matching OS versions.
+            </p>
+          </div>
         </div>
       {/if}
 
@@ -2289,11 +2318,11 @@
       {/if}
       {#if tb5WithoutRdma && !tb5InfoDismissed}
         <div
-          class="flex items-center gap-1.5 px-2 py-1 rounded border border-blue-400/50 bg-blue-400/10 backdrop-blur-sm"
-          title="Thunderbolt 5 detected — RDMA can be enabled for better performance"
+          class="flex items-center gap-1.5 px-2 py-1 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm"
+          title="Thunderbolt 5 detected — RDMA not enabled. Enable for faster inter-node communication."
         >
           <svg
-            class="w-3.5 h-3.5 text-blue-400"
+            class="w-3.5 h-3.5 text-yellow-400"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -2302,10 +2331,10 @@
             <path
               stroke-linecap="round"
               stroke-linejoin="round"
-              d={infoIconPath}
+              d={warningIconPath}
             />
           </svg>
-          <span class="text-[10px] font-mono text-blue-200">RDMA AVAILABLE</span
+          <span class="text-[10px] font-mono text-yellow-200">RDMA NOT ENABLED</span
           >
         </div>
       {/if}
@@ -2403,38 +2432,19 @@
 
           {@render clusterWarnings()}
 
-          <!-- TB5 RDMA Available Info -->
+          <!-- TB5 RDMA Not Enabled Warning -->
           {#if tb5WithoutRdma && !tb5InfoDismissed}
             <div
-              class="absolute left-4 flex items-center gap-2 px-3 py-2 rounded border border-blue-400/50 bg-blue-400/10 backdrop-blur-sm"
+              class="absolute left-4 group"
               class:top-16={tbBridgeCycles.length > 0}
               class:top-4={tbBridgeCycles.length === 0}
               role="status"
             >
-              <svg
-                class="w-5 h-5 text-blue-400 flex-shrink-0"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-              <span class="text-sm font-mono text-blue-200">
-                RDMA AVAILABLE
-              </span>
-              <button
-                type="button"
-                onclick={() => (tb5InfoDismissed = true)}
-                class="ml-1 text-blue-300/60 hover:text-blue-200 transition-colors cursor-pointer"
-                title="Dismiss"
+              <div
+                class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
               >
                 <svg
-                  class="w-4 h-4"
+                  class="w-5 h-5 text-yellow-400 flex-shrink-0"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -2443,10 +2453,61 @@
                   <path
                     stroke-linecap="round"
                     stroke-linejoin="round"
-                    d="M6 18L18 6M6 6l12 12"
+                    d={warningIconPath}
                   />
                 </svg>
-              </button>
+                <span class="text-sm font-mono text-yellow-200">
+                  RDMA NOT ENABLED
+                </span>
+                <button
+                  type="button"
+                  onclick={() => (tb5InfoDismissed = true)}
+                  class="ml-1 text-yellow-300/60 hover:text-yellow-200 transition-colors cursor-pointer"
+                  title="Dismiss"
+                >
+                  <svg
+                    class="w-4 h-4"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+              </div>
+              <!-- Tooltip on hover -->
+              <div
+                class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+              >
+                <p class="text-xs text-white/80 mb-2">
+                  Thunderbolt 5 hardware detected on multiple nodes. Enable
+                  RDMA for significantly faster inter-node communication.
+                </p>
+                <p class="text-xs text-white/60 mb-1.5">
+                  <span class="text-yellow-300">To enable:</span>
+                </p>
+                <ol
+                  class="text-xs text-white/60 list-decimal list-inside space-y-0.5 mb-1.5"
+                >
+                  <li>Connect nodes with TB5 cables</li>
+                  <li>Boot to Recovery (hold power 10s → Options)</li>
+                  <li>
+                    Run
+                    <code class="text-yellow-300 bg-yellow-400/10 px-1 rounded"
+                      >rdma_ctl enable</code
+                    >
+                  </li>
+                  <li>Reboot</li>
+                </ol>
+                <p class="text-xs text-white/40">
+                  Requires macOS 26.2+, TB5 cables, and matching OS versions.
+                </p>
+              </div>
             </div>
           {/if}
 
@@ -2495,7 +2556,7 @@
 
             {@render clusterWarnings()}
 
-            <!-- TB5 RDMA Available Info -->
+            <!-- TB5 RDMA Not Enabled Warning -->
             {#if tb5WithoutRdma && !tb5InfoDismissed}
               <div
                 class="absolute left-4 group"
@@ -2504,10 +2565,10 @@
                 role="status"
               >
                 <div
-                  class="flex items-center gap-2 px-3 py-2 rounded border border-blue-400/50 bg-blue-400/10 backdrop-blur-sm"
+                  class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
                 >
                   <svg
-                    class="w-5 h-5 text-blue-400 flex-shrink-0"
+                    class="w-5 h-5 text-yellow-400 flex-shrink-0"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -2516,16 +2577,16 @@
                     <path
                       stroke-linecap="round"
                       stroke-linejoin="round"
-                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      d={warningIconPath}
                     />
                   </svg>
-                  <span class="text-sm font-mono text-blue-200">
-                    RDMA AVAILABLE
+                  <span class="text-sm font-mono text-yellow-200">
+                    RDMA NOT ENABLED
                   </span>
                   <button
                     type="button"
                     onclick={() => (tb5InfoDismissed = true)}
-                    class="ml-1 text-blue-300/60 hover:text-blue-200 transition-colors cursor-pointer"
+                    class="ml-1 text-yellow-300/60 hover:text-yellow-200 transition-colors cursor-pointer"
                     title="Dismiss"
                   >
                     <svg
@@ -2546,14 +2607,14 @@
 
                 <!-- Tooltip on hover -->
                 <div
-                  class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-blue-400/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+                  class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
                 >
                   <p class="text-xs text-white/80 mb-2">
                     Thunderbolt 5 hardware detected on multiple nodes. Enable
                     RDMA for significantly faster inter-node communication.
                   </p>
                   <p class="text-xs text-white/60 mb-1.5">
-                    <span class="text-blue-300">To enable:</span>
+                    <span class="text-yellow-300">To enable:</span>
                   </p>
                   <ol
                     class="text-xs text-white/60 list-decimal list-inside space-y-0.5 mb-1.5"
@@ -2562,7 +2623,7 @@
                     <li>Boot to Recovery (hold power 10s → Options)</li>
                     <li>
                       Run
-                      <code class="text-blue-300 bg-blue-400/10 px-1 rounded"
+                      <code class="text-yellow-300 bg-yellow-400/10 px-1 rounded"
                         >rdma_ctl enable</code
                       >
                     </li>
