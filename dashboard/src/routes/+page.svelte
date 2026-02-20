@@ -257,13 +257,13 @@
   // ── Steps 1-5 animation state: cinematic SVG story ──
   const SIMULATED_STUDIO_GB = 256; // simulated Mac Studio memory
   const onboardingCombinedGB = $derived(
-    Math.round(clusterTotalMemoryGB() + SIMULATED_STUDIO_GB),
+    userDeviceInfo.memoryGB + SIMULATED_STUDIO_GB,
   );
 
   // Models unlocked by adding the second device — one per base model, well-known preferred
   const unlockedModels = $derived.by(() => {
     if (models.length === 0) return [];
-    const singleGB = clusterTotalMemoryGB();
+    const singleGB = userDeviceInfo.memoryGB;
     const combinedGB = onboardingCombinedGB;
     const candidates = models
       .filter((m) => {
