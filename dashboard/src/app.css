@@ -16,9 +16,10 @@
 	/* Gotham-inspired accent colors */
 	--exo-grid: oklch(0.25 0 0);
 	--exo-scanline: oklch(0.15 0 0);
-	--exo-glow-yellow: 0 0 20px oklch(0.85 0.18 85 / 0.3);
-	--exo-glow-yellow-strong: 0 0 40px oklch(0.85 0.18 85 / 0.5);
-	
+	--exo-glow-yellow: oklch(0.85 0.18 85 / 0.3);
+	--exo-glow-yellow-strong: oklch(0.85 0.18 85 / 0.5);
+	--exo-bg-hover: oklch(0.18 0 0);
+
 	/* Theme Variables */
 	--radius: 0.375rem;
 	--background: var(--exo-black);
@@ -39,6 +40,237 @@
 	--border: oklch(0.22 0 0);
 	--input: oklch(0.22 0 0);
 	--ring: var(--exo-yellow);
+}
+
+/* ============================================================
+   LIGHT THEME — "Mission Control, Dawn Shift"
+   Warm parchment + deep amber. Applied when <html> has .light class.
+   ============================================================ */
+html.light {
+	/* EXO brand palette — warm amber shift */
+	--exo-black: oklch(0.97 0.015 80);
+	--exo-dark-gray: oklch(0.92 0.012 80);
+	--exo-medium-gray: oklch(0.83 0.009 78);
+	--exo-light-gray: oklch(0.50 0.018 75);
+	--exo-yellow: oklch(0.50 0.14 65);
+	--exo-yellow-darker: oklch(0.40 0.13 65);
+	--exo-yellow-glow: oklch(0.60 0.14 65);
+
+	--exo-grid: oklch(0.88 0.009 80);
+	--exo-scanline: oklch(0.93 0.010 80);
+	--exo-glow-yellow: oklch(0.50 0.14 65 / 0.12);
+	--exo-glow-yellow-strong: oklch(0.50 0.14 65 / 0.22);
+	--exo-bg-hover: oklch(0.89 0.010 80);
+
+	/* Semantic tokens */
+	--background: oklch(0.97 0.015 80);
+	--foreground: oklch(0.13 0.015 75);
+	--card: oklch(0.92 0.012 80);
+	--card-foreground: oklch(0.13 0.015 75);
+	--popover: oklch(0.95 0.012 80);
+	--popover-foreground: oklch(0.13 0.015 75);
+	--primary: oklch(0.50 0.14 65);
+	--primary-foreground: oklch(0.97 0.015 80);
+	--secondary: oklch(0.88 0.008 80);
+	--secondary-foreground: oklch(0.15 0.012 75);
+	--muted: oklch(0.90 0.009 80);
+	--muted-foreground: oklch(0.50 0.018 75);
+	--accent: oklch(0.88 0.008 80);
+	--accent-foreground: oklch(0.15 0.012 75);
+	--destructive: oklch(0.52 0.22 25);
+	--border: oklch(0.84 0.007 78);
+	--input: oklch(0.87 0.008 80);
+	--ring: oklch(0.50 0.14 65);
+}
+
+/* ============================================================
+   LIGHT MODE UTILITY OVERRIDES
+   ============================================================ */
+html.light {
+	& .text-white,
+	& .text-white\/90,
+	& .text-white\/80,
+	& .text-white\/70 {
+		color: var(--foreground) !important;
+	}
+	& .text-white\/60,
+	& .text-white\/50 {
+		color: color-mix(in oklch, var(--foreground) 60%, transparent) !important;
+	}
+	& .text-white\/40,
+	& .text-white\/30 {
+		color: color-mix(in oklch, var(--foreground) 38%, transparent) !important;
+	}
+
+	& .bg-black\/80,
+	& .bg-black\/60,
+	& .bg-black\/50,
+	& .bg-black\/40 {
+		background-color: oklch(0.90 0.010 80 / 0.7) !important;
+	}
+	& [class*="bg-exo-black/"] {
+		background-color: oklch(0.90 0.010 80 / 0.6) !important;
+	}
+	& [class*="shadow-black"] {
+		--tw-shadow-color: oklch(0.30 0.010 75 / 0.10) !important;
+	}
+
+	& ::-webkit-scrollbar-track {
+		background: oklch(0.93 0.010 80) !important;
+	}
+	& ::-webkit-scrollbar-thumb {
+		background: oklch(0.76 0.010 78) !important;
+	}
+	& ::-webkit-scrollbar-thumb:hover {
+		background: oklch(0.50 0.14 65 / 0.6) !important;
+	}
+
+	& .command-panel {
+		background: linear-gradient(
+			180deg,
+			oklch(0.94 0.012 80 / 0.96) 0%,
+			oklch(0.91 0.010 80 / 0.98) 100%
+		) !important;
+		border-color: oklch(0.82 0.008 78) !important;
+		box-shadow:
+			inset 0 1px 0 oklch(1 0 0 / 0.6),
+			0 4px 20px oklch(0.30 0.010 75 / 0.08) !important;
+	}
+
+	& .glow-text {
+		text-shadow:
+			0 0 12px oklch(0.50 0.14 65 / 0.20),
+			0 1px 3px oklch(0.30 0.010 75 / 0.12) !important;
+	}
+
+	& .grid-bg {
+		background-image:
+			linear-gradient(oklch(0.75 0.008 78 / 0.25) 1px, transparent 1px),
+			linear-gradient(90deg, oklch(0.75 0.008 78 / 0.25) 1px, transparent 1px) !important;
+	}
+
+	& .scanlines::before {
+		background: repeating-linear-gradient(
+			0deg,
+			transparent,
+			transparent 2px,
+			oklch(0.50 0.010 78 / 0.018) 2px,
+			oklch(0.50 0.010 78 / 0.018) 4px
+		) !important;
+	}
+
+	& .crt-screen {
+		background: radial-gradient(
+			ellipse at center,
+			oklch(0.95 0.012 80) 0%,
+			oklch(0.92 0.010 80) 50%,
+			oklch(0.89 0.009 80) 100%
+		) !important;
+		box-shadow:
+			inset 0 0 60px oklch(0.30 0.010 75 / 0.04),
+			0 0 30px oklch(0.50 0.14 65 / 0.04) !important;
+	}
+
+	& .graph-link {
+		stroke: oklch(0.50 0.018 75 / 0.45) !important;
+		filter: none !important;
+	}
+	& .graph-link-active {
+		stroke: oklch(0.50 0.14 65 / 0.75) !important;
+		filter: none !important;
+	}
+
+	& .shooting-stars {
+		display: none !important;
+	}
+
+	& img[alt="EXO"] {
+		filter: brightness(0) drop-shadow(0 0 6px oklch(0.30 0.010 75 / 0.10)) !important;
+	}
+
+	& .text-red-400 { color: oklch(0.52 0.22 25) !important; }
+	& .text-green-400 { color: oklch(0.48 0.17 155) !important; }
+	& .text-blue-200,
+	& .text-blue-300,
+	& .text-blue-400 { color: oklch(0.48 0.17 250) !important; }
+
+	& .bg-red-500\/10 { background-color: oklch(0.52 0.22 25 / 0.07) !important; }
+	& .bg-red-500\/20 { background-color: oklch(0.52 0.22 25 / 0.11) !important; }
+	& .bg-red-500\/30 { background-color: oklch(0.52 0.22 25 / 0.14) !important; }
+
+	& textarea,
+	& input[type="text"] { color: var(--foreground) !important; }
+	& textarea::placeholder,
+	& input::placeholder { color: oklch(0.50 0.012 78 / 0.55) !important; }
+
+	& .code-block-wrapper,
+	& .math-display-wrapper {
+		background: oklch(0.95 0.010 80) !important;
+		border-color: oklch(0.83 0.007 78) !important;
+	}
+	& .code-block-header,
+	& .math-display-header {
+		background: oklch(0.91 0.009 80) !important;
+		border-color: oklch(0.85 0.007 78) !important;
+	}
+	& .inline-code {
+		background: oklch(0.89 0.009 80) !important;
+		color: oklch(0.20 0.012 75) !important;
+	}
+
+	& blockquote { background: oklch(0.93 0.010 80) !important; }
+	& th {
+		background: oklch(0.90 0.009 80) !important;
+		border-color: oklch(0.80 0.007 78) !important;
+	}
+	& td { border-color: oklch(0.84 0.007 78) !important; }
+	& hr { border-color: oklch(0.84 0.007 78) !important; }
+
+	& .hljs { color: oklch(0.22 0.012 75) !important; }
+	& .hljs-keyword, & .hljs-selector-tag, & .hljs-literal, & .hljs-section, & .hljs-link {
+		color: oklch(0.45 0.18 300) !important;
+	}
+	& .hljs-string, & .hljs-title, & .hljs-name, & .hljs-type,
+	& .hljs-attribute, & .hljs-symbol, & .hljs-bullet, & .hljs-addition,
+	& .hljs-variable, & .hljs-template-tag, & .hljs-template-variable {
+		color: oklch(0.45 0.14 65) !important;
+	}
+	& .hljs-comment, & .hljs-quote, & .hljs-deletion, & .hljs-meta {
+		color: oklch(0.55 0.010 78) !important;
+	}
+	& .hljs-number, & .hljs-regexp, & .hljs-built_in {
+		color: oklch(0.45 0.15 160) !important;
+	}
+	& .hljs-function, & .hljs-class .hljs-title {
+		color: oklch(0.42 0.17 240) !important;
+	}
+
+	& .katex, & .katex .mord, & .katex .minner, & .katex .mop,
+	& .katex .mbin, & .katex .mrel, & .katex .mpunct {
+		color: oklch(0.15 0.012 75) !important;
+	}
+	& .katex .frac-line, & .katex .overline-line, & .katex .underline-line,
+	& .katex .hline, & .katex .rule {
+		border-color: oklch(0.25 0.012 75) !important;
+		background: oklch(0.25 0.012 75) !important;
+	}
+	& .katex svg { fill: oklch(0.25 0.012 75) !important; stroke: oklch(0.25 0.012 75) !important; }
+	& .katex svg path { stroke: oklch(0.25 0.012 75) !important; }
+	& .katex .mopen, & .katex .mclose,
+	& .katex .delimsizing, & [class^="katex .delim-size"] {
+		color: oklch(0.35 0.012 75) !important;
+	}
+
+	& .latex-proof { background: oklch(0.96 0.010 80) !important; border-left-color: oklch(0.72 0.010 78) !important; }
+	& .latex-proof-header { color: oklch(0.22 0.012 75) !important; }
+	& .latex-proof-content { color: oklch(0.15 0.012 75) !important; }
+	& .latex-proof-content::after { color: oklch(0.48 0.012 75) !important; }
+	& .latex-theorem { background: oklch(0.94 0.010 80) !important; border-color: oklch(0.80 0.008 78) !important; }
+	& .latex-diagram-placeholder {
+		background: oklch(0.96 0.010 80) !important;
+		border-color: oklch(0.80 0.008 78) !important;
+		color: oklch(0.38 0.012 75) !important;
+	}
 }
 
 @theme inline {

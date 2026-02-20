@@ -1,7 +1,15 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 	<head>
 		<meta charset="utf-8" />
+		<script>
+			try {
+				if (localStorage.getItem('exo-theme') === 'light') {
+					document.documentElement.classList.remove('dark');
+					document.documentElement.classList.add('light');
+				}
+			} catch (_) {}
+		</script>
 		<link rel="icon" href="%sveltekit.assets%/favicon.ico" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>EXO</title>
