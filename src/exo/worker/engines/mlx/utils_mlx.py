@@ -58,6 +58,8 @@ from exo.worker.engines.mlx.auto_parallel import (
     LayerLoadedCallback,
     TimeoutCallback,
     eval_with_timeout,
+    get_inner_model,
+    get_layers,
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
@@ -169,6 +171,26 @@ def initialize_mlx(
     return mlx_distributed_init(bound_instance)
 
 
+def _eval_layers_with_progress(
+    model: nn.Module,
+    on_layer_loaded: LayerLoadedCallback | None = None,
+) -> None:
+    """Evaluate model layers one by one, reporting progress via callback."""
+    try:
+        inner = get_inner_model(model)
+        layers = get_layers(inner)
+    except ValueError:
+        # Model doesn't have standard layer structure — eval all at once
+        mx.eval(model)
+        return
+
+    total = len(layers)
+    for i, layer in enumerate(layers):
+        mx.eval(layer)  # type: ignore
+        if on_layer_loaded is not None:
+            on_layer_loaded(i + 1, total)
+
+
 def load_mlx_items(
     bound_instance: BoundInstance,
     group: Group | None,
@@ -179,7 +201,9 @@ def load_mlx_items(
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
         start_time = time.perf_counter()
-        model, _ = load_model(model_path, strict=True)
+        model, _ = load_model(model_path, lazy=True, strict=False)
+        _eval_layers_with_progress(model, on_layer_loaded)
+        mx.eval(model)
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
         tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)

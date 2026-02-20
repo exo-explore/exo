@@ -3156,7 +3156,7 @@
                 {onboardingCombinedGB} GB combined
               </text>
 
-              <!-- Step 2: Models unlocked — simple fade-in -->
+              <!-- Step 2: Models unlocked — staggered slide-up + yellow glow -->
               {#if unlockedModels.length > 0 && $chipPhase > 0.01}
                 {@const centerX = ($device1X + $device2X) / 2}
                 {@const chipW = 140}
@@ -3164,29 +3164,51 @@
                 {@const chipGap = 12}
                 {@const totalW = unlockedModels.length * chipW + (unlockedModels.length - 1) * chipGap}
                 {@const startX = centerX - totalW / 2}
-                <!-- Header -->
-                {@const headerOpacity = Math.min(1, $chipPhase)}
+                <!-- SVG filter for yellow glow -->
+                <defs>
+                  <filter id="chip-glow" x="-50%" y="-50%" width="200%" height="200%">
+                    <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur" />
+                    <feColorMatrix in="blur" type="matrix" values="1 0.8 0 0 0  0.8 0.7 0 0 0  0 0 0 0 0  0 0 0 0.4 0" result="glow" />
+                    <feMerge>
+                      <feMergeNode in="glow" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                </defs>
+                <!-- Header slides up + fades with yellow tint -->
+                {@const headerProgress = Math.min(1, $chipPhase)}
+                {@const headerY = 332 + 12 * (1 - headerProgress)}
+                {@const yellowR = 234}
+                {@const yellowG = 179}
+                {@const yellowB = 8}
                 <text
                   x={centerX}
-                  y="332"
+                  y={headerY}
                   text-anchor="middle"
                   dominant-baseline="middle"
-                  fill="rgba(255,255,255,{0.4 * headerOpacity})"
-                  opacity={headerOpacity}
+                  fill="rgba({yellowR},{yellowG},{yellowB},{0.5 * headerProgress})"
+                  opacity={headerProgress}
                   style="font-size: 10px; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; font-weight: 500; letter-spacing: 0.1em;"
                 >
                   NEW MODELS UNLOCKED
                 </text>
-                <!-- Model chips — staggered fade-in -->
+                <!-- Model chips — staggered slide-up + scale + yellow highlight -->
                 {#each unlockedModels as model, i}
                   {@const stagger = i * 0.6}
                   {@const progress = Math.max(0, Math.min(1, $chipPhase - stagger))}
                   {@const modelName = (model.name || model.id.split('/').pop() || '').slice(0, 18)}
                   {@const modelSize = Math.round(getModelSizeGB(model))}
+                  {@const slideY = 16 * (1 - progress)}
+                  {@const chipScale = 0.85 + 0.15 * progress}
+                  <!-- Yellow highlight peaks at ~0.6 progress then settles to subtle -->
+                  {@const highlightPeak = progress < 0.6 ? progress / 0.6 : 1 - (progress - 0.6) / 0.4 * 0.6}
+                  {@const borderYellow = 0.15 + 0.35 * highlightPeak}
+                  {@const fillYellow = 0.02 + 0.06 * highlightPeak}
                   {#if progress > 0}
                     <g
-                      transform="translate({startX + i * (chipW + chipGap) + chipW / 2}, 358)"
+                      transform="translate({startX + i * (chipW + chipGap) + chipW / 2}, {358 + slideY}) scale({chipScale})"
                       opacity={progress}
+                      filter={highlightPeak > 0.3 ? "url(#chip-glow)" : "none"}
                     >
                       <rect
                         x={-chipW / 2}
@@ -3194,8 +3216,8 @@
                         width={chipW}
                         height={chipH}
                         rx="15"
-                        fill="rgba(255,255,255,0.03)"
-                        stroke="rgba(255,255,255,0.12)"
+                        fill="rgba({yellowR},{yellowG},{yellowB},{fillYellow})"
+                        stroke="rgba({yellowR},{yellowG},{yellowB},{borderYellow})"
                         stroke-width="1"
                       />
                       <text
@@ -3203,7 +3225,7 @@
                         y={modelSize ? -4 : 1}
                         text-anchor="middle"
                         dominant-baseline="middle"
-                        fill="rgba(255,255,255,0.8)"
+                        fill="rgba(255,255,255,{0.5 + 0.3 * progress})"
                         style="font-size: 10px; font-family: 'SF Mono', ui-monospace, monospace; font-weight: 500;"
                       >
                         {modelName}
@@ -3214,7 +3236,7 @@
                           y="8"
                           text-anchor="middle"
                           dominant-baseline="middle"
-                          fill="rgba(255,255,255,0.3)"
+                          fill="rgba(255,255,255,{0.15 + 0.15 * progress})"
                           style="font-size: 8px; font-family: 'SF Mono', ui-monospace, monospace; font-weight: 400;"
                         >
                           {modelSize} GB
@@ -4016,10 +4038,8 @@
                     {@const statusText = downloadInfo.statusText}
                     {@const isDownloading = downloadInfo.isDownloading}
                     {@const isFailed = statusText === "FAILED"}
-                    {@const isLoading =
-                      statusText === "LOADING" ||
-                      statusText === "WARMING UP" ||
-                      statusText === "WAITING"}
+                    {@const isLoading = statusText === "LOADING"}
+                    {@const isWarmingUp = statusText === "WARMING UP" || statusText === "WAITING"}
                     {@const isReady =
                       statusText === "READY" || statusText === "LOADED"}
                     {@const isRunning = statusText === "RUNNING"}
@@ -4461,6 +4481,12 @@
                                     Loading model into memory...
                                   </p>
                                 {/if}
+                              {:else if isWarmingUp}
+                                <p
+                                  class="text-[11px] text-white/50 leading-relaxed"
+                                >
+                                  Warming up...
+                                </p>
                               {:else if isReady || isRunning}
                                 <p
                                   class="text-[11px] text-green-400/70 leading-relaxed"
@@ -4935,10 +4961,8 @@
                       {@const statusText = downloadInfo.statusText}
                       {@const isDownloading = downloadInfo.isDownloading}
                       {@const isFailed = statusText === "FAILED"}
-                      {@const isLoading =
-                        statusText === "LOADING" ||
-                        statusText === "WARMING UP" ||
-                        statusText === "WAITING"}
+                      {@const isLoading = statusText === "LOADING"}
+                      {@const isWarmingUp = statusText === "WARMING UP" || statusText === "WAITING"}
                       {@const isReady =
                         statusText === "READY" || statusText === "LOADED"}
                       {@const isRunning = statusText === "RUNNING"}
@@ -5380,6 +5404,12 @@
                                       Loading model into memory...
                                     </p>
                                   {/if}
+                                {:else if isWarmingUp}
+                                  <p
+                                    class="text-[11px] text-white/50 leading-relaxed"
+                                  >
+                                    Warming up...
+                                  </p>
                                 {:else if isReady || isRunning}
                                   <p
                                     class="text-[11px] text-green-400/70 leading-relaxed"

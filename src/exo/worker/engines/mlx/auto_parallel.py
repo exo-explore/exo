@@ -187,7 +187,7 @@ def set_pipeline_prefill(model: nn.Module, is_prefill: bool) -> None:
             layer.is_prefill = is_prefill
 
 
-def _inner_model(model: nn.Module) -> nn.Module:
+def get_inner_model(model: nn.Module) -> nn.Module:
     inner = getattr(model, "model", None)
     if isinstance(inner, nn.Module):
         return inner
@@ -205,7 +205,7 @@ def _inner_model(model: nn.Module) -> nn.Module:
     raise ValueError("Model must either have a 'model' or 'transformer' attribute")
 
 
-def _get_layers(inner_model_instance: nn.Module) -> list[_LayerCallable]:
+def get_layers(inner_model_instance: nn.Module) -> list[_LayerCallable]:
     # Handle both model.layers and model.h cases
     layers: list[_LayerCallable]
     if hasattr(inner_model_instance, "layers"):
@@ -232,9 +232,9 @@ def pipeline_auto_parallel(
     Returns:
     The parallelized model
     """
-    inner_model_instance: nn.Module = _inner_model(model)
+    inner_model_instance: nn.Module = get_inner_model(model)
 
-    layers = _get_layers(inner_model_instance)
+    layers = get_layers(inner_model_instance)
 
     start_layer, end_layer = model_shard_meta.start_layer, model_shard_meta.end_layer
     device_rank, world_size = model_shard_meta.device_rank, model_shard_meta.world_size
@@ -526,7 +526,7 @@ class LlamaShardingStrategy(TensorParallelShardingStrategy):
 
 
 def _set_layers(model: nn.Module, layers: list[_LayerCallable]) -> None:
-    inner_model_instance = _inner_model(model)
+    inner_model_instance = get_inner_model(model)
     if hasattr(inner_model_instance, "layers"):
         inner_model_instance.layers = layers
 
