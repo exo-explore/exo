@@ -3,8 +3,7 @@ from datetime import datetime, timezone
 from random import random
 
 import anyio
-from anyio import CancelScope, create_task_group, fail_after
-from anyio.abc import TaskGroup
+from anyio import CancelScope, fail_after
 from loguru import logger
 
 from exo.download.download_utils import resolve_model_in_path
@@ -51,6 +50,7 @@ from exo.utils.event_buffer import OrderedBuffer
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
 from exo.utils.info_gatherer.net_profile import check_reachable
 from exo.utils.keyed_backoff import KeyedBackoff
+from exo.utils.task_group import TaskGroup
 from exo.worker.plan import plan
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
@@ -80,7 +80,7 @@ class Worker:
 
         self.state: State = State()
         self.runners: dict[RunnerId, RunnerSupervisor] = {}
-        self._tg: TaskGroup = create_task_group()
+        self._tg: TaskGroup = TaskGroup()
 
         self._nack_cancel_scope: CancelScope | None = None
         self._nack_attempts: int = 0
@@ -317,7 +317,7 @@ class Worker:
                     await self._start_runner_task(task)
 
     def shutdown(self):
-        self._tg.cancel_scope.cancel()
+        self._tg.cancel_tasks()
 
     async def _start_runner_task(self, task: Task):
         if (instance := self.state.instances.get(task.instance_id)) is not None:
