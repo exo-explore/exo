@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// A popover callout anchored to the menu bar icon on first launch,
+/// A popover callout anchored to the menu bar icon on every launch,
 /// pointing the user to the web dashboard with an arrow connecting to the icon.
 @MainActor
 final class FirstLaunchPopout {
@@ -40,7 +40,7 @@ final class FirstLaunchPopout {
         pop.contentSize = NSSize(width: 280, height: 120)
         pop.contentViewController = NSHostingController(
             rootView: WelcomeCalloutView(
-                countdownDuration: 30,
+                countdownDuration: 10,
                 onDismiss: { [weak self] in
                     self?.onComplete?()
                     self?.dismiss()
@@ -56,9 +56,9 @@ final class FirstLaunchPopout {
         self.popover = pop
         pop.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
 
-        // Auto-open dashboard after 30s then dismiss
+        // Auto-open dashboard after 10s then dismiss
         countdownTask = Task {
-            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
             if !Task.isCancelled {
                 openDashboard()
                 onComplete?()
@@ -70,7 +70,6 @@ final class FirstLaunchPopout {
     func dismiss() {
         countdownTask?.cancel()
         countdownTask = nil
-        UserDefaults.standard.set(true, forKey: "EXOOnboardingCompleted")
         guard let pop = popover else { return }
         popover = nil
         pop.performClose(nil)
@@ -137,7 +136,7 @@ private struct WelcomeCalloutView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
-                Text("Welcome to EXO!")
+                Text("EXO is running")
                     .font(.system(.headline, design: .rounded))
                     .fontWeight(.semibold)
                     .foregroundColor(.primary)
@@ -171,7 +170,7 @@ private struct WelcomeCalloutView: View {
                 Spacer()
 
                 if countdown > 0 {
-                    Text("Auto-opens in \(countdown)s")
+                    Text("Launching in \(countdown) secs...")
                         .font(.system(.caption2, design: .default))
                         .foregroundColor(.secondary.opacity(0.6))
                         .monospacedDigit()
