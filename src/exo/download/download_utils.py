@@ -142,7 +142,7 @@ async def delete_model(model_id: ModelId) -> bool:
 
 
 async def seed_models(seed_dir: str | Path):
-    """Move model in resources folder of app to .cache/huggingface/hub"""
+    """Move models from resources folder to EXO_MODELS_DIR."""
     source_dir = Path(seed_dir)
     dest_dir = await ensure_models_dir()
     for path in source_dir.iterdir():
