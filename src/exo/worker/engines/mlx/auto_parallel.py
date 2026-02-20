@@ -1,5 +1,6 @@
 import os
 import threading
+import time as _time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from functools import partial
@@ -42,6 +43,17 @@ from transformers.models.qwen3.modeling_qwen3 import Qwen3DecoderLayer
 
 from exo.shared.logging import logger
 from exo.shared.types.worker.shards import PipelineShardMetadata
+
+_t0: float = 0.0
+
+
+def _ts() -> str:
+    return f"{(_time.perf_counter() - _t0) * 1000:8.1f}ms"
+
+
+def reset_pipeline_timer() -> None:
+    global _t0
+    _t0 = _time.perf_counter()
 
 if TYPE_CHECKING:
     from mlx_lm.models.cache import Cache
@@ -125,14 +137,18 @@ class PipelineFirstLayer(CustomMlxLayer):
         self.r: int = r
         self.group = group
         self.is_prefill: bool = False
+        self.skip_pipeline_io: bool = False
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
-        if self.r != 0:
+        if self.r != 0 and not self.skip_pipeline_io:
+            logger.info(f"[R{self.r} {_ts()}] FirstLayer: recv_like start")
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
             if self.is_prefill:
-                # We want to avoid GPU timeout errors by evalling the distributed operation
-                # so that it stays on CPU, which does not have a timeout.
+                logger.info(f"[R{self.r} {_ts()}] FirstLayer: mx.eval(recv) start")
                 mx.eval(x)
+                logger.info(f"[R{self.r} {_ts()}] FirstLayer: mx.eval(recv) done")
+        elif self.r != 0:
+            logger.info(f"[R{self.r} {_ts()}] FirstLayer: skip_io (no recv)")
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -150,6 +166,7 @@ class PipelineLastLayer(CustomMlxLayer):
         self.group = group
         self.original_layer_signature = signature(self.original_layer.__call__)
         self.is_prefill: bool = False
+        self.skip_pipeline_io: bool = False
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         cache = self.original_layer_signature.bind_partial(
@@ -158,21 +175,38 @@ class PipelineLastLayer(CustomMlxLayer):
 
         output: mx.array = self.original_layer(x, *args, **kwargs)
 
-        if self.r != self.s - 1:
-            output = mx.distributed.send(
-                output, (self.r + 1) % self.s, group=self.group
-            )
-            if cache is not None:
-                # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
-                # doesn't have .keys directly; access via first sub-cache.
-                _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
-                _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
+        if self.r != self.s - 1 and not self.skip_pipeline_io:
             if self.is_prefill:
+                logger.info(f"[R{self.r} {_ts()}] LastLayer: send start")
+                output = mx.distributed.send(
+                    output, (self.r + 1) % self.s, group=self.group
+                )
+                if cache is not None:
+                    _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
+                    _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
+                logger.info(f"[R{self.r} {_ts()}] LastLayer: mx.eval(send) start")
                 mx.eval(output)
+                logger.info(f"[R{self.r} {_ts()}] LastLayer: mx.eval(send) done")
                 if cache is not None:
                     mx.eval(_cache.keys)  # type: ignore
-
-        if not self.is_prefill:
+            else:
+                output = mx.distributed.send(
+                    output, (self.r + 1) % self.s, group=self.group
+                )
+                if cache is not None:
+                    _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
+                    _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
+        elif self.is_prefill and not self.skip_pipeline_io:
+            # Last rank: force layers to actually compute during prefill.
+            logger.info(f"[R{self.r} {_ts()}] LastLayer: eval(output) start (last rank)")
+            mx.eval(output)
+            logger.info(f"[R{self.r} {_ts()}] LastLayer: eval(output) done (last rank)")
+            if cache is not None:
+                _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
+                mx.eval(_cache.keys)  # type: ignore
+        elif self.skip_pipeline_io:
+            logger.info(f"[R{self.r} {_ts()}] LastLayer: skip_io (no send, no eval)")
+        if not self.is_prefill and not self.skip_pipeline_io:
             output = mx.distributed.all_gather(output, group=self.group)[
                 -output.shape[0] :
             ]
@@ -184,6 +218,12 @@ def set_pipeline_prefill(model: nn.Module, is_prefill: bool) -> None:
     for layer in model.layers:  # type: ignore
         if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
             layer.is_prefill = is_prefill
+
+
+def set_pipeline_skip_io(model: nn.Module, skip: bool) -> None:
+    for layer in model.layers:  # type: ignore
+        if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
+            layer.skip_pipeline_io = skip
 
 
 def _inner_model(model: nn.Module) -> nn.Module:

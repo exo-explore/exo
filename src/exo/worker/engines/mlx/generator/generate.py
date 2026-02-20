@@ -1,9 +1,13 @@
+import functools
 import time
 from copy import deepcopy
-from typing import Callable, Generator, cast, get_args
+from typing import Any, Callable, Generator, cast, get_args
 
 import mlx.core as mx
-from mlx_lm.generate import stream_generate
+from mlx_lm.generate import (
+    maybe_quantize_kv_cache,  # pyright: ignore[reportUnknownVariableType]
+    stream_generate,
+)
 from mlx_lm.models.cache import ArraysCache, RotatingKVCache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
@@ -24,7 +28,13 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
 from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.auto_parallel import set_pipeline_prefill
+from exo.worker.engines.mlx.auto_parallel import (
+    PipelineFirstLayer,
+    PipelineLastLayer,
+    reset_pipeline_timer,
+    set_pipeline_prefill,
+    set_pipeline_skip_io,
+)
 from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
     KVPrefixCache,
@@ -53,6 +63,121 @@ _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
 
 class PrefillCancelled(BaseException):
     """Raised when prefill is cancelled via the progress callback."""
+
+
+def _has_pipeline_layers(model: Model) -> bool:
+    return any(isinstance(layer, PipelineFirstLayer) for layer in model.layers)
+
+
+def _pipeline_rank(model: Model) -> int:
+    for layer in model.layers:
+        if isinstance(layer, PipelineFirstLayer):
+            return layer.r
+    return 0
+
+
+def _pipeline_world_size(model: Model) -> int:
+    for layer in model.layers:
+        if isinstance(layer, PipelineLastLayer):
+            return layer.s
+    return 1
+
+
+def _pipeline_prefill_cache(
+    model: Model,
+    prompt: mx.array,
+    prompt_cache: KVCacheType,
+    prefill_step_size: int,
+    kv_group_size: int | None,
+    kv_bits: int | None,
+    prompt_progress_callback: Callable[[int, int], None],
+) -> None:
+    """Prefill the KV cache for pipeline parallel with overlapping stages.
+
+    Each rank processes the full prompt through its real cache, offset by leading
+    and trailing dummy iterations.  Sends/recvs match by order of calls — dummies
+    use skip_pipeline_io so they don't consume send/recv slots.  This means rank
+    0's send at iteration 0 matches rank 1's recv at iteration 1 (rank 1's first
+    real iteration), giving rank 1 the correct hidden states from rank 0.
+
+    Total iterations per rank = N_real_chunks + world_size - 1:
+      - rank r leading dummies  (skip_pipeline_io, throwaway cache)
+      - N_real_chunks real      (pipeline IO active, real cache)
+      - (world_size-1-r) trailing dummies (skip_pipeline_io, throwaway cache)
+
+    Timeline (2 ranks, 3 chunks of 10240 tokens @ step=4096):
+        iter 0: R0 real[0:4096]     R1 dummy        ← R0 sends, R1 skips IO
+        iter 1: R0 real[4096:8192]  R1 real[0:4096]  ← OVERLAP, R1 recvs R0's 1st send
+        iter 2: R0 real[8192:10240] R1 real[4096:8192]← OVERLAP
+        iter 3: R0 dummy            R1 real[8192:10240]← R0 skips IO, R1 recvs R0's 3rd
+
+    mx_any barrier between iterations for cancellation.
+    """
+    quantize_cache_fn: Callable[..., None] = functools.partial(  # pyright: ignore[reportUnknownVariableType]
+        maybe_quantize_kv_cache,
+        quantized_kv_start=0,
+        kv_group_size=kv_group_size,
+        kv_bits=kv_bits,
+    )
+
+    _prompt_cache: Any = prompt_cache
+    rank = _pipeline_rank(model)
+    world_size = _pipeline_world_size(model)
+
+    # Build list of real prompt chunk sizes.
+    total = len(prompt)
+    real_chunk_sizes: list[int] = []
+    remaining = total
+    while remaining > 0:
+        n = min(prefill_step_size, remaining)
+        real_chunk_sizes.append(n)
+        remaining -= n
+    n_real = len(real_chunk_sizes)
+
+    # Each rank does: [rank leading dummies] [N real chunks] [world_size-1-rank trailing dummies]
+    n_leading = rank
+    n_trailing = world_size - 1 - rank
+    n_total = n_leading + n_real + n_trailing
+
+    # Dummy chunk size — just needs to keep GPU busy, use a small fixed size.
+    dummy_size = min(prefill_step_size, total)
+
+    throwaway: Any = make_kv_cache(model) if (n_leading + n_trailing) > 0 else None
+
+    reset_pipeline_timer()
+    t_start = time.perf_counter()
+    processed = 0
+    logger.info(
+        f"[R{rank}] Starting pipeline prefill: {n_real} real + {n_leading} leading + {n_trailing} trailing dummies = {n_total} iterations"
+    )
+    with mx.stream(generation_stream):
+        for i in range(n_total):
+            is_leading_dummy = i < n_leading
+            is_trailing_dummy = i >= n_leading + n_real
+            is_dummy = is_leading_dummy or is_trailing_dummy
+
+            if is_dummy:
+                kind = "leading_dummy" if is_leading_dummy else "trailing_dummy"
+                logger.info(f"[R{rank}] iter {i}/{n_total}: {kind} ({dummy_size} tokens)")
+                set_pipeline_skip_io(model, skip=True)
+                model(prompt[:dummy_size][None], cache=throwaway)  # pyright: ignore[reportAny]
+                set_pipeline_skip_io(model, skip=False)
+            else:
+                real_idx = i - n_leading
+                chunk_size = real_chunk_sizes[real_idx]
+                logger.info(f"[R{rank}] iter {i}/{n_total}: real chunk {real_idx} ({chunk_size} tokens, prompt[{processed}:{processed + chunk_size}])")
+                model(prompt[processed : processed + chunk_size][None], cache=_prompt_cache)  # pyright: ignore[reportAny]
+                quantize_cache_fn(_prompt_cache)  # pyright: ignore[reportAny]
+                processed += chunk_size
+
+            logger.info(f"[R{rank}] iter {i}/{n_total}: calling callback (processed={processed}/{total})")
+            prompt_progress_callback(processed, total)
+            logger.info(f"[R{rank}] iter {i}/{n_total}: callback done")
+
+    logger.info(
+        f"[R{rank}] Prefill: {n_real} real + {n_leading}+{n_trailing} dummy iterations, "
+        f"{processed} tokens in {(time.perf_counter() - t_start) * 1000:.1f}ms"
+    )
 
 
 def prefill(
@@ -99,39 +224,53 @@ def prefill(
     mx_barrier(group)
     logger.info("Starting prefill")
 
-    # Use max_tokens=1 because max_tokens=0 does not work.
-    # We just throw away the generated token - we only care about filling the cache
+    is_pipeline = _has_pipeline_layers(model)
+
     try:
-        for _ in stream_generate(
-            model=model,
-            tokenizer=tokenizer,
-            prompt=prompt_tokens,
-            max_tokens=1,
-            sampler=sampler,
-            prompt_cache=cache,
-            prefill_step_size=4096,
-            kv_group_size=KV_GROUP_SIZE,
-            kv_bits=KV_BITS,
-            prompt_progress_callback=progress_callback,
-        ):
-            break  # Stop after first iteration - cache is now filled
+        if is_pipeline:
+            _pipeline_prefill_cache(
+                model=model,
+                prompt=prompt_tokens,
+                prompt_cache=cache,
+                prefill_step_size=4096,
+                kv_group_size=KV_GROUP_SIZE,
+                kv_bits=KV_BITS,
+                prompt_progress_callback=progress_callback,
+            )
+        else:
+            # Use max_tokens=1 because max_tokens=0 does not work.
+            # We just throw away the generated token - we only care about filling the cache
+            for _ in stream_generate(
+                model=model,
+                tokenizer=tokenizer,
+                prompt=prompt_tokens,
+                max_tokens=1,
+                sampler=sampler,
+                prompt_cache=cache,
+                prefill_step_size=4096,
+                kv_group_size=KV_GROUP_SIZE,
+                kv_bits=KV_BITS,
+                prompt_progress_callback=progress_callback,
+            ):
+                break  # Stop after first iteration - cache is now filled
     except PrefillCancelled:
         set_pipeline_prefill(model, is_prefill=False)
         raise
 
     set_pipeline_prefill(model, is_prefill=False)
 
-    # stream_generate added 1 extra generated token to the cache, so we should trim it.
-    # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
-    pre_gen = deepcopy(snapshots[-2]) if has_ssm else None
-    for i, c in enumerate(cache):
-        if has_ssm and isinstance(c, (ArraysCache, RotatingKVCache)):
-            assert pre_gen is not None
-            if pre_gen.states[i] is not None:
-                cache[i] = deepcopy(pre_gen.states[i])  # type: ignore
-        else:
-            assert not isinstance(c, (ArraysCache, RotatingKVCache))
-            c.trim(2)  # pyright: ignore[reportUnknownMemberType]
+    if not is_pipeline:
+        # stream_generate added 1 extra generated token to the cache, so we should trim it.
+        # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
+        pre_gen = deepcopy(snapshots[-2]) if has_ssm else None
+        for i, c in enumerate(cache):
+            if has_ssm and isinstance(c, (ArraysCache, RotatingKVCache)):
+                assert pre_gen is not None
+                if pre_gen.states[i] is not None:
+                    cache[i] = deepcopy(pre_gen.states[i])  # type: ignore
+            else:
+                assert not isinstance(c, (ArraysCache, RotatingKVCache))
+                c.trim(2)  # pyright: ignore[reportUnknownMemberType]
 
     elapsed = time.perf_counter() - start_time
     tokens_per_sec = num_tokens / elapsed if elapsed > 0 else 0.0
@@ -323,7 +462,12 @@ def mlx_generate(
     )
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
-    # Prefill cache with all tokens except the last one
+    is_pipeline = _has_pipeline_layers(model)
+
+    # Pipeline prefill processes ALL tokens (no trim needed), so prefill prompt_tokens[:-1]
+    # and start generation from last 1 token.
+    # Standard prefill uses stream_generate which adds 2 extra tokens to cache (trim 2),
+    # so start generation from last 2 tokens.
     prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
         model,
         tokenizer,
@@ -335,8 +479,7 @@ def mlx_generate(
     )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 
-    # stream_generate starts from the last token
-    last_token = prompt_tokens[-2:]
+    last_token = prompt_tokens[-1:] if is_pipeline else prompt_tokens[-2:]
 
     max_tokens = task.max_output_tokens or MAX_TOKENS
     accumulated_text = ""
