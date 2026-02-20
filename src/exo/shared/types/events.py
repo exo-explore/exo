@@ -5,7 +5,7 @@ from pydantic import Field
 
 from exo.shared.topology import Connection
 from exo.shared.types.chunks import GenerationChunk, InputImageChunk
-from exo.shared.types.common import CommandId, Id, NodeId, SessionId
+from exo.shared.types.common import CommandId, Id, NodeId, SessionId, SystemId
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
@@ -162,10 +162,19 @@ class IndexedEvent(CamelCaseModel):
     event: Event
 
 
-class ForwarderEvent(CamelCaseModel):
+class GlobalForwarderEvent(CamelCaseModel):
     """An event the forwarder will serialize and send over the network"""
 
     origin_idx: int = Field(ge=0)
     origin: NodeId
+    session: SessionId
+    event: Event
+
+
+class LocalForwarderEvent(CamelCaseModel):
+    """An event the forwarder will serialize and send over the network"""
+
+    origin_idx: int = Field(ge=0)
+    origin: SystemId
     session: SessionId
     event: Event

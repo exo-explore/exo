@@ -15,11 +15,12 @@ from exo.shared.types.commands import (
     PlaceInstance,
     TextGeneration,
 )
-from exo.shared.types.common import ModelId, NodeId, SessionId
+from exo.shared.types.common import ModelId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
-    ForwarderEvent,
+    GlobalForwarderEvent,
     IndexedEvent,
     InstanceCreated,
+    LocalForwarderEvent,
     NodeGatheredInfo,
     TaskCreated,
 )
@@ -45,9 +46,9 @@ async def test_master():
     node_id = NodeId(keypair.to_node_id())
     session_id = SessionId(master_node_id=node_id, election_clock=0)
 
-    ge_sender, global_event_receiver = channel[ForwarderEvent]()
+    ge_sender, global_event_receiver = channel[GlobalForwarderEvent]()
     command_sender, co_receiver = channel[ForwarderCommand]()
-    local_event_sender, le_receiver = channel[ForwarderEvent]()
+    local_event_sender, le_receiver = channel[LocalForwarderEvent]()
     fcds, _fcdr = channel[ForwarderDownloadCommand]()
 
     all_events: list[IndexedEvent] = []
@@ -75,13 +76,12 @@ async def test_master():
     async with anyio.create_task_group() as tg:
         tg.start_soon(master.run)
 
-        sender_node_id = NodeId(f"{keypair.to_node_id()}_sender")
         # inject a NodeGatheredInfo event
         logger.info("inject a NodeGatheredInfo event")
         await local_event_sender.send(
-            ForwarderEvent(
+            LocalForwarderEvent(
                 origin_idx=0,
-                origin=sender_node_id,
+                origin=SystemId("Worker"),
                 session=session_id,
                 event=(
                     NodeGatheredInfo(
@@ -108,7 +108,7 @@ async def test_master():
         logger.info("inject a CreateInstance Command")
         await command_sender.send(
             ForwarderCommand(
-                origin=node_id,
+                origin=SystemId("API"),
                 command=(
                     PlaceInstance(
                         command_id=CommandId(),
@@ -133,7 +133,7 @@ async def test_master():
         logger.info("inject a TextGeneration Command")
         await command_sender.send(
             ForwarderCommand(
-                origin=node_id,
+                origin=SystemId("API"),
                 command=(
                     TextGeneration(
                         command_id=CommandId(),
