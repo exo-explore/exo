@@ -2257,9 +2257,7 @@
     <!-- ═══════════════════════════════════════════════════════ -->
     <!-- FULL-SCREEN ONBOARDING WIZARD                          -->
     <!-- ═══════════════════════════════════════════════════════ -->
-    <div
-      class="flex-1 flex items-center justify-center relative z-10 bg-white"
-    >
+    <div class="flex-1 flex items-center justify-center relative z-10 bg-white">
       {#if onboardingStep === 1}
         <!-- Step 1: Welcome -->
         <div
@@ -2269,7 +2267,7 @@
         >
           <div class="mb-8">
             <div
-              class="text-5xl font-mono font-bold text-exo-yellow-darker tracking-wider mb-4"
+              class="text-5xl font-mono font-bold text-gray-900 tracking-wider mb-4"
             >
               exo
             </div>
@@ -2335,8 +2333,8 @@
                 >
                   <feGaussianBlur stdDeviation="4" result="blur" />
                   <feFlood
-                    flood-color="#FFD700"
-                    flood-opacity="0.6"
+                    flood-color="#111827"
+                    flood-opacity="0.15"
                     result="color"
                   />
                   <feComposite
@@ -2388,7 +2386,7 @@
                     y={3 + 60 * 0.4}
                     width="114"
                     height={60 * 0.6}
-                    fill="rgba(255,215,0,0.85)"
+                    fill="rgba(17,24,39,0.7)"
                     clip-path="url(#onb-macbook-screen-clip)"
                   />
                   <!-- Apple logo on screen -->
@@ -2429,7 +2427,7 @@
                     x="60"
                     y="-8"
                     text-anchor="middle"
-                    fill="rgba(255,215,0,0.9)"
+                    fill="rgba(17,24,39,0.85)"
                     style="font-size: 12px; font-family: 'SF Mono', ui-monospace, monospace; font-weight: 500;"
                   >
                     MacBook Pro
@@ -2441,8 +2439,8 @@
                     text-anchor="middle"
                     style="font-size: 11px; font-family: 'SF Mono', ui-monospace, monospace;"
                   >
-                    <tspan fill="rgba(255,215,0,0.9)">36</tspan><tspan
-                      fill="rgba(179,179,179,0.9)">GB</tspan
+                    <tspan fill="rgba(17,24,39,0.8)">36</tspan><tspan
+                      fill="rgba(107,114,128,0.9)">GB</tspan
                     >
                   </text>
                 </g>
@@ -2467,7 +2465,7 @@
                   y={13 + 72 * 0.2}
                   width="100"
                   height={72 * 0.8}
-                  fill="rgba(255,215,0,0.75)"
+                  fill="rgba(17,24,39,0.6)"
                   clip-path="url(#onb-studio-body-clip)"
                 />
                 <!-- Top surface divider -->
@@ -2510,7 +2508,7 @@
                   x="50"
                   y="-8"
                   text-anchor="middle"
-                  fill="rgba(255,215,0,0.9)"
+                  fill="rgba(17,24,39,0.85)"
                   style="font-size: 12px; font-family: 'SF Mono', ui-monospace, monospace; font-weight: 500;"
                 >
                   Mac Studio
@@ -2522,8 +2520,8 @@
                   text-anchor="middle"
                   style="font-size: 11px; font-family: 'SF Mono', ui-monospace, monospace;"
                 >
-                  <tspan fill="rgba(255,215,0,0.9)">192</tspan><tspan
-                    fill="rgba(179,179,179,0.9)">{" "}GB</tspan
+                  <tspan fill="rgba(17,24,39,0.8)">192</tspan><tspan
+                    fill="rgba(107,114,128,0.9)">{" "}GB</tspan
                   >
                 </text>
               </g>
@@ -2546,7 +2544,7 @@
                   x={(215 + $studioX - 5) / 2}
                   y="62"
                   text-anchor="middle"
-                  fill="rgba(255,215,0,0.7)"
+                  fill="rgba(17,24,39,0.6)"
                   style="font-size: 11px; font-family: 'SF Mono', ui-monospace, monospace;"
                   in:fade={{ duration: 400 }}
                 >
@@ -2563,7 +2561,7 @@
                     y1="-70"
                     x2="150"
                     y2="-8"
-                    stroke="rgba(255,215,0,0.15)"
+                    stroke="rgba(17,24,39,0.12)"
                     stroke-width="1"
                     stroke-dasharray="4,4"
                     in:fade={{ duration: 300 }}
@@ -2573,7 +2571,7 @@
                     y1="-70"
                     x2={$studioX + 50}
                     y2="-8"
-                    stroke="rgba(255,215,0,0.15)"
+                    stroke="rgba(17,24,39,0.12)"
                     stroke-width="1"
                     stroke-dasharray="4,4"
                     in:fade={{ duration: 300 }}
@@ -2589,15 +2587,15 @@
                       width="110"
                       height="48"
                       rx="8"
-                      fill="rgba(255,255,255,0.04)"
-                      stroke="rgba(255,255,255,0.1)"
+                      fill="rgba(249,250,251,1)"
+                      stroke="rgba(209,213,219,0.6)"
                       stroke-width="1"
                     />
                     <text
                       x="55"
                       y="20"
                       text-anchor="middle"
-                      fill="rgba(255,255,255,0.7)"
+                      fill="rgba(107,114,128,0.9)"
                       style="font-size: 13px; font-family: system-ui, sans-serif;"
                     >
                       Qwen3 8B
@@ -2606,7 +2604,7 @@
                       x="55"
                       y="37"
                       text-anchor="middle"
-                      fill="rgba(255,255,255,0.35)"
+                      fill="rgba(156,163,175,0.9)"
                       style="font-size: 11px; font-family: 'SF Mono', monospace;"
                     >
                       4 GB
@@ -2627,11 +2625,11 @@
                       height="48"
                       rx="8"
                       fill={deviceAnimPhase >= 3
-                        ? "rgba(255,215,0,0.06)"
-                        : "rgba(255,255,255,0.03)"}
+                        ? "rgba(249,250,251,1)"
+                        : "rgba(249,250,251,0.5)"}
                       stroke={deviceAnimPhase >= 3
-                        ? "rgba(255,215,0,0.35)"
-                        : "rgba(255,255,255,0.08)"}
+                        ? "rgba(17,24,39,0.3)"
+                        : "rgba(209,213,219,0.4)"}
                       stroke-width="1"
                       filter={deviceAnimPhase >= 3
                         ? "url(#onb-gold-glow)"
@@ -2647,13 +2645,13 @@
                           height="11"
                           rx="2"
                           fill="none"
-                          stroke="rgba(255,255,255,0.2)"
+                          stroke="rgba(156,163,175,0.5)"
                           stroke-width="1"
                         />
                         <path
                           d="M 2 9 V 6 C 2 3 4.5 1 7 1 C 9.5 1 12 3 12 6 V 9"
                           fill="none"
-                          stroke="rgba(255,255,255,0.2)"
+                          stroke="rgba(156,163,175,0.5)"
                           stroke-width="1"
                         />
                       </g>
@@ -2662,7 +2660,7 @@
                         x="55"
                         y="20"
                         text-anchor="middle"
-                        fill="#FFD700"
+                        fill="rgba(17,24,39,0.85)"
                         style="font-size: 13px; font-family: system-ui, sans-serif;"
                       >
                         Qwen3 30B
@@ -2671,7 +2669,7 @@
                         x="55"
                         y="37"
                         text-anchor="middle"
-                        fill="rgba(255,215,0,0.6)"
+                        fill="rgba(107,114,128,0.8)"
                         style="font-size: 11px; font-family: 'SF Mono', monospace;"
                       >
                         16 GB
@@ -2693,11 +2691,11 @@
                       height="48"
                       rx="8"
                       fill={deviceAnimPhase >= 4
-                        ? "rgba(255,215,0,0.06)"
-                        : "rgba(255,255,255,0.03)"}
+                        ? "rgba(249,250,251,1)"
+                        : "rgba(249,250,251,0.5)"}
                       stroke={deviceAnimPhase >= 4
-                        ? "rgba(255,215,0,0.35)"
-                        : "rgba(255,255,255,0.08)"}
+                        ? "rgba(17,24,39,0.3)"
+                        : "rgba(209,213,219,0.4)"}
                       stroke-width="1"
                       filter={deviceAnimPhase >= 4
                         ? "url(#onb-gold-glow)"
@@ -2713,13 +2711,13 @@
                           height="11"
                           rx="2"
                           fill="none"
-                          stroke="rgba(255,255,255,0.2)"
+                          stroke="rgba(156,163,175,0.5)"
                           stroke-width="1"
                         />
                         <path
                           d="M 2 9 V 6 C 2 3 4.5 1 7 1 C 9.5 1 12 3 12 6 V 9"
                           fill="none"
-                          stroke="rgba(255,255,255,0.2)"
+                          stroke="rgba(156,163,175,0.5)"
                           stroke-width="1"
                         />
                       </g>
@@ -2728,7 +2726,7 @@
                         x="55"
                         y="20"
                         text-anchor="middle"
-                        fill="#FFD700"
+                        fill="rgba(17,24,39,0.85)"
                         style="font-size: 13px; font-family: system-ui, sans-serif;"
                       >
                         Llama 72B
@@ -2737,7 +2735,7 @@
                         x="55"
                         y="37"
                         text-anchor="middle"
-                        fill="rgba(255,215,0,0.6)"
+                        fill="rgba(107,114,128,0.8)"
                         style="font-size: 11px; font-family: 'SF Mono', monospace;"
                       >
                         36 GB
@@ -2759,11 +2757,11 @@
                       height="48"
                       rx="8"
                       fill={deviceAnimPhase >= 4
-                        ? "rgba(255,215,0,0.08)"
-                        : "rgba(255,255,255,0.03)"}
+                        ? "rgba(249,250,251,1)"
+                        : "rgba(249,250,251,0.5)"}
                       stroke={deviceAnimPhase >= 4
-                        ? "rgba(255,215,0,0.45)"
-                        : "rgba(255,255,255,0.08)"}
+                        ? "rgba(17,24,39,0.4)"
+                        : "rgba(209,213,219,0.4)"}
                       stroke-width={deviceAnimPhase >= 4 ? "1.5" : "1"}
                       filter={deviceAnimPhase >= 4
                         ? "url(#onb-gold-glow)"
@@ -2779,13 +2777,13 @@
                           height="11"
                           rx="2"
                           fill="none"
-                          stroke="rgba(255,255,255,0.2)"
+                          stroke="rgba(156,163,175,0.5)"
                           stroke-width="1"
                         />
                         <path
                           d="M 2 9 V 6 C 2 3 4.5 1 7 1 C 9.5 1 12 3 12 6 V 9"
                           fill="none"
-                          stroke="rgba(255,255,255,0.2)"
+                          stroke="rgba(156,163,175,0.5)"
                           stroke-width="1"
                         />
                       </g>
@@ -2794,7 +2792,7 @@
                         x="55"
                         y="20"
                         text-anchor="middle"
-                        fill="#FFD700"
+                        fill="rgba(17,24,39,0.9)"
                         style="font-size: 13px; font-family: system-ui, sans-serif; font-weight: 600;"
                       >
                         Llama 405B
@@ -2803,7 +2801,7 @@
                         x="55"
                         y="37"
                         text-anchor="middle"
-                        fill="rgba(255,215,0,0.6)"
+                        fill="rgba(107,114,128,0.8)"
                         style="font-size: 11px; font-family: 'SF Mono', monospace;"
                       >
                         203 GB
@@ -2818,7 +2816,7 @@
                     x="300"
                     y="72"
                     text-anchor="middle"
-                    fill="rgba(255,255,255,0.3)"
+                    fill="rgba(156,163,175,0.7)"
                     style="font-size: 11px; font-family: system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.12em;"
                     in:fade={{ duration: 400 }}
                   >
@@ -2965,7 +2963,7 @@
                       >
                       {#each tags as tag}
                         <span
-                          class="text-[10px] font-sans font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700"
+                          class="text-[10px] font-sans font-medium px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200"
                           >{tag}</span
                         >
                       {/each}
@@ -3022,7 +3020,9 @@
             </h1>
             <p class="text-sm text-gray-500">
               {#if onboardingModelId}
-                <span class="text-gray-900 font-medium">{onboardingModelId}</span>
+                <span class="text-gray-900 font-medium"
+                  >{onboardingModelId}</span
+                >
               {/if}
             </p>
           </div>
@@ -3083,7 +3083,9 @@
             </h1>
             <p class="text-sm text-gray-500">
               {#if onboardingModelId}
-                <span class="text-gray-900 font-medium">{onboardingModelId}</span>
+                <span class="text-gray-900 font-medium"
+                  >{onboardingModelId}</span
+                >
               {/if}
             </p>
           </div>

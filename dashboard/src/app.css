@@ -204,11 +204,11 @@
 
 /* Onboarding step 2: connection line between devices */
 .onboarding-connection-line {
-	stroke: oklch(0.85 0.18 85 / 0.5);
+	stroke: oklch(0.45 0.01 260 / 0.35);
 	stroke-width: 1.5px;
 	stroke-dasharray: 6, 6;
 	animation: flowAnimation 1s linear infinite;
-	filter: drop-shadow(0 0 4px oklch(0.85 0.18 85 / 0.4));
+	filter: drop-shadow(0 0 4px oklch(0.45 0.01 260 / 0.2));
 }
 
 .graph-link-active {
