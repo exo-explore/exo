@@ -192,7 +192,20 @@ class DownloadCoordinator:
 
                 match cmd.command:
                     case StartDownload(shard_metadata=shard):
-                        await self._start_download(shard)
+                        try:
+                            await self._start_download(shard)
+                        except Exception as e:
+                            model_id = shard.model_card.model_id
+                            logger.error(f"Failed to start download for {model_id}: {e}")
+                            failed = DownloadFailed(
+                                shard_metadata=shard,
+                                node_id=self.node_id,
+                                error_message=str(e),
+                            )
+                            self.download_status[model_id] = failed
+                            await self.event_sender.send(
+                                NodeDownloadProgress(download_progress=failed)
+                            )
                     case DeleteDownload(model_id=model_id):
                         await self._delete_download(model_id)
                     case CancelDownload(model_id=model_id):

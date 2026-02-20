@@ -117,7 +117,10 @@ class FluxKontextModelAdapter(ModelAdapter[Flux1Kontext, Transformer]):
         model_id: str,
         local_path: Path,
         quantize: int | None = None,
+        lora_paths: list[str] | None = None,
+        lora_scales: list[float] | None = None,
     ):
+        del lora_paths, lora_scales  # Kontext does not support LoRA
         self._config = config
         self._model = Flux1Kontext(
             model_config=ModelConfig.from_name(model_name=model_id, base_model=None),

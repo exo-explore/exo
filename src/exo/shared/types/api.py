@@ -47,6 +47,8 @@ class ModelListModel(BaseModel):
     quantization: str = Field(default="")
     base_model: str = Field(default="")
     capabilities: list[str] = Field(default_factory=list)
+    lora_paths: list[str] = Field(default_factory=list)
+    lora_scales: list[float] = Field(default_factory=list)
 
 
 class ModelList(BaseModel):
@@ -210,6 +212,18 @@ class BenchChatCompletionRequest(ChatCompletionRequest):
 
 class AddCustomModelParams(BaseModel):
     model_id: ModelId
+
+
+class CreateLoraModelParams(BaseModel):
+    base_model_id: ModelId
+    lora_repo: str
+    lora_scale: float = 1.0
+    custom_name: str | None = None
+
+
+class CreateLoraModelResponse(BaseModel):
+    model_id: str
+    message: str
 
 
 class HuggingFaceSearchResult(BaseModel):

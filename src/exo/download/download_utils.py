@@ -723,11 +723,14 @@ async def download_shard(
     allow_patterns: list[str] | None = None,
     on_connection_lost: Callable[[], None] = lambda: None,
 ) -> tuple[Path, RepoDownloadProgress]:
+    # For LoRA models, download from the base model's repo instead
+    repo_id: ModelId = ModelId(shard.model_card.download_repo_id) if shard.model_card.download_repo_id else shard.model_card.model_id
+
     if not skip_download:
-        logger.debug(f"Downloading {shard.model_card.model_id=}")
+        logger.debug(f"Downloading {repo_id=} (model_id={shard.model_card.model_id})")
 
     revision = "main"
-    target_dir = await ensure_models_dir() / str(shard.model_card.model_id).replace(
+    target_dir = await ensure_models_dir() / str(repo_id).replace(
         "/", "--"
     )
     if not skip_download:
@@ -737,11 +740,11 @@ async def download_shard(
         allow_patterns = await resolve_allow_patterns(shard)
 
     if not skip_download:
-        logger.debug(f"Downloading {shard.model_card.model_id=} with {allow_patterns=}")
+        logger.debug(f"Downloading {repo_id=} with {allow_patterns=}")
 
     all_start_time = time.time()
     file_list = await fetch_file_list_with_cache(
-        shard.model_card.model_id,
+        repo_id,
         revision,
         recursive=True,
         skip_internet=skip_internet,
@@ -797,7 +800,7 @@ async def download_shard(
             else timedelta(seconds=0)
         )
         file_progress[file.path] = RepoFileDownloadProgress(
-            repo_id=shard.model_card.model_id,
+            repo_id=repo_id,
             repo_revision=revision,
             file_path=file.path,
             downloaded=Memory.from_bytes(curr_bytes),
@@ -814,7 +817,7 @@ async def download_shard(
             shard,
             calculate_repo_progress(
                 shard,
-                shard.model_card.model_id,
+                repo_id,
                 revision,
                 file_progress,
                 all_start_time,
@@ -824,7 +827,7 @@ async def download_shard(
     for file in filtered_file_list:
         downloaded_bytes = await get_downloaded_size(target_dir / file.path)
         file_progress[file.path] = RepoFileDownloadProgress(
-            repo_id=shard.model_card.model_id,
+            repo_id=repo_id,
             repo_revision=revision,
             file_path=file.path,
             downloaded=Memory.from_bytes(downloaded_bytes),
@@ -848,7 +851,7 @@ async def download_shard(
     async def download_with_semaphore(file: FileListEntry) -> None:
         async with semaphore:
             await download_file_with_retry(
-                shard.model_card.model_id,
+                repo_id,
                 revision,
                 file.path,
                 target_dir,
@@ -864,7 +867,7 @@ async def download_shard(
             *[download_with_semaphore(file) for file in filtered_file_list]
         )
     final_repo_progress = calculate_repo_progress(
-        shard, shard.model_card.model_id, revision, file_progress, all_start_time
+        shard, repo_id, revision, file_progress, all_start_time
     )
     await on_progress(shard, final_repo_progress)
     if gguf := next((f for f in filtered_file_list if f.path.endswith(".gguf")), None):

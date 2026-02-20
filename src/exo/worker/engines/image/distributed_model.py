@@ -33,9 +33,13 @@ class DistributedImageModel:
         shard_metadata: PipelineShardMetadata | CfgShardMetadata,
         group: Optional[mx.distributed.Group] = None,
         quantize: int | None = None,
+        lora_paths: list[str] | None = None,
+        lora_scales: list[float] | None = None,
     ):
         config = get_config_for_model(model_id)
-        adapter = create_adapter_for_model(config, model_id, local_path, quantize)
+        adapter = create_adapter_for_model(
+            config, model_id, local_path, quantize, lora_paths, lora_scales
+        )
 
         has_layer_sharding = (
             shard_metadata.start_layer != 0
@@ -76,7 +80,8 @@ class DistributedImageModel:
     def from_bound_instance(
         cls, bound_instance: BoundInstance
     ) -> "DistributedImageModel":
-        model_id = bound_instance.bound_shard.model_card.model_id
+        model_card = bound_instance.bound_shard.model_card
+        model_id = model_card.model_id
         model_path = build_model_path(model_id)
 
         shard_metadata = bound_instance.bound_shard
@@ -95,11 +100,16 @@ class DistributedImageModel:
         else:
             group = None
 
+        lora_paths = model_card.lora_paths if model_card.lora_paths else None
+        lora_scales = model_card.lora_scales if model_card.lora_scales else None
+
         return cls(
             model_id=model_id,
             local_path=model_path,
             shard_metadata=shard_metadata,
             group=group,
+            lora_paths=lora_paths,
+            lora_scales=lora_scales,
         )
 
     def get_steps_for_quality(self, quality: Literal["low", "medium", "high"]) -> int:

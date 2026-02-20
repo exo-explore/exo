@@ -20,9 +20,10 @@ from exo.worker.engines.image.models.qwen import (
 __all__: list[str] = []
 
 # Type alias for adapter factory functions
-# Factory takes (config, model_id, local_path, quantize) and returns a ModelAdapter
+# Factory takes (config, model_id, local_path, quantize, lora_paths, lora_scales) and returns a ModelAdapter
 AdapterFactory = Callable[
-    [ImageModelConfig, str, Path, int | None], ModelAdapter[Any, Any]
+    [ImageModelConfig, str, Path, int | None, list[str], list[float]],
+    ModelAdapter[Any, Any],
 ]
 
 # Registry maps model_family string to adapter factory
@@ -71,6 +72,8 @@ def create_adapter_for_model(
     model_id: str,
     local_path: Path,
     quantize: int | None = None,
+    lora_paths: list[str] | None = None,
+    lora_scales: list[float] | None = None,
 ) -> ModelAdapter[Any, Any]:
     """Create a model adapter for the given configuration.
 
@@ -79,6 +82,8 @@ def create_adapter_for_model(
         model_id: The model identifier
         local_path: Path to the model weights
         quantize: Optional quantization bits
+        lora_paths: Optional list of LoRA adapter paths
+        lora_scales: Optional list of LoRA adapter scales
 
     Returns:
         A ModelAdapter instance
@@ -89,4 +94,6 @@ def create_adapter_for_model(
     factory = _ADAPTER_REGISTRY.get(config.model_family)
     if factory is None:
         raise ValueError(f"No adapter found for model family: {config.model_family}")
-    return factory(config, model_id, local_path, quantize)
+    return factory(
+        config, model_id, local_path, quantize, lora_paths or [], lora_scales or []
+    )

@@ -88,8 +88,12 @@ class ModelCard(CamelCaseModel):
     family: str = ""
     quantization: str = ""
     base_model: str = ""
+    context_length: int = 0
     capabilities: list[str] = []
     uses_cfg: bool = False
+    lora_paths: list[str] = []
+    lora_scales: list[float] = []
+    download_repo_id: str = ""
 
     @field_validator("tasks", mode="before")
     @classmethod
@@ -136,6 +140,7 @@ class ModelCard(CamelCaseModel):
             n_layers=num_layers,
             hidden_size=config_data.hidden_size or 0,
             supports_tensor=config_data.supports_tensor,
+            context_length=config_data.context_length or 0,
             tasks=[ModelTask.TextGeneration],
         )
         await mc.save_to_custom_dir()
@@ -151,6 +156,69 @@ async def delete_custom_card(model_id: ModelId) -> bool:
         _card_cache.pop(model_id, None)
         return True
     return False
+
+
+async def create_lora_card(
+    base_model_id: ModelId,
+    lora_repo: str,
+    lora_scale: float = 1.0,
+    custom_name: str | None = None,
+) -> "ModelCard":
+    """Create a LoRA model card based on an existing model.
+
+    Finds the base model's card, copies it with LoRA fields, saves to custom dir,
+    and creates a symlink so the LoRA model reuses the base model's weights.
+
+    Args:
+        base_model_id: The ID of the base model to apply LoRA to.
+        lora_repo: HuggingFace repo for the LoRA adapter (e.g. "user/my-lora").
+        lora_scale: Weight scale for the LoRA adapter (default 1.0).
+        custom_name: Optional custom name for the new model ID.
+
+    Returns:
+        The new ModelCard with LoRA fields set.
+
+    Raises:
+        ValueError: If the base model card cannot be found.
+    """
+    import os
+
+    from exo.download.download_utils import ensure_models_dir
+
+    base_card = await ModelCard.load(base_model_id)
+
+    # Build new model ID
+    lora_short = lora_repo.split("/")[-1] if "/" in lora_repo else lora_repo
+    if custom_name:
+        new_model_id = ModelId(custom_name)
+    else:
+        # Derive from lora repo name: "user/my-lora" -> "base-model--my-lora"
+        new_model_id = ModelId(f"{base_model_id}--{lora_short}")
+
+    lora_card = base_card.model_copy(
+        update={
+            "model_id": new_model_id,
+            "base_model": str(base_model_id),
+            "lora_paths": [lora_repo],
+            "lora_scales": [lora_scale],
+            "download_repo_id": str(base_model_id),
+            "quantization": lora_short,
+        }
+    )
+
+    await lora_card.save_to_custom_dir()
+    _card_cache[new_model_id] = lora_card
+
+    # Create symlink from new model dir -> base model dir so weights are reused
+    models_dir = await ensure_models_dir()
+    base_dir = models_dir / ModelId(base_model_id).normalize()
+    new_dir = models_dir / new_model_id.normalize()
+
+    if os.path.isdir(str(base_dir)) and not os.path.exists(str(new_dir)):
+        os.symlink(str(base_dir), str(new_dir))
+        logger.info(f"Created symlink {new_dir} -> {base_dir}")
+
+    return lora_card
 
 
 def is_custom_card(model_id: ModelId) -> bool:
@@ -177,6 +245,15 @@ class ConfigData(BaseModel):
             "num_decoder_layers",
             "decoder_layers",
         )
+    )
+    context_length: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "max_position_embeddings",
+            "max_seq_len",
+            "max_sequence_length",
+            "seq_length",
+        ),
     )
 
     @property
@@ -210,6 +287,10 @@ class ConfigData(BaseModel):
             "n_layers",
             "num_decoder_layers",
             "decoder_layers",
+            "max_position_embeddings",
+            "max_seq_len",
+            "max_sequence_length",
+            "seq_length",
         ]:
             if (val := text_config.get(field)) is not None:  # pyright: ignore[reportAny]
                 data[field] = val

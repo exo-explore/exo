@@ -61,6 +61,7 @@ from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
+    create_lora_card,
     delete_custom_card,
     get_model_cards,
     is_custom_card,
@@ -79,6 +80,8 @@ from exo.shared.types.api import (
     ChatCompletionResponse,
     CreateInstanceParams,
     CreateInstanceResponse,
+    CreateLoraModelParams,
+    CreateLoraModelResponse,
     DeleteDownloadResponse,
     DeleteInstanceResponse,
     ErrorInfo,
@@ -306,6 +309,7 @@ class API:
         self.app.get("/models")(self.get_models)
         self.app.get("/v1/models")(self.get_models)
         self.app.post("/models/add")(self.add_custom_model)
+        self.app.post("/models/lora")(self.create_lora_model)
         self.app.delete("/models/custom/{model_id:path}")(self.delete_custom_model)
         self.app.get("/models/search")(self.search_models)
         self.app.post("/v1/chat/completions", response_model=None)(
@@ -1515,6 +1519,7 @@ class API:
                     hugging_face_id=card.model_id,
                     name=card.model_id.short(),
                     description="",
+                    context_length=card.context_length,
                     tags=[],
                     storage_size_megabytes=card.storage_size.in_mb,
                     supports_tensor=card.supports_tensor,
@@ -1524,6 +1529,8 @@ class API:
                     quantization=card.quantization,
                     base_model=card.base_model,
                     capabilities=card.capabilities,
+                    lora_paths=card.lora_paths,
+                    lora_scales=card.lora_scales,
                 )
                 for card in cards
             ]
@@ -1548,6 +1555,27 @@ class API:
             supports_tensor=card.supports_tensor,
             tasks=[task.value for task in card.tasks],
             is_custom=True,
+        )
+
+    async def create_lora_model(
+        self, payload: CreateLoraModelParams
+    ) -> CreateLoraModelResponse:
+        """Create a LoRA model based on an existing model."""
+        try:
+            card = await create_lora_card(
+                base_model_id=payload.base_model_id,
+                lora_repo=payload.lora_repo,
+                lora_scale=payload.lora_scale,
+                custom_name=payload.custom_name,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Failed to create LoRA model: {exc}"
+            ) from exc
+
+        return CreateLoraModelResponse(
+            model_id=card.model_id,
+            message=f"LoRA model created: {card.model_id}",
         )
 
     async def delete_custom_model(self, model_id: ModelId) -> JSONResponse:

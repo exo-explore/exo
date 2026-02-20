@@ -82,12 +82,16 @@ class FluxModelAdapter(ModelAdapter[Flux1, Transformer]):
         model_id: str,
         local_path: Path,
         quantize: int | None = None,
+        lora_paths: list[str] | None = None,
+        lora_scales: list[float] | None = None,
     ):
         self._config = config
         self._model = Flux1(
             model_config=ModelConfig.from_name(model_name=model_id, base_model=None),
             model_path=str(local_path),
             quantize=quantize,
+            lora_paths=lora_paths if lora_paths else None,
+            lora_scales=lora_scales if lora_scales else None,
         )
         self._transformer = self._model.transformer
 
