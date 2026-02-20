@@ -64,6 +64,8 @@ class Node:
                 download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
                 local_event_sender=router.sender(topics.LOCAL_EVENTS),
                 offline=args.offline,
+                # TODO(evan): remove
+                _global_event_receiver=router.receiver(topics.GLOBAL_EVENTS),
             )
         else:
             download_coordinator = None
@@ -215,6 +217,10 @@ class Node:
                             ),
                             local_event_sender=self.router.sender(topics.LOCAL_EVENTS),
                             offline=self.offline,
+                            # TODO(evan): remove
+                            _global_event_receiver=self.router.receiver(
+                                topics.GLOBAL_EVENTS
+                            ),
                         )
                         self._tg.start_soon(self.download_coordinator.run)
                     if self.worker:
