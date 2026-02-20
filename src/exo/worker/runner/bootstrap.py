@@ -37,9 +37,13 @@ def entrypoint(
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:
-        from exo.worker.runner.runner import main
+        if bound_instance.is_image_model:
+            from exo.worker.runner.image_models.runner import main
+        else:
+            from exo.worker.runner.llm_inference.runner import main
 
         main(bound_instance, event_sender, task_receiver, cancel_receiver)
+
     except ClosedResourceError:
         logger.warning("Runner communication closed unexpectedly")
     except Exception as e:
