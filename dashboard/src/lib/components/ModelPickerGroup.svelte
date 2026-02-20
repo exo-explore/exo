@@ -134,7 +134,7 @@
     class="flex items-center gap-2 px-3 py-2.5 transition-colors {anyVariantFits
       ? 'hover:bg-white/5 cursor-pointer'
       : 'cursor-not-allowed'} {isMainSelected
-      ? 'bg-exo-yellow/10 border-l-2 border-exo-yellow'
+      ? 'bg-white/[0.06] border-l-2 border-exo-yellow'
       : 'border-l-2 border-transparent'}"
     onclick={() => {
       if (group.hasMultipleVariants) {
@@ -369,7 +369,7 @@
     >
       {#if isFavorite}
         <svg
-          class="w-4 h-4 text-amber-400"
+          class="w-4 h-4 text-exo-yellow"
           viewBox="0 0 24 24"
           fill="currentColor"
         >
@@ -426,7 +426,7 @@
           class="w-full flex items-center gap-3 px-3 py-2 pl-10 hover:bg-white/5 transition-colors text-left {!modelCanFit
             ? 'opacity-50 cursor-not-allowed'
             : 'cursor-pointer'} {isSelected
-            ? 'bg-exo-yellow/10 border-l-2 border-exo-yellow'
+            ? 'bg-white/[0.06] border-l-2 border-exo-yellow'
             : 'border-l-2 border-transparent'}"
           disabled={!modelCanFit}
           onclick={() => {
