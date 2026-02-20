@@ -4709,7 +4709,7 @@
                               ></span>
                             {/if}
                           </span>
-                          Standard
+                          TCP/IP
                         </button>
                         <button
                           onclick={() => {
