@@ -606,6 +606,8 @@
     } catch {
       // ignore
     }
+    // Persist to server (~/.exo)
+    fetch("/onboarding", { method: "POST" }).catch(() => {});
     // Remove overlay after fade-out transition completes
     setTimeout(() => {
       onboardingFadingOut = false;
@@ -1142,7 +1144,7 @@
     return tags;
   });
 
-  onMount(() => {
+  onMount(async () => {
     mounted = true;
     fetchModels();
 
@@ -1155,7 +1157,21 @@
       return;
     }
 
-    // Show onboarding wizard for first-time users
+    // Check server-side onboarding state (persisted in ~/.exo)
+    try {
+      const res = await fetch("/onboarding");
+      if (res.ok) {
+        const data = await res.json();
+        if (!data.completed) {
+          onboardingStep = 1;
+        }
+        return;
+      }
+    } catch {
+      // Server unreachable — fall through to localStorage
+    }
+
+    // Fallback: check localStorage
     if (!localStorage.getItem(ONBOARDING_COMPLETE_KEY)) {
       onboardingStep = 1;
     }
