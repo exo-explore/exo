@@ -345,8 +345,8 @@ class DownloadCoordinator:
                                 model_directory=self._model_dir(
                                     progress.shard.model_card.model_id
                                 ),
-                                downloaded_bytes=progress.downloaded,
-                                total_bytes=progress.total,
+                                downloaded=progress.downloaded,
+                                total=progress.total,
                             )
                         else:
                             status = DownloadOngoing(

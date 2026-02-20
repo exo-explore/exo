@@ -31,8 +31,8 @@
       }
     | {
         kind: "pending";
-        downloadedBytes: number;
-        totalBytes: number;
+        downloaded: number;
+        total: number;
         modelDirectory?: string;
       }
     | { kind: "failed"; modelDirectory?: string }
@@ -260,16 +260,16 @@
           } else if (tag === "DownloadFailed") {
             cell = { kind: "failed", modelDirectory };
           } else {
-            const downloadedBytes = getBytes(
-              payload.downloaded_bytes ?? payload.downloadedBytes,
+            const downloaded = getBytes(
+              payload.downloaded ?? payload.downloaded_bytes ?? payload.downloadedBytes,
             );
-            const totalBytes = getBytes(
-              payload.total_bytes ?? payload.totalBytes,
+            const total = getBytes(
+              payload.total ?? payload.total_bytes ?? payload.totalBytes,
             );
             cell = {
               kind: "pending",
-              downloadedBytes,
-              totalBytes,
+              downloaded,
+              total,
               modelDirectory,
             };
           }
@@ -281,14 +281,37 @@
         }
       }
 
+      function rowSortKey(row: ModelRow): number {
+        // in progress (4) -> completed (3) -> paused (2) -> not started (1) -> not present (0)
+        let best = 0;
+        for (const cell of Object.values(row.cells)) {
+          let score = 0;
+          if (cell.kind === "downloading") score = 4;
+          else if (cell.kind === "completed") score = 3;
+          else if (cell.kind === "pending" && cell.downloaded > 0) score = 2; // paused
+          else if (cell.kind === "pending" || cell.kind === "failed") score = 1; // not started
+          if (score > best) best = score;
+        }
+        return best;
+      }
+
+      function totalCompletedBytes(row: ModelRow): number {
+        let total = 0;
+        for (const cell of Object.values(row.cells)) {
+          if (cell.kind === "completed") total += cell.totalBytes;
+        }
+        return total;
+      }
+
       const rows = Array.from(rowMap.values()).sort((a, b) => {
-        const aCompleted = Object.values(a.cells).filter(
-          (c) => c.kind === "completed",
-        ).length;
-        const bCompleted = Object.values(b.cells).filter(
-          (c) => c.kind === "completed",
-        ).length;
-        if (aCompleted !== bCompleted) return bCompleted - aCompleted;
+        const aPriority = rowSortKey(a);
+        const bPriority = rowSortKey(b);
+        if (aPriority !== bPriority) return bPriority - aPriority;
+        // Within completed, sort by biggest size first
+        if (aPriority === 3 && bPriority === 3) {
+          const sizeDiff = totalCompletedBytes(b) - totalCompletedBytes(a);
+          if (sizeDiff !== 0) return sizeDiff;
+        }
         return a.modelId.localeCompare(b.modelId);
       });
 
@@ -498,14 +521,14 @@
                     {:else if cell.kind === "pending"}
                       <div
                         class="flex flex-col items-center gap-0.5"
-                        title={cell.downloadedBytes > 0
-                          ? `${formatBytes(cell.downloadedBytes)} / ${formatBytes(cell.totalBytes)} downloaded`
+                        title={cell.downloaded > 0
+                          ? `${formatBytes(cell.downloaded)} / ${formatBytes(cell.total)} downloaded`
                           : "Download pending"}
                       >
-                        {#if cell.downloadedBytes > 0 && cell.totalBytes > 0}
+                        {#if cell.downloaded > 0 && cell.total > 0}
                           <span class="text-exo-light-gray/70 text-[10px]"
-                            >{formatBytes(cell.downloadedBytes)} / {formatBytes(
-                              cell.totalBytes,
+                            >{formatBytes(cell.downloaded)} / {formatBytes(
+                              cell.total,
                             )}</span
                           >
                           <div
@@ -514,7 +537,7 @@
                             <div
                               class="h-full bg-exo-light-gray/40 rounded-full"
                               style="width: {(
-                                (cell.downloadedBytes / cell.totalBytes) *
+                                (cell.downloaded / cell.total) *
                                 100
                               ).toFixed(1)}%"
                             ></div>
