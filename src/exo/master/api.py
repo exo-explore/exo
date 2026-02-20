@@ -321,20 +321,21 @@ class API:
         self.app.get("/images/{image_id}")(self.get_image)
         self.app.post("/v1/messages", response_model=None)(self.claude_messages)
         self.app.post("/v1/responses", response_model=None)(self.openai_responses)
-        # Ollama API — health checks (must be before static files mount)
-        self.app.head("/")(self._ollama_root)
-        self.app.head("/api/version")(self.ollama_version)
+
         # Ollama API
-        self.app.post("/api/chat", response_model=None)(self.ollama_chat)
-        self.app.post("/api/api/chat", response_model=None)(self.ollama_chat)
-        self.app.post("/api/v1/chat", response_model=None)(self.ollama_chat)
-        self.app.post("/api/generate", response_model=None)(self.ollama_generate)
-        self.app.get("/api/tags")(self.ollama_tags)
-        self.app.get("/api/api/tags")(self.ollama_tags)
-        self.app.get("/api/v1/tags")(self.ollama_tags)
-        self.app.post("/api/show")(self.ollama_show)
-        self.app.get("/api/ps")(self.ollama_ps)
-        self.app.get("/api/version")(self.ollama_version)
+        self.app.head("/ollama/")(self.ollama_version)
+        self.app.head("/ollama/api/version")(self.ollama_version)
+        self.app.post("/ollama/api/chat", response_model=None)(self.ollama_chat)
+        self.app.post("/ollama/api/api/chat", response_model=None)(self.ollama_chat)
+        self.app.post("/ollama/api/v1/chat", response_model=None)(self.ollama_chat)
+        self.app.post("/ollama/api/generate", response_model=None)(self.ollama_generate)
+        self.app.get("/ollama/api/tags")(self.ollama_tags)
+        self.app.get("/ollama/api/api/tags")(self.ollama_tags)
+        self.app.get("/ollama/api/v1/tags")(self.ollama_tags)
+        self.app.post("/ollama/api/show")(self.ollama_show)
+        self.app.get("/ollama/api/ps")(self.ollama_ps)
+        self.app.get("/ollama/api/version")(self.ollama_version)
+
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(self.stream_events)
         self.app.post("/download/start")(self.start_download)
@@ -1444,14 +1445,19 @@ class API:
         """Returns model information in Ollama show format."""
         body = await request.body()
         payload = OllamaShowRequest.model_validate_json(body)
+        model_name = payload.name or payload.model
+        if not model_name:
+            raise HTTPException(status_code=400, detail="name or model is required")
         try:
-            card = await ModelCard.load(ModelId(payload.name))
+            card = await ModelCard.load(ModelId(model_name))
         except Exception as exc:
             raise HTTPException(
-                status_code=404, detail=f"Model not found: {payload.name}"
+                status_code=404, detail=f"Model not found: {model_name}"
             ) from exc
 
         return OllamaShowResponse(
+            modelfile=f"FROM {card.model_id}",
+            template="{{ .Prompt }}",
             details=OllamaModelDetails(
                 family=card.family or None,
                 quantization_level=card.quantization or None,
