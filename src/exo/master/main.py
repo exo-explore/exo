@@ -385,19 +385,44 @@ class Master:
             async for local_event in local_events:
                 # Discard all events not from our session
                 if local_event.session != self.session_id:
+                    logger.debug(
+                        f"Master discarding event from wrong session: "
+                        f"event_session={local_event.session} our_session={self.session_id} "
+                        f"origin={local_event.origin} origin_idx={local_event.origin_idx}"
+                    )
                     continue
+                logger.info(
+                    f"Master received local event: origin={local_event.origin} "
+                    f"origin_idx={local_event.origin_idx} type={type(local_event.event).__name__} "
+                    f"event={str(local_event.event)[:200]}"
+                )
                 self._multi_buffer.ingest(
                     local_event.origin_idx,
                     local_event.event,
                     local_event.origin,
                 )
-                for event in self._multi_buffer.drain():
+                drained = self._multi_buffer.drain()
+                if not drained:
+                    logger.info(
+                        f"Master: no events drained after ingesting origin_idx={local_event.origin_idx} "
+                        f"from {local_event.origin} (likely waiting for earlier events)"
+                    )
+                else:
+                    logger.info(
+                        f"Master: drained {len(drained)} events after ingesting "
+                        f"origin_idx={local_event.origin_idx} from {local_event.origin}"
+                    )
+                for event in drained:
                     if isinstance(event, TracesCollected):
                         await self._handle_traces_collected(event)
                         continue
 
-                    logger.debug(f"Master indexing event: {str(event)[:100]}")
-                    indexed = IndexedEvent(event=event, idx=len(self._event_log))
+                    global_idx = len(self._event_log)
+                    logger.info(
+                        f"Master indexing event: global_idx={global_idx} "
+                        f"type={type(event).__name__} event={str(event)[:200]}"
+                    )
+                    indexed = IndexedEvent(event=event, idx=global_idx)
                     self.state = apply(self.state, indexed)
 
                     event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
@@ -406,6 +431,10 @@ class Master:
 
                     self._event_log.append(event)
                     await self._send_event(indexed)
+                    logger.info(
+                        f"Master broadcast event: global_idx={global_idx} "
+                        f"type={type(event).__name__}"
+                    )
 
     async def _loopback_processor(self) -> None:
         # this would ideally not be necessary.
