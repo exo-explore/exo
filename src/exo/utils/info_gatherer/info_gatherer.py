@@ -388,6 +388,12 @@ class InfoGatherer:
             if IS_DARWIN:
                 if (macmon_path := shutil.which("macmon")) is not None:
                     tg.start_soon(self._monitor_macmon, macmon_path)
+                else:
+                    # macmon not installed — fall back to psutil for memory
+                    logger.warning(
+                        "macmon not found, falling back to psutil for memory monitoring"
+                    )
+                    self.memory_poll_rate = 1
                 tg.start_soon(self._monitor_system_profiler_thunderbolt_data)
                 tg.start_soon(self._monitor_thunderbolt_bridge_status)
                 tg.start_soon(self._monitor_rdma_ctl_status)
