@@ -80,9 +80,9 @@ def map_repo_file_download_progress_to_download_progress_data(
     repo_file_download_progress: RepoFileDownloadProgress,
 ) -> DownloadProgressData:
     return DownloadProgressData(
-        downloaded_bytes=repo_file_download_progress.downloaded,
-        downloaded_bytes_this_session=repo_file_download_progress.downloaded_this_session,
-        total_bytes=repo_file_download_progress.total,
+        downloaded=repo_file_download_progress.downloaded,
+        downloaded_this_session=repo_file_download_progress.downloaded_this_session,
+        total=repo_file_download_progress.total,
         completed_files=1 if repo_file_download_progress.status == "complete" else 0,
         total_files=1,
         speed=repo_file_download_progress.speed,
@@ -95,9 +95,9 @@ def map_repo_download_progress_to_download_progress_data(
     repo_download_progress: RepoDownloadProgress,
 ) -> DownloadProgressData:
     return DownloadProgressData(
-        total_bytes=repo_download_progress.total_bytes,
-        downloaded_bytes=repo_download_progress.downloaded_bytes,
-        downloaded_bytes_this_session=repo_download_progress.downloaded_bytes_this_session,
+        total=repo_download_progress.total,
+        downloaded=repo_download_progress.downloaded,
+        downloaded_this_session=repo_download_progress.downloaded_this_session,
         completed_files=repo_download_progress.completed_files,
         total_files=repo_download_progress.total_files,
         speed=repo_download_progress.overall_speed,
@@ -142,7 +142,7 @@ async def delete_model(model_id: ModelId) -> bool:
 
 
 async def seed_models(seed_dir: str | Path):
-    """Move model in resources folder of app to .cache/huggingface/hub"""
+    """Move models from resources folder to EXO_MODELS_DIR."""
     source_dir = Path(seed_dir)
     dest_dir = await ensure_models_dir()
     for path in source_dir.iterdir():
@@ -448,12 +448,13 @@ async def download_file_with_retry(
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
     on_connection_lost: Callable[[], None] = lambda: None,
+    skip_internet: bool = False,
 ) -> Path:
     n_attempts = 3
     for attempt in range(n_attempts):
         try:
             return await _download_file(
-                model_id, revision, path, target_dir, on_progress
+                model_id, revision, path, target_dir, on_progress, skip_internet
             )
         except HuggingFaceAuthenticationError:
             raise
@@ -487,10 +488,14 @@ async def _download_file(
     path: str,
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
+    skip_internet: bool = False,
 ) -> Path:
     target_path = target_dir / path
 
     if await aios.path.exists(target_path):
+        if skip_internet:
+            return target_path
+
         local_size = (await aios.stat(target_path)).st_size
 
         # Try to verify against remote, but allow offline operation
@@ -509,6 +514,11 @@ async def _download_file(
                 f"Could not verify {path} against remote (offline?): {e}, using local file"
             )
             return target_path
+
+    if skip_internet:
+        raise FileNotFoundError(
+            f"File {path} not found locally and cannot download in offline mode"
+        )
 
     await aios.makedirs((target_dir / path).parent, exist_ok=True)
     length, etag = await file_meta(model_id, revision, path)
@@ -568,19 +578,20 @@ def calculate_repo_progress(
     file_progress: dict[str, RepoFileDownloadProgress],
     all_start_time: float,
 ) -> RepoDownloadProgress:
-    all_total_bytes = sum((p.total.in_bytes for p in file_progress.values()), 0)
-    all_downloaded_bytes = sum(
-        (p.downloaded.in_bytes for p in file_progress.values()), 0
+    all_total = sum((p.total for p in file_progress.values()), Memory.from_bytes(0))
+    all_downloaded = sum(
+        (p.downloaded for p in file_progress.values()), Memory.from_bytes(0)
     )
-    all_downloaded_bytes_this_session = sum(
-        (p.downloaded_this_session.in_bytes for p in file_progress.values()), 0
+    all_downloaded_this_session = sum(
+        (p.downloaded_this_session for p in file_progress.values()),
+        Memory.from_bytes(0),
     )
     elapsed_time = time.time() - all_start_time
     all_speed = (
-        all_downloaded_bytes_this_session / elapsed_time if elapsed_time > 0 else 0
+        all_downloaded_this_session.in_bytes / elapsed_time if elapsed_time > 0 else 0
     )
     all_eta = (
-        timedelta(seconds=(all_total_bytes - all_downloaded_bytes) / all_speed)
+        timedelta(seconds=(all_total - all_downloaded).in_bytes / all_speed)
         if all_speed > 0
         else timedelta(seconds=0)
     )
@@ -599,11 +610,9 @@ def calculate_repo_progress(
             [p for p in file_progress.values() if p.downloaded == p.total]
         ),
         total_files=len(file_progress),
-        downloaded_bytes=Memory.from_bytes(all_downloaded_bytes),
-        downloaded_bytes_this_session=Memory.from_bytes(
-            all_downloaded_bytes_this_session
-        ),
-        total_bytes=Memory.from_bytes(all_total_bytes),
+        downloaded=all_downloaded,
+        downloaded_this_session=all_downloaded_this_session,
+        total=all_total,
         overall_speed=all_speed,
         overall_eta=all_eta,
         status=status,
@@ -814,6 +823,7 @@ async def download_shard(
                     file, curr_bytes, total_bytes, is_renamed
                 ),
                 on_connection_lost=on_connection_lost,
+                skip_internet=skip_internet,
             )
 
     if not skip_download:

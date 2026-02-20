@@ -6,7 +6,7 @@ tasks = ["TextGeneration"]
 family = "kimi"
 quantization = ""
 base_model = "Kimi K2.5"
-capabilities = ["text", "thinking"]
+capabilities = ["text", "thinking", "thinking_toggle"]
 
 [storage_size]
 in_bytes = 662498705408

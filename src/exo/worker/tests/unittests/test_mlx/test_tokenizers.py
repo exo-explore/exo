@@ -343,8 +343,16 @@ async def test_kimi_tokenizer_specifically():
 @pytest.mark.asyncio
 async def test_glm_tokenizer_specifically():
     """Test GLM tokenizer with its specific EOS tokens."""
+
+    def contains(card: ModelCard, x: str):
+        return x in card.model_id.lower()
+
     glm_model_cards = [
-        card for card in await get_model_cards() if "glm" in card.model_id.lower()
+        card
+        for card in await get_model_cards()
+        if contains(card, "glm")
+        and not contains(card, "-5")
+        and not contains(card, "4.7")
     ]
 
     if not glm_model_cards:

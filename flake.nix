@@ -74,7 +74,6 @@
       perSystem =
         { config, self', inputs', pkgs, lib, system, ... }:
         let
-          fenixToolchain = inputs'.fenix.packages.complete;
           # Use pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
           pkgsSwift = import inputs.nixpkgs-swift { inherit system; };
         in

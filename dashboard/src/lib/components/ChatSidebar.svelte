@@ -185,7 +185,11 @@
 
     let instanceType: string | null = null;
     if (instanceTag === "MlxRingInstance") instanceType = "MLX Ring";
-    else if (instanceTag === "MlxJacclInstance") instanceType = "MLX RDMA";
+    else if (
+      instanceTag === "MlxIbvInstance" ||
+      instanceTag === "MlxJacclInstance"
+    )
+      instanceType = "MLX RDMA";
 
     let sharding: string | null = null;
     const inst = instance as {

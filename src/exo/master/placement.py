@@ -6,11 +6,11 @@ from typing import Sequence
 from exo.master.placement_utils import (
     Cycle,
     filter_cycles_by_memory,
-    get_largest_cycles,
     get_mlx_jaccl_coordinators,
     get_mlx_jaccl_devices_matrix,
     get_mlx_ring_hosts_by_node,
     get_shard_assignments,
+    get_smallest_cycles,
 )
 from exo.shared.models.model_cards import ModelId
 from exo.shared.topology import Topology
@@ -106,27 +106,23 @@ def place_instance(
             "Pipeline parallelism is not supported for DeepSeek V3.1 (8-bit)"
         )
 
-    largest_cycles = get_largest_cycles(cycles_with_sufficient_memory)
+    smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
 
-    largest_rdma_cycles = [
-        cycle for cycle in largest_cycles if topology.is_rdma_cycle(cycle)
+    smallest_rdma_cycles = [
+        cycle for cycle in smallest_cycles if topology.is_rdma_cycle(cycle)
     ]
 
-    if command.instance_meta == InstanceMeta.MlxJaccl:
-        if not largest_rdma_cycles:
-            raise ValueError(
-                "Requested RDMA (MlxJaccl) but no RDMA-connected cycles available"
-            )
-        largest_cycles = largest_rdma_cycles
+    if command.instance_meta == InstanceMeta.MlxJaccl and smallest_rdma_cycles != []:
+        smallest_cycles = smallest_rdma_cycles
 
     cycles_with_leaf_nodes: list[Cycle] = [
         cycle
-        for cycle in largest_cycles
+        for cycle in smallest_cycles
         if any(topology.node_is_leaf(node_id) for node_id in cycle)
     ]
 
     selected_cycle = max(
-        cycles_with_leaf_nodes if cycles_with_leaf_nodes != [] else largest_cycles,
+        cycles_with_leaf_nodes if cycles_with_leaf_nodes != [] else smallest_cycles,
         key=lambda cycle: sum(
             (node_memory[node_id].ram_available for node_id in cycle),
             start=Memory(),
@@ -145,15 +141,29 @@ def place_instance(
     if len(selected_cycle) == 1:
         command.instance_meta = InstanceMeta.MlxRing
 
-    # TODO: Single node instances
     match command.instance_meta:
         case InstanceMeta.MlxJaccl:
+            # TODO(evan): shard assignments should contain information about ranks, this is ugly
+            def get_device_rank(node_id: NodeId) -> int:
+                runner_id = shard_assignments.node_to_runner[node_id]
+                shard_metadata = shard_assignments.runner_to_shard.get(runner_id)
+                assert shard_metadata is not None
+                return shard_metadata.device_rank
+
+            zero_node_ids = [
+                node_id
+                for node_id in selected_cycle.node_ids
+                if get_device_rank(node_id) == 0
+            ]
+            assert len(zero_node_ids) == 1
+            coordinator_node_id = zero_node_ids[0]
+
             mlx_jaccl_devices = get_mlx_jaccl_devices_matrix(
                 [node_id for node_id in selected_cycle],
                 cycle_digraph,
             )
             mlx_jaccl_coordinators = get_mlx_jaccl_coordinators(
-                coordinator=selected_cycle.node_ids[0],
+                coordinator=coordinator_node_id,
                 coordinator_port=random_ephemeral_port(),
                 cycle_digraph=cycle_digraph,
                 node_network=node_network,

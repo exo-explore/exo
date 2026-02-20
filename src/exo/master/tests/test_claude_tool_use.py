@@ -261,7 +261,7 @@ class TestGenerateClaudeStreamToolUse:
 
         parsed = _parse_sse_events(events)
 
-        # Two tool block starts (at indices 1 and 2)
+        # Two tool block starts (at indices 0 and 1 — no text block when only tools)
         tool_starts = [
             e
             for e in parsed
@@ -270,12 +270,11 @@ class TestGenerateClaudeStreamToolUse:
             == "tool_use"
         ]
         assert len(tool_starts) == 2
-        assert tool_starts[0]["index"] == 1
-        assert tool_starts[1]["index"] == 2
+        assert tool_starts[0]["index"] == 0
+        assert tool_starts[1]["index"] == 1
 
-        # Two tool block stops (at indices 1 and 2), plus text block stop at 0
+        # Two tool block stops (at indices 0 and 1)
         block_stops = [e for e in parsed if e.get("type") == "content_block_stop"]
         stop_indices = [e["index"] for e in block_stops]
         assert 0 in stop_indices
         assert 1 in stop_indices
-        assert 2 in stop_indices

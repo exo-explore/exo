@@ -28,6 +28,7 @@ class GenerationResponse(BaseRunnerResponse):
     finish_reason: FinishReason | None = None
     stats: GenerationStats | None = None
     usage: Usage | None
+    is_thinking: bool = False
 
 
 class ImageGenerationResponse(BaseRunnerResponse):
@@ -67,3 +68,8 @@ class ToolCallResponse(BaseRunnerResponse):
 
 class FinishedResponse(BaseRunnerResponse):
     pass
+
+
+class PrefillProgressResponse(BaseRunnerResponse):
+    processed_tokens: int
+    total_tokens: int

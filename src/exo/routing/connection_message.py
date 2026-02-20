@@ -30,7 +30,7 @@ class ConnectionMessage(CamelCaseModel):
     @classmethod
     def from_update(cls, update: ConnectionUpdate) -> "ConnectionMessage":
         return cls(
-            node_id=NodeId(update.peer_id.to_base58()),
+            node_id=NodeId(update.peer_id),
             connection_type=ConnectionMessageType.from_update_type(update.update_type),
             remote_ipv4=update.remote_ipv4,
             remote_tcp_port=update.remote_tcp_port,

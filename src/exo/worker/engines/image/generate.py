@@ -14,6 +14,7 @@ from exo.shared.types.api import (
     ImageEditsTaskParams,
     ImageGenerationStats,
     ImageGenerationTaskParams,
+    ImageSize,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.runner_response import (
@@ -23,9 +24,9 @@ from exo.shared.types.worker.runner_response import (
 from exo.worker.engines.image.distributed_model import DistributedImageModel
 
 
-def parse_size(size_str: str | None) -> tuple[int, int]:
+def parse_size(size_str: ImageSize) -> tuple[int, int]:
     """Parse size parameter like '1024x1024' to (width, height) tuple."""
-    if not size_str:
+    if size_str == "auto":
         return (1024, 1024)
 
     try:
@@ -109,6 +110,9 @@ def generate_image(
             # Decode base64 image data and save to temp file
             image_path = Path(tmpdir) / "input.png"
             image_path.write_bytes(base64.b64decode(task.image_data))
+            if task.size == "auto":
+                with Image.open(image_path) as img:
+                    width, height = img.size
 
         for image_num in range(num_images):
             # Increment seed for each image to ensure unique results
@@ -162,7 +166,7 @@ def generate_image(
                             else 0.0
                         )
 
-                        peak_memory_gb = mx.get_peak_memory() / (1024**3)
+                        peak_memory = Memory.from_bytes(mx.get_peak_memory())
 
                         stats = ImageGenerationStats(
                             seconds_per_step=seconds_per_step,
@@ -171,7 +175,7 @@ def generate_image(
                             num_images=num_images,
                             image_width=width,
                             image_height=height,
-                            peak_memory_usage=Memory.from_gb(peak_memory_gb),
+                            peak_memory_usage=peak_memory,
                         )
 
                     buffer = io.BytesIO()

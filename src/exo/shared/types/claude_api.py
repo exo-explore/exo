@@ -47,6 +47,14 @@ class ClaudeImageBlock(BaseModel, frozen=True):
     source: ClaudeImageSource
 
 
+class ClaudeThinkingBlock(BaseModel, frozen=True):
+    """Thinking content block in Claude Messages API."""
+
+    type: Literal["thinking"] = "thinking"
+    thinking: str
+    signature: str | None = None
+
+
 class ClaudeToolUseBlock(BaseModel, frozen=True):
     """Tool use content block in Claude Messages API."""
 
@@ -66,11 +74,17 @@ class ClaudeToolResultBlock(BaseModel, frozen=True):
     cache_control: dict[str, str] | None = None
 
 
-ClaudeContentBlock = ClaudeTextBlock | ClaudeImageBlock | ClaudeToolUseBlock
+ClaudeContentBlock = (
+    ClaudeTextBlock | ClaudeImageBlock | ClaudeThinkingBlock | ClaudeToolUseBlock
+)
 
 # Input content blocks can also include tool_result (sent by user after tool_use)
 ClaudeInputContentBlock = (
-    ClaudeTextBlock | ClaudeImageBlock | ClaudeToolUseBlock | ClaudeToolResultBlock
+    ClaudeTextBlock
+    | ClaudeImageBlock
+    | ClaudeThinkingBlock
+    | ClaudeToolUseBlock
+    | ClaudeToolResultBlock
 )
 
 
@@ -80,6 +94,11 @@ class ClaudeMessage(BaseModel, frozen=True):
 
     role: ClaudeRole
     content: str | list[ClaudeInputContentBlock]
+
+
+class ClaudeThinkingConfig(BaseModel, frozen=True):
+    type: Literal["enabled", "disabled", "adaptive"]
+    budget_tokens: int | None = None
 
 
 class ClaudeMessagesRequest(BaseModel):
@@ -96,6 +115,7 @@ class ClaudeMessagesRequest(BaseModel):
     top_k: int | None = None
     tools: list[ClaudeToolDefinition] | None = None
     metadata: dict[str, str] | None = None
+    thinking: ClaudeThinkingConfig | None = None
 
 
 # Response types
@@ -145,7 +165,7 @@ class ClaudeContentBlockStartEvent(BaseModel, frozen=True):
 
     type: Literal["content_block_start"] = "content_block_start"
     index: int
-    content_block: ClaudeTextBlock | ClaudeToolUseBlock
+    content_block: ClaudeTextBlock | ClaudeThinkingBlock | ClaudeToolUseBlock
 
 
 class ClaudeTextDelta(BaseModel, frozen=True):
@@ -153,6 +173,13 @@ class ClaudeTextDelta(BaseModel, frozen=True):
 
     type: Literal["text_delta"] = "text_delta"
     text: str
+
+
+class ClaudeThinkingDelta(BaseModel, frozen=True):
+    """Delta for thinking content block."""
+
+    type: Literal["thinking_delta"] = "thinking_delta"
+    thinking: str
 
 
 class ClaudeInputJsonDelta(BaseModel, frozen=True):
@@ -167,7 +194,7 @@ class ClaudeContentBlockDeltaEvent(BaseModel, frozen=True):
 
     type: Literal["content_block_delta"] = "content_block_delta"
     index: int
-    delta: ClaudeTextDelta | ClaudeInputJsonDelta
+    delta: ClaudeTextDelta | ClaudeThinkingDelta | ClaudeInputJsonDelta
 
 
 class ClaudeContentBlockStopEvent(BaseModel, frozen=True):

@@ -163,11 +163,14 @@ class PipelineLastLayer(CustomMlxLayer):
                 output, (self.r + 1) % self.s, group=self.group
             )
             if cache is not None:
-                cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
+                # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
+                # doesn't have .keys directly; access via first sub-cache.
+                _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
+                _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
             if self.is_prefill:
                 mx.eval(output)
                 if cache is not None:
-                    mx.eval(cache.keys)  # type: ignore
+                    mx.eval(_cache.keys)  # type: ignore
 
         if not self.is_prefill:
             output = mx.distributed.all_gather(output, group=self.group)[
@@ -307,7 +310,9 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
 
         # Add dependency to last cache entry to ensure distributed ops are evaluated
         if cache is not None:
-            cache[-1].state = mx.depends(cache[-1].state, logits)  # type: ignore
+            last = cache[-1]  # type: ignore
+            dep_cache = last[0] if hasattr(last, "caches") else last  # type: ignore
+            dep_cache.keys = mx.depends(dep_cache.keys, logits)  # type: ignore
 
         return logits
 
@@ -333,7 +338,9 @@ def patch_tensor_model[T](model: T) -> T:
 
         # Add dependency to last cache entry to ensure distributed ops are evaluated
         if cache is not None and len(cache) > 0:  # pyright: ignore[reportAny]
-            cache[-1].state = mx.depends(cache[-1].state, logits)  # pyright: ignore[reportAny,reportUnknownMemberType]
+            last = cache[-1]  # pyright: ignore[reportAny]
+            dep_cache = last[0] if hasattr(last, "caches") else last  # pyright: ignore[reportAny]
+            dep_cache.keys = mx.depends(dep_cache.keys, logits)  # pyright: ignore[reportAny,reportUnknownMemberType]
 
         return logits
 
@@ -547,10 +554,12 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
         on_timeout: TimeoutCallback | None,
     ) -> nn.Module:
         model = cast(DeepseekV3Model, model)
+
         for layer in model.layers:
             eval_with_timeout(
                 layer.parameters(), timeout_seconds / len(model.layers), on_timeout
             )
+
             # Shard the self attention
             if layer.self_attn.q_lora_rank is None:
                 layer.self_attn.q_proj = self.all_to_sharded_linear(
@@ -581,12 +590,18 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
                 layer.mlp.down_proj = self.sharded_to_all_linear(layer.mlp.down_proj)
                 layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
 
-            # Shard the MoE. Shard in place since the MoE should be responsible
-            # for aggregating the results.
+            # Shard the MoE.
             else:
-                self.all_to_sharded_linear_in_place(layer.mlp.shared_experts.gate_proj)
-                self.sharded_to_all_linear_in_place(layer.mlp.shared_experts.down_proj)
-                self.all_to_sharded_linear_in_place(layer.mlp.shared_experts.up_proj)
+                if getattr(layer.mlp, "shared_experts", None) is not None:
+                    self.all_to_sharded_linear_in_place(
+                        layer.mlp.shared_experts.gate_proj
+                    )
+                    self.sharded_to_all_linear_in_place(
+                        layer.mlp.shared_experts.down_proj
+                    )
+                    self.all_to_sharded_linear_in_place(
+                        layer.mlp.shared_experts.up_proj
+                    )
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
                 self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
@@ -779,8 +794,7 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
 
             layer.self_attn = WrappedMiniMaxAttention(layer.self_attn, self.group)  # pyright: ignore[reportAttributeAccessIssue,reportArgumentType]
 
-            # Shard the MoE. Shard in place since the MoE should be responsible
-            # for aggregating the results.
+            # Shard the MoE.
             self.all_to_sharded_linear_in_place(
                 layer.block_sparse_moe.switch_mlp.gate_proj
             )
@@ -893,8 +907,7 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                     layer.self_attn.num_attention_heads //= self.N
                     layer.self_attn.num_key_value_heads //= self.N
 
-            # Shard the MoE. Shard in place since the MoE should be responsible
-            # for aggregating the results.
+            # Shard the MoE.
             if isinstance(layer.mlp, (Qwen3MoeSparseMoeBlock, Qwen3NextSparseMoeBlock)):
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
                 self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)

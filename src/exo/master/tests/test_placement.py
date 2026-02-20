@@ -80,8 +80,8 @@ def test_get_instance_placements_create_instance(
 ):
     # arrange
     model_card.n_layers = total_layers
-    model_card.storage_size.in_bytes = sum(
-        available_memory
+    model_card.storage_size = Memory.from_bytes(
+        sum(available_memory)
     )  # make it exactly fit across all nodes
     topology = Topology()
 
@@ -349,7 +349,7 @@ def test_tensor_rdma_backend_connectivity_matrix(
     # arrange
     topology = Topology()
     model_card.n_layers = 12
-    model_card.storage_size.in_bytes = 1500
+    model_card.storage_size = Memory.from_bytes(1500)
 
     node_a = NodeId()
     node_b = NodeId()
