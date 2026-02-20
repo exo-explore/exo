@@ -4,8 +4,6 @@ import Foundation
 
 private let customNamespaceKey = "EXOCustomNamespace"
 private let hfTokenKey = "EXOHFToken"
-private let enableImageModelsKey = "EXOEnableImageModels"
-
 @MainActor
 final class ExoProcessController: ObservableObject {
     enum Status: Equatable {
@@ -49,14 +47,6 @@ final class ExoProcessController: ObservableObject {
     {
         didSet {
             UserDefaults.standard.set(hfToken, forKey: hfTokenKey)
-        }
-    }
-    @Published var enableImageModels: Bool = {
-        return UserDefaults.standard.bool(forKey: enableImageModelsKey)
-    }()
-    {
-        didSet {
-            UserDefaults.standard.set(enableImageModels, forKey: enableImageModelsKey)
         }
     }
 
@@ -246,10 +236,6 @@ final class ExoProcessController: ObservableObject {
         if !hfToken.isEmpty {
             environment["HF_TOKEN"] = hfToken
         }
-        if enableImageModels {
-            environment["EXO_ENABLE_IMAGE_MODELS"] = "true"
-        }
-
         var paths: [String] = []
         if let existing = environment["PATH"], !existing.isEmpty {
             paths = existing.split(separator: ":").map(String.init)
