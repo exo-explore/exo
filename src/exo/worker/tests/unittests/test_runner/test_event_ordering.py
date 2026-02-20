@@ -180,7 +180,7 @@ def _run(tasks: Iterable[Task]):
         task_receiver.close = nothin
         task_receiver.join = nothin
         with unittest.mock.patch(
-            "exo.worker.runner.runner.mx.distributed.all_gather",
+            "exo.worker.runner.llm_inference.runner.mx.distributed.all_gather",
             make_nothin(mx.array([1])),
         ):
             mlx_runner.main(
