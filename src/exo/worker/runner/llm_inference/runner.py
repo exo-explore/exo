@@ -313,7 +313,7 @@ def main(
                             mlx_generator = parse_tool_calls(mlx_generator, tool_parser)
 
                         completion_tokens = 0
-                        tokens_since_last_cancel_check = 0
+                        tokens_since_last_cancel_check = check_for_cancel_every
                         for response in mlx_generator:
                             tokens_since_last_cancel_check += 1
                             if tokens_since_last_cancel_check >= check_for_cancel_every:
