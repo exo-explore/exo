@@ -337,10 +337,11 @@
   // Step 2 chip fade: 0→N where each chip fades in at its stagger offset
   const chipPhase = tweened(0, { duration: 800, easing: cubicOut });
   const deviceCountOpacity = tweened(0, { duration: 600, easing: cubicOut });
+  const topologyOpacity = tweened(1, { duration: 400, easing: cubicOut });
   const titleOpacity = tweened(0, { duration: 500, easing: cubicOut });
   const subtitleOpacity = tweened(0, { duration: 500, easing: cubicOut });
 
-  // ── Step 1: "Your device" — one device fades in, centered ──
+  // ── Step 1: "Your EXO Network" — show real topology ──
   $effect(() => {
     if (onboardingStep === 1) {
       showContinueButton = false;
@@ -360,33 +361,33 @@
       subtitleOpacity.set(0, { duration: 0 });
       chipPhase.set(0, { duration: 0 });
       deviceCountOpacity.set(0, { duration: 0 });
+      topologyOpacity.set(1, { duration: 0 });
 
       const t1 = setTimeout(() => {
-        device1Opacity.set(1);
+        titleOpacity.set(1);
       }, 300);
       const t2 = setTimeout(() => {
-        titleOpacity.set(1);
-      }, 500);
-      const t3 = setTimeout(() => {
         deviceCountOpacity.set(1);
-      }, 1200);
-      const t4 = setTimeout(() => {
+      }, 800);
+      const t3 = setTimeout(() => {
         showContinueButton = true;
-      }, 1400);
+      }, 1200);
 
       return () => {
         clearTimeout(t1);
         clearTimeout(t2);
         clearTimeout(t3);
-        clearTimeout(t4);
       };
     }
   });
 
-  // ── Step 2: "Add devices to run larger models" — device 1 slides left, Mac Studio enters ──
+  // ── Step 2: "Add devices to run larger models" — cross-fade topology out, device pair animates in ──
   $effect(() => {
     if (onboardingStep === 2) {
       showContinueButton = false;
+
+      // Cross-fade: fade out real topology
+      topologyOpacity.set(0);
 
       // Immediately transition out step 1 elements
       logoOpacity.set(0);
@@ -395,33 +396,37 @@
       titleOpacity.set(0, { duration: 300 });
       subtitleOpacity.set(0, { duration: 0 });
 
+      // Delay all step 2 animations by 400ms to let topology fade out
+      const DELAY = 400;
+
       const t0 = setTimeout(() => {
         stepTitle = "Add devices to run larger models";
         titleOpacity.set(1, { duration: 400 });
-      }, 300);
+      }, DELAY + 300);
 
       const t1 = setTimeout(() => {
+        device1Opacity.set(1, { duration: 0 });
         device1X.set(220);
         device2X.set(480, { duration: 0 });
         device2Opacity.set(0, { duration: 0 });
-      }, 200);
+      }, DELAY + 200);
       const t2 = setTimeout(() => {
         device2Opacity.set(1);
         device2X.set(480);
-      }, 700);
+      }, DELAY + 700);
       const t3 = setTimeout(() => {
         connectionOpacity.set(1);
-      }, 1200);
+      }, DELAY + 1200);
       const t4 = setTimeout(() => {
         combinedLabelOpacity.set(1);
-      }, 1600);
+      }, DELAY + 1600);
       // Staggered chip fade-in (each chip offsets by 0.6 in chipPhase)
       const t5 = setTimeout(() => {
         chipPhase.set(3, { duration: 1800 });
-      }, 1800);
+      }, DELAY + 1800);
       const t6 = setTimeout(() => {
         showContinueButton = true;
-      }, 3200);
+      }, DELAY + 3200);
 
       return () => {
         clearTimeout(t0);
@@ -3033,10 +3038,22 @@
               Your EXO Network
             </p>
 
+            <!-- Step 1: Real topology graph -->
+            {#if onboardingStep <= 1 || $topologyOpacity > 0.01}
+              <div
+                class="absolute inset-0 flex items-center justify-center"
+                style="opacity: {$topologyOpacity}; pointer-events: {onboardingStep <= 1 ? 'none' : 'none'};"
+              >
+                <TopologyGraph class="w-full h-full" />
+              </div>
+            {/if}
+
+            <!-- Steps 2+: Tweened SVG canvas with device pair -->
             <svg
               viewBox="0 0 700 420"
               class="w-full h-full"
               xmlns="http://www.w3.org/2000/svg"
+              style="position: relative;"
             >
               <!-- Device 1 (User's device) -->
               <g
@@ -3071,12 +3088,23 @@
                 </text>
               </g>
 
-              <!-- Device 2 (Mac Studio) -->
+              <!-- Device 2 (Mac Studio — simulated) -->
               <g
                 transform="translate({$device2X}, 210)"
                 opacity={$device2Opacity}
                 style="transition: opacity 0.6s ease;"
               >
+                <!-- Dashed outline to indicate simulated device -->
+                <rect
+                  x={-110 * 1.25 / 2 - 6}
+                  y={-110 * 0.85 / 2 - 6}
+                  width={110 * 1.25 + 12}
+                  height={110 * 0.85 + 12}
+                  rx="6"
+                  fill="none"
+                  stroke="rgba(255,255,255,0.12)"
+                  stroke-dasharray="4,4"
+                />
                 <DeviceIcon
                   deviceType="mac studio"
                   cx={0}
@@ -3101,6 +3129,15 @@
                   style="font-size: 14px; font-family: 'SF Mono', ui-monospace, monospace;"
                 >
                   <tspan fill="rgba(255,215,0,0.9)">{SIMULATED_STUDIO_GB}</tspan><tspan fill="rgba(255,255,255,0.4)">{" "}GB</tspan>
+                </text>
+                <text
+                  x="0"
+                  y="120"
+                  text-anchor="middle"
+                  fill="rgba(255,255,255,0.2)"
+                  style="font-size: 9px; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; font-style: italic;"
+                >
+                  (example)
                 </text>
               </g>
 
