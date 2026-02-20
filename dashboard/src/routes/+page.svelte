@@ -295,8 +295,8 @@
       0;
     const memGB = Math.round(totalMem / (1024 * 1024 * 1024));
     const name = firstNode.friendly_name || "Your Mac";
-    const deviceType = (firstNode.device_type || "macbook pro").toLowerCase();
-    return { name, memoryGB: memGB || 36, deviceType };
+    const modelId = (firstNode.system_info?.model_id || "macbook pro").toLowerCase();
+    return { name, memoryGB: memGB || 36, deviceType: modelId };
   });
 
   let showContinueButton = $state(false);
@@ -532,7 +532,7 @@
         connectionIsRed.set(0);
       }, 3700);
       const t7 = setTimeout(() => {
-        modelBlockY.set(115); // Settle back down just above the device
+        modelBlockY.set(125); // Settle back down just above the device
       }, 4800);
       const t8 = setTimeout(() => {
         advanceStep(6);
@@ -552,13 +552,39 @@
     }
   });
 
-  // Recommended models for onboarding (biggest to smallest that fit, limited to 6)
+  // Recommended models for onboarding: 2 large, 2 medium, 2 small
+  // Always includes Llama-3.2-3B-4bit as a fast-loading small option
+  const PINNED_ONBOARDING_MODEL = "mlx-community/Llama-3.2-3B-Instruct-4bit";
   const onboardingModels = $derived.by(() => {
     if (models.length === 0) return [];
-    return [...models]
+    const sorted = [...models]
       .filter((m) => hasEnoughMemory(m) && getModelSizeGB(m) > 0)
-      .sort((a, b) => getModelSizeGB(b) - getModelSizeGB(a))
-      .slice(0, 6);
+      .sort((a, b) => getModelSizeGB(b) - getModelSizeGB(a));
+    if (sorted.length <= 6) return sorted;
+
+    // Split into thirds by size: large (top third), medium (middle), small (bottom)
+    const third = Math.max(1, Math.floor(sorted.length / 3));
+    const large = sorted.slice(0, third);
+    const medium = sorted.slice(third, third * 2);
+    const small = sorted.slice(third * 2);
+
+    // Pick 2 from each tier, ensuring pinned model counts as a small pick
+    const pinned = small.find((m) => m.id === PINNED_ONBOARDING_MODEL)
+      || sorted.find((m) => m.id === PINNED_ONBOARDING_MODEL);
+    const pickLarge = large.slice(0, 2);
+    const pickMedium = medium.slice(0, 2);
+    const pickSmall = pinned
+      ? [small.find((m) => m.id !== PINNED_ONBOARDING_MODEL) || small[0], pinned].filter(Boolean)
+      : small.slice(0, 2);
+
+    const result = [...pickLarge, ...pickMedium, ...pickSmall];
+    // Deduplicate (in case pinned was already picked)
+    const seen = new Set<string>();
+    return result.filter((m) => {
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    });
   });
 
   // Track onboarding instance status for auto-advancing steps.
@@ -1259,13 +1285,27 @@
       // Use the specific preview if provided, otherwise fall back to filtered preview
       const preview = specificPreview ?? filteredPreview();
 
-      let instanceData: unknown;
-
-      const response = await fetch("/meta_instance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instance: instanceData }),
-      });
+      let response: Response;
+      if (preview?.instance) {
+        // Launch with pre-computed placement from preview
+        response = await fetch("/instance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ instance: preview.instance }),
+        });
+      } else {
+        // No preview available — use place_instance to let server decide placement
+        response = await fetch("/place_instance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model_id: modelId,
+            sharding: selectedSharding,
+            instance_meta: selectedInstanceType,
+            min_nodes: 1,
+          }),
+        });
+      }
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -2948,19 +2988,34 @@
             </p>
           </div>
 
-          <!-- Persistent SVG canvas — BIGGER devices -->
+          <!-- Device display area -->
           <div class="relative w-full" style="height: 420px;">
             <!-- Device count label — fades in on step 1, fades out on step 2 -->
             <p
-              class="absolute left-0 right-0 text-center text-lg text-white/50 font-light tracking-wide"
+              class="absolute left-0 right-0 text-center text-lg text-white/50 font-light tracking-wide z-10"
               style="top: 20px; opacity: {$deviceCountOpacity}; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; pointer-events: none;"
             >
               {Math.max(1, nodeCount)} {Math.max(1, nodeCount) === 1 ? 'Device' : 'Devices'} in your EXO network
             </p>
+
+            {#if onboardingStep === 1}
+              <!-- Step 1: Show actual topology -->
+              <div class="absolute inset-0" style="top: 50px; opacity: {$device1Opacity}; transition: opacity 0.6s ease;">
+                <TopologyGraph
+                  class="w-full h-full"
+                  highlightedNodes={new Set()}
+                  filteredNodes={new Set()}
+                />
+              </div>
+            {:else}
+              <!-- Steps 2-4: Cinematic SVG animation -->
+            {/if}
+
             <svg
               viewBox="0 0 700 420"
               class="w-full h-full"
               xmlns="http://www.w3.org/2000/svg"
+              style={onboardingStep === 1 ? 'opacity: 0; pointer-events: none;' : ''}
             >
               <!-- Device 1 (User's device) -->
               <g
@@ -3226,21 +3281,21 @@
                     opacity={$modelBlockOpacity}
                   >
                     <rect
-                      x="-60"
-                      y="-18"
-                      width="120"
-                      height="36"
-                      rx="8"
+                      x="-45"
+                      y="-13"
+                      width="90"
+                      height="26"
+                      rx="6"
                       fill="rgba(180,140,0,0.08)"
                       stroke="rgba(180,140,0,0.45)"
                       stroke-width="1.5"
                     />
                     <text
                       x="0"
-                      y="6"
+                      y="5"
                       text-anchor="middle"
                       fill="rgba(220,180,40,0.9)"
-                      style="font-size: 13px; font-family: -apple-system, system-ui, sans-serif; font-weight: 500;"
+                      style="font-size: 12px; font-family: -apple-system, system-ui, sans-serif; font-weight: 500;"
                     >
                       LLM
                     </text>
@@ -3250,7 +3305,7 @@
                   {@const splitX =
                     $modelSplitProgress * (($device2X - $device1X) / 2)}
                   {@const centerX = ($device1X + $device2X) / 2}
-                  {@const splitY = $modelBlockY + $modelSplitProgress * 30}
+                  {@const splitY = $modelBlockY + $modelSplitProgress * 80}
 
                   <!-- Left half -> Device 1 -->
                   <g
@@ -3258,10 +3313,10 @@
                     opacity={$modelBlockOpacity}
                   >
                     <rect
-                      x="-50"
-                      y="-15"
-                      width="100"
-                      height="30"
+                      x="-45"
+                      y="-13"
+                      width="90"
+                      height="26"
                       rx="6"
                       fill="rgba(180,140,0,0.08)"
                       stroke="rgba(180,140,0,0.35)"
@@ -3269,10 +3324,10 @@
                     />
                     <text
                       x="0"
-                      y="5"
+                      y="4"
                       text-anchor="middle"
                       fill="rgba(220,180,40,0.75)"
-                      style="font-size: 12px; font-family: -apple-system, system-ui, sans-serif;"
+                      style="font-size: 11px; font-family: -apple-system, system-ui, sans-serif;"
                     >
                       Shard 1/2
                     </text>
@@ -3284,10 +3339,10 @@
                     opacity={$modelBlockOpacity * $device2Opacity}
                   >
                     <rect
-                      x="-50"
-                      y="-15"
-                      width="100"
-                      height="30"
+                      x="-45"
+                      y="-13"
+                      width="90"
+                      height="26"
                       rx="6"
                       fill="rgba(180,140,0,0.08)"
                       stroke="rgba(180,140,0,0.35)"
@@ -3295,10 +3350,10 @@
                     />
                     <text
                       x="0"
-                      y="5"
+                      y="4"
                       text-anchor="middle"
                       fill="rgba(220,180,40,0.75)"
-                      style="font-size: 12px; font-family: -apple-system, system-ui, sans-serif;"
+                      style="font-size: 11px; font-family: -apple-system, system-ui, sans-serif;"
                     >
                       Shard 2/2
                     </text>
@@ -3496,7 +3551,7 @@
           class="text-center max-w-lg px-8"
           style="opacity: 0; animation: onb-fade-in 0.5s ease forwards;"
         >
-          <div class="mb-8">
+          <div class="mb-6">
             <h1
               class="text-xl font-sans font-light text-white/90 mb-2 tracking-wide"
             >
@@ -3509,9 +3564,23 @@
             {/if}
           </div>
 
+          <!-- Device icon -->
           <div class="flex justify-center mb-6">
+            <svg viewBox="0 0 200 200" class="w-32 h-32" xmlns="http://www.w3.org/2000/svg">
+              <DeviceIcon
+                deviceType={userDeviceInfo.deviceType}
+                cx={100}
+                cy={100}
+                size={80}
+                ramPercent={60}
+                uid="onb-loading"
+              />
+            </svg>
+          </div>
+
+          <div class="flex justify-center mb-4">
             <div
-              class="w-10 h-10 border-2 border-exo-yellow/15 border-t-exo-yellow/70 rounded-full animate-spin"
+              class="w-8 h-8 border-2 border-exo-yellow/15 border-t-exo-yellow/70 rounded-full animate-spin"
             ></div>
           </div>
 
