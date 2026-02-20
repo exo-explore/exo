@@ -334,8 +334,8 @@
   const disconnectXOpacity = tweened(0, { duration: 400, easing: cubicOut });
   const device1Opacity = tweened(1, { duration: 600, easing: cubicOut });
   const logoOpacity = tweened(1, { duration: 600, easing: cubicOut });
-  // Step 2 chip reveal phases: 0→1 chip0 appears, 1→2 chip0 unlocks, 2→3 chips1+2 appear, 3→4 chips1+2 unlock
-  const chipPhase = tweened(0, { duration: 600, easing: cubicOut });
+  // Step 2 chip fade: 0→N where each chip fades in at its stagger offset
+  const chipPhase = tweened(0, { duration: 800, easing: cubicOut });
   const deviceCountOpacity = tweened(0, { duration: 600, easing: cubicOut });
   const titleOpacity = tweened(0, { duration: 500, easing: cubicOut });
   const subtitleOpacity = tweened(0, { duration: 500, easing: cubicOut });
@@ -415,25 +415,13 @@
       const t4 = setTimeout(() => {
         combinedLabelOpacity.set(1);
       }, 1600);
-      // Sequential chip reveal: first small model appears (locked)...
-      const t5a = setTimeout(() => {
-        chipPhase.set(1, { duration: 500 });
+      // Staggered chip fade-in (each chip offsets by 0.6 in chipPhase)
+      const t5 = setTimeout(() => {
+        chipPhase.set(3, { duration: 1800 });
       }, 1800);
-      // ...first model unlocks (lights up gold)
-      const t5b = setTimeout(() => {
-        chipPhase.set(2, { duration: 400 });
-      }, 2400);
-      // ...bigger models appear (locked)
-      const t5c = setTimeout(() => {
-        chipPhase.set(3, { duration: 500 });
-      }, 2900);
-      // ...bigger models unlock (light up)
-      const t5d = setTimeout(() => {
-        chipPhase.set(4, { duration: 400 });
-      }, 3500);
       const t6 = setTimeout(() => {
         showContinueButton = true;
-      }, 4000);
+      }, 3200);
 
       return () => {
         clearTimeout(t0);
@@ -441,10 +429,7 @@
         clearTimeout(t2);
         clearTimeout(t3);
         clearTimeout(t4);
-        clearTimeout(t5a);
-        clearTimeout(t5b);
-        clearTimeout(t5c);
-        clearTimeout(t5d);
+        clearTimeout(t5);
         clearTimeout(t6);
       };
     }
@@ -3141,123 +3126,66 @@
                 {onboardingCombinedGB} GB combined
               </text>
 
-              <!-- Glow filters for unlock effects -->
-              <defs>
-                <filter id="chip-glow" x="-50%" y="-50%" width="200%" height="200%">
-                  <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur" />
-                  <feColorMatrix in="blur" type="matrix"
-                    values="1 0.8 0 0 0  0.8 0.6 0 0 0  0 0 0 0 0  0 0 0 0.7 0"
-                    result="glow" />
-                  <feMerge>
-                    <feMergeNode in="glow" />
-                    <feMergeNode in="SourceGraphic" />
-                  </feMerge>
-                </filter>
-                <filter id="unlock-flash" x="-100%" y="-100%" width="300%" height="300%">
-                  <feGaussianBlur in="SourceGraphic" stdDeviation="12" result="blur" />
-                  <feColorMatrix in="blur" type="matrix"
-                    values="1 0.9 0 0 0.2  0.9 0.7 0 0 0.1  0 0 0 0 0  0 0 0 1 0"
-                    result="glow" />
-                  <feMerge>
-                    <feMergeNode in="glow" />
-                    <feMergeNode in="SourceGraphic" />
-                  </feMerge>
-                </filter>
-              </defs>
-
-              <!-- Step 2: Game-style model unlock animation -->
+              <!-- Step 2: Models unlocked — simple fade-in -->
               {#if unlockedModels.length > 0 && $chipPhase > 0.01}
                 {@const centerX = ($device1X + $device2X) / 2}
-                {@const chipW = 148}
-                {@const chipH = 34}
-                {@const chipGap = 16}
+                {@const chipW = 140}
+                {@const chipH = 30}
+                {@const chipGap = 12}
                 {@const totalW = unlockedModels.length * chipW + (unlockedModels.length - 1) * chipGap}
                 {@const startX = centerX - totalW / 2}
-                <!-- "MODELS UNLOCKED" header — scales in dramatically -->
-                {@const headerProgress = Math.max(0, Math.min(1, $chipPhase * 1.5))}
-                {@const headerScale = 0.85 + headerProgress * 0.15}
-                <g
-                  transform="translate({centerX}, 330) scale({headerScale})"
-                  opacity={headerProgress}
-                  filter={headerProgress > 0.3 && headerProgress < 0.9 ? "url(#unlock-flash)" : "none"}
+                <!-- Header -->
+                {@const headerOpacity = Math.min(1, $chipPhase)}
+                <text
+                  x={centerX}
+                  y="332"
+                  text-anchor="middle"
+                  dominant-baseline="middle"
+                  fill="rgba(255,255,255,{0.4 * headerOpacity})"
+                  opacity={headerOpacity}
+                  style="font-size: 10px; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; font-weight: 500; letter-spacing: 0.1em;"
                 >
-                  <text
-                    x="0"
-                    y="0"
-                    text-anchor="middle"
-                    dominant-baseline="middle"
-                    fill="rgba(255,215,0,{0.6 + headerProgress * 0.4})"
-                    style="font-size: 11px; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; font-weight: 600; letter-spacing: 0.15em;"
-                  >
-                    MODELS UNLOCKED
-                  </text>
-                </g>
-                <!-- Model chips -->
+                  NEW MODELS UNLOCKED
+                </text>
+                <!-- Model chips — staggered fade-in -->
                 {#each unlockedModels as model, i}
-                  {@const appearAt = i === 0 ? 0 : 2}
-                  {@const unlockAt = i === 0 ? 1 : 3}
-                  {@const appearProgress = Math.max(0, Math.min(1, $chipPhase - appearAt))}
-                  {@const unlockProgress = Math.max(0, Math.min(1, $chipPhase - unlockAt))}
-                  {@const scaleIn = 0.92 + appearProgress * 0.08}
-                  {@const scalePop = unlockProgress > 0 && unlockProgress < 1 ? 1 + 0.08 * Math.sin(unlockProgress * Math.PI) : 1}
+                  {@const stagger = i * 0.6}
+                  {@const progress = Math.max(0, Math.min(1, $chipPhase - stagger))}
                   {@const modelName = (model.name || model.id.split('/').pop() || '').slice(0, 18)}
                   {@const modelSize = Math.round(getModelSizeGB(model))}
-                  {#if appearProgress > 0}
-                    {@const settled = unlockProgress >= 1}
-                    {@const flashing = unlockProgress > 0 && unlockProgress < 1}
+                  {#if progress > 0}
                     <g
-                      transform="translate({startX + i * (chipW + chipGap) + chipW / 2}, 362) scale({scaleIn * scalePop})"
-                      opacity={appearProgress}
-                      filter={flashing ? "url(#chip-glow)" : "none"}
+                      transform="translate({startX + i * (chipW + chipGap) + chipW / 2}, 358)"
+                      opacity={progress}
                     >
-                      <!-- Burst ring on unlock -->
-                      {#if flashing}
-                        {@const burstScale = 1 + unlockProgress * 0.5}
-                        {@const burstOpacity = Math.sin(unlockProgress * Math.PI) * 0.6}
-                        <rect
-                          x={-chipW / 2 - 4}
-                          y={-chipH / 2 - 4}
-                          width={chipW + 8}
-                          height={chipH + 8}
-                          rx="21"
-                          fill="none"
-                          stroke="rgba(255,215,0,{burstOpacity})"
-                          stroke-width="2"
-                          transform="scale({burstScale})"
-                          transform-origin="0 0"
-                        />
-                      {/if}
-                      <!-- Chip background — gold flash during unlock, then subtle dark settled -->
                       <rect
                         x={-chipW / 2}
                         y={-chipH / 2}
                         width={chipW}
                         height={chipH}
-                        rx="17"
-                        fill={settled ? 'rgba(255,215,0,0.04)' : (flashing ? `rgba(255,215,0,${unlockProgress * 0.1})` : 'rgba(255,255,255,0.02)')}
-                        stroke={settled ? 'rgba(255,215,0,0.3)' : (flashing ? `rgba(255,215,0,${0.15 + unlockProgress * 0.35})` : 'rgba(255,255,255,0.1)')}
-                        stroke-width={settled ? 1 : 1 + unlockProgress * 0.5}
+                        rx="15"
+                        fill="rgba(255,255,255,0.03)"
+                        stroke="rgba(255,255,255,0.12)"
+                        stroke-width="1"
                       />
-                      <!-- Model name — white when settled for readability -->
                       <text
                         x="0"
-                        y={modelSize ? -5 : 0}
+                        y={modelSize ? -4 : 1}
                         text-anchor="middle"
                         dominant-baseline="middle"
-                        fill={settled ? 'rgba(255,255,255,0.9)' : (flashing ? `rgba(255,215,0,${0.4 + unlockProgress * 0.5})` : 'rgba(255,255,255,0.3)')}
-                        style="font-size: 10.5px; font-family: 'SF Mono', ui-monospace, monospace; font-weight: 600; letter-spacing: 0.02em;"
+                        fill="rgba(255,255,255,0.8)"
+                        style="font-size: 10px; font-family: 'SF Mono', ui-monospace, monospace; font-weight: 500;"
                       >
                         {modelName}
                       </text>
-                      <!-- Model size -->
                       {#if modelSize}
                         <text
                           x="0"
                           y="8"
                           text-anchor="middle"
                           dominant-baseline="middle"
-                          fill={settled ? 'rgba(255,215,0,0.5)' : (flashing ? `rgba(255,215,0,${unlockProgress * 0.3})` : 'rgba(255,255,255,0.15)')}
-                          style="font-size: 8.5px; font-family: 'SF Mono', ui-monospace, monospace; font-weight: 400;"
+                          fill="rgba(255,255,255,0.3)"
+                          style="font-size: 8px; font-family: 'SF Mono', ui-monospace, monospace; font-weight: 400;"
                         >
                           {modelSize} GB
                         </text>
