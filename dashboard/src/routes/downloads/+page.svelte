@@ -261,7 +261,9 @@
             cell = { kind: "failed", modelDirectory };
           } else {
             const downloaded = getBytes(
-              payload.downloaded ?? payload.downloaded_bytes ?? payload.downloadedBytes,
+              payload.downloaded ??
+                payload.downloaded_bytes ??
+                payload.downloadedBytes,
             );
             const total = getBytes(
               payload.total ?? payload.total_bytes ?? payload.totalBytes,
@@ -288,7 +290,8 @@
           let score = 0;
           if (cell.kind === "downloading") score = 4;
           else if (cell.kind === "completed") score = 3;
-          else if (cell.kind === "pending" && cell.downloaded > 0) score = 2; // paused
+          else if (cell.kind === "pending" && cell.downloaded > 0)
+            score = 2; // paused
           else if (cell.kind === "pending" || cell.kind === "failed") score = 1; // not started
           if (score > best) best = score;
         }
@@ -313,8 +316,16 @@
           if (sizeDiff !== 0) return sizeDiff;
         }
         if (aPriority === 2 && bPriority === 2) {
-          const aSize = Math.max(...Object.values(a.cells).map((c) => c.kind === "pending" ? c.total : 0));
-          const bSize = Math.max(...Object.values(b.cells).map((c) => c.kind === "pending" ? c.total : 0));
+          const aSize = Math.max(
+            ...Object.values(a.cells).map((c) =>
+              c.kind === "pending" ? c.total : 0,
+            ),
+          );
+          const bSize = Math.max(
+            ...Object.values(b.cells).map((c) =>
+              c.kind === "pending" ? c.total : 0,
+            ),
+          );
           if (aSize !== bSize) return bSize - aSize;
         }
         return a.modelId.localeCompare(b.modelId);
