@@ -225,18 +225,23 @@ class Worker:
                         )
                     )
                 case Shutdown(runner_id=runner_id):
-                    runner = self.runners.pop(runner_id)
+                    supervisor = self.runners.pop(runner_id)
                     try:
                         with fail_after(3):
-                            await runner.start_task(task)
+                            await supervisor.start_task(task)
                     except TimeoutError:
+                        logger.warning(
+                            f"Runner {runner_id} did not respond to Shutdown within 3s, "
+                            f"forcefully terminating process"
+                        )
+                        supervisor.shutdown()
                         await self.event_sender.send(
                             TaskStatusUpdated(
                                 task_id=task.task_id, task_status=TaskStatus.TimedOut
                             )
                         )
                     finally:
-                        runner.shutdown()
+                        supervisor.shutdown()
                 case CancelTask(
                     cancelled_task_id=cancelled_task_id, runner_id=runner_id
                 ):
