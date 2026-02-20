@@ -26,6 +26,7 @@ exo connects all your devices into an AI cluster. Not only does exo enable runni
 - **Topology-Aware Auto Parallel**: exo figures out the best way to split your model across all available devices based on a realtime view of your device topology. It takes into account device resources and network latency/bandwidth between each link.
 - **Tensor Parallelism**: exo supports sharding models, for up to 1.8x speedup on 2 devices and 3.2x speedup on 4 devices.
 - **MLX Support**: exo uses [MLX](https://github.com/ml-explore/mlx) as an inference backend and [MLX distributed](https://ml-explore.github.io/mlx/build/html/usage/distributed.html) for distributed communication.
+- **PyTorch Support** *(Experimental)*: exo supports [PyTorch](https://pytorch.org/) as an inference backend for NVIDIA GPUs on Linux. See [PyTorch Backend](#pytorch-backend) for details.
 
 ## Dashboard
 
@@ -426,7 +427,52 @@ The tool outputs performance metrics including prompt tokens per second (prompt_
 
 ## Hardware Accelerator Support
 
-On macOS, exo uses the GPU. On Linux, exo currently runs on CPU. We are working on extending hardware accelerator support. If you'd like support for a new hardware platform, please [search for an existing feature request](https://github.com/exo-explore/exo/issues) and add a thumbs up so we know what hardware is important to the community.
+On macOS, exo uses the GPU via MLX. On Linux with NVIDIA GPUs, exo can use PyTorch (experimental). We are working on extending hardware accelerator support. If you'd like support for a new hardware platform, please [search for an existing feature request](https://github.com/exo-explore/exo/issues) and add a thumbs up so we know what hardware is important to the community.
+
+---
+
+## PyTorch Backend
+
+The PyTorch backend enables running exo on Linux systems with NVIDIA GPUs. This is an experimental feature that brings exo beyond the Apple ecosystem.
+
+### Requirements
+
+- Linux with NVIDIA GPU (CUDA-capable)
+- Python 3.11+
+- PyTorch 2.0+ with CUDA support
+- NVIDIA drivers with nvidia-smi available
+
+### Usage
+
+Select "PyTorch" as the runtime in the dashboard when launching a model, or use the API:
+
+```bash
+curl -X POST http://localhost:52415/instance \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model_id": "tinyllama-1.1b-pytorch",
+    "sharding": "Pipeline",
+    "instance_meta": "Pytorch"
+  }'
+```
+
+### Supported Models
+
+The PyTorch backend currently supports models with these architectures:
+- Llama-style models (LLaMA, Mistral, TinyLlama, etc.)
+- GPT-2 and GPT-Neo
+- GPT-NeoX and GPT-J
+- Falcon
+- BLOOM
+- OPT
+
+### Disabling PyTorch
+
+To force MLX-only mode (useful for debugging), set the environment variable:
+
+```bash
+export EXO_DISABLE_PYTORCH=1
+```
 
 ---
 

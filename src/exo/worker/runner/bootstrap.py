@@ -4,14 +4,41 @@ import loguru
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
 from exo.shared.types.tasks import Task, TaskId
-from exo.shared.types.worker.instances import BoundInstance, MlxJacclInstance
+from exo.shared.types.worker.instances import (
+    BoundInstance,
+    MlxJacclInstance,
+    PytorchInstance,
+)
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
+from exo.worker.engines.base_engine import Engine
 
 logger: "loguru.Logger" = loguru.logger
 
 
-def entrypoint(
+def _create_engine(bound_instance: BoundInstance) -> Engine:
+    """Create the appropriate engine based on instance type."""
+    instance = bound_instance.instance
+
+    # Check for feature flag to disable PyTorch
+    if isinstance(instance, PytorchInstance) and os.getenv("EXO_DISABLE_PYTORCH"):
+        raise ValueError(
+            "PyTorch backend is disabled via EXO_DISABLE_PYTORCH environment variable"
+        )
+
+    # Select engine based on instance type - import only the needed engine
+    if isinstance(instance, PytorchInstance):
+        from exo.worker.engines.pytorch import PytorchEngine
+
+        return PytorchEngine(bound_instance)
+    else:
+        # Default to MLX for MlxRingInstance or MlxJacclInstance
+        from exo.worker.engines.mlx import MlxEngine
+
+        return MlxEngine(bound_instance)
+
+
+async def entrypoint(
     bound_instance: BoundInstance,
     event_sender: MpSender[Event],
     task_receiver: MpReceiver[Task],
@@ -35,11 +62,14 @@ def entrypoint(
 
     logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
 
-    # Import main after setting global logger - this lets us just import logger from this module
+    # Select and instantiate the engine using registry
+    engine = _create_engine(bound_instance)
+
+    # Import main after setting global logger
     try:
         from exo.worker.runner.runner import main
 
-        main(bound_instance, event_sender, task_receiver, cancel_receiver)
+        main(bound_instance, event_sender, task_receiver, cancel_receiver, engine)
     except ClosedResourceError:
         logger.warning("Runner communication closed unexpectedly")
     except Exception as e:
@@ -56,7 +86,9 @@ def entrypoint(
         try:
             event_sender.close()
             task_receiver.close()
+            cancel_receiver.close()
         finally:
             event_sender.join()
             task_receiver.join()
+            cancel_receiver.join()
             logger.info("bye from the runner")

@@ -14,6 +14,7 @@ class InstanceId(Id):
 class InstanceMeta(str, Enum):
     MlxRing = "MlxRing"
     MlxJaccl = "MlxJaccl"
+    Pytorch = "Pytorch"
 
 
 class BaseInstance(TaggedModel):
@@ -34,8 +35,14 @@ class MlxJacclInstance(BaseInstance):
     jaccl_coordinators: dict[NodeId, str]
 
 
-# TODO: Single node instance
-Instance = MlxRingInstance | MlxJacclInstance
+# TODO: Single node instance for now. hosts_by_node and ephemeral_port are placeholders
+# for future multi-node torch.distributed support (currently unused).
+class PytorchInstance(BaseInstance):
+    hosts_by_node: dict[NodeId, list[Host]]
+    ephemeral_port: int
+
+
+Instance = MlxRingInstance | MlxJacclInstance | PytorchInstance
 
 
 class BoundInstance(CamelCaseModel):

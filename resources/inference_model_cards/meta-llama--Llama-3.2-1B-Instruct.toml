@@ -1,0 +1,13 @@
+model_id = "meta-llama/Llama-3.2-1B-Instruct"
+n_layers = 16
+hidden_size = 2048
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "llama"
+quantization = ""
+base_model = "Llama 3.2 1B"
+capabilities = ["text"]
+tags = ["pytorch"]
+
+[storage_size]
+in_bytes = 2470000000

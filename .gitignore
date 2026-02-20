@@ -3,6 +3,8 @@ digest.txt
 
 # python
 **/__pycache__
+.venv/
+*.log
 
 # nix
 .direnv/
@@ -38,3 +40,5 @@ bench/**/*.json
 
 # tmp
 tmp/models
+.copilot-instructions.md
+tmp/

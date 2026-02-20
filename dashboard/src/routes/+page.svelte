@@ -235,6 +235,7 @@
       quantization?: string;
       base_model?: string;
       capabilities?: string[];
+      tags?: string[];
     }>
   >([]);
   type ModelMemoryFitStatus =
@@ -291,8 +292,37 @@
     if (!model?.tasks) return false;
     return model.tasks.includes("ImageToImage");
   }
+
+  // Helper to check if a model is compatible with the selected engine
+  function isModelCompatibleWithEngine(
+    model: { id: string; tags?: string[] },
+    instanceType: InstanceMeta,
+  ): boolean {
+    // Check explicit tags first
+    if (model.tags && model.tags.length > 0) {
+      if (instanceType === "Pytorch") {
+        return model.tags.includes("pytorch");
+      } else {
+        return model.tags.includes("mlx");
+      }
+    }
+
+    // Infer from model ID prefix if no tags:
+    // - mlx-community/* models are MLX-only
+    // - Other HuggingFace models could potentially work with PyTorch
+    const isMlxCommunity = model.id.startsWith("mlx-community/");
+
+    if (instanceType === "Pytorch") {
+      // PyTorch can work with non-mlx-community models
+      return !isMlxCommunity;
+    } else {
+      // MLX variants work with mlx-community models by default
+      return isMlxCommunity;
+    }
+  }
+
   let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
-  type InstanceMeta = "MlxRing" | "MlxIbv" | "MlxJaccl";
+  type InstanceMeta = "MlxRing" | "MlxIbv" | "MlxJaccl" | "Pytorch";
 
   // Launch defaults persistence
   const LAUNCH_DEFAULTS_KEY = "exo-launch-defaults";
@@ -546,10 +576,16 @@
     return { ttft: 300, tps: 50 };
   }
 
-  const matchesSelectedRuntime = (runtime: InstanceMeta): boolean =>
-    selectedInstanceType === "MlxRing"
-      ? runtime === "MlxRing"
-      : runtime === "MlxIbv" || runtime === "MlxJaccl";
+  const matchesSelectedRuntime = (runtime: InstanceMeta): boolean => {
+    if (selectedInstanceType === "MlxRing") {
+      return runtime === "MlxRing";
+    } else if (selectedInstanceType === "Pytorch") {
+      return runtime === "Pytorch";
+    } else {
+      // MlxIbv includes MlxJaccl
+      return runtime === "MlxIbv" || runtime === "MlxJaccl";
+    }
+  };
 
   // Helper to check if a model can be launched (has valid placement with >= minNodes)
   function canModelFit(modelId: string): boolean {
@@ -1358,6 +1394,7 @@
       instanceTag === "MlxJacclInstance"
     )
       instanceType = "MLX RDMA";
+    else if (instanceTag === "PytorchInstance") instanceType = "PyTorch";
 
     const inst = instance as {
       shardAssignments?: {
@@ -3186,51 +3223,79 @@
                 <div class="text-xs text-white/70 font-mono mb-2">
                   Instance Type:
                 </div>
-                <div class="flex gap-2">
-                  <button
-                    onclick={() => {
-                      selectedInstanceType = "MlxRing";
-                      saveLaunchDefaults();
-                    }}
-                    class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
-                    'MlxRing'
-                      ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                      : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-                  >
-                    <span
-                      class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
+                <div class="flex flex-col gap-2">
+                  <!-- MLX options row -->
+                  <div class="flex gap-2">
+                    <button
+                      onclick={() => {
+                        selectedInstanceType = "MlxRing";
+                        saveLaunchDefaults();
+                      }}
+                      class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
                       'MlxRing'
-                        ? 'border-exo-yellow'
-                        : 'border-exo-medium-gray'}"
+                        ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                        : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
                     >
-                      {#if selectedInstanceType === "MlxRing"}
-                        <span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
-                      {/if}
-                    </span>
-                    MLX Ring
-                  </button>
-                  <button
-                    onclick={() => {
-                      selectedInstanceType = "MlxIbv";
-                      saveLaunchDefaults();
-                    }}
-                    class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
-                    'MlxIbv'
-                      ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                      : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-                  >
-                    <span
-                      class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
+                      <span
+                        class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
+                        'MlxRing'
+                          ? 'border-exo-yellow'
+                          : 'border-exo-medium-gray'}"
+                      >
+                        {#if selectedInstanceType === "MlxRing"}
+                          <span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
+                        {/if}
+                      </span>
+                      MLX Ring
+                    </button>
+                    <button
+                      onclick={() => {
+                        selectedInstanceType = "MlxIbv";
+                        saveLaunchDefaults();
+                      }}
+                      class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
                       'MlxIbv'
-                        ? 'border-exo-yellow'
-                        : 'border-exo-medium-gray'}"
+                        ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                        : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
                     >
-                      {#if selectedInstanceType === "MlxIbv"}
-                        <span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
-                      {/if}
-                    </span>
-                    MLX RDMA
-                  </button>
+                      <span
+                        class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
+                        'MlxIbv'
+                          ? 'border-exo-yellow'
+                          : 'border-exo-medium-gray'}"
+                      >
+                        {#if selectedInstanceType === "MlxIbv"}
+                          <span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
+                        {/if}
+                      </span>
+                      MLX RDMA
+                    </button>
+                  </div>
+                  <!-- PyTorch option row -->
+                  <div class="flex gap-2">
+                    <button
+                      onclick={() => {
+                        selectedInstanceType = "Pytorch";
+                        saveLaunchDefaults();
+                      }}
+                      class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
+                      'Pytorch'
+                        ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                        : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                    >
+                      <span
+                        class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
+                        'Pytorch'
+                          ? 'border-exo-yellow'
+                          : 'border-exo-medium-gray'}"
+                      >
+                        {#if selectedInstanceType === "Pytorch"}
+                          <span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
+                        {/if}
+                      </span>
+                      PyTorch (NVIDIA)
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -3884,7 +3949,7 @@
 
 <ModelPickerModal
   isOpen={isModelPickerOpen}
-  {models}
+  models={models.filter((m) => isModelCompatibleWithEngine(m, selectedInstanceType))}
   {selectedModelId}
   favorites={favoritesSet}
   {recentModelIds}
