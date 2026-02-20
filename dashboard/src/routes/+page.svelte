@@ -591,22 +591,22 @@
 
   // Track onboarding instance status for auto-advancing steps.
   // Uses runner status as source of truth to avoid false "ready" from missing download data.
+  // Only tracks the specific model launched during onboarding (ignores other running instances).
   $effect(() => {
-    if (onboardingStep === 7 && instanceCount > 0) {
+    if (onboardingStep === 7 && instanceCount > 0 && onboardingModelId) {
       let anyDownloading = false;
       let anyReady = false;
-      for (const [, inst] of Object.entries(instanceData)) {
+      for (const [id, inst] of Object.entries(instanceData)) {
+        // Only check instances for the model we launched during onboarding
+        if (getInstanceModelId(inst) !== onboardingModelId) continue;
         const runnerStatus = deriveInstanceStatus(inst);
         if (runnerStatus.statusText === "READY" || runnerStatus.statusText === "LOADED" || runnerStatus.statusText === "RUNNING") {
           anyReady = true;
         } else if (runnerStatus.statusText === "DOWNLOADING") {
           anyDownloading = true;
         } else {
-          // Check download progress data too
-          for (const [id2, inst2] of Object.entries(instanceData)) {
-            const dlStatus = getInstanceDownloadStatus(id2, inst2);
-            if (dlStatus.isDownloading) anyDownloading = true;
-          }
+          const dlStatus = getInstanceDownloadStatus(id, inst);
+          if (dlStatus.isDownloading) anyDownloading = true;
         }
       }
       // Model already cached & ready — skip download AND loading steps
@@ -618,6 +618,7 @@
         // Not ready and not downloading — could be loading, initializing, or preparing.
         // Only advance to step 8 if runners are actually in a loading state.
         for (const [, inst] of Object.entries(instanceData)) {
+          if (getInstanceModelId(inst) !== onboardingModelId) continue;
           const runnerStatus = deriveInstanceStatus(inst);
           if (runnerStatus.statusText === "LOADING" || runnerStatus.statusText === "WARMING UP") {
             onboardingStep = 8;
@@ -629,8 +630,9 @@
   });
 
   $effect(() => {
-    if (onboardingStep === 8 && instanceCount > 0) {
+    if (onboardingStep === 8 && instanceCount > 0 && onboardingModelId) {
       for (const [, inst] of Object.entries(instanceData)) {
+        if (getInstanceModelId(inst) !== onboardingModelId) continue;
         const runnerStatus = deriveInstanceStatus(inst);
         if (runnerStatus.statusText === "READY" || runnerStatus.statusText === "LOADED" || runnerStatus.statusText === "RUNNING") {
           onboardingStep = 9;
