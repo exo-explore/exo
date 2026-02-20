@@ -701,6 +701,22 @@
     return null;
   });
 
+  // Helper to get onboarding model loading progress (layers loaded)
+  const onboardingLoadProgress = $derived.by(() => {
+    if (instanceCount === 0 || !onboardingModelId) return null;
+    let layersLoaded = 0, totalLayers = 0;
+    for (const [, inst] of Object.entries(instanceData)) {
+      if (getInstanceModelId(inst) !== onboardingModelId) continue;
+      const status = deriveInstanceStatus(inst);
+      if (status.statusText === "LOADING" && status.totalLayers && status.totalLayers > 0) {
+        layersLoaded += status.layersLoaded ?? 0;
+        totalLayers += status.totalLayers;
+      }
+    }
+    if (totalLayers === 0) return null;
+    return { layersLoaded, totalLayers, percentage: (layersLoaded / totalLayers) * 100 };
+  });
+
   // Instance launch state
   let models = $state<
     Array<{
@@ -1720,6 +1736,8 @@
   function deriveInstanceStatus(instanceWrapped: unknown): {
     statusText: string;
     statusClass: string;
+    layersLoaded?: number;
+    totalLayers?: number;
   } {
     const [, instance] = getTagged(instanceWrapped);
     if (!instance || typeof instance !== "object") {
@@ -1759,8 +1777,20 @@
     if (has("Failed")) return { statusText: "FAILED", statusClass: "failed" };
     if (has("Shutdown"))
       return { statusText: "SHUTDOWN", statusClass: "inactive" };
-    if (has("Loading"))
-      return { statusText: "LOADING", statusClass: "starting" };
+    if (has("Loading")) {
+      let layersLoaded = 0, totalLayers = 0;
+      for (const rid of runnerIds) {
+        const r = runnersData[rid];
+        if (!r) continue;
+        const [kind, payload] = getTagged(r);
+        if (kind === "RunnerLoading" && payload && typeof payload === "object") {
+          const p = payload as { layersLoaded?: number; totalLayers?: number };
+          layersLoaded += p.layersLoaded ?? 0;
+          totalLayers += p.totalLayers ?? 0;
+        }
+      }
+      return { statusText: "LOADING", statusClass: "starting", layersLoaded, totalLayers };
+    }
     if (has("WarmingUp"))
       return { statusText: "WARMING UP", statusClass: "starting" };
     if (has("Running"))
@@ -3502,13 +3532,26 @@
             </svg>
           </div>
 
-          <div class="flex justify-center mb-4">
-            <div
-              class="w-8 h-8 border-2 border-exo-yellow/15 border-t-exo-yellow/70 rounded-full animate-spin"
-            ></div>
-          </div>
-
-          <p class="text-sm text-white/30 font-sans">Almost ready...</p>
+          {#if onboardingLoadProgress}
+            <div class="w-full max-w-xs mx-auto space-y-3">
+              <div class="relative h-2 bg-white/10 rounded-full overflow-hidden">
+                <div
+                  class="absolute inset-y-0 left-0 bg-gradient-to-r from-exo-yellow to-exo-yellow-darker rounded-full transition-all duration-500"
+                  style="width: {onboardingLoadProgress.percentage}%"
+                ></div>
+              </div>
+              <p class="text-xs text-white/40 font-mono text-center">
+                {onboardingLoadProgress.layersLoaded} / {onboardingLoadProgress.totalLayers} layers loaded
+              </p>
+            </div>
+          {:else}
+            <div class="flex justify-center mb-4">
+              <div
+                class="w-8 h-8 border-2 border-exo-yellow/15 border-t-exo-yellow/70 rounded-full animate-spin"
+              ></div>
+            </div>
+            <p class="text-sm text-white/30 font-sans">Loading...</p>
+          {/if}
         </div>
       {:else if onboardingStep === 9}
         <!-- Step 9: Ready — centered input with suggestion chips -->
@@ -4397,12 +4440,27 @@
                                 {downloadInfo.statusText}
                               </div>
                               {#if isLoading}
-                                <p
-                                  class="text-[11px] text-white/50 leading-relaxed"
-                                >
-                                  Loading model into memory for fast
-                                  inference...
-                                </p>
+                                {@const loadStatus = deriveInstanceStatus(instance)}
+                                {#if loadStatus.totalLayers && loadStatus.totalLayers > 0}
+                                  <div class="mt-1 space-y-1">
+                                    <div class="flex justify-between text-xs font-mono">
+                                      <span class="text-yellow-400">{((loadStatus.layersLoaded ?? 0) / loadStatus.totalLayers * 100).toFixed(0)}%</span>
+                                      <span class="text-exo-light-gray">{loadStatus.layersLoaded ?? 0} / {loadStatus.totalLayers} layers</span>
+                                    </div>
+                                    <div class="relative h-1.5 bg-exo-black/60 rounded-sm overflow-hidden">
+                                      <div
+                                        class="absolute inset-y-0 left-0 bg-gradient-to-r from-yellow-500 to-yellow-400 transition-all duration-300"
+                                        style="width: {(loadStatus.layersLoaded ?? 0) / loadStatus.totalLayers * 100}%"
+                                      ></div>
+                                    </div>
+                                  </div>
+                                {:else}
+                                  <p
+                                    class="text-[11px] text-white/50 leading-relaxed"
+                                  >
+                                    Loading model into memory...
+                                  </p>
+                                {/if}
                               {:else if isReady || isRunning}
                                 <p
                                   class="text-[11px] text-green-400/70 leading-relaxed"
@@ -5301,12 +5359,27 @@
                                   {downloadInfo.statusText}
                                 </div>
                                 {#if isLoading}
-                                  <p
-                                    class="text-[11px] text-white/50 leading-relaxed"
-                                  >
-                                    Loading model into memory for fast
-                                    inference...
-                                  </p>
+                                  {@const loadStatus = deriveInstanceStatus(instance)}
+                                  {#if loadStatus.totalLayers && loadStatus.totalLayers > 0}
+                                    <div class="mt-1 space-y-1">
+                                      <div class="flex justify-between text-xs font-mono">
+                                        <span class="text-yellow-400">{((loadStatus.layersLoaded ?? 0) / loadStatus.totalLayers * 100).toFixed(0)}%</span>
+                                        <span class="text-exo-light-gray">{loadStatus.layersLoaded ?? 0} / {loadStatus.totalLayers} layers</span>
+                                      </div>
+                                      <div class="relative h-1.5 bg-exo-black/60 rounded-sm overflow-hidden">
+                                        <div
+                                          class="absolute inset-y-0 left-0 bg-gradient-to-r from-yellow-500 to-yellow-400 transition-all duration-300"
+                                          style="width: {(loadStatus.layersLoaded ?? 0) / loadStatus.totalLayers * 100}%"
+                                        ></div>
+                                      </div>
+                                    </div>
+                                  {:else}
+                                    <p
+                                      class="text-[11px] text-white/50 leading-relaxed"
+                                    >
+                                      Loading model into memory...
+                                    </p>
+                                  {/if}
                                 {:else if isReady || isRunning}
                                   <p
                                     class="text-[11px] text-green-400/70 leading-relaxed"

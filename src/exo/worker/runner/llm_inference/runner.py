@@ -150,7 +150,8 @@ def main(
                 case LoadModel() if (
                     isinstance(current_status, RunnerConnected) and group is not None
                 ) or (isinstance(current_status, RunnerIdle) and group is None):
-                    current_status = RunnerLoading()
+                    total_layers = shard_metadata.end_layer - shard_metadata.start_layer
+                    current_status = RunnerLoading(layers_loaded=0, total_layers=total_layers)
                     logger.info("runner loading")
                     event_sender.send(
                         RunnerStatusUpdated(
@@ -170,11 +171,18 @@ def main(
                         )
                         time.sleep(0.5)
 
+                    def on_layer_loaded(layers_loaded: int, total: int) -> None:
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=RunnerLoading(layers_loaded=layers_loaded, total_layers=total)
+                            )
+                        )
+
                     assert (
                         ModelTask.TextGeneration in shard_metadata.model_card.tasks
                     ), f"Incorrect model task(s): {shard_metadata.model_card.tasks}"
                     inference_model, tokenizer = load_mlx_items(
-                        bound_instance, group, on_timeout=on_model_load_timeout
+                        bound_instance, group, on_timeout=on_model_load_timeout, on_layer_loaded=on_layer_loaded
                     )
                     logger.info(
                         f"model has_tool_calling={tokenizer.has_tool_calling} using tokens {tokenizer.tool_call_start}, {tokenizer.tool_call_end}"

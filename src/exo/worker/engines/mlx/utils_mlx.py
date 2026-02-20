@@ -55,6 +55,7 @@ from exo.shared.types.worker.shards import (
 )
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.auto_parallel import (
+    LayerLoadedCallback,
     TimeoutCallback,
     eval_with_timeout,
     pipeline_auto_parallel,
@@ -172,6 +173,7 @@ def load_mlx_items(
     bound_instance: BoundInstance,
     group: Group | None,
     on_timeout: TimeoutCallback | None = None,
+    on_layer_loaded: LayerLoadedCallback | None = None,
 ) -> tuple[Model, TokenizerWrapper]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
@@ -186,7 +188,7 @@ def load_mlx_items(
         logger.info("Starting distributed init")
         start_time = time.perf_counter()
         model, tokenizer = shard_and_load(
-            bound_instance.bound_shard, group=group, on_timeout=on_timeout
+            bound_instance.bound_shard, group=group, on_timeout=on_timeout, on_layer_loaded=on_layer_loaded
         )
         end_time = time.perf_counter()
         logger.info(
@@ -202,6 +204,7 @@ def shard_and_load(
     shard_metadata: ShardMetadata,
     group: Group,
     on_timeout: TimeoutCallback | None = None,
+    on_layer_loaded: LayerLoadedCallback | None = None,
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
@@ -245,7 +248,7 @@ def shard_and_load(
             model = tensor_auto_parallel(model, group, timeout_seconds, on_timeout)
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
-            model = pipeline_auto_parallel(model, group, shard_metadata)
+            model = pipeline_auto_parallel(model, group, shard_metadata, on_layer_loaded=on_layer_loaded)
             eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
         case CfgShardMetadata():
             raise ValueError(
