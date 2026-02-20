@@ -511,9 +511,7 @@ class LlamaShardingStrategy(TensorParallelShardingStrategy):
         total = len(model.layers)
         for i, layer in enumerate(model.layers):
             # Force load weights before sharding to avoid FAST_SYNCH deadlock
-            eval_with_timeout(
-                layer.parameters(), timeout_seconds / total, on_timeout
-            )
+            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
@@ -569,9 +567,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
         total = len(model.layers)
 
         for i, layer in enumerate(model.layers):
-            eval_with_timeout(
-                layer.parameters(), timeout_seconds / total, on_timeout
-            )
+            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
 
             # Shard the self attention
             if layer.self_attn.q_lora_rank is None:
@@ -801,9 +797,7 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
         model = cast(MiniMaxModel, model)
         total = len(model.layers)
         for i, layer in enumerate(model.layers):
-            eval_with_timeout(
-                layer.parameters(), timeout_seconds / total, on_timeout
-            )
+            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
             # Shard the self attention
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
@@ -844,9 +838,7 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
         model = cast(Qwen3MoeModel | Qwen3NextModel, model)
         total = len(model.layers)
         for i, layer in enumerate(model.layers):
-            eval_with_timeout(
-                layer.parameters(), timeout_seconds / total, on_timeout
-            )
+            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
             # Shard the self attention
             if isinstance(layer, Qwen3DecoderLayer):
                 layer.self_attn.q_proj = self.all_to_sharded_linear(
@@ -971,9 +963,7 @@ class Glm4MoeShardingStrategy(TensorParallelShardingStrategy):
         model = cast(Glm4MoeModel, model)
         total = len(model.layers)
         for i, layer in enumerate(model.layers):
-            eval_with_timeout(
-                layer.parameters(), timeout_seconds / total, on_timeout
-            )
+            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
 
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
@@ -1022,9 +1012,7 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
         total = len(model.layers)
 
         for i, layer in enumerate(model.layers):
-            eval_with_timeout(
-                layer.parameters(), timeout_seconds / total, on_timeout
-            )
+            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
@@ -1067,9 +1055,7 @@ class Step35ShardingStrategy(TensorParallelShardingStrategy):
         total = len(model.layers)
 
         for i, layer in enumerate(model.layers):
-            eval_with_timeout(
-                layer.parameters(), timeout_seconds / total, on_timeout
-            )
+            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
