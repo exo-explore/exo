@@ -344,6 +344,12 @@ input:focus, textarea:focus {
 	to { opacity: 1; transform: none; }
 }
 
+/* Opacity-only fade-in — no transform, safe for containers with fixed-position children */
+@keyframes onb-fade-opacity {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
 /* Respect reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
 	.shooting-star,
@@ -366,7 +372,8 @@ input:focus, textarea:focus {
 	.onboarding-connection-line-red {
 		animation: none;
 	}
-	[style*="onb-fade-in"] {
+	[style*="onb-fade-in"],
+	[style*="onb-fade-opacity"] {
 		animation: none !important;
 		opacity: 1 !important;
 	}
