@@ -590,43 +590,49 @@
   });
 
   // Track onboarding instance status for auto-advancing steps.
-  // Handles cached models: if no download is needed, skip step 7 entirely.
+  // Uses runner status as source of truth to avoid false "ready" from missing download data.
   $effect(() => {
     if (onboardingStep === 7 && instanceCount > 0) {
       let anyDownloading = false;
       let anyReady = false;
-      for (const [id, inst] of Object.entries(instanceData)) {
-        const status = getInstanceDownloadStatus(id, inst);
-        if (status.isDownloading) {
-          anyDownloading = true;
-        }
-        if (
-          status.statusText === "READY" ||
-          status.statusText === "LOADED" ||
-          status.statusText === "RUNNING"
-        ) {
+      for (const [, inst] of Object.entries(instanceData)) {
+        const runnerStatus = deriveInstanceStatus(inst);
+        if (runnerStatus.statusText === "READY" || runnerStatus.statusText === "LOADED" || runnerStatus.statusText === "RUNNING") {
           anyReady = true;
+        } else if (runnerStatus.statusText === "DOWNLOADING") {
+          anyDownloading = true;
+        } else {
+          // Check download progress data too
+          for (const [id2, inst2] of Object.entries(instanceData)) {
+            const dlStatus = getInstanceDownloadStatus(id2, inst2);
+            if (dlStatus.isDownloading) anyDownloading = true;
+          }
         }
       }
       // Model already cached & ready — skip download AND loading steps
       if (anyReady) {
         onboardingStep = 9;
-      } else if (!anyDownloading) {
-        // Download finished (or was never needed) but not ready yet
-        onboardingStep = 8;
+      } else if (anyDownloading) {
+        // Stay on step 7 (downloading)
+      } else {
+        // Not ready and not downloading — could be loading, initializing, or preparing.
+        // Only advance to step 8 if runners are actually in a loading state.
+        for (const [, inst] of Object.entries(instanceData)) {
+          const runnerStatus = deriveInstanceStatus(inst);
+          if (runnerStatus.statusText === "LOADING" || runnerStatus.statusText === "WARMING UP") {
+            onboardingStep = 8;
+            break;
+          }
+        }
       }
     }
   });
 
   $effect(() => {
     if (onboardingStep === 8 && instanceCount > 0) {
-      for (const [id, inst] of Object.entries(instanceData)) {
-        const status = getInstanceDownloadStatus(id, inst);
-        if (
-          status.statusText === "READY" ||
-          status.statusText === "LOADED" ||
-          status.statusText === "RUNNING"
-        ) {
+      for (const [, inst] of Object.entries(instanceData)) {
+        const runnerStatus = deriveInstanceStatus(inst);
+        if (runnerStatus.statusText === "READY" || runnerStatus.statusText === "LOADED" || runnerStatus.statusText === "RUNNING") {
           onboardingStep = 9;
           break;
         }
@@ -1539,12 +1545,14 @@
     }>;
   } {
     if (!downloadsData || Object.keys(downloadsData).length === 0) {
+      // No download data yet — defer to runner status instead of assuming RUNNING
+      const statusInfo = deriveInstanceStatus(instanceWrapped);
       return {
         isDownloading: false,
         isFailed: false,
         errorMessage: null,
         progress: null,
-        statusText: "RUNNING",
+        statusText: statusInfo.statusText,
         perNode: [],
       };
     }
