@@ -40,7 +40,7 @@
   function getConfidenceClass(probability: number): string {
     if (probability > 0.8) return "text-inherit"; // Expected tokens - blend in
     if (probability > 0.5) return "bg-gray-500/10 text-inherit"; // Slight hint
-    if (probability > 0.2) return "bg-amber-500/15 text-amber-200/90"; // Subtle warmth
+    if (probability > 0.2) return "bg-exo-medium-gray/40 text-exo-yellow/90"; // Subtle warmth
     return "bg-red-500/20 text-red-200/90"; // Draws attention
   }
 
@@ -50,7 +50,7 @@
   function getBorderClass(probability: number): string {
     if (probability > 0.8) return "border-transparent"; // No border for expected
     if (probability > 0.5) return "border-gray-500/20";
-    if (probability > 0.2) return "border-amber-500/30";
+    if (probability > 0.2) return "border-exo-yellow/25";
     return "border-red-500/40";
   }
 
@@ -128,7 +128,7 @@
   function getProbabilityColor(probability: number): string {
     if (probability > 0.8) return "text-gray-300";
     if (probability > 0.5) return "text-gray-400";
-    if (probability > 0.2) return "text-amber-400";
+    if (probability > 0.2) return "text-exo-yellow";
     return "text-red-400";
   }
 </script>
