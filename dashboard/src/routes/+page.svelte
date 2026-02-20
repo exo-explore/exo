@@ -2995,27 +2995,13 @@
               class="absolute left-0 right-0 text-center text-lg text-white/50 font-light tracking-wide z-10"
               style="top: 20px; opacity: {$deviceCountOpacity}; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; pointer-events: none;"
             >
-              {Math.max(1, nodeCount)} {Math.max(1, nodeCount) === 1 ? 'Device' : 'Devices'} in your EXO network
+              Your EXO Network
             </p>
-
-            {#if onboardingStep === 1}
-              <!-- Step 1: Show actual topology -->
-              <div class="absolute inset-0" style="top: 50px; opacity: {$device1Opacity}; transition: opacity 0.6s ease;">
-                <TopologyGraph
-                  class="w-full h-full"
-                  highlightedNodes={new Set()}
-                  filteredNodes={new Set()}
-                />
-              </div>
-            {:else}
-              <!-- Steps 2-4: Cinematic SVG animation -->
-            {/if}
 
             <svg
               viewBox="0 0 700 420"
               class="w-full h-full"
               xmlns="http://www.w3.org/2000/svg"
-              style={onboardingStep === 1 ? 'opacity: 0; pointer-events: none;' : ''}
             >
               <!-- Device 1 (User's device) -->
               <g
