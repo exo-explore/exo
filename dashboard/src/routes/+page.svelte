@@ -781,7 +781,7 @@
   type InstanceMeta = "MlxRing" | "MlxJaccl";
 
   // Launch defaults persistence
-  const LAUNCH_DEFAULTS_KEY = "exo-launch-defaults";
+  const LAUNCH_DEFAULTS_KEY = "exo-launch-defaults-v2";
   interface LaunchDefaults {
     modelId: string | null;
     sharding: "Pipeline" | "Tensor";
