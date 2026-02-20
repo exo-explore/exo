@@ -26,7 +26,8 @@
     downloadedOnNodes = [],
   }: HuggingFaceResultItemProps = $props();
 
-  function formatNumber(num: number): string {
+  function formatNumber(num: number | undefined): string {
+    if (num == null) return "0";
     if (num >= 1000000) {
       return `${(num / 1000000).toFixed(1)}M`;
     } else if (num >= 1000) {

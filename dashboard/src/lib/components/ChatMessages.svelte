@@ -3,16 +3,17 @@
     messages,
     currentResponse,
     isLoading,
+    prefillProgress,
     deleteMessage,
     editAndRegenerate,
     regenerateLastResponse,
     regenerateFromToken,
     setEditingImage,
   } from "$lib/stores/app.svelte";
-  import type { Message } from "$lib/stores/app.svelte";
   import type { MessageAttachment } from "$lib/stores/app.svelte";
   import MarkdownContent from "./MarkdownContent.svelte";
   import TokenHeatmap from "./TokenHeatmap.svelte";
+  import PrefillProgressBar from "./PrefillProgressBar.svelte";
   import ImageLightbox from "./ImageLightbox.svelte";
 
   interface Props {
@@ -25,6 +26,7 @@
   const messageList = $derived(messages());
   const response = $derived(currentResponse());
   const loading = $derived(isLoading());
+  const prefill = $derived(prefillProgress());
 
   // Scroll management - user controls scroll, show button when not at bottom
   const SCROLL_THRESHOLD = 100;
@@ -428,6 +430,9 @@
             {:else}
               <!-- Assistant message styling -->
               <div class="p-3 sm:p-4">
+                {#if loading && isLastAssistantMessage(message.id) && prefill && !message.content}
+                  <PrefillProgressBar progress={prefill} class="mb-3" />
+                {/if}
                 {#if message.thinking && message.thinking.trim().length > 0}
                   <div
                     class="mb-3 rounded border border-exo-yellow/20 bg-exo-black/40"

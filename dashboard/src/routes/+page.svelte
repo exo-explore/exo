@@ -114,6 +114,74 @@
   });
   let tb5InfoDismissed = $state(false);
 
+  // Detect Mac Studio nodes using RDMA on en2 (the port next to ethernet — RDMA doesn't work there)
+  const macStudioEn2RdmaWarning = $derived.by(() => {
+    const edges = data?.edges;
+    const ids = tbIdentifiers;
+    const rdmaCtl = rdmaCtlData;
+    if (!edges || !ids || !rdmaCtl) return null;
+
+    const affectedConnections: Array<{
+      nodeId: string;
+      nodeName: string;
+      peerNodeId: string;
+      peerNodeName: string;
+      rdmaIface: string;
+    }> = [];
+
+    const isMacStudio = (node: (typeof data.nodes)[string] | undefined) =>
+      node?.system_info?.model_id === "Mac Studio";
+
+    for (const edge of edges) {
+      if (!edge.sourceRdmaIface && !edge.sinkRdmaIface) continue;
+
+      const sourceNode = data?.nodes?.[edge.source];
+      if (
+        isMacStudio(sourceNode) &&
+        edge.sourceRdmaIface === "rdma_en2" &&
+        rdmaCtl[edge.source]?.enabled
+      ) {
+        affectedConnections.push({
+          nodeId: edge.source,
+          nodeName:
+            sourceNode?.friendly_name || edge.source.slice(0, 8) + "...",
+          peerNodeId: edge.target,
+          peerNodeName:
+            data?.nodes?.[edge.target]?.friendly_name ||
+            edge.target.slice(0, 8) + "...",
+          rdmaIface: "en2",
+        });
+      }
+
+      const sinkNode = data?.nodes?.[edge.target];
+      if (
+        isMacStudio(sinkNode) &&
+        edge.sinkRdmaIface === "rdma_en2" &&
+        rdmaCtl[edge.target]?.enabled
+      ) {
+        affectedConnections.push({
+          nodeId: edge.target,
+          nodeName: sinkNode?.friendly_name || edge.target.slice(0, 8) + "...",
+          peerNodeId: edge.source,
+          peerNodeName:
+            sourceNode?.friendly_name || edge.source.slice(0, 8) + "...",
+          rdmaIface: "en2",
+        });
+      }
+    }
+
+    // Deduplicate by nodeId
+    const seen = new Set<string>();
+    const unique = affectedConnections.filter((c) => {
+      if (seen.has(c.nodeId)) return false;
+      seen.add(c.nodeId);
+      return true;
+    });
+
+    return unique.length > 0 ? unique : null;
+  });
+  let macStudioEn2Dismissed = $state(false);
+
   // Helper to get friendly node name from node ID
   function getNodeName(nodeId: string): string {
     const node = data?.nodes?.[nodeId];
@@ -790,10 +858,8 @@
     if (!progress || typeof progress !== "object") return null;
 
     const prog = progress as Record<string, unknown>;
-    const totalBytes = getBytes(prog.total_bytes ?? prog.totalBytes);
-    const downloadedBytes = getBytes(
-      prog.downloaded_bytes ?? prog.downloadedBytes,
-    );
+    const totalBytes = getBytes(prog.total);
+    const downloadedBytes = getBytes(prog.downloaded);
     const speed = (prog.speed as number) ?? 0;
     const completedFiles =
       (prog.completed_files as number) ?? (prog.completedFiles as number) ?? 0;
@@ -806,8 +872,8 @@
     for (const [fileName, fileData] of Object.entries(filesObj)) {
       if (!fileData || typeof fileData !== "object") continue;
       const fd = fileData as Record<string, unknown>;
-      const fTotal = getBytes(fd.total_bytes ?? fd.totalBytes);
-      const fDownloaded = getBytes(fd.downloaded_bytes ?? fd.downloadedBytes);
+      const fTotal = getBytes(fd.total);
+      const fDownloaded = getBytes(fd.downloaded);
       files.push({
         name: fileName,
         totalBytes: fTotal,
@@ -931,13 +997,6 @@
       perNode,
     };
   }
-
-  // Debug: Log downloads data when it changes
-  $effect(() => {
-    if (downloadsData && Object.keys(downloadsData).length > 0) {
-      console.log("[Download Debug] Current downloads:", downloadsData);
-    }
-  });
 
   // Helper to get download status for an instance
   function getInstanceDownloadStatus(
@@ -1203,7 +1262,6 @@
     if (typeof value === "number") return value;
     if (value && typeof value === "object") {
       const v = value as Record<string, unknown>;
-      if (typeof v.in_bytes === "number") return v.in_bytes;
       if (typeof v.inBytes === "number") return v.inBytes;
     }
     return 0;
@@ -1765,7 +1823,7 @@
 </script>
 
 {#snippet clusterWarnings()}
-  {#if tbBridgeCycles.length > 0 || macosVersionMismatch || (tb5WithoutRdma && !tb5InfoDismissed)}
+  {#if tbBridgeCycles.length > 0 || macosVersionMismatch || (tb5WithoutRdma && !tb5InfoDismissed) || (macStudioEn2RdmaWarning && !macStudioEn2Dismissed)}
     <div class="absolute top-4 left-4 flex flex-col gap-2 z-40">
       {#if tbBridgeCycles.length > 0}
         {@const cycle = tbBridgeCycles[0]}
@@ -1930,12 +1988,260 @@
           </button>
         </div>
       {/if}
+
+      {#if macStudioEn2RdmaWarning && !macStudioEn2Dismissed}
+        <div class="group relative" role="alert">
+          <div
+            class="flex items-center gap-2 px-3 py-2 rounded border border-red-500/50 bg-red-500/10 backdrop-blur-sm cursor-help"
+          >
+            <svg
+              class="w-5 h-5 text-red-400 flex-shrink-0"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d={warningIconPath}
+              />
+            </svg>
+            <span class="text-sm font-mono text-red-200">
+              RDMA INCOMPATIBLE PORT
+            </span>
+            <button
+              type="button"
+              onclick={() => (macStudioEn2Dismissed = true)}
+              class="ml-1 text-red-300/60 hover:text-red-200 transition-colors cursor-pointer"
+              title="Dismiss"
+            >
+              <svg
+                class="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          </div>
+
+          <!-- Expanded tooltip on hover -->
+          <div
+            class="absolute top-full left-0 mt-2 w-96 p-4 rounded border border-red-500/30 bg-[#1a1a1a]/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
+          >
+            <p class="text-xs text-white/80 mb-3">
+              The Thunderbolt 5 port next to the Ethernet port on Mac Studio
+              does
+              <span class="text-red-400 font-semibold">not support RDMA</span>.
+              Move the cable to one of the other three TB5 ports.
+            </p>
+
+            <div class="text-xs text-white/60 mb-3">
+              <span class="text-red-300">Affected:</span>
+              {#each macStudioEn2RdmaWarning as conn}
+                <div class="ml-2 mt-0.5">
+                  <span class="text-white/80">{conn.nodeName}</span>
+                  <span class="text-white/30">&rarr;</span>
+                  <span class="text-white/60">{conn.peerNodeName}</span>
+                  <span class="text-white/30 ml-1">(en2)</span>
+                </div>
+              {/each}
+            </div>
+
+            <!-- Mac Studio back panel illustration -->
+            <div class="bg-black/40 rounded p-3 mb-3">
+              <p
+                class="text-[10px] font-mono text-white/30 uppercase tracking-wider mb-2"
+              >
+                Mac Studio — Rear Panel
+              </p>
+              <svg
+                viewBox="0 0 320 72"
+                class="w-full"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <rect
+                  x="1"
+                  y="1"
+                  width="318"
+                  height="70"
+                  rx="6"
+                  ry="6"
+                  fill="none"
+                  stroke="rgba(255,255,255,0.12)"
+                  stroke-width="1"
+                />
+                <!-- TB5 port 1 -->
+                <rect
+                  x="24"
+                  y="22"
+                  width="28"
+                  height="14"
+                  rx="4"
+                  fill="none"
+                  stroke="rgba(255,255,255,0.3)"
+                  stroke-width="1"
+                />
+                <text
+                  x="38"
+                  y="52"
+                  text-anchor="middle"
+                  fill="rgba(255,255,255,0.25)"
+                  style="font-size:7px;font-family:ui-monospace,monospace;"
+                  >TB5</text
+                >
+                <!-- TB5 port 2 -->
+                <rect
+                  x="62"
+                  y="22"
+                  width="28"
+                  height="14"
+                  rx="4"
+                  fill="none"
+                  stroke="rgba(255,255,255,0.3)"
+                  stroke-width="1"
+                />
+                <text
+                  x="76"
+                  y="52"
+                  text-anchor="middle"
+                  fill="rgba(255,255,255,0.25)"
+                  style="font-size:7px;font-family:ui-monospace,monospace;"
+                  >TB5</text
+                >
+                <!-- TB5 port 3 -->
+                <rect
+                  x="100"
+                  y="22"
+                  width="28"
+                  height="14"
+                  rx="4"
+                  fill="none"
+                  stroke="rgba(255,255,255,0.3)"
+                  stroke-width="1"
+                />
+                <text
+                  x="114"
+                  y="52"
+                  text-anchor="middle"
+                  fill="rgba(255,255,255,0.25)"
+                  style="font-size:7px;font-family:ui-monospace,monospace;"
+                  >TB5</text
+                >
+                <!-- TB5 port 4: INCOMPATIBLE (en2) — equally spaced with ports 1-3 -->
+                <rect
+                  x="138"
+                  y="22"
+                  width="28"
+                  height="14"
+                  rx="4"
+                  fill="rgba(239,68,68,0.1)"
+                  stroke="rgba(239,68,68,0.7)"
+                  stroke-width="1.5"
+                />
+                <line
+                  x1="142"
+                  y1="25"
+                  x2="162"
+                  y2="33"
+                  stroke="rgba(239,68,68,0.8)"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                />
+                <line
+                  x1="162"
+                  y1="25"
+                  x2="142"
+                  y2="33"
+                  stroke="rgba(239,68,68,0.8)"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                />
+                <text
+                  x="152"
+                  y="52"
+                  text-anchor="middle"
+                  fill="rgba(239,68,68,0.6)"
+                  style="font-size:7px;font-family:ui-monospace,monospace;font-weight:600;"
+                  >en2</text
+                >
+                <!-- Ethernet port -->
+                <rect
+                  x="196"
+                  y="19"
+                  width="24"
+                  height="20"
+                  rx="2"
+                  fill="none"
+                  stroke="rgba(255,255,255,0.2)"
+                  stroke-width="1"
+                />
+                <rect
+                  x="200"
+                  y="23"
+                  width="16"
+                  height="12"
+                  rx="1"
+                  fill="none"
+                  stroke="rgba(255,255,255,0.12)"
+                  stroke-width="0.75"
+                />
+                <text
+                  x="208"
+                  y="52"
+                  text-anchor="middle"
+                  fill="rgba(255,255,255,0.25)"
+                  style="font-size:7px;font-family:ui-monospace,monospace;"
+                  >ETH</text
+                >
+                <!-- Green checkmarks on working ports -->
+                <circle
+                  cx="38"
+                  cy="62"
+                  r="3"
+                  fill="none"
+                  stroke="rgba(74,222,128,0.5)"
+                  stroke-width="0.75"
+                />
+                <circle
+                  cx="76"
+                  cy="62"
+                  r="3"
+                  fill="none"
+                  stroke="rgba(74,222,128,0.5)"
+                  stroke-width="0.75"
+                />
+                <circle
+                  cx="114"
+                  cy="62"
+                  r="3"
+                  fill="none"
+                  stroke="rgba(74,222,128,0.5)"
+                  stroke-width="0.75"
+                />
+              </svg>
+            </div>
+
+            <p class="text-xs text-white/50">
+              <span class="text-green-400">Fix:</span> Move the Thunderbolt cable
+              to any of the three leftmost ports (all support RDMA).
+            </p>
+          </div>
+        </div>
+      {/if}
     </div>
   {/if}
 {/snippet}
 
 {#snippet clusterWarningsCompact()}
-  {#if tbBridgeCycles.length > 0 || macosVersionMismatch || (tb5WithoutRdma && !tb5InfoDismissed)}
+  {#if tbBridgeCycles.length > 0 || macosVersionMismatch || (tb5WithoutRdma && !tb5InfoDismissed) || (macStudioEn2RdmaWarning && !macStudioEn2Dismissed)}
     <div class="absolute top-2 left-2 flex flex-col gap-1">
       {#if tbBridgeCycles.length > 0}
         <div
@@ -2001,6 +2307,27 @@
           </svg>
           <span class="text-[10px] font-mono text-blue-200">RDMA AVAILABLE</span
           >
+        </div>
+      {/if}
+      {#if macStudioEn2RdmaWarning && !macStudioEn2Dismissed}
+        <div
+          class="flex items-center gap-1.5 px-2 py-1 rounded border border-red-500/50 bg-red-500/10 backdrop-blur-sm"
+          title="Mac Studio RDMA incompatible port (en2) — move cable to another TB5 port"
+        >
+          <svg
+            class="w-3.5 h-3.5 text-red-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d={warningIconPath}
+            />
+          </svg>
+          <span class="text-[10px] font-mono text-red-200">BAD RDMA PORT</span>
         </div>
       {/if}
     </div>

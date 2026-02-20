@@ -1,0 +1,12 @@
+model_id = "mlx-community/MiniMax-M2.5-4bit"
+n_layers = 62
+hidden_size = 3072
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "minimax"
+quantization = "4bit"
+base_model = "MiniMax M2.5"
+capabilities = ["text", "thinking"]
+
+[storage_size]
+in_bytes = 128666664960

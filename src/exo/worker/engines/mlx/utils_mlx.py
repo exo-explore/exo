@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -231,11 +232,11 @@ def shard_and_load(
 
     # Estimate timeout based on model size (5x default for large queued workloads)
     base_timeout = float(os.environ.get("EXO_MODEL_LOAD_TIMEOUT", "300"))
-    model_size_gb = get_weights_size(shard_metadata).in_bytes / (1024**3)
-    timeout_seconds = base_timeout + model_size_gb
+    model_size = get_weights_size(shard_metadata)
+    timeout_seconds = base_timeout + model_size.in_gb
     logger.info(
         f"Evaluating model parameters with timeout of {timeout_seconds:.0f}s "
-        f"(model size: {model_size_gb:.1f}GB)"
+        f"(model size: {model_size.in_gb:.1f}GB)"
     )
 
     match shard_metadata:
@@ -285,11 +286,15 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     model_id_lower = model_id.lower()
     if "kimi-k2" in model_id_lower:
         return [163586]
-    elif "glm-4.7-flash" in model_id_lower:
+    elif "glm-5" in model_id_lower or "glm-4.7" in model_id_lower:
+        # For GLM-5 and GLM-4.7
         # 154820: <|endoftext|>, 154827: <|user|>, 154829: <|observation|>
         return [154820, 154827, 154829]
     elif "glm" in model_id_lower:
+        # For GLM-4.5 and older
         return [151336, 151329, 151338]
+    elif "gpt-oss" in model_id_lower:
+        return [200002, 200012]
     return None
 
 
@@ -353,7 +358,13 @@ def load_tokenizer_for_model_id(
             return list(hf_tokenizer.model.encode(text, allowed_special="all"))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
         hf_tokenizer.encode = _patched_encode
-        return TokenizerWrapper(hf_tokenizer, eos_token_ids=eos_token_ids)
+        return TokenizerWrapper(
+            hf_tokenizer,
+            eos_token_ids=eos_token_ids,
+            tool_call_start="<|tool_calls_section_begin|>",
+            tool_call_end="<|tool_calls_section_end|>",
+            tool_parser=_parse_kimi_tool_calls,
+        )
 
     tokenizer = load_tokenizer(
         model_path,
@@ -397,6 +408,69 @@ def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
                 func["arguments"] = json.loads(args)
 
 
+def _collect_nested_property_names(schema: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    properties: dict[str, Any] = schema.get("properties", {})  # type: ignore[reportAny]
+    for prop_spec in properties.values():  # pyright: ignore[reportAny]
+        if not isinstance(prop_spec, dict):
+            continue
+        if prop_spec.get("type") == "array":  # type: ignore[reportAny]
+            items: dict[str, Any] | None = prop_spec.get("items")  # type: ignore[reportAny]
+            if isinstance(items, dict) and items.get("type") == "object":  # type: ignore[reportAny]
+                inner_props: dict[str, Any] = items.get("properties", {})  # type: ignore[reportAny]
+                for k in inner_props:  # pyright: ignore[reportUnknownVariableType]
+                    names.add(str(k))  # pyright: ignore[reportUnknownArgumentType]
+                names.update(_collect_nested_property_names(items))  # pyright: ignore[reportUnknownArgumentType]
+    return names
+
+
+def _schemas_lost_in_prompt(prompt: str, tools: list[dict[str, Any]]) -> bool:
+    """Return True if nested property names from any tool schema are absent."""
+    for tool in tools:
+        fn: dict[str, Any] = tool.get("function", {})  # type: ignore
+        params: dict[str, Any] = fn.get("parameters", {})  # type: ignore
+        nested = _collect_nested_property_names(params)
+        if nested and not all(name in prompt for name in nested):
+            return True
+    return False
+
+
+_LOSSY_TEMPLATE_PATTERN = re.compile(
+    r"""inner_type\s*==\s*["']object \| object["']\s*or\s*inner_type\|length\s*>\s*\d+""",
+)
+
+
+def _patch_lossy_chat_template(template: str) -> str | None:
+    """Patch chat templates that collapse nested object schemas to ``any[]``.
+
+    Some templates (e.g., GPT-OSS) have a guard like::
+
+        inner_type == "object | object" or inner_type|length > 50
+
+    The length check silently drops complex array-of-object schemas.
+    We remove the length guard, keeping only the object-union check.
+    Returns the patched template, or *None* if no patch was needed.
+    """
+    patched, n = _LOSSY_TEMPLATE_PATTERN.subn(
+        lambda m: m.group(0).split(" or ")[0],  # keep only the object-union check
+        template,
+    )
+    return patched if n > 0 else None
+
+
+def _needs_dsml_encoding(task_params: TextGenerationTaskParams) -> bool:
+    if "deepseek-v3.2" not in task_params.model.lower():
+        return False
+    # Use DSML encoding when tools are provided or tool results are in the conversation
+    if task_params.tools:
+        return True
+    if task_params.chat_template_messages:
+        return any(
+            msg.get("role") == "tool" for msg in task_params.chat_template_messages
+        )
+    return False
+
+
 def apply_chat_template(
     tokenizer: TokenizerWrapper,
     task_params: TextGenerationTaskParams,
@@ -408,7 +482,6 @@ def apply_chat_template(
 
     When chat_template_messages is available (from Chat Completions API),
     uses those directly to preserve tool_calls, thinking, and other fields.
-    Otherwise builds messages from the task params input/instructions.
     """
     formatted_messages: list[dict[str, Any]] = []
     if task_params.chat_template_messages is not None:
@@ -436,6 +509,19 @@ def apply_chat_template(
         partial_assistant_content = cast(str, formatted_messages[-1].get("content", ""))
         formatted_messages = formatted_messages[:-1]
 
+    if _needs_dsml_encoding(task_params):
+        from exo.worker.engines.mlx.dsml_encoding import encode_messages
+
+        prompt = encode_messages(
+            messages=formatted_messages,
+            thinking_mode="thinking" if task_params.enable_thinking else "chat",
+            tools=task_params.tools,
+        )
+        if partial_assistant_content:
+            prompt += partial_assistant_content
+        logger.info(prompt)
+        return prompt
+
     extra_kwargs: dict[str, Any] = {}
     if task_params.enable_thinking is not None:
         # Qwen3 and GLM use "enable_thinking"; DeepSeek uses "thinking".
@@ -443,13 +529,27 @@ def apply_chat_template(
         extra_kwargs["enable_thinking"] = task_params.enable_thinking
         extra_kwargs["thinking"] = task_params.enable_thinking
 
+    patched_template: str | None = None
+    if task_params.tools:
+        original_template: str | None = getattr(tokenizer, "chat_template", None)
+        if isinstance(original_template, str):
+            patched_template = _patch_lossy_chat_template(original_template)
+            if patched_template is not None:
+                logger.info(
+                    "Patched lossy chat template (removed inner_type length guard)"
+                )
+
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
         tools=task_params.tools,
+        **({"chat_template": patched_template} if patched_template is not None else {}),
         **extra_kwargs,
     )
+
+    if task_params.tools and _schemas_lost_in_prompt(prompt, task_params.tools):
+        logger.warning("Chat template lost nested tool schemas even after patching")
 
     if partial_assistant_content:
         prompt += partial_assistant_content
@@ -542,18 +642,17 @@ def set_wired_limit_for_model(model_size: Memory):
     if not mx.metal.is_available():
         return
 
-    model_bytes = model_size.in_bytes
-    max_rec_size = int(mx.metal.device_info()["max_recommended_working_set_size"])
-    if model_bytes > 0.9 * max_rec_size:
-        model_mb = model_bytes // 2**20
-        max_rec_mb = max_rec_size // 2**20
+    max_rec_size = Memory.from_bytes(
+        int(mx.metal.device_info()["max_recommended_working_set_size"])
+    )
+    if model_size > 0.9 * max_rec_size:
         logger.warning(
-            f"Generating with a model that requires {model_mb} MB "
-            f"which is close to the maximum recommended size of {max_rec_mb} "
+            f"Generating with a model that requires {model_size.in_float_mb:.1f} MB "
+            f"which is close to the maximum recommended size of {max_rec_size.in_float_mb:.1f} "
             "MB. This can be slow. See the documentation for possible work-arounds: "
             "https://github.com/ml-explore/mlx-lm/tree/main#large-models"
         )
-    mx.set_wired_limit(max_rec_size)
+    mx.set_wired_limit(max_rec_size.in_bytes)
     logger.info(f"Wired limit set to {max_rec_size}.")
 
 
@@ -585,3 +684,41 @@ def mx_barrier(group: Group | None):
             mx.array(1.0), group=group, stream=mx.default_stream(mx.Device(mx.cpu))
         )
     )
+
+
+def _parse_kimi_tool_calls(text: str):
+    import regex as re
+
+    # kimi has a fixed function naming scheme, with a json formatted arg
+    #   functions.multiply:0<|tool_call_argument_begin|>{"a": 2, "b": 3}
+    _func_name_regex = re.compile(
+        r"^\s*((?:functions\.)?(.+?):\d+)\s*<\|tool_call_argument_begin\|>", re.DOTALL
+    )
+    _func_arg_regex = re.compile(r"<\|tool_call_argument_begin\|>\s*(.*)\s*", re.DOTALL)
+    _tool_call_split_regex = re.compile(
+        r"<\|tool_call_begin\|>(.*?)<\|tool_call_end\|>", re.DOTALL
+    )
+
+    def _parse_single_tool(text: str) -> dict[str, Any]:
+        func_name_match = _func_name_regex.search(text)
+        if func_name_match is None:
+            raise ValueError("No tool call found.")
+        tool_call_id = func_name_match.group(1)  # e.g. "functions.get_weather:0"
+        func_name = func_name_match.group(2)  # e.g. "get_weather"
+
+        func_args_match = _func_arg_regex.search(text)
+        if func_args_match is None:
+            raise ValueError("No tool call arguments found.")
+        func_args = func_args_match.group(1)
+        try:
+            arg_dct = json.loads(func_args)  # pyright: ignore[reportAny]
+        except Exception:
+            arg_dct = None
+
+        return dict(id=tool_call_id, name=func_name, arguments=arg_dct)
+
+    tool_matches = _tool_call_split_regex.findall(text)
+    if tool_matches:
+        return [_parse_single_tool(match) for match in tool_matches]  # pyright: ignore[reportAny]
+    else:
+        return [_parse_single_tool(text)]

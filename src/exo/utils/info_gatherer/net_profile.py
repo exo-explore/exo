@@ -108,7 +108,7 @@ async def check_reachable(
                 await send.send((target_ip, expected_node_id))
 
     async with (
-        httpx.AsyncClient(timeout=timeout, limits=limits) as client,
+        httpx.AsyncClient(timeout=timeout, limits=limits, verify=False) as client,
         create_task_group() as tg,
     ):
         for node_id in topology.list_nodes():

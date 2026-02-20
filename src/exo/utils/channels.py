@@ -1,3 +1,4 @@
+import contextlib
 import multiprocessing as mp
 from dataclasses import dataclass, field
 from math import inf
@@ -132,7 +133,8 @@ class MpSender[T]:
     def close(self) -> None:
         if not self._state.closed.is_set():
             self._state.closed.set()
-        self._state.buffer.put(_MpEndOfStream())
+        with contextlib.suppress(Exception):
+            self._state.buffer.put_nowait(_MpEndOfStream())
         self._state.buffer.close()
 
     # == unique to Mp channels ==
@@ -190,7 +192,13 @@ class MpReceiver[T]:
         try:
             return self.receive_nowait()
         except WouldBlock:
-            item = self._state.buffer.get()
+            try:
+                item = self._state.buffer.get()
+            except (TypeError, OSError):
+                # Queue pipe can get closed while we are blocked on get().
+                # The underlying connection._handle becomes None, causing
+                # TypeError in read(handle, remaining).
+                raise ClosedResourceError from None
             if isinstance(item, _MpEndOfStream):
                 self.close()
                 raise EndOfStream from None
@@ -204,6 +212,8 @@ class MpReceiver[T]:
     def close(self) -> None:
         if not self._state.closed.is_set():
             self._state.closed.set()
+        with contextlib.suppress(Exception):
+            self._state.buffer.put_nowait(_MpEndOfStream())
         self._state.buffer.close()
 
     # == unique to Mp channels ==

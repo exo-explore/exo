@@ -58,6 +58,21 @@
         lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
           (lib.mapAttrs (_: ignoreMissing) nvidiaPackages) // {
             mlx = ignoreMissing prev.mlx;
+            mlx-cuda-13 = prev.mlx-cuda-13.overrideAttrs (old: {
+              buildInputs = (old.buildInputs or [ ]) ++ [
+                final.nvidia-cublas
+                final.nvidia-cuda-nvrtc
+                final.nvidia-cudnn-cu13
+                final.nvidia-nccl-cu13
+              ];
+              preFixup = ''
+                addAutoPatchelfSearchPath ${final.nvidia-cublas}
+                addAutoPatchelfSearchPath ${final.nvidia-cuda-nvrtc}
+                addAutoPatchelfSearchPath ${final.nvidia-cudnn-cu13}
+                addAutoPatchelfSearchPath ${final.nvidia-nccl-cu13}
+              '';
+              autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
+            });
             torch = ignoreMissing prev.torch;
             triton = ignoreMissing prev.triton;
           }
@@ -74,14 +89,25 @@
           linuxOverlay
         ]
       );
-      exoVenv = pythonSet.mkVirtualEnv "exo-env" workspace.deps.default;
+      # mlx-cpu and mlx-cuda-13 both ship mlx/ site-packages files; keep first.
+      # mlx-cpu/mlx-cuda-13 and nvidia-cudnn-cu12/cu13 ship overlapping files.
+      venvCollisionPaths = lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+        "lib/python3.13/site-packages/mlx*"
+        "lib/python3.13/site-packages/nvidia*"
+      ];
+
+      exoVenv = (pythonSet.mkVirtualEnv "exo-env" workspace.deps.default).overrideAttrs {
+        venvIgnoreCollisions = venvCollisionPaths;
+      };
 
       # Virtual environment with dev dependencies for testing
-      testVenv = pythonSet.mkVirtualEnv "exo-test-env" (
+      testVenv = (pythonSet.mkVirtualEnv "exo-test-env" (
         workspace.deps.default // {
           exo = [ "dev" ]; # Include pytest, pytest-asyncio, pytest-env
         }
-      );
+      )).overrideAttrs {
+        venvIgnoreCollisions = venvCollisionPaths;
+      };
 
       mkPythonScript = name: path: pkgs.writeShellApplication {
         inherit name;
@@ -132,6 +158,7 @@
           exo-test-env = testVenv;
         } // {
         exo-bench = mkBenchScript "exo-bench" (inputs.self + /bench/exo_bench.py);
+        exo-eval-tool-calls = mkBenchScript "exo-eval-tool-calls" (inputs.self + /bench/eval_tool_calls.py);
         exo-get-all-models-on-cluster = mkSimplePythonScript "exo-get-all-models-on-cluster" (inputs.self + /tests/get_all_models_on_cluster.py);
       };
 

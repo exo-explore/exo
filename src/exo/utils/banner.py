@@ -1,5 +1,7 @@
+import sys
+
+
 def print_startup_banner(port: int) -> None:
-    """Print a prominent startup banner with API endpoint information."""
     dashboard_url = f"http://localhost:{port}"
     banner = f"""
 ╔═══════════════════════════════════════════════════════════════════════╗
@@ -27,4 +29,4 @@ def print_startup_banner(port: int) -> None:
 
 """
 
-    print(banner)
+    print(banner, file=sys.stderr)

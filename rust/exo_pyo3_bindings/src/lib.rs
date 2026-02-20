@@ -4,28 +4,14 @@
 //!
 //!
 
-// enable Rust-unstable features for convenience
-#![feature(trait_alias)]
-#![feature(tuple_trait)]
-#![feature(unboxed_closures)]
-// #![feature(stmt_expr_attributes)]
-// #![feature(assert_matches)]
-// #![feature(async_fn_in_dyn_trait)]
-// #![feature(async_for_loop)]
-// #![feature(auto_traits)]
-// #![feature(negative_impls)]
-
-extern crate core;
 mod allow_threading;
-mod examples;
-pub(crate) mod networking;
-pub(crate) mod pylibp2p;
+mod ident;
+mod networking;
 
+use crate::ident::PyKeypair;
 use crate::networking::networking_submodule;
-use crate::pylibp2p::ident::ident_submodule;
-use crate::pylibp2p::multiaddr::multiaddr_submodule;
 use pyo3::prelude::PyModule;
-use pyo3::prelude::*;
+use pyo3::types::PyModuleMethods;
 use pyo3::{Bound, PyResult, pyclass, pymodule};
 use pyo3_stub_gen::define_stub_info_gatherer;
 
@@ -34,24 +20,11 @@ pub(crate) mod r#const {
     pub const MPSC_CHANNEL_SIZE: usize = 1024;
 }
 
-/// Namespace for all the type/trait aliases used by this crate.
-pub(crate) mod alias {
-    use std::error::Error;
-    use std::marker::Tuple;
-
-    pub trait SendFn<Args: Tuple + Send + 'static, Output> =
-        Fn<Args, Output = Output> + Send + 'static;
-
-    pub type AnyError = Box<dyn Error + Send + Sync + 'static>;
-    pub type AnyResult<T> = Result<T, AnyError>;
-}
-
 /// Namespace for crate-wide extension traits/methods
 pub(crate) mod ext {
     use crate::allow_threading::AllowThreads;
     use extend::ext;
     use pyo3::exceptions::{PyConnectionError, PyRuntimeError};
-    use pyo3::marker::Ungil;
     use pyo3::types::PyBytes;
     use pyo3::{Py, PyErr, PyResult, Python};
     use tokio::runtime::Runtime;
@@ -62,7 +35,7 @@ pub(crate) mod ext {
     #[ext(pub, name = ByteArrayExt)]
     impl [u8] {
         fn pybytes(&self) -> Py<PyBytes> {
-            Python::with_gil(|py| PyBytes::new(py, self).unbind())
+            Python::attach(|py| PyBytes::new(py, self).unbind())
         }
     }
 
@@ -98,7 +71,7 @@ pub(crate) mod ext {
     #[ext(pub, name = PyResultExt)]
     impl<T> PyResult<T> {
         fn write_unraisable(self) -> Option<T> {
-            Python::with_gil(|py| self.write_unraisable_with(py))
+            Python::attach(|py| self.write_unraisable_with(py))
         }
 
         fn write_unraisable_with(self, py: Python<'_>) -> Option<T> {
@@ -175,24 +148,6 @@ pub(crate) mod ext {
     }
 }
 
-pub(crate) mod private {
-    use std::marker::Sized;
-
-    /// Sealed traits support
-    pub trait Sealed {}
-    impl<T: ?Sized> Sealed for T {}
-}
-
-/// A wrapper around [`Py`] that implements [`Clone`] using [`Python::with_gil`].
-#[repr(transparent)]
-pub(crate) struct ClonePy<T>(pub Py<T>);
-
-impl<T> Clone for ClonePy<T> {
-    fn clone(&self) -> Self {
-        Python::with_gil(|py| Self(self.0.clone_ref(py)))
-    }
-}
-
 /// A Python module implemented in Rust. The name of this function must match
 /// the `lib.name` setting in the `Cargo.toml`, else Python will not be able to
 /// import the module.
@@ -204,8 +159,7 @@ fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // TODO: for now this is all NOT a submodule, but figure out how to make the submodule system
     //       work with maturin, where the types generate correctly, in the right folder, without
     //       too many importing issues...
-    ident_submodule(m)?;
-    multiaddr_submodule(m)?;
+    m.add_class::<PyKeypair>()?;
     networking_submodule(m)?;
 
     // top-level constructs

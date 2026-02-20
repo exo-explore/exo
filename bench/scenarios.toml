@@ -1,0 +1,306 @@
+# Tool definitions — each becomes an OpenAI function tool.
+# All scenarios get all tools unless they specify a `tools` list.
+
+[tools.get_current_weather]
+description = "Get the current weather in a given location"
+required = ["location"]
+
+[tools.get_current_weather.properties.location]
+type = "string"
+description = "City and state, e.g. San Francisco, CA"
+
+[tools.get_current_weather.properties.unit]
+type = "string"
+enum = ["celsius", "fahrenheit"]
+description = "Temperature unit"
+
+[tools.calculate]
+description = "Evaluate a mathematical expression and return the numeric result"
+required = ["expression"]
+
+[tools.calculate.properties.expression]
+type = "string"
+description = "The math expression to evaluate, e.g. '2 + 3 * 4'"
+
+[tools.search_products]
+description = "Search for products in a catalog by query, category, and price"
+required = ["query"]
+
+[tools.search_products.properties.query]
+type = "string"
+description = "Search query string"
+
+[tools.search_products.properties.category]
+type = "string"
+enum = ["electronics", "clothing", "food", "books"]
+description = "Product category to filter by"
+
+[tools.search_products.properties.max_price]
+type = "number"
+description = "Maximum price in USD"
+
+[tools.create_todos]
+description = "Create a structured todo list"
+required = ["todos"]
+
+[tools.create_todos.properties.todos]
+type = "array"
+description = "List of todo items"
+
+[tools.create_todos.properties.todos.items]
+type = "object"
+required = ["content", "status", "priority"]
+
+[tools.create_todos.properties.todos.items.properties.content]
+type = "string"
+description = "The todo item text"
+
+[tools.create_todos.properties.todos.items.properties.status]
+type = "string"
+description = "Status: pending, in_progress, or completed"
+
+[tools.create_todos.properties.todos.items.properties.priority]
+type = "string"
+description = "Priority: low, normal, or high"
+
+# -- Should call a tool --
+
+[[scenarios]]
+name = "weather_simple"
+description = "Basic weather query -> get_current_weather"
+expect_tool_call = true
+expected_function = "get_current_weather"
+required_arg_keys = ["location"]
+
+[[scenarios.messages]]
+role = "user"
+content = "What's the weather like in Tokyo right now?"
+
+[[scenarios]]
+name = "calculator_simple"
+description = "Math question -> calculate"
+expect_tool_call = true
+expected_function = "calculate"
+required_arg_keys = ["expression"]
+
+[[scenarios.messages]]
+role = "user"
+content = "Use the calculator to compute 3847 * 926 + 17293"
+
+[[scenarios]]
+name = "search_with_filters"
+description = "Product search with category and price filter"
+expect_tool_call = true
+expected_function = "search_products"
+required_arg_keys = ["query"]
+
+[[scenarios.messages]]
+role = "user"
+content = "Find me electronics under $50"
+
+# -- Multi-turn: tool call then follow-up --
+
+[[scenarios]]
+name = "weather_multi_turn"
+description = "Weather query -> tool result -> natural language summary"
+expect_tool_call = true
+expected_function = "get_current_weather"
+required_arg_keys = ["location"]
+
+[scenarios.tool_result]
+temperature = "18C"
+condition = "partly cloudy"
+humidity = "65%"
+wind = "12 km/h NW"
+
+[[scenarios.messages]]
+role = "user"
+content = "What's the weather in Paris?"
+
+[[scenarios]]
+name = "calculator_multi_turn"
+description = "Math query -> tool result -> model reports the answer"
+expect_tool_call = true
+expected_function = "calculate"
+required_arg_keys = ["expression"]
+
+[scenarios.tool_result]
+result = 491682
+
+[[scenarios.messages]]
+role = "user"
+content = "Use the calculator to compute 1847 * 263 + 5921"
+
+[[scenarios]]
+name = "search_multi_turn"
+description = "Search query -> tool result -> model summarizes products"
+expect_tool_call = true
+expected_function = "search_products"
+required_arg_keys = ["query"]
+
+[[scenarios.tool_result.results]]
+name = "Hands-On Machine Learning"
+price = 45.99
+rating = 4.8
+
+[[scenarios.tool_result.results]]
+name = "Deep Learning with Python"
+price = 39.99
+rating = 4.6
+
+[[scenarios.messages]]
+role = "user"
+content = "Search for books about machine learning"
+
+# -- Sequential tool calls --
+
+[[scenarios]]
+name = "chained_tool_calls_same"
+description = "Thinking + weather(Tokyo) -> result -> model must call weather(London)"
+expect_tool_call = true
+expected_function = "get_current_weather"
+required_arg_keys = ["location"]
+
+[[scenarios.messages]]
+role = "user"
+content = "Compare the weather in Tokyo and London."
+
+[[scenarios.messages]]
+role = "assistant"
+content = "I'll check both cities. Let me start with Tokyo."
+
+[[scenarios.messages.tool_calls]]
+id = "call_1"
+name = "get_current_weather"
+arguments = { location = "Tokyo" }
+
+[[scenarios.messages]]
+role = "tool"
+tool_call_id = "call_1"
+content = '{"temperature": "25C", "condition": "sunny"}'
+
+[[scenarios]]
+name = "chained_tool_calls_different"
+description = "Thinking + weather(Berlin) -> result -> model must call calculator"
+expect_tool_call = true
+expected_function = "calculate"
+required_arg_keys = ["expression"]
+
+[[scenarios.messages]]
+role = "user"
+content = "What's the weather in Berlin, and also use the calculator to compute 4819 * 37 + 291."
+
+[[scenarios.messages]]
+role = "assistant"
+content = "I'll handle both. Let me check Berlin's weather first."
+
+[[scenarios.messages.tool_calls]]
+id = "call_2"
+name = "get_current_weather"
+arguments = { location = "Berlin" }
+
+[[scenarios.messages]]
+role = "tool"
+tool_call_id = "call_2"
+content = '{"temperature": "12C", "condition": "rainy"}'
+
+[[scenarios]]
+name = "chained_tool_calls_three"
+description = "Two prior thinking+tool calls -> results -> model must make a third"
+expect_tool_call = true
+expected_function = "get_current_weather"
+required_arg_keys = ["location"]
+
+[[scenarios.messages]]
+role = "user"
+content = "Compare weather in Tokyo, Paris, and London."
+
+[[scenarios.messages]]
+role = "assistant"
+content = "I'll check all three cities. Starting with Tokyo."
+
+[[scenarios.messages.tool_calls]]
+id = "call_3"
+name = "get_current_weather"
+arguments = { location = "Tokyo" }
+
+[[scenarios.messages]]
+role = "tool"
+tool_call_id = "call_3"
+content = '{"temperature": "25C", "condition": "sunny"}'
+
+[[scenarios.messages]]
+role = "assistant"
+content = "Got Tokyo. Now checking Paris."
+
+[[scenarios.messages.tool_calls]]
+id = "call_4"
+name = "get_current_weather"
+arguments = { location = "Paris" }
+
+[[scenarios.messages]]
+role = "tool"
+tool_call_id = "call_4"
+content = '{"temperature": "18C", "condition": "cloudy"}'
+
+# -- Nested object schema (regression for lossy chat template rendering) --
+
+[[scenarios]]
+name = "nested_schema_tool_call"
+description = "Tool call with nested object array schema -> create_todos"
+expect_tool_call = true
+expected_function = "create_todos"
+required_arg_keys = ["todos"]
+nested_array_key = "todos"
+required_item_keys = ["content", "status", "priority"]
+tools = ["create_todos"]
+
+[[scenarios.messages]]
+role = "user"
+content = "Create a todo list with 3 items to learn Python"
+
+# -- Tool name integrity (regression for harmony token leaking into name) --
+
+[tools.glob]
+description = "Search for files matching a glob pattern in the codebase"
+required = ["pattern"]
+
+[tools.glob.properties.pattern]
+type = "string"
+description = "The glob pattern to match files against, e.g. '**/*.py'"
+
+[tools.glob.properties.path]
+type = "string"
+description = "The directory to search in"
+
+[[scenarios]]
+name = "tool_name_integrity"
+description = "Tool name must not contain harmony tokens like <|channel|>"
+expect_tool_call = true
+expected_function = "glob"
+required_arg_keys = ["pattern"]
+tools = ["glob"]
+
+[[scenarios.messages]]
+role = "user"
+content = "Find all Python files in the src directory"
+
+# -- Should NOT call a tool --
+
+[[scenarios]]
+name = "no_tool_joke"
+description = "Joke request should NOT trigger any tool"
+expect_tool_call = false
+
+[[scenarios.messages]]
+role = "user"
+content = "Tell me a funny joke about cats."
+
+[[scenarios]]
+name = "no_tool_factual"
+description = "Factual question answerable from training data"
+expect_tool_call = false
+
+[[scenarios.messages]]
+role = "user"
+content = "What is the capital of Japan?"

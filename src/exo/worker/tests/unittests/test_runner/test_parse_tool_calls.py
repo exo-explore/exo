@@ -5,12 +5,13 @@ from typing import Any
 
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.worker.runner.runner import parse_tool_calls
+from exo.worker.runner.tool_parsers import make_mlx_parser
 
 
 def _make_responses(
     texts: list[str],
     finish_on_last: bool = True,
-) -> Generator[GenerationResponse | ToolCallResponse]:
+) -> Generator[GenerationResponse]:
     """Create a sequence of GenerationResponses from text strings."""
     for i, text in enumerate(texts):
         is_last = i == len(texts) - 1
@@ -22,8 +23,11 @@ def _make_responses(
         )
 
 
-def _dummy_parser(text: str) -> dict[str, Any]:
+def _dummier_parser(text: str) -> dict[str, Any]:
     return {"name": "test_fn", "arguments": {"arg": text}}
+
+
+_dummy_parser = make_mlx_parser("<tool_call>", "</tool_call>", _dummier_parser)
 
 
 class TestParseToolCalls:
@@ -35,8 +39,6 @@ class TestParseToolCalls:
         results = list(
             parse_tool_calls(
                 _make_responses(texts, finish_on_last=False),
-                "<tool_call>",
-                "</tool_call>",
                 _dummy_parser,
             )
         )
@@ -50,8 +52,6 @@ class TestParseToolCalls:
         results = list(
             parse_tool_calls(
                 _make_responses(texts),
-                "<tool_call>",
-                "</tool_call>",
                 _dummy_parser,
             )
         )
@@ -76,9 +76,7 @@ class TestParseToolCalls:
         results = list(
             parse_tool_calls(
                 _make_responses(texts, finish_on_last=False),
-                "<tool_call>",
-                "</tool_call>",
-                _failing_parser,
+                make_mlx_parser("<tool_call>", "</tool_call>", _failing_parser),
             )
         )
 

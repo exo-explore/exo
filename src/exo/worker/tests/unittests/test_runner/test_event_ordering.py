@@ -148,6 +148,7 @@ class MockTokenizer:
     tool_call_start = None
     tool_call_end = None
     has_tool_calling = False
+    has_thinking = False
 
 
 class MockGroup:
