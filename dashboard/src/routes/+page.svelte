@@ -260,18 +260,27 @@
     Math.round(clusterTotalMemoryGB() + SIMULATED_STUDIO_GB),
   );
 
-  // Models unlocked by adding the second device (sorted ascending — small model first)
+  // Models unlocked by adding the second device — one per base model, well-known preferred
   const unlockedModels = $derived.by(() => {
     if (models.length === 0) return [];
     const singleGB = clusterTotalMemoryGB();
     const combinedGB = onboardingCombinedGB;
-    return models
+    const candidates = models
       .filter((m) => {
         const sizeGB = getModelSizeGB(m);
-        return sizeGB > singleGB && sizeGB <= combinedGB;
+        return sizeGB > singleGB && sizeGB <= combinedGB && m.family;
       })
-      .sort((a, b) => getModelSizeGB(a) - getModelSizeGB(b))
-      .slice(0, 3);
+      .sort((a, b) => getModelSizeGB(a) - getModelSizeGB(b));
+    // Deduplicate by base_model (or family as fallback) — keep smallest quant per base
+    const seen = new Set<string>();
+    const deduped: typeof candidates = [];
+    for (const m of candidates) {
+      const key = m.base_model || m.family || m.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(m);
+    }
+    return deduped.slice(0, 3);
   });
 
   // User device info from topology
@@ -3241,7 +3250,7 @@
                   {@const splitX =
                     $modelSplitProgress * (($device2X - $device1X) / 2)}
                   {@const centerX = ($device1X + $device2X) / 2}
-                  {@const splitY = $modelBlockY + $modelSplitProgress * 70}
+                  {@const splitY = $modelBlockY + $modelSplitProgress * 30}
 
                   <!-- Left half -> Device 1 -->
                   <g
