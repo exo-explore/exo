@@ -136,7 +136,7 @@ from exo.shared.types.common import CommandId, Id, NodeId, SessionId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
-    ForwarderEvent,
+    GlobalForwarderEvent,
     IndexedEvent,
     TracesMerged,
 )
@@ -176,7 +176,7 @@ class API:
         *,
         port: int,
         # Ideally this would be a MasterForwarderEvent but type system says no :(
-        global_event_receiver: Receiver[ForwarderEvent],
+        global_event_receiver: Receiver[GlobalForwarderEvent],
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
