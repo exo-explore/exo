@@ -143,7 +143,7 @@ def place_instance(
 
     match command.instance_meta:
         case InstanceMeta.MlxJaccl:
-
+            # TODO(evan): shard assignments should contain information about ranks, this is ugly
             def get_device_rank(node_id: NodeId) -> int:
                 runner_id = shard_assignments.node_to_runner[node_id]
                 shard_metadata = shard_assignments.runner_to_shard.get(runner_id)
