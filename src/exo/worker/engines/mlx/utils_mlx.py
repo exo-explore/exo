@@ -146,6 +146,9 @@ def mlx_distributed_init(
                 os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
                 group = mx.distributed.init(backend="jaccl", strict=True)
 
+            case _:
+                raise TypeError(f"Unsupported instance type for MLX: {type(bound_instance.instance)}")
+
         logger.info(f"Rank {rank} mlx distributed initialization complete")
 
         return group

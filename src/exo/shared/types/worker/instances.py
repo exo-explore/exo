@@ -33,9 +33,12 @@ class MlxJacclInstance(BaseInstance):
     jaccl_devices: list[list[str | None]]
     jaccl_coordinators: dict[NodeId, str]
 
+class TinygradInstance(BaseInstance):
+    hosts_by_node: dict[NodeId, list[Host]] | None = None
+    ephemeral_port: int | None = None
 
 # TODO: Single node instance
-Instance = MlxRingInstance | MlxJacclInstance
+Instance = MlxRingInstance | MlxJacclInstance | TinygradInstance
 
 
 class BoundInstance(CamelCaseModel):

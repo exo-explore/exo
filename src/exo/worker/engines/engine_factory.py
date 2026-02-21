@@ -35,6 +35,7 @@ def create_engine(bound_instance: BoundInstance) -> Engine:
     from exo.shared.types.worker.instances import (
         MlxJacclInstance,
         MlxRingInstance,
+        TinygradInstance,
     )
 
     match bound_instance.instance:
@@ -61,9 +62,41 @@ def create_engine(bound_instance: BoundInstance) -> Engine:
                 cleanup = _mlx_cleanup,
             )
 
+        case TinygradInstance():
+            from exo.shared.tokenizer.chat_template import (
+                apply_chat_template,
+            )
+            from exo.worker.engines.tinygrad.generator.generate import (
+                tinygrad_generate,
+                warmup_inference,
+            )
+            from exo.worker.engines.tinygrad.utils_tinygrad import (
+                initialize_tinygrad,
+                load_tinygrad_items,
+            )
+
+            return Engine(
+                initialize=initialize_tinygrad,
+                load=load_tinygrad_items,
+                generate=tinygrad_generate,
+                apply_chat_template=apply_chat_template,
+                detect_thinking_prompt_suffix=_tinygrad_detect_thinking,
+                warmup=warmup_inference,
+                cleanup=_tinygrad_cleanup,
+            )
+
         case _:  # pyright: ignore[reportUnnecessaryComparison]
             raise ValueError(f"Unsupported Instance: {type(bound_instance.instance)}")
+
 
 def _mlx_cleanup() -> None:
     from mlx.core import clear_cache
     clear_cache()
+
+
+def _tinygrad_cleanup() -> None:
+    pass
+
+
+def _tinygrad_detect_thinking(prompt: str, tokenizer: Any) -> bool:  # pyright: ignore[reportAny]
+    return False
