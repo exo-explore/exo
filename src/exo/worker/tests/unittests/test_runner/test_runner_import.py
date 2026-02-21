@@ -30,13 +30,12 @@ def test_engine_factory_importable() -> None:
     )
 
 def test_engine_is_immutable() -> None:
-    """Engine must be an immutable dataclass with the expected fields."""
-    import dataclasses
+    """Engine must be an immutable Pydantic model with the expected fields."""
+    from pydantic import BaseModel
 
     from exo.worker.engines.engine_factory import Engine
-
-    assert dataclasses.is_dataclass(Engine)
-    field_names = {f.name for f in dataclasses.fields(Engine)}
+    assert issubclass(Engine, BaseModel)
+    field_names = set(Engine.model_fields.keys())
 
     required_fields = [
         "initialize", "load", "generate", "warmup", "cleanup",

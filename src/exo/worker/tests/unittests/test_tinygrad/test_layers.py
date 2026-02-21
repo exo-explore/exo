@@ -1,5 +1,5 @@
-import pytest
-from tinygrad import Tensor
+# pyright: reportUnknownMemberType=false
+from tinygrad.tensor import Tensor
 
 # --- RMS Norm ---
 
@@ -100,7 +100,6 @@ def test_lm_head_shape():
 
 def test_swiglu_mlp_shape():
     """SwiGLU MLP: hidden_size in, hidden_size out."""
-    from exo.worker.engines.tinygrad.layers.attention import linear_forward
     from exo.worker.engines.tinygrad.layers.mlp import swiglu_mlp
 
     x = Tensor.randn(1, 4, 2048)

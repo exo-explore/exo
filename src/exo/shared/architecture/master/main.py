@@ -4,15 +4,15 @@ import anyio
 from anyio.abc import TaskGroup
 from loguru import logger
 
-from exo.master.event_log import DiskEventLog
-from exo.master.placement import (
+from exo.shared.apply import apply
+from exo.shared.architecture.master.event_log import DiskEventLog
+from exo.shared.architecture.master.placement import (
     add_instance_to_placements,
     cancel_unnecessary_downloads,
     delete_instance,
     get_transition_events,
     place_instance,
 )
-from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
     CreateInstance,

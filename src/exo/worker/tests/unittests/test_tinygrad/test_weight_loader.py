@@ -1,5 +1,7 @@
-import pytest
 from pathlib import Path
+
+import pytest
+
 
 def test_layer_weights_is_named_tuple():
     """LayerWeights should be a NamedTuple with expected fields."""
@@ -59,7 +61,9 @@ def test_load_respects_layer_range():
 
 def test_load_missing_safetensors_raises(tmp_path: Path):
     """Loading from an empty directory should raise FileNotFoundError."""
-    from exo.worker.engines.tinygrad.weight_loader import _load_all_safetensors
+    from exo.worker.engines.tinygrad.weight_loader import (
+        _load_all_safetensors,  # pyright: ignore[reportPrivateUsage]
+    )
 
     with pytest.raises(FileNotFoundError, match="No .safetensors"):
         _load_all_safetensors(tmp_path)

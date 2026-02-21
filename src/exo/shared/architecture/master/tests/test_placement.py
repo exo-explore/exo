@@ -1,10 +1,10 @@
 import pytest
 
-from exo.master.placement import (
+from exo.shared.architecture.master.placement import (
     get_transition_events,
     place_instance,
 )
-from exo.master.tests.conftest import (
+from exo.shared.architecture.master.tests.conftest import (
     create_node_memory,
     create_node_network,
     create_rdma_connection,

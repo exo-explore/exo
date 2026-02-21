@@ -1,12 +1,17 @@
-from typing import NamedTuple, Any
-from tinygrad import Tensor
-from tinygrad.nn.state import safe_load
-from exo.worker.engines.tinygrad.quantization.layers import (
-    QuantizedLinear, QuantizedEmbedding
-)
-from exo.worker.engines.tinygrad.quantization.shapes import infer_weight_shape
-from exo.shared.model_config import ModelConfig
 from pathlib import Path
+from typing import Literal, NamedTuple, overload
+
+from tinygrad.nn.state import safe_load
+from tinygrad.tensor import Tensor
+
+from exo.shared.architecture import ArchitectureSpec
+from exo.shared.model_config import ModelConfig
+from exo.worker.engines.tinygrad.quantization.layers import (
+    QuantizedEmbedding,
+    QuantizedLinear,
+)
+from exo.worker.engines.tinygrad.quantization.packing import PackedTensor
+from exo.worker.engines.tinygrad.quantization.shapes import infer_weight_shape
 
 LinearWeight = Tensor | QuantizedLinear
 EmbedWeight = Tensor | QuantizedEmbedding
@@ -54,13 +59,13 @@ def load_transformer_weights(
         f"{spec.embed_key}.weight",
         config, is_embedding = True)
 
-    lm_head = embed_tokens if config.tie_word_embeddings else _build_weight(
+    lm_head: LinearWeight = embed_tokens if config.tie_word_embeddings else _build_weight(  # pyright: ignore[reportAssignmentType]
         raw_weights, f"{spec.lm_head_key}.weight", config,
     )
 
     final_norm = raw_weights[f"{spec.final_norm_key}.weight"]
 
-    layers = []
+    layers: list[LayerWeights] = []
 
     for layer_idx in range(start_layer, end_layer):
         prefix = spec.layer_prefix.format(layer_idx=layer_idx)
@@ -71,12 +76,41 @@ def load_transformer_weights(
         final_norm=final_norm, layers=layers, config=config
     )
 
+def _build_layer_weights(
+    raw: dict[str, Tensor],
+    prefix: str,
+    spec: ArchitectureSpec,
+    config: ModelConfig,
+) -> LayerWeights:
+    def key(suffix: str) -> str:
+        return f"{prefix}.{suffix}.weight"
+
+    return LayerWeights(
+        q_proj=_build_weight(raw, key(spec.q_proj_key), config),
+        k_proj=_build_weight(raw, key(spec.k_proj_key), config),
+        v_proj=_build_weight(raw, key(spec.v_proj_key), config),
+        o_proj=_build_weight(raw, key(spec.o_proj_key), config),
+        gate_proj=_build_weight(raw, key(spec.gate_proj_key), config),
+        up_proj=_build_weight(raw, key(spec.up_proj_key), config),
+        down_proj=_build_weight(raw, key(spec.down_proj_key), config),
+        input_norm=raw[f"{prefix}.{spec.input_norm_key}.weight"],
+        post_attn_norm=raw[f"{prefix}.{spec.post_attn_norm_key}.weight"],
+    )
+
+@overload
+def _build_weight(raw: dict[str, Tensor], key: str, config: ModelConfig, is_embedding: Literal[True]) -> EmbedWeight: ...
+@overload
+def _build_weight(raw: dict[str, Tensor], key: str, config: ModelConfig, is_embedding: Literal[False] = ...) -> LinearWeight: ...
+
 def _build_weight(
-    raw: Any,
+    raw: dict[str, Tensor],
     key: str,
     config: ModelConfig,
     is_embedding: bool = False,
 ) -> LinearWeight | EmbedWeight:
+    if key in raw:
+        return raw[key]
+
     qweight_key = key.replace(".weight", ".qweight")
 
     if qweight_key in raw and config.quantization_config is not None:
@@ -101,15 +135,12 @@ def _build_weight(
                 group_size = qcfg.group_size,
             )
 
-        return QuantizedEmbedding(
+        return QuantizedLinear(
             weight_q = packed,
             scales = raw[scales_key],
             biases = raw[biases_key],
             group_size = qcfg.group_size,
         )
-
-        if key in raw:
-            return raw[key]
 
     raise KeyError(f"Weight key '{key}' not found (also tried {qweight_key})")
 

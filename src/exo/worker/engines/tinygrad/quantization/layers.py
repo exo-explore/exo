@@ -1,9 +1,10 @@
 from typing import final
 
-from tinygrad import Tensor
+from tinygrad.tensor import Tensor
 
 from .dequantization import affine_dequantize
 from .packing import PackedTensor, unpack_bits
+
 
 @final
 class QuantizedLinear:
@@ -37,7 +38,7 @@ class QuantizedLinear:
 
         result = x @ self._dequantized_weight.T
         if self.bias is not None:
-            result = result + bias
+            result = result + self.bias
 
         return result
 

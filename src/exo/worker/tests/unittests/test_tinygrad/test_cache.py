@@ -1,5 +1,6 @@
-import pytest
-from tinygrad import Tensor
+# pyright: reportUnknownMemberType=false
+from tinygrad.tensor import Tensor
+
 
 def test_cache_initial_seq_len():
     """Fresh cache should have seq_len == 0."""
@@ -15,7 +16,7 @@ def test_cache_update_first_call():
     cache = KVCache(num_layers=4)
     k = Tensor.randn(1, 8, 3, 64)  # (batch, kv_heads, seq=3, head_dim)
     v = Tensor.randn(1, 8, 3, 64)
-    k_out, v_out = cache.update(0, k, v)
+    k_out, _v_out = cache.update(0, k, v)
     assert k_out.shape == (1, 8, 3, 64)
     assert cache.seq_len == 3
 
@@ -30,7 +31,7 @@ def test_cache_update_concatenates():
 
     k2 = Tensor.randn(1, 8, 1, 64)  # decode step: seq=1
     v2 = Tensor.randn(1, 8, 1, 64)
-    k_out, v_out = cache.update(0, k2, v2)
+    k_out, _v_out = cache.update(0, k2, v2)
     assert k_out.shape == (1, 8, 4, 64)  # 3 + 1
     assert cache.seq_len == 4
 
@@ -42,4 +43,4 @@ def test_cache_layers_are_independent():
     k = Tensor.randn(1, 8, 3, 64)
     v = Tensor.randn(1, 8, 3, 64)
     cache.update(0, k, v)
-    assert cache._keys[1] is None  # layer 1 untouched
+    assert cache._keys[1] is None  # layer 1 untouched  # pyright: ignore[reportPrivateUsage]

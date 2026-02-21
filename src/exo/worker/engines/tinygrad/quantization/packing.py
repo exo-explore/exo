@@ -1,8 +1,10 @@
 from math import ceil
 from typing import final
-from pydantic import BaseModel, ConfigDict
 
-from tinygrad import Tensor, dtypes
+from pydantic import BaseModel, ConfigDict
+from tinygrad.dtype import dtypes
+from tinygrad.tensor import Tensor
+
 
 @final
 class PackedTensor(BaseModel):
@@ -34,7 +36,7 @@ def pack_bits(unpacked: Tensor, bits: int) -> PackedTensor:
     """
 
     pack_factor = calculate_pack_factor(bits)
-    original_shape = unpacked.shape
+    original_shape = tuple(int(d) for d in unpacked.shape)
     last_dim = original_shape[-1]
     padded_last_dim = ceil(last_dim / pack_factor) * pack_factor
     packed_last_dim = padded_last_dim // pack_factor
@@ -42,10 +44,10 @@ def pack_bits(unpacked: Tensor, bits: int) -> PackedTensor:
 
     if last_dim != padded_last_dim:
         pad_shape = (*original_shape[:-1], padded_last_dim - last_dim)
-        padding = Tensor.zeros(*pad_shape, dtype = unpacked.dtype)
+        padding = Tensor.zeros(*pad_shape, dtype = unpacked.dtype)  # pyright: ignore[reportUnknownMemberType]
         unpacked = unpacked.cat(padding, dim = -1)
 
-    packed = Tensor.zeros(*packed_shape, dtype=dtypes.uint32)
+    packed = Tensor.zeros(*packed_shape, dtype=dtypes.uint32)  # pyright: ignore[reportUnknownMemberType]
     for slot in range(pack_factor):
         values = unpacked[..., slot::pack_factor].cast(dtypes.uint32)
         packed = packed | (values << (slot * bits))
@@ -74,7 +76,7 @@ def unpack_bits(packed_tensor: PackedTensor) -> Tensor:
     stacked = Tensor.stack(*slices, dim=0)
     padded_last_dim = packed.shape[-1] * pack_factor
     padded_shape = (*original_shape[:-1], padded_last_dim)
-    result = stacked.permute(*range(1, len(stacked.shape)), 0).reshape(padded_shape)
+    result = stacked.permute(*range(1, len(stacked.shape)), 0).reshape(padded_shape)  # pyright: ignore[reportUnknownMemberType]
 
     if padded_last_dim != original_shape[-1]:
         # Trim padding for padded, packed tensors

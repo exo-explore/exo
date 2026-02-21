@@ -1,6 +1,6 @@
 import pytest
 
-from exo.master.placement_utils import (
+from exo.shared.architecture.master.placement_utils import (
     allocate_layers_proportionally,
     filter_cycles_by_memory,
     get_mlx_jaccl_coordinators,
@@ -8,7 +8,7 @@ from exo.master.placement_utils import (
     get_shard_assignments_for_pipeline_parallel,
     get_smallest_cycles,
 )
-from exo.master.tests.conftest import (
+from exo.shared.architecture.master.tests.conftest import (
     create_node_memory,
     create_socket_connection,
 )

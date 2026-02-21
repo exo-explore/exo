@@ -4,7 +4,7 @@ import resource
 import time
 from collections.abc import Generator
 from functools import cache
-from typing import Literal
+from typing import Any, Literal
 
 from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     HarmonyEncodingName,
@@ -74,25 +74,21 @@ from exo.utils.channels import MpReceiver, MpSender
 
 try:
     from exo.worker.engines.image import (
-        DistributedImageModel,
         generate_image,
         initialize_image_model,
         warmup_image_generator,
     )
     from exo.worker.engines.mlx.cache import KVPrefixCache
 except (ImportError, OSError):
-    DistributedImageModel = None  # type: ignore[assignment, misc]
-    generate_image = None  # type: ignore[assignment]
-    initialize_image_model = None  # type: ignore[assignment]
-    warmup_image_generator = None  # type: ignore[assignment]
-    Model = None  # type: ignore[assignment, misc]
-    KVPrefixCache = None  # type: ignore[assignment, misc]
+    generate_image = None
+    initialize_image_model = None
+    warmup_image_generator = None
+    KVPrefixCache = None
+from exo.shared.types.worker.tokenizer import Tokenizer
+from exo.worker.engines.engine_factory import create_engine
 from exo.worker.runner.bootstrap import logger
 
 from .tool_parsers import ToolParser, make_mlx_parser
-from exo.shared.types.worker.tokenizer import MutableTokenizer, Tokenizer
-from exo.worker.engines.engine_factory import create_engine
-from exo.worker.runner.bootstrap import logger
 
 
 def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:
@@ -136,14 +132,13 @@ def main(
     cancelled_tasks = set[TaskId]()
 
     engine = create_engine(bound_instance)
-    model: Any = None                   # Model | DistributedImageModel | None = None
+    model: Any = None
+    image_model: Any = None
     tokenizer = None
     tool_parser: ToolParser | None = None
     group = None
-    kv_prefix_cache: KVPrefixCache | None = None
+    kv_prefix_cache: Any = None
     check_for_cancel_every: int | None = None
-    context: Any = None                 # replaced group
-    kv_prefix_cache: Any = None         # (now, managed per-engine) KVPrefixCache | None
 
     current_status: RunnerStatus = RunnerIdle()
     logger.info("runner created")
@@ -206,23 +201,25 @@ def main(
                             bound_instance, group, on_timeout=on_model_load_timeout
                         )
                         logger.info(
-                            f"model has_tool_calling={tokenizer.has_tool_calling} using tokens {tokenizer.tool_call_start}, {tokenizer.tool_call_end}"
+                            f"model has_tool_calling={tokenizer.has_tool_calling} using tokens {tokenizer.tool_call_start}, {tokenizer.tool_call_end}"  # pyright: ignore[reportAny]
                         )
-                        if tokenizer.has_tool_calling:
-                            assert tokenizer.tool_call_start
-                            assert tokenizer.tool_call_end
+                        if tokenizer.has_tool_calling:  # pyright: ignore[reportAny]
+                            assert tokenizer.tool_call_start  # pyright: ignore[reportAny]
+                            assert tokenizer.tool_call_end  # pyright: ignore[reportAny]
                             assert tokenizer.tool_parser  # pyright: ignore[reportAny]
                             tool_parser = make_mlx_parser(
-                                tokenizer.tool_call_start,
-                                tokenizer.tool_call_end,
+                                tokenizer.tool_call_start,  # pyright: ignore[reportAny]
+                                tokenizer.tool_call_end,  # pyright: ignore[reportAny]
                                 tokenizer.tool_parser,  # pyright: ignore[reportAny]
                             )
+                        assert KVPrefixCache is not None
                         kv_prefix_cache = KVPrefixCache(group)
 
                     elif (
                         ModelTask.TextToImage in shard_metadata.model_card.tasks
                         or ModelTask.ImageToImage in shard_metadata.model_card.tasks
                     ):
+                        assert initialize_image_model is not None
                         image_model = initialize_image_model(bound_instance)
                     else:
                         raise ValueError(
@@ -242,7 +239,7 @@ def main(
 
                     logger.info(f"warming up inference for instance: {instance}")
                     if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
-                        assert inference_model
+                        assert model
                         assert tokenizer
 
                         toks = engine.warmup(
@@ -252,14 +249,14 @@ def main(
                         )
                         logger.info(f"warmed up by generating {toks} tokens")
                         check_for_cancel_every = min(
-                            math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
+                            math.ceil(toks / max(time.time() - setup_start_time, 0.001)), 100
                         )
                         if group is not None:
                             import mlx.core as mx
                             check_for_cancel_every = int(
                                 mx.max(
                                     mx.distributed.all_gather(
-                                        mx.array([check_for_cancel_every]), group=group
+                                        mx.array([check_for_cancel_every]), group=group  # pyright: ignore[reportAny]
                                     )
                                 ).item()
                             )
@@ -275,7 +272,8 @@ def main(
                         or ModelTask.ImageToImage in shard_metadata.model_card.tasks
                     ):
                         assert image_model
-                        image = warmup_image_generator(model=image_model)
+                        assert warmup_image_generator is not None
+                        image = warmup_image_generator(model=image_model)  # pyright: ignore[reportAny]
                         if image is not None:
                             logger.info(f"warmed up by generating {image.size} image")
                         else:
@@ -295,7 +293,7 @@ def main(
                         )
                     )
                     event_sender.send(TaskAcknowledged(task_id=task.task_id))
-                    assert inference_model
+                    assert model
                     assert tokenizer
                     assert check_for_cancel_every
 
@@ -340,7 +338,12 @@ def main(
                             )
 
                         # GPT-OSS specific parsing to match other model formats.
-                        if isinstance(inference_model, GptOssModel):
+                        try:
+                            from mlx_lm.models.gpt_oss import Model as GptOssModel
+                            is_gpt_oss = isinstance(model, GptOssModel)
+                        except ImportError:
+                            is_gpt_oss = False
+                        if is_gpt_oss:
                             mlx_generator = parse_gpt_oss(mlx_generator)
                         elif tool_parser:
                             mlx_generator = parse_tool_calls(mlx_generator, tool_parser)
@@ -355,7 +358,11 @@ def main(
                                 want_to_cancel = (task.task_id in cancelled_tasks) or (
                                     TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
                                 )
-                                if any(want_to_cancel, group):
+                                if group is not None:
+                                    from exo.worker.engines.mlx.utils_mlx import mx_any
+                                    if mx_any(want_to_cancel, group):  # pyright: ignore[reportAny]
+                                        break
+                                elif want_to_cancel:
                                     break
 
                             match response:
@@ -442,9 +449,10 @@ def main(
                     event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
                     try:
+                        assert generate_image is not None
                         image_index = 0
                         for response in generate_image(
-                            model=image_model, task=task_params
+                            model=image_model, task=task_params  # pyright: ignore[reportAny]
                         ):
                             is_primary_output = _is_primary_output_node(shard_metadata)
 
@@ -507,9 +515,10 @@ def main(
                     event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
                     try:
+                        assert generate_image is not None
                         image_index = 0
                         for response in generate_image(
-                            model=image_model, task=task_params
+                            model=image_model, task=task_params  # pyright: ignore[reportAny]
                         ):
                             if _is_primary_output_node(shard_metadata):
                                 match response:
@@ -582,7 +591,7 @@ def main(
                 RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
             )
             if isinstance(current_status, RunnerShutdown):
-                del inference_model, image_model, tokenizer, group
+                del model, image_model, tokenizer, group
                 engine.cleanup()
                 import gc
 
@@ -597,7 +606,7 @@ def get_gpt_oss_encoding():
 
 
 def parse_gpt_oss(
-    responses: Generator[GenerationResponse],
+    responses: Generator[GenerationResponse | ToolCallResponse],
 ) -> Generator[GenerationResponse | ToolCallResponse]:
     encoding = get_gpt_oss_encoding()
     stream = StreamableParser(encoding, role=Role.ASSISTANT)
@@ -667,10 +676,6 @@ def parse_gpt_oss(
             yield response
 
 
-def parse_thinking_models(
-    responses: Generator[GenerationResponse],
-    tokenizer: TokenizerWrapper,
-) -> Generator[GenerationResponse]:
 def parse_thinking_models(
     responses: Generator[GenerationResponse | ToolCallResponse],
     tokenizer: Tokenizer,
@@ -795,11 +800,14 @@ def _process_image_response(
 
 
 def parse_tool_calls(
-    responses: Generator[GenerationResponse], tool_parser: ToolParser
+    responses: Generator[GenerationResponse | ToolCallResponse], tool_parser: ToolParser
 ) -> Generator[GenerationResponse | ToolCallResponse]:
     in_tool_call = False
     tool_call_text_parts: list[str] = []
     for response in responses:
+        if isinstance(response, ToolCallResponse):
+            yield response
+            continue
         if response.text.startswith(tool_parser.start_parsing):
             in_tool_call = True
 

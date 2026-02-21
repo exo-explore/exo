@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Generator
-from dataclasses import dataclass
 from typing import Any
+
 from pydantic import BaseModel
 
 from exo.shared.types.worker.instances import BoundInstance

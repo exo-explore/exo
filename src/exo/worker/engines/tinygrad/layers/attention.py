@@ -1,16 +1,29 @@
-import math
-from tinygrad import Tensor
-from exo.worker.engines.tinygrad.layers.rotary import apply_rope
+from __future__ import annotations
 
-def linear_forward(x: Tensor, weight: Tensor) -> Tensor:
+import math
+from typing import TYPE_CHECKING
+
+from tinygrad.tensor import Tensor
+
+from exo.worker.engines.tinygrad.layers.rotary import apply_rope
+from exo.worker.engines.tinygrad.quantization.layers import QuantizedLinear
+
+if TYPE_CHECKING:
+    from exo.worker.engines.tinygrad.cache import KVCache
+
+LinearWeight = Tensor | QuantizedLinear
+
+def linear_forward(x: Tensor, weight: LinearWeight) -> Tensor:
+    if isinstance(weight, QuantizedLinear):
+        return weight(x)
     return x @ weight.T
 
 def grouped_query_attention(
     x: Tensor,
-    q_proj: Tensor,
-    k_proj: Tensor,
-    v_proj: Tensor,
-    o_proj: Tensor,
+    q_proj: LinearWeight,
+    k_proj: LinearWeight,
+    v_proj: LinearWeight,
+    o_proj: LinearWeight,
     cos_freqs: Tensor,
     sin_freqs: Tensor,
     cache: "KVCache",
@@ -20,11 +33,11 @@ def grouped_query_attention(
     num_kv_heads: int,
     head_dim: int,
 ) -> Tensor:
-    batch, seq_len, _ = x.shape
+    _batch, seq_len, _ = x.shape
 
-    q = linear_forward(x, q_proj).reshape(batch, seq_len, num_heads, head_dim).permute(0, 2, 1, 3)
-    k = linear_forward(x, k_proj).reshape(batch, seq_len, num_kv_heads, head_dim).permute(0, 2, 1, 3)
-    v = linear_forward(x, v_proj).reshape(batch, seq_len, num_kv_heads, head_dim).permute(0, 2, 1, 3)
+    q = linear_forward(x, q_proj).reshape(int(_batch), seq_len, num_heads, head_dim).permute(0, 2, 1, 3)  # pyright: ignore[reportUnknownMemberType]
+    k = linear_forward(x, k_proj).reshape(int(_batch), seq_len, num_kv_heads, head_dim).permute(0, 2, 1, 3)  # pyright: ignore[reportUnknownMemberType]
+    v = linear_forward(x, v_proj).reshape(int(_batch), seq_len, num_kv_heads, head_dim).permute(0, 2, 1, 3)  # pyright: ignore[reportUnknownMemberType]
 
     q = apply_rope(q, cos_freqs, sin_freqs, position_offset)
     k = apply_rope(k, cos_freqs, sin_freqs, position_offset)
@@ -33,19 +46,19 @@ def grouped_query_attention(
 
     if num_kv_heads < num_heads:
         repeat_factor = num_heads // num_kv_heads
-        k = k.repeat((1, repeat_factor, 1, 1))
-        v = v.repeat((1, repeat_factor, 1, 1))
+        k = k.repeat((1, repeat_factor, 1, 1))  # pyright: ignore[reportUnknownMemberType]
+        v = v.repeat((1, repeat_factor, 1, 1))  # pyright: ignore[reportUnknownMemberType]
 
     scale = 1.0 / math.sqrt(head_dim)
-    full_seq = k.shape[2]
-    scores = (q @ k.transpose(-2, -1)) * scale
+    full_seq: int = int(k.shape[2])
+    scores: Tensor = (q @ k.transpose(-2, -1)) * scale
 
     if seq_len > 1:
-        mask = Tensor.ones(seq_len, full_seq).triu(full_seq - seq_len + 1)
+        mask = Tensor.ones(seq_len, full_seq).triu(int(full_seq - seq_len + 1))  # pyright: ignore[reportUnknownMemberType]
         scores = scores + mask * float("-1e9")
 
-    attn_weights = scores.softmax(axis=-1)
-    out = attn_weights @ v
-    out = out.permute(0, 2, 1, 3).reshape(batch, seq_len, num_heads * head_dim)
+    attn_weights: Tensor = scores.softmax(axis=-1)
+    out: Tensor = attn_weights @ v
+    out = out.permute(0, 2, 1, 3).reshape(int(_batch), seq_len, num_heads * head_dim)  # pyright: ignore[reportUnknownMemberType]
 
     return linear_forward(out, o_proj)

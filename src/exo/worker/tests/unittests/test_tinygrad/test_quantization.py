@@ -1,5 +1,12 @@
+from __future__ import annotations
+
+# pyright: reportUnknownMemberType=false
 import pytest
-from tinygrad import Tensor, dtypes, Device
+from tinygrad.device import Device
+from tinygrad.dtype import dtypes
+from tinygrad.tensor import Tensor
+
+from exo.shared.model_config import ModelConfig
 
 Device.DEFAULT = "CPU"
 
@@ -11,10 +18,9 @@ def _make_model_config(
     num_key_value_heads: int | None = None,
     intermediate_size: int = 8192,
     vocab_size: int = 128256,
-) -> "ModelConfig":
+) -> ModelConfig:
     """Build a ModelConfig with sensible defaults for quantization tests."""
     from exo.shared.architecture.llama import LLAMA_SPEC
-    from exo.shared.model_config import ModelConfig
 
     n_kv = num_key_value_heads if num_key_value_heads is not None else num_attention_heads
     return ModelConfig(
@@ -64,11 +70,11 @@ def test_packed_tensor_metadata():
 
 def test_packed_tensor_is_frozen():
     """PackedTensor must be immutable (frozen dataclass)."""
-    from exo.worker.engines.tinygrad.quantization.packing import PackedTensor, pack_bits
+    from exo.worker.engines.tinygrad.quantization.packing import pack_bits
 
     packed = pack_bits(Tensor.zeros(4, 8, dtype=dtypes.float16), bits=4)
     with pytest.raises(AttributeError):
-        packed.bits = 8  # type: ignore[misc]
+        packed.bits = 8
 
 def test_pack_unpack_roundtrip_4bit():
     """pack then unpack should recover original values (4-bit)."""
@@ -115,7 +121,9 @@ def test_unpack_dtype_is_float16():
 
 def test_affine_dequantize_identity():
     """scale=1, bias=0 → identity."""
-    from exo.worker.engines.tinygrad.quantization.dequantization import affine_dequantize
+    from exo.worker.engines.tinygrad.quantization.dequantization import (
+        affine_dequantize,
+    )
 
     quantized = Tensor([[1.0, 2.0, 3.0, 4.0]])
     scales = Tensor([[1.0]])
@@ -127,7 +135,9 @@ def test_affine_dequantize_identity():
 
 def test_affine_dequantize_scaling():
     """scale=2 should double values."""
-    from exo.worker.engines.tinygrad.quantization.dequantization import affine_dequantize
+    from exo.worker.engines.tinygrad.quantization.dequantization import (
+        affine_dequantize,
+    )
 
     quantized = Tensor([[1.0, 2.0, 3.0, 4.0]])
     scales = Tensor([[2.0]])
@@ -138,7 +148,9 @@ def test_affine_dequantize_scaling():
 
 def test_affine_dequantize_bias_offset():
     """bias=10 should offset by 10."""
-    from exo.worker.engines.tinygrad.quantization.dequantization import affine_dequantize
+    from exo.worker.engines.tinygrad.quantization.dequantization import (
+        affine_dequantize,
+    )
 
     quantized = Tensor([[0.0, 0.0, 0.0, 0.0]])
     scales = Tensor([[1.0]])
@@ -149,7 +161,9 @@ def test_affine_dequantize_bias_offset():
 
 def test_affine_dequantize_multiple_groups():
     """Each group uses its own scale and bias."""
-    from exo.worker.engines.tinygrad.quantization.dequantization import affine_dequantize
+    from exo.worker.engines.tinygrad.quantization.dequantization import (
+        affine_dequantize,
+    )
 
     quantized = Tensor([[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]])
     scales = Tensor([[2.0, 3.0]])   # 2 groups of 4
@@ -160,7 +174,9 @@ def test_affine_dequantize_multiple_groups():
 
 def test_affine_dequantize_2d_weight_matrix():
     """Dequantize a realistic 2D weight matrix [out_features, in_features]."""
-    from exo.worker.engines.tinygrad.quantization.dequantization import affine_dequantize
+    from exo.worker.engines.tinygrad.quantization.dequantization import (
+        affine_dequantize,
+    )
 
     out_features, in_features, group_size = 32, 64, 32
     quantized = Tensor.ones(out_features, in_features)
@@ -222,10 +238,10 @@ def test_quantized_linear_caches_dequantized_weights():
     )
     x = Tensor.randn(1, 1, 32)
     layer(x)
-    assert layer._dequantized_weight is not None
-    cached_ref = layer._dequantized_weight
+    assert layer._dequantized_weight is not None  # pyright: ignore[reportPrivateUsage]
+    cached_ref = layer._dequantized_weight  # pyright: ignore[reportPrivateUsage]
     layer(x)
-    assert layer._dequantized_weight is cached_ref
+    assert layer._dequantized_weight is cached_ref  # pyright: ignore[reportPrivateUsage]
 
 def test_quantized_linear_clear_cache():
     """clear_cache() resets the dequantized weight cache."""
@@ -241,9 +257,9 @@ def test_quantized_linear_clear_cache():
         group_size=32,
     )
     layer(Tensor.randn(1, 1, 32))
-    assert layer._dequantized_weight is not None
+    assert layer._dequantized_weight is not None  # pyright: ignore[reportPrivateUsage]
     layer.clear_cache()
-    assert layer._dequantized_weight is None
+    assert layer._dequantized_weight is None  # pyright: ignore[reportPrivateUsage]
 
 def test_quantized_linear_in_out_features():
     """in_features and out_features reflect the original weight shape."""
@@ -319,9 +335,9 @@ def test_quantized_embedding_clear_cache():
         group_size=32,
     )
     layer(Tensor([[0]]))
-    assert layer._dequantized_weight is not None
+    assert layer._dequantized_weight is not None  # pyright: ignore[reportPrivateUsage]
     layer.clear_cache()
-    assert layer._dequantized_weight is None
+    assert layer._dequantized_weight is None  # pyright: ignore[reportPrivateUsage]
 
 def test_quantized_embedding_is_final():
     """QuantizedEmbedding must be decorated with @final."""
@@ -412,10 +428,16 @@ def test_infer_shape_lm_head():
 # ── Package Exports ──
 
 def test_package_exports_quantized_linear():
-    from exo.worker.engines.tinygrad.quantization import QuantizedLinear  # noqa: F401
+    from exo.worker.engines.tinygrad.quantization import (
+        QuantizedLinear,  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    )
 
 def test_package_exports_quantized_embedding():
-    from exo.worker.engines.tinygrad.quantization import QuantizedEmbedding  # noqa: F401
+    from exo.worker.engines.tinygrad.quantization import (
+        QuantizedEmbedding,  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    )
 
 def test_package_exports_packed_tensor():
-    from exo.worker.engines.tinygrad.quantization import PackedTensor  # noqa: F401
+    from exo.worker.engines.tinygrad.quantization import (
+        PackedTensor,  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    )

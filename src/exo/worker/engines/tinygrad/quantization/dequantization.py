@@ -1,4 +1,5 @@
-from tinygrad import Tensor
+from tinygrad.tensor import Tensor
+
 
 def affine_dequantize(
     quantized: Tensor,

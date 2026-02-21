@@ -1,11 +1,16 @@
-from exo.worker.engines.tinygrad.cache import KVCache
-from exo.worker.engines.tinygrad.weight_loader import TransformerWeights, LayerWeights
-from exo.worker.engines.tinygrad.layers import compute_rope_frequencies
+from typing import NamedTuple
+
+from tinygrad.tensor import Tensor
 
 from exo.shared.model_config import ModelConfig
+from exo.worker.engines.tinygrad.cache import KVCache
+from exo.worker.engines.tinygrad.layers.attention import grouped_query_attention
+from exo.worker.engines.tinygrad.layers.embedding import apply_embedding, apply_lm_head
+from exo.worker.engines.tinygrad.layers.mlp import swiglu_mlp
+from exo.worker.engines.tinygrad.layers.normalization import rms_norm
+from exo.worker.engines.tinygrad.layers.rotary import compute_rope_frequencies
+from exo.worker.engines.tinygrad.weight_loader import LayerWeights, TransformerWeights
 
-from tinygrad import Tensor
-from typing import NamedTuple
 
 class TransfomerBlockBuilder(NamedTuple):
     cos_freqs: Tensor
@@ -21,13 +26,13 @@ def forward_pass(
     position_offset: int = 0,
 ) -> tuple[Tensor, KVCache]:
     config = weights.config
-    batch, seq_len = input_ids.shape
+    _batch, seq_len = input_ids.shape
 
     x = apply_embedding(weights.embed_tokens, input_ids)
 
     cos_freqs, sin_freqs = compute_rope_frequencies(
         head_dim = config.head_dim,
-        max_seq_len = position_offset + seq_len,
+        max_seq_len = position_offset + int(seq_len),
         rope_theta = config.rope_theta
     )
 
@@ -62,7 +67,7 @@ def _transformer_block(
                 cos_freqs = builder.cos_freqs,
                 sin_freqs = builder.sin_freqs,
                 cache = cache, layer_idx = builder.idx,
-                position_offset = builder.position_offset,
+                position_offset = builder.offset,
                 num_heads = config.num_attention_heads,
                 num_kv_heads = config.num_key_value_heads,
                 head_dim = config.head_dim,
