@@ -570,22 +570,21 @@ class API:
             instance_id=instance_id,
         )
 
-    async def cancel_command(self, command_id: str) -> CancelCommandResponse:
+    async def cancel_command(self, command_id: CommandId) -> CancelCommandResponse:
         """Cancel an active command by closing its stream and notifying workers."""
-        cid = CommandId(command_id)
-        sender = self._text_generation_queues.get(cid) or self._image_generation_queues.get(cid)
+        sender = self._text_generation_queues.get(command_id) or self._image_generation_queues.get(command_id)
         if sender is None:
             raise HTTPException(
                 status_code=404,
                 detail="Command not found or already completed",
             )
 
-        await self._send(TaskCancelled(cancelled_command_id=cid))
+        await self._send(TaskCancelled(cancelled_command_id=command_id))
         sender.close()
 
         return CancelCommandResponse(
             message="Command cancelled.",
-            command_id=cid,
+            command_id=command_id,
         )
 
     async def _token_chunk_stream(
