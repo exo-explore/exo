@@ -48,10 +48,11 @@
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
     nodeIdentities,
+    isConnected,
     type DownloadProgress,
     type PlacementPreview,
   } from "$lib/stores/app.svelte";
-  import { addToast } from "$lib/stores/toast.svelte";
+  import { addToast, dismissByMessage } from "$lib/stores/toast.svelte";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
   import DeviceIcon from "$lib/components/DeviceIcon.svelte";
   import { fade, fly, slide } from "svelte/transition";
@@ -1314,8 +1315,6 @@
     selectPreviewModel(modelId);
     saveLaunchDefaults();
     isModelPickerOpen = false;
-    // Auto-launch the model so it begins downloading immediately
-    launchInstance(modelId);
   }
 
   async function launchInstance(
@@ -1360,7 +1359,7 @@
           message: `Failed to launch model: ${errorText}`,
         });
       } else {
-        addToast({ type: "success", message: `Model launched successfully` });
+        addToast({ type: "info", message: `Launching model...` });
         // Always auto-select the newly launched model so the user chats to what they just launched
         setSelectedChatModel(modelId);
 
@@ -2304,6 +2303,72 @@
 
   const nodeCount = $derived(data ? Object.keys(data.nodes).length : 0);
   const instanceCount = $derived(Object.keys(instanceData).length);
+
+  // ── Instance status transition toasts ──
+  // Track previous statuses so we can detect meaningful transitions and fire toasts.
+  let previousInstanceStatuses: Record<string, string> = {};
+
+  $effect(() => {
+    const currentStatuses: Record<string, string> = {};
+    for (const [id, inst] of Object.entries(instanceData)) {
+      const dlStatus = getInstanceDownloadStatus(id, inst);
+      currentStatuses[id] = dlStatus.statusText;
+    }
+
+    const prev = previousInstanceStatuses;
+
+    // Only fire toasts if we had a previous snapshot (skip the very first poll)
+    if (Object.keys(prev).length > 0) {
+      for (const [id, currentStatus] of Object.entries(currentStatuses)) {
+        const prevStatus = prev[id];
+        if (!prevStatus || prevStatus === currentStatus) continue;
+
+        const modelId = getInstanceModelId(instanceData[id]);
+        const shortName = modelId ? (modelId.split("/").pop() ?? modelId) : id.slice(0, 8);
+
+        // Downloading -> non-downloading, non-failure = download complete
+        if (prevStatus === "DOWNLOADING" && currentStatus !== "DOWNLOADING" && currentStatus !== "FAILED") {
+          addToast({ type: "success", message: `Download complete: ${shortName}` });
+        }
+
+        // Loading/Warming Up -> Ready/Loaded/Running = model ready
+        if (
+          (prevStatus === "LOADING" || prevStatus === "WARMING UP") &&
+          (currentStatus === "READY" || currentStatus === "LOADED" || currentStatus === "RUNNING")
+        ) {
+          addToast({ type: "success", message: `Model ready: ${shortName}` });
+        }
+
+        // Any -> Failed
+        if (prevStatus !== "FAILED" && currentStatus === "FAILED") {
+          addToast({ type: "error", message: `Model failed: ${shortName}` });
+        }
+
+        // Any -> Shutdown
+        if (prevStatus !== "SHUTDOWN" && currentStatus === "SHUTDOWN") {
+          addToast({ type: "info", message: `Model shut down: ${shortName}` });
+        }
+      }
+    }
+
+    previousInstanceStatuses = currentStatuses;
+  });
+
+  // ── Connection status toasts ──
+  let previousConnectionStatus: boolean | null = null;
+
+  $effect(() => {
+    const connected = isConnected();
+    if (previousConnectionStatus !== null) {
+      if (previousConnectionStatus && !connected) {
+        addToast({ type: "warning", message: "Connection to server lost", persistent: true });
+      } else if (!previousConnectionStatus && connected) {
+        dismissByMessage("Connection to server lost");
+        addToast({ type: "success", message: "Connection restored" });
+      }
+    }
+    previousConnectionStatus = connected;
+  });
 
   const suggestedPrompts = [
     "Write a poem about the ocean",
@@ -4550,8 +4615,8 @@
                             <p
                               class="text-[11px] text-white/50 leading-relaxed"
                             >
-                              Downloading model files. This runs locally on your
-                              device and needs to finish before you can chat.
+                              Downloading model files. Model runs on your devices
+                              so needs to be downloaded before you can chat.
                             </p>
                           </div>
                         {:else}
@@ -5482,8 +5547,8 @@
                               <p
                                 class="text-[11px] text-white/50 leading-relaxed"
                               >
-                                Downloading model files. This runs locally on
-                                your device and needs to finish before you can
+                                Downloading model files. Model runs on your
+                                devices so needs to be downloaded before you can
                                 chat.
                               </p>
                             </div>
