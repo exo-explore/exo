@@ -1143,7 +1143,7 @@
       return {
         isDownloading: false,
         isFailed: statusInfo.statusText === "FAILED",
-        errorMessage: null,
+        errorMessage: statusInfo.errorMessage,
         progress: null,
         statusText: statusInfo.statusText,
         perNode: [],
@@ -1201,22 +1201,28 @@
   function deriveInstanceStatus(instanceWrapped: unknown): {
     statusText: string;
     statusClass: string;
+    errorMessage: string | null;
   } {
     const [, instance] = getTagged(instanceWrapped);
     if (!instance || typeof instance !== "object") {
-      return { statusText: "PREPARING", statusClass: "inactive" };
+      return {
+        statusText: "PREPARING",
+        statusClass: "inactive",
+        errorMessage: null,
+      };
     }
 
     const inst = instance as {
       shardAssignments?: { runnerToShard?: Record<string, unknown> };
     };
     const runnerIds = Object.keys(inst.shardAssignments?.runnerToShard || {});
+    const failureMessages: string[] = [];
 
     const statuses = runnerIds
       .map((rid) => {
         const r = runnersData[rid];
         if (!r) return null;
-        const [kind] = getTagged(r);
+        const [kind, payload] = getTagged(r);
         const statusMap: Record<string, string> = {
           RunnerWaitingForInitialization: "WaitingForInitialization",
           RunnerInitializingBackend: "InitializingBackend",
@@ -1229,33 +1235,96 @@
           RunnerShutdown: "Shutdown",
           RunnerFailed: "Failed",
         };
+        if (kind === "RunnerFailed" && payload && typeof payload === "object") {
+          const p = payload as Record<string, unknown>;
+          const msg =
+            (typeof p.errorMessage === "string" ? p.errorMessage : null) ??
+            (typeof p.error_message === "string" ? p.error_message : null);
+          if (msg && msg.trim()) {
+            failureMessages.push(msg.trim());
+          }
+        }
         return kind ? statusMap[kind] || null : null;
       })
       .filter((s): s is string => s !== null);
 
     const has = (s: string) => statuses.includes(s);
+    const errorMessage =
+      failureMessages.length > 0
+        ? Array.from(new Set(failureMessages)).join(" • ")
+        : null;
 
-    if (statuses.length === 0)
-      return { statusText: "PREPARING", statusClass: "inactive" };
-    if (has("Failed")) return { statusText: "FAILED", statusClass: "failed" };
-    if (has("Shutdown"))
-      return { statusText: "SHUTDOWN", statusClass: "inactive" };
-    if (has("Loading"))
-      return { statusText: "LOADING", statusClass: "starting" };
-    if (has("WarmingUp"))
-      return { statusText: "WARMING UP", statusClass: "starting" };
-    if (has("Running"))
-      return { statusText: "RUNNING", statusClass: "running" };
-    if (has("Ready")) return { statusText: "READY", statusClass: "loaded" };
-    if (has("Loaded")) return { statusText: "LOADED", statusClass: "loaded" };
-    if (has("WaitingForModel"))
-      return { statusText: "WAITING", statusClass: "starting" };
-    if (has("InitializingBackend"))
-      return { statusText: "INITIALIZING", statusClass: "starting" };
-    if (has("WaitingForInitialization"))
-      return { statusText: "INITIALIZING", statusClass: "starting" };
+    if (statuses.length === 0) {
+      return {
+        statusText: "PREPARING",
+        statusClass: "inactive",
+        errorMessage: null,
+      };
+    }
+    if (has("Failed")) {
+      return { statusText: "FAILED", statusClass: "failed", errorMessage };
+    }
+    if (has("Shutdown")) {
+      return {
+        statusText: "SHUTDOWN",
+        statusClass: "inactive",
+        errorMessage: null,
+      };
+    }
+    if (has("Loading")) {
+      return {
+        statusText: "LOADING",
+        statusClass: "starting",
+        errorMessage: null,
+      };
+    }
+    if (has("WarmingUp")) {
+      return {
+        statusText: "WARMING UP",
+        statusClass: "starting",
+        errorMessage: null,
+      };
+    }
+    if (has("Running")) {
+      return {
+        statusText: "RUNNING",
+        statusClass: "running",
+        errorMessage: null,
+      };
+    }
+    if (has("Ready")) {
+      return { statusText: "READY", statusClass: "loaded", errorMessage: null };
+    }
+    if (has("Loaded")) {
+      return {
+        statusText: "LOADED",
+        statusClass: "loaded",
+        errorMessage: null,
+      };
+    }
+    if (has("WaitingForModel")) {
+      return {
+        statusText: "WAITING",
+        statusClass: "starting",
+        errorMessage: null,
+      };
+    }
+    if (has("InitializingBackend")) {
+      return {
+        statusText: "INITIALIZING",
+        statusClass: "starting",
+        errorMessage: null,
+      };
+    }
+    if (has("WaitingForInitialization")) {
+      return {
+        statusText: "INITIALIZING",
+        statusClass: "starting",
+        errorMessage: null,
+      };
+    }
 
-    return { statusText: "RUNNING", statusClass: "active" };
+    return { statusText: "RUNNING", statusClass: "active", errorMessage: null };
   }
 
   function getBytes(value: unknown): number {
