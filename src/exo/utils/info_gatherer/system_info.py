@@ -1,6 +1,8 @@
+import math
 import platform
 import socket
 import sys
+import time
 from subprocess import CalledProcessError
 
 import psutil
@@ -148,3 +150,54 @@ async def get_model_and_chip() -> tuple[str, str]:
     chip = chip_line.split(": ")[1] if chip_line else "Unknown Chip"
 
     return (model, chip)
+
+
+def profile_memory_bandwidth() -> int:
+    """Profile device memory bandwidth using MLX GPU operations.
+
+    Uses a large array copy on the GPU to measure unified memory bandwidth.
+    Returns measured bandwidth in bytes/second.
+    Raises exception if MLX is unavailable or profiling fails.
+    """
+    import mlx.core as mx
+
+    if not mx.metal.is_available():
+        raise RuntimeError("Metal is not available")
+
+    # Use 2GB buffer to better saturate memory bandwidth
+    size_bytes = 2 * 1024 * 1024 * 1024
+    side = math.isqrt(size_bytes // 4)  # Square 2D array of float32
+    shape = (side, side)
+    actual_bytes = side * side * 4
+    bytes_transferred = actual_bytes * 2  # read + write
+
+    # Warm-up: run the full benchmark operation multiple times to stabilize GPU
+    for _ in range(3):
+        src = mx.random.uniform(shape=shape, dtype=mx.float32)
+        mx.eval(src)
+        dst = src + 0.0
+        mx.eval(dst)
+        mx.synchronize()
+        del src, dst
+
+    # Benchmark: measure time to copy array
+    best_bandwidth = 0.0
+    num_runs = 4
+
+    for _ in range(num_runs):
+        src = mx.random.uniform(shape=shape, dtype=mx.float32)
+        mx.eval(src)
+        mx.synchronize()
+
+        start = time.perf_counter()
+        dst = src + 0.0
+        mx.eval(dst)
+        mx.synchronize()
+        end = time.perf_counter()
+
+        bandwidth = bytes_transferred / (end - start)
+        best_bandwidth = max(best_bandwidth, bandwidth)
+
+        del src, dst
+
+    return int(best_bandwidth)
