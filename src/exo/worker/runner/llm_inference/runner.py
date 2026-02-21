@@ -31,6 +31,7 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
+from exo.shared.types.mlx import Model
 from exo.shared.types.tasks import (
     ConnectToGroup,
     LoadModel,
@@ -63,7 +64,6 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import MpReceiver, MpSender
-from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import (
     PrefillCancelled,

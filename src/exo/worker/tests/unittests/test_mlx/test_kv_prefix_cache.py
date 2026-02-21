@@ -9,8 +9,8 @@ from mlx_lm.models.cache import KVCache
 from mlx_lm.sample_utils import make_sampler
 
 from exo.shared.types.common import ModelId
+from exo.shared.types.mlx import Model
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
-from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.cache import (
     KVPrefixCache,
     cache_length,

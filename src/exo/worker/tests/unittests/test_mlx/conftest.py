@@ -14,9 +14,9 @@ from exo.shared.constants import EXO_MODELS_DIR
 from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
+from exo.shared.types.mlx import Model
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.shards import PipelineShardMetadata, TensorShardMetadata
-from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.generator.generate import mlx_generate
 from exo.worker.engines.mlx.utils_mlx import apply_chat_template, shard_and_load
 
