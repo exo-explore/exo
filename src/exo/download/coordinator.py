@@ -1,6 +1,7 @@
 import asyncio
 import socket
 from dataclasses import dataclass, field
+from pathlib import Path
 from random import random
 
 import anyio
@@ -87,6 +88,18 @@ class DownloadCoordinator:
         throttle_interval_secs = 1.0
 
         if progress.status == "complete":
+            # If the model uses a different repo for downloads (e.g. LoRA
+            # variants), the files live under the base repo's directory.
+            # Create a symlink so the runner can find them under the
+            # variant's model ID.
+            download_repo = callback_shard.model_card.download_repo_id
+            if download_repo and ModelId(download_repo) != model_id:
+                base_dir = Path(self._model_dir(ModelId(download_repo)))
+                variant_dir = Path(self._model_dir(model_id))
+                if base_dir.exists() and not variant_dir.exists():
+                    variant_dir.symlink_to(base_dir)
+                    logger.info(f"Symlinked LoRA variant: {variant_dir} -> {base_dir}")
+
             completed = DownloadCompleted(
                 shard_metadata=callback_shard,
                 node_id=self.node_id,
