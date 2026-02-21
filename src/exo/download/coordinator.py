@@ -388,9 +388,7 @@ class DownloadCoordinator:
                     if model_id in self.active_downloads:
                         continue
 
-                    if progress.status == "complete" or (
-                        progress.downloaded.in_bytes >= progress.total.in_bytes > 0
-                    ):
+                    if progress.status == "complete":
                         status: DownloadProgress = DownloadCompleted(
                             node_id=self.node_id,
                             shard_metadata=progress.shard,
