@@ -371,7 +371,7 @@ def run_planning_phase(
                 unwrap_instance(p["DownloadCompleted"]["shardMetadata"])["modelCard"][
                     "modelId"
                 ],
-                p["DownloadCompleted"]["totalBytes"]["inBytes"],
+                p["DownloadCompleted"]["total"]["inBytes"],
             )
             for p in node_downloads
             if "DownloadCompleted" in p
