@@ -2481,7 +2481,7 @@
       {#if mobileTab === "instances"}
         <div class="flex-1 overflow-y-auto">
           <div class="px-4 pt-4 pb-8 space-y-6">
-            <!-- Instances section -->
+            <!-- Active Instances section -->
             {#if instanceCount > 0}
               <section>
                 <h3 class="text-[13px] font-semibold text-white/40 uppercase tracking-wide px-1 mb-2">Active Instances</h3>
@@ -2495,14 +2495,114 @@
                     {@const isDownloading = downloadInfo.isDownloading}
                     {@const instanceModelId = getInstanceModelId(instance)}
                     {@const instanceInfo = getInstanceInfo(instance)}
-                    <div class="flex items-center min-h-[52px] px-4 py-3 {i < Object.entries(instanceData).length - 1 ? 'border-b border-white/[0.06]' : ''}">
-                      <div class="flex-1 min-w-0 mr-3">
-                        <div class="text-[15px] text-white/90 font-medium truncate">{instanceModelId ?? id}</div>
-                        {#if instanceInfo}
-                          <div class="text-[13px] text-white/40 mt-0.5">{instanceInfo.sharding ?? ""} {instanceInfo.instanceType ?? ""}</div>
+                    {@const isSelected = instanceModelId != null && instanceModelId === selectedChatModel}
+                    {@const isExpanded = expandedMobileInstance === id}
+                    <!-- Instance row: tap to select, chevron to expand -->
+                    <div class="{i < Object.entries(instanceData).length - 1 ? 'border-b border-white/[0.06]' : ''}">
+                      <div class="flex items-center min-h-[52px] px-4 py-3">
+                        <!-- Tap area: select this model for chat -->
+                        <button
+                          type="button"
+                          class="flex items-center flex-1 min-w-0 mr-3 text-left"
+                          onclick={() => {
+                            if (instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model") {
+                              setSelectedChatModel(instanceModelId);
+                            }
+                          }}
+                        >
+                          <!-- Status dot -->
+                          <div class="w-2.5 h-2.5 rounded-full mr-3 flex-shrink-0 {isReady || isRunning ? 'bg-green-400 shadow-[0_0_6px_rgba(74,222,128,0.5)]' : isFailed ? 'bg-red-400' : isDownloading ? 'bg-blue-400 animate-pulse' : 'bg-white/30'}"></div>
+                          <div class="flex-1 min-w-0">
+                            <div class="text-[15px] text-white/90 font-medium truncate">{instanceModelId ?? id}</div>
+                            {#if instanceInfo}
+                              <div class="text-[13px] text-white/40 mt-0.5">
+                                {instanceInfo.sharding ?? ""} {instanceInfo.instanceType ?? ""}
+                                {#if instanceInfo.nodeNames.length > 0}
+                                  <span class="text-white/25"> · {instanceInfo.nodeNames.join(", ")}</span>
+                                {/if}
+                              </div>
+                            {/if}
+                          </div>
+                        </button>
+                        <!-- Status badge -->
+                        <span class="text-[11px] font-semibold tracking-wider px-2.5 py-1 rounded-full flex-shrink-0 mr-2 {isReady || isRunning ? 'text-green-400 bg-green-500/15' : isFailed ? 'text-red-400 bg-red-500/15' : isDownloading ? 'text-blue-400 bg-blue-500/15' : 'text-white/40 bg-white/[0.06]'}">{statusText}</span>
+                        <!-- Selected checkmark -->
+                        {#if isSelected}
+                          <svg class="w-5 h-5 text-exo-yellow flex-shrink-0 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
                         {/if}
+                        <!-- Expand chevron -->
+                        <button
+                          type="button"
+                          class="p-1.5 -mr-1.5 text-white/30 hover:text-white/60 transition-colors"
+                          onclick={() => expandedMobileInstance = isExpanded ? null : id}
+                        >
+                          <svg class="w-5 h-5 transition-transform duration-200 {isExpanded ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                          </svg>
+                        </button>
                       </div>
-                      <span class="text-[11px] font-semibold tracking-wider px-2.5 py-1 rounded-full {isReady || isRunning ? 'text-green-400 bg-green-500/15' : isFailed ? 'text-red-400 bg-red-500/15' : isDownloading ? 'text-exo-yellow bg-exo-yellow/15' : 'text-white/40 bg-white/[0.06]'}">{statusText}</span>
+
+                      <!-- Expanded detail section -->
+                      {#if isExpanded}
+                        <div class="px-4 pb-4 space-y-3">
+                          <!-- Download progress -->
+                          {#if downloadInfo.isDownloading && downloadInfo.progress}
+                            <div class="bg-white/[0.03] rounded-xl p-3 space-y-2">
+                              <div class="flex justify-between text-[13px] font-mono">
+                                <span class="text-blue-400">{downloadInfo.progress.percentage.toFixed(1)}%</span>
+                                <span class="text-white/50">{formatBytes(downloadInfo.progress.downloadedBytes)} / {formatBytes(downloadInfo.progress.totalBytes)}</span>
+                              </div>
+                              <div class="relative h-2 bg-black/40 rounded-full overflow-hidden">
+                                <div
+                                  class="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-300"
+                                  style="width: {downloadInfo.progress.percentage}%"
+                                ></div>
+                              </div>
+                              <div class="flex justify-between text-[12px] font-mono text-white/40">
+                                <span>{formatSpeed(downloadInfo.progress.speed)}</span>
+                                <span>ETA: {formatEta(downloadInfo.progress.etaMs)}</span>
+                              </div>
+                            </div>
+                          {/if}
+
+                          <!-- Error message -->
+                          {#if downloadInfo.isFailed && downloadInfo.errorMessage}
+                            <div class="bg-red-500/10 rounded-xl p-3 text-[13px] text-red-400 font-mono">
+                              {downloadInfo.errorMessage}
+                            </div>
+                          {/if}
+
+                          <!-- HuggingFace link -->
+                          {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
+                            <a
+                              class="flex items-center gap-2 bg-white/[0.03] rounded-xl px-4 py-3 text-[14px] text-white/60 hover:text-exo-yellow transition-colors"
+                              href={`https://huggingface.co/${instanceModelId}`}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                            >
+                              <span>View on Hugging Face</span>
+                              <svg class="w-4 h-4 ml-auto" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M14 3h7v7" /><path d="M10 14l11-11" /><path d="M21 14v6a1 1 0 0 1-1 1h-16a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1h6" />
+                              </svg>
+                            </a>
+                          {/if}
+
+                          <!-- Delete button -->
+                          <button
+                            type="button"
+                            class="w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-xl px-4 py-3 text-[14px] font-medium transition-colors"
+                            onclick={() => {
+                              if (confirm(`Delete instance ${instanceModelId ?? id}?`)) {
+                                deleteInstance(id);
+                              }
+                            }}
+                          >
+                            Delete Instance
+                          </button>
+                        </div>
+                      {/if}
                     </div>
                   {/each}
                 </div>
@@ -2515,7 +2615,7 @@
                   </svg>
                 </div>
                 <p class="text-[17px] font-semibold text-white/50 mb-1">No Instances</p>
-                <p class="text-[15px] text-white/30">Start a chat to launch a model</p>
+                <p class="text-[15px] text-white/30">Launch a model to get started</p>
               </div>
             {/if}
 
@@ -2561,6 +2661,18 @@
                 </div>
               </section>
             {/if}
+
+            <!-- Launch New Instance button -->
+            <button
+              type="button"
+              class="w-full bg-exo-yellow/10 hover:bg-exo-yellow/20 border border-exo-yellow/30 text-exo-yellow rounded-2xl px-4 py-4 text-[15px] font-semibold transition-colors flex items-center justify-center gap-2"
+              onclick={() => mobileLaunchSheetOpen = true}
+            >
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Launch New Instance
+            </button>
           </div>
         </div>
       {/if}
@@ -4142,6 +4254,180 @@
       </div>
     {/if}
   </main>
+
+  <!-- Mobile Launch Bottom Sheet -->
+  {#if mobileLaunchSheetOpen}
+    <!-- Scrim -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm md:hidden"
+      transition:fade={{ duration: 200 }}
+      onclick={() => mobileLaunchSheetOpen = false}
+      onkeydown={(e) => { if (e.key === 'Escape') mobileLaunchSheetOpen = false; }}
+    ></div>
+    <!-- Sheet panel -->
+    <div
+      class="fixed inset-x-0 bottom-0 z-[61] md:hidden"
+      transition:fly={{ y: 500, duration: 300 }}
+    >
+      <div class="bg-exo-dark-gray border-t border-white/[0.08] rounded-t-3xl max-h-[85vh] flex flex-col" style="padding-bottom: env(safe-area-inset-bottom)">
+        <!-- Drag handle -->
+        <div class="flex justify-center py-3 flex-shrink-0">
+          <div class="w-10 h-1 bg-white/20 rounded-full"></div>
+        </div>
+
+        <!-- Header -->
+        <div class="flex items-center justify-between px-5 pb-4 flex-shrink-0">
+          <h2 class="text-[17px] font-semibold text-white/90">Launch Instance</h2>
+          <button
+            type="button"
+            class="w-8 h-8 bg-white/[0.08] rounded-full flex items-center justify-center text-white/50 hover:text-white/80 transition-colors"
+            onclick={() => mobileLaunchSheetOpen = false}
+          >
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Scrollable content -->
+        <div class="flex-1 overflow-y-auto px-5 pb-5 space-y-5">
+          <!-- Model Picker Button -->
+          <div>
+            <div class="text-[13px] text-white/40 uppercase tracking-wide font-semibold mb-2">Model</div>
+            <button
+              type="button"
+              onclick={() => isModelPickerOpen = true}
+              class="w-full bg-white/[0.04] border border-white/[0.08] rounded-2xl px-4 py-3.5 text-left transition-colors hover:border-exo-yellow/30"
+            >
+              {#if selectedModelId}
+                {@const foundModel = models.find((m) => m.id === selectedModelId)}
+                {#if foundModel}
+                  {@const sizeGB = getModelSizeGB(foundModel)}
+                  <div class="flex items-center justify-between">
+                    <span class="text-[15px] text-white/90 font-medium truncate mr-3">{foundModel.name || foundModel.id}</span>
+                    <span class="text-[13px] text-white/40 flex-shrink-0">{sizeGB >= 1 ? sizeGB.toFixed(0) : sizeGB.toFixed(1)}GB</span>
+                  </div>
+                {:else}
+                  <span class="text-[15px] text-white/60">{selectedModelId}</span>
+                {/if}
+              {:else}
+                <span class="text-[15px] text-white/30">Select a model...</span>
+              {/if}
+            </button>
+          </div>
+
+          <!-- Sharding segmented control -->
+          <div>
+            <div class="text-[13px] text-white/40 uppercase tracking-wide font-semibold mb-2">Sharding</div>
+            <div class="flex bg-white/[0.04] rounded-xl p-1 gap-1">
+              <button
+                type="button"
+                onclick={() => { selectedSharding = "Pipeline"; saveLaunchDefaults(); }}
+                class="flex-1 py-2.5 rounded-lg text-[14px] font-medium transition-all {selectedSharding === 'Pipeline' ? 'bg-exo-yellow/20 text-exo-yellow' : 'text-white/50'}"
+              >Pipeline</button>
+              <button
+                type="button"
+                onclick={() => { selectedSharding = "Tensor"; saveLaunchDefaults(); }}
+                class="flex-1 py-2.5 rounded-lg text-[14px] font-medium transition-all {selectedSharding === 'Tensor' ? 'bg-exo-yellow/20 text-exo-yellow' : 'text-white/50'}"
+              >Tensor</button>
+            </div>
+          </div>
+
+          <!-- Instance Type segmented control -->
+          <div>
+            <div class="text-[13px] text-white/40 uppercase tracking-wide font-semibold mb-2">Instance Type</div>
+            <div class="flex bg-white/[0.04] rounded-xl p-1 gap-1">
+              <button
+                type="button"
+                onclick={() => { selectedInstanceType = "MlxRing"; saveLaunchDefaults(); }}
+                class="flex-1 py-2.5 rounded-lg text-[14px] font-medium transition-all {selectedInstanceType === 'MlxRing' ? 'bg-exo-yellow/20 text-exo-yellow' : 'text-white/50'}"
+              >MLX Ring</button>
+              <button
+                type="button"
+                onclick={() => { selectedInstanceType = "MlxIbv"; saveLaunchDefaults(); }}
+                class="flex-1 py-2.5 rounded-lg text-[14px] font-medium transition-all {selectedInstanceType === 'MlxIbv' ? 'bg-exo-yellow/20 text-exo-yellow' : 'text-white/50'}"
+              >MLX RDMA</button>
+            </div>
+          </div>
+
+          <!-- Min Nodes stepper -->
+          <div>
+            <div class="text-[13px] text-white/40 uppercase tracking-wide font-semibold mb-2">Minimum Nodes</div>
+            <div class="flex items-center justify-between bg-white/[0.04] rounded-xl px-4 py-3">
+              <button
+                type="button"
+                class="w-10 h-10 rounded-xl bg-white/[0.06] flex items-center justify-center text-white/60 hover:text-white/90 hover:bg-white/[0.1] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                disabled={selectedMinNodes <= 1}
+                onclick={() => { selectedMinNodes = Math.max(1, selectedMinNodes - 1); saveLaunchDefaults(); }}
+              >
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                  <path stroke-linecap="round" d="M5 12h14" />
+                </svg>
+              </button>
+              <div class="text-center">
+                <div class="text-[28px] font-bold text-white/90 tabular-nums leading-none">{selectedMinNodes}</div>
+                <div class="text-[11px] text-white/30 mt-1">{selectedMinNodes === 1 ? 'node' : 'nodes'}</div>
+              </div>
+              <button
+                type="button"
+                class="w-10 h-10 rounded-xl bg-white/[0.06] flex items-center justify-center text-white/60 hover:text-white/90 hover:bg-white/[0.1] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                disabled={selectedMinNodes >= availableMinNodes}
+                onclick={() => { selectedMinNodes = Math.min(availableMinNodes, selectedMinNodes + 1); saveLaunchDefaults(); }}
+              >
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                  <path stroke-linecap="round" d="M12 5v14m7-7H5" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Placement previews / Launch -->
+          <div>
+            {#if models.length === 0}
+              <div class="text-center py-8 text-[13px] text-white/30">Loading models...</div>
+            {:else if loadingPreviews}
+              <div class="text-center py-8 text-[13px] text-exo-yellow animate-pulse">Loading preview...</div>
+            {:else}
+              {@const selectedModel = models.find((m) => m.id === selectedModelId)}
+              {@const allPreviews = filteredPreviews()}
+              {#if selectedModel && allPreviews.length > 0}
+                <div class="space-y-3">
+                  {#each allPreviews as apiPreview}
+                    <div>
+                      <ModelCard
+                        model={selectedModel}
+                        isLaunching={launchingModelId === selectedModel.id}
+                        downloadStatus={getModelDownloadStatus(selectedModel.id)}
+                        nodes={data?.nodes ?? {}}
+                        sharding={apiPreview.sharding}
+                        runtime={apiPreview.instance_meta}
+                        onLaunch={() => {
+                          launchInstance(selectedModel.id, apiPreview);
+                          mobileLaunchSheetOpen = false;
+                        }}
+                        tags={modelTags()[selectedModel.id] || []}
+                        {apiPreview}
+                        modelIdOverride={apiPreview.model_id}
+                      />
+                    </div>
+                  {/each}
+                </div>
+              {:else if selectedModel}
+                <div class="text-center py-4 text-[13px] text-white/40">
+                  No valid configurations for current settings
+                </div>
+              {:else}
+                <div class="text-center py-4 text-[13px] text-white/30">
+                  Select a model above to see placement options
+                </div>
+              {/if}
+            {/if}
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <ModelPickerModal
