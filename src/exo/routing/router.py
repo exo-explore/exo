@@ -16,6 +16,7 @@ from anyio.abc import TaskGroup
 from exo_pyo3_bindings import (
     AllQueuesFullError,
     Keypair,
+    MessageTooLargeError,
     NetworkingHandle,
     NoPeersSubscribedToTopicError,
 )
@@ -211,6 +212,10 @@ class Router:
                     pass
                 except AllQueuesFullError:
                     logger.warning(f"All peer queues full, dropping message on {topic}")
+                except MessageTooLargeError:
+                    logger.warning(
+                        f"Message too large for gossipsub on {topic} ({len(data)} bytes), dropping"
+                    )
 
 
 def get_node_id_keypair(
