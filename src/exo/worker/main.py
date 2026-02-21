@@ -1,9 +1,10 @@
+import contextlib
 from collections import defaultdict
 from datetime import datetime, timezone
 from random import random
 
 import anyio
-from anyio import CancelScope, create_task_group, fail_after
+from anyio import CancelScope, ClosedResourceError, create_task_group, fail_after
 from anyio.abc import TaskGroup
 from loguru import logger
 
@@ -119,7 +120,8 @@ class Worker:
             self.command_sender.close()
             self.download_command_sender.close()
             for runner in self.runners.values():
-                runner.shutdown()
+                with contextlib.suppress(ClosedResourceError):
+                    runner.shutdown()
 
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
@@ -265,7 +267,8 @@ class Worker:
                             )
                         )
                     finally:
-                        runner.shutdown()
+                        with contextlib.suppress(ClosedResourceError):
+                            runner.shutdown()
                 case CancelTask(
                     cancelled_task_id=cancelled_task_id, runner_id=runner_id
                 ):

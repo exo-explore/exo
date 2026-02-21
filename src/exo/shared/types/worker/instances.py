@@ -3,7 +3,7 @@ from enum import Enum
 from pydantic import model_validator
 
 from exo.shared.models.model_cards import ModelTask
-from exo.shared.types.common import Host, Id, NodeId
+from exo.shared.types.common import Host, Id, MetaInstanceId, NodeId
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments, ShardMetadata
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
@@ -20,6 +20,7 @@ class InstanceMeta(str, Enum):
 class BaseInstance(TaggedModel):
     instance_id: InstanceId
     shard_assignments: ShardAssignments
+    meta_instance_id: MetaInstanceId | None = None
 
     def shard(self, runner_id: RunnerId) -> ShardMetadata | None:
         return self.shard_assignments.runner_to_shard.get(runner_id, None)

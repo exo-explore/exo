@@ -5,7 +5,15 @@ from pydantic import Field
 
 from exo.shared.topology import Connection
 from exo.shared.types.chunks import GenerationChunk, InputImageChunk
-from exo.shared.types.common import CommandId, Id, NodeId, SessionId, SystemId
+from exo.shared.types.common import (
+    CommandId,
+    Id,
+    MetaInstanceId,
+    NodeId,
+    SessionId,
+    SystemId,
+)
+from exo.shared.types.meta_instance import MetaInstance
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
@@ -66,6 +74,30 @@ class InstanceCreated(BaseEvent):
 
 class InstanceDeleted(BaseEvent):
     instance_id: InstanceId
+    failure_error: str | None = None
+
+
+class MetaInstanceCreated(BaseEvent):
+    meta_instance: MetaInstance
+
+
+class MetaInstanceDeleted(BaseEvent):
+    meta_instance_id: MetaInstanceId
+
+
+@final
+class MetaInstancePlacementFailed(BaseEvent):
+    meta_instance_id: MetaInstanceId
+    reason: str
+
+
+@final
+class InstanceRetrying(BaseEvent):
+    """Runners failed but retry count is below the limit — restart runners, keep instance."""
+
+    instance_id: InstanceId
+    meta_instance_id: MetaInstanceId
+    failure_error: str
 
 
 class RunnerStatusUpdated(BaseEvent):
@@ -141,6 +173,10 @@ Event = (
     | TaskAcknowledged
     | InstanceCreated
     | InstanceDeleted
+    | InstanceRetrying
+    | MetaInstanceCreated
+    | MetaInstanceDeleted
+    | MetaInstancePlacementFailed
     | RunnerStatusUpdated
     | RunnerDeleted
     | NodeTimedOut
