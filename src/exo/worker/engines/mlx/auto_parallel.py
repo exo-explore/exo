@@ -244,7 +244,7 @@ def pipeline_auto_parallel(
     for i, layer in enumerate(layers):
         mx.eval(layer)  # type: ignore
         if on_layer_loaded is not None:
-            on_layer_loaded(i + 1, total)
+            on_layer_loaded(i, total)
 
     layers[0] = PipelineFirstLayer(layers[0], device_rank, group=group)
     layers[-1] = PipelineLastLayer(
@@ -525,7 +525,7 @@ class LlamaShardingStrategy(TensorParallelShardingStrategy):
             layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
             mx.eval(layer)
             if on_layer_loaded is not None:
-                on_layer_loaded(i + 1, total)
+                on_layer_loaded(i, total)
         return model
 
 
@@ -619,7 +619,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
 
             mx.eval(layer)
             if on_layer_loaded is not None:
-                on_layer_loaded(i + 1, total)
+                on_layer_loaded(i, total)
 
         return model
 
@@ -703,7 +703,7 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
                 layer.mlp.sharding_group = self.group  # type: ignore
             mx.eval(layer)
             if on_layer_loaded is not None:
-                on_layer_loaded(i + 1, total)
+                on_layer_loaded(i, total)
 
         return model
 
@@ -823,7 +823,7 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
             layer.block_sparse_moe.sharding_group = self.group  # pyright: ignore[reportAttributeAccessIssue]
             mx.eval(layer)
             if on_layer_loaded is not None:
-                on_layer_loaded(i + 1, total)
+                on_layer_loaded(i, total)
         return model
 
 
@@ -948,7 +948,7 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
 
             mx.eval(layer)
             if on_layer_loaded is not None:
-                on_layer_loaded(i + 1, total)
+                on_layer_loaded(i, total)
         return model
 
 
@@ -996,7 +996,7 @@ class Glm4MoeShardingStrategy(TensorParallelShardingStrategy):
 
             mx.eval(layer)
             if on_layer_loaded is not None:
-                on_layer_loaded(i + 1, total)
+                on_layer_loaded(i, total)
         return model
 
 
@@ -1039,7 +1039,7 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
             layer.mlp.sharding_group = self.group  # pyright: ignore[reportAttributeAccessIssue]
             mx.eval(layer)
             if on_layer_loaded is not None:
-                on_layer_loaded(i + 1, total)
+                on_layer_loaded(i, total)
         return model
 
 
@@ -1084,5 +1084,5 @@ class Step35ShardingStrategy(TensorParallelShardingStrategy):
 
             mx.eval(layer)
             if on_layer_loaded is not None:
-                on_layer_loaded(i + 1, total)
+                on_layer_loaded(i, total)
         return model

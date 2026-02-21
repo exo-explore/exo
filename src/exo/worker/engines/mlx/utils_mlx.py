@@ -190,7 +190,7 @@ def load_mlx_items(
             for i, layer in enumerate(layers):
                 mx.eval(layer)  # type: ignore
                 if on_layer_loaded is not None:
-                    on_layer_loaded(i + 1, total)
+                    on_layer_loaded(i, total)
         except ValueError:
             pass
         mx.eval(model)

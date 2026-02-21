@@ -174,12 +174,14 @@ def main(
                         time.sleep(0.5)
 
                     def on_layer_loaded(layers_loaded: int, total: int) -> None:
+                        nonlocal current_status
+                        current_status = RunnerLoading(
+                            layers_loaded=layers_loaded, total_layers=total
+                        )
                         event_sender.send(
                             RunnerStatusUpdated(
                                 runner_id=runner_id,
-                                runner_status=RunnerLoading(
-                                    layers_loaded=layers_loaded, total_layers=total
-                                ),
+                                runner_status=current_status,
                             )
                         )
 
