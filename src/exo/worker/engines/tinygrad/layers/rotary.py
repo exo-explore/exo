@@ -31,10 +31,12 @@ def apply_rope(
     cos = cos_freqs[position_offset:position_offset + seq_len].reshape(1, 1, seq_len, -1)  # pyright: ignore[reportUnknownMemberType]
     sin = sin_freqs[position_offset:position_offset + seq_len].reshape(1, 1, seq_len, -1)  # pyright: ignore[reportUnknownMemberType]
 
-    x_even = x[..., 0::2]
-    x_odd = x[..., 1::2]
+    half = x.shape[-1] // 2
 
-    out_even = x_even * cos - x_odd * sin
-    out_odd = x_even * sin + x_odd * cos
+    x1 = x[..., :half]
+    x2 = x[..., half:]
 
-    return out_even.stack(out_odd, dim = -1).reshape(x.shape)  # pyright: ignore[reportUnknownMemberType]
+    out1 = x1 * cos - x2 * sin
+    out2 = x2 * cos + x1 * sin
+
+    return out1.cat(out2, dim=-1)

@@ -41,6 +41,7 @@ from exo.shared.types.worker.instances import (
     InstanceMeta,
     MlxJacclInstance,
     MlxRingInstance,
+    TinygradInstance,
 )
 from exo.shared.types.worker.shards import Sharding
 
@@ -138,7 +139,7 @@ def place_instance(
     instance_id = InstanceId()
     target_instances = dict(deepcopy(current_instances))
 
-    if len(selected_cycle) == 1:
+    if len(selected_cycle) == 1 and command.instance_meta != InstanceMeta.Tinygrad:
         command.instance_meta = InstanceMeta.MlxRing
 
     # TODO: Single node instances
@@ -173,6 +174,11 @@ def place_instance(
                 shard_assignments=shard_assignments,
                 hosts_by_node=hosts_by_node,
                 ephemeral_port=ephemeral_port,
+            )
+        case InstanceMeta.Tinygrad:
+            target_instances[instance_id] = TinygradInstance(
+                instance_id=instance_id,
+                shard_assignments=shard_assignments,
             )
 
     return target_instances

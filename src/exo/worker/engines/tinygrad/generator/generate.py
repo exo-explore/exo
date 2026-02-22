@@ -1,5 +1,5 @@
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from typing import Any
 
 from tinygrad.dtype import dtypes
@@ -34,6 +34,9 @@ def tinygrad_generate(
     tokenizer: Any,  # pyright: ignore[reportAny]
     task: TextGenerationTaskParams,
     prompt: str,
+    kv_prefix_cache: Any = None,  # pyright: ignore[reportAny]
+    on_prefill_progress: Callable[[int, int], None] | None = None,
+    group: None = None,
 ) -> Generator[GenerationResponse]:
     input_ids = _encode_prompt(tokenizer, prompt)
     input_tensor = Tensor([input_ids], dtype=dtypes.int32)
@@ -46,6 +49,7 @@ def tinygrad_generate(
     top_logprobs_count = task.top_logprobs or 0
 
     eos_ids = _get_eos_ids(tokenizer, model.config)
+    print(f"[DEBUG] eos_ids={eos_ids}")
     prompt_tokens = len(input_ids)
 
     # Prefill
@@ -65,6 +69,10 @@ def tinygrad_generate(
         token_text: str = tokenizer.decode([result.token_id])  # pyright: ignore[reportAny]
 
         is_eos = result.token_id in eos_ids
+        if is_eos:
+            print(f"[DEBUG] EOS detected: token_id={result.token_id}, text={token_text!r}")
+        if "<|eot_id|>" in token_text or "<|end" in token_text:
+            print(f"[DEBUG] Special token in text but is_eos={is_eos}, token_id={result.token_id}")
         tokens_generated = token_idx + 1
         elapsed = time.time() - generation_start
         generation_tps = tokens_generated / max(elapsed, 1e-9)
@@ -106,6 +114,9 @@ def tinygrad_generate(
                 for tok_id, lp in result.top_logprobs
             ]
 
+        if is_eos:
+            token_text = ""
+
         yield GenerationResponse(
             text=token_text, token=result.token_id,
             logprob=logprob, top_logprobs=top_lps,
@@ -121,8 +132,7 @@ def tinygrad_generate(
             position_offset=prompt_tokens + token_idx + 1,
         )
 
-
-def warmup_inference(model: TransformerWeights, tokenizer: Any) -> int:  # pyright: ignore[reportAny]
+def warmup_inference(model: TransformerWeights, tokenizer: Any, group: None = None) -> int:  # pyright: ignore[reportAny]
     """Run a full generation loop to warm up forward pass, KV cache, and sampling."""
     from exo.shared.tokenizer.chat_template import apply_chat_template
     from exo.shared.types.common import ModelId as CommonModelId
@@ -143,12 +153,10 @@ def warmup_inference(model: TransformerWeights, tokenizer: Any) -> int:  # pyrig
 
     return tokens_generated
 
-
 def _encode_prompt(tokenizer: Any, prompt: str) -> list[int]:  # pyright: ignore[reportAny]
     result: Any = tokenizer.encode(prompt)  # pyright: ignore[reportAny]
 
     return result.ids if hasattr(result, "ids") else result  # pyright: ignore[reportAny]
-
 
 def _get_eos_ids(tokenizer: Any, config: ModelConfig) -> set[int]:  # pyright: ignore[reportAny]
     eos_ids: set[int] = set()

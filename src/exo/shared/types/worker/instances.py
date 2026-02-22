@@ -1,3 +1,4 @@
+import sys
 from enum import Enum
 
 from pydantic import model_validator
@@ -14,6 +15,13 @@ class InstanceId(Id):
 class InstanceMeta(str, Enum):
     MlxRing = "MlxRing"
     MlxJaccl = "MlxJaccl"
+    Tinygrad = "Tinygrad"
+
+
+def default_instance_meta() -> InstanceMeta:
+    if sys.platform == "darwin":
+        return InstanceMeta.MlxRing
+    return InstanceMeta.Tinygrad
 
 
 class BaseInstance(TaggedModel):

@@ -212,8 +212,8 @@ def main(
                                 tokenizer.tool_call_end,  # pyright: ignore[reportAny]
                                 tokenizer.tool_parser,  # pyright: ignore[reportAny]
                             )
-                        assert KVPrefixCache is not None
-                        kv_prefix_cache = KVPrefixCache(group)
+                        if KVPrefixCache is not None:
+                            kv_prefix_cache = KVPrefixCache(group)
 
                     elif (
                         ModelTask.TextToImage in shard_metadata.model_card.tasks

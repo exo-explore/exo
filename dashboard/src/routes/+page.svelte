@@ -224,7 +224,7 @@
     return model.tasks.includes("ImageToImage");
   }
   let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
-  type InstanceMeta = "MlxRing" | "MlxIbv" | "MlxJaccl";
+  type InstanceMeta = "MlxRing" | "MlxIbv" | "MlxJaccl" | "Tinygrad";
 
   // Launch defaults persistence
   const LAUNCH_DEFAULTS_KEY = "exo-launch-defaults";
@@ -290,6 +290,7 @@
   }
 
   let selectedInstanceType = $state<InstanceMeta>("MlxRing");
+  let instanceTypeInitialized = $state(false);
   let selectedMinNodes = $state<number>(1);
   let minNodesInitialized = $state(false);
   let launchingModelId = $state<string | null>(null);
@@ -479,9 +480,11 @@
   }
 
   const matchesSelectedRuntime = (runtime: InstanceMeta): boolean =>
-    selectedInstanceType === "MlxRing"
-      ? runtime === "MlxRing"
-      : runtime === "MlxIbv" || runtime === "MlxJaccl";
+    selectedInstanceType === "Tinygrad"
+      ? runtime === "Tinygrad"
+      : selectedInstanceType === "MlxRing"
+        ? runtime === "MlxRing"
+        : runtime === "MlxIbv" || runtime === "MlxJaccl";
 
   // Helper to check if a model can be launched (has valid placement with >= minNodes)
   function canModelFit(modelId: string): boolean {
@@ -1742,6 +1745,22 @@
     }
   });
 
+  // Auto-detect instance type from available placement previews (e.g., Tinygrad on Linux)
+  $effect(() => {
+    if (instanceTypeInitialized || previewsData.length === 0) return;
+    const hasCurrentType = previewsData.some(
+      (p: PlacementPreview) => matchesSelectedRuntime(p.instance_meta),
+    );
+    if (!hasCurrentType) {
+      // Switch to whatever the server provides
+      const firstMeta = previewsData[0]?.instance_meta;
+      if (firstMeta) {
+        selectedInstanceType = firstMeta;
+      }
+    }
+    instanceTypeInitialized = true;
+  });
+
   // Calculate total memory usage across all nodes
   const clusterMemory = $derived(() => {
     if (!data) return { used: 0, total: 0 };
@@ -2896,6 +2915,28 @@
                       {/if}
                     </span>
                     MLX RDMA
+                  </button>
+                  <button
+                    onclick={() => {
+                      selectedInstanceType = "Tinygrad";
+                      saveLaunchDefaults();
+                    }}
+                    class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
+                    'Tinygrad'
+                      ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                      : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                  >
+                    <span
+                      class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
+                      'Tinygrad'
+                        ? 'border-exo-yellow'
+                        : 'border-exo-medium-gray'}"
+                    >
+                      {#if selectedInstanceType === "Tinygrad"}
+                        <span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
+                      {/if}
+                    </span>
+                    Tinygrad
                   </button>
                 </div>
               </div>

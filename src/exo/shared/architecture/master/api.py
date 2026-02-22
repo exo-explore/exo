@@ -2,6 +2,7 @@ import base64
 import contextlib
 import json
 import random
+import sys
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
 from datetime import datetime, timezone
@@ -150,7 +151,12 @@ from exo.shared.types.openai_responses import (
 )
 from exo.shared.types.state import State
 from exo.shared.types.worker.downloads import DownloadCompleted
-from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
+from exo.shared.types.worker.instances import (
+    Instance,
+    InstanceId,
+    InstanceMeta,
+    default_instance_meta,
+)
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
@@ -356,9 +362,11 @@ class API:
         self,
         model_id: ModelId,
         sharding: Sharding = Sharding.Pipeline,
-        instance_meta: InstanceMeta = InstanceMeta.MlxRing,
+        instance_meta: InstanceMeta | None = None,
         min_nodes: int = 1,
     ) -> Instance:
+        if instance_meta is None:
+            instance_meta = default_instance_meta()
         model_card = await ModelCard.load(model_id)
 
         try:
@@ -408,8 +416,13 @@ class API:
                 status_code=400, detail=f"Failed to load model card: {exc}"
             ) from exc
         instance_combinations: list[tuple[Sharding, InstanceMeta, int]] = []
+        instance_metas = (
+            (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl)
+            if sys.platform == "darwin"
+            else (InstanceMeta.Tinygrad,)
+        )
         for sharding in (Sharding.Pipeline, Sharding.Tensor):
-            for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
+            for instance_meta in instance_metas:
                 instance_combinations.extend(
                     [
                         (sharding, instance_meta, i)

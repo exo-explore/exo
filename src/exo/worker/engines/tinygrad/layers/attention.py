@@ -46,8 +46,8 @@ def grouped_query_attention(
 
     if num_kv_heads < num_heads:
         repeat_factor = num_heads // num_kv_heads
-        k = k.repeat((1, repeat_factor, 1, 1))  # pyright: ignore[reportUnknownMemberType]
-        v = v.repeat((1, repeat_factor, 1, 1))  # pyright: ignore[reportUnknownMemberType]
+        k = k.repeat_interleave(repeat_factor, dim = 1)  # pyright: ignore[reportUnknownMemberType]
+        v = v.repeat_interleave(repeat_factor, dim = 1)  # pyright: ignore[reportUnknownMemberType]
 
     scale = 1.0 / math.sqrt(head_dim)
     full_seq: int = int(k.shape[2])

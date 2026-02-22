@@ -11,7 +11,6 @@ from exo.worker.engines.tinygrad.layers.normalization import rms_norm
 from exo.worker.engines.tinygrad.layers.rotary import compute_rope_frequencies
 from exo.worker.engines.tinygrad.weight_loader import LayerWeights, TransformerWeights
 
-
 class TransfomerBlockBuilder(NamedTuple):
     cos_freqs: Tensor
     sin_freqs: Tensor
@@ -30,18 +29,13 @@ def forward_pass(
 
     x = apply_embedding(weights.embed_tokens, input_ids)
 
-    cos_freqs, sin_freqs = compute_rope_frequencies(
-        head_dim = config.head_dim,
-        max_seq_len = position_offset + int(seq_len),
-        rope_theta = config.rope_theta
-    )
-
     if cache is None:
        cache = KVCache(num_layers = len(weights.layers))
 
     for layer_idx, layer in enumerate(weights.layers):
         builder = TransfomerBlockBuilder(
-           cos_freqs, sin_freqs, layer, layer_idx, position_offset
+           weights.rope_cos, weights.rope_sin, 
+            layer, layer_idx, position_offset,
         )
         x = _transformer_block(x, config, cache, builder)
 
@@ -58,6 +52,7 @@ def _transformer_block(
 ) -> Tensor:
     residual = x
     layer = builder.layer
+    x = rms_norm(x, layer.input_norm, config.rms_norm_eps)
 
     match config.architecture_spec.attention_type:
         case "grouped_query" | "multi_head":

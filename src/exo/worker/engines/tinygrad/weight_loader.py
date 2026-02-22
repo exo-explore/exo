@@ -3,6 +3,7 @@ from typing import Literal, NamedTuple, overload
 
 from tinygrad.nn.state import safe_load
 from tinygrad.tensor import Tensor
+from tinygrad.device import Device
 
 from exo.shared.architecture import ArchitectureSpec
 from exo.shared.model_config import ModelConfig
@@ -12,6 +13,8 @@ from exo.worker.engines.tinygrad.quantization.layers import (
 )
 from exo.worker.engines.tinygrad.quantization.packing import PackedTensor
 from exo.worker.engines.tinygrad.quantization.shapes import infer_weight_shape
+from exo.worker.engines.tinygrad.layers.rotary import compute_rope_frequencies
+
 
 LinearWeight = Tensor | QuantizedLinear
 EmbedWeight = Tensor | QuantizedEmbedding
@@ -41,6 +44,8 @@ class TransformerWeights(NamedTuple):
     final_norm: Tensor
     layers: list[LayerWeights]
     config: ModelConfig
+    rope_sin: Tensor
+    rope_cos: Tensor
 
 def load_transformer_weights(
     model_path: Path,
@@ -59,9 +64,20 @@ def load_transformer_weights(
         f"{spec.embed_key}.weight",
         config, is_embedding = True)
 
-    lm_head: LinearWeight = embed_tokens if config.tie_word_embeddings else _build_weight(  # pyright: ignore[reportAssignmentType]
-        raw_weights, f"{spec.lm_head_key}.weight", config,
-    )
+    if config.tie_word_embeddings:
+        if isinstance(embed_tokens, QuantizedEmbedding):
+            lm_head: LinearWeight = QuantizedLinear(
+                weight_q = embed_tokens.weight_q,
+                scales = embed_tokens.scales,
+                biases = embed_tokens.biases,
+                group_size = embed_tokens.group_size,
+            )
+        else:
+            lm_head: LinearWeight = embed_tokens
+    else:
+        lm_head: LinearWeight = _build_weight(
+            raw_weights, f"{spec.lm_head_key}.weight", config,
+        )
 
     final_norm = raw_weights[f"{spec.final_norm_key}.weight"]
 
@@ -71,9 +87,17 @@ def load_transformer_weights(
         prefix = spec.layer_prefix.format(layer_idx=layer_idx)
         layers.append(_build_layer_weights(raw_weights, prefix, spec, config))
 
+    rope_cos, rope_sin = compute_rope_frequencies(
+        head_dim = config.head_dim,
+        max_seq_len = config.max_position_embeddings,
+        rope_theta = config.rope_theta,
+    )
+
     return TransformerWeights(
         embed_tokens=embed_tokens, lm_head=lm_head,
-        final_norm=final_norm, layers=layers, config=config
+        final_norm=final_norm, layers=layers, config=config,
+        rope_cos = rope_cos.realize(), 
+        rope_sin = rope_sin.realize(),
     )
 
 def _build_layer_weights(
@@ -108,21 +132,50 @@ def _build_weight(
     config: ModelConfig,
     is_embedding: bool = False,
 ) -> LinearWeight | EmbedWeight:
+    scales_key = key.replace(".weight", ".scales")
+    biases_key = key.replace(".weight", ".biases")
+
+    # MLX quantized: .weight (packed uint32) + .scales + .biases + quantization_config
+    if key in raw and config.quantization_config is not None and scales_key in raw and biases_key in raw:
+        qcfg = config.quantization_config
+        packed = PackedTensor(
+            tensor = raw[key],
+            original_shape = infer_weight_shape(key, config),
+            pack_factor = 32 // qcfg.bits,
+            bits = qcfg.bits,
+        )
+
+        if is_embedding:
+            return QuantizedEmbedding(
+                num_embeddings = config.vocab_size,
+                embedding_dim = config.hidden_size,
+                weight_q = packed,
+                scales = raw[scales_key],
+                biases = raw[biases_key],
+                group_size = qcfg.group_size,
+            )
+
+        return QuantizedLinear(
+            weight_q = packed,
+            scales = raw[scales_key],
+            biases = raw[biases_key],
+            group_size = qcfg.group_size,
+        )
+
+    # Plain unquantized: .weight only
     if key in raw:
         return raw[key]
 
+    # Legacy .qweight format
     qweight_key = key.replace(".weight", ".qweight")
 
     if qweight_key in raw and config.quantization_config is not None:
         qcfg = config.quantization_config
-        scales_key = key.replace(".weight", ".scales")
-        biases_key = key.replace(".weight", ".biases")
-
         packed = PackedTensor(
             tensor = raw[qweight_key],
             original_shape = infer_weight_shape(key, config),
             pack_factor = 32 // qcfg.bits,
-            bits = qcfg.bits
+            bits = qcfg.bits,
         )
 
         if is_embedding:
@@ -149,7 +202,8 @@ def _load_all_safetensors(path: Path) -> dict[str, Tensor]:
 
     for safetensor_file in sorted(path.glob("*.safetensors")):
         shard = safe_load(str(safetensor_file))
-        merged.update(shard)
+        for key, tensor in shard.items():
+            merged[key] = tensor.to(Device.DEFAULT).contiguous().realize()
 
     if not merged:
         raise FileNotFoundError(f"No .safetensors file found in {path}")

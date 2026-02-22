@@ -34,7 +34,7 @@ class QuantizedLinear:
 
     def __call__(self, x: Tensor) -> Tensor:
         if self._dequantized_weight is None:
-            self._dequantized_weight = self._dequantize()
+            self._dequantized_weight = self._dequantize().realize()
 
         result = x @ self._dequantized_weight.T
         if self.bias is not None:
@@ -85,7 +85,8 @@ class QuantizedEmbedding:
 
     def __call__(self, indices: Tensor) -> Tensor:
         if self._dequantized_weight is None:
-            self._dequantized_weight = self._dequantize()
+            self._dequantized_weight = self._dequantize().realize()
+
         return self._dequantized_weight[indices]
 
     def _dequantize(self) -> Tensor:

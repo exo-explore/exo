@@ -21,7 +21,7 @@
     } | null;
     nodes?: Record<string, NodeInfo>;
     sharding?: "Pipeline" | "Tensor";
-    runtime?: "MlxRing" | "MlxIbv" | "MlxJaccl";
+    runtime?: "MlxRing" | "MlxIbv" | "MlxJaccl" | "Tinygrad";
     onLaunch?: () => void;
     tags?: string[];
     apiPreview?: PlacementPreview | null;
