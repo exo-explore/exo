@@ -78,7 +78,6 @@ def maybe_quantize_kv_cache(
     kv_group_size: int | None,
     kv_bits: int | None,
 ) -> None: ...
-
 def generate_step(
     prompt: mx.array,
     model: nn.Module,
