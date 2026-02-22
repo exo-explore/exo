@@ -140,10 +140,9 @@ class PipelineFirstLayer(CustomMlxLayer):
         self.r: int = r
         self.group = group
         self.is_prefill: bool = False
-        self.skip_io: bool = False
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
-        if self.r != 0 and not self.skip_io:
+        if self.r != 0:
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
             if self.is_prefill:
                 # We want to avoid GPU timeout errors by evalling the distributed operation
@@ -166,7 +165,6 @@ class PipelineLastLayer(CustomMlxLayer):
         self.group = group
         self.original_layer_signature = signature(self.original_layer.__call__)
         self.is_prefill: bool = False
-        self.skip_io: bool = False
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         cache = self.original_layer_signature.bind_partial(
@@ -175,10 +173,8 @@ class PipelineLastLayer(CustomMlxLayer):
 
         output: mx.array = self.original_layer(x, *args, **kwargs)
 
-        if self.r != self.s - 1 and not self.skip_io:
+        if self.r != self.s - 1:
             if self.is_prefill:
-                # Eval computation + cache synchronously (GPU watchdog).
-                # Queue the send — flushed after the mx_any barrier.
                 mx.eval(output)
                 if cache is not None:
                     _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
@@ -193,13 +189,8 @@ class PipelineLastLayer(CustomMlxLayer):
                 if cache is not None:
                     _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
                     _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
-        elif self.is_prefill and not self.skip_io:
-            # Last rank: force computation during prefill.
-            mx.eval(output)
-            if cache is not None:
-                _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
-                mx.eval(_cache.keys)  # type: ignore
-        if not self.is_prefill and not self.skip_io:
+
+        if not self.is_prefill:
             output = mx.distributed.all_gather(output, group=self.group)[
                 -output.shape[0] :
             ]
@@ -211,12 +202,6 @@ def set_pipeline_prefill(model: nn.Module, is_prefill: bool) -> None:
     for layer in model.layers:  # type: ignore
         if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
             layer.is_prefill = is_prefill
-
-
-def set_pipeline_skip_io(model: nn.Module, skip: bool) -> None:
-    for layer in model.layers:  # type: ignore
-        if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
-            layer.skip_io = skip
 
 
 def _inner_model(model: nn.Module) -> nn.Module:

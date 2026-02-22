@@ -33,7 +33,6 @@ from exo.worker.engines.mlx.auto_parallel import (
     clear_prefill_sends,
     flush_prefill_sends,
     set_pipeline_prefill,
-    set_pipeline_skip_io,
 )
 from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
@@ -167,17 +166,16 @@ def _pipeline_prefill_cache(
         clear_prefill_sends()
 
     # Post-loop: process remaining 1 token + add +1 entry to match stream_generate.
-    set_pipeline_skip_io(model, skip=True)
-    with mx.stream(generation_stream):
-        model(prompt[-1:][None], cache=_prompt_cache)
-        quantize_cache_fn(_prompt_cache)
-        model(prompt[-1:][None], cache=_prompt_cache)
-        quantize_cache_fn(_prompt_cache)
-        assert _prompt_cache is not None
-        mx.eval([c.state for c in _prompt_cache])  # type: ignore
-    set_pipeline_skip_io(model, skip=False)
+    for _ in range(2):
+        with mx.stream(generation_stream):
+            model(prompt[-1:][None], cache=_prompt_cache)
+            quantize_cache_fn(_prompt_cache)
+        flush_prefill_sends()
 
-    # Final callback matching generate_step's callback(M, M) after _step(y).
+    assert _prompt_cache is not None
+    mx.eval([c.state for c in _prompt_cache])  # type: ignore
+
+    # Final callback matching generate_step's callback.
     prompt_progress_callback(total, total)
 
     logger.info(
@@ -477,10 +475,7 @@ def mlx_generate(
     )
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
-    # Pipeline prefill processes ALL tokens (no trim needed), so prefill prompt_tokens[:-1]
-    # and start generation from last 1 token.
-    # Standard prefill uses stream_generate which adds 2 extra tokens to cache (trim 2),
-    # so start generation from last 2 tokens.
+    # Prefill cache with all tokens except the last one
     prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
         model,
         tokenizer,
