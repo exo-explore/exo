@@ -669,12 +669,10 @@ def mlx_cleanup(
 def mx_any(bool_: bool, group: Group | None) -> bool:
     if group is None:
         return bool_
-    logger.info(f"[mx_any R{group.rank()}] entering all_sum...")
     num_true = mx.distributed.all_sum(
         mx.array(bool_), group=group, stream=mx.default_stream(mx.Device(mx.cpu))
     )
     mx.eval(num_true)
-    logger.info(f"[mx_any R{group.rank()}] all_sum done, result={num_true.item()}")
     return num_true.item() > 0
 
 

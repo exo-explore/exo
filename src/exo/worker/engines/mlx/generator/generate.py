@@ -143,40 +143,29 @@ def _pipeline_prefill_cache(
                 is_leading_dummy = i < n_leading
                 is_trailing_dummy = i >= n_leading + n_real
                 is_dummy = is_leading_dummy or is_trailing_dummy
-                iter_kind = "DUMMY(leading)" if is_leading_dummy else "DUMMY(trailing)" if is_trailing_dummy else "REAL"
 
                 if is_dummy:
-                    logger.info(f"[R{rank}] iter {i}/{n_total}: {iter_kind} — skip")
+                    pass
                 else:
                     real_idx = i - n_leading
                     chunk_size = real_chunk_sizes[real_idx]
-                    logger.info(
-                        f"[R{rank}] iter {i}/{n_total}: {iter_kind} — model(prompt[{processed}:{processed + chunk_size}]) "
-                        f"chunk_size={chunk_size}"
-                    )
                     model(
                         prompt[processed : processed + chunk_size][None],
                         cache=_prompt_cache,
                     )
                     quantize_cache_fn(_prompt_cache)
                     processed += chunk_size
-                    logger.info(f"[R{rank}] iter {i}/{n_total}: model() done, processed={processed}/{total}")
 
                 if distributed_prompt_progress_callback is not None:
-                    logger.info(f"[R{rank}] iter {i}/{n_total}: entering distributed callback...")
                     distributed_prompt_progress_callback()
-                    logger.info(f"[R{rank}] iter {i}/{n_total}: distributed callback done")
 
-                logger.info(f"[R{rank}] iter {i}/{n_total}: flushing sends...")
                 flush_prefill_sends()
-                logger.info(f"[R{rank}] iter {i}/{n_total}: flush done")
 
                 if not is_dummy:
                     prompt_progress_callback(processed, total)
     finally:
         clear_prefill_sends()
 
-    logger.info(f"[R{rank}] Post-loop: processing last token with skip_pipeline_io=True")
     # Post-loop: process remaining 1 token + add +1 entry to match stream_generate.
     set_pipeline_skip_io(model, skip=True)
     with mx.stream(generation_stream):
@@ -185,10 +174,8 @@ def _pipeline_prefill_cache(
         model(prompt[-1:][None], cache=_prompt_cache)
         quantize_cache_fn(_prompt_cache)
         assert _prompt_cache is not None
-        logger.info(f"[R{rank}] Post-loop: mx.eval cache...")
         mx.eval([c.state for c in _prompt_cache])  # type: ignore
     set_pipeline_skip_io(model, skip=False)
-    logger.info(f"[R{rank}] Post-loop: done")
 
     # Final callback matching generate_step's callback(M, M) after _step(y).
     prompt_progress_callback(total, total)
