@@ -222,7 +222,7 @@ def pipeline_auto_parallel(
     model: nn.Module,
     group: mx.distributed.Group,
     model_shard_meta: PipelineShardMetadata,
-    on_layer_loaded: LayerLoadedCallback | None = None,
+    on_layer_loaded: LayerLoadedCallback | None,
 ) -> nn.Module:
     """
     Automatically parallelize a model across multiple devices.
@@ -356,9 +356,9 @@ def patch_tensor_model[T](model: T) -> T:
 def tensor_auto_parallel(
     model: nn.Module,
     group: mx.distributed.Group,
-    timeout_seconds: float = 60.0,
-    on_timeout: TimeoutCallback | None = None,
-    on_layer_loaded: LayerLoadedCallback | None = None,
+    timeout_seconds: float,
+    on_timeout: TimeoutCallback | None,
+    on_layer_loaded: LayerLoadedCallback | None,
 ) -> nn.Module:
     all_to_sharded_linear = partial(
         shard_linear,
@@ -495,7 +495,7 @@ class TensorParallelShardingStrategy(ABC):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
-        on_layer_loaded: LayerLoadedCallback | None = None,
+        on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module: ...
 
 
@@ -505,7 +505,7 @@ class LlamaShardingStrategy(TensorParallelShardingStrategy):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
-        on_layer_loaded: LayerLoadedCallback | None = None,
+        on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(LlamaModel, model)
         total = len(model.layers)
@@ -561,7 +561,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
-        on_layer_loaded: LayerLoadedCallback | None = None,
+        on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(DeepseekV3Model, model)
         total = len(model.layers)
@@ -646,7 +646,7 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
-        on_layer_loaded: LayerLoadedCallback | None = None,
+        on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(GLM4MoeLiteModel, model)
         total = len(model.layers)  # type: ignore
@@ -792,7 +792,7 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
-        on_layer_loaded: LayerLoadedCallback | None = None,
+        on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(MiniMaxModel, model)
         total = len(model.layers)
@@ -833,7 +833,7 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
-        on_layer_loaded: LayerLoadedCallback | None = None,
+        on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(Qwen3MoeModel | Qwen3NextModel, model)
         total = len(model.layers)
@@ -958,7 +958,7 @@ class Glm4MoeShardingStrategy(TensorParallelShardingStrategy):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
-        on_layer_loaded: LayerLoadedCallback | None = None,
+        on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(Glm4MoeModel, model)
         total = len(model.layers)
@@ -1006,7 +1006,7 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
-        on_layer_loaded: LayerLoadedCallback | None = None,
+        on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(GptOssMoeModel, model)
         total = len(model.layers)
@@ -1049,7 +1049,7 @@ class Step35ShardingStrategy(TensorParallelShardingStrategy):
         model: nn.Module,
         timeout_seconds: float,
         on_timeout: TimeoutCallback | None,
-        on_layer_loaded: LayerLoadedCallback | None = None,
+        on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(Step35Model, model)
         total = len(model.layers)

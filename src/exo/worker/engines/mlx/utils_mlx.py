@@ -174,8 +174,8 @@ def initialize_mlx(
 def load_mlx_items(
     bound_instance: BoundInstance,
     group: Group | None,
-    on_timeout: TimeoutCallback | None = None,
-    on_layer_loaded: LayerLoadedCallback | None = None,
+    on_timeout: TimeoutCallback | None,
+    on_layer_loaded: LayerLoadedCallback | None,
 ) -> tuple[Model, TokenizerWrapper]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
@@ -192,7 +192,7 @@ def load_mlx_items(
                 if on_layer_loaded is not None:
                     on_layer_loaded(i, total)
         except ValueError:
-            pass
+            logger.debug("Model architecture doesn't support layer-by-layer progress tracking", exc_info=True)
         mx.eval(model)
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
@@ -220,8 +220,8 @@ def load_mlx_items(
 def shard_and_load(
     shard_metadata: ShardMetadata,
     group: Group,
-    on_timeout: TimeoutCallback | None = None,
-    on_layer_loaded: LayerLoadedCallback | None = None,
+    on_timeout: TimeoutCallback | None,
+    on_layer_loaded: LayerLoadedCallback | None,
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
