@@ -698,7 +698,10 @@ class API:
                 },
             )
 
-        return await collect_chat_response(command.command_id, chunk_stream)
+        return StreamingResponse(
+            collect_chat_response(command.command_id, chunk_stream),
+            media_type="application/json",
+        )
 
     async def bench_chat_completions(
         self, payload: BenchChatCompletionRequest
