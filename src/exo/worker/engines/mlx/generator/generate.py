@@ -71,7 +71,7 @@ def _has_pipeline_layer(model: Model):
     return False
 
 
-def _pipeline_prefill_cache(
+def pipeline_parallel_prefill(
     model: Model,
     prompt: mx.array,
     prompt_cache: KVCacheType,
@@ -239,7 +239,7 @@ def prefill(
     try:
         if is_pipeline:
             assert group is not None, "Pipeline prefill requires a distributed group"
-            _pipeline_prefill_cache(
+            pipeline_parallel_prefill(
                 model=model,
                 prompt=prompt_tokens,
                 prompt_cache=cache,
@@ -488,6 +488,7 @@ def mlx_generate(
     )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 
+    # stream_generate starts from the last token
     last_token = prompt_tokens[-2:]
 
     max_tokens = task.max_output_tokens or MAX_TOKENS
