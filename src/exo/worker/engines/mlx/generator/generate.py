@@ -80,6 +80,7 @@ def _pipeline_prefill_cache(
     kv_group_size: int | None,
     kv_bits: int | None,
     prompt_progress_callback: Callable[[int, int], None],
+    distributed_prompt_progress_callback: Callable[[], None] | None,
     group: mx.distributed.Group,
 ) -> None:
     """Prefill the KV cache for pipeline parallel with overlapping stages.
@@ -92,6 +93,7 @@ def _pipeline_prefill_cache(
       - N_real_chunks real      (pipeline IO active, real cache)
       - (world_size-1-r) trailing dummies (skip_pipeline_io, throwaway cache)
 
+    e.g.
     Timeline (2 ranks, 3 chunks of 10240 tokens @ step=4096):
         iter 0: R0 real[0:4096]     R1 dummy
         iter 1: R0 real[4096:8192]  R1 real[0:4096]
@@ -154,10 +156,13 @@ def _pipeline_prefill_cache(
                     quantize_cache_fn(_prompt_cache)
                     processed += chunk_size
 
-                    # Callback only on real iterations
-                    prompt_progress_callback(processed, total)
+                if distributed_prompt_progress_callback is not None:
+                    distributed_prompt_progress_callback()
 
                 flush_prefill_sends()
+
+                if not is_dummy:
+                    prompt_progress_callback(processed, total)
     finally:
         clear_prefill_sends()
 
@@ -189,6 +194,7 @@ def prefill(
     cache: KVCacheType,
     group: mx.distributed.Group | None,
     on_prefill_progress: Callable[[int, int], None] | None,
+    distributed_prompt_progress_callback: Callable[[], None] | None,
 ) -> tuple[float, int, list[CacheSnapshot]]:
     """Prefill the KV cache with prompt tokens.
 
@@ -220,6 +226,11 @@ def prefill(
         if on_prefill_progress is not None:
             on_prefill_progress(processed, total)
 
+    def combined_progress_callback(processed: int, total: int) -> None:
+        if distributed_prompt_progress_callback is not None:
+            distributed_prompt_progress_callback()
+        progress_callback(processed, total)
+
     set_pipeline_prefill(model, is_prefill=True)
 
     mx_barrier(group)
@@ -238,6 +249,7 @@ def prefill(
                 kv_group_size=KV_GROUP_SIZE,
                 kv_bits=KV_BITS,
                 prompt_progress_callback=progress_callback,
+                distributed_prompt_progress_callback=distributed_prompt_progress_callback,
                 group=group,
             )
         else:
@@ -253,7 +265,7 @@ def prefill(
                 prefill_step_size=4096,
                 kv_group_size=KV_GROUP_SIZE,
                 kv_bits=KV_BITS,
-                prompt_progress_callback=progress_callback,
+                prompt_progress_callback=combined_progress_callback,
             ):
                 break  # Stop after first iteration - cache is now filled
     except PrefillCancelled:
@@ -412,6 +424,7 @@ def mlx_generate(
     kv_prefix_cache: KVPrefixCache | None,
     group: mx.distributed.Group | None,
     on_prefill_progress: Callable[[int, int], None] | None = None,
+    distributed_prompt_progress_callback: Callable[[], None] | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -476,6 +489,7 @@ def mlx_generate(
         caches,
         group,
         on_prefill_progress,
+        distributed_prompt_progress_callback,
     )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 

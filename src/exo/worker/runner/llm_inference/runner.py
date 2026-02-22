@@ -255,8 +255,6 @@ def main(
                     def on_prefill_progress(
                         processed: int,
                         total: int,
-                        _task_id: TaskId = task.task_id,
-                        _group: mx.distributed.Group | None = group,
                     ) -> None:
                         if device_rank == 0:
                             event_sender.send(
@@ -269,6 +267,11 @@ def main(
                                     ),
                                 )
                             )
+
+                    def distributed_prompt_progress_callback(
+                        _task_id: TaskId = task.task_id,
+                        _group: mx.distributed.Group | None = group,
+                    ) -> None:
                         cancelled_tasks.update(cancel_receiver.collect())
                         want_to_cancel = (_task_id in cancelled_tasks) or (
                             TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
@@ -290,6 +293,7 @@ def main(
                             prompt=prompt,
                             kv_prefix_cache=kv_prefix_cache,
                             on_prefill_progress=on_prefill_progress,
+                            distributed_prompt_progress_callback=distributed_prompt_progress_callback,
                             group=group,
                         )
 
