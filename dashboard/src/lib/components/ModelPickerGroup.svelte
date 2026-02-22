@@ -490,18 +490,26 @@
         {@const modelCanFit = canModelFit(variant.id)}
         {@const variantHasInstance = instanceStatuses[variant.id] != null}
         {@const isSelected = selectedModelId === variant.id}
-        <button
-          type="button"
+        <div
           class="w-full flex items-center gap-3 px-3 py-2 pl-10 hover:bg-white/5 transition-colors text-left {!modelCanFit &&
           !variantHasInstance
             ? 'opacity-50 cursor-not-allowed'
             : 'cursor-pointer'} {isSelected
             ? 'bg-exo-yellow/10 border-l-2 border-exo-yellow'
             : 'border-l-2 border-transparent'}"
-          disabled={!modelCanFit && !variantHasInstance}
+          role="button"
+          tabindex="0"
           onclick={() => {
             if (modelCanFit || variantHasInstance) {
               onSelectModel(variant.id);
+            }
+          }}
+          onkeydown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              if (modelCanFit) {
+                onSelectModel(variant.id);
+              }
             }
           }}
         >
@@ -602,7 +610,36 @@
               />
             </svg>
           {/if}
-        </button>
+
+          <!-- Info button -->
+          <button
+            type="button"
+            class="p-1 rounded hover:bg-white/10 transition-colors flex-shrink-0"
+            onclick={(e) => {
+              e.stopPropagation();
+              onShowInfo({
+                id: variant.id,
+                name: variant.name || variant.id,
+                capabilities: group.capabilities,
+                family: group.family,
+                variants: [variant],
+                smallestVariant: variant,
+                hasMultipleVariants: false,
+              });
+            }}
+            title="View variant details"
+          >
+            <svg
+              class="w-4 h-4 text-white/30 hover:text-white/50"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+            >
+              <path
+                d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
+              />
+            </svg>
+          </button>
+        </div>
       {/each}
     </div>
   {/if}
