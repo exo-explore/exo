@@ -21,8 +21,15 @@ struct ContentView: View {
     @State private var showAllInstances = false
     @State private var showAdvanced = false
     @State private var showDebugInfo = false
-    @State private var bugReportInFlight = false
-    @State private var bugReportMessage: String?
+    private enum BugReportPhase: Equatable {
+        case idle
+        case prompting
+        case sending(String)
+        case success(String)
+        case failure(String)
+    }
+    @State private var bugReportPhase: BugReportPhase = .idle
+    @State private var bugReportUserDescription: String = ""
     @State private var uninstallInProgress = false
     @State private var pendingNamespace: String = ""
     @State private var pendingHFToken: String = ""
@@ -611,39 +618,115 @@ struct ContentView: View {
     }
 
     private var sendBugReportButton: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button {
-                Task {
-                    await sendBugReport()
-                }
-            } label: {
-                HStack {
-                    if bugReportInFlight {
-                        ProgressView()
-                            .scaleEffect(0.6)
+        VStack(alignment: .leading, spacing: 6) {
+            switch bugReportPhase {
+            case .idle:
+                Button {
+                    bugReportPhase = .prompting
+                    bugReportUserDescription = ""
+                } label: {
+                    HStack {
+                        Text("Send Bug Report")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                        Spacer()
                     }
-                    Text("Send Bug Report")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                    Spacer()
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.accentColor.opacity(0.12))
+                    )
                 }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 8)
+                .buttonStyle(.plain)
+
+            case .prompting:
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("What's the issue? (optional)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    TextEditor(text: $bugReportUserDescription)
+                        .font(.caption2)
+                        .frame(height: 60)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                        )
+                    HStack(spacing: 8) {
+                        Button("Send") {
+                            Task {
+                                await sendBugReport()
+                            }
+                        }
+                        .font(.caption2)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        Button("Cancel") {
+                            bugReportPhase = .idle
+                        }
+                        .font(.caption2)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+                .padding(8)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.accentColor.opacity(0.12))
+                        .fill(Color.accentColor.opacity(0.06))
                 )
-            }
-            .buttonStyle(.plain)
-            .disabled(bugReportInFlight)
 
-            if let message = bugReportMessage {
-                Text(message)
+            case .sending(let message):
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+
+            case .success(let message):
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button {
+                        openGitHubIssue()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.up.right.square")
+                                .imageScale(.small)
+                            Text("Create GitHub Issue")
+                                .font(.caption2)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    Button("Done") {
+                        bugReportPhase = .idle
+                        bugReportUserDescription = ""
+                    }
                     .font(.caption2)
+                    .buttonStyle(.plain)
                     .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                }
+
+            case .failure(let message):
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundColor(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Dismiss") {
+                        bugReportPhase = .idle
+                    }
+                    .font(.caption2)
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
+                }
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: bugReportPhase)
     }
 
     private var processToggleBinding: Binding<Bool> {
@@ -687,16 +770,58 @@ struct ContentView: View {
     }
 
     private func sendBugReport() async {
-        bugReportInFlight = true
-        bugReportMessage = "Collecting logs..."
+        bugReportPhase = .sending("Collecting logs...")
         let service = BugReportService()
+        let description = bugReportUserDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            let outcome = try await service.sendReport(isManual: true)
-            bugReportMessage = outcome.message
+            let outcome = try await service.sendReport(
+                isManual: true,
+                userDescription: description.isEmpty ? nil : description
+            )
+            if outcome.success {
+                bugReportPhase = .success(outcome.message)
+            } else {
+                bugReportPhase = .failure(outcome.message)
+            }
         } catch {
-            bugReportMessage = error.localizedDescription
+            bugReportPhase = .failure(error.localizedDescription)
         }
-        bugReportInFlight = false
+    }
+
+    private func openGitHubIssue() {
+        let description = bugReportUserDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var bodyParts: [String] = []
+        bodyParts.append("## Describe the bug")
+        bodyParts.append("")
+        if !description.isEmpty {
+            bodyParts.append(description)
+        } else {
+            bodyParts.append("A clear and concise description of what the bug is.")
+        }
+        bodyParts.append("")
+        bodyParts.append("## Environment")
+        bodyParts.append("")
+        bodyParts.append("- macOS Version: \(ProcessInfo.processInfo.operatingSystemVersionString)")
+        bodyParts.append("- EXO Version: \(buildTag) (\(buildCommit))")
+        bodyParts.append("")
+        bodyParts.append("## Additional context")
+        bodyParts.append("")
+        bodyParts.append("A bug report with diagnostic logs was submitted via the app.")
+
+        let body = bodyParts.joined(separator: "\n")
+
+        var components = URLComponents(string: "https://github.com/exo-explore/exo/issues/new")!
+        components.queryItems = [
+            URLQueryItem(name: "template", value: "bug_report.md"),
+            URLQueryItem(name: "title", value: "[BUG] "),
+            URLQueryItem(name: "body", value: body),
+            URLQueryItem(name: "labels", value: "bug"),
+        ]
+
+        if let url = components.url {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     private func showUninstallConfirmationAlert() {
