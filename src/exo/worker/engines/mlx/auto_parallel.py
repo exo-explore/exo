@@ -53,9 +53,13 @@ _pending_prefill_sends: list[tuple[mx.array, int, mx.distributed.Group]] = []
 
 
 def flush_prefill_sends() -> None:
+    if _pending_prefill_sends:
+        logger.info(f"flush_prefill_sends: flushing {len(_pending_prefill_sends)} pending send(s)")
     for output, dst, group in _pending_prefill_sends:
+        logger.info(f"flush_prefill_sends: sending to R{dst} shape={output.shape}...")
         sent = mx.distributed.send(output, dst, group=group)
         mx.async_eval(sent)
+        logger.info(f"flush_prefill_sends: async_eval done for R{dst}")
     _pending_prefill_sends.clear()
 
 
@@ -144,11 +148,13 @@ class PipelineFirstLayer(CustomMlxLayer):
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0 and not self.skip_io:
+            logger.info(f"[PipelineFirstLayer R{self.r}] recv_like from R{self.r - 1} (prefill={self.is_prefill})...")
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
             if self.is_prefill:
                 # We want to avoid GPU timeout errors by evalling the distributed operation
                 # so that it stays on CPU, which does not have a timeout.
                 mx.eval(x)
+            logger.info(f"[PipelineFirstLayer R{self.r}] recv done")
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -179,10 +185,12 @@ class PipelineLastLayer(CustomMlxLayer):
             if self.is_prefill:
                 # Eval computation + cache synchronously (GPU watchdog).
                 # Queue the send — flushed after the mx_any barrier.
+                logger.info(f"[PipelineLastLayer R{self.r}] prefill: eval output...")
                 mx.eval(output)
                 if cache is not None:
                     _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
                     mx.eval(_cache.keys)  # type: ignore
+                logger.info(f"[PipelineLastLayer R{self.r}] prefill: queuing send to R{(self.r + 1) % self.s}")
                 _pending_prefill_sends.append(
                     (output, (self.r + 1) % self.s, self.group)
                 )
@@ -195,10 +203,12 @@ class PipelineLastLayer(CustomMlxLayer):
                     _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
         elif self.is_prefill and not self.skip_io:
             # Last rank: force computation during prefill.
+            logger.info(f"[PipelineLastLayer R{self.r}] prefill last rank: eval output...")
             mx.eval(output)
             if cache is not None:
                 _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
                 mx.eval(_cache.keys)  # type: ignore
+            logger.info(f"[PipelineLastLayer R{self.r}] prefill last rank: eval done")
         if not self.is_prefill and not self.skip_io:
             output = mx.distributed.all_gather(output, group=self.group)[
                 -output.shape[0] :
