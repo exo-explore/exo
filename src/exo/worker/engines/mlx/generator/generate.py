@@ -5,7 +5,7 @@ from typing import Callable, Generator, cast, get_args
 
 import mlx.core as mx
 from mlx_lm.generate import (
-    maybe_quantize_kv_cache,  # pyright: ignore[reportUnknownVariableType]
+    maybe_quantize_kv_cache,
     stream_generate,
 )
 from mlx_lm.models.cache import ArraysCache, RotatingKVCache
@@ -101,7 +101,7 @@ def pipeline_parallel_prefill(
 
     This function is designed to match mlx_lm's stream_generate exactly in terms of side effects.
     """
-    quantize_cache_fn: Callable[..., None] = functools.partial(  # pyright: ignore[reportUnknownVariableType]
+    quantize_cache_fn: Callable[..., None] = functools.partial(
         maybe_quantize_kv_cache,
         quantized_kv_start=0,
         kv_group_size=kv_group_size,
@@ -134,6 +134,7 @@ def pipeline_parallel_prefill(
     )
     clear_prefill_sends()
 
+    # Initial callback matching generate_step
     prompt_progress_callback(0, total)
 
     try:
@@ -161,6 +162,7 @@ def pipeline_parallel_prefill(
                 flush_prefill_sends()
 
                 if not is_dummy:
+                    # Only callback when something actually meaningful was computed
                     prompt_progress_callback(processed, total)
     finally:
         clear_prefill_sends()
@@ -175,7 +177,7 @@ def pipeline_parallel_prefill(
     assert _prompt_cache is not None
     mx.eval([c.state for c in _prompt_cache])  # type: ignore
 
-    # Final callback matching generate_step's callback.
+    # Final callback matching generate_step
     prompt_progress_callback(total, total)
 
     logger.info(
