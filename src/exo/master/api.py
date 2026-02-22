@@ -15,7 +15,7 @@ from anyio import BrokenResourceError, create_task_group
 from anyio.abc import TaskGroup
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
 from hypercorn.config import Config
@@ -37,7 +37,7 @@ from exo.master.adapters.responses import (
     generate_responses_stream,
     responses_request_to_text_generation,
 )
-from exo.master.conversation_store import Conversation, ConversationMessage, ConversationStore
+from exo.master.conversation_store import ConversationMessage, ConversationStore
 from exo.master.event_log import DiskEventLog
 from exo.master.push_service import DeviceRegistrationRequest, PushService
 from exo.master.image_store import ImageStore
@@ -109,6 +109,7 @@ from exo.shared.types.chunks import (
     ErrorChunk,
     ImageChunk,
     InputImageChunk,
+    PrefillProgressChunk,
     TokenChunk,
     ToolCallChunk,
 )
@@ -129,6 +130,7 @@ from exo.shared.types.commands import (
     PlaceInstance,
     SendInputChunk,
     StartDownload,
+    TaskCancelled,
     TaskFinished,
     TextGeneration,
 )
@@ -221,7 +223,7 @@ class API:
         )
 
         self._text_generation_queues: dict[
-            CommandId, Sender[TokenChunk | ErrorChunk | ToolCallChunk]
+            CommandId, Sender[TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk]
         ] = {}
         self._image_generation_queues: dict[
             CommandId, Sender[ImageChunk | ErrorChunk]
@@ -537,39 +539,39 @@ class API:
 
     async def _token_chunk_stream(
         self, command_id: CommandId
-    ) -> AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None]:
+    ) -> AsyncGenerator[TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk, None]:
         """Yield chunks for a given command until completion.
 
         This is the internal low-level stream used by all API adapters.
         """
         try:
             self._text_generation_queues[command_id], recv = channel[
-                ErrorChunk | ToolCallChunk | TokenChunk
+                TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk
             ]()
 
             with recv as token_chunks:
                 async for chunk in token_chunks:
                     yield chunk
+                    if isinstance(chunk, PrefillProgressChunk):
+                        continue
                     if chunk.finish_reason is not None:
                         break
 
         except anyio.get_cancelled_exc_class():
-            # TODO: TaskCancelled
-            """
-            self.command_sender.send_nowait(
-                ForwarderCommand(origin=self.node_id, command=command)
-            )
-            """
+            command = TaskCancelled(cancelled_command_id=command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(origin=self.node_id, command=command)
+                )
             raise
         finally:
-            command = TaskFinished(finished_command_id=command_id)
-            await self._send(command)
+            await self._send(TaskFinished(finished_command_id=command_id))
             if command_id in self._text_generation_queues:
                 del self._text_generation_queues[command_id]
 
     async def _conversation_tracking_stream(
         self, command_id: CommandId
-    ) -> AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk, None]:
+    ) -> AsyncGenerator[ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressChunk, None]:
         """Wraps _token_chunk_stream to accumulate text and persist to ConversationStore."""
         text_parts: list[str] = []
         model: str | None = None
@@ -614,6 +616,9 @@ class API:
         stats: GenerationStats | None = None
 
         async for chunk in self._token_chunk_stream(command_id):
+            if isinstance(chunk, PrefillProgressChunk):
+                continue
+
             if chunk.finish_reason == "error":
                 raise HTTPException(
                     status_code=500,
@@ -936,6 +941,11 @@ class API:
                         del image_metadata[key]
 
         except anyio.get_cancelled_exc_class():
+            command = TaskCancelled(cancelled_command_id=command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(origin=self.node_id, command=command)
+                )
             raise
         finally:
             await self._send(TaskFinished(finished_command_id=command_id))
@@ -1017,6 +1027,11 @@ class API:
 
             return (images, stats if capture_stats else None)
         except anyio.get_cancelled_exc_class():
+            command = TaskCancelled(cancelled_command_id=command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(origin=self.node_id, command=command)
+                )
             raise
         finally:
             await self._send(TaskFinished(finished_command_id=command_id))
@@ -1275,10 +1290,13 @@ class API:
                 },
             )
 
-        return await collect_claude_response(
-            command.command_id,
-            payload.model,
-            self._token_chunk_stream(command.command_id),
+        return StreamingResponse(
+            collect_claude_response(
+                command.command_id,
+                payload.model,
+                self._token_chunk_stream(command.command_id),
+            ),
+            media_type="application/json",
         )
 
     async def openai_responses(
@@ -1307,10 +1325,13 @@ class API:
                 },
             )
 
-        return await collect_responses_response(
-            command.command_id,
-            payload.model,
-            self._token_chunk_stream(command.command_id),
+        return StreamingResponse(
+            collect_responses_response(
+                command.command_id,
+                payload.model,
+                self._token_chunk_stream(command.command_id),
+            ),
+            media_type="application/json",
         )
 
     def _calculate_total_available_memory(self) -> Memory:
@@ -1485,6 +1506,8 @@ class API:
     async def _apply_state(self):
         with self.global_event_receiver as events:
             async for f_event in events:
+                if f_event.session != self.session_id:
+                    continue
                 if f_event.origin != self.session_id.master_node_id:
                     continue
                 self.event_buffer.ingest(f_event.origin_idx, f_event.event)
