@@ -1,4 +1,5 @@
 import math
+import re
 import resource
 import time
 from collections.abc import Generator
@@ -80,7 +81,15 @@ from exo.worker.engines.mlx.utils_mlx import (
 )
 from exo.worker.runner.bootstrap import logger
 
-from .tool_parsers import ToolParser, make_mlx_parser
+from .tool_parsers import (
+    LLAMA3_EOM,
+    LLAMA3_EOT,
+    LLAMA3_SPECIAL_TOKENS,
+    LLAMA3_TOOL_START,
+    ToolParser,
+    llama3_tool_parser,
+    make_mlx_parser,
+)
 
 
 def main(
@@ -110,6 +119,7 @@ def main(
     inference_model: Model | None = None
     tokenizer = None
     tool_parser: ToolParser | None = None
+    is_llama3 = False
     group = None
     kv_prefix_cache: KVPrefixCache | None = None
     check_for_cancel_every: int | None = None
@@ -188,6 +198,26 @@ def main(
                             tokenizer.tool_call_end,
                             tokenizer.tool_parser,  # pyright: ignore[reportAny]
                         )
+
+                    # Llama 3 instruct: detect <|python_tag|> in vocab and
+                    # set up tool parser + EOS tokens if mlx_lm didn't.
+                    vocab = tokenizer.get_vocab()
+                    is_llama3 = LLAMA3_TOOL_START in vocab
+                    if is_llama3:
+                        logger.info("detected Llama 3 instruct model")
+                        if tool_parser is None:
+                            tool_parser = llama3_tool_parser
+                            logger.info("assigned llama3 tool parser")
+                        # Ensure Llama 3 end-of-message and end-of-turn
+                        # tokens stop generation instead of leaking into output.
+                        for token in (LLAMA3_EOM, LLAMA3_EOT):
+                            if token in vocab:
+                                try:
+                                    tokenizer.add_eos_token(token)
+                                    logger.info(f"added EOS token: {token}")
+                                except ValueError:
+                                    logger.warning(f"failed to add EOS token: {token}")
+
                     kv_prefix_cache = KVPrefixCache(group)
                     current_status = RunnerLoaded()
                     logger.info("runner loaded")
@@ -311,6 +341,10 @@ def main(
                             mlx_generator = parse_deepseek_v32(mlx_generator)
                         elif tool_parser:
                             mlx_generator = parse_tool_calls(mlx_generator, tool_parser)
+
+                        # Strip leaked special tokens from Llama 3 instruct output.
+                        if is_llama3:
+                            mlx_generator = strip_llama3_special_tokens(mlx_generator)
 
                         completion_tokens = 0
                         tokens_since_last_cancel_check = check_for_cancel_every
@@ -703,6 +737,39 @@ def parse_thinking_models(
         yield response.model_copy(update={"is_thinking": in_thinking})
 
 
+# Pre-compile regex for Llama 3 special token stripping.
+_LLAMA3_TOKEN_RE = re.compile(
+    "|".join(re.escape(t) for t in sorted(LLAMA3_SPECIAL_TOKENS, key=len, reverse=True))
+)
+
+
+def strip_llama3_special_tokens(
+    responses: Generator[GenerationResponse | ToolCallResponse],
+) -> Generator[GenerationResponse | ToolCallResponse]:
+    """Remove leaked Llama 3 instruct special tokens from text output.
+
+    Runs as a final pass after tool call parsing. ToolCallResponse items
+    are passed through unchanged. For GenerationResponse, any special
+    token substrings are stripped — if the entire text was a special
+    token, the response is suppressed (unless it carries a finish_reason).
+    """
+    for response in responses:
+        if isinstance(response, ToolCallResponse):
+            yield response
+            continue
+
+        cleaned = _LLAMA3_TOKEN_RE.sub("", response.text)
+        if cleaned == response.text:
+            yield response
+        elif cleaned:
+            yield response.model_copy(update={"text": cleaned})
+        elif response.finish_reason is not None:
+            # Token was entirely a special token, but we need to
+            # preserve the finish_reason to terminate the stream.
+            yield response.model_copy(update={"text": ""})
+        # else: suppress the response entirely (just a special token)
+
+
 def parse_tool_calls(
     responses: Generator[GenerationResponse], tool_parser: ToolParser
 ) -> Generator[GenerationResponse | ToolCallResponse]:
@@ -736,16 +803,30 @@ def parse_tool_calls(
                 continue
 
             if response.finish_reason is not None:
-                logger.info(
-                    "tool call parsing interrupted, yield partial tool call as text"
-                )
-                response = response.model_copy(
-                    update={
-                        "text": "".join(tool_call_text_parts),
-                        "token": 0,
-                    }
-                )
-                yield response
+                # The end marker may be an EOS token (e.g. Llama 3's <|eom_id|>),
+                # so it never appears in text — try parsing accumulated text first.
+                accumulated = "".join(tool_call_text_parts).strip()
+                parsed = tool_parser.parse_tool_calls(accumulated)
+                if parsed is not None:
+                    logger.info(f"parsed tool calls on EOS: {parsed}")
+                    yield ToolCallResponse(
+                        tool_calls=parsed,
+                        usage=response.usage,
+                        stats=response.stats,
+                    )
+                else:
+                    logger.info(
+                        "tool call parsing interrupted by EOS, yielding as text"
+                    )
+                    yield response.model_copy(
+                        update={
+                            "text": accumulated,
+                            "token": 0,
+                        }
+                    )
+
+                in_tool_call = False
+                tool_call_text_parts = []
 
             continue
 
