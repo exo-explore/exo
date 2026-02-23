@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browser } from "$app/environment";
+  import { theme } from "$lib/stores/theme.svelte";
 
   export let showHome = true;
   export let onHome: (() => void) | null = null;
@@ -79,10 +80,48 @@
     />
   </button>
 
-  <!-- Right: Home + Downloads -->
+  <!-- Right: Theme toggle + Home + Downloads -->
   <div
     class="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-4"
   >
+    <button
+      onclick={() => theme.toggle()}
+      class="p-2 rounded border border-exo-medium-gray/40 hover:border-exo-yellow/50 transition-colors cursor-pointer"
+      title={theme.isLight ? "Switch to dark mode" : "Switch to light mode"}
+      aria-label={theme.isLight
+        ? "Switch to dark mode"
+        : "Switch to light mode"}
+    >
+      {#if theme.isLight}
+        <svg
+          class="w-4 h-4 text-exo-light-gray"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M21 12.79A9 9 0 1111.21 3a7 7 0 009.79 9.79z"
+          />
+        </svg>
+      {:else}
+        <svg
+          class="w-4 h-4 text-exo-light-gray"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <circle cx="12" cy="12" r="5" />
+          <path
+            stroke-linecap="round"
+            d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"
+          />
+        </svg>
+      {/if}
+    </button>
     {#if showHome}
       <button
         onclick={handleHome}
