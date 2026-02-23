@@ -21,7 +21,7 @@ rm -f /tmp/exo-rce-proof.txt
 if [ -f "$CARD_FILE" ]; then
   echo "[0] Removing stale card from previous run ..."
   curl -s -X DELETE \
-    "http://$HOST/models/custom/$(python3 -c 'import urllib.parse; print(urllib.parse.quote("'"$MODEL_ID"'", safe=""))')" > /dev/null
+    "http://$HOST/models/custom/$(python3 -c 'import urllib.parse; print(urllib.parse.quote("'"$MODEL_ID"'", safe=""))')" >/dev/null
   rm -f "$CARD_FILE"
   echo "    Done"
   echo ""
@@ -110,7 +110,7 @@ for iid, wrapper in state.get('instances', {}).items():
 
 if [ -n "$INSTANCE_ID" ]; then
   echo "    Deleting instance $INSTANCE_ID ..."
-  curl -s -X DELETE "http://$HOST/instance/$INSTANCE_ID" > /dev/null
+  curl -s -X DELETE "http://$HOST/instance/$INSTANCE_ID" >/dev/null
   echo "    Done"
 else
   echo "    No instance found to delete"
@@ -118,7 +118,7 @@ fi
 
 echo "    Deleting custom model card ..."
 curl -s -X DELETE \
-  "http://$HOST/models/custom/$(python3 -c 'import urllib.parse; print(urllib.parse.quote("'"$MODEL_ID"'", safe=""))')" > /dev/null
+  "http://$HOST/models/custom/$(python3 -c 'import urllib.parse; print(urllib.parse.quote("'"$MODEL_ID"'", safe=""))')" >/dev/null
 echo "    Done"
 
 echo ""
