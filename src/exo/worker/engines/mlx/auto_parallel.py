@@ -852,8 +852,6 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                 layer.self_attn.o_proj = self.sharded_to_all_linear(
                     layer.self_attn.o_proj
                 )
-                layer.self_attn.n_heads //= self.N
-                layer.self_attn.n_kv_heads //= self.N
             else:
                 assert isinstance(layer, Qwen3NextDecoderLayer)
                 if hasattr(layer, "linear_attn"):
