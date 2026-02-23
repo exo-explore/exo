@@ -5405,7 +5405,7 @@
                               <p
                                 class="text-[11px] text-green-400/70 leading-relaxed"
                               >
-                                Ready to chat! Type a message below.
+                                Ready to chat!
                               </p>
                             {/if}
                           </div>
@@ -6545,7 +6545,7 @@
                                 <p
                                   class="text-[11px] text-green-400/70 leading-relaxed"
                                 >
-                                  Ready to chat! Type a message below.
+                                  Ready to chat!
                                 </p>
                               {/if}
                             </div>
