@@ -64,7 +64,7 @@ class PrefillCancelled(BaseException):
     """Raised when prefill is cancelled via the progress callback."""
 
 
-def _has_pipeline_layer(model: Model):
+def _has_pipeline_communication_layer(model: Model):
     for layer in model.layers:
         if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
             return True
@@ -139,31 +139,30 @@ def pipeline_parallel_prefill(
 
     try:
         with mx.stream(generation_stream):
-            for i in range(n_total):
-                is_leading_dummy = i < n_leading
-                is_trailing_dummy = i >= n_leading + n_real
-                is_dummy = is_leading_dummy or is_trailing_dummy
+            for _ in range(n_leading):
+                if distributed_prompt_progress_callback is not None:
+                    distributed_prompt_progress_callback()
 
-                if is_dummy:
-                    pass
-                else:
-                    real_idx = i - n_leading
-                    chunk_size = real_chunk_sizes[real_idx]
-                    model(
-                        prompt[processed : processed + chunk_size][None],
-                        cache=_prompt_cache,
-                    )
-                    quantize_cache_fn(_prompt_cache)
-                    processed += chunk_size
+            for i in range(n_real):
+                chunk_size = real_chunk_sizes[i]
+                model(
+                    prompt[processed : processed + chunk_size][None],
+                    cache=_prompt_cache,
+                )
+                quantize_cache_fn(_prompt_cache)
+                processed += chunk_size
 
                 if distributed_prompt_progress_callback is not None:
                     distributed_prompt_progress_callback()
 
                 flush_prefill_sends()
 
-                if not is_dummy:
-                    # Only callback when something actually meaningful was computed
-                    prompt_progress_callback(processed, total)
+                prompt_progress_callback(processed, total)
+
+            for _ in range(n_leading):
+                if distributed_prompt_progress_callback is not None:
+                    distributed_prompt_progress_callback()
+
     finally:
         clear_prefill_sends()
 
@@ -236,7 +235,7 @@ def prefill(
     mx_barrier(group)
     logger.info("Starting prefill")
 
-    is_pipeline = _has_pipeline_layer(model)
+    is_pipeline = _has_pipeline_communication_layer(model)
 
     try:
         if is_pipeline:
