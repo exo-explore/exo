@@ -46,14 +46,16 @@ def infer_weight_shape(weight_key: str, config: ModelConfig) -> tuple[int, ...]:
     hidden_size = config.hidden_size
     intermediate_size = config.intermediate_size
     vocab_size = config.vocab_size
+
     kv_dim = config.num_key_value_heads * config.head_dim
+    q_dim = config.num_attention_heads * config.head_dim
 
     shape_map: dict[LayerType, tuple[int, ...]] = {
-        "q_proj": (hidden_size, hidden_size),
+        "q_proj": (q_dim, hidden_size),
         "k_proj": (kv_dim, hidden_size),
         "v_proj": (kv_dim, hidden_size),
-        "o_proj": (hidden_size, hidden_size),
-        "qkv_proj": (3 * hidden_size, hidden_size),
+        "o_proj": (hidden_size, q_dim),
+        "qkv_proj": (q_dim + 2 * kv_dim, hidden_size),
         "gate_proj": (intermediate_size, hidden_size),
         "up_proj": (intermediate_size, hidden_size),
         "down_proj": (hidden_size, intermediate_size),
@@ -65,5 +67,5 @@ def infer_weight_shape(weight_key: str, config: ModelConfig) -> tuple[int, ...]:
     if layer_type in shape_map:
         return shape_map[layer_type]
 
-    # Use hidden_size^2 as a generic fallback
-    return (hidden_size, hidden_size)
+    # Generic fallback
+    return (q_dim, hidden_size)

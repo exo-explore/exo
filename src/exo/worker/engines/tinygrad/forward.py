@@ -66,6 +66,9 @@ def _transformer_block(
                 num_heads = config.num_attention_heads,
                 num_kv_heads = config.num_key_value_heads,
                 head_dim = config.head_dim,
+                q_norm = layer.q_norm,
+                k_norm = layer.k_norm,
+                rms_norm_eps = config.rms_norm_eps,
             )
         case "multi_latent":
             raise NotImplementedError(

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from tinygrad.tensor import Tensor
 
+from exo.worker.engines.tinygrad.layers.normalization import rms_norm
 from exo.worker.engines.tinygrad.layers.rotary import apply_rope
 from exo.worker.engines.tinygrad.quantization.layers import QuantizedLinear
 
@@ -32,12 +33,20 @@ def grouped_query_attention(
     num_heads: int,
     num_kv_heads: int,
     head_dim: int,
+    q_norm: Tensor | None = None,
+    k_norm: Tensor | None = None,
+    rms_norm_eps: float = 1e-6,
 ) -> Tensor:
     _batch, seq_len, _ = x.shape
 
     q = linear_forward(x, q_proj).reshape(int(_batch), seq_len, num_heads, head_dim).permute(0, 2, 1, 3)  # pyright: ignore[reportUnknownMemberType]
     k = linear_forward(x, k_proj).reshape(int(_batch), seq_len, num_kv_heads, head_dim).permute(0, 2, 1, 3)  # pyright: ignore[reportUnknownMemberType]
     v = linear_forward(x, v_proj).reshape(int(_batch), seq_len, num_kv_heads, head_dim).permute(0, 2, 1, 3)  # pyright: ignore[reportUnknownMemberType]
+
+    if q_norm is not None:
+        q = rms_norm(q, q_norm, rms_norm_eps)
+    if k_norm is not None:
+        k = rms_norm(k, k_norm, rms_norm_eps)
 
     q = apply_rope(q, cos_freqs, sin_freqs, position_offset)
     k = apply_rope(k, cos_freqs, sin_freqs, position_offset)

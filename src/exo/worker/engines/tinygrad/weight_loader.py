@@ -32,6 +32,10 @@ class LayerWeights(NamedTuple):
     input_norm: Tensor
     post_attn_norm: Tensor
 
+    # Optional layers
+    q_norm: Tensor | None = None
+    k_norm: Tensor | None = None
+
     # MoE (None for dense models)
     router_weight: Tensor | None = None
     expert_gate_projs: list[LinearWeight] | None = None
@@ -109,6 +113,9 @@ def _build_layer_weights(
     def key(suffix: str) -> str:
         return f"{prefix}.{suffix}.weight"
 
+    q_norm = raw.get(f"{prefix}.{spec.q_norm_key}.weight") if spec.q_norm_key else None
+    k_norm = raw.get(f"{prefix}.{spec.k_norm_key}.weight") if spec.k_norm_key else None
+
     return LayerWeights(
         q_proj=_build_weight(raw, key(spec.q_proj_key), config),
         k_proj=_build_weight(raw, key(spec.k_proj_key), config),
@@ -119,6 +126,8 @@ def _build_layer_weights(
         down_proj=_build_weight(raw, key(spec.down_proj_key), config),
         input_norm=raw[f"{prefix}.{spec.input_norm_key}.weight"],
         post_attn_norm=raw[f"{prefix}.{spec.post_attn_norm_key}.weight"],
+        q_norm=q_norm,
+        k_norm=k_norm,
     )
 
 @overload

@@ -28,6 +28,11 @@ class ArchitectureSpec(BaseModel, frozen=True, strict=True):
     final_norm_key: str
     lm_head_key: str
 
+    # Optional normalised keys
+
+    q_norm_key: str | None = None
+    k_norm_key: str | None = None
+
     # MoE (optional, follow-up)
     router_key: str | None = None
     expert_prefix: str | None = None
