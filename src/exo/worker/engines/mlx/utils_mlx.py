@@ -642,7 +642,7 @@ class NullKVCache(KVCache):
         raise NotImplementedError("We should not be setting a NullKVCache.")
 
 
-def mlx_force_oom(size: int = 40000) -> None:
+def mlx_force_oom(size: int = 200000) -> None:
     """
     Force an Out-Of-Memory (OOM) error in MLX by performing large tensor operations.
     """

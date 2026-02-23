@@ -18,14 +18,14 @@ def entrypoint(
     cancel_receiver: MpReceiver[TaskId],
     _logger: "loguru.Logger",
 ) -> None:
+    global logger
+    logger = _logger
+
     fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
     if fast_synch_override != "off":
         os.environ["MLX_METAL_FAST_SYNCH"] = "1"
     else:
         os.environ["MLX_METAL_FAST_SYNCH"] = "0"
-
-    global logger
-    logger = _logger
 
     logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
 

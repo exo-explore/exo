@@ -1,7 +1,7 @@
 import contextlib
+import multiprocessing as mp
 import signal
 from dataclasses import dataclass, field
-from multiprocessing import Process
 from typing import Self
 
 import anyio
@@ -32,6 +32,7 @@ from exo.shared.types.worker.runners import (
 )
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.channels import MpReceiver, MpSender, Sender, mp_channel
+from exo.utils.task_group import TaskGroup
 from exo.worker.runner.bootstrap import entrypoint
 
 PREFILL_TIMEOUT_SECONDS = 60
@@ -42,16 +43,20 @@ DECODE_TIMEOUT_SECONDS = 5
 class RunnerSupervisor:
     shard_metadata: ShardMetadata
     bound_instance: BoundInstance
-    runner_process: Process
+    runner_process: mp.Process
     initialize_timeout: float
     _ev_recv: MpReceiver[Event]
     _task_sender: MpSender[Task]
     _event_sender: Sender[Event]
     _cancel_sender: MpSender[TaskId]
+    _tg: TaskGroup = field(default_factory=TaskGroup, init=False)
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
     completed: set[TaskId] = field(default_factory=set, init=False)
     cancelled: set[TaskId] = field(default_factory=set, init=False)
+    _cancel_watch_runner: anyio.CancelScope = field(
+        default_factory=anyio.CancelScope, init=False
+    )
 
     @classmethod
     def create(
@@ -65,7 +70,7 @@ class RunnerSupervisor:
         task_sender, task_recv = mp_channel[Task]()
         cancel_sender, cancel_recv = mp_channel[TaskId]()
 
-        runner_process = Process(
+        runner_process = mp.Process(
             target=entrypoint,
             args=(
                 bound_instance,
@@ -94,12 +99,17 @@ class RunnerSupervisor:
 
     async def run(self):
         self.runner_process.start()
-        await self._forward_events()
+        async with self._tg as tg:
+            tg.start_soon(self._watch_runner)
+            tg.start_soon(self._forward_events)
 
     def shutdown(self):
         logger.info("Runner supervisor shutting down")
+        self._tg.cancel_tasks()
         self._ev_recv.close()
         self._task_sender.close()
+        if not self._cancel_watch_runner.cancel_called:
+            self._cancel_watch_runner.cancel()
         with contextlib.suppress(ClosedResourceError):
             self._cancel_sender.send(TaskId("CANCEL_CURRENT_TASK"))
         self._cancel_sender.close()
@@ -151,8 +161,8 @@ class RunnerSupervisor:
             await self._check_runner(TimeoutError("cancel pipe blocked"))
 
     async def _forward_events(self):
-        with self._ev_recv as events:
-            try:
+        try:
+            with self._ev_recv as events:
                 async for event in events:
                     if isinstance(event, RunnerStatusUpdated):
                         self.status = event.runner_status
@@ -176,25 +186,34 @@ class RunnerSupervisor:
                         )
                         self.completed.add(event.task_id)
                     await self._event_sender.send(event)
-            except (ClosedResourceError, BrokenResourceError) as e:
-                await self._check_runner(e)
-                for tid in self.pending:
-                    self.pending[tid].set()
-        self._event_sender.close()
+        except (ClosedResourceError, BrokenResourceError) as e:
+            await self._check_runner(e)
+        finally:
+            for tid in self.pending:
+                self.pending[tid].set()
 
     def __del__(self) -> None:
         if self.runner_process.is_alive():
-            logger.warning("RunnerSupervisor was not stopped cleanly.")
+            logger.critical("RunnerSupervisor was not stopped cleanly.")
             with contextlib.suppress(ValueError):
                 self.runner_process.kill()
 
+    async def _watch_runner(self) -> None:
+        with self._cancel_watch_runner:
+            while True:
+                await anyio.sleep(5)
+                if not self.runner_process.is_alive():
+                    await self._check_runner(RuntimeError("Runner found to be dead"))
+
     async def _check_runner(self, e: Exception) -> None:
+        if not self._cancel_watch_runner.cancel_called:
+            self._cancel_watch_runner.cancel()
         logger.info("Checking runner's status")
         if self.runner_process.is_alive():
             logger.info("Runner was found to be alive, attempting to join process")
             await to_thread.run_sync(self.runner_process.join, 5)
         rc = self.runner_process.exitcode
-        logger.info(f"RunnerSupervisor exited with exit code {rc}")
+        logger.info(f"Runner exited with exit code {rc}")
         if rc == 0:
             return
 
@@ -207,15 +226,19 @@ class RunnerSupervisor:
         else:
             cause = f"exitcode={rc}"
 
-        logger.opt(exception=e).error(f"Runner terminated ({cause})")
+        logger.opt(exception=e).error(f"Runner terminated with {cause}")
 
         try:
-            await self._event_sender.send(
-                RunnerStatusUpdated(
-                    runner_id=self.bound_instance.bound_runner_id,
-                    runner_status=RunnerFailed(error_message=f"Terminated ({cause})"),
+            self.status = RunnerFailed(error_message=f"Terminated ({cause})")
+            with anyio.CancelScope(shield=True):
+                await self._event_sender.send(
+                    RunnerStatusUpdated(
+                        runner_id=self.bound_instance.bound_runner_id,
+                        runner_status=RunnerFailed(
+                            error_message=f"Terminated ({cause})"
+                        ),
+                    )
                 )
-            )
         except (ClosedResourceError, BrokenResourceError):
             logger.warning(
                 "Event sender already closed, unable to report runner failure"
