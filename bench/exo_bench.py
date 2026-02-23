@@ -338,7 +338,7 @@ def main() -> int:
     )
 
     logger.info("Planning phase: checking downloads...")
-    run_planning_phase(
+    download_duration_s = run_planning_phase(
         client,
         full_model_id,
         selected[0],
@@ -346,6 +346,10 @@ def main() -> int:
         args.timeout,
         settle_deadline,
     )
+    if download_duration_s is not None:
+        logger.info(f"Download: {download_duration_s:.1f}s (freshly downloaded)")
+    else:
+        logger.info("Download: model already cached")
 
     all_rows: list[dict[str, Any]] = []
 
@@ -409,6 +413,11 @@ def main() -> int:
                             "pp_tokens": actual_pp_tokens,
                             "tg": tg,
                             "repeat_index": r,
+                            **(
+                                {"download_duration_s": download_duration_s}
+                                if download_duration_s is not None
+                                else {}
+                            ),
                         }
                     )
                     runs.append(row)

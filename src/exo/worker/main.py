@@ -1,13 +1,12 @@
 from collections import defaultdict
 from datetime import datetime, timezone
 from random import random
-from typing import Iterator
 
 import anyio
-from anyio import CancelScope, create_task_group, fail_after
-from anyio.abc import TaskGroup
+from anyio import CancelScope, fail_after
 from loguru import logger
 
+from exo.download.download_utils import resolve_model_in_path
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.api import ImageEditsTaskParams
@@ -17,13 +16,15 @@ from exo.shared.types.commands import (
     RequestEventLog,
     StartDownload,
 )
-from exo.shared.types.common import CommandId, NodeId, SessionId
+from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     Event,
     EventId,
-    ForwarderEvent,
+    GlobalForwarderEvent,
     IndexedEvent,
     InputChunkReceived,
+    LocalForwarderEvent,
+    NodeDownloadProgress,
     NodeGatheredInfo,
     TaskCreated,
     TaskStatusUpdated,
@@ -42,12 +43,14 @@ from exo.shared.types.tasks import (
     TaskStatus,
 )
 from exo.shared.types.topology import Connection, SocketConnection
+from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
 from exo.utils.info_gatherer.net_profile import check_reachable
 from exo.utils.keyed_backoff import KeyedBackoff
+from exo.utils.task_group import TaskGroup
 from exo.worker.plan import plan
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
@@ -58,33 +61,33 @@ class Worker:
         node_id: NodeId,
         session_id: SessionId,
         *,
-        global_event_receiver: Receiver[ForwarderEvent],
-        local_event_sender: Sender[ForwarderEvent],
+        global_event_receiver: Receiver[GlobalForwarderEvent],
+        local_event_sender: Sender[LocalForwarderEvent],
         # This is for requesting updates. It doesn't need to be a general command sender right now,
         # but I think it's the correct way to be thinking about commands
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
-        event_index_counter: Iterator[int],
     ):
         self.node_id: NodeId = node_id
         self.session_id: SessionId = session_id
 
         self.global_event_receiver = global_event_receiver
         self.local_event_sender = local_event_sender
-        self.event_index_counter = event_index_counter
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.event_buffer = OrderedBuffer[Event]()
-        self.out_for_delivery: dict[EventId, ForwarderEvent] = {}
+        self.out_for_delivery: dict[EventId, LocalForwarderEvent] = {}
 
         self.state: State = State()
         self.runners: dict[RunnerId, RunnerSupervisor] = {}
-        self._tg: TaskGroup = create_task_group()
+        self._tg: TaskGroup = TaskGroup()
 
         self._nack_cancel_scope: CancelScope | None = None
         self._nack_attempts: int = 0
         self._nack_base_seconds: float = 0.5
         self._nack_cap_seconds: float = 10.0
+
+        self._system_id = SystemId()
 
         self.event_sender, self.event_receiver = channel[Event]()
 
@@ -132,6 +135,8 @@ class Worker:
     async def _event_applier(self):
         with self.global_event_receiver as events:
             async for f_event in events:
+                if f_event.session != self.session_id:
+                    continue
                 if f_event.origin != self.session_id.master_node_id:
                     continue
                 self.event_buffer.ingest(f_event.origin_idx, f_event.event)
@@ -210,20 +215,44 @@ class Worker:
                     model_id = shard.model_card.model_id
                     self._download_backoff.record_attempt(model_id)
 
-                    await self.download_command_sender.send(
-                        ForwarderDownloadCommand(
-                            origin=self.node_id,
-                            command=StartDownload(
-                                target_node_id=self.node_id,
-                                shard_metadata=shard,
-                            ),
+                    found_path = resolve_model_in_path(model_id)
+                    if found_path is not None:
+                        logger.info(
+                            f"Model {model_id} found in EXO_MODELS_PATH at {found_path}"
                         )
-                    )
-                    await self.event_sender.send(
-                        TaskStatusUpdated(
-                            task_id=task.task_id, task_status=TaskStatus.Running
+                        await self.event_sender.send(
+                            NodeDownloadProgress(
+                                download_progress=DownloadCompleted(
+                                    node_id=self.node_id,
+                                    shard_metadata=shard,
+                                    model_directory=str(found_path),
+                                    total=shard.model_card.storage_size,
+                                    read_only=True,
+                                )
+                            )
                         )
-                    )
+                        await self.event_sender.send(
+                            TaskStatusUpdated(
+                                task_id=task.task_id,
+                                task_status=TaskStatus.Complete,
+                            )
+                        )
+                    else:
+                        await self.download_command_sender.send(
+                            ForwarderDownloadCommand(
+                                origin=self._system_id,
+                                command=StartDownload(
+                                    target_node_id=self.node_id,
+                                    shard_metadata=shard,
+                                ),
+                            )
+                        )
+                        await self.event_sender.send(
+                            TaskStatusUpdated(
+                                task_id=task.task_id,
+                                task_status=TaskStatus.Running,
+                            )
+                        )
                 case Shutdown(runner_id=runner_id):
                     runner = self.runners.pop(runner_id)
                     try:
@@ -288,7 +317,7 @@ class Worker:
                     await self._start_runner_task(task)
 
     def shutdown(self):
-        self._tg.cancel_scope.cancel()
+        self._tg.cancel_tasks()
 
     async def _start_runner_task(self, task: Task):
         if (instance := self.state.instances.get(task.instance_id)) is not None:
@@ -317,7 +346,7 @@ class Worker:
                 )
                 await self.command_sender.send(
                     ForwarderCommand(
-                        origin=self.node_id,
+                        origin=self._system_id,
                         command=RequestEventLog(since_idx=since_idx),
                     )
                 )
@@ -344,15 +373,16 @@ class Worker:
         return runner
 
     async def _forward_events(self) -> None:
+        idx = 0
         with self.event_receiver as events:
             async for event in events:
-                idx = next(self.event_index_counter)
-                fe = ForwarderEvent(
+                fe = LocalForwarderEvent(
                     origin_idx=idx,
-                    origin=self.node_id,
+                    origin=self._system_id,
                     session=self.session_id,
                     event=event,
                 )
+                idx += 1
                 logger.debug(f"Worker published event {idx}: {str(event)[:100]}")
                 await self.local_event_sender.send(fe)
                 self.out_for_delivery[event.event_id] = fe

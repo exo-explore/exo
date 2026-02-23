@@ -8,8 +8,7 @@ from subprocess import CalledProcessError
 from typing import Self, cast
 
 import anyio
-from anyio import create_task_group, fail_after, open_process, to_thread
-from anyio.abc import TaskGroup
+from anyio import fail_after, open_process, to_thread
 from anyio.streams.buffered import BufferedByteReceiveStream
 from anyio.streams.text import TextReceiveStream
 from loguru import logger
@@ -30,6 +29,7 @@ from exo.shared.types.thunderbolt import (
 )
 from exo.utils.channels import Sender
 from exo.utils.pydantic_ext import TaggedModel
+from exo.utils.task_group import TaskGroup
 
 from .macmon import MacmonMetrics
 from .system_info import (
@@ -381,13 +381,19 @@ class InfoGatherer:
     static_info_poll_interval: float | None = 60
     rdma_ctl_poll_interval: float | None = 10 if IS_DARWIN else None
     disk_poll_interval: float | None = 30
-    _tg: TaskGroup = field(init=False, default_factory=create_task_group)
+    _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     async def run(self):
         async with self._tg as tg:
             if IS_DARWIN:
                 if (macmon_path := shutil.which("macmon")) is not None:
                     tg.start_soon(self._monitor_macmon, macmon_path)
+                else:
+                    # macmon not installed — fall back to psutil for memory
+                    logger.warning(
+                        "macmon not found, falling back to psutil for memory monitoring"
+                    )
+                    self.memory_poll_rate = 1
                 tg.start_soon(self._monitor_system_profiler_thunderbolt_data)
                 tg.start_soon(self._monitor_thunderbolt_bridge_status)
                 tg.start_soon(self._monitor_rdma_ctl_status)
@@ -402,7 +408,7 @@ class InfoGatherer:
                 await self.info_sender.send(nc)
 
     def shutdown(self):
-        self._tg.cancel_scope.cancel()
+        self._tg.cancel_tasks()
 
     async def _monitor_static_info(self):
         if self.static_info_poll_interval is None:

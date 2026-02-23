@@ -4,8 +4,8 @@ from collections.abc import Generator
 from typing import Any
 
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
-from exo.worker.runner.runner import parse_tool_calls
-from exo.worker.runner.tool_parsers import make_mlx_parser
+from exo.worker.runner.llm_inference.runner import parse_tool_calls
+from exo.worker.runner.llm_inference.tool_parsers import make_mlx_parser
 
 
 def _make_responses(

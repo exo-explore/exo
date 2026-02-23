@@ -11,8 +11,7 @@ from typing import Annotated, Literal, cast
 from uuid import uuid4
 
 import anyio
-from anyio import BrokenResourceError, create_task_group
-from anyio.abc import TaskGroup
+from anyio import BrokenResourceError
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -51,6 +50,7 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
+    EXO_CACHE_HOME,
     EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
@@ -140,11 +140,11 @@ from exo.shared.types.commands import (
     TaskFinished,
     TextGeneration,
 )
-from exo.shared.types.common import CommandId, Id, NodeId, SessionId
+from exo.shared.types.common import CommandId, Id, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
-    ForwarderEvent,
+    GlobalForwarderEvent,
     IndexedEvent,
     TracesMerged,
 )
@@ -173,8 +173,10 @@ from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
+from exo.utils.task_group import TaskGroup
 
 _API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
+ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
 
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
@@ -197,8 +199,7 @@ class API:
         session_id: SessionId,
         *,
         port: int,
-        # Ideally this would be a MasterForwarderEvent but type system says no :(
-        global_event_receiver: Receiver[ForwarderEvent],
+        global_event_receiver: Receiver[GlobalForwarderEvent],
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
@@ -206,6 +207,7 @@ class API:
     ) -> None:
         self.state = State()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
+        self._system_id = SystemId()
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.global_event_receiver = global_event_receiver
@@ -250,13 +252,14 @@ class API:
             CommandId, Sender[ImageChunk | ErrorChunk]
         ] = {}
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
-        self._tg: TaskGroup | None = None
+        self._tg: TaskGroup = TaskGroup()
 
     def reset(self, new_session_id: SessionId, result_clock: int):
         logger.info("Resetting API State")
         self._event_log.close()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
         self.state = State()
+        self._system_id = SystemId()
         self.session_id = new_session_id
         self.event_buffer = OrderedBuffer[Event]()
         self._text_generation_queues = {}
@@ -344,6 +347,8 @@ class API:
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
         self.app.get("/v1/traces/{task_id}/stats")(self.get_trace_stats)
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
+        self.app.get("/onboarding")(self.get_onboarding)
+        self.app.post("/onboarding")(self.complete_onboarding)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -589,7 +594,7 @@ class API:
             command = TaskCancelled(cancelled_command_id=command_id)
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(
-                    ForwarderCommand(origin=self.node_id, command=command)
+                    ForwarderCommand(origin=self._system_id, command=command)
                 )
             raise
         finally:
@@ -937,7 +942,7 @@ class API:
             command = TaskCancelled(cancelled_command_id=command_id)
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(
-                    ForwarderCommand(origin=self.node_id, command=command)
+                    ForwarderCommand(origin=self._system_id, command=command)
                 )
             raise
         finally:
@@ -1023,7 +1028,7 @@ class API:
             command = TaskCancelled(cancelled_command_id=command_id)
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(
-                    ForwarderCommand(origin=self.node_id, command=command)
+                    ForwarderCommand(origin=self._system_id, command=command)
                 )
             raise
         finally:
@@ -1586,8 +1591,7 @@ class API:
         shutdown_ev = anyio.Event()
 
         try:
-            async with create_task_group() as tg:
-                self._tg = tg
+            async with self._tg as tg:
                 logger.info("Starting API")
                 tg.start_soon(self._apply_state)
                 tg.start_soon(self._pause_on_new_election)
@@ -1621,6 +1625,8 @@ class API:
     async def _apply_state(self):
         with self.global_event_receiver as events:
             async for f_event in events:
+                if f_event.session != self.session_id:
+                    continue
                 if f_event.origin != self.session_id.master_node_id:
                     continue
                 self.event_buffer.ingest(f_event.origin_idx, f_event.event)
@@ -1684,12 +1690,12 @@ class API:
         while self.paused:
             await self.paused_ev.wait()
         await self.command_sender.send(
-            ForwarderCommand(origin=self.node_id, command=command)
+            ForwarderCommand(origin=self._system_id, command=command)
         )
 
     async def _send_download(self, command: DownloadCommand):
         await self.download_command_sender.send(
-            ForwarderDownloadCommand(origin=self.node_id, command=command)
+            ForwarderDownloadCommand(origin=self._system_id, command=command)
         )
 
     async def start_download(
@@ -1811,3 +1817,11 @@ class API:
             media_type="application/json",
             filename=f"trace_{task_id}.json",
         )
+
+    async def get_onboarding(self) -> JSONResponse:
+        return JSONResponse({"completed": ONBOARDING_COMPLETE_FILE.exists()})
+
+    async def complete_onboarding(self) -> JSONResponse:
+        ONBOARDING_COMPLETE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ONBOARDING_COMPLETE_FILE.write_text("true")
+        return JSONResponse({"completed": True})

@@ -30,11 +30,13 @@ class BaseDownloadProgress(TaggedModel):
 
 
 class DownloadPending(BaseDownloadProgress):
-    pass
+    downloaded: Memory = Memory()
+    total: Memory = Memory()
 
 
 class DownloadCompleted(BaseDownloadProgress):
     total: Memory
+    read_only: bool = False
 
 
 class DownloadFailed(BaseDownloadProgress):

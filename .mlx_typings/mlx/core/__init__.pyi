@@ -215,6 +215,22 @@ class StreamContext:
         traceback: object | None = ...,
     ) -> None: ...
 
+def device_info() -> dict[str, str | int]:
+    """
+    Get information about the GPU device and system settings.
+
+    Currently returns:
+
+    * ``architecture``
+    * ``max_buffer_size``
+    * ``max_recommended_working_set_size``
+    * ``memory_size``
+    * ``resource_limit``
+
+    Returns:
+        dict: A dictionary with string keys and string or integer values.
+    """
+
 def abs(a: array, /, *, stream: Stream | Device | None = ...) -> array:
     """
     Element-wise absolute value.

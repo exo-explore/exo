@@ -202,6 +202,23 @@
 	filter: drop-shadow(0 0 3px oklch(0.85 0.18 85 / 0.5));
 }
 
+/* Onboarding step 2: connection line between devices */
+.onboarding-connection-line {
+	stroke: oklch(0.85 0.18 85 / 0.5);
+	stroke-width: 1.5px;
+	stroke-dasharray: 6, 6;
+	animation: flowAnimation 1s linear infinite;
+	filter: drop-shadow(0 0 4px oklch(0.85 0.18 85 / 0.4));
+}
+
+/* Onboarding step 4: red connection line for disconnect */
+.onboarding-connection-line-red {
+	stroke: rgba(220, 38, 38, 0.7);
+	stroke-width: 1.5px;
+	stroke-dasharray: 6, 6;
+	filter: drop-shadow(0 0 2px rgba(220, 38, 38, 0.3));
+}
+
 .graph-link-active {
 	stroke: oklch(0.85 0.18 85 / 0.8);
 	stroke-width: 2px;
@@ -318,5 +335,53 @@ input:focus, textarea:focus {
 	100% {
 		opacity: 0;
 		transform: translate(400px, 400px);
+	}
+}
+
+/* Onboarding smooth fade-in */
+@keyframes onb-fade-in {
+	from { opacity: 0; transform: translateY(8px); }
+	to { opacity: 1; transform: none; }
+}
+
+/* Opacity-only fade-in — no transform, safe for containers with fixed-position children */
+@keyframes onb-fade-opacity {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+	.shooting-star,
+	.shooting-star::before {
+		animation: none !important;
+		opacity: 0 !important;
+	}
+	.graph-link {
+		animation: none;
+	}
+	.status-pulse {
+		animation: none;
+	}
+	.cursor-blink {
+		animation: none;
+	}
+	.onboarding-connection-line {
+		animation: none;
+	}
+	.onboarding-connection-line-red {
+		animation: none;
+	}
+	[style*="onb-fade-in"],
+	[style*="onb-fade-opacity"] {
+		animation: none !important;
+		opacity: 1 !important;
+	}
+	*,
+	*::before,
+	*::after {
+		transition-duration: 0.01ms !important;
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
 	}
 }

@@ -19,7 +19,7 @@ from exo.worker.engines.mlx.dsml_encoding import (
     encode_messages,
     parse_dsml_output,
 )
-from exo.worker.runner.runner import parse_deepseek_v32
+from exo.worker.runner.llm_inference.runner import parse_deepseek_v32
 
 # ── Shared fixtures ──────────────────────────────────────────────
 

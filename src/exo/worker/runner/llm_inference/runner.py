@@ -1,10 +1,9 @@
-import base64
 import math
 import resource
 import time
 from collections.abc import Generator
 from functools import cache
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, cast
 
 import mlx.core as mx
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
@@ -18,31 +17,22 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     load_harmony_encoding,
 )
 
-from exo.shared.constants import EXO_MAX_CHUNK_SIZE, EXO_TRACING_ENABLED
-from exo.shared.models.model_cards import ModelId, ModelTask
-from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
-from exo.shared.types.api import ImageGenerationStats
+from exo.shared.models.model_cards import ModelTask
 from exo.shared.types.chunks import (
     ErrorChunk,
-    ImageChunk,
     PrefillProgressChunk,
     TokenChunk,
     ToolCallChunk,
 )
-from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
-    TraceEventData,
-    TracesCollected,
 )
 from exo.shared.types.tasks import (
     ConnectToGroup,
-    ImageEdits,
-    ImageGeneration,
     LoadModel,
     Shutdown,
     StartWarmup,
@@ -55,8 +45,6 @@ from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
-    ImageGenerationResponse,
-    PartialImageResponse,
     ToolCallItem,
     ToolCallResponse,
 )
@@ -74,18 +62,7 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
-from exo.shared.types.worker.shards import (
-    CfgShardMetadata,
-    PipelineShardMetadata,
-    ShardMetadata,
-)
 from exo.utils.channels import MpReceiver, MpSender
-from exo.worker.engines.image import (
-    DistributedImageModel,
-    generate_image,
-    initialize_image_model,
-    warmup_image_generator,
-)
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import (
@@ -104,22 +81,6 @@ from exo.worker.engines.mlx.utils_mlx import (
 from exo.worker.runner.bootstrap import logger
 
 from .tool_parsers import ToolParser, make_mlx_parser
-
-
-def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:
-    """Check if this node is the primary output node for image generation.
-
-    For CFG models: the last pipeline stage in CFG group 0 (positive prompt).
-    For non-CFG models: the last pipeline stage.
-    """
-    if isinstance(shard_metadata, CfgShardMetadata):
-        is_pipeline_last = (
-            shard_metadata.pipeline_rank == shard_metadata.pipeline_world_size - 1
-        )
-        return is_pipeline_last and shard_metadata.cfg_rank == 0
-    elif isinstance(shard_metadata, PipelineShardMetadata):
-        return shard_metadata.device_rank == shard_metadata.world_size - 1
-    return False
 
 
 def main(
@@ -146,9 +107,7 @@ def main(
     setup_start_time = time.time()
     cancelled_tasks = set[TaskId]()
 
-    # type checker was unhappy with me - splitting these fixed it
     inference_model: Model | None = None
-    image_model: DistributedImageModel | None = None
     tokenizer = None
     tool_parser: ToolParser | None = None
     group = None
@@ -191,7 +150,10 @@ def main(
                 case LoadModel() if (
                     isinstance(current_status, RunnerConnected) and group is not None
                 ) or (isinstance(current_status, RunnerIdle) and group is None):
-                    current_status = RunnerLoading()
+                    total_layers = shard_metadata.end_layer - shard_metadata.start_layer
+                    current_status = RunnerLoading(
+                        layers_loaded=0, total_layers=total_layers
+                    )
                     logger.info("runner loading")
                     event_sender.send(
                         RunnerStatusUpdated(
@@ -211,33 +173,40 @@ def main(
                         )
                         time.sleep(0.5)
 
-                    if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
-                        inference_model, tokenizer = load_mlx_items(
-                            bound_instance, group, on_timeout=on_model_load_timeout
+                    def on_layer_loaded(layers_loaded: int, total: int) -> None:
+                        nonlocal current_status
+                        current_status = RunnerLoading(
+                            layers_loaded=layers_loaded, total_layers=total
                         )
-                        logger.info(
-                            f"model has_tool_calling={tokenizer.has_tool_calling} using tokens {tokenizer.tool_call_start}, {tokenizer.tool_call_end}"
-                        )
-                        if tokenizer.has_tool_calling:
-                            assert tokenizer.tool_call_start
-                            assert tokenizer.tool_call_end
-                            assert tokenizer.tool_parser  # pyright: ignore[reportAny]
-                            tool_parser = make_mlx_parser(
-                                tokenizer.tool_call_start,
-                                tokenizer.tool_call_end,
-                                tokenizer.tool_parser,  # pyright: ignore[reportAny]
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id,
+                                runner_status=current_status,
                             )
-                        kv_prefix_cache = KVPrefixCache(group)
-
-                    elif (
-                        ModelTask.TextToImage in shard_metadata.model_card.tasks
-                        or ModelTask.ImageToImage in shard_metadata.model_card.tasks
-                    ):
-                        image_model = initialize_image_model(bound_instance)
-                    else:
-                        raise ValueError(
-                            f"Unknown model task(s): {shard_metadata.model_card.tasks}"
                         )
+
+                    assert (
+                        ModelTask.TextGeneration in shard_metadata.model_card.tasks
+                    ), f"Incorrect model task(s): {shard_metadata.model_card.tasks}"
+                    inference_model, tokenizer = load_mlx_items(
+                        bound_instance,
+                        group,
+                        on_timeout=on_model_load_timeout,
+                        on_layer_loaded=on_layer_loaded,
+                    )
+                    logger.info(
+                        f"model has_tool_calling={tokenizer.has_tool_calling} using tokens {tokenizer.tool_call_start}, {tokenizer.tool_call_end}"
+                    )
+                    if tokenizer.has_tool_calling:
+                        assert tokenizer.tool_call_start
+                        assert tokenizer.tool_call_end
+                        assert tokenizer.tool_parser  # pyright: ignore[reportAny]
+                        tool_parser = make_mlx_parser(
+                            tokenizer.tool_call_start,
+                            tokenizer.tool_call_end,
+                            tokenizer.tool_parser,  # pyright: ignore[reportAny]
+                        )
+                    kv_prefix_cache = KVPrefixCache(group)
                     current_status = RunnerLoaded()
                     logger.info("runner loaded")
                 case StartWarmup() if isinstance(current_status, RunnerLoaded):
@@ -251,46 +220,34 @@ def main(
                     event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
                     logger.info(f"warming up inference for instance: {instance}")
-                    if ModelTask.TextGeneration in shard_metadata.model_card.tasks:
-                        assert inference_model
-                        assert tokenizer
+                    assert inference_model
+                    assert tokenizer
 
-                        t = time.monotonic()
-                        toks = warmup_inference(
-                            model=inference_model,
-                            tokenizer=tokenizer,
-                            group=group,
+                    t = time.monotonic()
+                    toks = warmup_inference(
+                        model=cast(Model, inference_model),
+                        tokenizer=tokenizer,
+                        group=group,
+                    )
+                    logger.info(f"warmed up by generating {toks} tokens")
+                    check_for_cancel_every = min(
+                        math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
+                    )
+                    if group is not None:
+                        check_for_cancel_every = int(
+                            mx.max(
+                                mx.distributed.all_gather(
+                                    mx.array([check_for_cancel_every]), group=group
+                                )
+                            ).item()
                         )
-                        logger.info(f"warmed up by generating {toks} tokens")
-                        check_for_cancel_every = min(
-                            math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
-                        )
-                        if group is not None:
-                            check_for_cancel_every = int(
-                                mx.max(
-                                    mx.distributed.all_gather(
-                                        mx.array([check_for_cancel_every]), group=group
-                                    )
-                                ).item()
-                            )
 
-                        logger.info(
-                            f"runner checking for cancellation every {check_for_cancel_every} tokens"
-                        )
-                        logger.info(
-                            f"runner initialized in {time.time() - setup_start_time} seconds"
-                        )
-                    elif (
-                        ModelTask.TextToImage in shard_metadata.model_card.tasks
-                        or ModelTask.ImageToImage in shard_metadata.model_card.tasks
-                    ):
-                        assert image_model
-                        image = warmup_image_generator(model=image_model)
-                        if image is not None:
-                            logger.info(f"warmed up by generating {image.size} image")
-                        else:
-                            logger.info("warmup completed (non-primary node)")
-
+                    logger.info(
+                        f"runner checking for cancellation every {check_for_cancel_every} tokens"
+                    )
+                    logger.info(
+                        f"runner initialized in {time.time() - setup_start_time} seconds"
+                    )
                     current_status = RunnerReady()
                     logger.info("runner ready")
                 case TextGeneration(task_params=task_params, command_id=command_id) if (
@@ -345,7 +302,7 @@ def main(
 
                         # Generate responses using the actual MLX generation
                         mlx_generator = mlx_generate(
-                            model=inference_model,
+                            model=cast(Model, inference_model),
                             tokenizer=tokenizer,
                             task=task_params,
                             prompt=prompt,
@@ -374,7 +331,7 @@ def main(
                             mlx_generator = parse_tool_calls(mlx_generator, tool_parser)
 
                         completion_tokens = 0
-                        tokens_since_last_cancel_check = 0
+                        tokens_since_last_cancel_check = check_for_cancel_every
                         for response in mlx_generator:
                             tokens_since_last_cancel_check += 1
                             if tokens_since_last_cancel_check >= check_for_cancel_every:
@@ -458,138 +415,12 @@ def main(
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
-                case ImageGeneration(
-                    task_params=task_params, command_id=command_id
-                ) if isinstance(current_status, RunnerReady):
-                    assert image_model
-                    logger.info(f"received image generation request: {str(task)[:500]}")
-                    current_status = RunnerRunning()
-                    logger.info("runner running")
-                    event_sender.send(
-                        RunnerStatusUpdated(
-                            runner_id=runner_id, runner_status=current_status
-                        )
-                    )
-                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
-                    try:
-                        image_index = 0
-                        for response in generate_image(
-                            model=image_model, task=task_params
-                        ):
-                            is_primary_output = _is_primary_output_node(shard_metadata)
-
-                            if is_primary_output:
-                                match response:
-                                    case PartialImageResponse():
-                                        logger.info(
-                                            f"sending partial ImageChunk {response.partial_index}/{response.total_partials}"
-                                        )
-                                        _process_image_response(
-                                            response,
-                                            command_id,
-                                            shard_metadata,
-                                            event_sender,
-                                            image_index,
-                                        )
-                                    case ImageGenerationResponse():
-                                        logger.info("sending final ImageChunk")
-                                        _process_image_response(
-                                            response,
-                                            command_id,
-                                            shard_metadata,
-                                            event_sender,
-                                            image_index,
-                                        )
-                                        image_index += 1
-                    # can we make this more explicit?
-                    except Exception as e:
-                        if _is_primary_output_node(shard_metadata):
-                            event_sender.send(
-                                ChunkGenerated(
-                                    command_id=command_id,
-                                    chunk=ErrorChunk(
-                                        model=shard_metadata.model_card.model_id,
-                                        finish_reason="error",
-                                        error_message=str(e),
-                                    ),
-                                )
-                            )
-                        raise
-                    finally:
-                        _send_traces_if_enabled(
-                            event_sender, task.task_id, shard_metadata.device_rank
-                        )
-
-                    current_status = RunnerReady()
-                    logger.info("runner ready")
-                case ImageEdits(task_params=task_params, command_id=command_id) if (
-                    isinstance(current_status, RunnerReady)
-                ):
-                    assert image_model
-                    logger.info(f"received image edits request: {str(task)[:500]}")
-                    current_status = RunnerRunning()
-                    logger.info("runner running")
-                    event_sender.send(
-                        RunnerStatusUpdated(
-                            runner_id=runner_id, runner_status=current_status
-                        )
-                    )
-                    event_sender.send(TaskAcknowledged(task_id=task.task_id))
-
-                    try:
-                        image_index = 0
-                        for response in generate_image(
-                            model=image_model, task=task_params
-                        ):
-                            if _is_primary_output_node(shard_metadata):
-                                match response:
-                                    case PartialImageResponse():
-                                        logger.info(
-                                            f"sending partial ImageChunk {response.partial_index}/{response.total_partials}"
-                                        )
-                                        _process_image_response(
-                                            response,
-                                            command_id,
-                                            shard_metadata,
-                                            event_sender,
-                                            image_index,
-                                        )
-                                    case ImageGenerationResponse():
-                                        logger.info("sending final ImageChunk")
-                                        _process_image_response(
-                                            response,
-                                            command_id,
-                                            shard_metadata,
-                                            event_sender,
-                                            image_index,
-                                        )
-                                        image_index += 1
-                    except Exception as e:
-                        if _is_primary_output_node(shard_metadata):
-                            event_sender.send(
-                                ChunkGenerated(
-                                    command_id=command_id,
-                                    chunk=ErrorChunk(
-                                        model=shard_metadata.model_card.model_id,
-                                        finish_reason="error",
-                                        error_message=str(e),
-                                    ),
-                                )
-                            )
-                        raise
-                    finally:
-                        _send_traces_if_enabled(
-                            event_sender, task.task_id, shard_metadata.device_rank
-                        )
-
-                    current_status = RunnerReady()
-                    logger.info("runner ready")
                 case Shutdown():
                     current_status = RunnerShuttingDown()
                     logger.info("runner shutting down")
                     if not TYPE_CHECKING:
-                        del inference_model, image_model, tokenizer, group
+                        del inference_model, tokenizer, group
                         mx.clear_cache()
                         import gc
 
@@ -888,104 +719,6 @@ def parse_thinking_models(
                 yield response.model_copy(update={"text": "", "is_thinking": False})
             continue
         yield response.model_copy(update={"is_thinking": in_thinking})
-
-
-def _send_image_chunk(
-    encoded_data: str,
-    command_id: CommandId,
-    model_id: ModelId,
-    event_sender: MpSender[Event],
-    image_index: int,
-    is_partial: bool,
-    partial_index: int | None = None,
-    total_partials: int | None = None,
-    stats: ImageGenerationStats | None = None,
-    image_format: Literal["png", "jpeg", "webp"] | None = None,
-) -> None:
-    """Send base64-encoded image data as chunks via events."""
-    data_chunks = [
-        encoded_data[i : i + EXO_MAX_CHUNK_SIZE]
-        for i in range(0, len(encoded_data), EXO_MAX_CHUNK_SIZE)
-    ]
-    total_chunks = len(data_chunks)
-    for chunk_index, chunk_data in enumerate(data_chunks):
-        # Only include stats on the last chunk of the final image
-        chunk_stats = (
-            stats if chunk_index == total_chunks - 1 and not is_partial else None
-        )
-        event_sender.send(
-            ChunkGenerated(
-                command_id=command_id,
-                chunk=ImageChunk(
-                    model=model_id,
-                    data=chunk_data,
-                    chunk_index=chunk_index,
-                    total_chunks=total_chunks,
-                    image_index=image_index,
-                    is_partial=is_partial,
-                    partial_index=partial_index,
-                    total_partials=total_partials,
-                    stats=chunk_stats,
-                    format=image_format,
-                ),
-            )
-        )
-
-
-def _send_traces_if_enabled(
-    event_sender: MpSender[Event],
-    task_id: TaskId,
-    rank: int,
-) -> None:
-    if not EXO_TRACING_ENABLED:
-        return
-
-    traces = get_trace_buffer()
-    if traces:
-        trace_data = [
-            TraceEventData(
-                name=t.name,
-                start_us=t.start_us,
-                duration_us=t.duration_us,
-                rank=t.rank,
-                category=t.category,
-            )
-            for t in traces
-        ]
-        event_sender.send(
-            TracesCollected(
-                task_id=task_id,
-                rank=rank,
-                traces=trace_data,
-            )
-        )
-    clear_trace_buffer()
-
-
-def _process_image_response(
-    response: ImageGenerationResponse | PartialImageResponse,
-    command_id: CommandId,
-    shard_metadata: ShardMetadata,
-    event_sender: MpSender[Event],
-    image_index: int,
-) -> None:
-    """Process a single image response and send chunks."""
-    encoded_data = base64.b64encode(response.image_data).decode("utf-8")
-    is_partial = isinstance(response, PartialImageResponse)
-    # Extract stats from final ImageGenerationResponse if available
-    stats = response.stats if isinstance(response, ImageGenerationResponse) else None
-    _send_image_chunk(
-        encoded_data=encoded_data,
-        command_id=command_id,
-        model_id=shard_metadata.model_card.model_id,
-        event_sender=event_sender,
-        image_index=response.image_index,
-        is_partial=is_partial,
-        partial_index=response.partial_index if is_partial else None,
-        total_partials=response.total_partials if is_partial else None,
-        stats=stats,
-        image_format=response.format,
-    )
 
 
 def parse_tool_calls(

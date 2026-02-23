@@ -6,7 +6,7 @@ from typing import Callable
 import mlx.core as mx
 import pytest
 
-import exo.worker.runner.runner as mlx_runner
+import exo.worker.runner.llm_inference.runner as mlx_runner
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -180,7 +180,7 @@ def _run(tasks: Iterable[Task]):
         task_receiver.close = nothin
         task_receiver.join = nothin
         with unittest.mock.patch(
-            "exo.worker.runner.runner.mx.distributed.all_gather",
+            "exo.worker.runner.llm_inference.runner.mx.distributed.all_gather",
             make_nothin(mx.array([1])),
         ):
             mlx_runner.main(
@@ -224,7 +224,10 @@ def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
             ),
             RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerConnected()),
             TaskStatusUpdated(task_id=LOAD_TASK_ID, task_status=TaskStatus.Running),
-            RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerLoading()),
+            RunnerStatusUpdated(
+                runner_id=RUNNER_1_ID,
+                runner_status=RunnerLoading(layers_loaded=0, total_layers=32),
+            ),
             TaskAcknowledged(task_id=LOAD_TASK_ID),
             TaskStatusUpdated(task_id=LOAD_TASK_ID, task_status=TaskStatus.Complete),
             RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerLoaded()),
