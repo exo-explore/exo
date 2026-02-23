@@ -823,6 +823,7 @@ async def download_shard(
 
     for file in filtered_file_list:
         downloaded_bytes = await get_downloaded_size(target_dir / file.path)
+        final_file_exists = await aios.path.exists(target_dir / file.path)
         file_progress[file.path] = RepoFileDownloadProgress(
             repo_id=shard.model_card.model_id,
             repo_revision=revision,
@@ -832,7 +833,9 @@ async def download_shard(
             total=Memory.from_bytes(file.size or 0),
             speed=0,
             eta=timedelta(0),
-            status="complete" if downloaded_bytes == file.size else "not_started",
+            status="complete"
+            if final_file_exists and downloaded_bytes == file.size
+            else "not_started",
             start_time=time.time(),
         )
 
