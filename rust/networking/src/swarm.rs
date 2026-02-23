@@ -1,10 +1,9 @@
 use std::pin::Pin;
-use std::task::Poll;
 
 use crate::swarm::transport::tcp_transport;
 use crate::{alias, discovery};
 pub use behaviour::{Behaviour, BehaviourEvent};
-use futures_lite::Stream;
+use futures_lite::{Stream, StreamExt};
 use libp2p::{PeerId, SwarmBuilder, gossipsub, identity, swarm::SwarmEvent};
 use tokio::sync::{mpsc, oneshot};
 
@@ -46,111 +45,101 @@ pub enum FromSwarm {
         peer_id: PeerId,
     },
 }
-#[pin_project::pin_project]
+
 pub struct Swarm {
-    #[pin]
-    inner: libp2p::Swarm<Behaviour>,
+    swarm: libp2p::Swarm<Behaviour>,
     from_client: mpsc::Receiver<ToSwarm>,
 }
+
 impl Swarm {
-    fn on_message(mut self: Pin<&mut Self>, message: ToSwarm) {
-        match message {
-            ToSwarm::Subscribe {
-                topic,
-                result_sender,
-            } => {
-                // try to subscribe
-                let result = self
-                    .inner
-                    .behaviour_mut()
-                    .gossipsub
-                    .subscribe(&gossipsub::IdentTopic::new(topic));
-
-                // send response oneshot
-                _ = result_sender.send(result)
-            }
-            ToSwarm::Unsubscribe {
-                topic,
-                result_sender,
-            } => {
-                // try to unsubscribe from the topic
-                let result = self
-                    .inner
-                    .behaviour_mut()
-                    .gossipsub
-                    .unsubscribe(&gossipsub::IdentTopic::new(topic));
-
-                // send response oneshot (or exit if connection closed)
-                _ = result_sender.send(result)
-            }
-            ToSwarm::Publish {
-                topic,
-                data,
-                result_sender,
-            } => {
-                // try to publish the data -> catch NoPeersSubscribedToTopic error & convert to correct exception
-                let result = self
-                    .inner
-                    .behaviour_mut()
-                    .gossipsub
-                    .publish(gossipsub::IdentTopic::new(topic), data);
-                // send response oneshot (or exit if connection closed)
-                _ = result_sender.send(result)
-            }
-        }
-    }
-}
-impl Stream for Swarm {
-    type Item = FromSwarm;
-    fn poll_next(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        loop {
-            let recv = self.as_mut().project().from_client;
-            match recv.poll_recv(cx) {
-                Poll::Ready(Some(msg)) => {
-                    self.as_mut().on_message(msg);
-                    // continue to re-poll after consumption
-                    continue;
+    pub fn into_stream(self) -> Pin<Box<dyn Stream<Item = FromSwarm> + Send>> {
+        let Swarm {
+            mut swarm,
+            mut from_client,
+        } = self;
+        let stream = async_stream::stream! {
+            loop {
+                tokio::select! {
+                    msg = from_client.recv() => {
+                        let Some(msg) = msg else { break };
+                        on_message(&mut swarm, msg);
+                    }
+                    event = swarm.next() => {
+                        let Some(event) = event else { break };
+                        if let Some(item) = filter_swarm_event(event) {
+                            yield item;
+                        }
+                    }
                 }
-                Poll::Ready(None) => return Poll::Ready(None),
-                Poll::Pending => {}
             }
-            let inner = self.as_mut().project().inner;
-            return match inner.poll_next(cx) {
-                Poll::Pending => Poll::Pending,
-                Poll::Ready(None) => Poll::Ready(None),
-                Poll::Ready(Some(swarm_event)) => match swarm_event {
-                    SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(
-                        gossipsub::Event::Message {
-                            message:
-                                gossipsub::Message {
-                                    source: Some(peer_id),
-                                    topic,
-                                    data,
-                                    ..
-                                },
-                            ..
-                        },
-                    )) => Poll::Ready(Some(FromSwarm::Message {
-                        from: peer_id,
-                        topic: topic.into_string(),
-                        data,
-                    })),
-                    SwarmEvent::Behaviour(BehaviourEvent::Discovery(
-                        discovery::Event::ConnectionEstablished { peer_id, .. },
-                    )) => Poll::Ready(Some(FromSwarm::Discovered { peer_id })),
-                    SwarmEvent::Behaviour(BehaviourEvent::Discovery(
-                        discovery::Event::ConnectionClosed { peer_id, .. },
-                    )) => Poll::Ready(Some(FromSwarm::Expired { peer_id })),
-                    // continue to re-poll after consumption
-                    _ => continue,
-                },
-            };
+        };
+        Box::pin(stream)
+    }
+}
+
+fn on_message(swarm: &mut libp2p::Swarm<Behaviour>, message: ToSwarm) {
+    match message {
+        ToSwarm::Subscribe {
+            topic,
+            result_sender,
+        } => {
+            let result = swarm
+                .behaviour_mut()
+                .gossipsub
+                .subscribe(&gossipsub::IdentTopic::new(topic));
+            _ = result_sender.send(result);
+        }
+        ToSwarm::Unsubscribe {
+            topic,
+            result_sender,
+        } => {
+            let result = swarm
+                .behaviour_mut()
+                .gossipsub
+                .unsubscribe(&gossipsub::IdentTopic::new(topic));
+            _ = result_sender.send(result);
+        }
+        ToSwarm::Publish {
+            topic,
+            data,
+            result_sender,
+        } => {
+            let result = swarm
+                .behaviour_mut()
+                .gossipsub
+                .publish(gossipsub::IdentTopic::new(topic), data);
+            _ = result_sender.send(result);
         }
     }
 }
+
+fn filter_swarm_event(event: SwarmEvent<BehaviourEvent>) -> Option<FromSwarm> {
+    match event {
+        SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
+            message:
+                gossipsub::Message {
+                    source: Some(peer_id),
+                    topic,
+                    data,
+                    ..
+                },
+            ..
+        })) => Some(FromSwarm::Message {
+            from: peer_id,
+            topic: topic.into_string(),
+            data,
+        }),
+        SwarmEvent::Behaviour(BehaviourEvent::Discovery(
+            discovery::Event::ConnectionEstablished { peer_id, .. },
+        )) => Some(FromSwarm::Discovered { peer_id }),
+        SwarmEvent::Behaviour(BehaviourEvent::Discovery(discovery::Event::ConnectionClosed {
+            peer_id,
+            ..
+        })) => Some(FromSwarm::Expired { peer_id }),
+        _ => None,
+    }
+}
+
 /// Create and configure a swarm which listens to all ports on OS
 pub fn create_swarm(
     keypair: identity::Keypair,
@@ -164,10 +153,7 @@ pub fn create_swarm(
 
     // Listen on all interfaces and whatever port the OS assigns
     swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
-    Ok(Swarm {
-        inner: swarm,
-        from_client,
-    })
+    Ok(Swarm { swarm, from_client })
 }
 
 mod transport {

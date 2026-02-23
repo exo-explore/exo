@@ -17,7 +17,8 @@ async fn main() {
 
     // Configure swarm
     let mut swarm = swarm::create_swarm(identity::Keypair::generate_ed25519(), from_client)
-        .expect("Swarm creation failed");
+        .expect("Swarm creation failed")
+        .into_stream();
 
     // Create a Gossipsub topic & subscribe
     let (tx, rx) = oneshot::channel();

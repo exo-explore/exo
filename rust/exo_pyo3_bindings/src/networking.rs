@@ -1,3 +1,4 @@
+use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::r#const::MPSC_CHANNEL_SIZE;
@@ -8,9 +9,9 @@ use crate::networking::exception::{
     PyAllQueuesFullError, PyMessageTooLargeError, PyNoPeersSubscribedToTopicError,
 };
 use crate::pyclass;
-use futures_lite::StreamExt as _;
+use futures_lite::{Stream, StreamExt as _};
 use libp2p::gossipsub::PublishError;
-use networking::swarm::{FromSwarm, Swarm, ToSwarm, create_swarm};
+use networking::swarm::{FromSwarm, ToSwarm, create_swarm};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::{PyModule, PyModuleMethods as _};
 use pyo3::types::PyBytes;
@@ -133,7 +134,7 @@ mod exception {
 struct PyNetworkingHandle {
     // channels
     pub to_swarm: mpsc::Sender<ToSwarm>,
-    pub swarm: Arc<Mutex<Swarm>>,
+    pub swarm: Arc<Mutex<Pin<Box<dyn Stream<Item = FromSwarm> + Send>>>>,
 }
 
 #[gen_stub_pyclass_complex_enum]
@@ -188,7 +189,7 @@ impl PyNetworkingHandle {
 
         // create networking swarm (within tokio context!! or it crashes)
         let _guard = pyo3_async_runtimes::tokio::get_runtime().enter();
-        let swarm = { create_swarm(identity, from_client).pyerr()? };
+        let swarm = create_swarm(identity, from_client).pyerr()?.into_stream();
 
         Ok(Self {
             swarm: Arc::new(Mutex::new(swarm)),

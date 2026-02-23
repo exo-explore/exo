@@ -21,9 +21,10 @@ extend = { workspace = true }
 delegate = { workspace = true }
 
 # async
-tokio = { workspace = true, features = ["full"] }
+async-stream = { workspace = true }
 futures-lite = { workspace = true }
 futures-timer = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
 
 # utility dependencies
 util = { workspace = true }
