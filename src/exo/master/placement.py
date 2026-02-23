@@ -138,9 +138,6 @@ def place_instance(
     instance_id = InstanceId()
     target_instances = dict(deepcopy(current_instances))
 
-    if len(selected_cycle) == 1:
-        command.instance_meta = InstanceMeta.MlxRing
-
     match command.instance_meta:
         case InstanceMeta.MlxJaccl:
             # TODO(evan): shard assignments should contain information about ranks, this is ugly
