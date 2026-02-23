@@ -158,6 +158,10 @@ def profile_memory_bandwidth() -> int:
     Uses a large array copy on the GPU to measure unified memory bandwidth.
     Returns measured bandwidth in bytes/second.
     Raises exception if MLX is unavailable or profiling fails.
+
+    Note: This allocates ~4 GB of GPU unified memory (2 GB for source + 2 GB for
+    destination arrays). On systems with limited memory or when models are loaded,
+    this may cause memory pressure. The caller should handle exceptions appropriately.
     """
     import mlx.core as mx
 
@@ -165,6 +169,7 @@ def profile_memory_bandwidth() -> int:
         raise RuntimeError("Metal is not available")
 
     # Use 2GB buffer to better saturate memory bandwidth
+    # WARNING: This allocates ~4GB temporarily (source + destination)
     size_bytes = 2 * 1024 * 1024 * 1024
     side = math.isqrt(size_bytes // 4)  # Square 2D array of float32
     shape = (side, side)

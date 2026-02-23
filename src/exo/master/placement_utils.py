@@ -141,36 +141,80 @@ def _distribute_layers_by_bandwidth(
     remaining_layers: int,
     model_card: ModelCard,
 ) -> None:
-    """Distribute remaining layers based on bandwidth and RAM capacity."""
-    indexed_nodes = list(enumerate(cycle.node_ids))
-    sorted_nodes = sorted(
-        indexed_nodes,
-        key=lambda x: node_bandwidth.get(x[1], 0),
-        reverse=True,
+    """Distribute remaining layers proportionally to bandwidth, respecting RAM capacity."""
+    # Calculate total bandwidth
+    total_bandwidth = sum(node_bandwidth.get(node_id, 0) for node_id in cycle.node_ids)
+    if total_bandwidth == 0:
+        logger.warning("Total bandwidth is zero, cannot distribute layers by bandwidth")
+        return
+
+    # Calculate bandwidth fractions for each node
+    bandwidth_fractions = [
+        node_bandwidth.get(node_id, 0) / total_bandwidth for node_id in cycle.node_ids
+    ]
+
+    # Allocate remaining layers proportionally to bandwidth
+    desired_allocations = allocate_layers_proportionally(
+        total_layers=remaining_layers, memory_fractions=bandwidth_fractions
     )
 
-    for original_idx, node_id in sorted_nodes:
-        if remaining_layers <= 0:
-            break
+    # Apply desired allocations while respecting RAM constraints
+    layer_size_bytes = model_card.storage_size.in_bytes / model_card.n_layers
+    unallocated_layers = 0
 
-        layer_size_bytes = model_card.storage_size.in_bytes / model_card.n_layers
+    for i, desired_layers in enumerate(desired_allocations):
+        node_id = cycle.node_ids[i]
         max_layers_by_ram = int(
             node_memory[node_id].ram_available.in_bytes // layer_size_bytes
         )
-        can_take = max(0, max_layers_by_ram - assignments[original_idx])
-        take = min(can_take, remaining_layers)
-        assignments[original_idx] += take
-        remaining_layers -= take
+        can_take = max(0, max_layers_by_ram - assignments[i])
+        actual_take = min(desired_layers, can_take)
+        assignments[i] += actual_take
+        unallocated_layers += desired_layers - actual_take
 
-    if remaining_layers > 0:
-        logger.warning(
-            "All nodes maxed out on RAM estimation, dumping remaining layers on fastest nodes."
-        )
-        for original_idx, _ in sorted_nodes:
-            assignments[original_idx] += 1
-            remaining_layers -= 1
-            if remaining_layers == 0:
-                break
+    # If some layers couldn't fit due to RAM constraints, redistribute proportionally
+    # among nodes that still have capacity
+    while unallocated_layers > 0:
+        nodes_with_capacity: list[tuple[int, int, int]] = []
+        for i, node_id in enumerate(cycle.node_ids):
+            max_layers_by_ram = int(
+                node_memory[node_id].ram_available.in_bytes // layer_size_bytes
+            )
+            if assignments[i] < max_layers_by_ram:
+                capacity = max_layers_by_ram - assignments[i]
+                bandwidth_value = node_bandwidth.get(node_id, 0)
+                nodes_with_capacity.append((i, capacity, bandwidth_value))
+
+        if not nodes_with_capacity:
+            logger.error(
+                f"Cannot allocate {unallocated_layers} layers: "
+                "all nodes exhausted RAM capacity. Model too large for cluster."
+            )
+            break
+
+        # Sort by bandwidth descending, for stable allocation when multiple passes needed
+        nodes_with_capacity.sort(key=lambda x: x[2], reverse=True)
+
+        # Calculate total bandwidth of nodes with capacity
+        total_bandwidth_with_capacity = sum(bw for _, _, bw in nodes_with_capacity)
+        if total_bandwidth_with_capacity == 0:
+            # If all nodes with capacity have zero bandwidth, distribute evenly
+            layers_per_node = max(1, unallocated_layers // len(nodes_with_capacity))
+            for idx, capacity, _ in nodes_with_capacity:
+                take = min(layers_per_node, capacity, unallocated_layers)
+                assignments[idx] += take
+                unallocated_layers -= take
+                if unallocated_layers == 0:
+                    break
+        else:
+            # Distribute proportionally to bandwidth among nodes with capacity
+            for idx, capacity, bandwidth_value in nodes_with_capacity:
+                fraction = bandwidth_value / total_bandwidth_with_capacity
+                desired = int(fraction * unallocated_layers + 0.5)  # round to nearest
+                take = min(desired, capacity, unallocated_layers)
+                if take > 0:
+                    assignments[idx] += take
+                    unallocated_layers -= take
 
 
 def _assign_layers_by_bandwidth(

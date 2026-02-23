@@ -771,14 +771,18 @@ def test_get_shard_assignments_bandwidth_aware():
     # Total layers preserved
     assert layers_a + layers_b + layers_c == 30
 
-    # Fastest node (A, 400 GB/s) gets saturated first via greedy assignment:
+    # Bandwidth-proportional assignment with 400:200:100 GB/s (4:2:1 ratio):
     # 1. Reserve 1 layer each: A=1, B=1, C=1. Remaining=27.
-    # 2. Sort by bandwidth: [A, B, C].
-    # 3. A takes min(27, huge RAM capacity) = 27.
-    # 4. Result: A=28, B=1, C=1.
-    assert layers_a == 28
-    assert layers_b == 1
-    assert layers_c == 1
+    # 2. Total bandwidth = 700 GB/s, fractions: A=4/7, B=2/7, C=1/7
+    # 3. Proportional allocation of 27 layers: A≈15.43, B≈7.71, C≈3.86
+    # 4. After largest-remainder rounding: C gets remainder 0.86, B gets 0.71,
+    #    resulting in A=15, B=8, C=4 from the 27 remaining
+    # 5. Final result (adding base): A=16, B=9, C=5
+    # This distributes work across all nodes while favoring faster ones,
+    # minimizing total pipeline time (dominated by slowest stage).
+    assert layers_a == 16
+    assert layers_b == 9
+    assert layers_c == 5
 
 
 def test_get_shard_assignments_falls_back_without_bandwidth():

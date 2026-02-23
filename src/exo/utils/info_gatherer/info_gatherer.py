@@ -346,7 +346,7 @@ class NodeMemoryBandwidth(TaggedModel):
         for attempt in range(1, 6):
             try:
                 bandwidth: int = await to_thread.run_sync(profile_memory_bandwidth)
-                logger.info(f"Memory bandwidth: {bandwidth / 1e9:.1f} GB/s")
+                logger.info("Memory bandwidth: {:.1f} GB/s", bandwidth / 1e9)
                 return cls(memory_bandwidth=bandwidth)
             except Exception as e:
                 if attempt < 5:
