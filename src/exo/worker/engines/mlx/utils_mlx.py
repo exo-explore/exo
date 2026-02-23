@@ -291,10 +291,14 @@ def shard_and_load(
 
 def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerWrapper:
     """Load tokenizer for a model shard. Delegates to load_tokenizer_for_model_id."""
+    trust_remote_code = (
+        shard_metadata.model_card.trust_remote_code
+        or os.environ.get("EXO_TRUST_REMOTE_CODE") == "1"
+    )
     return load_tokenizer_for_model_id(
         shard_metadata.model_card.model_id,
         model_path,
-        trust_remote_code=shard_metadata.model_card.trust_remote_code,
+        trust_remote_code=trust_remote_code,
     )
 
 

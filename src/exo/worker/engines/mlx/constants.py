@@ -13,5 +13,5 @@ KV_CACHE_BITS: int | None = None
 
 DEFAULT_TOP_LOGPROBS: int = 5
 
-# TODO: We should really make this opt-in, but Kimi requires trust_remote_code=True
-TRUST_REMOTE_CODE: bool = True
+# Opt-in via --trust-remote-code CLI flag; default is False for security.
+TRUST_REMOTE_CODE: bool = False
