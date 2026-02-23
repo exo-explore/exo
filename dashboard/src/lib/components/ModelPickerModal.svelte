@@ -36,6 +36,7 @@
     capabilities: string[];
     sizeRange: { min: number; max: number } | null;
     downloadedOnly: boolean;
+    readyOnly: boolean;
   }
 
   interface HuggingFaceModel {
@@ -48,6 +49,11 @@
   }
 
   type ModelFitStatus = "fits_now" | "fits_cluster_capacity" | "too_large";
+
+  export type InstanceStatus = {
+    status: string;
+    statusClass: string;
+  };
 
   type ModelPickerModalProps = {
     isOpen: boolean;
@@ -75,6 +81,7 @@
         macmon_info?: { memory?: { ram_total?: number } };
       }
     >;
+    instanceStatuses?: Record<string, InstanceStatus>;
   };
 
   let {
@@ -96,6 +103,7 @@
     usedMemoryGB,
     downloadsData,
     topologyNodes,
+    instanceStatuses = {},
   }: ModelPickerModalProps = $props();
 
   // Local state
@@ -107,6 +115,7 @@
     capabilities: [],
     sizeRange: null,
     downloadedOnly: false,
+    readyOnly: false,
   });
   let infoGroup = $state<ModelGroup | null>(null);
 
@@ -440,6 +449,16 @@
       );
     }
 
+    // Filter to ready/running models only
+    if (filters.readyOnly) {
+      result = result.filter((g) =>
+        g.variants.some((v) => {
+          const s = instanceStatuses[v.id];
+          return s && s.statusClass === "ready";
+        }),
+      );
+    }
+
     // Sort: fits-now first, then fits-cluster-capacity, then too-large
     result.sort((a, b) => {
       const getGroupFitRank = (group: ModelGroup): number => {
@@ -550,13 +569,14 @@
   }
 
   function clearFilters() {
-    filters = { capabilities: [], sizeRange: null, downloadedOnly: false };
+    filters = { capabilities: [], sizeRange: null, downloadedOnly: false, readyOnly: false };
   }
 
   const hasActiveFilters = $derived(
     filters.capabilities.length > 0 ||
       filters.sizeRange !== null ||
-      filters.downloadedOnly,
+      filters.downloadedOnly ||
+      filters.readyOnly,
   );
 </script>
 
@@ -825,6 +845,7 @@
                 onShowInfo={(g) => (infoGroup = g)}
                 downloadStatusMap={getVariantDownloadMap(group)}
                 launchedAt={recentTimestamps.get(group.variants[0]?.id ?? "")}
+                {instanceStatuses}
               />
             {/each}
           {/if}
@@ -892,6 +913,7 @@
               {onToggleFavorite}
               onShowInfo={(g) => (infoGroup = g)}
               downloadStatusMap={getVariantDownloadMap(group)}
+                {instanceStatuses}
             />
           {/each}
           <!-- Other models -->
@@ -918,6 +940,7 @@
               {onToggleFavorite}
               onShowInfo={(g) => (infoGroup = g)}
               downloadStatusMap={getVariantDownloadMap(group)}
+              {instanceStatuses}
             />
           {/each}
         {/if}
@@ -938,6 +961,11 @@
         {#if filters.downloadedOnly}
           <span class="px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded"
             >Downloaded</span
+          >
+        {/if}
+        {#if filters.readyOnly}
+          <span class="px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded"
+            >Ready</span
           >
         {/if}
         {#if filters.sizeRange}
