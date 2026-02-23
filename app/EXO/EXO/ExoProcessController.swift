@@ -6,6 +6,7 @@ private let customNamespaceKey = "EXOCustomNamespace"
 private let hfTokenKey = "EXOHFToken"
 private let enableImageModelsKey = "EXOEnableImageModels"
 private let onboardingCompletedKey = "EXOOnboardingCompleted"
+private let modelSearchPathsKey = "EXOModelSearchPaths"
 
 @MainActor
 final class ExoProcessController: ObservableObject {
@@ -58,6 +59,14 @@ final class ExoProcessController: ObservableObject {
     {
         didSet {
             UserDefaults.standard.set(enableImageModels, forKey: enableImageModelsKey)
+        }
+    }
+    @Published var modelSearchPaths: String = {
+        return UserDefaults.standard.string(forKey: modelSearchPathsKey) ?? ""
+    }()
+    {
+        didSet {
+            UserDefaults.standard.set(modelSearchPaths, forKey: modelSearchPathsKey)
         }
     }
 
@@ -266,6 +275,9 @@ final class ExoProcessController: ObservableObject {
         }
         if enableImageModels {
             environment["EXO_ENABLE_IMAGE_MODELS"] = "true"
+        }
+        if !modelSearchPaths.isEmpty {
+            environment["EXO_MODELS_PATH"] = modelSearchPaths
         }
 
         var paths: [String] = []

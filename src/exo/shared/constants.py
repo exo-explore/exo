@@ -36,11 +36,25 @@ EXO_MODELS_DIR = (
 
 # Read-only search path for pre-downloaded models (colon-separated directories)
 _EXO_MODELS_PATH_ENV = os.environ.get("EXO_MODELS_PATH", None)
-EXO_MODELS_PATH: tuple[Path, ...] | None = (
-    tuple(Path(p).expanduser() for p in _EXO_MODELS_PATH_ENV.split(":") if p)
-    if _EXO_MODELS_PATH_ENV is not None
-    else None
+
+# Well-known model cache directories from other inference engines
+_WELL_KNOWN_MODEL_PATHS: tuple[Path, ...] = tuple(
+    p for p in (Path.home() / ".cache" / "huggingface" / "hub",) if p.is_dir()
 )
+
+
+def _build_models_path() -> tuple[Path, ...] | None:
+    if _EXO_MODELS_PATH_ENV is not None:
+        user_paths = tuple(
+            Path(p).expanduser() for p in _EXO_MODELS_PATH_ENV.split(":") if p
+        )
+        return user_paths + tuple(
+            p for p in _WELL_KNOWN_MODEL_PATHS if p not in user_paths
+        )
+    return _WELL_KNOWN_MODEL_PATHS if _WELL_KNOWN_MODEL_PATHS else None
+
+
+EXO_MODELS_PATH: tuple[Path, ...] | None = _build_models_path()
 
 _RESOURCES_DIR_ENV = os.environ.get("EXO_RESOURCES_DIR", None)
 RESOURCES_DIR = (

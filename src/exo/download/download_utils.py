@@ -110,20 +110,54 @@ def map_repo_download_progress_to_download_progress_data(
     )
 
 
+def _resolve_hf_hub_model(search_dir: Path, normalized: str) -> Path | None:
+    """Try to find a model in HuggingFace Hub cache format.
+
+    HF Hub stores models as ``models--<org>--<name>/snapshots/<commit>/``
+    with symlinks to ``../../blobs/``.  The active commit is read from
+    ``refs/main``.
+    """
+    hf_model_dir = search_dir / f"models--{normalized}"
+    if not hf_model_dir.is_dir():
+        return None
+    # Resolve ref → snapshot
+    ref_file = hf_model_dir / "refs" / "main"
+    if ref_file.is_file():
+        commit_hash = ref_file.read_text().strip()
+        snapshot = hf_model_dir / "snapshots" / commit_hash
+        if snapshot.is_dir():
+            return snapshot
+    # Fallback: use latest snapshot by mtime
+    snapshots_dir = hf_model_dir / "snapshots"
+    if snapshots_dir.is_dir():
+        snapshots = sorted(
+            snapshots_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True
+        )
+        if snapshots:
+            return snapshots[0]
+    return None
+
+
 def resolve_model_in_path(model_id: ModelId) -> Path | None:
     """Search EXO_MODELS_PATH directories for a pre-existing model.
 
-    Checks each directory for the normalized name (org--model).  A candidate
-    is only returned if ``is_model_directory_complete`` confirms all weight
-    files are present.
+    Checks each directory for the normalized name (org--model) and the
+    HuggingFace Hub cache format (models--org--model/snapshots/<ref>/).
+    A candidate is only returned if ``is_model_directory_complete``
+    confirms all weight files are present.
     """
     if EXO_MODELS_PATH is None:
         return None
     normalized = model_id.normalize()
     for search_dir in EXO_MODELS_PATH:
+        # Try direct format: <dir>/<org--name>/
         candidate = search_dir / normalized
         if candidate.is_dir() and is_model_directory_complete(candidate):
             return candidate
+        # Try HF Hub cache format: <dir>/models--<org--name>/snapshots/<ref>/
+        hf_candidate = _resolve_hf_hub_model(search_dir, normalized)
+        if hf_candidate is not None and is_model_directory_complete(hf_candidate):
+            return hf_candidate
     return None
 
 

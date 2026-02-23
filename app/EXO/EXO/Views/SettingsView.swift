@@ -13,6 +13,7 @@ struct SettingsView: View {
     @State private var pendingNamespace: String = ""
     @State private var pendingHFToken: String = ""
     @State private var pendingEnableImageModels = false
+    @State private var pendingModelSearchPaths: String = ""
     @State private var needsRestart = false
     @State private var bugReportInFlight = false
     @State private var bugReportMessage: String?
@@ -42,6 +43,7 @@ struct SettingsView: View {
             pendingNamespace = controller.customNamespace
             pendingHFToken = controller.hfToken
             pendingEnableImageModels = controller.enableImageModels
+            pendingModelSearchPaths = controller.modelSearchPaths
             needsRestart = false
         }
     }
@@ -95,6 +97,19 @@ struct SettingsView: View {
                 Text("Allow text-to-image and image-to-image models in the model picker.")
                     .font(.caption)
                     .foregroundColor(.secondary)
+            }
+
+            Section {
+                LabeledContent("Model Search Paths") {
+                    TextField("/path/one:/path/two", text: $pendingModelSearchPaths)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 200)
+                }
+                Text(
+                    "Extra directories to search for pre-downloaded models (colon-separated). HuggingFace cache (~/.cache/huggingface/hub) is checked automatically."
+                )
+                .font(.caption)
+                .foregroundColor(.secondary)
             }
 
             Section {
@@ -449,6 +464,7 @@ struct SettingsView: View {
 
     private var hasModelChanges: Bool {
         pendingEnableImageModels != controller.enableImageModels
+            || pendingModelSearchPaths != controller.modelSearchPaths
     }
 
     private func applyGeneralSettings() {
@@ -459,6 +475,7 @@ struct SettingsView: View {
 
     private func applyModelSettings() {
         controller.enableImageModels = pendingEnableImageModels
+        controller.modelSearchPaths = pendingModelSearchPaths
         restartIfRunning()
     }
 
