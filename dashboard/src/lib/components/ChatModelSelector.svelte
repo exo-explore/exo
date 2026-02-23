@@ -237,7 +237,7 @@
 
   function showTooltip(category: string, e: MouseEvent | FocusEvent) {
     hoveredTooltip = category;
-    const target = (e.currentTarget as HTMLElement);
+    const target = e.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
     tooltipAnchor = { x: rect.left + rect.width / 2, y: rect.top };
   }
@@ -392,7 +392,8 @@
   {#if rec}
     <div
       class="fixed z-[9999] px-3 py-2 bg-exo-black border border-exo-medium-gray/50 rounded text-xs text-exo-light-gray whitespace-nowrap shadow-lg pointer-events-none"
-      style="left: {tooltipAnchor.x}px; top: {tooltipAnchor.y - 8}px; transform: translate(-50%, -100%);"
+      style="left: {tooltipAnchor.x}px; top: {tooltipAnchor.y -
+        8}px; transform: translate(-50%, -100%);"
     >
       {rec.tooltip}
     </div>

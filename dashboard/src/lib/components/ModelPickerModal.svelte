@@ -569,7 +569,12 @@
   }
 
   function clearFilters() {
-    filters = { capabilities: [], sizeRange: null, downloadedOnly: false, readyOnly: false };
+    filters = {
+      capabilities: [],
+      sizeRange: null,
+      downloadedOnly: false,
+      readyOnly: false,
+    };
   }
 
   const hasActiveFilters = $derived(
@@ -913,7 +918,7 @@
               {onToggleFavorite}
               onShowInfo={(g) => (infoGroup = g)}
               downloadStatusMap={getVariantDownloadMap(group)}
-                {instanceStatuses}
+              {instanceStatuses}
             />
           {/each}
           <!-- Other models -->

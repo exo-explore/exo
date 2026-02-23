@@ -8,7 +8,10 @@
     ModelPickerModal,
     ChatModelSelector,
   } from "$lib/components";
-  import { pickAutoModel, getAutoTierIndex } from "$lib/components/ChatModelSelector.svelte";
+  import {
+    pickAutoModel,
+    getAutoTierIndex,
+  } from "$lib/components/ChatModelSelector.svelte";
   import {
     favorites,
     toggleFavorite,
@@ -2005,11 +2008,16 @@
     const result: Record<string, { status: string; statusClass: string }> = {};
     for (const [id, inst] of Object.entries(instanceData)) {
       const modelId = getInstanceModelId(inst);
-      if (!modelId || modelId === "Unknown" || modelId === "Unknown Model") continue;
+      if (!modelId || modelId === "Unknown" || modelId === "Unknown Model")
+        continue;
       const dlStatus = getInstanceDownloadStatus(id, inst);
       const statusText = dlStatus.statusText;
       let statusClass = "inactive";
-      if (statusText === "READY" || statusText === "RUNNING" || statusText === "LOADED") {
+      if (
+        statusText === "READY" ||
+        statusText === "RUNNING" ||
+        statusText === "LOADED"
+      ) {
         statusClass = "ready";
       } else if (statusText === "DOWNLOADING") {
         statusClass = "downloading";
@@ -2019,7 +2027,8 @@
       // Keep the best status per modelId (ready > loading > downloading > other)
       const existing = result[modelId];
       if (existing) {
-        const rank = (c: string) => c === "ready" ? 3 : c === "loading" ? 2 : c === "downloading" ? 1 : 0;
+        const rank = (c: string) =>
+          c === "ready" ? 3 : c === "loading" ? 2 : c === "downloading" ? 1 : 0;
         if (rank(statusClass) <= rank(existing.statusClass)) continue;
       }
       result[modelId] = { status: statusText, statusClass };
@@ -2597,18 +2606,19 @@
     if (hasMultiNode) {
       // Multi-node with RDMA: prefer Jaccl + Tensor with most nodes (fastest TPS)
       const jacclTensor = valid
-        .filter((p) => p.instance_meta === "MlxJaccl" && p.sharding === "Tensor")
+        .filter(
+          (p) => p.instance_meta === "MlxJaccl" && p.sharding === "Tensor",
+        )
         .sort((a, b) => getPreviewNodeCount(b) - getPreviewNodeCount(a));
       if (jacclTensor.length > 0) return jacclTensor[0];
 
       // Multi-node without RDMA: fall back to single-node Pipeline/Ring
-      const singlePipeline = valid
-        .filter(
-          (p) =>
-            p.instance_meta === "MlxRing" &&
-            p.sharding === "Pipeline" &&
-            getPreviewNodeCount(p) === 1,
-        );
+      const singlePipeline = valid.filter(
+        (p) =>
+          p.instance_meta === "MlxRing" &&
+          p.sharding === "Pipeline" &&
+          getPreviewNodeCount(p) === 1,
+      );
       if (singlePipeline.length > 0) return singlePipeline[0];
     }
 
@@ -2748,7 +2758,9 @@
 
     // Prefer running model unless auto-pick is a strictly better tier
     if (bestRunning) {
-      const autoTier = autoModel ? getAutoTierIndex(autoModel.base_model) : Infinity;
+      const autoTier = autoModel
+        ? getAutoTierIndex(autoModel.base_model)
+        : Infinity;
       if (autoTier >= bestRunning.tierIndex) {
         // Running model is same or better tier — use it directly
         setSelectedChatModel(bestRunning.id);
@@ -3000,11 +3012,7 @@
 
     // Model is selected and running — send directly
     if (model && hasRunningInstance(model)) {
-      sendMessage(
-        content,
-        files,
-        null,
-      );
+      sendMessage(content, files, null);
       return;
     }
 
@@ -4597,7 +4605,9 @@
         <ChatSidebar
           class="h-full"
           onNewChat={handleNewChat}
-          onSelectConversation={() => { userForcedIdle = false; }}
+          onSelectConversation={() => {
+            userForcedIdle = false;
+          }}
         />
       </div>
     {/if}
@@ -5437,7 +5447,10 @@
             <div class="flex-shrink-0 mb-3">
               <button
                 type="button"
-                onclick={() => { modelPickerContext = "dashboard"; isModelPickerOpen = true; }}
+                onclick={() => {
+                  modelPickerContext = "dashboard";
+                  isModelPickerOpen = true;
+                }}
                 class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-2.5 text-sm font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 relative"
               >
                 {#if selectedModelId}
@@ -5488,7 +5501,8 @@
                       >
                     </span>
                   {:else}
-                    <span class="text-exo-light-gray">{bestRunningModelId}</span>
+                    <span class="text-exo-light-gray">{bestRunningModelId}</span
+                    >
                   {/if}
                 {:else}
                   <span class="text-white/50">— SELECT MODEL —</span>

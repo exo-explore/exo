@@ -20,7 +20,11 @@
     onSelectConversation?: () => void;
   }
 
-  let { class: className = "", onNewChat, onSelectConversation }: Props = $props();
+  let {
+    class: className = "",
+    onNewChat,
+    onSelectConversation,
+  }: Props = $props();
 
   const conversationList = $derived(conversations());
   const activeId = $derived(activeConversationId());
