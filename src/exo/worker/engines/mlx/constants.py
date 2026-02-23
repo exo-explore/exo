@@ -13,5 +13,6 @@ KV_CACHE_BITS: int | None = None
 
 DEFAULT_TOP_LOGPROBS: int = 5
 
-# Opt-in via --trust-remote-code CLI flag; default is False for security.
-TRUST_REMOTE_CODE: bool = False
+# True for built-in models with known model cards; custom models added via API default to False
+# and can be overridden with the --trust-remote-code CLI flag.
+TRUST_REMOTE_CODE: bool = True
