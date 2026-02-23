@@ -215,7 +215,6 @@ class StreamContext:
         traceback: object | None = ...,
     ) -> None: ...
 
-
 def device_info() -> dict[str, str | int]:
     """
     Get information about the GPU device and system settings.
