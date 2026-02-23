@@ -51,6 +51,7 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
+    EXO_CACHE_HOME,
     EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
@@ -175,6 +176,7 @@ from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
 
 _API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
+ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
 
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
@@ -345,6 +347,8 @@ class API:
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
         self.app.get("/v1/traces/{task_id}/stats")(self.get_trace_stats)
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
+        self.app.get("/onboarding")(self.get_onboarding)
+        self.app.post("/onboarding")(self.complete_onboarding)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -1814,3 +1818,11 @@ class API:
             media_type="application/json",
             filename=f"trace_{task_id}.json",
         )
+
+    async def get_onboarding(self) -> JSONResponse:
+        return JSONResponse({"completed": ONBOARDING_COMPLETE_FILE.exists()})
+
+    async def complete_onboarding(self) -> JSONResponse:
+        ONBOARDING_COMPLETE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ONBOARDING_COMPLETE_FILE.write_text("true")
+        return JSONResponse({"completed": True})
