@@ -11,8 +11,7 @@ from typing import Annotated, Literal, cast
 from uuid import uuid4
 
 import anyio
-from anyio import BrokenResourceError, create_task_group
-from anyio.abc import TaskGroup
+from anyio import BrokenResourceError
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -174,6 +173,7 @@ from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
+from exo.utils.task_group import TaskGroup
 
 _API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
 ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
@@ -252,7 +252,7 @@ class API:
             CommandId, Sender[ImageChunk | ErrorChunk]
         ] = {}
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
-        self._tg: TaskGroup | None = None
+        self._tg: TaskGroup = TaskGroup()
 
     def reset(self, new_session_id: SessionId, result_clock: int):
         logger.info("Resetting API State")
@@ -1591,8 +1591,7 @@ class API:
         shutdown_ev = anyio.Event()
 
         try:
-            async with create_task_group() as tg:
-                self._tg = tg
+            async with self._tg as tg:
                 logger.info("Starting API")
                 tg.start_soon(self._apply_state)
                 tg.start_soon(self._pause_on_new_election)

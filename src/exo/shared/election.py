@@ -4,10 +4,8 @@ import anyio
 from anyio import (
     CancelScope,
     Event,
-    create_task_group,
     get_cancelled_exc_class,
 )
-from anyio.abc import TaskGroup
 from loguru import logger
 
 from exo.routing.connection_message import ConnectionMessage
@@ -15,6 +13,7 @@ from exo.shared.types.commands import ForwarderCommand
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, Sender
 from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.task_group import TaskGroup
 
 DEFAULT_ELECTION_TIMEOUT = 3.0
 
@@ -82,13 +81,12 @@ class Election:
         self._candidates: list[ElectionMessage] = []
         self._campaign_cancel_scope: CancelScope | None = None
         self._campaign_done: Event | None = None
-        self._tg: TaskGroup | None = None
+        self._tg = TaskGroup()
 
     async def run(self):
         logger.info("Starting Election")
         try:
-            async with create_task_group() as tg:
-                self._tg = tg
+            async with self._tg as tg:
                 tg.start_soon(self._election_receiver)
                 tg.start_soon(self._connection_receiver)
                 tg.start_soon(self._command_counter)
@@ -124,12 +122,7 @@ class Election:
         )
 
     async def shutdown(self) -> None:
-        if not self._tg:
-            logger.warning(
-                "Attempted to shutdown election service that was not running"
-            )
-            return
-        self._tg.cancel_scope.cancel()
+        self._tg.cancel_tasks()
 
     async def _election_receiver(self) -> None:
         with self._em_receiver as election_messages:
@@ -143,7 +136,6 @@ class Election:
                 if message.clock > self.clock:
                     self.clock = message.clock
                     logger.debug(f"New clock: {self.clock}")
-                    assert self._tg is not None
                     logger.debug("Starting new campaign")
                     candidates: list[ElectionMessage] = [message]
                     logger.debug(f"Candidates: {candidates}")
@@ -178,7 +170,6 @@ class Election:
                 # These messages are strictly peer to peer
                 self.clock += 1
                 logger.debug(f"New clock: {self.clock}")
-                assert self._tg is not None
                 candidates: list[ElectionMessage] = []
                 self._candidates = candidates
                 logger.debug("Starting new campaign")

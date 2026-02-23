@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
 import anyio
-from anyio.abc import TaskGroup
 from loguru import logger
 
 from exo.master.event_log import DiskEventLog
@@ -63,6 +62,7 @@ from exo.shared.types.tasks import (
 from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import MultiSourceBuffer
+from exo.utils.task_group import TaskGroup
 
 
 class Master:
@@ -77,7 +77,7 @@ class Master:
         download_command_sender: Sender[ForwarderDownloadCommand],
     ):
         self.state = State()
-        self._tg: TaskGroup = anyio.create_task_group()
+        self._tg: TaskGroup = TaskGroup()
         self.node_id = node_id
         self.session_id = session_id
         self.command_task_mapping: dict[CommandId, TaskId] = {}
@@ -116,7 +116,7 @@ class Master:
 
     async def shutdown(self):
         logger.info("Stopping Master")
-        self._tg.cancel_scope.cancel()
+        self._tg.cancel_tasks()
 
     async def _command_processor(self) -> None:
         with self.command_receiver as commands:
