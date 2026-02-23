@@ -100,10 +100,13 @@ class RunnerSupervisor:
         logger.info("Runner supervisor shutting down")
         self._ev_recv.close()
         self._task_sender.close()
-        with contextlib.suppress(ClosedResourceError):
+        try:
             self._cancel_sender.send(TaskId("CANCEL_CURRENT_TASK"))
-        self._cancel_sender.close()
-        self.runner_process.join(5)
+            self._cancel_sender.close()
+        except ClosedResourceError:
+            pass
+        self._event_sender.close()
+        self.runner_process.join(1)
         if not self.runner_process.is_alive():
             logger.info("Runner process succesfully terminated")
             return
@@ -140,6 +143,7 @@ class RunnerSupervisor:
         await event.wait()
 
     async def cancel_task(self, task_id: TaskId):
+        """Send a cancellation signal to the runner process."""
         if task_id in self.completed:
             logger.info(f"Unable to cancel {task_id} as it has been completed")
             return
