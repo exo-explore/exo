@@ -138,8 +138,8 @@ def place_instance(
     instance_id = InstanceId()
     target_instances = dict(deepcopy(current_instances))
 
-    if len(selected_cycle) == 1:
-        command.instance_meta = InstanceMeta.MlxRing
+    if len(selected_cycle) == 1 and command.instance_meta == InstanceMeta.MlxJaccl:
+        raise ValueError("MlxJaccl requires more than one node; only one node was selected")
 
     match command.instance_meta:
         case InstanceMeta.MlxJaccl:
