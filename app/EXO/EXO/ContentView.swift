@@ -21,6 +21,21 @@ struct ContentView: View {
     @State private var showAllNodes = false
     @State private var showAllInstances = false
     @State private var baseURLCopied = false
+    @State private var showAdvanced = false
+    @State private var showDebugInfo = false
+    private enum BugReportPhase: Equatable {
+        case idle
+        case prompting
+        case sending(String)
+        case success(String)
+        case failure(String)
+    }
+    @State private var bugReportPhase: BugReportPhase = .idle
+    @State private var bugReportUserDescription: String = ""
+    @State private var uninstallInProgress = false
+    @State private var pendingNamespace: String = ""
+    @State private var pendingHFToken: String = ""
+    @State private var pendingEnableImageModels = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -379,6 +394,283 @@ struct ContentView: View {
         }
     }
 
+    private var thunderboltStatusText: String {
+        switch networkStatusService.status.thunderboltBridgeState {
+        case .some(.disabled):
+            return "Thunderbolt Bridge: Disabled"
+        case .some(.deleted):
+            return "Thunderbolt Bridge: Deleted"
+        case .some(.enabled):
+            return "Thunderbolt Bridge: Enabled"
+        case nil:
+            return "Thunderbolt Bridge: Unknown"
+        }
+    }
+
+    private var thunderboltStatusColor: Color {
+        switch networkStatusService.status.thunderboltBridgeState {
+        case .some(.disabled), .some(.deleted):
+            return .green
+        case .some(.enabled):
+            return .red
+        case nil:
+            return .secondary
+        }
+    }
+
+    /// Shows TB bridge status for all nodes from exo cluster state
+    private var clusterThunderboltBridgeView: some View {
+        let bridgeStatuses = stateService.latestSnapshot?.nodeThunderboltBridge ?? [:]
+        let localNodeId = stateService.localNodeId
+        let nodeProfiles = stateService.latestSnapshot?.nodeProfiles ?? [:]
+
+        return VStack(alignment: .leading, spacing: 1) {
+            if bridgeStatuses.isEmpty {
+                Text("Cluster TB Bridge: No data")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            } else {
+                Text("Cluster TB Bridge Status:")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                ForEach(Array(bridgeStatuses.keys.sorted()), id: \.self) { nodeId in
+                    if let status = bridgeStatuses[nodeId] {
+                        let nodeName =
+                            nodeProfiles[nodeId]?.friendlyName ?? String(nodeId.prefix(8))
+                        let isLocal = nodeId == localNodeId
+                        let prefix = isLocal ? "  \(nodeName) (local):" : "  \(nodeName):"
+                        let statusText =
+                            !status.exists
+                            ? "N/A"
+                            : (status.enabled ? "Enabled" : "Disabled")
+                        let color: Color =
+                            !status.exists
+                            ? .secondary
+                            : (status.enabled ? .red : .green)
+                        Text("\(prefix) \(statusText)")
+                            .font(.caption2)
+                            .foregroundColor(color)
+                    }
+                }
+            }
+        }
+    }
+
+    private var interfaceIpList: some View {
+        let statuses = networkStatusService.status.interfaceStatuses
+        return VStack(alignment: .leading, spacing: 1) {
+            Text("Interfaces (en0–en7):")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            if statuses.isEmpty {
+                Text("  Unknown")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(statuses, id: \.interfaceName) { status in
+                    let ipText = status.ipAddress ?? "No IP"
+                    Text("  \(status.interfaceName): \(ipText)")
+                        .font(.caption2)
+                        .foregroundColor(status.ipAddress == nil ? .red : .green)
+                }
+            }
+        }
+    }
+
+    private var debugSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HoverButton(
+                title: "Debug Info",
+                tint: .primary,
+                trailingSystemImage: showDebugInfo ? "chevron.up" : "chevron.down",
+                small: true
+            ) {
+                showDebugInfo.toggle()
+            }
+            if showDebugInfo {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Version: \(buildTag)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text("Commit: \(buildCommit)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text(thunderboltStatusText)
+                        .font(.caption2)
+                        .foregroundColor(thunderboltStatusColor)
+                    clusterThunderboltBridgeView
+                    interfaceIpList
+                    rdmaStatusView
+                    sendBugReportButton
+                        .padding(.top, 6)
+                }
+                .padding(.leading, 8)
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: showDebugInfo)
+    }
+
+    private var rdmaStatusView: some View {
+        let rdmaStatuses = stateService.latestSnapshot?.nodeRdmaCtl ?? [:]
+        let localNodeId = stateService.localNodeId
+        let nodeProfiles = stateService.latestSnapshot?.nodeProfiles ?? [:]
+        let localDevices = networkStatusService.status.localRdmaDevices
+        let localPorts = networkStatusService.status.localRdmaActivePorts
+
+        return VStack(alignment: .leading, spacing: 1) {
+            if rdmaStatuses.isEmpty {
+                Text("Cluster RDMA: No data")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            } else {
+                Text("Cluster RDMA Status:")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                ForEach(Array(rdmaStatuses.keys.sorted()), id: \.self) { nodeId in
+                    if let status = rdmaStatuses[nodeId] {
+                        let nodeName =
+                            nodeProfiles[nodeId]?.friendlyName ?? String(nodeId.prefix(8))
+                        let isLocal = nodeId == localNodeId
+                        let prefix = isLocal ? "  \(nodeName) (local):" : "  \(nodeName):"
+                        let statusText = status.enabled ? "Enabled" : "Disabled"
+                        let color: Color = status.enabled ? .green : .orange
+                        Text("\(prefix) \(statusText)")
+                            .font(.caption2)
+                            .foregroundColor(color)
+                    }
+                }
+            }
+            if !localDevices.isEmpty {
+                Text("  Local Devices: \(localDevices.joined(separator: ", "))")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            if !localPorts.isEmpty {
+                Text("  Local Active Ports:")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                ForEach(localPorts, id: \.device) { port in
+                    Text("    \(port.device) port \(port.port): \(port.state)")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                }
+            }
+        }
+    }
+
+    private var sendBugReportButton: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch bugReportPhase {
+            case .idle:
+                Button {
+                    bugReportPhase = .prompting
+                    bugReportUserDescription = ""
+                } label: {
+                    HStack {
+                        Text("Send Bug Report")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                        Spacer()
+                    }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.accentColor.opacity(0.12))
+                    )
+                }
+                .buttonStyle(.plain)
+
+            case .prompting:
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("What's the issue? (optional)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    TextEditor(text: $bugReportUserDescription)
+                        .font(.caption2)
+                        .frame(height: 60)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                        )
+                    HStack(spacing: 8) {
+                        Button("Send") {
+                            Task {
+                                await sendBugReport()
+                            }
+                        }
+                        .font(.caption2)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        Button("Cancel") {
+                            bugReportPhase = .idle
+                        }
+                        .font(.caption2)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.accentColor.opacity(0.06))
+                )
+
+            case .sending(let message):
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+
+            case .success(let message):
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button {
+                        openGitHubIssue()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.up.right.square")
+                                .imageScale(.small)
+                            Text("Create GitHub Issue")
+                                .font(.caption2)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    Button("Done") {
+                        bugReportPhase = .idle
+                        bugReportUserDescription = ""
+                    }
+                    .font(.caption2)
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
+                }
+
+            case .failure(let message):
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundColor(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Dismiss") {
+                        bugReportPhase = .idle
+                    }
+                    .font(.caption2)
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
+                }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: bugReportPhase)
+    }
+
     private var processToggleBinding: Binding<Bool> {
         Binding(
             get: {
@@ -417,6 +709,143 @@ struct ContentView: View {
                 }
             }
         )
+    }
+
+    private func sendBugReport() async {
+        bugReportPhase = .sending("Collecting logs...")
+        let service = BugReportService()
+        let description = bugReportUserDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            let outcome = try await service.sendReport(
+                isManual: true,
+                userDescription: description.isEmpty ? nil : description
+            )
+            if outcome.success {
+                bugReportPhase = .success(outcome.message)
+            } else {
+                bugReportPhase = .failure(outcome.message)
+            }
+        } catch {
+            bugReportPhase = .failure(error.localizedDescription)
+        }
+    }
+
+    private func openGitHubIssue() {
+        let description = bugReportUserDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var bodyParts: [String] = []
+        bodyParts.append("## Describe the bug")
+        bodyParts.append("")
+        if !description.isEmpty {
+            bodyParts.append(description)
+        } else {
+            bodyParts.append("A clear and concise description of what the bug is.")
+        }
+        bodyParts.append("")
+        bodyParts.append("## Environment")
+        bodyParts.append("")
+        bodyParts.append("- macOS Version: \(ProcessInfo.processInfo.operatingSystemVersionString)")
+        bodyParts.append("- EXO Version: \(buildTag) (\(buildCommit))")
+        bodyParts.append("")
+        bodyParts.append("## Additional context")
+        bodyParts.append("")
+        bodyParts.append("A bug report with diagnostic logs was submitted via the app.")
+
+        let body = bodyParts.joined(separator: "\n")
+
+        var components = URLComponents(string: "https://github.com/exo-explore/exo/issues/new")!
+        components.queryItems = [
+            URLQueryItem(name: "template", value: "bug_report.md"),
+            URLQueryItem(name: "title", value: "[BUG] "),
+            URLQueryItem(name: "body", value: body),
+            URLQueryItem(name: "labels", value: "bug"),
+        ]
+
+        if let url = components.url {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func showUninstallConfirmationAlert() {
+        let alert = NSAlert()
+        alert.messageText = "Uninstall EXO"
+        alert.informativeText = """
+            This will remove EXO and all its system components:
+
+            • Network configuration daemon
+            • Launch at login registration
+            • EXO network location
+
+            The app will be moved to Trash.
+            """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Uninstall")
+        alert.addButton(withTitle: "Cancel")
+
+        // Style the Uninstall button as destructive
+        if let uninstallButton = alert.buttons.first {
+            uninstallButton.hasDestructiveAction = true
+        }
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            performUninstall()
+        }
+    }
+
+    private func performUninstall() {
+        uninstallInProgress = true
+
+        // Stop EXO process first
+        controller.cancelPendingLaunch()
+        controller.stop()
+        stateService.stopPolling()
+
+        // Run the privileged uninstall on a background thread
+        // Using .utility QoS to avoid priority inversion with NSAppleScript's subprocess
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                // Remove network setup daemon and components (requires admin privileges)
+                try NetworkSetupHelper.uninstall()
+
+                DispatchQueue.main.async {
+                    // Unregister from launch at login
+                    LaunchAtLoginHelper.disable()
+
+                    // Move app to trash
+                    self.moveAppToTrash()
+
+                    // Quit the app
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        NSApplication.shared.terminate(nil)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.showErrorAlert(message: error.localizedDescription)
+                    self.uninstallInProgress = false
+                }
+            }
+        }
+    }
+
+    private func showErrorAlert(message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Uninstall Failed"
+        alert.informativeText = message
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    private func moveAppToTrash() {
+        guard let appURL = Bundle.main.bundleURL as URL? else { return }
+        do {
+            try FileManager.default.trashItem(at: appURL, resultingItemURL: nil)
+        } catch {
+            // If we can't trash the app, that's OK - user can do it manually
+            // The important system components have already been cleaned up
+        }
     }
 
     private var buildTag: String {
