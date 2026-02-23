@@ -36,6 +36,8 @@ from exo.shared.types.events import (
     IndexedEvent,
     InputChunkReceived,
     InstanceDeleted,
+    JacclSideChannelData,
+    JacclSideChannelGathered,
     LocalForwarderEvent,
     NodeGatheredInfo,
     NodeTimedOut,
@@ -61,6 +63,7 @@ from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
 from exo.shared.types.worker.instances import InstanceId
+from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import MultiSourceBuffer
 
@@ -96,6 +99,7 @@ class Master:
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
+        self._jaccl_pending: dict[InstanceId, dict[int, dict[RunnerId, bytes]]] = {}
 
     async def run(self):
         logger.info("Starting Master")
@@ -409,6 +413,11 @@ class Master:
                     self._event_log.append(event)
                     await self._send_event(indexed)
 
+                    # After broadcasting JacclSideChannelData, accumulate and
+                    # emit gathered result when all runners have contributed.
+                    if isinstance(event, JacclSideChannelData):
+                        await self._handle_jaccl_side_channel(event)
+
     async def _loopback_processor(self) -> None:
         # this would ideally not be necessary.
         # this is WAY less hacky than how I was working around this before
@@ -462,3 +471,42 @@ class Master:
         del self._pending_traces[task_id]
         if task_id in self._expected_ranks:
             del self._expected_ranks[task_id]
+
+    async def _handle_jaccl_side_channel(self, event: JacclSideChannelData) -> None:
+        """Accumulate SideChannel contributions; when all runners for an instance
+        have submitted for the same sequence, emit JacclSideChannelGathered."""
+        iid = event.instance_id
+        seq = event.sequence
+
+        if iid not in self._jaccl_pending:
+            self._jaccl_pending[iid] = {}
+        if seq not in self._jaccl_pending[iid]:
+            self._jaccl_pending[iid][seq] = {}
+        self._jaccl_pending[iid][seq][event.runner_id] = event.data
+
+        instance = self.state.instances.get(iid)
+        if instance is None:
+            logger.warning(f"JacclSideChannelData for unknown instance {iid}")
+            return
+
+        expected_runners = set(instance.shard_assignments.runner_to_shard.keys())
+        submitted = set(self._jaccl_pending[iid][seq].keys())
+
+        logger.info(
+            f"JACCL side channel: instance={iid} seq={seq} "
+            f"submitted={len(submitted)}/{len(expected_runners)}"
+        )
+
+        if submitted >= expected_runners:
+            gathered = dict(self._jaccl_pending[iid][seq])
+            del self._jaccl_pending[iid][seq]
+            if not self._jaccl_pending[iid]:
+                del self._jaccl_pending[iid]
+
+            await self.event_sender.send(
+                JacclSideChannelGathered(
+                    instance_id=iid,
+                    sequence=seq,
+                    gathered_data=gathered,
+                )
+            )

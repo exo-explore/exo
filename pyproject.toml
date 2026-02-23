@@ -64,7 +64,7 @@ members = [
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
-mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
+mlx = { git = "https://github.com/exo-explore/mlx.git", branch = "pipe-sidechannel", marker = "sys_platform == 'darwin'" }
 #mlx-lm = { git = "https://github.com/davidmcc73/mlx-lm", branch = "stable" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }
