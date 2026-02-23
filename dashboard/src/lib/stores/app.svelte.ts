@@ -847,6 +847,10 @@ class AppStore {
     this.thinkingEnabled = conversation.enableThinking ?? true;
     this.refreshConversationModelFromInstances();
 
+    // Sync global selection to the loaded conversation's model so reactive
+    // effects in +page.svelte can determine the correct chat launch state.
+    this.selectedChatModel = conversation.modelId || "";
+
     return true;
   }
 

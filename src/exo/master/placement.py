@@ -133,6 +133,11 @@ def place_instance(
         ),
     )
 
+    # Single-node: force Pipeline/Ring (Tensor and Jaccl require multi-node)
+    if len(selected_cycle) == 1:
+        command.instance_meta = InstanceMeta.MlxRing
+        command.sharding = Sharding.Pipeline
+
     shard_assignments = get_shard_assignments(
         command.model_card, selected_cycle, command.sharding, node_memory
     )
@@ -141,9 +146,6 @@ def place_instance(
 
     instance_id = InstanceId()
     target_instances = dict(deepcopy(current_instances))
-
-    if len(selected_cycle) == 1:
-        command.instance_meta = InstanceMeta.MlxRing
 
     match command.instance_meta:
         case InstanceMeta.MlxJaccl:
