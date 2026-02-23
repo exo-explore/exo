@@ -14,10 +14,12 @@ from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.commands import PlaceInstance
 from exo.shared.types.common import CommandId, NodeId
-from exo.shared.types.events import InstanceCreated, InstanceDeleted
+from exo.shared.types.events import InstanceCreated, InstanceDeleted, TaskStatusUpdated
 from exo.shared.types.memory import Memory
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import NetworkInterfaceInfo, NodeNetworkInfo
+from exo.shared.types.tasks import TaskId, TaskStatus, TextGeneration
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.instances import (
     Instance,
@@ -456,3 +458,117 @@ def test_tensor_rdma_backend_connectivity_matrix(
         else:
             ip_part = coordinator.split(":")[0]
             assert len(ip_part.split(".")) == 4
+
+
+def _make_task(
+    instance_id: InstanceId,
+    status: TaskStatus = TaskStatus.Running,
+) -> TextGeneration:
+    return TextGeneration(
+        task_id=TaskId(),
+        task_status=status,
+        instance_id=instance_id,
+        command_id=CommandId(),
+        task_params=TextGenerationTaskParams(
+            model=ModelId("test-model"),
+            input=[InputMessage(role="user", content="hello")],
+        ),
+    )
+
+
+def test_get_transition_events_delete_instance_cancels_running_tasks(
+    instance: Instance,
+):
+    # arrange
+    instance_id = InstanceId()
+    current_instances: dict[InstanceId, Instance] = {instance_id: instance}
+    target_instances: dict[InstanceId, Instance] = {}
+    task = _make_task(instance_id, TaskStatus.Running)
+    tasks = {task.task_id: task}
+
+    # act
+    events = get_transition_events(current_instances, target_instances, tasks)
+
+    # assert – cancellation event should come before the deletion event
+    assert len(events) == 2
+    assert isinstance(events[0], TaskStatusUpdated)
+    assert events[0].task_id == task.task_id
+    assert events[0].task_status == TaskStatus.Cancelled
+    assert isinstance(events[1], InstanceDeleted)
+    assert events[1].instance_id == instance_id
+
+
+def test_get_transition_events_delete_instance_cancels_pending_tasks(
+    instance: Instance,
+):
+    # arrange
+    instance_id = InstanceId()
+    current_instances: dict[InstanceId, Instance] = {instance_id: instance}
+    target_instances: dict[InstanceId, Instance] = {}
+    task = _make_task(instance_id, TaskStatus.Pending)
+    tasks = {task.task_id: task}
+
+    # act
+    events = get_transition_events(current_instances, target_instances, tasks)
+
+    # assert
+    assert len(events) == 2
+    assert isinstance(events[0], TaskStatusUpdated)
+    assert events[0].task_id == task.task_id
+    assert events[0].task_status == TaskStatus.Cancelled
+    assert isinstance(events[1], InstanceDeleted)
+
+
+def test_get_transition_events_delete_instance_ignores_completed_tasks(
+    instance: Instance,
+):
+    # arrange
+    instance_id = InstanceId()
+    current_instances: dict[InstanceId, Instance] = {instance_id: instance}
+    target_instances: dict[InstanceId, Instance] = {}
+    tasks = {
+        t.task_id: t
+        for t in [
+            _make_task(instance_id, TaskStatus.Complete),
+            _make_task(instance_id, TaskStatus.Failed),
+            _make_task(instance_id, TaskStatus.TimedOut),
+            _make_task(instance_id, TaskStatus.Cancelled),
+        ]
+    }
+
+    # act
+    events = get_transition_events(current_instances, target_instances, tasks)
+
+    # assert – only the InstanceDeleted event, no cancellations
+    assert len(events) == 1
+    assert isinstance(events[0], InstanceDeleted)
+
+
+def test_get_transition_events_delete_instance_cancels_only_matching_tasks(
+    instance: Instance,
+):
+    # arrange
+    instance_id_a = InstanceId()
+    instance_id_b = InstanceId()
+    current_instances: dict[InstanceId, Instance] = {
+        instance_id_a: instance,
+        instance_id_b: instance,
+    }
+    # only delete instance A, keep instance B
+    target_instances: dict[InstanceId, Instance] = {instance_id_b: instance}
+
+    task_a = _make_task(instance_id_a, TaskStatus.Running)
+    task_b = _make_task(instance_id_b, TaskStatus.Running)
+    tasks = {task_a.task_id: task_a, task_b.task_id: task_b}
+
+    # act
+    events = get_transition_events(current_instances, target_instances, tasks)
+
+    # assert – only task_a should be cancelled
+    cancel_events = [e for e in events if isinstance(e, TaskStatusUpdated)]
+    delete_events = [e for e in events if isinstance(e, InstanceDeleted)]
+    assert len(cancel_events) == 1
+    assert cancel_events[0].task_id == task_a.task_id
+    assert cancel_events[0].task_status == TaskStatus.Cancelled
+    assert len(delete_events) == 1
+    assert delete_events[0].instance_id == instance_id_a
