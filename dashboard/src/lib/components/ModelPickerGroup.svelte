@@ -41,6 +41,7 @@
     onShowInfo: (group: ModelGroup) => void;
     downloadStatusMap?: Map<string, DownloadAvailability>;
     launchedAt?: number;
+    instanceStatuses?: Record<string, { status: string; statusClass: string }>;
   };
 
   let {
@@ -56,6 +57,7 @@
     onShowInfo,
     downloadStatusMap,
     launchedAt,
+    instanceStatuses = {},
   }: ModelPickerGroupProps = $props();
 
   // Group-level download status: show if any variant is downloaded
@@ -92,6 +94,12 @@
   const anyVariantFits = $derived(
     group.variants.some((v) => canModelFit(v.id)),
   );
+  // Check if any variant has an active instance (ready, loading, downloading)
+  const anyVariantHasInstance = $derived(
+    instanceStatuses
+      ? group.variants.some((v) => instanceStatuses[v.id] != null)
+      : false,
+  );
   const groupFitStatus = $derived.by((): ModelFitStatus => {
     let hasClusterCapacityOnly = false;
     for (const variant of group.variants) {
@@ -122,16 +130,35 @@
     !group.hasMultipleVariants &&
       group.variants.some((v) => v.id === selectedModelId),
   );
+
+  // Group-level instance status: show the "best" status across all variants
+  const groupInstanceStatus = $derived.by(() => {
+    if (!instanceStatuses) return null;
+    const readyStatuses = ["READY", "LOADED", "RUNNING"];
+    const loadingStatuses = ["LOADING", "WARMING UP"];
+    let bestStatus: { status: string; statusClass: string } | null = null;
+    for (const variant of group.variants) {
+      const s = instanceStatuses[variant.id];
+      if (!s) continue;
+      if (readyStatuses.includes(s.status)) return s; // Ready is best
+      if (loadingStatuses.includes(s.status) || s.status === "DOWNLOADING") {
+        bestStatus = s;
+      }
+    }
+    return bestStatus;
+  });
 </script>
 
 <div
-  class="border-b border-white/5 last:border-b-0 {!anyVariantFits
+  class="border-b border-white/5 last:border-b-0 {!anyVariantFits &&
+  !anyVariantHasInstance
     ? 'opacity-50'
     : ''}"
 >
   <!-- Main row -->
   <div
-    class="flex items-center gap-2 px-3 py-2.5 transition-colors {anyVariantFits
+    class="flex items-center gap-2 px-3 py-2.5 transition-colors {anyVariantFits ||
+    anyVariantHasInstance
       ? 'hover:bg-white/5 cursor-pointer'
       : 'cursor-not-allowed'} {isMainSelected
       ? 'bg-exo-yellow/10 border-l-2 border-exo-yellow'
@@ -141,7 +168,7 @@
         onToggleExpand();
       } else {
         const modelId = group.variants[0]?.id;
-        if (modelId && canModelFit(modelId)) {
+        if (modelId && (canModelFit(modelId) || instanceStatuses[modelId])) {
           onSelectModel(modelId);
         }
       }
@@ -155,7 +182,7 @@
           onToggleExpand();
         } else {
           const modelId = group.variants[0]?.id;
-          if (modelId && canModelFit(modelId)) {
+          if (modelId && (canModelFit(modelId) || instanceStatuses[modelId])) {
             onSelectModel(modelId);
           }
         }
@@ -346,6 +373,47 @@
       </span>
     {/if}
 
+    <!-- Instance status badge -->
+    {#if groupInstanceStatus}
+      {#if groupInstanceStatus.status === "READY" || groupInstanceStatus.status === "LOADED" || groupInstanceStatus.status === "RUNNING"}
+        <span class="flex-shrink-0" title="Running">
+          <svg
+            class="w-3 h-3 text-green-400"
+            viewBox="0 0 12 12"
+            fill="currentColor"
+          >
+            <circle cx="6" cy="6" r="5" />
+          </svg>
+        </span>
+      {:else if groupInstanceStatus.status === "DOWNLOADING"}
+        <span class="flex-shrink-0 animate-pulse" title="Downloading">
+          <svg
+            class="w-3.5 h-3.5 text-blue-400"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+        </span>
+      {:else if groupInstanceStatus.status === "LOADING" || groupInstanceStatus.status === "WARMING UP"}
+        <span class="flex-shrink-0 animate-pulse" title="Loading">
+          <svg
+            class="w-3 h-3 text-yellow-400"
+            viewBox="0 0 12 12"
+            fill="currentColor"
+          >
+            <circle cx="6" cy="6" r="5" />
+          </svg>
+        </span>
+      {/if}
+    {/if}
+
     <!-- Check mark if selected (single-variant) -->
     {#if isMainSelected}
       <svg
@@ -420,17 +488,19 @@
       {#each group.variants as variant}
         {@const fitStatus = getModelFitStatus(variant.id)}
         {@const modelCanFit = canModelFit(variant.id)}
+        {@const variantHasInstance = instanceStatuses[variant.id] != null}
         {@const isSelected = selectedModelId === variant.id}
         <button
           type="button"
-          class="w-full flex items-center gap-3 px-3 py-2 pl-10 hover:bg-white/5 transition-colors text-left {!modelCanFit
+          class="w-full flex items-center gap-3 px-3 py-2 pl-10 hover:bg-white/5 transition-colors text-left {!modelCanFit &&
+          !variantHasInstance
             ? 'opacity-50 cursor-not-allowed'
             : 'cursor-pointer'} {isSelected
             ? 'bg-exo-yellow/10 border-l-2 border-exo-yellow'
             : 'border-l-2 border-transparent'}"
-          disabled={!modelCanFit}
+          disabled={!modelCanFit && !variantHasInstance}
           onclick={() => {
-            if (modelCanFit) {
+            if (modelCanFit || variantHasInstance) {
               onSelectModel(variant.id);
             }
           }}
@@ -473,6 +543,48 @@
                     d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
                   />
                   <path class="text-green-400" d="m9 13 2 2 4-4" />
+                </svg>
+              </span>
+            {/if}
+          {/if}
+
+          <!-- Instance status badge -->
+          {#if instanceStatuses[variant.id]}
+            {@const instStatus = instanceStatuses[variant.id]}
+            {#if instStatus.status === "READY" || instStatus.status === "LOADED" || instStatus.status === "RUNNING"}
+              <span class="flex-shrink-0" title="Running">
+                <svg
+                  class="w-3 h-3 text-green-400"
+                  viewBox="0 0 12 12"
+                  fill="currentColor"
+                >
+                  <circle cx="6" cy="6" r="5" />
+                </svg>
+              </span>
+            {:else if instStatus.status === "DOWNLOADING"}
+              <span class="flex-shrink-0 animate-pulse" title="Downloading">
+                <svg
+                  class="w-3.5 h-3.5 text-blue-400"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+              </span>
+            {:else if instStatus.status === "LOADING" || instStatus.status === "WARMING UP"}
+              <span class="flex-shrink-0 animate-pulse" title="Loading">
+                <svg
+                  class="w-3 h-3 text-yellow-400"
+                  viewBox="0 0 12 12"
+                  fill="currentColor"
+                >
+                  <circle cx="6" cy="6" r="5" />
                 </svg>
               </span>
             {/if}

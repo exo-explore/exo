@@ -193,7 +193,7 @@ def load_mlx_items(
                     on_layer_loaded(i, total)
         except ValueError as e:
             logger.opt(exception=e).debug(
-                "Model architecture doesn't support layer-by-layer progress tracking"
+                "Model architecture doesn't support layer-by-layer progress tracking",
             )
         mx.eval(model)
         end_time = time.perf_counter()

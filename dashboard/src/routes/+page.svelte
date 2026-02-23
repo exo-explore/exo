@@ -6,7 +6,12 @@
     ChatSidebar,
     ModelCard,
     ModelPickerModal,
+    ChatModelSelector,
   } from "$lib/components";
+  import {
+    pickAutoModel,
+    getAutoTierIndex,
+  } from "$lib/components/ChatModelSelector.svelte";
   import {
     favorites,
     toggleFavorite,
@@ -678,9 +683,15 @@
     selectPreviewModel(modelId);
     onboardingStep = 7;
     // Launch via standard placement API (same as main dashboard)
+    // Single-node: force Pipeline/Ring regardless of persisted defaults
+    const nodeCount = topologyData()
+      ? Object.keys(topologyData()!.nodes).length
+      : 1;
+    const sharding = nodeCount <= 1 ? "Pipeline" : selectedSharding;
+    const instanceType = nodeCount <= 1 ? "MlxRing" : selectedInstanceType;
     try {
       const placementResponse = await fetch(
-        `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${selectedSharding}&instance_meta=${selectedInstanceType}&min_nodes=1`,
+        `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${sharding}&instance_meta=${instanceType}&min_nodes=1`,
       );
       if (!placementResponse.ok) {
         const errorText = await placementResponse.text();
@@ -1992,6 +2003,39 @@
     };
   }
 
+  // Compute instance statuses by modelId for the model picker
+  const modelInstanceStatuses = $derived.by(() => {
+    const result: Record<string, { status: string; statusClass: string }> = {};
+    for (const [id, inst] of Object.entries(instanceData)) {
+      const modelId = getInstanceModelId(inst);
+      if (!modelId || modelId === "Unknown" || modelId === "Unknown Model")
+        continue;
+      const dlStatus = getInstanceDownloadStatus(id, inst);
+      const statusText = dlStatus.statusText;
+      let statusClass = "inactive";
+      if (
+        statusText === "READY" ||
+        statusText === "RUNNING" ||
+        statusText === "LOADED"
+      ) {
+        statusClass = "ready";
+      } else if (statusText === "DOWNLOADING") {
+        statusClass = "downloading";
+      } else if (statusText === "LOADING" || statusText === "WARMING UP") {
+        statusClass = "loading";
+      }
+      // Keep the best status per modelId (ready > loading > downloading > other)
+      const existing = result[modelId];
+      if (existing) {
+        const rank = (c: string) =>
+          c === "ready" ? 3 : c === "loading" ? 2 : c === "downloading" ? 1 : 0;
+        if (rank(statusClass) <= rank(existing.statusClass)) continue;
+      }
+      result[modelId] = { status: statusText, statusClass };
+    }
+    return result;
+  });
+
   function formatLastUpdate(): string {
     if (!update) return "ACQUIRING...";
     const seconds = Math.floor((Date.now() - update) / 1000);
@@ -2225,10 +2269,22 @@
   }
 
   function handleNewChat() {
+    chatLaunchState = "idle";
+    pendingChatModelId = null;
+    selectedChatCategory = null;
+    pendingAutoMessage = null;
+    userForcedIdle = true;
+    setSelectedChatModel("");
     createConversation();
   }
 
   function handleGoHome() {
+    chatLaunchState = "idle";
+    pendingChatModelId = null;
+    selectedChatCategory = null;
+    pendingAutoMessage = null;
+    userForcedIdle = true;
+    setSelectedChatModel("");
     clearChat();
   }
 
@@ -2391,6 +2447,586 @@
     "Help me debug my code",
     "Tell me a creative story",
   ];
+
+  // ── Seamless chat: launch models from chat view ──
+  type ChatLaunchState =
+    | "idle"
+    | "launching"
+    | "downloading"
+    | "loading"
+    | "ready";
+  let chatLaunchState = $state<ChatLaunchState>("idle");
+  let pendingChatModelId = $state<string | null>(null);
+  let selectedChatCategory = $state<string | null>(null);
+  // Guard: when true, the restore $effect must not override chatLaunchState.
+  // Set by handleNewChat/handleGoHome; cleared when the user picks a model.
+  let userForcedIdle = $state(false);
+
+  // Restore chat launch state when switching conversations
+  $effect(() => {
+    const currentModel = selectedChatModel();
+    // When the user explicitly requested the model selector (New Chat / Go Home),
+    // skip restoring state so the selector stays visible.
+    if (userForcedIdle) return;
+    if (!currentModel) {
+      if (chatStarted && chatLaunchState !== "idle") {
+        chatLaunchState = "idle";
+        pendingChatModelId = null;
+        selectedChatCategory = null;
+      }
+      return;
+    }
+
+    // Model is already running — no progress to show
+    if (hasRunningInstance(currentModel)) {
+      if (chatLaunchState !== "ready") {
+        chatLaunchState = "ready";
+      }
+      pendingChatModelId = currentModel;
+      return;
+    }
+
+    // Model is downloading
+    const dlStatus = getModelDownloadStatus(currentModel);
+    if (dlStatus.isDownloading) {
+      chatLaunchState = "downloading";
+      pendingChatModelId = currentModel;
+      return;
+    }
+
+    // Model is loading or in another pre-ready state
+    for (const [, inst] of Object.entries(instanceData)) {
+      if (getInstanceModelId(inst) !== currentModel) continue;
+      const status = deriveInstanceStatus(inst);
+      if (status.statusText === "LOADING") {
+        chatLaunchState = "loading";
+        pendingChatModelId = currentModel;
+        return;
+      }
+      if (
+        status.statusText === "WARMING UP" ||
+        status.statusText === "WAITING" ||
+        status.statusText === "INITIALIZING" ||
+        status.statusText === "PREPARING"
+      ) {
+        chatLaunchState = "launching";
+        pendingChatModelId = currentModel;
+        return;
+      }
+    }
+  });
+
+  // Suggested prompts per category
+  const categorySuggestedPrompts: Record<string, string[]> = {
+    coding: [
+      "Write a Snake game in Python",
+      "Build a REST API with FastAPI",
+      "Explain how async/await works",
+      "Help me write unit tests for my code",
+    ],
+    writing: [
+      "Write a short story about time travel",
+      "Draft a professional email to a client",
+      "Create a haiku about the ocean",
+      "Summarize the key ideas of stoicism",
+    ],
+    agentic: [
+      "Plan a weekend trip to Tokyo",
+      "Research and compare React vs Svelte",
+      "Create a step-by-step guide to learn ML",
+      "Analyze the pros and cons of remote work",
+    ],
+    biggest: [
+      "Explain quantum computing simply",
+      "Help me brainstorm startup ideas",
+      "What are the key differences between TCP and UDP?",
+      "Write a Python script to analyze a CSV file",
+    ],
+    auto: [
+      "Explain quantum computing simply",
+      "Help me brainstorm ideas for a side project",
+      "Write a Python function to sort a list",
+      "What makes a great technical interview?",
+    ],
+  };
+
+  // Cluster label for ChatModelSelector header
+  const chatClusterLabel = $derived.by(() => {
+    if (!data) return "your Mac";
+    const nodes = Object.values(data.nodes);
+    if (nodes.length === 0) return "your Mac";
+    if (nodes.length === 1) {
+      const node = nodes[0];
+      const name = node.system_info?.model_id || "your Mac";
+      const totalMem =
+        node.macmon_info?.memory?.ram_total ?? node.system_info?.memory ?? 0;
+      const memGB = Math.round(totalMem / (1024 * 1024 * 1024));
+      return `${name} ${memGB}GB`;
+    }
+    const totalMemGB = Math.round(clusterTotalMemoryGB());
+    return `cluster ${totalMemGB}GB`;
+  });
+
+  // Check if a model already has a running instance
+  function hasRunningInstance(modelId: string): boolean {
+    for (const [, inst] of Object.entries(instanceData)) {
+      const id = getInstanceModelId(inst);
+      if (id === modelId) {
+        const status = deriveInstanceStatus(inst);
+        if (
+          status.statusText === "READY" ||
+          status.statusText === "LOADED" ||
+          status.statusText === "RUNNING"
+        ) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function hasExistingInstance(modelId: string): boolean {
+    for (const [, inst] of Object.entries(instanceData)) {
+      if (getInstanceModelId(inst) === modelId) return true;
+    }
+    return false;
+  }
+
+  // Pick optimal placement from previews (frontend logic)
+  // Rules: 1-node → Pipeline/Ring, multi-node with RDMA → Tensor/Jaccl (most nodes),
+  //         multi-node without RDMA → 1-node Pipeline/Ring
+  function pickOptimalPlacement(
+    previews: PlacementPreview[],
+  ): PlacementPreview | null {
+    const valid = previews.filter((p) => p.instance && !p.error);
+
+    // Check if any valid placement uses multiple nodes (indicates multi-node cluster)
+    const hasMultiNode = valid.some((p) => getPreviewNodeCount(p) > 1);
+
+    if (hasMultiNode) {
+      // Multi-node with RDMA: prefer Jaccl + Tensor with most nodes (fastest TPS)
+      const jacclTensor = valid
+        .filter(
+          (p) => p.instance_meta === "MlxJaccl" && p.sharding === "Tensor",
+        )
+        .sort((a, b) => getPreviewNodeCount(b) - getPreviewNodeCount(a));
+      if (jacclTensor.length > 0) return jacclTensor[0];
+
+      // Multi-node without RDMA: fall back to single-node Pipeline/Ring
+      const singlePipeline = valid.filter(
+        (p) =>
+          p.instance_meta === "MlxRing" &&
+          p.sharding === "Pipeline" &&
+          getPreviewNodeCount(p) === 1,
+      );
+      if (singlePipeline.length > 0) return singlePipeline[0];
+    }
+
+    // Single node (or final fallback): Pipeline/Ring with fewest nodes
+    const ringPipeline = valid
+      .filter((p) => p.instance_meta === "MlxRing" && p.sharding === "Pipeline")
+      .sort((a, b) => getPreviewNodeCount(a) - getPreviewNodeCount(b));
+    if (ringPipeline.length > 0) return ringPipeline[0];
+
+    // Last resort: any valid placement, fewest nodes
+    return (
+      valid.sort(
+        (a, b) => getPreviewNodeCount(a) - getPreviewNodeCount(b),
+      )[0] ?? null
+    );
+  }
+
+  // Launch a model for seamless chat
+  async function launchModelForChat(modelId: string, category: string) {
+    userForcedIdle = false;
+    pendingChatModelId = modelId;
+    selectedChatCategory = category;
+
+    // Check if already running — skip straight to chat
+    if (hasRunningInstance(modelId)) {
+      setSelectedChatModel(modelId);
+      createConversation();
+      chatLaunchState = "ready";
+      return;
+    }
+
+    // Already has an instance (downloading/loading) — attach to its progress
+    if (hasExistingInstance(modelId)) {
+      setSelectedChatModel(modelId);
+      pendingChatModelId = modelId;
+      createConversation();
+      const dlStatus = getModelDownloadStatus(modelId);
+      if (dlStatus.isDownloading) {
+        chatLaunchState = "downloading";
+      } else {
+        chatLaunchState = "launching";
+      }
+      return;
+    }
+
+    chatLaunchState = "launching";
+
+    try {
+      // Fetch placement previews
+      const res = await fetch(
+        `/instance/previews?model_id=${encodeURIComponent(modelId)}`,
+      );
+      if (!res.ok) {
+        addToast({
+          type: "error",
+          message: `Failed to get placements: ${await res.text()}`,
+        });
+        chatLaunchState = "idle";
+        return;
+      }
+      const data: { previews: PlacementPreview[] } = await res.json();
+      const placement = pickOptimalPlacement(data.previews);
+      if (!placement) {
+        addToast({
+          type: "error",
+          message: "No valid placement found for this model",
+        });
+        chatLaunchState = "idle";
+        return;
+      }
+
+      // Launch the instance
+      const launchRes = await fetch("/instance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instance: placement.instance }),
+      });
+      if (!launchRes.ok) {
+        addToast({
+          type: "error",
+          message: `Failed to launch: ${await launchRes.text()}`,
+        });
+        chatLaunchState = "idle";
+        return;
+      }
+
+      setSelectedChatModel(modelId);
+      recordRecentLaunch(modelId);
+      createConversation();
+      chatLaunchState = "downloading";
+    } catch (error) {
+      addToast({ type: "error", message: `Network error: ${error}` });
+      chatLaunchState = "idle";
+    }
+  }
+
+  // Handle auto-send: user typed without selecting a model
+  async function handleAutoSend(
+    content: string,
+    files?: {
+      id: string;
+      name: string;
+      type: string;
+      textContent?: string;
+      preview?: string;
+    }[],
+  ) {
+    // Clear forced-idle so restore effect resumes normal operation
+    userForcedIdle = false;
+
+    // Find the best already-running model by tier
+    let bestRunning: { id: string; tierIndex: number } | null = null;
+    for (const [, inst] of Object.entries(instanceData)) {
+      const modelId = getInstanceModelId(inst);
+      if (modelId === "Unknown" || modelId === "Unknown Model") continue;
+      if (!hasRunningInstance(modelId)) continue;
+      const info = models.find((m) => m.id === modelId);
+      if (!info) continue;
+      const tierIndex = getAutoTierIndex(info.base_model ?? "");
+      if (!bestRunning || tierIndex < bestRunning.tierIndex) {
+        bestRunning = { id: modelId, tierIndex };
+      }
+    }
+
+    // Find the best auto model that fits in available memory
+    const totalMem = availableMemoryGB();
+    const modelInfos = models.map((m) => ({
+      id: m.id,
+      name: m.name ?? "",
+      base_model: m.base_model ?? "",
+      storage_size_megabytes: m.storage_size_megabytes ?? 0,
+      capabilities: m.capabilities ?? [],
+      family: m.family ?? "",
+      quantization: m.quantization ?? "",
+    }));
+    const autoModel = pickAutoModel(modelInfos, totalMem);
+
+    // Prefer running model unless auto-pick is a strictly better tier
+    if (bestRunning) {
+      const autoTier = autoModel
+        ? getAutoTierIndex(autoModel.base_model)
+        : Infinity;
+      if (autoTier >= bestRunning.tierIndex) {
+        // Running model is same or better tier — use it directly
+        setSelectedChatModel(bestRunning.id);
+        if (!chatStarted) createConversation();
+        sendMessage(content, files);
+        return;
+      }
+    }
+
+    if (!autoModel) {
+      addToast({
+        type: "error",
+        message: "No model fits in your available memory",
+      });
+      return;
+    }
+
+    // Check if the chosen auto model is already running
+    if (hasRunningInstance(autoModel.id)) {
+      setSelectedChatModel(autoModel.id);
+      if (!chatStarted) createConversation();
+      sendMessage(content, files);
+      return;
+    }
+
+    // Already has an instance (downloading/loading) — attach to its progress
+    if (hasExistingInstance(autoModel.id)) {
+      selectedChatCategory = "auto";
+      setSelectedChatModel(autoModel.id);
+      pendingChatModelId = autoModel.id;
+      if (!chatStarted) createConversation();
+      pendingAutoMessage = { content, files };
+      const dlStatus = getModelDownloadStatus(autoModel.id);
+      if (dlStatus.isDownloading) {
+        chatLaunchState = "downloading";
+      } else {
+        chatLaunchState = "launching";
+      }
+      return;
+    }
+
+    // Need to launch first, then send
+    selectedChatCategory = "auto";
+    pendingChatModelId = autoModel.id;
+    chatLaunchState = "launching";
+
+    try {
+      const res = await fetch(
+        `/instance/previews?model_id=${encodeURIComponent(autoModel.id)}`,
+      );
+      if (!res.ok) {
+        addToast({
+          type: "error",
+          message: `Failed to get placements: ${await res.text()}`,
+        });
+        chatLaunchState = "idle";
+        return;
+      }
+      const data: { previews: PlacementPreview[] } = await res.json();
+      const placement = pickOptimalPlacement(data.previews);
+      if (!placement) {
+        addToast({ type: "error", message: "No valid placement found" });
+        chatLaunchState = "idle";
+        return;
+      }
+
+      const launchRes = await fetch("/instance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instance: placement.instance }),
+      });
+      if (!launchRes.ok) {
+        addToast({
+          type: "error",
+          message: `Failed to launch: ${await launchRes.text()}`,
+        });
+        chatLaunchState = "idle";
+        return;
+      }
+
+      setSelectedChatModel(autoModel.id);
+      recordRecentLaunch(autoModel.id);
+      if (!chatStarted) createConversation();
+      chatLaunchState = "downloading";
+
+      // Queue the message to send once model is ready
+      pendingAutoMessage = { content, files };
+    } catch (error) {
+      addToast({ type: "error", message: `Network error: ${error}` });
+      chatLaunchState = "idle";
+    }
+  }
+
+  // Pending message to send after auto-launch completes
+  let pendingAutoMessage = $state<{
+    content: string;
+    files?: {
+      id: string;
+      name: string;
+      type: string;
+      textContent?: string;
+      preview?: string;
+    }[];
+  } | null>(null);
+
+  // Best running model by tier (for auto-pick display)
+  const bestRunningModelId = $derived.by(() => {
+    let best: { id: string; tierIndex: number } | null = null;
+    for (const [, inst] of Object.entries(instanceData)) {
+      const modelId = getInstanceModelId(inst);
+      if (modelId === "Unknown" || modelId === "Unknown Model") continue;
+      if (!hasRunningInstance(modelId)) continue;
+      const info = models.find((m) => m.id === modelId);
+      if (!info) continue;
+      const tierIndex = getAutoTierIndex(info.base_model ?? "");
+      if (!best || tierIndex < best.tierIndex) {
+        best = { id: modelId, tierIndex };
+      }
+    }
+    return best?.id ?? null;
+  });
+
+  // Track chat launch progress (download + loading)
+  const chatLaunchDownload = $derived.by(() => {
+    if (
+      !pendingChatModelId ||
+      (chatLaunchState !== "downloading" && chatLaunchState !== "launching")
+    )
+      return null;
+    const status = getModelDownloadStatus(pendingChatModelId);
+    if (status.isDownloading) return status.progress;
+    return null;
+  });
+
+  const chatLaunchLoadProgress = $derived.by(() => {
+    if (
+      !pendingChatModelId ||
+      chatLaunchState === "idle" ||
+      chatLaunchState === "ready"
+    )
+      return null;
+    let layersLoaded = 0,
+      totalLayers = 0;
+    for (const [, inst] of Object.entries(instanceData)) {
+      if (getInstanceModelId(inst) !== pendingChatModelId) continue;
+      const status = deriveInstanceStatus(inst);
+      if (
+        status.statusText === "LOADING" &&
+        status.totalLayers &&
+        status.totalLayers > 0
+      ) {
+        layersLoaded += status.layersLoaded ?? 0;
+        totalLayers += status.totalLayers;
+      }
+    }
+    if (totalLayers === 0) return null;
+    return {
+      layersLoaded,
+      totalLayers,
+      percentage: (layersLoaded / totalLayers) * 100,
+    };
+  });
+
+  // Auto-advance chat launch state based on instance status
+  $effect(() => {
+    if (!pendingChatModelId || chatLaunchState === "idle") return;
+
+    // Check if model is now ready
+    if (hasRunningInstance(pendingChatModelId)) {
+      chatLaunchState = "ready";
+      // Send pending auto message if any
+      if (pendingAutoMessage) {
+        const msg = pendingAutoMessage;
+        pendingAutoMessage = null;
+        sendMessage(msg.content, msg.files);
+      }
+      return;
+    }
+
+    // If already ready (set by restore effect), don't downgrade state
+    if (chatLaunchState === "ready") return;
+
+    // Check if currently loading
+    if (chatLaunchLoadProgress) {
+      chatLaunchState = "loading";
+      return;
+    }
+
+    // Check if currently downloading
+    if (chatLaunchDownload) {
+      chatLaunchState = "downloading";
+    }
+  });
+
+  // Check if any instance is running (for showing model selector vs chat)
+  const hasAnyRunningInstance = $derived(() => {
+    for (const [, inst] of Object.entries(instanceData)) {
+      const status = deriveInstanceStatus(inst);
+      if (
+        status.statusText === "READY" ||
+        status.statusText === "LOADED" ||
+        status.statusText === "RUNNING"
+      ) {
+        return true;
+      }
+    }
+    return false;
+  });
+
+  // Handle model selection from ChatModelSelector
+  function handleChatModelSelect(modelId: string, category: string) {
+    launchModelForChat(modelId, category);
+  }
+
+  // Handle "+ Add Model" from ChatModelSelector
+  function handleChatAddModel() {
+    modelPickerContext = "chat";
+    isModelPickerOpen = true;
+  }
+
+  // Track which context opened the model picker (dashboard launch vs chat selection)
+  let modelPickerContext = $state<"dashboard" | "chat">("dashboard");
+
+  // Open the model picker from a chat context (e.g. clicking the model button in ChatForm)
+  function openChatModelPicker() {
+    modelPickerContext = "chat";
+    isModelPickerOpen = true;
+  }
+
+  // Handle model selection from the picker when opened from chat context
+  function handleChatPickerSelect(modelId: string) {
+    setSelectedChatModel(modelId);
+    userForcedIdle = false;
+    isModelPickerOpen = false;
+  }
+
+  // Unified send handler: sends if model running, auto-launches if not
+  function handleChatSend(
+    content: string,
+    files?: {
+      id: string;
+      name: string;
+      type: string;
+      textContent?: string;
+      preview?: string;
+    }[],
+  ) {
+    const model = selectedChatModel();
+
+    // Model is selected and running — send directly
+    if (model && hasRunningInstance(model)) {
+      sendMessage(content, files, null);
+      return;
+    }
+
+    // Model is selected but NOT running — launch it, queue the message
+    if (model) {
+      pendingAutoMessage = { content, files };
+      userForcedIdle = false;
+      launchModelForChat(model, "picker");
+      return;
+    }
+
+    // No model selected — fall through to auto-pick
+    handleAutoSend(content, files);
+  }
 
   // Helper to get the number of nodes in a placement preview
   function getPreviewNodeCount(preview: PlacementPreview): number {
@@ -3689,6 +4325,7 @@
           <button
             type="button"
             onclick={() => {
+              modelPickerContext = "dashboard";
               isModelPickerOpen = true;
             }}
             class="text-sm font-sans text-white/40 hover:text-exo-yellow transition-colors cursor-pointer underline underline-offset-4 decoration-white/20 hover:decoration-exo-yellow/50"
@@ -3845,6 +4482,8 @@
               showModelSelector={true}
               modelTasks={modelTasks()}
               modelCapabilities={modelCapabilities()}
+              onOpenModelPicker={openChatModelPicker}
+              onAutoSend={handleChatSend}
             />
           </div>
 
@@ -3963,7 +4602,13 @@
         role="complementary"
         aria-label="Conversation history"
       >
-        <ChatSidebar class="h-full" />
+        <ChatSidebar
+          class="h-full"
+          onNewChat={handleNewChat}
+          onSelectConversation={() => {
+            userForcedIdle = false;
+          }}
+        />
       </div>
     {/if}
 
@@ -4256,6 +4901,8 @@
                 showModelSelector={true}
                 modelTasks={modelTasks()}
                 modelCapabilities={modelCapabilities()}
+                onOpenModelPicker={openChatModelPicker}
+                onAutoSend={handleChatSend}
               />
             </div>
           </div>
@@ -4320,6 +4967,7 @@
                         instanceModelId !== "Unknown" &&
                         instanceModelId !== "Unknown Model"
                       ) {
+                        userForcedIdle = false;
                         setSelectedChatModel(instanceModelId);
                       }
                     }}
@@ -4757,7 +5405,7 @@
                               <p
                                 class="text-[11px] text-green-400/70 leading-relaxed"
                               >
-                                Ready to chat! Type a message below.
+                                Ready to chat!
                               </p>
                             {/if}
                           </div>
@@ -4799,7 +5447,10 @@
             <div class="flex-shrink-0 mb-3">
               <button
                 type="button"
-                onclick={() => (isModelPickerOpen = true)}
+                onclick={() => {
+                  modelPickerContext = "dashboard";
+                  isModelPickerOpen = true;
+                }}
                 class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-2.5 text-sm font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 relative"
               >
                 {#if selectedModelId}
@@ -4826,6 +5477,32 @@
                     </span>
                   {:else}
                     <span class="text-exo-light-gray">{selectedModelId}</span>
+                  {/if}
+                {:else if bestRunningModelId}
+                  {@const runModel = models.find(
+                    (m) => m.id === bestRunningModelId,
+                  )}
+                  {#if runModel}
+                    {@const sizeGB = getModelSizeGB(runModel)}
+                    <span
+                      class="flex items-center justify-between gap-2 w-full pr-4"
+                    >
+                      <span
+                        class="flex items-center gap-2 text-exo-light-gray truncate"
+                      >
+                        <span class="truncate"
+                          >{runModel.name || runModel.id}</span
+                        >
+                      </span>
+                      <span class="text-white/50 text-xs flex-shrink-0"
+                        >{sizeGB >= 1
+                          ? sizeGB.toFixed(0)
+                          : sizeGB.toFixed(1)}GB</span
+                      >
+                    </span>
+                  {:else}
+                    <span class="text-exo-light-gray">{bestRunningModelId}</span
+                    >
                   {/if}
                 {:else}
                   <span class="text-white/50">— SELECT MODEL —</span>
@@ -5127,30 +5804,207 @@
           class="flex-1 flex flex-col min-w-0 overflow-hidden"
           in:fade={{ duration: 300, delay: 100 }}
         >
-          <div
-            class="flex-1 overflow-y-auto px-8 py-6"
-            bind:this={chatScrollRef}
-            role="log"
-            aria-live="polite"
-            aria-label="Chat messages"
-          >
-            <div class="max-w-7xl mx-auto">
-              <ChatMessages scrollParent={chatScrollRef} />
-            </div>
-          </div>
-
-          <div
-            class="flex-shrink-0 px-8 pb-6 pt-4 bg-gradient-to-t from-exo-black via-exo-black to-transparent"
-          >
-            <div class="max-w-7xl mx-auto">
-              <ChatForm
-                placeholder="Ask anything"
-                showModelSelector={true}
-                modelTasks={modelTasks()}
-                modelCapabilities={modelCapabilities()}
+          {#if chatLaunchState === "idle"}
+            <!-- No running instance: show model selector -->
+            <div
+              class="flex-1 overflow-y-auto flex items-center justify-center px-8 py-6"
+            >
+              <ChatModelSelector
+                models={models.map((m) => ({
+                  id: m.id,
+                  name: m.name ?? "",
+                  base_model: m.base_model ?? "",
+                  storage_size_megabytes: m.storage_size_megabytes ?? 0,
+                  capabilities: m.capabilities ?? [],
+                  family: m.family ?? "",
+                  quantization: m.quantization ?? "",
+                }))}
+                clusterLabel={chatClusterLabel}
+                totalMemoryGB={availableMemoryGB()}
+                onSelect={handleChatModelSelect}
+                onAddModel={handleChatAddModel}
               />
             </div>
-          </div>
+            <div
+              class="flex-shrink-0 px-8 pb-6 pt-4 bg-gradient-to-t from-exo-black via-exo-black to-transparent"
+            >
+              <div class="max-w-7xl mx-auto">
+                <ChatForm
+                  placeholder="Ask anything — we'll pick the best model automatically"
+                  showModelSelector={!!bestRunningModelId}
+                  modelDisplayOverride={bestRunningModelId ?? undefined}
+                  modelTasks={modelTasks()}
+                  modelCapabilities={modelCapabilities()}
+                  onAutoSend={handleAutoSend}
+                  onOpenModelPicker={openChatModelPicker}
+                />
+              </div>
+            </div>
+          {:else if chatLaunchState !== "idle" && chatLaunchState !== "ready"}
+            <!-- Model launching/downloading/loading: show progress -->
+            <div class="flex-1 flex items-center justify-center px-8 py-6">
+              <div class="flex flex-col items-center gap-6 max-w-md w-full">
+                <!-- Model name -->
+                {#if pendingChatModelId}
+                  <p class="text-sm text-white font-mono tracking-wide">
+                    {pendingChatModelId.split("/").pop()?.replace(/-/g, " ") ||
+                      pendingChatModelId}
+                  </p>
+                {/if}
+
+                {#if chatLaunchState === "launching"}
+                  <div class="flex flex-col items-center gap-3">
+                    <div
+                      class="w-8 h-8 border-2 border-exo-yellow/30 border-t-exo-yellow rounded-full animate-spin"
+                    ></div>
+                    <p
+                      class="text-xs text-exo-light-gray font-mono uppercase tracking-wider"
+                    >
+                      Preparing to launch&hellip;
+                    </p>
+                  </div>
+                {:else if chatLaunchState === "downloading"}
+                  <div class="w-full flex flex-col gap-3">
+                    <div
+                      class="flex items-center justify-between text-xs font-mono"
+                    >
+                      <span class="text-exo-yellow uppercase tracking-wider"
+                        >Downloading</span
+                      >
+                      {#if chatLaunchDownload}
+                        <span class="text-exo-light-gray tabular-nums">
+                          {chatLaunchDownload.percentage.toFixed(1)}%
+                        </span>
+                      {/if}
+                    </div>
+                    <div
+                      class="w-full h-2 bg-exo-dark-gray rounded-full overflow-hidden border border-exo-medium-gray/30"
+                    >
+                      <div
+                        class="h-full bg-gradient-to-r from-exo-yellow/80 to-exo-yellow rounded-full transition-all duration-300"
+                        style="width: {chatLaunchDownload?.percentage ?? 0}%"
+                      ></div>
+                    </div>
+                    {#if chatLaunchDownload}
+                      <div
+                        class="flex justify-between text-[10px] text-exo-light-gray/60 font-mono"
+                      >
+                        <span
+                          >{formatBytes(chatLaunchDownload.downloadedBytes)} / {formatBytes(
+                            chatLaunchDownload.totalBytes,
+                          )}</span
+                        >
+                        <span>
+                          {#if chatLaunchDownload.speed > 0}
+                            {formatBytes(chatLaunchDownload.speed)}/s
+                          {/if}
+                          {#if chatLaunchDownload.etaMs > 0}
+                            &middot; {formatEta(chatLaunchDownload.etaMs)}
+                          {/if}
+                        </span>
+                      </div>
+                    {/if}
+                  </div>
+                {:else if chatLaunchState === "loading"}
+                  <div class="w-full flex flex-col gap-3">
+                    <div
+                      class="flex items-center justify-between text-xs font-mono"
+                    >
+                      <span class="text-exo-yellow uppercase tracking-wider"
+                        >Loading model</span
+                      >
+                      {#if chatLaunchLoadProgress}
+                        <span class="text-exo-light-gray tabular-nums">
+                          {chatLaunchLoadProgress.layersLoaded}/{chatLaunchLoadProgress.totalLayers}
+                          layers
+                        </span>
+                      {/if}
+                    </div>
+                    <div
+                      class="w-full h-2 bg-exo-dark-gray rounded-full overflow-hidden border border-exo-medium-gray/30"
+                    >
+                      <div
+                        class="h-full bg-gradient-to-r from-exo-yellow/80 to-exo-yellow rounded-full transition-all duration-300"
+                        style="width: {chatLaunchLoadProgress?.percentage ??
+                          0}%"
+                      ></div>
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            </div>
+            <div
+              class="flex-shrink-0 px-8 pb-6 pt-4 bg-gradient-to-t from-exo-black via-exo-black to-transparent"
+            >
+              <div class="max-w-7xl mx-auto">
+                <ChatForm
+                  placeholder="Ask anything"
+                  showModelSelector={true}
+                  modelTasks={modelTasks()}
+                  modelCapabilities={modelCapabilities()}
+                  onAutoSend={handleChatSend}
+                  onOpenModelPicker={openChatModelPicker}
+                />
+              </div>
+            </div>
+          {:else}
+            <!-- Normal chat: model is running -->
+            <div
+              class="flex-1 overflow-y-auto px-8 py-6"
+              bind:this={chatScrollRef}
+              role="log"
+              aria-live="polite"
+              aria-label="Chat messages"
+            >
+              <div class="max-w-7xl mx-auto">
+                <ChatMessages scrollParent={chatScrollRef} />
+                {#if chatLaunchState === "ready" && selectedChatCategory}
+                  {@const prompts =
+                    categorySuggestedPrompts[selectedChatCategory] ??
+                    categorySuggestedPrompts.auto}
+                  <div
+                    class="flex flex-col items-center gap-4 mt-12"
+                    in:fade={{ duration: 300 }}
+                  >
+                    <p
+                      class="text-xs text-exo-light-gray/60 font-mono uppercase tracking-wider"
+                    >
+                      Try asking
+                    </p>
+                    <div class="grid grid-cols-2 gap-2 max-w-lg w-full">
+                      {#each prompts as prompt}
+                        <button
+                          type="button"
+                          onclick={() => {
+                            chatLaunchState = "idle";
+                            selectedChatCategory = null;
+                            sendMessage(prompt);
+                          }}
+                          class="text-left px-3 py-2.5 text-xs text-exo-light-gray hover:text-white font-mono rounded-lg border border-exo-medium-gray/30 hover:border-exo-yellow/30 bg-exo-dark-gray/30 hover:bg-exo-dark-gray/60 transition-all duration-200 cursor-pointer"
+                        >
+                          {prompt}
+                        </button>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            </div>
+            <div
+              class="flex-shrink-0 px-8 pb-6 pt-4 bg-gradient-to-t from-exo-black via-exo-black to-transparent"
+            >
+              <div class="max-w-7xl mx-auto">
+                <ChatForm
+                  placeholder="Ask anything"
+                  showModelSelector={true}
+                  modelTasks={modelTasks()}
+                  modelCapabilities={modelCapabilities()}
+                  onAutoSend={handleChatSend}
+                  onOpenModelPicker={openChatModelPicker}
+                />
+              </div>
+            </div>
+          {/if}
         </div>
 
         <!-- Right: Mini-Map Sidebar -->
@@ -5244,6 +6098,7 @@
                           instanceModelId !== "Unknown" &&
                           instanceModelId !== "Unknown Model"
                         ) {
+                          userForcedIdle = false;
                           setSelectedChatModel(instanceModelId);
                         }
                       }}
@@ -5690,7 +6545,7 @@
                                 <p
                                   class="text-[11px] text-green-400/70 leading-relaxed"
                                 >
-                                  Ready to chat! Type a message below.
+                                  Ready to chat!
                                 </p>
                               {/if}
                             </div>
@@ -5733,7 +6588,13 @@
       const model = models.find((m) => m.id === modelId);
       return model ? getModelMemoryFitStatus(model) : "too_large";
     }}
-    onSelect={handleModelPickerSelect}
+    onSelect={(modelId) => {
+      if (modelPickerContext === "chat") {
+        handleChatPickerSelect(modelId);
+      } else {
+        handleModelPickerSelect(modelId);
+      }
+    }}
     onClose={() => (isModelPickerOpen = false)}
     onToggleFavorite={toggleFavorite}
     onAddModel={addModelFromPicker}
@@ -5742,5 +6603,6 @@
     usedMemoryGB={clusterMemory().used / (1024 * 1024 * 1024)}
     {downloadsData}
     topologyNodes={data?.nodes}
+    instanceStatuses={modelInstanceStatuses}
   />
 {/if}

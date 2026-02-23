@@ -2,7 +2,6 @@
   import {
     conversations,
     activeConversationId,
-    createConversation,
     loadConversation,
     deleteConversation,
     deleteAllConversations,
@@ -17,9 +16,15 @@
 
   interface Props {
     class?: string;
+    onNewChat?: () => void;
+    onSelectConversation?: () => void;
   }
 
-  let { class: className = "" }: Props = $props();
+  let {
+    class: className = "",
+    onNewChat,
+    onSelectConversation,
+  }: Props = $props();
 
   const conversationList = $derived(conversations());
   const activeId = $derived(activeConversationId());
@@ -42,10 +47,11 @@
   );
 
   function handleNewChat() {
-    createConversation();
+    onNewChat?.();
   }
 
   function handleSelectConversation(id: string) {
+    onSelectConversation?.();
     loadConversation(id);
   }
 
