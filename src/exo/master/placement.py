@@ -29,7 +29,7 @@ from exo.shared.types.events import (
     TaskStatusUpdated,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
+from exo.shared.types.profiling import MemoryUsage, NodeBandwidth, NodeNetworkInfo
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
     DownloadOngoing,
@@ -67,6 +67,7 @@ def place_instance(
     node_memory: Mapping[NodeId, MemoryUsage],
     node_network: Mapping[NodeId, NodeNetworkInfo],
     required_nodes: set[NodeId] | None = None,
+    node_bandwidth: Mapping[NodeId, NodeBandwidth] | None = None,
 ) -> dict[InstanceId, Instance]:
     cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
@@ -133,8 +134,19 @@ def place_instance(
         ),
     )
 
+    # Extract raw bandwidth values from NodeBandwidth objects
+    bandwidth_map: dict[NodeId, int] | None = None
+    if node_bandwidth:
+        bandwidth_map = {
+            node_id: nb.memory_bandwidth
+            for node_id, nb in node_bandwidth.items()
+            if nb.memory_bandwidth is not None
+        }
+        if not bandwidth_map:
+            bandwidth_map = None
+
     shard_assignments = get_shard_assignments(
-        command.model_card, selected_cycle, command.sharding, node_memory
+        command.model_card, selected_cycle, command.sharding, node_memory, bandwidth_map
     )
 
     cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle.node_ids)
