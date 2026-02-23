@@ -106,13 +106,18 @@ class RunnerSupervisor:
     def shutdown(self):
         logger.info("Runner supervisor shutting down")
         self._tg.cancel_tasks()
-        self._ev_recv.close()
-        self._task_sender.close()
         if not self._cancel_watch_runner.cancel_called:
             self._cancel_watch_runner.cancel()
         with contextlib.suppress(ClosedResourceError):
+            self._ev_recv.close()
+        with contextlib.suppress(ClosedResourceError):
+            self._task_sender.close()
+        with contextlib.suppress(ClosedResourceError):
+            self._event_sender.close()
+        with contextlib.suppress(ClosedResourceError):
             self._cancel_sender.send(TaskId("CANCEL_CURRENT_TASK"))
-        self._cancel_sender.close()
+        with contextlib.suppress(ClosedResourceError):
+            self._cancel_sender.close()
         self.runner_process.join(5)
         if not self.runner_process.is_alive():
             logger.info("Runner process succesfully terminated")
