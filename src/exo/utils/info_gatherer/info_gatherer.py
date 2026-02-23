@@ -336,7 +336,13 @@ class NodeDiskUsage(TaggedModel):
 
 
 class NodeMemoryBandwidth(TaggedModel):
-    """Memory bandwidth information gathered once at startup."""
+    """Memory bandwidth information gathered once at startup.
+
+    Bandwidth is sampled only once because:
+    - Apple Silicon has hardware-fixed bandwidth (not dynamic like CPU/GPU frequency)
+    - Profiling requires large GPU allocations (~4GB) which is risky during operation
+    - Unlike memory/disk usage, bandwidth doesn't change at runtime
+    """
 
     memory_bandwidth: int | None = None
 

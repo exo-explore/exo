@@ -162,6 +162,11 @@ def profile_memory_bandwidth() -> int:
     Note: This allocates ~4 GB of GPU unified memory (2 GB for source + 2 GB for
     destination arrays). On systems with limited memory or when models are loaded,
     this may cause memory pressure. The caller should handle exceptions appropriately.
+
+    Design note: Bandwidth is profiled only once at startup. For Apple Silicon,
+    unified memory bandwidth is a hardware constant (architecture and clock frequency
+    dependent), making re-profiling unnecessary. This avoids the cost and risk of
+    repeated 4GB allocations during operation.
     """
     import mlx.core as mx
 
