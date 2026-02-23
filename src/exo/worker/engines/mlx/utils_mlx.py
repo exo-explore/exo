@@ -23,9 +23,7 @@ from mlx_lm.models.deepseek_v3 import DeepseekV3Model
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelId
-from exo.worker.engines.mlx.constants import (
-    TRUST_REMOTE_CODE,
-)
+from exo.worker.engines.mlx.constants import TRUST_REMOTE_CODE
 
 try:
     from mlx_lm.tokenizer_utils import load_tokenizer
@@ -293,7 +291,11 @@ def shard_and_load(
 
 def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerWrapper:
     """Load tokenizer for a model shard. Delegates to load_tokenizer_for_model_id."""
-    return load_tokenizer_for_model_id(shard_metadata.model_card.model_id, model_path)
+    return load_tokenizer_for_model_id(
+        shard_metadata.model_card.model_id,
+        model_path,
+        trust_remote_code=shard_metadata.model_card.trust_remote_code,
+    )
 
 
 def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
@@ -325,7 +327,7 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
 
 
 def load_tokenizer_for_model_id(
-    model_id: ModelId, model_path: Path
+    model_id: ModelId, model_path: Path, *, trust_remote_code: bool = TRUST_REMOTE_CODE
 ) -> TokenizerWrapper:
     """
     Load tokenizer for a model given its ID and local path.
@@ -394,7 +396,7 @@ def load_tokenizer_for_model_id(
 
     tokenizer = load_tokenizer(
         model_path,
-        tokenizer_config_extra={"trust_remote_code": TRUST_REMOTE_CODE},
+        tokenizer_config_extra={"trust_remote_code": trust_remote_code},
         eos_token_ids=eos_token_ids,
     )
 
