@@ -20,7 +20,6 @@ from tomlkit.exceptions import TOMLKitError
 
 from exo.shared.constants import (
     EXO_CUSTOM_MODEL_CARDS_DIR,
-    EXO_ENABLE_IMAGE_MODELS,
     RESOURCES_DIR,
 )
 from exo.shared.types.common import ModelId
@@ -50,16 +49,10 @@ async def _refresh_card_cache():
                 pass
 
 
-def _is_image_card(card: "ModelCard") -> bool:
-    return any(t in (ModelTask.TextToImage, ModelTask.ImageToImage) for t in card.tasks)
-
-
 async def get_model_cards() -> list["ModelCard"]:
     if len(_card_cache) == 0:
         await _refresh_card_cache()
-    if EXO_ENABLE_IMAGE_MODELS:
-        return list(_card_cache.values())
-    return [c for c in _card_cache.values() if not _is_image_card(c)]
+    return list(_card_cache.values())
 
 
 class ModelTask(str, Enum):
