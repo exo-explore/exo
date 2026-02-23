@@ -680,9 +680,15 @@
     selectPreviewModel(modelId);
     onboardingStep = 7;
     // Launch via standard placement API (same as main dashboard)
+    // Single-node: force Pipeline/Ring regardless of persisted defaults
+    const nodeCount = topologyData()
+      ? Object.keys(topologyData()!.nodes).length
+      : 1;
+    const sharding = nodeCount <= 1 ? "Pipeline" : selectedSharding;
+    const instanceType = nodeCount <= 1 ? "MlxRing" : selectedInstanceType;
     try {
       const placementResponse = await fetch(
-        `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${selectedSharding}&instance_meta=${selectedInstanceType}&min_nodes=1`,
+        `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${sharding}&instance_meta=${instanceType}&min_nodes=1`,
       );
       if (!placementResponse.ok) {
         const errorText = await placementResponse.text();
@@ -2578,18 +2584,35 @@
   }
 
   // Pick optimal placement from previews (frontend logic)
+  // Rules: 1-node → Pipeline/Ring, multi-node with RDMA → Tensor/Jaccl (most nodes),
+  //         multi-node without RDMA → 1-node Pipeline/Ring
   function pickOptimalPlacement(
     previews: PlacementPreview[],
   ): PlacementPreview | null {
     const valid = previews.filter((p) => p.instance && !p.error);
 
-    // Prefer Jaccl + Tensor with most nodes (fastest TPS)
-    const jacclTensor = valid
-      .filter((p) => p.instance_meta === "MlxJaccl" && p.sharding === "Tensor")
-      .sort((a, b) => getPreviewNodeCount(b) - getPreviewNodeCount(a));
-    if (jacclTensor.length > 0) return jacclTensor[0];
+    // Check if any valid placement uses multiple nodes (indicates multi-node cluster)
+    const hasMultiNode = valid.some((p) => getPreviewNodeCount(p) > 1);
 
-    // Fallback: Ring + Pipeline with fewest nodes
+    if (hasMultiNode) {
+      // Multi-node with RDMA: prefer Jaccl + Tensor with most nodes (fastest TPS)
+      const jacclTensor = valid
+        .filter((p) => p.instance_meta === "MlxJaccl" && p.sharding === "Tensor")
+        .sort((a, b) => getPreviewNodeCount(b) - getPreviewNodeCount(a));
+      if (jacclTensor.length > 0) return jacclTensor[0];
+
+      // Multi-node without RDMA: fall back to single-node Pipeline/Ring
+      const singlePipeline = valid
+        .filter(
+          (p) =>
+            p.instance_meta === "MlxRing" &&
+            p.sharding === "Pipeline" &&
+            getPreviewNodeCount(p) === 1,
+        );
+      if (singlePipeline.length > 0) return singlePipeline[0];
+    }
+
+    // Single node (or final fallback): Pipeline/Ring with fewest nodes
     const ringPipeline = valid
       .filter((p) => p.instance_meta === "MlxRing" && p.sharding === "Pipeline")
       .sort((a, b) => getPreviewNodeCount(a) - getPreviewNodeCount(b));
