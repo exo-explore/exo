@@ -669,7 +669,7 @@ def set_wired_limit_for_model(model_size: Memory):
         return
 
     max_rec_size = Memory.from_bytes(
-        int(mx.metal.device_info()["max_recommended_working_set_size"])
+        int(mx.device_info()["max_recommended_working_set_size"])
     )
     if model_size > 0.9 * max_rec_size:
         logger.warning(
