@@ -251,7 +251,9 @@ def get_shard_assignments_for_pipeline_parallel(
     use_cfg_parallel = model_card.uses_cfg and world_size >= 2 and world_size % 2 == 0
 
     if use_cfg_parallel:
-        return _get_shard_assignments_for_cfg_parallel(model_card, cycle, node_memory)
+        return _get_shard_assignments_for_cfg_parallel(
+            model_card, cycle, node_memory, node_bandwidth
+        )
     else:
         return _get_shard_assignments_for_pure_pipeline(
             model_card, cycle, node_memory, node_bandwidth
@@ -262,6 +264,7 @@ def _get_shard_assignments_for_cfg_parallel(
     model_card: ModelCard,
     cycle: Cycle,
     node_memory: Mapping[NodeId, MemoryUsage],
+    node_bandwidth: Mapping[NodeId, int] | None = None,
 ) -> ShardAssignments:
     """Create shard assignments for CFG parallel execution.
 
@@ -278,10 +281,29 @@ def _get_shard_assignments_for_cfg_parallel(
 
     # Allocate layers for one pipeline group (both groups run the same layers)
     pipeline_node_ids = cycle.node_ids[:pipeline_world_size]
-    pipeline_memory = _compute_total_memory(pipeline_node_ids, node_memory)
-    layer_allocations = _allocate_and_validate_layers(
-        pipeline_node_ids, node_memory, pipeline_memory, model_card
+    
+    # Use bandwidth-aware allocation if bandwidth data is available for all pipeline nodes
+    has_bandwidth = node_bandwidth is not None and all(
+        node_id in node_bandwidth for node_id in pipeline_node_ids
     )
+
+    if has_bandwidth:
+        assert node_bandwidth is not None
+        # Create a sub-cycle for the pipeline nodes
+        pipeline_cycle = Cycle(node_ids=pipeline_node_ids)
+        layer_allocations = _assign_layers_by_bandwidth(
+            model_card, pipeline_cycle, node_memory, node_bandwidth
+        )
+    else:
+        if node_bandwidth:
+            logger.info(
+                "Bandwidth data missing for some pipeline nodes, "
+                "falling back to RAM-proportional assignment for CFG parallel"
+            )
+        pipeline_memory = _compute_total_memory(pipeline_node_ids, node_memory)
+        layer_allocations = _allocate_and_validate_layers(
+            pipeline_node_ids, node_memory, pipeline_memory, model_card
+        )
 
     # Ring topology: group 0 ascending [0,1,2,...], group 1 descending [...,2,1,0]
     # This places both last stages as neighbors for CFG exchange.
