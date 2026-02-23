@@ -55,8 +55,11 @@ from exo.shared.types.worker.shards import (
 )
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.auto_parallel import (
+    LayerLoadedCallback,
     TimeoutCallback,
     eval_with_timeout,
+    get_inner_model,
+    get_layers,
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
@@ -171,13 +174,28 @@ def initialize_mlx(
 def load_mlx_items(
     bound_instance: BoundInstance,
     group: Group | None,
-    on_timeout: TimeoutCallback | None = None,
+    on_timeout: TimeoutCallback | None,
+    on_layer_loaded: LayerLoadedCallback | None,
 ) -> tuple[Model, TokenizerWrapper]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
         start_time = time.perf_counter()
-        model, _ = load_model(model_path, strict=True)
+        model, _ = load_model(model_path, lazy=True, strict=False)
+        # Eval layers one by one for progress reporting
+        try:
+            inner = get_inner_model(model)
+            layers = get_layers(inner)
+            total = len(layers)
+            for i, layer in enumerate(layers):
+                mx.eval(layer)  # type: ignore
+                if on_layer_loaded is not None:
+                    on_layer_loaded(i, total)
+        except ValueError as e:
+            logger.opt(exception=e).debug(
+                "Model architecture doesn't support layer-by-layer progress tracking",
+            )
+        mx.eval(model)
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
         tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
@@ -186,7 +204,10 @@ def load_mlx_items(
         logger.info("Starting distributed init")
         start_time = time.perf_counter()
         model, tokenizer = shard_and_load(
-            bound_instance.bound_shard, group=group, on_timeout=on_timeout
+            bound_instance.bound_shard,
+            group=group,
+            on_timeout=on_timeout,
+            on_layer_loaded=on_layer_loaded,
         )
         end_time = time.perf_counter()
         logger.info(
@@ -201,7 +222,8 @@ def load_mlx_items(
 def shard_and_load(
     shard_metadata: ShardMetadata,
     group: Group,
-    on_timeout: TimeoutCallback | None = None,
+    on_timeout: TimeoutCallback | None,
+    on_layer_loaded: LayerLoadedCallback | None,
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
@@ -242,10 +264,14 @@ def shard_and_load(
     match shard_metadata:
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
-            model = tensor_auto_parallel(model, group, timeout_seconds, on_timeout)
+            model = tensor_auto_parallel(
+                model, group, timeout_seconds, on_timeout, on_layer_loaded
+            )
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
-            model = pipeline_auto_parallel(model, group, shard_metadata)
+            model = pipeline_auto_parallel(
+                model, group, shard_metadata, on_layer_loaded=on_layer_loaded
+            )
             eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
         case CfgShardMetadata():
             raise ValueError(
@@ -616,7 +642,7 @@ class NullKVCache(KVCache):
         raise NotImplementedError("We should not be setting a NullKVCache.")
 
 
-def mlx_force_oom(size: int = 40000) -> None:
+def mlx_force_oom(size: int = 200000) -> None:
     """
     Force an Out-Of-Memory (OOM) error in MLX by performing large tensor operations.
     """
@@ -643,7 +669,7 @@ def set_wired_limit_for_model(model_size: Memory):
         return
 
     max_rec_size = Memory.from_bytes(
-        int(mx.metal.device_info()["max_recommended_working_set_size"])
+        int(mx.device_info()["max_recommended_working_set_size"])
     )
     if model_size > 0.9 * max_rec_size:
         logger.warning(

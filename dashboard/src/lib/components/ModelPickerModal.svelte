@@ -36,6 +36,7 @@
     capabilities: string[];
     sizeRange: { min: number; max: number } | null;
     downloadedOnly: boolean;
+    readyOnly: boolean;
   }
 
   interface HuggingFaceModel {
@@ -48,6 +49,11 @@
   }
 
   type ModelFitStatus = "fits_now" | "fits_cluster_capacity" | "too_large";
+
+  export type InstanceStatus = {
+    status: string;
+    statusClass: string;
+  };
 
   type ModelPickerModalProps = {
     isOpen: boolean;
@@ -75,6 +81,7 @@
         macmon_info?: { memory?: { ram_total?: number } };
       }
     >;
+    instanceStatuses?: Record<string, InstanceStatus>;
   };
 
   let {
@@ -96,6 +103,7 @@
     usedMemoryGB,
     downloadsData,
     topologyNodes,
+    instanceStatuses = {},
   }: ModelPickerModalProps = $props();
 
   // Local state
@@ -107,6 +115,7 @@
     capabilities: [],
     sizeRange: null,
     downloadedOnly: false,
+    readyOnly: false,
   });
   let infoGroup = $state<ModelGroup | null>(null);
 
@@ -440,6 +449,16 @@
       );
     }
 
+    // Filter to ready/running models only
+    if (filters.readyOnly) {
+      result = result.filter((g) =>
+        g.variants.some((v) => {
+          const s = instanceStatuses[v.id];
+          return s && s.statusClass === "ready";
+        }),
+      );
+    }
+
     // Sort: fits-now first, then fits-cluster-capacity, then too-large
     result.sort((a, b) => {
       const getGroupFitRank = (group: ModelGroup): number => {
@@ -512,6 +531,18 @@
     );
   });
 
+  // Split filtered groups into recommended (fits_now) and others for visual separation
+  const recommendedGroups = $derived(
+    filteredGroups.filter((g) =>
+      g.variants.some((v) => getModelFitStatus(v.id) === "fits_now"),
+    ),
+  );
+  const otherGroups = $derived(
+    filteredGroups.filter(
+      (g) => !g.variants.some((v) => getModelFitStatus(v.id) === "fits_now"),
+    ),
+  );
+
   function toggleGroupExpanded(groupId: string) {
     const next = new Set(expandedGroups);
     if (next.has(groupId)) {
@@ -538,13 +569,19 @@
   }
 
   function clearFilters() {
-    filters = { capabilities: [], sizeRange: null, downloadedOnly: false };
+    filters = {
+      capabilities: [],
+      sizeRange: null,
+      downloadedOnly: false,
+      readyOnly: false,
+    };
   }
 
   const hasActiveFilters = $derived(
     filters.capabilities.length > 0 ||
       filters.sizeRange !== null ||
-      filters.downloadedOnly,
+      filters.downloadedOnly ||
+      filters.readyOnly,
   );
 </script>
 
@@ -813,6 +850,7 @@
                 onShowInfo={(g) => (infoGroup = g)}
                 downloadStatusMap={getVariantDownloadMap(group)}
                 launchedAt={recentTimestamps.get(group.variants[0]?.id ?? "")}
+                {instanceStatuses}
               />
             {/each}
           {/if}
@@ -840,7 +878,34 @@
             {/if}
           </div>
         {:else}
-          {#each filteredGroups as group}
+          <!-- Recommended for your cluster -->
+          {#if recommendedGroups.length > 0 && otherGroups.length > 0 && !searchQuery.trim()}
+            <div
+              class="sticky top-0 z-10 flex items-center gap-2 px-3 py-2 bg-green-950/60 border-b border-green-500/20 backdrop-blur-sm"
+            >
+              <svg
+                class="w-3.5 h-3.5 text-green-400 flex-shrink-0"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              <span
+                class="text-xs font-mono text-green-400 tracking-wider uppercase"
+                >Recommended for your cluster</span
+              >
+              <span class="text-xs font-mono text-green-400/50"
+                >— fits in available memory</span
+              >
+            </div>
+          {/if}
+          {#each recommendedGroups as group}
             <ModelPickerGroup
               {group}
               isExpanded={expandedGroups.has(group.id)}
@@ -853,6 +918,34 @@
               {onToggleFavorite}
               onShowInfo={(g) => (infoGroup = g)}
               downloadStatusMap={getVariantDownloadMap(group)}
+              {instanceStatuses}
+            />
+          {/each}
+          <!-- Other models -->
+          {#if otherGroups.length > 0 && recommendedGroups.length > 0 && !searchQuery.trim()}
+            <div
+              class="sticky top-0 z-10 flex items-center gap-2 px-3 py-2 bg-exo-dark-gray/80 border-y border-exo-medium-gray/20 backdrop-blur-sm"
+            >
+              <span
+                class="text-xs font-mono text-white/40 tracking-wider uppercase"
+                >Other models</span
+              >
+            </div>
+          {/if}
+          {#each otherGroups as group}
+            <ModelPickerGroup
+              {group}
+              isExpanded={expandedGroups.has(group.id)}
+              isFavorite={favorites.has(group.id)}
+              {selectedModelId}
+              {canModelFit}
+              {getModelFitStatus}
+              onToggleExpand={() => toggleGroupExpanded(group.id)}
+              onSelectModel={handleSelect}
+              {onToggleFavorite}
+              onShowInfo={(g) => (infoGroup = g)}
+              downloadStatusMap={getVariantDownloadMap(group)}
+              {instanceStatuses}
             />
           {/each}
         {/if}
@@ -873,6 +966,11 @@
         {#if filters.downloadedOnly}
           <span class="px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded"
             >Downloaded</span
+          >
+        {/if}
+        {#if filters.readyOnly}
+          <span class="px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded"
+            >Ready</span
           >
         {/if}
         {#if filters.sizeRange}

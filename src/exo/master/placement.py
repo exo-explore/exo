@@ -112,7 +112,11 @@ def place_instance(
         cycle for cycle in smallest_cycles if topology.is_rdma_cycle(cycle)
     ]
 
-    if command.instance_meta == InstanceMeta.MlxJaccl and smallest_rdma_cycles != []:
+    if command.instance_meta == InstanceMeta.MlxJaccl:
+        if not smallest_rdma_cycles:
+            raise ValueError(
+                "Requested RDMA (MlxJaccl) but no RDMA-connected cycles available"
+            )
         smallest_cycles = smallest_rdma_cycles
 
     cycles_with_leaf_nodes: list[Cycle] = [
@@ -128,6 +132,11 @@ def place_instance(
             start=Memory(),
         ),
     )
+
+    # Single-node: force Pipeline/Ring (Tensor and Jaccl require multi-node)
+    if len(selected_cycle) == 1:
+        command.instance_meta = InstanceMeta.MlxRing
+        command.sharding = Sharding.Pipeline
 
     shard_assignments = get_shard_assignments(
         command.model_card, selected_cycle, command.sharding, node_memory

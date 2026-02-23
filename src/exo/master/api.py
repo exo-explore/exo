@@ -11,8 +11,7 @@ from typing import Annotated, Literal, cast
 from uuid import uuid4
 
 import anyio
-from anyio import BrokenResourceError, create_task_group
-from anyio.abc import TaskGroup
+from anyio import BrokenResourceError
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -51,6 +50,7 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
+    EXO_CACHE_HOME,
     EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
@@ -173,8 +173,10 @@ from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
+from exo.utils.task_group import TaskGroup
 
 _API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
+ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
 
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
@@ -250,7 +252,7 @@ class API:
             CommandId, Sender[ImageChunk | ErrorChunk]
         ] = {}
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
-        self._tg: TaskGroup | None = None
+        self._tg: TaskGroup = TaskGroup()
 
     def reset(self, new_session_id: SessionId, result_clock: int):
         logger.info("Resetting API State")
@@ -345,6 +347,8 @@ class API:
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
         self.app.get("/v1/traces/{task_id}/stats")(self.get_trace_stats)
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
+        self.app.get("/onboarding")(self.get_onboarding)
+        self.app.post("/onboarding")(self.complete_onboarding)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -1587,8 +1591,7 @@ class API:
         shutdown_ev = anyio.Event()
 
         try:
-            async with create_task_group() as tg:
-                self._tg = tg
+            async with self._tg as tg:
                 logger.info("Starting API")
                 tg.start_soon(self._apply_state)
                 tg.start_soon(self._pause_on_new_election)
@@ -1814,3 +1817,11 @@ class API:
             media_type="application/json",
             filename=f"trace_{task_id}.json",
         )
+
+    async def get_onboarding(self) -> JSONResponse:
+        return JSONResponse({"completed": ONBOARDING_COMPLETE_FILE.exists()})
+
+    async def complete_onboarding(self) -> JSONResponse:
+        ONBOARDING_COMPLETE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ONBOARDING_COMPLETE_FILE.write_text("true")
+        return JSONResponse({"completed": True})

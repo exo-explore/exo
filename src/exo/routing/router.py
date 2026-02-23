@@ -8,14 +8,13 @@ from typing import cast
 from anyio import (
     BrokenResourceError,
     ClosedResourceError,
-    create_task_group,
     move_on_after,
     sleep_forever,
 )
-from anyio.abc import TaskGroup
 from exo_pyo3_bindings import (
     AllQueuesFullError,
     Keypair,
+    MessageTooLargeError,
     NetworkingHandle,
     NoPeersSubscribedToTopicError,
 )
@@ -25,6 +24,7 @@ from loguru import logger
 from exo.shared.constants import EXO_NODE_ID_KEYPAIR
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.task_group import TaskGroup
 
 from .connection_message import ConnectionMessage
 from .topics import CONNECTION_MESSAGES, PublishPolicy, TypedTopic
@@ -111,10 +111,9 @@ class Router:
         self._net: NetworkingHandle = handle
         self._tmp_networking_sender: Sender[tuple[str, bytes]] | None = send
         self._id_count = count()
-        self._tg: TaskGroup | None = None
+        self._tg: TaskGroup = TaskGroup()
 
     async def register_topic[T: CamelCaseModel](self, topic: TypedTopic[T]):
-        assert self._tg is None, "Attempted to register topic after setup time"
         send = self._tmp_networking_sender
         if send:
             self._tmp_networking_sender = None
@@ -148,8 +147,7 @@ class Router:
     async def run(self):
         logger.debug("Starting Router")
         try:
-            async with create_task_group() as tg:
-                self._tg = tg
+            async with self._tg as tg:
                 for topic in self.topic_routers:
                     router = self.topic_routers[topic]
                     tg.start_soon(router.run)
@@ -165,9 +163,7 @@ class Router:
 
     async def shutdown(self):
         logger.debug("Shutting down Router")
-        if not self._tg:
-            return
-        self._tg.cancel_scope.cancel()
+        self._tg.cancel_tasks()
 
     async def _networking_subscribe(self, topic: str):
         await self._net.gossipsub_subscribe(topic)
@@ -211,6 +207,10 @@ class Router:
                     pass
                 except AllQueuesFullError:
                     logger.warning(f"All peer queues full, dropping message on {topic}")
+                except MessageTooLargeError:
+                    logger.warning(
+                        f"Message too large for gossipsub on {topic} ({len(data)} bytes), dropping"
+                    )
 
 
 def get_node_id_keypair(

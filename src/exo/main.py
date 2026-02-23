@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from typing import Self
 
 import anyio
-from anyio.abc import TaskGroup
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -23,6 +22,7 @@ from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
 
 
@@ -38,7 +38,7 @@ class Node:
 
     node_id: NodeId
     offline: bool
-    _tg: TaskGroup = field(init=False, default_factory=anyio.create_task_group)
+    _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     @classmethod
     async def create(cls, args: "Args") -> Self:
@@ -149,11 +149,11 @@ class Node:
 
     def shutdown(self):
         # if this is our second call to shutdown, just sys.exit
-        if self._tg.cancel_scope.cancel_called:
+        if self._tg.cancel_called():
             import sys
 
             sys.exit(1)
-        self._tg.cancel_scope.cancel()
+        self._tg.cancel_tasks()
 
     async def _elect_loop(self):
         with self.election_result_receiver as results:
@@ -252,7 +252,7 @@ def main():
     target = min(max(soft, 65535), hard)
     resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
-    mp.set_start_method("spawn")
+    mp.set_start_method("spawn", force=True)
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
     logger.info("Starting EXO")

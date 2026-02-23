@@ -6,6 +6,7 @@
     capabilities: string[];
     sizeRange: { min: number; max: number } | null;
     downloadedOnly: boolean;
+    readyOnly: boolean;
   }
 
   type ModelFilterPopoverProps = {
@@ -190,34 +191,58 @@
       </div>
     </div>
 
-    <!-- Downloaded only -->
+    <!-- Availability filters -->
     <div>
       <h4 class="text-xs font-mono text-white/50 mb-2">Availability</h4>
-      <button
-        type="button"
-        class="px-2 py-1 text-xs font-mono rounded transition-colors {filters.downloadedOnly
-          ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-          : 'bg-white/5 text-white/60 hover:bg-white/10 border border-transparent'}"
-        onclick={() =>
-          onChange({ ...filters, downloadedOnly: !filters.downloadedOnly })}
-      >
-        <svg
-          class="w-3.5 h-3.5 inline-block"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
+      <div class="flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          class="px-2 py-1 text-xs font-mono rounded transition-colors {filters.downloadedOnly
+            ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+            : 'bg-white/5 text-white/60 hover:bg-white/10 border border-transparent'}"
+          onclick={() =>
+            onChange({ ...filters, downloadedOnly: !filters.downloadedOnly })}
         >
-          <path
-            class="text-white/40"
-            d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
-          />
-          <path class="text-green-400" d="m9 13 2 2 4-4" />
-        </svg>
-        <span class="ml-1">Downloaded</span>
-      </button>
+          <svg
+            class="w-3.5 h-3.5 inline-block"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path
+              class="text-white/40"
+              d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+            />
+            <path class="text-green-400" d="m9 13 2 2 4-4" />
+          </svg>
+          <span class="ml-1">Downloaded</span>
+        </button>
+        <button
+          type="button"
+          class="px-2 py-1 text-xs font-mono rounded transition-colors {filters.readyOnly
+            ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+            : 'bg-white/5 text-white/60 hover:bg-white/10 border border-transparent'}"
+          onclick={() =>
+            onChange({ ...filters, readyOnly: !filters.readyOnly })}
+        >
+          <svg
+            class="w-3.5 h-3.5 inline-block"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <path d="m9 12 2 2 4-4" />
+          </svg>
+          <span class="ml-1">Ready</span>
+        </button>
+      </div>
     </div>
 
     <!-- Size range -->
