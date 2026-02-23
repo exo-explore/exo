@@ -8,7 +8,7 @@ from urllib.request import urlopen
 
 h = sys.argv[1] if len(sys.argv) > 1 else sys.exit(f"USAGE: {sys.argv[0]} host")
 ts = subprocess.run(
-    ["tailscale", "status"], check=True, text=True, capture_output=True
+    ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "status"], check=True, text=True, capture_output=True
 ).stdout.splitlines()
 ip = next(
     (sl[0] for line in ts if len(sl := line.split()) >= 2 if sl[1] == h), None

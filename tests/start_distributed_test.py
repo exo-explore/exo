@@ -15,7 +15,7 @@ if not (args := sys.argv[1:]):
 kind = args[0] if args[0] in ("jaccl", "ring") else "both"
 hosts = args[1:] if kind != "both" else args
 ts = subprocess.run(
-    ["tailscale", "status"], check=True, text=True, capture_output=True
+    ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "status"], check=True, text=True, capture_output=True
 ).stdout.splitlines()
 ip = {sl[1]: sl[0] for line in ts if len(sl := line.split()) >= 2}
 ips = [ip[h] for h in hosts]
