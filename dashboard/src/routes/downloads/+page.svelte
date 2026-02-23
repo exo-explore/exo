@@ -581,8 +581,7 @@
                               </svg>
                             </button>
                           {:else}
-                            <span class="text-white/50 text-[10px]"
-                              >paused</span
+                            <span class="text-white/50 text-[10px]">paused</span
                             >
                           {/if}
                         {:else if row.shardMetadata}
@@ -608,8 +607,7 @@
                             </svg>
                           </button>
                         {:else}
-                          <span class="text-white/40 text-sm">...</span
-                          >
+                          <span class="text-white/40 text-sm">...</span>
                         {/if}
                       </div>
                     {:else if cell.kind === "failed"}
