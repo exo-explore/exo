@@ -67,8 +67,8 @@
   const studioMemH = $derived((ramPercent / 100) * studioMemTotalH);
 
   // ── MacBook dimensions (same ratios as TopologyGraph) ──
-  const mbW = $derived(size * 1.6);
-  const mbH = $derived(size * 1.15);
+  const mbW = $derived((size * 1.6 * 0.85) / 1.15);
+  const mbH = $derived(size * 0.85);
   const mbX = $derived(cx - mbW / 2);
   const mbY = $derived(cy - mbH / 2);
 
