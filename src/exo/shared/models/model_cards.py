@@ -90,6 +90,7 @@ class ModelCard(CamelCaseModel):
     base_model: str = ""
     capabilities: list[str] = []
     uses_cfg: bool = False
+    trust_remote_code: bool = True
 
     @field_validator("tasks", mode="before")
     @classmethod
@@ -137,6 +138,7 @@ class ModelCard(CamelCaseModel):
             hidden_size=config_data.hidden_size or 0,
             supports_tensor=config_data.supports_tensor,
             tasks=[ModelTask.TextGeneration],
+            trust_remote_code=False,
         )
         await mc.save_to_custom_dir()
         _card_cache[model_id] = mc
