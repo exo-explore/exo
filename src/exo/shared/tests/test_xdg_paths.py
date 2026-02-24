@@ -94,7 +94,27 @@ def test_macos_uses_traditional_paths():
         home = Path.home()
         assert home / ".exo" == constants.EXO_CONFIG_HOME
         assert home / ".exo" == constants.EXO_DATA_HOME
-        assert home / ".exo" == constants.EXO_CACHE_HOME
+        assert home / ".cache" / "exo" == constants.EXO_CACHE_HOME
+
+
+def test_exo_home_env():
+    """Test that macOS uses traditional ~/.exo directory."""
+    # Remove EXO_HOME to ensure we test the default behavior
+    env = {k: v for k, v in os.environ.items() if k != "EXO_HOME"}
+    env["EXO_HOME"] = "/exo"
+    with (
+        mock.patch.dict(os.environ, env, clear=True),
+        mock.patch.object(sys, "platform", "darwin"),
+    ):
+        import importlib
+
+        import exo.shared.constants as constants
+
+        importlib.reload(constants)
+
+        assert Path("/exo") == constants.EXO_CONFIG_HOME
+        assert Path("/exo") == constants.EXO_DATA_HOME
+        assert Path("/exo") == constants.EXO_CACHE_HOME
 
 
 def test_node_id_in_config_dir():
