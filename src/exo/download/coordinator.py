@@ -199,9 +199,22 @@ class DownloadCoordinator:
                         await self._cancel_download(model_id)
 
     async def _cancel_download(self, model_id: ModelId) -> None:
-        if model_id in self.active_downloads and model_id in self.download_status:
+        if model_id in self.active_downloads:
             logger.info(f"Cancelling download for {model_id}")
             self.active_downloads.pop(model_id).cancel()
+        if model_id in self.download_status:
+            current_status = self.download_status[model_id]
+            if isinstance(current_status, DownloadOngoing):
+                pending = DownloadPending(
+                    shard_metadata=current_status.shard_metadata,
+                    node_id=self.node_id,
+                    model_directory=self._model_dir(model_id),
+                )
+                await self.event_sender.send(
+                    NodeDownloadProgress(download_progress=pending)
+                )
+            del self.download_status[model_id]
+        self._last_progress_time.pop(model_id, None)
 
     async def _start_download(self, shard: ShardMetadata) -> None:
         model_id = shard.model_card.model_id
@@ -298,6 +311,11 @@ class DownloadCoordinator:
         async def download_wrapper() -> None:
             try:
                 await self.shard_downloader.ensure_shard(shard)
+            except asyncio.CancelledError:
+                logger.info(f"Download cancelled for {model_id}")
+                if model_id in self.download_status:
+                    del self.download_status[model_id]
+                raise
             except Exception as e:
                 logger.error(f"Download failed for {model_id}: {e}")
                 failed = DownloadFailed(
