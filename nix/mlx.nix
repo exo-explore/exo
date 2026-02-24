@@ -41,7 +41,7 @@ let
 
   mlx = stdenv.mkDerivation rec {
     pname = "mlx";
-    version = let v = "0.30.7.dev20260224+5289547a"; in
+    version = let v = "0.30.7.dev20260224+e862b122"; in
       assert v == uvLockMlxVersion || throw "MLX version mismatch: nix/mlx.nix has ${v} but uv.lock has ${uvLockMlxVersion}. Update both the version and hash in nix/mlx.nix.";
       v;
     pyproject = true;
@@ -49,8 +49,8 @@ let
     src = fetchFromGitHub {
       owner = "rltakashige";
       repo = "mlx-jaccl-fix-small-recv";
-      rev = "5289547ada1cddda2b9716baf6a077a906d02189";
-      hash = "sha256-Zp9Jln7+Fpn79OfnIdiIVYzQDpih9lHrKtKJadh+c0I=";
+      rev = "e862b1223a2310d4cc8df1135aed42f5246bc50a";
+      hash = "sha256-GosFIWxIB48Egb1MqJrR3xhsUsQeWdRk5rV93USY6wQ=";
     };
 
     patches = [
