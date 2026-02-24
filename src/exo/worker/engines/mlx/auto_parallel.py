@@ -129,10 +129,9 @@ class PipelineFirstLayer(CustomMlxLayer):
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
-            if self.is_prefill:
-                # We want to avoid GPU timeout errors by evalling the distributed operation
-                # so that it stays on CPU, which does not have a timeout.
-                mx.eval(x)
+            # We want to avoid GPU timeout errors by evalling the distributed operation
+            # so that it stays on CPU, which does not have a timeout.
+            mx.eval(x)
         return self.original_layer(x, *args, **kwargs)
 
 
