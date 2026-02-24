@@ -166,17 +166,14 @@ class PipelineLastLayer(CustomMlxLayer):
                 # doesn't have .keys directly; access via first sub-cache.
                 _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
                 _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
-            if self.is_prefill:
-                mx.eval(output)
-                if cache is not None:
-                    mx.eval(_cache.keys)  # type: ignore
+            mx.eval(output)
+            if cache is not None:
+                mx.eval(_cache.keys)  # type: ignore
 
         if not self.is_prefill:
             output = mx.distributed.all_gather(output, group=self.group)[
                 -output.shape[0] :
             ]
-            # Also eval here
-            mx.eval(output)
 
         return output
 
