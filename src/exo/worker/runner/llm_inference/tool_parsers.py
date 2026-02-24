@@ -51,11 +51,33 @@ def _parse_json_calls(text: str) -> list[ToolCallItem] | None:
         return None
 
 
+def _try_parse_json(v: str) -> str | dict[str, Any] | list[Any]:
+    stripped = v.strip()
+    if (stripped.startswith("[") and stripped.endswith("]")) or (
+        stripped.startswith("{") and stripped.endswith("}")
+    ):
+        try:
+            parsed: dict[str, Any] | list[Any] = json.loads(stripped)  # pyright: ignore[reportAny]
+            return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return v
+
+
 def _flatten(p: dict[str, Any]) -> dict[str, str]:
-    return {
-        k: json.dumps(v) if isinstance(v, (dict, list)) else str(v)  # pyright: ignore[reportAny]
-        for k, v in p.items()  # pyright: ignore[reportAny]
-    }
+    result: dict[str, str] = {}
+    for k, v in p.items():  # pyright: ignore[reportAny]
+        if isinstance(v, dict):
+            resolved: dict[str, Any] = {
+                str(ik): _try_parse_json(str(iv)) if isinstance(iv, str) else iv  # pyright: ignore[reportUnknownArgumentType]
+                for ik, iv in v.items()  # pyright: ignore[reportUnknownVariableType]
+            }
+            result[k] = json.dumps(resolved)
+        elif isinstance(v, list):
+            result[k] = json.dumps(v)
+        else:
+            result[k] = str(v)  # pyright: ignore[reportAny]
+    return result
 
 
 json_tool_parser = ToolParser(
