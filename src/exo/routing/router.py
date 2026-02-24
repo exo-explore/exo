@@ -234,8 +234,6 @@ def get_node_id_keypair(
     Obtains the :class:`Keypair` associated with this node-ID.
     Obtain the :class:`PeerId` by from it.
     """
-    # TODO(evan): bring back node id persistence once we figure out how to deal with duplicates
-    return Keypair.generate()
 
     def lock_path(path: str | bytes | PathLike[str] | PathLike[bytes]) -> Path:
         return Path(str(path) + ".lock")
@@ -255,6 +253,6 @@ def get_node_id_keypair(
 
         # if no valid credentials, create new ones and persist
         with open(path, "w+b") as f:
-            keypair = Keypair.generate_ed25519()
+            keypair = Keypair.generate()
             f.write(keypair.to_bytes())
             return keypair
