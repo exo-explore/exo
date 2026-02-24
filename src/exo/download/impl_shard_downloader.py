@@ -15,9 +15,13 @@ from exo.shared.types.worker.shards import (
 )
 
 
-def exo_shard_downloader(max_parallel_downloads: int = 8) -> ShardDownloader:
+def exo_shard_downloader(
+    max_parallel_downloads: int = 8, offline: bool = False
+) -> ShardDownloader:
     return SingletonShardDownloader(
-        CachedShardDownloader(ResumableShardDownloader(max_parallel_downloads))
+        CachedShardDownloader(
+            ResumableShardDownloader(max_parallel_downloads, offline=offline)
+        )
     )
 
 
@@ -49,10 +53,6 @@ class SingletonShardDownloader(ShardDownloader):
     def __init__(self, shard_downloader: ShardDownloader):
         self.shard_downloader = shard_downloader
         self.active_downloads: dict[ShardMetadata, asyncio.Task[Path]] = {}
-
-    def set_internet_connection(self, value: bool) -> None:
-        self.internet_connection = value
-        self.shard_downloader.set_internet_connection(value)
 
     def on_progress(
         self,
@@ -90,10 +90,6 @@ class CachedShardDownloader(ShardDownloader):
         self.shard_downloader = shard_downloader
         self.cache: dict[tuple[str, ShardMetadata], Path] = {}
 
-    def set_internet_connection(self, value: bool) -> None:
-        self.internet_connection = value
-        self.shard_downloader.set_internet_connection(value)
-
     def on_progress(
         self,
         callback: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
@@ -123,8 +119,9 @@ class CachedShardDownloader(ShardDownloader):
 
 
 class ResumableShardDownloader(ShardDownloader):
-    def __init__(self, max_parallel_downloads: int = 8):
+    def __init__(self, max_parallel_downloads: int = 8, offline: bool = False):
         self.max_parallel_downloads = max_parallel_downloads
+        self.offline = offline
         self.on_progress_callbacks: list[
             Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]]
         ] = []
@@ -151,8 +148,7 @@ class ResumableShardDownloader(ShardDownloader):
             self.on_progress_wrapper,
             max_parallel_downloads=self.max_parallel_downloads,
             allow_patterns=allow_patterns,
-            skip_internet=not self.internet_connection,
-            on_connection_lost=lambda: self.set_internet_connection(False),
+            skip_internet=self.offline,
         )
         return target_dir
 
@@ -168,8 +164,7 @@ class ResumableShardDownloader(ShardDownloader):
                 shard,
                 self.on_progress_wrapper,
                 skip_download=True,
-                skip_internet=not self.internet_connection,
-                on_connection_lost=lambda: self.set_internet_connection(False),
+                skip_internet=self.offline,
             )
 
         semaphore = asyncio.Semaphore(self.max_parallel_downloads)
@@ -198,7 +193,6 @@ class ResumableShardDownloader(ShardDownloader):
             shard,
             self.on_progress_wrapper,
             skip_download=True,
-            skip_internet=not self.internet_connection,
-            on_connection_lost=lambda: self.set_internet_connection(False),
+            skip_internet=self.offline,
         )
         return progress

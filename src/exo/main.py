@@ -60,7 +60,7 @@ class Node:
             download_coordinator = DownloadCoordinator(
                 node_id,
                 session_id,
-                exo_shard_downloader(),
+                exo_shard_downloader(offline=args.offline),
                 download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
                 local_event_sender=router.sender(topics.LOCAL_EVENTS),
                 offline=args.offline,
@@ -211,7 +211,7 @@ class Node:
                         self.download_coordinator = DownloadCoordinator(
                             self.node_id,
                             result.session_id,
-                            exo_shard_downloader(),
+                            exo_shard_downloader(offline=self.offline),
                             download_command_receiver=self.router.receiver(
                                 topics.DOWNLOAD_COMMANDS
                             ),
@@ -283,7 +283,7 @@ class Args(CamelCaseModel):
     tb_only: bool = False
     no_worker: bool = False
     no_downloads: bool = False
-    offline: bool = False
+    offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
 
     @classmethod
@@ -334,6 +334,7 @@ class Args(CamelCaseModel):
         parser.add_argument(
             "--offline",
             action="store_true",
+            default=os.getenv("EXO_OFFLINE", "false").lower() == "true",
             help="Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models",
         )
         fast_synch_group = parser.add_mutually_exclusive_group()
