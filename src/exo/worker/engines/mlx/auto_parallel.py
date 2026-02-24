@@ -317,6 +317,8 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
             dep_cache = last[0] if hasattr(last, "caches") else last  # type: ignore
             dep_cache.keys = mx.depends(dep_cache.keys, logits)  # type: ignore
 
+        mx.eval(logits)
+
         return logits
 
     cls.__call__ = patched_call
