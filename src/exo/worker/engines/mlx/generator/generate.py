@@ -170,6 +170,7 @@ def warmup_inference(
     mx_barrier(group)
 
     logger.info("Generating warmup tokens")
+    set_pipeline_prefill(model, is_prefill=True)
     for _r in stream_generate(
         model=model,
         tokenizer=tokenizer,
@@ -183,6 +184,7 @@ def warmup_inference(
     ):
         logger.info("Generated warmup token: " + str(_r.text))
         tokens_generated += 1
+    set_pipeline_prefill(model, is_prefill=False)
 
     logger.info("Generated ALL warmup tokens")
 
