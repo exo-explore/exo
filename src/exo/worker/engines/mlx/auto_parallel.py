@@ -623,7 +623,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
             def log_info(stuff: nn.Module, name: str):
                 logger.info(f"Info for {name}:")
 
-                weights = stuff.weights
+                weights = stuff.weight
                 logger.info(f"Scales: {weights.shape} {weights.dtype}")
 
                 if hasattr(stuff, "scales"):
