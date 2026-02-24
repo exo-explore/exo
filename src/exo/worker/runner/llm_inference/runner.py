@@ -276,31 +276,38 @@ def main(
                         _task_id: TaskId = task.task_id,
                         _group: mx.distributed.Group | None = group,
                     ) -> None:
-                        if device_rank == 0:
-                            event_sender.send(
-                                ChunkGenerated(
-                                    command_id=command_id,
-                                    chunk=PrefillProgressChunk(
-                                        model=shard_metadata.model_card.model_id,
-                                        processed_tokens=processed,
-                                        total_tokens=total,
-                                    ),
-                                )
-                            )
-                        cancelled_tasks.update(cancel_receiver.collect())
-                        want_to_cancel = (_task_id in cancelled_tasks) or (
-                            TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
-                        )
-                        if mx_any(want_to_cancel, _group):
-                            raise PrefillCancelled()
+                        time.sleep(0.2)
+                        return None
+                        # if device_rank == 0:
+                        #     event_sender.send(
+                        #         ChunkGenerated(
+                        #             command_id=command_id,
+                        #             chunk=PrefillProgressChunk(
+                        #                 model=shard_metadata.model_card.model_id,
+                        #                 processed_tokens=processed,
+                        #                 total_tokens=total,
+                        #             ),
+                        #         )
+                        #     )
+                        # cancelled_tasks.update(cancel_receiver.collect())
+                        # want_to_cancel = (_task_id in cancelled_tasks) or (
+                        #     TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
+                        # )
+                        # if mx_any(want_to_cancel, _group):
+                        #     raise PrefillCancelled()
 
                     try:
+                        import time as _time
+                        _runner_req_start = _time.perf_counter()
                         _check_for_debug_prompts(task_params)
 
                         # Build prompt once - used for both generation and thinking detection
+                        _t0 = _time.perf_counter()
                         prompt = apply_chat_template(tokenizer, task_params)
+                        logger.warning(f"[RUNNER] apply_chat_template took {_time.perf_counter() - _t0:.4f}s")
 
                         # Generate responses using the actual MLX generation
+                        logger.warning("[RUNNER] calling mlx_generate")
                         mlx_generator = mlx_generate(
                             model=cast(Model, inference_model),
                             tokenizer=tokenizer,
@@ -332,6 +339,8 @@ def main(
 
                         completion_tokens = 0
                         tokens_since_last_cancel_check = check_for_cancel_every
+                        logger.warning("[RUNNER] starting token iteration loop")
+                        _runner_token_start = _time.perf_counter()
                         for response in mlx_generator:
                             tokens_since_last_cancel_check += 1
                             if tokens_since_last_cancel_check >= check_for_cancel_every:
@@ -413,6 +422,7 @@ def main(
                             )
                         raise
 
+                    logger.warning(f"[RUNNER] request complete in {_time.perf_counter() - _runner_req_start:.4f}s total")
                     current_status = RunnerReady()
                     logger.info("runner ready")
 

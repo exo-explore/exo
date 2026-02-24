@@ -128,12 +128,25 @@ class PipelineFirstLayer(CustomMlxLayer):
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
+            import time as _time
+            _t0 = _time.perf_counter()
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
             if self.is_prefill:
                 # We want to avoid GPU timeout errors by evalling the distributed operation
                 # so that it stays on CPU, which does not have a timeout.
                 mx.eval(x)
-        return self.original_layer(x, *args, **kwargs)
+                _elapsed = _time.perf_counter() - _t0
+                if _elapsed > 1.0:
+                    import logging
+                    logging.getLogger(__name__).warning(f"[PIPELINE] PipelineFirstLayer recv_like+eval took {_elapsed:.4f}s (SLOW)")
+        _t0_layer = _time.perf_counter() if self.r != 0 else None
+        result = self.original_layer(x, *args, **kwargs)
+        if _t0_layer is not None:
+            _elapsed_layer = _time.perf_counter() - _t0_layer
+            if _elapsed_layer > 1.0:
+                import logging
+                logging.getLogger(__name__).warning(f"[PIPELINE] PipelineFirstLayer original_layer took {_elapsed_layer:.4f}s (SLOW)")
+        return result
 
 
 class PipelineLastLayer(CustomMlxLayer):
@@ -152,13 +165,20 @@ class PipelineLastLayer(CustomMlxLayer):
         self.is_prefill: bool = False
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
+        import time as _time
         cache = self.original_layer_signature.bind_partial(
             x, *args, **kwargs
         ).arguments.get("cache", None)
 
+        _t0 = _time.perf_counter()
         output: mx.array = self.original_layer(x, *args, **kwargs)
+        _elapsed = _time.perf_counter() - _t0
+        if _elapsed > 1.0:
+            import logging
+            logging.getLogger(__name__).warning(f"[PIPELINE] PipelineLastLayer original_layer took {_elapsed:.4f}s (SLOW)")
 
         if self.r != self.s - 1:
+            _t0 = _time.perf_counter()
             output = mx.distributed.send(
                 output, (self.r + 1) % self.s, group=self.group
             )
@@ -171,11 +191,20 @@ class PipelineLastLayer(CustomMlxLayer):
                 mx.eval(output)
                 if cache is not None:
                     mx.eval(_cache.keys)  # type: ignore
+                _elapsed = _time.perf_counter() - _t0
+                if _elapsed > 1.0:
+                    import logging
+                    logging.getLogger(__name__).warning(f"[PIPELINE] PipelineLastLayer send+eval took {_elapsed:.4f}s (SLOW)")
 
         if not self.is_prefill:
+            _t0 = _time.perf_counter()
             output = mx.distributed.all_gather(output, group=self.group)[
                 -output.shape[0] :
             ]
+            _elapsed = _time.perf_counter() - _t0
+            if _elapsed > 1.0:
+                import logging
+                logging.getLogger(__name__).warning(f"[PIPELINE] PipelineLastLayer all_gather took {_elapsed:.4f}s (SLOW)")
 
         return output
 

@@ -94,14 +94,20 @@ def prefill(
         if on_prefill_progress is not None:
             on_prefill_progress(processed, total)
 
+    t0 = time.perf_counter()
     set_pipeline_prefill(model, is_prefill=True)
+    logger.warning(f"[PREFILL] set_pipeline_prefill(True) took {time.perf_counter() - t0:.4f}s")
 
+    t0 = time.perf_counter()
     mx_barrier(group)
-    logger.info("Starting prefill")
+    logger.warning(f"[PREFILL] mx_barrier (pre-prefill) took {time.perf_counter() - t0:.4f}s")
+
+    logger.warning("[PREFILL] Starting prefill via stream_generate")
 
     # Use max_tokens=1 because max_tokens=0 does not work.
     # We just throw away the generated token - we only care about filling the cache
     try:
+        t0 = time.perf_counter()
         for _ in stream_generate(
             model=model,
             tokenizer=tokenizer,
@@ -114,15 +120,19 @@ def prefill(
             kv_bits=KV_BITS,
             prompt_progress_callback=progress_callback,
         ):
+            logger.warning(f"[PREFILL] stream_generate first yield took {time.perf_counter() - t0:.4f}s")
             break  # Stop after first iteration - cache is now filled
     except PrefillCancelled:
         set_pipeline_prefill(model, is_prefill=False)
         raise
 
+    t0 = time.perf_counter()
     set_pipeline_prefill(model, is_prefill=False)
+    logger.warning(f"[PREFILL] set_pipeline_prefill(False) took {time.perf_counter() - t0:.4f}s")
 
     # stream_generate added 1 extra generated token to the cache, so we should trim it.
     # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
+    t0 = time.perf_counter()
     pre_gen = deepcopy(snapshots[-2]) if has_ssm else None
     for i, c in enumerate(cache):
         if has_ssm and isinstance(c, (ArraysCache, RotatingKVCache)):
@@ -132,11 +142,12 @@ def prefill(
         else:
             assert not isinstance(c, (ArraysCache, RotatingKVCache))
             c.trim(2)  # pyright: ignore[reportUnknownMemberType]
+    logger.warning(f"[PREFILL] cache trim took {time.perf_counter() - t0:.4f}s")
 
     elapsed = time.perf_counter() - start_time
     tokens_per_sec = num_tokens / elapsed if elapsed > 0 else 0.0
-    logger.debug(
-        f"Prefill complete: {num_tokens} tokens in {elapsed:.2f}s "
+    logger.warning(
+        f"[PREFILL] complete: {num_tokens} tokens in {elapsed:.2f}s "
         f"({tokens_per_sec:.1f} tok/s)"
     )
     # Exclude the last snapshot
@@ -324,6 +335,8 @@ def mlx_generate(
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
     # Prefill cache with all tokens except the last one
+    logger.warning(f"[GENERATE] calling prefill with {len(prompt_tokens) - 1} tokens")
+    t_prefill_start = time.perf_counter()
     prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
         model,
         tokenizer,
@@ -333,6 +346,7 @@ def mlx_generate(
         group,
         on_prefill_progress,
     )
+    logger.warning(f"[GENERATE] prefill() returned in {time.perf_counter() - t_prefill_start:.4f}s")
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 
     # stream_generate starts from the last token
@@ -348,9 +362,12 @@ def mlx_generate(
     think_start = tokenizer.think_start
     think_end = tokenizer.think_end
 
-    logger.info("Starting decode")
+    logger.warning("[GENERATE] Starting decode")
+    t0 = time.perf_counter()
     mx_barrier(group)
+    logger.warning(f"[GENERATE] mx_barrier (pre-decode) took {time.perf_counter() - t0:.4f}s")
 
+    _decode_token_start = time.perf_counter()
     for completion_tokens, out in enumerate(
         stream_generate(
             model=model,
@@ -366,6 +383,9 @@ def mlx_generate(
         ),
         start=1,
     ):
+        _decode_token_elapsed = time.perf_counter() - _decode_token_start
+        if _decode_token_elapsed > 1.0:
+            logger.warning(f"[DECODE] token {completion_tokens} took {_decode_token_elapsed:.4f}s (SLOW)")
         generated_text_parts.append(out.text)
         accumulated_text += out.text
 
@@ -488,9 +508,12 @@ def mlx_generate(
         )
 
         if is_done:
+            t0 = time.perf_counter()
             mx_barrier(group)
+            logger.warning(f"[GENERATE] mx_barrier (post-decode) took {time.perf_counter() - t0:.4f}s")
             break
 
         # Limit accumulated_text to what's needed for stop sequence detection
         if max_stop_len > 0 and len(accumulated_text) > max_stop_len:
             accumulated_text = accumulated_text[-max_stop_len:]
+        _decode_token_start = time.perf_counter()
