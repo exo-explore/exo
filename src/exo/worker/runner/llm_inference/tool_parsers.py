@@ -58,15 +58,16 @@ def _flatten(p: dict[str, Any]) -> dict[str, str]:
     }
 
 
-json_tool_parser = ToolParser(
-    start_parsing="<tool_call>",
-    end_parsing="</tool_call>",
-    parse_tool_calls=_parse_json_calls,
-)
+def make_json_parser() -> ToolParser:
+    return ToolParser(
+        start_parsing="<tool_call>",
+        end_parsing="</tool_call>",
+        parse_tool_calls=_parse_json_calls,
+    )
 
 
 def infer_tool_parser(chat_template: str) -> ToolParser | None:
     """Attempt to auto-infer a tool parser from the chat template."""
     if "<tool_call>" in chat_template and "tool_call.name" in chat_template:
-        return json_tool_parser
+        return make_json_parser()
     return None
