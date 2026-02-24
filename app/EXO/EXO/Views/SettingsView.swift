@@ -13,6 +13,7 @@ struct SettingsView: View {
     @State private var pendingNamespace: String = ""
     @State private var pendingHFToken: String = ""
     @State private var pendingEnableImageModels = false
+    @State private var pendingOfflineMode = false
     @State private var needsRestart = false
     @State private var bugReportInFlight = false
     @State private var bugReportMessage: String?
@@ -42,6 +43,7 @@ struct SettingsView: View {
             pendingNamespace = controller.customNamespace
             pendingHFToken = controller.hfToken
             pendingEnableImageModels = controller.enableImageModels
+            pendingOfflineMode = controller.offlineMode
             needsRestart = false
         }
     }
@@ -68,6 +70,13 @@ struct SettingsView: View {
                         .frame(width: 200)
                 }
                 Text("Required for gated models. Get yours at huggingface.co/settings/tokens")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section {
+                Toggle("Offline Mode", isOn: $pendingOfflineMode)
+                Text("Skip internet checks and use only locally available models.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -445,6 +454,7 @@ struct SettingsView: View {
 
     private var hasGeneralChanges: Bool {
         pendingNamespace != controller.customNamespace || pendingHFToken != controller.hfToken
+            || pendingOfflineMode != controller.offlineMode
     }
 
     private var hasModelChanges: Bool {
@@ -454,6 +464,7 @@ struct SettingsView: View {
     private func applyGeneralSettings() {
         controller.customNamespace = pendingNamespace
         controller.hfToken = pendingHFToken
+        controller.offlineMode = pendingOfflineMode
         restartIfRunning()
     }
 
