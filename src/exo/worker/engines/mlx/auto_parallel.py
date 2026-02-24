@@ -620,6 +620,34 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
             if on_layer_loaded is not None:
                 on_layer_loaded(i, total)
 
+            def log_info(stuff: nn.Module, name: str):
+                logger.info(f"Info for {name}:")
+
+                weights = stuff.weights
+                logger.info(f"Scales: {weights.shape} {weights.dtype}")
+
+                if hasattr(stuff, "scales"):
+                    scales = stuff.scales
+                    logger.info(f"Scales: {scales.shape} {scales.dtype}")
+                else:
+                    logger.info("Scales: None")
+
+                if hasattr(stuff, "biases"):
+                    biases = stuff.biases
+                    logger.info(f"Scales: {biases.shape} {biases.dtype}")
+                else:
+                    logger.info("Biases: None")
+
+            if i == 9:
+                if getattr(layer.mlp, "shared_experts", None) is not None:
+                    log_info(
+                        layer.mlp.shared_experts.down_proj, "Shared experts Down Proj"
+                    )
+
+                log_info(layer.mlp.switch_mlp.gate_proj, "Switch MLP Gate Proj")
+
+                log_info(layer.self_attn.o_proj, "Self Attn O_proj")
+
         return model
 
 
