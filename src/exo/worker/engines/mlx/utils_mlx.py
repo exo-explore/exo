@@ -214,6 +214,8 @@ def load_mlx_items(
 
     set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
 
+    mx.clear_cache()
+
     return cast(Model, model), tokenizer
 
 
