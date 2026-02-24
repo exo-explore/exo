@@ -174,6 +174,7 @@ class PipelineLastLayer(CustomMlxLayer):
             output = mx.distributed.all_gather(output, group=self.group)[
                 -output.shape[0] :
             ]
+            mx.eval(output)
 
         return output
 
