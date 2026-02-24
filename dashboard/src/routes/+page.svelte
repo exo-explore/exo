@@ -2646,7 +2646,11 @@
   }
 
   // Launch a model for seamless chat
-  async function launchModelForChat(modelId: string, category: string, skipCreate = false) {
+  async function launchModelForChat(
+    modelId: string,
+    category: string,
+    skipCreate = false,
+  ) {
     userForcedIdle = false;
     pendingChatModelId = modelId;
     selectedChatCategory = category;
