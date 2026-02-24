@@ -624,7 +624,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
                 logger.info(f"Info for {name}:")
 
                 weights = stuff.weight
-                logger.info(f"Scales: {weights.shape} {weights.dtype}")
+                logger.info(f"Weights: {weights.shape} {weights.dtype}")
 
                 if hasattr(stuff, "scales"):
                     scales = stuff.scales
@@ -634,7 +634,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
 
                 if hasattr(stuff, "biases"):
                     biases = stuff.biases
-                    logger.info(f"Scales: {biases.shape} {biases.dtype}")
+                    logger.info(f"Biases: {biases.shape} {biases.dtype}")
                 else:
                     logger.info("Biases: None")
 
