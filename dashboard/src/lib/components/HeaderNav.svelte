@@ -95,7 +95,7 @@
     {#if showHome}
       <button
         onclick={handleHome}
-        class="text-sm text-exo-light-gray hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-2 cursor-pointer"
+        class="text-sm text-white/70 hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-2 cursor-pointer"
         title="Back to topology view"
       >
         <svg
@@ -116,7 +116,7 @@
     {/if}
     <a
       href="/#/downloads"
-      class="text-sm text-exo-light-gray hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-2 cursor-pointer"
+      class="text-sm text-white/70 hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-2 cursor-pointer"
       title="View downloads overview"
     >
       {#if downloadProgress}
