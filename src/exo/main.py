@@ -270,9 +270,16 @@ def main():
         logger.info("FAST_SYNCH forced OFF")
 
     node = anyio.run(Node.create, args)
-    anyio.run(node.run)
-    logger.info("EXO Shutdown complete")
-    logger_cleanup()
+    try:
+        anyio.run(node.run)
+    except BaseException as exception:
+        logger.opt(exception=exception).critical(
+            "EXO terminated due to unhandled exception"
+        )
+        raise
+    finally:
+        logger.info("EXO Shutdown complete")
+        logger_cleanup()
 
 
 class Args(CamelCaseModel):
