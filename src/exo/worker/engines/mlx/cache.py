@@ -32,7 +32,7 @@ def _default_memory_threshold() -> float:
     return 0.70
 
 
-_MEMORY_THRESHOLD = float(
+MEMORY_THRESHOLD = float(
     os.environ.get("EXO_MEMORY_THRESHOLD", _default_memory_threshold())
 )
 
@@ -91,6 +91,15 @@ class KVPrefixCache:
         self.caches.clear()
         self._snapshots.clear()
         self._last_used.clear()
+
+    def force_evict_all(self) -> int:
+        count = len(self.caches)
+        self.clear()
+        if count > 0:
+            logger.info(
+                f"Force-evicted all {count} prefix cache entries due to memory pressure"
+            )
+        return count
 
     def add_kv_cache(
         self,
@@ -217,7 +226,7 @@ class KVPrefixCache:
         # Evict LRU entries until below threshold
         while (
             len(self.caches) > 0
-            and self.get_memory_used_percentage() > _MEMORY_THRESHOLD
+            and self.get_memory_used_percentage() > MEMORY_THRESHOLD
         ):
             lru_index = self._last_used.index(min(self._last_used))
             evicted_tokens = len(self.prompts[lru_index])
@@ -308,6 +317,47 @@ def get_memory_used_percentage() -> float:
     mem = psutil.virtual_memory()
     # percent is 0-100
     return float(mem.percent / 100)
+
+
+def _measure_single_cache_bytes(
+    entry: KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList,
+) -> int:
+    if isinstance(entry, CacheList):
+        return sum(
+            _measure_single_cache_bytes(c)  # pyright: ignore[reportArgumentType]
+            for c in entry.caches
+        )
+
+    total = 0
+    for attr_name in ("keys", "values"):
+        val: object = getattr(entry, attr_name, None)
+        if val is None:
+            continue
+        if isinstance(val, mx.array):
+            total += val.nbytes
+        elif isinstance(val, (tuple, list)):
+            # QuantizedKVCache stores tuples of arrays (data, scales, biases)
+            for arr in val:  # pyright: ignore[reportUnknownVariableType]
+                if isinstance(arr, mx.array):
+                    total += arr.nbytes
+
+    if isinstance(entry, ArraysCache):
+        state = entry.state  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        for arr in state:  # pyright: ignore[reportUnknownVariableType]
+            if isinstance(arr, mx.array):
+                total += arr.nbytes
+    return total
+
+
+def measure_cache_bytes(cache: KVCacheType) -> int:
+    return sum(_measure_single_cache_bytes(c) for c in cache)
+
+
+def measure_kv_cache_bytes_per_token(cache: KVCacheType) -> int:
+    offset = cache_length(cache)
+    if offset == 0:
+        return 0
+    return measure_cache_bytes(cache) // offset
 
 
 def make_kv_cache(

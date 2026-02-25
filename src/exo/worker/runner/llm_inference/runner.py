@@ -114,6 +114,7 @@ def main(
     group = None
     kv_prefix_cache: KVPrefixCache | None = None
     check_for_cancel_every: int | None = None
+    bytes_per_token: int = 0
 
     current_status: RunnerStatus = RunnerIdle()
     logger.info("runner created")
@@ -225,12 +226,14 @@ def main(
                     assert tokenizer
 
                     t = time.monotonic()
-                    toks = warmup_inference(
+                    toks, bytes_per_token = warmup_inference(
                         model=cast(Model, inference_model),
                         tokenizer=tokenizer,
                         group=group,
                     )
-                    logger.info(f"warmed up by generating {toks} tokens")
+                    logger.info(
+                        f"warmed up by generating {toks} tokens, {bytes_per_token} bytes/token for KV cache"
+                    )
                     check_for_cancel_every = min(
                         math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
                     )
@@ -310,6 +313,7 @@ def main(
                             kv_prefix_cache=kv_prefix_cache,
                             on_prefill_progress=on_prefill_progress,
                             group=group,
+                            bytes_per_token=bytes_per_token,
                         )
 
                         if tokenizer.has_thinking:

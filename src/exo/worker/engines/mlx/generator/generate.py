@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Callable, Generator, cast, get_args
 
 import mlx.core as mx
+import psutil
 from mlx_lm.generate import stream_generate
 from mlx_lm.models.cache import ArraysCache, RotatingKVCache
 from mlx_lm.sample_utils import make_sampler
@@ -27,11 +28,14 @@ from exo.shared.types.worker.runner_response import (
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.auto_parallel import set_pipeline_prefill
 from exo.worker.engines.mlx.cache import (
+    MEMORY_THRESHOLD,
     CacheSnapshot,
     KVPrefixCache,
     encode_prompt,
+    get_memory_used_percentage,
     has_non_kv_caches,
     make_kv_cache,
+    measure_kv_cache_bytes_per_token,
     snapshot_ssm_states,
 )
 from exo.worker.engines.mlx.constants import (
@@ -148,7 +152,13 @@ def warmup_inference(
     model: Model,
     tokenizer: TokenizerWrapper,
     group: mx.distributed.Group | None,
-) -> int:
+) -> tuple[int, int]:
+    """Run warmup inference and measure KV cache cost per token.
+
+    Returns:
+        (tokens_generated, bytes_per_token) where bytes_per_token is the
+        measured KV cache memory consumed per token across all local layers.
+    """
     content = "Prompt to warm up the inference engine. Repeat this."
 
     warmup_prompt = apply_chat_template(
@@ -187,9 +197,13 @@ def warmup_inference(
 
     logger.info("Generated ALL warmup tokens")
 
+    # Measure KV cache bytes per token from the populated warmup cache
+    bytes_per_token = measure_kv_cache_bytes_per_token(cache)
+    logger.info(f"Measured KV cache cost: {bytes_per_token} bytes per token")
+
     mx_barrier(group)
 
-    return tokens_generated
+    return tokens_generated, bytes_per_token
 
 
 def ban_token_ids(token_ids: list[int]) -> Callable[[mx.array, mx.array], mx.array]:
@@ -267,6 +281,65 @@ def extract_top_logprobs(
     return selected_logprob, top_logprob_items
 
 
+def _check_memory_budget(
+    bytes_per_token: int,
+    total_sequence_tokens: int,
+    kv_prefix_cache: KVPrefixCache | None,
+) -> str | None:
+    """Check if enough memory is available for the estimated KV cache.
+
+    Uses the same memory pressure system as prefix cache eviction.
+    If memory would exceed the threshold, tries evicting prefix caches first.
+
+    Returns None if OK, or an error message string if OOM is predicted.
+    """
+    if bytes_per_token == 0:
+        return None
+
+    total_ram = psutil.virtual_memory().total
+    estimated_cache_bytes = bytes_per_token * total_sequence_tokens
+
+    current_pressure = (
+        kv_prefix_cache.get_memory_used_percentage()
+        if kv_prefix_cache is not None
+        else get_memory_used_percentage()
+    )
+    projected_pressure = current_pressure + (estimated_cache_bytes / total_ram)
+
+    logger.info(
+        f"Memory check: {total_sequence_tokens} tokens × {bytes_per_token} B/tok "
+        f"= {estimated_cache_bytes / (1024**2):.1f} MB, "
+        f"pressure {current_pressure:.1%} → projected {projected_pressure:.1%} "
+        f"(threshold {MEMORY_THRESHOLD:.1%})"
+    )
+
+    if projected_pressure <= MEMORY_THRESHOLD:
+        return None
+
+    # Try evicting all prefix caches
+    if kv_prefix_cache is not None:
+        evicted = kv_prefix_cache.force_evict_all()
+        if evicted > 0:
+            mx.clear_cache()
+            current_pressure = kv_prefix_cache.get_memory_used_percentage()
+            projected_pressure = current_pressure + (estimated_cache_bytes / total_ram)
+            logger.info(
+                f"After evicting {evicted} prefix cache entries: "
+                f"pressure {current_pressure:.1%} → projected {projected_pressure:.1%}"
+            )
+            if projected_pressure <= MEMORY_THRESHOLD:
+                return None
+
+    needed_mb = estimated_cache_bytes / (1024**2)
+    headroom_mb = max(0, (MEMORY_THRESHOLD - current_pressure) * total_ram) / (1024**2)
+    return (
+        f"Not enough memory for this conversation. "
+        f"Estimated KV cache need: {needed_mb:.0f} MB, "
+        f"available headroom: {headroom_mb:.0f} MB. "
+        f"Please start a new conversation or compact your messages to continue."
+    )
+
+
 def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
@@ -275,6 +348,7 @@ def mlx_generate(
     kv_prefix_cache: KVPrefixCache | None,
     group: mx.distributed.Group | None,
     on_prefill_progress: Callable[[int, int], None] | None = None,
+    bytes_per_token: int = 0,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -306,6 +380,25 @@ def mlx_generate(
             logger.info(
                 f"KV cache hit: {prefix_hit_length}/{len(all_prompt_tokens)} tokens cached ({100 * prefix_hit_length / len(all_prompt_tokens):.1f}%)"
             )
+
+    # OOM prevention: check if the full sequence will fit in memory
+    if bytes_per_token > 0:
+        max_tokens = task.max_output_tokens or MAX_TOKENS
+        total_sequence_tokens = len(all_prompt_tokens) + max_tokens
+        oom_error = _check_memory_budget(
+            bytes_per_token=bytes_per_token,
+            total_sequence_tokens=total_sequence_tokens,
+            kv_prefix_cache=kv_prefix_cache,
+        )
+        if oom_error is not None:
+            logger.warning(f"OOM prevention triggered: {oom_error}")
+            yield GenerationResponse(
+                text=oom_error,
+                token=0,
+                finish_reason="error",
+                usage=None,
+            )
+            return
 
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = []
     if is_bench:
