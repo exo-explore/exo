@@ -173,6 +173,10 @@ class PipelineLastLayer(CustomMlxLayer):
                 mx.eval(_cache.keys)  # type: ignore
 
         if not self.is_prefill:
+            # Force materialization before all_gather. The last rank (r == s-1)
+            # skips the send block, so output can still be lazy. With FAST_SYNCH,
+            # all_gather reads stale buffer data instead of waiting for the GPU.
+            mx.eval(output)
             output = mx.distributed.all_gather(output, group=self.group)[
                 -output.shape[0] :
             ]
