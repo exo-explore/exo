@@ -23,9 +23,7 @@ from mlx_lm.models.deepseek_v3 import DeepseekV3Model
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelId
-from exo.worker.engines.mlx.constants import (
-    TRUST_REMOTE_CODE,
-)
+from exo.worker.engines.mlx.constants import TRUST_REMOTE_CODE
 
 try:
     from mlx_lm.tokenizer_utils import load_tokenizer
@@ -55,8 +53,11 @@ from exo.shared.types.worker.shards import (
     TensorShardMetadata,
 )
 from exo.worker.engines.mlx.auto_parallel import (
+    LayerLoadedCallback,
     TimeoutCallback,
     eval_with_timeout,
+    get_inner_model,
+    get_layers,
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
@@ -171,13 +172,28 @@ def initialize_mlx(
 def load_mlx_items(
     bound_instance: BoundInstance,
     group: Group | None,
-    on_timeout: TimeoutCallback | None = None,
+    on_timeout: TimeoutCallback | None,
+    on_layer_loaded: LayerLoadedCallback | None,
 ) -> tuple[Model, TokenizerWrapper]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
         start_time = time.perf_counter()
-        model, _ = load_model(model_path, strict=True)
+        model, _ = load_model(model_path, lazy=True, strict=False)
+        # Eval layers one by one for progress reporting
+        try:
+            inner = get_inner_model(model)
+            layers = get_layers(inner)
+            total = len(layers)
+            for i, layer in enumerate(layers):
+                mx.eval(layer)  # type: ignore
+                if on_layer_loaded is not None:
+                    on_layer_loaded(i, total)
+        except ValueError as e:
+            logger.opt(exception=e).debug(
+                "Model architecture doesn't support layer-by-layer progress tracking",
+            )
+        mx.eval(model)
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
         tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
@@ -186,7 +202,10 @@ def load_mlx_items(
         logger.info("Starting distributed init")
         start_time = time.perf_counter()
         model, tokenizer = shard_and_load(
-            bound_instance.bound_shard, group=group, on_timeout=on_timeout
+            bound_instance.bound_shard,
+            group=group,
+            on_timeout=on_timeout,
+            on_layer_loaded=on_layer_loaded,
         )
         end_time = time.perf_counter()
         logger.info(
@@ -201,7 +220,8 @@ def load_mlx_items(
 def shard_and_load(
     shard_metadata: ShardMetadata,
     group: Group,
-    on_timeout: TimeoutCallback | None = None,
+    on_timeout: TimeoutCallback | None,
+    on_layer_loaded: LayerLoadedCallback | None,
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
@@ -242,10 +262,14 @@ def shard_and_load(
     match shard_metadata:
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
-            model = tensor_auto_parallel(model, group, timeout_seconds, on_timeout)
+            model = tensor_auto_parallel(
+                model, group, timeout_seconds, on_timeout, on_layer_loaded
+            )
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
-            model = pipeline_auto_parallel(model, group, shard_metadata)
+            model = pipeline_auto_parallel(
+                model, group, shard_metadata, on_layer_loaded=on_layer_loaded
+            )
             eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
         case CfgShardMetadata():
             raise ValueError(
@@ -267,7 +291,11 @@ def shard_and_load(
 
 def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerWrapper:
     """Load tokenizer for a model shard. Delegates to load_tokenizer_for_model_id."""
-    return load_tokenizer_for_model_id(shard_metadata.model_card.model_id, model_path)
+    return load_tokenizer_for_model_id(
+        shard_metadata.model_card.model_id,
+        model_path,
+        trust_remote_code=shard_metadata.model_card.trust_remote_code,
+    )
 
 
 def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
@@ -299,7 +327,7 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
 
 
 def load_tokenizer_for_model_id(
-    model_id: ModelId, model_path: Path
+    model_id: ModelId, model_path: Path, *, trust_remote_code: bool = TRUST_REMOTE_CODE
 ) -> TokenizerWrapper:
     """
     Load tokenizer for a model given its ID and local path.
@@ -368,7 +396,7 @@ def load_tokenizer_for_model_id(
 
     tokenizer = load_tokenizer(
         model_path,
-        tokenizer_config_extra={"trust_remote_code": TRUST_REMOTE_CODE},
+        tokenizer_config_extra={"trust_remote_code": trust_remote_code},
         eos_token_ids=eos_token_ids,
     )
 
@@ -616,7 +644,7 @@ class NullKVCache(KVCache):
         raise NotImplementedError("We should not be setting a NullKVCache.")
 
 
-def mlx_force_oom(size: int = 40000) -> None:
+def mlx_force_oom(size: int = 200000) -> None:
     """
     Force an Out-Of-Memory (OOM) error in MLX by performing large tensor operations.
     """
@@ -643,7 +671,7 @@ def set_wired_limit_for_model(model_size: Memory):
         return
 
     max_rec_size = Memory.from_bytes(
-        int(mx.metal.device_info()["max_recommended_working_set_size"])
+        int(mx.device_info()["max_recommended_working_set_size"])
     )
     if model_size > 0.9 * max_rec_size:
         logger.warning(

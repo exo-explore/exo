@@ -96,7 +96,9 @@ def run_gpt_oss_pipeline_device(
             n_layers=24,
         )
 
-        model, tokenizer = shard_and_load(shard_meta, group)
+        model, tokenizer = shard_and_load(
+            shard_meta, group, on_timeout=None, on_layer_loaded=None
+        )
         model = cast(Model, model)
 
         # Generate a prompt of exact token length
@@ -172,7 +174,9 @@ def run_gpt_oss_tensor_parallel_device(
             n_layers=24,
         )
 
-        model, tokenizer = shard_and_load(shard_meta, group)
+        model, tokenizer = shard_and_load(
+            shard_meta, group, on_timeout=None, on_layer_loaded=None
+        )
         model = cast(Model, model)
 
         base_text = "The quick brown fox jumps over the lazy dog. "

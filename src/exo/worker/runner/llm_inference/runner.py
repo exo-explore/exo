@@ -97,6 +97,7 @@ def main(
         bound_instance.bound_runner_id,
         bound_instance.bound_shard,
     )
+    model_id = shard_metadata.model_card.model_id
     device_rank = shard_metadata.device_rank
     logger.info("hello from the runner")
     if getattr(shard_metadata, "immediate_exception", False):
@@ -150,7 +151,10 @@ def main(
                 case LoadModel() if (
                     isinstance(current_status, RunnerConnected) and group is not None
                 ) or (isinstance(current_status, RunnerIdle) and group is None):
-                    current_status = RunnerLoading()
+                    total_layers = shard_metadata.end_layer - shard_metadata.start_layer
+                    current_status = RunnerLoading(
+                        layers_loaded=0, total_layers=total_layers
+                    )
                     logger.info("runner loading")
                     event_sender.send(
                         RunnerStatusUpdated(
@@ -170,11 +174,26 @@ def main(
                         )
                         time.sleep(0.5)
 
+                    def on_layer_loaded(layers_loaded: int, total: int) -> None:
+                        nonlocal current_status
+                        current_status = RunnerLoading(
+                            layers_loaded=layers_loaded, total_layers=total
+                        )
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id,
+                                runner_status=current_status,
+                            )
+                        )
+
                     assert (
                         ModelTask.TextGeneration in shard_metadata.model_card.tasks
                     ), f"Incorrect model task(s): {shard_metadata.model_card.tasks}"
                     inference_model, tokenizer = load_mlx_items(
-                        bound_instance, group, on_timeout=on_model_load_timeout
+                        bound_instance,
+                        group,
+                        on_timeout=on_model_load_timeout,
+                        on_layer_loaded=on_layer_loaded,
                     )
                     logger.info(
                         f"model has_tool_calling={tokenizer.has_tool_calling} using tokens {tokenizer.tool_call_start}, {tokenizer.tool_call_end}"
@@ -261,7 +280,7 @@ def main(
                                 ChunkGenerated(
                                     command_id=command_id,
                                     chunk=PrefillProgressChunk(
-                                        model=shard_metadata.model_card.model_id,
+                                        model=model_id,
                                         processed_tokens=processed,
                                         total_tokens=total,
                                     ),
@@ -311,7 +330,10 @@ def main(
                         # Model-specific output parsing for tool calls.
                         if isinstance(inference_model, GptOssModel):
                             mlx_generator = parse_gpt_oss(mlx_generator)
-                        elif isinstance(inference_model, DeepseekV32Model):
+                        elif (
+                            isinstance(inference_model, DeepseekV32Model)
+                            and "deepseek" in model_id.normalize().lower()
+                        ):
                             mlx_generator = parse_deepseek_v32(mlx_generator)
                         elif tool_parser:
                             mlx_generator = parse_tool_calls(mlx_generator, tool_parser)
@@ -341,7 +363,7 @@ def main(
                                                 command_id=command_id,
                                                 chunk=ErrorChunk(
                                                     error_message=response.text,
-                                                    model=shard_metadata.model_card.model_id,
+                                                    model=model_id,
                                                 ),
                                             )
                                         )
@@ -356,7 +378,7 @@ def main(
                                             ChunkGenerated(
                                                 command_id=command_id,
                                                 chunk=TokenChunk(
-                                                    model=shard_metadata.model_card.model_id,
+                                                    model=model_id,
                                                     text=response.text,
                                                     token_id=response.token,
                                                     usage=response.usage,
@@ -375,7 +397,7 @@ def main(
                                                 command_id=command_id,
                                                 chunk=ToolCallChunk(
                                                     tool_calls=response.tool_calls,
-                                                    model=shard_metadata.model_card.model_id,
+                                                    model=model_id,
                                                     usage=response.usage,
                                                     stats=response.stats,
                                                 ),
@@ -391,7 +413,7 @@ def main(
                                 ChunkGenerated(
                                     command_id=command_id,
                                     chunk=ErrorChunk(
-                                        model=shard_metadata.model_card.model_id,
+                                        model=model_id,
                                         finish_reason="error",
                                         error_message=str(e),
                                     ),
@@ -713,7 +735,7 @@ def parse_tool_calls(
     in_tool_call = False
     tool_call_text_parts: list[str] = []
     for response in responses:
-        if response.text.startswith(tool_parser.start_parsing):
+        if not in_tool_call and response.text.startswith(tool_parser.start_parsing):
             in_tool_call = True
 
         if in_tool_call:
@@ -751,10 +773,9 @@ def parse_tool_calls(
                 )
                 yield response
 
-            continue
-
-        # fallthrough
-        yield response
+        else:
+            # fallthrough
+            yield response
 
 
 EXO_RUNNER_MUST_FAIL = "EXO RUNNER MUST FAIL"

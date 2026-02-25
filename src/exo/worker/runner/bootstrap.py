@@ -4,7 +4,7 @@ import loguru
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
 from exo.shared.types.tasks import Task, TaskId
-from exo.shared.types.worker.instances import BoundInstance, MlxJacclInstance
+from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 
@@ -18,20 +18,14 @@ def entrypoint(
     cancel_receiver: MpReceiver[TaskId],
     _logger: "loguru.Logger",
 ) -> None:
+    global logger
+    logger = _logger
+
     fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
-    if fast_synch_override == "on" or (
-        fast_synch_override != "off"
-        and (
-            isinstance(bound_instance.instance, MlxJacclInstance)
-            and len(bound_instance.instance.jaccl_devices) >= 2
-        )
-    ):
+    if fast_synch_override != "off":
         os.environ["MLX_METAL_FAST_SYNCH"] = "1"
     else:
         os.environ["MLX_METAL_FAST_SYNCH"] = "0"
-
-    global logger
-    logger = _logger
 
     logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
 

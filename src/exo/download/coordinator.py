@@ -1,11 +1,9 @@
 import asyncio
-import socket
 from dataclasses import dataclass, field
 from random import random
 
 import anyio
 from anyio import current_time
-from anyio.abc import TaskGroup
 from loguru import logger
 
 from exo.download.download_utils import (
@@ -41,6 +39,7 @@ from exo.shared.types.worker.downloads import (
 )
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.task_group import TaskGroup
 
 
 @dataclass
@@ -66,15 +65,13 @@ class DownloadCoordinator:
     # Internal event channel for forwarding (initialized in __post_init__)
     event_sender: Sender[Event] = field(init=False)
     event_receiver: Receiver[Event] = field(init=False)
-    _tg: TaskGroup = field(init=False, default_factory=anyio.create_task_group)
+    _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     # Per-model throttle for download progress events
     _last_progress_time: dict[ModelId, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.event_sender, self.event_receiver = channel[Event]()
-        if self.offline:
-            self.shard_downloader.set_internet_connection(False)
         self.shard_downloader.on_progress(self._download_progress_callback)
 
     def _model_dir(self, model_id: ModelId) -> str:
@@ -123,8 +120,6 @@ class DownloadCoordinator:
         logger.info(
             f"Starting DownloadCoordinator{' (offline mode)' if self.offline else ''}"
         )
-        if not self.offline:
-            self._test_internet_connection()
         try:
             async with self._tg as tg:
                 tg.start_soon(self._command_processor)
@@ -132,42 +127,12 @@ class DownloadCoordinator:
                 tg.start_soon(self._emit_existing_download_progress)
                 tg.start_soon(self._resend_out_for_delivery)
                 tg.start_soon(self._clear_ofd)
-                if not self.offline:
-                    tg.start_soon(self._check_internet_connection)
         finally:
             for task in self.active_downloads.values():
                 task.cancel()
 
-    def _test_internet_connection(self) -> None:
-        # Try multiple endpoints since some ISPs/networks block specific IPs
-        for host in ("1.1.1.1", "8.8.8.8", "1.0.0.1"):
-            try:
-                socket.create_connection((host, 443), timeout=3).close()
-                self.shard_downloader.set_internet_connection(True)
-                logger.debug(f"Internet connectivity: True (via {host})")
-                return
-            except OSError:
-                continue
-        self.shard_downloader.set_internet_connection(False)
-        logger.debug("Internet connectivity: False")
-
-    async def _check_internet_connection(self) -> None:
-        first_connection = True
-        while True:
-            await asyncio.sleep(10)
-
-            # Assume that internet connection is set to False on 443 errors.
-            if self.shard_downloader.internet_connection:
-                continue
-
-            self._test_internet_connection()
-
-            if first_connection and self.shard_downloader.internet_connection:
-                first_connection = False
-                self._tg.start_soon(self._emit_existing_download_progress)
-
     def shutdown(self) -> None:
-        self._tg.cancel_scope.cancel()
+        self._tg.cancel_tasks()
 
     # directly copied from worker
     async def _resend_out_for_delivery(self) -> None:

@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from typing import Self
 
 import anyio
-from anyio.abc import TaskGroup
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -23,6 +22,7 @@ from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
 
 
@@ -38,7 +38,7 @@ class Node:
 
     node_id: NodeId
     offline: bool
-    _tg: TaskGroup = field(init=False, default_factory=anyio.create_task_group)
+    _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     @classmethod
     async def create(cls, args: "Args") -> Self:
@@ -60,7 +60,7 @@ class Node:
             download_coordinator = DownloadCoordinator(
                 node_id,
                 session_id,
-                exo_shard_downloader(),
+                exo_shard_downloader(offline=args.offline),
                 download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
                 local_event_sender=router.sender(topics.LOCAL_EVENTS),
                 offline=args.offline,
@@ -149,11 +149,11 @@ class Node:
 
     def shutdown(self):
         # if this is our second call to shutdown, just sys.exit
-        if self._tg.cancel_scope.cancel_called:
+        if self._tg.cancel_called():
             import sys
 
             sys.exit(1)
-        self._tg.cancel_scope.cancel()
+        self._tg.cancel_tasks()
 
     async def _elect_loop(self):
         with self.election_result_receiver as results:
@@ -211,7 +211,7 @@ class Node:
                         self.download_coordinator = DownloadCoordinator(
                             self.node_id,
                             result.session_id,
-                            exo_shard_downloader(),
+                            exo_shard_downloader(offline=self.offline),
                             download_command_receiver=self.router.receiver(
                                 topics.DOWNLOAD_COMMANDS
                             ),
@@ -252,7 +252,7 @@ def main():
     target = min(max(soft, 65535), hard)
     resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
-    mp.set_start_method("spawn")
+    mp.set_start_method("spawn", force=True)
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
     logger.info("Starting EXO")
@@ -283,7 +283,7 @@ class Args(CamelCaseModel):
     tb_only: bool = False
     no_worker: bool = False
     no_downloads: bool = False
-    offline: bool = False
+    offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
 
     @classmethod
@@ -334,6 +334,7 @@ class Args(CamelCaseModel):
         parser.add_argument(
             "--offline",
             action="store_true",
+            default=os.getenv("EXO_OFFLINE", "false").lower() == "true",
             help="Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models",
         )
         fast_synch_group = parser.add_mutually_exclusive_group()

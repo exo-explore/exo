@@ -5,7 +5,7 @@ from math import inf
 from multiprocessing.synchronize import Event
 from queue import Empty, Full
 from types import TracebackType
-from typing import Self
+from typing import Any, Self
 
 from anyio import (
     CapacityLimiter,
@@ -157,7 +157,7 @@ class MpSender[T]:
     ) -> None:
         self.close()
 
-    def __getstate__(self):
+    def __getstate__(self) -> dict[str, Any]:
         d = self.__dict__.copy()
         d.pop("__orig_class__", None)
         return d
