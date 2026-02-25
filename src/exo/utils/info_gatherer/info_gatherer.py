@@ -542,10 +542,13 @@ class InfoGatherer:
                     if not p.stdout:
                         logger.critical("MacMon closed stdout")
                         return
-                    async for text in TextReceiveStream(
-                        BufferedByteReceiveStream(p.stdout)
-                    ):
-                        await self.info_sender.send(MacmonMetrics.from_raw_json(text))
+                    t = TextReceiveStream(BufferedByteReceiveStream(p.stdout))
+                    while True:
+                        with anyio.fail_after(self.macmon_interval * 3):
+                            macmon_output = await t.receive()
+                            await self.info_sender.send(
+                                MacmonMetrics.from_raw_json(macmon_output)
+                            )
             except CalledProcessError as e:
                 stderr_msg = "no stderr"
                 stderr_output = cast(bytes | str | None, e.stderr)
@@ -556,8 +559,12 @@ class InfoGatherer:
                         else str(stderr_output)
                     )
                 logger.warning(
-                    f"MacMon failed with return code {e.returncode}: {stderr_msg}"
+                    f"memory monitor failed with return code {e.returncode}: {stderr_msg}"
+                )
+            except TimeoutError:
+                logger.warning(
+                    f"memory monitor silent for {self.macmon_interval * 3}s - reloading"
                 )
             except Exception as e:
-                logger.warning(f"Error in macmon monitor: {e}")
+                logger.opt(exception=e).warning("Error in memory monitor")
             await anyio.sleep(self.macmon_interval)
