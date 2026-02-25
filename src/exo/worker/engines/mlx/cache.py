@@ -319,6 +319,16 @@ def get_memory_used_percentage() -> float:
     return float(mem.percent / 100)
 
 
+def get_safety_floor() -> int:
+    total = psutil.virtual_memory().total
+    return min(int(total * 0.10), 5 * 1024**3)
+
+
+def get_memory_pressure_threshold() -> float:
+    total = psutil.virtual_memory().total
+    return 1.0 - get_safety_floor() / total
+
+
 def _measure_single_cache_bytes(
     entry: KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList,
 ) -> int:

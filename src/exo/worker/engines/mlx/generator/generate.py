@@ -31,6 +31,7 @@ from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
     KVPrefixCache,
     encode_prompt,
+    get_memory_pressure_threshold,
     has_non_kv_caches,
     make_kv_cache,
     measure_kv_cache_bytes_per_token,
@@ -45,6 +46,7 @@ from exo.worker.engines.mlx.constants import (
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     fix_unmatched_think_end_tokens,
+    mx_any,
     mx_barrier,
 )
 from exo.worker.runner.bootstrap import logger
@@ -279,65 +281,53 @@ def extract_top_logprobs(
     return selected_logprob, top_logprob_items
 
 
-_SAFETY_MARGIN_FRACTION = 0.10
-_SAFETY_MARGIN_CAP_BYTES = 5 * 1024**3  # 5 GB
-
-
 def _check_memory_budget(
     bytes_per_token: int,
     total_sequence_tokens: int,
     kv_prefix_cache: KVPrefixCache | None,
+    group: mx.distributed.Group | None,
 ) -> str | None:
-    """Check if enough memory is available for the estimated KV cache.
-
-    Compares the estimated cache size against actual available memory
-    (minus a safety margin of min(10%, 5GB)).  If it won't fit, evicts
-    all prefix caches first and re-checks.
-
-    Returns None if OK, or an error message string if OOM is predicted.
-    """
     if bytes_per_token == 0:
         return None
 
     estimated_cache_bytes = bytes_per_token * total_sequence_tokens
-    available = psutil.virtual_memory().available
-    safety = min(int(available * _SAFETY_MARGIN_FRACTION), _SAFETY_MARGIN_CAP_BYTES)
-    budget = available - safety
+    mem = psutil.virtual_memory()
+    current_pressure = mem.percent / 100
+    estimated_pressure = estimated_cache_bytes / mem.total
+    projected = current_pressure + estimated_pressure
+    threshold = get_memory_pressure_threshold()
 
     logger.info(
         f"Memory check: {total_sequence_tokens} tokens × {bytes_per_token} B/tok "
         f"= {estimated_cache_bytes / (1024**2):.1f} MB, "
-        f"available: {available / (1024**2):.1f} MB, "
-        f"budget (after {safety / (1024**2):.0f} MB margin): {budget / (1024**2):.1f} MB"
+        f"current pressure: {current_pressure:.1%}, "
+        f"projected: {projected:.1%}, threshold: {threshold:.1%}"
     )
 
-    if estimated_cache_bytes <= budget:
+    over_budget = projected > threshold
+    if not mx_any(over_budget, group):
         return None
 
-    # Try evicting all prefix caches
+    # Some rank is over budget, so we evict all ranks.
     if kv_prefix_cache is not None:
         evicted = kv_prefix_cache.force_evict_all()
         if evicted > 0:
             mx.clear_cache()
-            available = psutil.virtual_memory().available
-            safety = min(
-                int(available * _SAFETY_MARGIN_FRACTION), _SAFETY_MARGIN_CAP_BYTES
-            )
-            budget = available - safety
+            mem = psutil.virtual_memory()
+            current_pressure = mem.percent / 100
+            projected = current_pressure + estimated_pressure
             logger.info(
                 f"After evicting {evicted} prefix cache entries: "
-                f"available {available / (1024**2):.1f} MB, "
-                f"budget {budget / (1024**2):.1f} MB"
+                f"pressure {current_pressure:.1%}, projected {projected:.1%}"
             )
-            if estimated_cache_bytes <= budget:
+            still_over = projected > threshold
+            if not mx_any(still_over, group):
                 return None
 
-    needed_mb = estimated_cache_bytes / (1024**2)
-    budget_mb = budget / (1024**2)
     return (
         f"Not enough memory for this conversation. "
-        f"Estimated KV cache need: {needed_mb:.0f} MB, "
-        f"available: {budget_mb:.0f} MB. "
+        f"Projected memory pressure: {projected:.0%}, "
+        f"threshold: {threshold:.0%}. "
         f"Please start a new conversation or compact your messages to continue."
     )
 
@@ -383,17 +373,16 @@ def mlx_generate(
                 f"KV cache hit: {prefix_hit_length}/{len(all_prompt_tokens)} tokens cached ({100 * prefix_hit_length / len(all_prompt_tokens):.1f}%)"
             )
 
-    # OOM prevention: check if the full sequence will fit in memory
+    # OOM prevention: check if the prompt will fit in memory
     if bytes_per_token > 0:
-        max_tokens = task.max_output_tokens or MAX_TOKENS
-        total_sequence_tokens = len(all_prompt_tokens) + max_tokens
         oom_error = _check_memory_budget(
             bytes_per_token=bytes_per_token,
-            total_sequence_tokens=total_sequence_tokens,
+            total_sequence_tokens=len(all_prompt_tokens),
             kv_prefix_cache=kv_prefix_cache,
+            group=group,
         )
         if oom_error is not None:
-            logger.warning(f"OOM prevention triggered: {oom_error}")
+            logger.warning(f"OOM prevention (prefill): {oom_error}")
             yield GenerationResponse(
                 text=oom_error,
                 token=0,

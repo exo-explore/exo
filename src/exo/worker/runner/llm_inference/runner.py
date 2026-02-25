@@ -6,6 +6,7 @@ from functools import cache
 from typing import TYPE_CHECKING, cast
 
 import mlx.core as mx
+import psutil
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
@@ -64,7 +65,7 @@ from exo.shared.types.worker.runners import (
 )
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.cache import KVPrefixCache
+from exo.worker.engines.mlx.cache import KVPrefixCache, get_memory_pressure_threshold
 from exo.worker.engines.mlx.generator.generate import (
     PrefillCancelled,
     mlx_generate,
@@ -340,6 +341,7 @@ def main(
 
                         completion_tokens = 0
                         tokens_since_last_cancel_check = check_for_cancel_every
+                        oom_stopped = False
                         for response in mlx_generator:
                             tokens_since_last_cancel_check += 1
                             if tokens_since_last_cancel_check >= check_for_cancel_every:
@@ -348,7 +350,14 @@ def main(
                                 want_to_cancel = (task.task_id in cancelled_tasks) or (
                                     TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
                                 )
-                                if mx_any(want_to_cancel, group):
+                                oom_local = (
+                                    bytes_per_token > 0
+                                    and psutil.virtual_memory().percent / 100
+                                    > get_memory_pressure_threshold()
+                                )
+                                if mx_any(want_to_cancel or oom_local, group):
+                                    if not want_to_cancel:
+                                        oom_stopped = True
                                     break
 
                             match response:
@@ -403,6 +412,21 @@ def main(
                                                 ),
                                             )
                                         )
+
+                        if oom_stopped and device_rank == 0:
+                            event_sender.send(
+                                ChunkGenerated(
+                                    command_id=command_id,
+                                    chunk=ErrorChunk(
+                                        model=model_id,
+                                        error_message=(
+                                            "Generation stopped: running out of memory. "
+                                            "Please start a new conversation or compact "
+                                            "your messages."
+                                        ),
+                                    ),
+                                )
+                            )
 
                     except PrefillCancelled:
                         logger.info(f"Prefill cancelled for task {task.task_id}")
