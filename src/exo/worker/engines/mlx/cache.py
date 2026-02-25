@@ -339,6 +339,14 @@ def _measure_single_cache_bytes(
         )
 
     total = 0
+    if isinstance(entry, ArraysCache):
+        state = entry.state  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        for arr in state:  # pyright: ignore[reportUnknownVariableType]
+            if isinstance(arr, mx.array):
+                total += arr.nbytes
+        return total
+
+    total = 0
     for attr_name in ("keys", "values"):
         val: object = getattr(entry, attr_name, None)
         if val is None:
@@ -346,16 +354,10 @@ def _measure_single_cache_bytes(
         if isinstance(val, mx.array):
             total += val.nbytes
         elif isinstance(val, (tuple, list)):
-            # QuantizedKVCache stores tuples of arrays (data, scales, biases)
             for arr in val:  # pyright: ignore[reportUnknownVariableType]
                 if isinstance(arr, mx.array):
                     total += arr.nbytes
 
-    if isinstance(entry, ArraysCache):
-        state = entry.state  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        for arr in state:  # pyright: ignore[reportUnknownVariableType]
-            if isinstance(arr, mx.array):
-                total += arr.nbytes
     return total
 
 

@@ -153,11 +153,10 @@ def warmup_inference(
     tokenizer: TokenizerWrapper,
     group: mx.distributed.Group | None,
 ) -> tuple[int, int]:
-    """Run warmup inference and measure KV cache cost per token.
+    """Run warmup inference and measure various metrics.
 
     Returns:
-        (tokens_generated, bytes_per_token) where bytes_per_token is the
-        measured KV cache memory consumed per token across all local layers.
+        tokens_generated, bytes_per_token
     """
     content = "Prompt to warm up the inference engine. Repeat this."
 
@@ -373,7 +372,6 @@ def mlx_generate(
                 f"KV cache hit: {prefix_hit_length}/{len(all_prompt_tokens)} tokens cached ({100 * prefix_hit_length / len(all_prompt_tokens):.1f}%)"
             )
 
-    # OOM prevention: check if the prompt will fit in memory
     if bytes_per_token > 0:
         oom_error = _check_memory_budget(
             bytes_per_token=bytes_per_token,
