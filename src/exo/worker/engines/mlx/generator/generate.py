@@ -28,11 +28,9 @@ from exo.shared.types.worker.runner_response import (
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.auto_parallel import set_pipeline_prefill
 from exo.worker.engines.mlx.cache import (
-    MEMORY_THRESHOLD,
     CacheSnapshot,
     KVPrefixCache,
     encode_prompt,
-    get_memory_used_percentage,
     has_non_kv_caches,
     make_kv_cache,
     measure_kv_cache_bytes_per_token,
@@ -281,6 +279,10 @@ def extract_top_logprobs(
     return selected_logprob, top_logprob_items
 
 
+_SAFETY_MARGIN_FRACTION = 0.10
+_SAFETY_MARGIN_CAP_BYTES = 5 * 1024**3  # 5 GB
+
+
 def _check_memory_budget(
     bytes_per_token: int,
     total_sequence_tokens: int,
@@ -288,32 +290,28 @@ def _check_memory_budget(
 ) -> str | None:
     """Check if enough memory is available for the estimated KV cache.
 
-    Uses the same memory pressure system as prefix cache eviction.
-    If memory would exceed the threshold, tries evicting prefix caches first.
+    Compares the estimated cache size against actual available memory
+    (minus a safety margin of min(10%, 5GB)).  If it won't fit, evicts
+    all prefix caches first and re-checks.
 
     Returns None if OK, or an error message string if OOM is predicted.
     """
     if bytes_per_token == 0:
         return None
 
-    total_ram = psutil.virtual_memory().total
     estimated_cache_bytes = bytes_per_token * total_sequence_tokens
-
-    current_pressure = (
-        kv_prefix_cache.get_memory_used_percentage()
-        if kv_prefix_cache is not None
-        else get_memory_used_percentage()
-    )
-    projected_pressure = current_pressure + (estimated_cache_bytes / total_ram)
+    available = psutil.virtual_memory().available
+    safety = min(int(available * _SAFETY_MARGIN_FRACTION), _SAFETY_MARGIN_CAP_BYTES)
+    budget = available - safety
 
     logger.info(
         f"Memory check: {total_sequence_tokens} tokens × {bytes_per_token} B/tok "
         f"= {estimated_cache_bytes / (1024**2):.1f} MB, "
-        f"pressure {current_pressure:.1%} → projected {projected_pressure:.1%} "
-        f"(threshold {MEMORY_THRESHOLD:.1%})"
+        f"available: {available / (1024**2):.1f} MB, "
+        f"budget (after {safety / (1024**2):.0f} MB margin): {budget / (1024**2):.1f} MB"
     )
 
-    if projected_pressure <= MEMORY_THRESHOLD:
+    if estimated_cache_bytes <= budget:
         return None
 
     # Try evicting all prefix caches
@@ -321,21 +319,25 @@ def _check_memory_budget(
         evicted = kv_prefix_cache.force_evict_all()
         if evicted > 0:
             mx.clear_cache()
-            current_pressure = kv_prefix_cache.get_memory_used_percentage()
-            projected_pressure = current_pressure + (estimated_cache_bytes / total_ram)
+            available = psutil.virtual_memory().available
+            safety = min(
+                int(available * _SAFETY_MARGIN_FRACTION), _SAFETY_MARGIN_CAP_BYTES
+            )
+            budget = available - safety
             logger.info(
                 f"After evicting {evicted} prefix cache entries: "
-                f"pressure {current_pressure:.1%} → projected {projected_pressure:.1%}"
+                f"available {available / (1024**2):.1f} MB, "
+                f"budget {budget / (1024**2):.1f} MB"
             )
-            if projected_pressure <= MEMORY_THRESHOLD:
+            if estimated_cache_bytes <= budget:
                 return None
 
     needed_mb = estimated_cache_bytes / (1024**2)
-    headroom_mb = max(0, (MEMORY_THRESHOLD - current_pressure) * total_ram) / (1024**2)
+    budget_mb = budget / (1024**2)
     return (
         f"Not enough memory for this conversation. "
         f"Estimated KV cache need: {needed_mb:.0f} MB, "
-        f"available headroom: {headroom_mb:.0f} MB. "
+        f"available: {budget_mb:.0f} MB. "
         f"Please start a new conversation or compact your messages to continue."
     )
 
