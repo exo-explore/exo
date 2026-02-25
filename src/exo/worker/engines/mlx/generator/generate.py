@@ -153,11 +153,7 @@ def warmup_inference(
     tokenizer: TokenizerWrapper,
     group: mx.distributed.Group | None,
 ) -> tuple[int, int]:
-    """Run warmup inference and measure various metrics.
-
-    Returns:
-        tokens_generated, bytes_per_token
-    """
+    """Run warmup inference and tokens_generated and bytes_per_token"""
     content = "Prompt to warm up the inference engine. Repeat this."
 
     warmup_prompt = apply_chat_template(
@@ -196,7 +192,6 @@ def warmup_inference(
 
     logger.info("Generated ALL warmup tokens")
 
-    # Measure KV cache bytes per token from the populated warmup cache
     bytes_per_token = measure_kv_cache_bytes_per_token(cache)
     logger.info(f"Measured KV cache cost: {bytes_per_token} bytes per token")
 
@@ -289,45 +284,25 @@ def _check_memory_budget(
     if bytes_per_token == 0:
         return None
 
-    estimated_cache_bytes = bytes_per_token * total_sequence_tokens
     mem = psutil.virtual_memory()
-    current_pressure = mem.percent / 100
-    estimated_pressure = estimated_cache_bytes / mem.total
-    projected = current_pressure + estimated_pressure
+    estimated = bytes_per_token * total_sequence_tokens / mem.total
+    projected = mem.percent / 100 + estimated
     threshold = get_memory_pressure_threshold()
 
-    logger.info(
-        f"Memory check: {total_sequence_tokens} tokens × {bytes_per_token} B/tok "
-        f"= {estimated_cache_bytes / (1024**2):.1f} MB, "
-        f"current pressure: {current_pressure:.1%}, "
-        f"projected: {projected:.1%}, threshold: {threshold:.1%}"
-    )
-
-    over_budget = projected > threshold
-    if not mx_any(over_budget, group):
+    if not mx_any(projected > threshold, group):
         return None
 
-    # Some rank is over budget, so we evict all ranks.
-    if kv_prefix_cache is not None:
-        evicted = kv_prefix_cache.force_evict_all()
-        if evicted > 0:
-            mx.clear_cache()
-            mem = psutil.virtual_memory()
-            current_pressure = mem.percent / 100
-            projected = current_pressure + estimated_pressure
-            logger.info(
-                f"After evicting {evicted} prefix cache entries: "
-                f"pressure {current_pressure:.1%}, projected {projected:.1%}"
-            )
-            still_over = projected > threshold
-            if not mx_any(still_over, group):
-                return None
+    if kv_prefix_cache is not None and kv_prefix_cache.force_evict_all() > 0:
+        mx.clear_cache()
+        mem = psutil.virtual_memory()
+        projected = mem.percent / 100 + estimated
+        if not mx_any(projected > threshold, group):
+            return None
 
     return (
-        f"Not enough memory for this conversation. "
-        f"Projected memory pressure: {projected:.0%}, "
-        f"threshold: {threshold:.0%}. "
-        f"Please start a new conversation or compact your messages to continue."
+        f"Not enough memory for this conversation ({projected:.0%} projected, "
+        f"{threshold:.0%} limit). "
+        f"Please start a new conversation or compact your messages."
     )
 
 
