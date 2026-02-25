@@ -128,11 +128,11 @@ class PipelineFirstLayer(CustomMlxLayer):
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
+            # We want to avoid GPU timeout errors by evalling the distributed operation
+            # so that it stays on CPU, which does not have a timeout.
+            mx.eval(x)
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
-            if self.is_prefill:
-                # We want to avoid GPU timeout errors by evalling the distributed operation
-                # so that it stays on CPU, which does not have a timeout.
-                mx.eval(x)
+            mx.eval(x)
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -158,6 +158,10 @@ class PipelineLastLayer(CustomMlxLayer):
 
         output: mx.array = self.original_layer(x, *args, **kwargs)
 
+        # Eval layer output to materialize it before send — this splits the graph
+        # so the send is isolated and the receiving rank's recv can complete.
+        mx.eval(output)
+
         if self.r != self.s - 1:
             output = mx.distributed.send(
                 output, (self.r + 1) % self.s, group=self.group
@@ -167,15 +171,15 @@ class PipelineLastLayer(CustomMlxLayer):
                 # doesn't have .keys directly; access via first sub-cache.
                 _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
                 _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
-            if self.is_prefill:
-                mx.eval(output)
-                if cache is not None:
-                    mx.eval(_cache.keys)  # type: ignore
+            mx.eval(output)
+            if cache is not None:
+                mx.eval(_cache.keys)  # type: ignore
 
         if not self.is_prefill:
             output = mx.distributed.all_gather(output, group=self.group)[
                 -output.shape[0] :
             ]
+            mx.eval(output)
 
         return output
 
