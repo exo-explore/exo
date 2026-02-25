@@ -17,6 +17,13 @@ git branch -r --contains "$commit" | grep -qE '^\s*origin/' || {
   exit 1
 }
 hosts=("$@")
+
+for host; do
+  ssh -T -o BatchMode=yes -o ServerAliveInterval=30 "$host@$host" \
+    "EXO_LIBP2P_NAMESPACE=$commit /nix/var/nix/profiles/default/bin/nix build github:exo-explore/exo/$commit" &
+done
+wait
+
 cleanup() {
   for host in "${hosts[@]}"; do
     ssh -T -o BatchMode=yes "$host@$host" "pkill -f bin/exo" &
@@ -26,11 +33,6 @@ cleanup() {
 }
 trap 'cleanup' EXIT INT TERM
 
-for host; do
-  ssh -T -o BatchMode=yes -o ServerAliveInterval=30 "$host@$host" \
-    "EXO_LIBP2P_NAMESPACE=$commit /nix/var/nix/profiles/default/bin/nix build github:exo-explore/exo/$commit" &
-done
-wait
 for host; do
   ssh -T -o BatchMode=yes -o ServerAliveInterval=30 "$host@$host" \
     "EXO_LIBP2P_NAMESPACE=$commit /nix/var/nix/profiles/default/bin/nix run github:exo-explore/exo/$commit" &>/dev/null &
