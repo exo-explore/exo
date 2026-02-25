@@ -125,13 +125,14 @@ class PipelineFirstLayer(CustomMlxLayer):
         self.r: int = r
         self.group = group
         self.is_prefill: bool = False
+        self.comm_stream: mx.Stream = mx.new_stream(mx.default_device())
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
-            x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
-            # We want to avoid GPU timeout errors by evalling the distributed operation
-            # so that it stays on CPU, which does not have a timeout.
-            mx.eval(x)
+            with mx.stream(self.comm_stream):
+                x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
+            if self.is_prefill:
+                mx.eval(x)
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -149,6 +150,7 @@ class PipelineLastLayer(CustomMlxLayer):
         self.group = group
         self.original_layer_signature = signature(self.original_layer.__call__)
         self.is_prefill: bool = False
+        self.comm_stream: mx.Stream = mx.new_stream(mx.default_device())
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         cache = self.original_layer_signature.bind_partial(
@@ -158,23 +160,24 @@ class PipelineLastLayer(CustomMlxLayer):
         output: mx.array = self.original_layer(x, *args, **kwargs)
 
         if self.r != self.s - 1:
-            output = mx.distributed.send(
-                output, (self.r + 1) % self.s, group=self.group
-            )
+            with mx.stream(self.comm_stream):
+                output = mx.distributed.send(
+                    output, (self.r + 1) % self.s, group=self.group
+                )
             if cache is not None:
                 # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
                 # doesn't have .keys directly; access via first sub-cache.
                 _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
                 _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
-            mx.eval(output)
-            if cache is not None:
-                mx.eval(_cache.keys)  # type: ignore
+            if self.is_prefill:
+                mx.eval(output)
+                if cache is not None:
+                    mx.eval(_cache.keys)  # type: ignore
 
         if not self.is_prefill:
             output = mx.distributed.all_gather(output, group=self.group)[
                 -output.shape[0] :
             ]
-            mx.eval(output)
 
         return output
 
@@ -316,8 +319,6 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
             last = cache[-1]  # type: ignore
             dep_cache = last[0] if hasattr(last, "caches") else last  # type: ignore
             dep_cache.keys = mx.depends(dep_cache.keys, logits)  # type: ignore
-
-        mx.eval(logits)
 
         return logits
 
