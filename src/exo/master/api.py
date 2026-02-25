@@ -524,15 +524,15 @@ class API:
 
             if (
                 model_card.model_id,
-                sharding,
-                instance_meta,
+                instance.sharding(),
+                instance.instance_meta(),
                 len(placement_node_ids),
             ) not in seen:
                 previews.append(
                     PlacementPreview(
                         model_id=model_card.model_id,
-                        sharding=sharding,
-                        instance_meta=instance_meta,
+                        sharding=instance.sharding(),
+                        instance_meta=instance.instance_meta(),
                         instance=instance,
                         memory_delta_by_node=memory_delta_by_node or None,
                         error=None,
@@ -541,8 +541,8 @@ class API:
             seen.add(
                 (
                     model_card.model_id,
-                    sharding,
-                    instance_meta,
+                    instance.sharding(),
+                    instance.instance_meta(),
                     len(placement_node_ids),
                 )
             )
