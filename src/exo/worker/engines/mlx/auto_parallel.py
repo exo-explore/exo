@@ -49,6 +49,21 @@ TimeoutCallback = Callable[[], None]
 LayerLoadedCallback = Callable[[int, int], None]  # (layers_loaded, total_layers)
 
 
+_pending_prefill_sends: list[tuple[mx.array, int, mx.distributed.Group]] = []
+
+
+def flush_prefill_sends() -> None:
+    for output, dst, group in _pending_prefill_sends:
+        sent = mx.distributed.send(output, dst, group=group)
+        mx.async_eval(sent)
+    _pending_prefill_sends.clear()
+
+
+def clear_prefill_sends() -> None:
+    # Discard pending sends (e.g. on cancellation).
+    _pending_prefill_sends.clear()
+
+
 def eval_with_timeout(
     mlx_item: Any,  # pyright: ignore[reportAny]
     timeout_seconds: float = 60.0,
@@ -163,9 +178,14 @@ class PipelineLastLayer(CustomMlxLayer):
         mx.eval(output)
 
         if self.r != self.s - 1:
-            output = mx.distributed.send(
-                output, (self.r + 1) % self.s, group=self.group
-            )
+            if self.is_prefill:
+                _pending_prefill_sends.append(
+                    (output, (self.r + 1) % self.s, self.group)
+                )
+            else:
+                output = mx.distributed.send(
+                    output, (self.r + 1) % self.s, group=self.group
+                )
             if cache is not None:
                 # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
                 # doesn't have .keys directly; access via first sub-cache.

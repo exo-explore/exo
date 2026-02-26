@@ -314,9 +314,13 @@ async def fetch_file_list_with_cache(
         _fetched_file_lists_this_session.add(cache_key)
         return file_list
     except Exception as e:
+        logger.opt(exception=e).warning(
+            "Ran into exception when fetching file list from HF."
+        )
+
         if await aios.path.exists(cache_file):
             logger.warning(
-                f"No internet and no cached file list for {model_id} - using local file list"
+                f"No cached file list for {model_id} - using local file list"
             )
             async with aiofiles.open(cache_file, "r") as f:
                 return TypeAdapter(list[FileListEntry]).validate_json(await f.read())

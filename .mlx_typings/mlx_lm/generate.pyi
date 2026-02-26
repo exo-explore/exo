@@ -73,9 +73,11 @@ class GenerationResponse:
     finish_reason: Optional[str] = ...
 
 def maybe_quantize_kv_cache(
-    prompt_cache, quantized_kv_start, kv_group_size, kv_bits
-):  # -> None:
-    ...
+    prompt_cache: Any,
+    quantized_kv_start: int | None,
+    kv_group_size: int | None,
+    kv_bits: int | None,
+) -> None: ...
 def generate_step(
     prompt: mx.array,
     model: nn.Module,

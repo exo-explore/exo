@@ -40,6 +40,7 @@ from pydantic import RootModel
 from exo.download.download_utils import build_model_path
 from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
+from exo.shared.types.mlx import Model
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     BoundInstance,
@@ -52,7 +53,6 @@ from exo.shared.types.worker.shards import (
     ShardMetadata,
     TensorShardMetadata,
 )
-from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.auto_parallel import (
     LayerLoadedCallback,
     TimeoutCallback,
