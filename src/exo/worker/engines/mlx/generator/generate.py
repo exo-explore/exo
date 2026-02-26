@@ -1,5 +1,5 @@
-import math
 import functools
+import math
 import time
 from copy import deepcopy
 from typing import Callable, Generator, cast, get_args
