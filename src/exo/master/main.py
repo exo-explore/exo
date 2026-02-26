@@ -60,7 +60,7 @@ from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
 from exo.shared.types.worker.instances import InstanceId
-from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.channels import Receiver, Sender
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
 
@@ -72,25 +72,21 @@ class Master:
         session_id: SessionId,
         *,
         command_receiver: Receiver[ForwarderCommand],
+        event_sender: Sender[Event],
         local_event_receiver: Receiver[LocalForwarderEvent],
         global_event_sender: Sender[GlobalForwarderEvent],
         download_command_sender: Sender[ForwarderDownloadCommand],
     ):
-        self.state = State()
-        self._tg: TaskGroup = TaskGroup()
         self.node_id = node_id
         self.session_id = session_id
+        self.state = State()
+        self._tg: TaskGroup = TaskGroup()
         self.command_task_mapping: dict[CommandId, TaskId] = {}
         self.command_receiver = command_receiver
         self.local_event_receiver = local_event_receiver
         self.global_event_sender = global_event_sender
         self.download_command_sender = download_command_sender
-        send, recv = channel[Event]()
-        self.event_sender: Sender[Event] = send
-        self._loopback_event_receiver: Receiver[Event] = recv
-        self._loopback_event_sender: Sender[LocalForwarderEvent] = (
-            local_event_receiver.clone_sender()
-        )
+        self.event_sender = event_sender
         self._system_id = SystemId()
         self._multi_buffer = MultiSourceBuffer[SystemId, Event]()
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
@@ -104,15 +100,12 @@ class Master:
             async with self._tg as tg:
                 tg.start_soon(self._event_processor)
                 tg.start_soon(self._command_processor)
-                tg.start_soon(self._loopback_processor)
                 tg.start_soon(self._plan)
         finally:
             self._event_log.close()
             self.global_event_sender.close()
             self.local_event_receiver.close()
             self.command_receiver.close()
-            self._loopback_event_sender.close()
-            self._loopback_event_receiver.close()
 
     async def shutdown(self):
         logger.info("Stopping Master")
@@ -408,22 +401,6 @@ class Master:
 
                     self._event_log.append(event)
                     await self._send_event(indexed)
-
-    async def _loopback_processor(self) -> None:
-        # this would ideally not be necessary.
-        # this is WAY less hacky than how I was working around this before
-        local_index = 0
-        with self._loopback_event_receiver as events:
-            async for event in events:
-                await self._loopback_event_sender.send(
-                    LocalForwarderEvent(
-                        origin=self._system_id,
-                        origin_idx=local_index,
-                        session=self.session_id,
-                        event=event,
-                    )
-                )
-                local_index += 1
 
     # This function is re-entrant, take care!
     async def _send_event(self, event: IndexedEvent):

@@ -17,6 +17,7 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.common import ModelId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
+    Event,
     GlobalForwarderEvent,
     IndexedEvent,
     InstanceCreated,
@@ -50,6 +51,22 @@ async def test_master():
     command_sender, co_receiver = channel[ForwarderCommand]()
     local_event_sender, le_receiver = channel[LocalForwarderEvent]()
     fcds, _fcdr = channel[ForwarderDownloadCommand]()
+    ev_send, ev_recv = channel[Event]()
+
+    async def mock_event_router():
+        idx = 0
+        sid = SystemId()
+        with ev_recv as master_events:
+            async for event in master_events:
+                await local_event_sender.send(
+                    LocalForwarderEvent(
+                        origin=sid,
+                        origin_idx=idx,
+                        session=session_id,
+                        event=event,
+                    )
+                )
+                idx += 1
 
     all_events: list[IndexedEvent] = []
 
@@ -67,6 +84,7 @@ async def test_master():
     master = Master(
         node_id,
         session_id,
+        event_sender=ev_send,
         global_event_sender=ge_sender,
         local_event_receiver=le_receiver,
         command_receiver=co_receiver,
@@ -75,6 +93,7 @@ async def test_master():
     logger.info("run the master")
     async with anyio.create_task_group() as tg:
         tg.start_soon(master.run)
+        tg.start_soon(mock_event_router)
 
         # inject a NodeGatheredInfo event
         logger.info("inject a NodeGatheredInfo event")
@@ -197,4 +216,5 @@ async def test_master():
             input=[InputMessage(role="user", content="Hello, how are you?")],
         )
 
+        ev_send.close()
         await master.shutdown()
