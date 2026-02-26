@@ -34,6 +34,7 @@ from exo.worker.engines.mlx.auto_parallel import (
     clear_prefill_sends,
     flush_prefill_sends,
     set_pipeline_prefill,
+    set_pipeline_queue_sends,
 )
 from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
@@ -245,6 +246,7 @@ def prefill(
 
     try:
         if is_pipeline and num_tokens >= prefill_step_size:
+            set_pipeline_queue_sends(model, queue_sends=True)
             assert group is not None, "Pipeline prefill requires a distributed group"
             pipeline_parallel_prefill(
                 model=model,
@@ -257,6 +259,7 @@ def prefill(
                 distributed_prompt_progress_callback=distributed_prompt_progress_callback,
                 group=group,
             )
+            set_pipeline_queue_sends(model, queue_sends=True)
         else:
             # Use max_tokens=1 because max_tokens=0 does not work.
             # We just throw away the generated token - we only care about filling the cache
@@ -274,9 +277,11 @@ def prefill(
             ):
                 break  # Stop after first iteration - cache is now filled
     except PrefillCancelled:
+        set_pipeline_queue_sends(model, queue_sends=False)
         set_pipeline_prefill(model, is_prefill=False)
         raise
 
+    set_pipeline_queue_sends(model, queue_sends=False)
     set_pipeline_prefill(model, is_prefill=False)
 
     # stream_generate added 1 extra generated token to the cache, so we should trim it.
