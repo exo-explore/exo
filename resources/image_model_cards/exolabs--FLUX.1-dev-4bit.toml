@@ -1,4 +1,5 @@
 model_id = "exolabs/FLUX.1-dev-4bit"
+revision = "b96c650a7b2c57484e2df51d1fafcb4cb31b1060"
 n_layers = 57
 hidden_size = 1
 supports_tensor = false

@@ -1,4 +1,5 @@
 model_id = "exolabs/FLUX.1-schnell"
+revision = "aedc677102a335e26774bea593b317d64c908a83"
 n_layers = 57
 hidden_size = 1
 supports_tensor = false

@@ -1,4 +1,5 @@
 model_id = "mlx-community/gpt-oss-120b-MXFP4-Q8"
+revision = "81e5ac3ad0af6efb1298a8e8c7a10ed2990c137b"
 n_layers = 36
 hidden_size = 2880
 supports_tensor = true

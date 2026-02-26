@@ -1,4 +1,5 @@
 model_id = "exolabs/FLUX.1-Krea-dev"
+revision = "2e3d8c5ebc737af82d1f4c669f99bacc72b09d6b"
 n_layers = 57
 hidden_size = 1
 supports_tensor = false

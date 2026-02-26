@@ -1,4 +1,5 @@
 model_id = "mlx-community/GLM-4.5-Air-bf16"
+revision = "1753b3269c9e3cb62ba3cbaf0ab6433d69784592"
 n_layers = 46
 hidden_size = 4096
 supports_tensor = true

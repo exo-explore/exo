@@ -1,4 +1,5 @@
 model_id = "mlx-community/Qwen3-Coder-Next-8bit"
+revision = "6d3c664dc8539a711783391484fd6784c51fd8fa"
 n_layers = 48
 hidden_size = 2048
 supports_tensor = true

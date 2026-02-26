@@ -1,4 +1,5 @@
 model_id = "exolabs/Qwen-Image"
+revision = "e7990ef5392a17dc917578b6f4e43aad9ae93e7a"
 n_layers = 60
 hidden_size = 1
 supports_tensor = false

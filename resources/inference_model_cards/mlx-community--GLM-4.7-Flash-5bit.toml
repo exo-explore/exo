@@ -1,4 +1,5 @@
 model_id = "mlx-community/GLM-4.7-Flash-5bit"
+revision = "4b35cbe614a5693f0d8978de8718efdbf06d5706"
 n_layers = 47
 hidden_size = 2048
 supports_tensor = true
