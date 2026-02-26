@@ -3,6 +3,7 @@
   import {
     listTraces,
     getTraceRawUrl,
+    deleteTraces,
     type TraceListItem,
   } from "$lib/stores/app.svelte";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
@@ -10,6 +11,51 @@
   let traces = $state<TraceListItem[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
+  let selectedIds = $state<Set<string>>(new Set());
+  let deleting = $state(false);
+
+  let allSelected = $derived(
+    traces.length > 0 && selectedIds.size === traces.length,
+  );
+
+  function toggleSelect(taskId: string) {
+    const next = new Set(selectedIds);
+    if (next.has(taskId)) {
+      next.delete(taskId);
+    } else {
+      next.add(taskId);
+    }
+    selectedIds = next;
+  }
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      selectedIds = new Set();
+    } else {
+      selectedIds = new Set(traces.map((t) => t.taskId));
+    }
+  }
+
+  async function handleDelete() {
+    if (selectedIds.size === 0) return;
+    const count = selectedIds.size;
+    if (
+      !confirm(
+        `Delete ${count} trace${count === 1 ? "" : "s"}? This cannot be undone.`,
+      )
+    )
+      return;
+    deleting = true;
+    try {
+      await deleteTraces([...selectedIds]);
+      selectedIds = new Set();
+      await refresh();
+    } catch (e) {
+      error = e instanceof Error ? e.message : "Failed to delete traces";
+    } finally {
+      deleting = false;
+    }
+  }
 
   function formatBytes(bytes: number): string {
     if (!bytes || bytes <= 0) return "0B";
@@ -109,6 +155,16 @@
         </h1>
       </div>
       <div class="flex items-center gap-3">
+        {#if selectedIds.size > 0}
+          <button
+            type="button"
+            class="text-xs font-mono text-red-400 hover:text-red-300 transition-colors uppercase border border-red-500/40 px-2 py-1 rounded"
+            onclick={handleDelete}
+            disabled={deleting}
+          >
+            {deleting ? "Deleting..." : `Delete (${selectedIds.size})`}
+          </button>
+        {/if}
         <button
           type="button"
           class="text-xs font-mono text-exo-light-gray hover:text-exo-yellow transition-colors uppercase border border-exo-medium-gray/40 px-2 py-1 rounded"
@@ -143,14 +199,41 @@
       </div>
     {:else}
       <div class="space-y-3">
+        <div class="flex items-center gap-2 px-1">
+          <button
+            type="button"
+            class="text-xs font-mono uppercase transition-colors {allSelected
+              ? 'text-exo-yellow'
+              : 'text-exo-light-gray hover:text-exo-yellow'}"
+            onclick={toggleSelectAll}
+          >
+            {allSelected ? "Deselect all" : "Select all"}
+          </button>
+        </div>
         {#each traces as trace}
+          {@const isSelected = selectedIds.has(trace.taskId)}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
-            class="rounded border border-exo-medium-gray/30 bg-exo-black/30 p-4 flex items-center justify-between gap-4"
+            role="button"
+            tabindex="0"
+            class="w-full text-left rounded border-l-2 border-r border-t border-b transition-all p-4 flex items-center justify-between gap-4 cursor-pointer {isSelected
+              ? 'bg-exo-yellow/10 border-l-exo-yellow border-r-exo-medium-gray/30 border-t-exo-medium-gray/30 border-b-exo-medium-gray/30'
+              : 'bg-exo-black/30 border-l-transparent border-r-exo-medium-gray/30 border-t-exo-medium-gray/30 border-b-exo-medium-gray/30 hover:bg-white/[0.03]'}"
+            onclick={() => toggleSelect(trace.taskId)}
+            onkeydown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                toggleSelect(trace.taskId);
+              }
+            }}
           >
             <div class="min-w-0 flex-1">
               <a
                 href="#/traces/{trace.taskId}"
-                class="text-sm font-mono text-white hover:text-exo-yellow transition-colors truncate block"
+                class="text-sm font-mono transition-colors truncate block {isSelected
+                  ? 'text-exo-yellow'
+                  : 'text-white hover:text-exo-yellow'}"
+                onclick={(e) => e.stopPropagation()}
               >
                 {trace.taskId}
               </a>
@@ -160,7 +243,11 @@
                 )}
               </div>
             </div>
-            <div class="flex items-center gap-2 shrink-0">
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <div
+              class="flex items-center gap-2 shrink-0"
+              onclick={(e) => e.stopPropagation()}
+            >
               <a
                 href="#/traces/{trace.taskId}"
                 class="text-xs font-mono text-exo-light-gray hover:text-exo-yellow transition-colors uppercase border border-exo-medium-gray/40 px-2 py-1 rounded"

@@ -437,3 +437,12 @@ class TraceListItem(CamelCaseModel):
 
 class TraceListResponse(CamelCaseModel):
     traces: list[TraceListItem]
+
+
+class DeleteTracesRequest(CamelCaseModel):
+    task_ids: list[str]
+
+
+class DeleteTracesResponse(CamelCaseModel):
+    deleted: list[str]
+    not_found: list[str]

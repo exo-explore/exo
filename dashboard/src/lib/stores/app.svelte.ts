@@ -3159,6 +3159,23 @@ class AppStore {
   }
 
   /**
+   * Delete traces by task IDs
+   */
+  async deleteTraces(
+    taskIds: string[],
+  ): Promise<{ deleted: string[]; notFound: string[] }> {
+    const response = await fetch("/v1/traces/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ taskIds }),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to delete traces: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  /**
    * Get the URL for the raw trace file (for Perfetto)
    */
   getTraceRawUrl(taskId: string): string {
@@ -3301,3 +3318,5 @@ export const fetchTraceStats = (taskId: string) =>
   appStore.fetchTraceStats(taskId);
 export const getTraceRawUrl = (taskId: string) =>
   appStore.getTraceRawUrl(taskId);
+export const deleteTraces = (taskIds: string[]) =>
+  appStore.deleteTraces(taskIds);
