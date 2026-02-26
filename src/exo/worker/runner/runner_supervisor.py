@@ -34,6 +34,7 @@ from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.channels import MpReceiver, MpSender, Sender, mp_channel
 from exo.utils.task_group import TaskGroup
 from exo.worker.runner.bootstrap import entrypoint
+from exo.worker.runner.runner_opts import RunnerOpts
 
 PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5
@@ -62,6 +63,7 @@ class RunnerSupervisor:
     def create(
         cls,
         *,
+        runner_opts: RunnerOpts,
         bound_instance: BoundInstance,
         event_sender: Sender[Event],
         initialize_timeout: float = 400,
@@ -73,6 +75,7 @@ class RunnerSupervisor:
         runner_process = mp.Process(
             target=entrypoint,
             args=(
+                runner_opts,
                 bound_instance,
                 ev_send,
                 task_recv,
