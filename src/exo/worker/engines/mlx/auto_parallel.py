@@ -165,6 +165,7 @@ class PipelineLastLayer(CustomMlxLayer):
         self.group = group
         self.original_layer_signature = signature(self.original_layer.__call__)
         self.is_prefill: bool = False
+        self.queue_sends: bool = False
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         cache = self.original_layer_signature.bind_partial(
@@ -178,7 +179,7 @@ class PipelineLastLayer(CustomMlxLayer):
         mx.eval(output)
 
         if self.r != self.s - 1:
-            if self.is_prefill:
+            if self.queue_sends:
                 _pending_prefill_sends.append(
                     (output, (self.r + 1) % self.s, self.group)
                 )
@@ -208,6 +209,12 @@ def set_pipeline_prefill(model: nn.Module, is_prefill: bool) -> None:
     for layer in model.layers:  # type: ignore
         if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
             layer.is_prefill = is_prefill
+
+
+def set_pipeline_queue_sends(model: nn.Module, queue_sends: bool) -> None:
+    for layer in model.layers:  # type: ignore
+        if isinstance(layer, PipelineLastLayer):
+            layer.queue_sends = queue_sends
 
 
 def get_inner_model(model: nn.Module) -> nn.Module:

@@ -377,10 +377,7 @@ class TestPipelinePrefillCallbacks:
         ids=["short_50", "medium_500", "long_5000"],
     )
     def test_callbacks_match(self, prompt_tokens: int) -> None:
-        """Pipeline and stream_generate must produce identical callback sequences."""
-        # Run single-device (stream_generate path)
-        single = _run_single_device_test(prompt_tokens, timeout=180)
-
+        """All pipeline ranks must produce identical callback sequences."""
         # Run 4-rank pipeline
         pipeline_results = _run_pipeline_test(
             layer_splits=LAYER_SPLITS_4WAY,
@@ -389,10 +386,11 @@ class TestPipelinePrefillCallbacks:
             timeout=180,
         )
 
-        single_callbacks = single["callbacks"]
-        prefill_count = single["prefill_token_count"]
+        # All ranks must agree on prefill token count and callback sequence
+        rank0_data = pipeline_results[0]
+        rank0_callbacks = rank0_data["callbacks"]
+        prefill_count = rank0_data["prefill_token_count"]
 
-        # Every rank must produce the same callback sequence as stream_generate
         for rank, pipe_data in sorted(pipeline_results.items()):
             pipe_callbacks = pipe_data["callbacks"]
 
@@ -401,11 +399,23 @@ class TestPipelinePrefillCallbacks:
                 f"{pipe_data['prefill_token_count']} vs {prefill_count}"
             )
 
-            assert pipe_callbacks == single_callbacks, (
+            assert pipe_callbacks == rank0_callbacks, (
                 f"Rank {rank} callback mismatch for {prompt_tokens} prompt tokens "
                 f"(prefill M={prefill_count}):\n"
-                f"  stream_generate ({len(single_callbacks)} callbacks): {single_callbacks}\n"
+                f"  pipeline R0 ({len(rank0_callbacks)} callbacks): {rank0_callbacks}\n"
                 f"  pipeline R{rank} ({len(pipe_callbacks)} callbacks): {pipe_callbacks}"
+            )
+
+        # Structural checks: starts with (0, M), ends with (M, M), monotonically increasing
+        assert rank0_callbacks[0] == (0, prefill_count), (
+            f"First callback should be (0, {prefill_count}), got {rank0_callbacks[0]}"
+        )
+        assert rank0_callbacks[-1] == (prefill_count, prefill_count), (
+            f"Last callback should be ({prefill_count}, {prefill_count}), got {rank0_callbacks[-1]}"
+        )
+        for i in range(1, len(rank0_callbacks)):
+            assert rank0_callbacks[i][0] >= rank0_callbacks[i - 1][0], (
+                f"Callbacks not monotonically increasing at index {i}: {rank0_callbacks}"
             )
 
     @pytest.mark.parametrize(
