@@ -6,7 +6,6 @@ from functools import cache
 from typing import TYPE_CHECKING, cast
 
 import mlx.core as mx
-import psutil
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
@@ -31,6 +30,11 @@ from exo.shared.types.events import (
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
+)
+from exo.shared.types.memory import (
+    Memory,
+    get_memory_pressure,
+    get_memory_pressure_threshold,
 )
 from exo.shared.types.tasks import (
     ConnectToGroup,
@@ -65,7 +69,7 @@ from exo.shared.types.worker.runners import (
 )
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.cache import KVPrefixCache, get_memory_pressure_threshold
+from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import (
     PrefillCancelled,
     mlx_generate,
@@ -115,7 +119,7 @@ def main(
     group = None
     kv_prefix_cache: KVPrefixCache | None = None
     check_for_cancel_every: int | None = None
-    bytes_per_token: int = 0
+    bytes_per_token = Memory.from_bytes(0)
 
     current_status: RunnerStatus = RunnerIdle()
     logger.info("runner created")
@@ -233,7 +237,7 @@ def main(
                         group=group,
                     )
                     logger.info(
-                        f"warmed up by generating {toks} tokens, {bytes_per_token} bytes/token for KV cache"
+                        f"warmed up by generating {toks} tokens, {bytes_per_token}/token for KV cache"
                     )
                     check_for_cancel_every = min(
                         math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
@@ -351,8 +355,8 @@ def main(
                                     TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
                                 )
                                 oom_local = (
-                                    bytes_per_token > 0
-                                    and psutil.virtual_memory().percent / 100
+                                    bytes_per_token.in_bytes > 0
+                                    and get_memory_pressure()
                                     > get_memory_pressure_threshold()
                                 )
                                 if mx_any(want_to_cancel or oom_local, group):

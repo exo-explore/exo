@@ -1,8 +1,6 @@
-import os
 from copy import deepcopy
 
 import mlx.core as mx
-import psutil
 from mlx_lm.models.cache import (
     ArraysCache,
     CacheList,
@@ -12,29 +10,11 @@ from mlx_lm.models.cache import (
 )
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.types.memory import Memory
+from exo.shared.types.memory import MEMORY_THRESHOLD, Memory, get_memory_pressure
 from exo.shared.types.mlx import KVCacheType
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
 from exo.worker.runner.bootstrap import logger
-
-
-# Fraction of device memory above which LRU eviction kicks in.
-# Smaller machines need more aggressive eviction.
-def _default_memory_threshold() -> float:
-    total_gb = Memory.from_bytes(psutil.virtual_memory().total).in_gb
-    if total_gb >= 128:
-        return 0.85
-    if total_gb >= 64:
-        return 0.80
-    if total_gb >= 32:
-        return 0.75
-    return 0.70
-
-
-MEMORY_THRESHOLD = float(
-    os.environ.get("EXO_MEMORY_THRESHOLD", _default_memory_threshold())
-)
 
 
 class CacheSnapshot:
@@ -239,7 +219,7 @@ class KVPrefixCache:
             )
 
     def get_memory_used_percentage(self) -> float:
-        local_pressure: float = get_memory_used_percentage()
+        local_pressure: float = get_memory_pressure()
 
         if self._group is None:
             return local_pressure
@@ -308,27 +288,6 @@ def get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
     return int(mx.sum(prefix_mask).item())
 
 
-def get_available_memory() -> Memory:
-    mem: int = psutil.virtual_memory().available
-    return Memory.from_bytes(mem)
-
-
-def get_memory_used_percentage() -> float:
-    mem = psutil.virtual_memory()
-    # percent is 0-100
-    return float(mem.percent / 100)
-
-
-def get_safety_floor() -> int:
-    total = psutil.virtual_memory().total
-    return min(int(total * 0.10), 5 * 1024**3)
-
-
-def get_memory_pressure_threshold() -> float:
-    total = psutil.virtual_memory().total
-    return 1.0 - get_safety_floor() / total
-
-
 def _measure_single_cache_bytes(
     entry: KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList,
 ) -> int:
@@ -365,11 +324,11 @@ def measure_cache_bytes(cache: KVCacheType) -> int:
     return sum(_measure_single_cache_bytes(c) for c in cache)
 
 
-def measure_kv_cache_bytes_per_token(cache: KVCacheType) -> int:
+def measure_kv_cache_bytes_per_token(cache: KVCacheType) -> Memory:
     offset = cache_length(cache)
     if offset == 0:
-        return 0
-    return measure_cache_bytes(cache) // offset
+        return Memory.from_bytes(0)
+    return Memory.from_bytes(measure_cache_bytes(cache) // offset)
 
 
 def make_kv_cache(

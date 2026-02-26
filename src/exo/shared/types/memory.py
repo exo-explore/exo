@@ -1,6 +1,12 @@
+import ctypes
+import os
+import sys
 from math import ceil
 from typing import Self, overload
 
+import psutil
+
+from exo.shared.logging import logger
 from exo.utils.pydantic_ext import FrozenModel
 
 
@@ -149,3 +155,78 @@ class Memory(FrozenModel):
             unit = "B"
 
         return f"{val:.2f} {unit}".rstrip("0").rstrip(".") + f" {unit}"
+
+
+# Fraction of device memory above which LRU eviction kicks in.
+# Smaller machines need more aggressive eviction.
+def _default_memory_threshold() -> float:
+    total_gb = Memory.from_bytes(psutil.virtual_memory().total).in_gb
+    if total_gb >= 128:
+        return 0.85
+    if total_gb >= 64:
+        return 0.80
+    if total_gb >= 32:
+        return 0.75
+    return 0.70
+
+
+MEMORY_THRESHOLD = float(
+    os.environ.get("EXO_MEMORY_THRESHOLD", _default_memory_threshold())
+)
+
+MEMORY_FLOOR = Memory.from_gb(float(os.environ.get("EXO_MEMORY_FLOOR", "5")))
+
+_libc: ctypes.CDLL | None = None
+
+
+def _macos_memorystatus_level() -> int:
+    global _libc  # noqa: PLW0603
+    if _libc is None:
+        _libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+    level = ctypes.c_int(0)
+    size = ctypes.c_size_t(ctypes.sizeof(ctypes.c_int))
+    ret: int = _libc.sysctlbyname(  # pyright: ignore[reportAny]
+        b"kern.memorystatus_level",
+        ctypes.byref(level),
+        ctypes.byref(size),
+        None,
+        ctypes.c_size_t(0),
+    )
+    if ret != 0:
+        raise OSError("sysctlbyname kern.memorystatus_level failed")
+    return level.value
+
+
+def _get_macos_memory_pressure() -> float:
+    try:
+        return 1.0 - _macos_memorystatus_level() / 100.0
+    except (OSError, FileNotFoundError):
+        logger.warning("Using fallback memory pressure")
+        return _fallback_memory_pressure()
+
+
+def _fallback_memory_pressure() -> float:
+    vm = psutil.virtual_memory()
+    return 1.0 - vm.available / vm.total
+
+
+def get_memory_pressure() -> float:
+    if sys.platform == "darwin":
+        return _get_macos_memory_pressure()
+    return _fallback_memory_pressure()
+
+
+def get_memory_limit() -> Memory:
+    total = psutil.virtual_memory().total
+    floor = min(int(total * (1 - MEMORY_THRESHOLD)), MEMORY_FLOOR.in_bytes)
+    return Memory.from_bytes(total - floor)
+
+
+def get_memory_available_locally() -> Memory:
+    total = Memory.from_bytes(psutil.virtual_memory().total)
+    return get_memory_limit() - total * get_memory_pressure()
+
+
+def get_memory_pressure_threshold() -> float:
+    total = psutil.virtual_memory().total
+    return get_memory_limit().in_bytes / total
