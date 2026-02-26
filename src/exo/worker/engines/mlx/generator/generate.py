@@ -1,9 +1,14 @@
+import functools
+import math
 import time
 from copy import deepcopy
 from typing import Callable, Generator, cast, get_args
 
 import mlx.core as mx
-from mlx_lm.generate import stream_generate
+from mlx_lm.generate import (
+    maybe_quantize_kv_cache,
+    stream_generate,
+)
 from mlx_lm.models.cache import ArraysCache, RotatingKVCache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
@@ -18,13 +23,19 @@ from exo.shared.types.api import (
 )
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
-from exo.shared.types.mlx import KVCacheType
+from exo.shared.types.mlx import KVCacheType, Model
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
-from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.auto_parallel import set_pipeline_prefill
+from exo.worker.engines.mlx.auto_parallel import (
+    PipelineFirstLayer,
+    PipelineLastLayer,
+    clear_prefill_sends,
+    flush_prefill_sends,
+    set_pipeline_prefill,
+    set_pipeline_queue_sends,
+)
 from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
     KVPrefixCache,
@@ -55,6 +66,130 @@ class PrefillCancelled(BaseException):
     """Raised when prefill is cancelled via the progress callback."""
 
 
+def _has_pipeline_communication_layer(model: Model):
+    for layer in model.layers:
+        if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
+            return True
+    return False
+
+
+def pipeline_parallel_prefill(
+    model: Model,
+    prompt: mx.array,
+    prompt_cache: KVCacheType,
+    prefill_step_size: int,
+    kv_group_size: int | None,
+    kv_bits: int | None,
+    prompt_progress_callback: Callable[[int, int], None],
+    distributed_prompt_progress_callback: Callable[[], None] | None,
+    group: mx.distributed.Group,
+) -> None:
+    """Prefill the KV cache for pipeline parallel with overlapping stages.
+
+    Each rank processes the full prompt through its real cache, offset by leading
+    and trailing dummy iterations.
+
+    Total iterations per rank = N_real_chunks + world_size - 1:
+      - rank r leading dummies  (skip_pipeline_io, throwaway cache)
+      - N_real_chunks real      (pipeline IO active, real cache)
+      - (world_size-1-r) trailing dummies (skip_pipeline_io, throwaway cache)
+
+    e.g.
+    Timeline (2 ranks, 3 chunks of 10240 tokens @ step=4096):
+        iter 0: R0 real[0:4096]     R1 dummy
+        iter 1: R0 real[4096:8192]  R1 real[0:4096]
+        iter 2: R0 real[8192:10240] R1 real[4096:8192]
+        iter 3: R0 dummy            R1 real[8192:10240]
+
+    This function is designed to match mlx_lm's stream_generate exactly in terms of
+    side effects (given the same prefill step size)
+    """
+    prefill_step_size = prefill_step_size // min(4, group.size())
+
+    quantize_cache_fn: Callable[..., None] = functools.partial(
+        maybe_quantize_kv_cache,
+        quantized_kv_start=0,
+        kv_group_size=kv_group_size,
+        kv_bits=kv_bits,
+    )
+
+    _prompt_cache: KVCacheType = prompt_cache
+    rank = group.rank()
+    world_size = group.size()
+
+    # Build list of real prompt chunk sizes
+    total = len(prompt)
+    real_chunk_sizes: list[int] = []
+    remaining = total - 1
+    while remaining:
+        n = min(prefill_step_size, remaining)
+        real_chunk_sizes.append(n)
+        remaining -= n
+    n_real = len(real_chunk_sizes)
+
+    # Each rank does: [rank leading dummies] [N real chunks] [world_size-1-rank trailing dummies]
+    n_leading = rank
+    n_trailing = world_size - 1 - rank
+    n_total = n_leading + n_real + n_trailing
+
+    t_start = time.perf_counter()
+    processed = 0
+    logger.info(
+        f"[R{rank}] Pipeline prefill: {n_real} real + {n_leading} leading + {n_trailing} trailing = {n_total} iterations"
+    )
+    clear_prefill_sends()
+
+    # Initial callback matching generate_step
+    prompt_progress_callback(0, total)
+
+    try:
+        with mx.stream(generation_stream):
+            for _ in range(n_leading):
+                if distributed_prompt_progress_callback is not None:
+                    distributed_prompt_progress_callback()
+
+            for i in range(n_real):
+                chunk_size = real_chunk_sizes[i]
+                model(
+                    prompt[processed : processed + chunk_size][None],
+                    cache=_prompt_cache,
+                )
+                quantize_cache_fn(_prompt_cache)
+                processed += chunk_size
+
+                if distributed_prompt_progress_callback is not None:
+                    distributed_prompt_progress_callback()
+
+                flush_prefill_sends()
+
+                prompt_progress_callback(processed, total)
+
+            for _ in range(n_trailing):
+                if distributed_prompt_progress_callback is not None:
+                    distributed_prompt_progress_callback()
+
+    finally:
+        clear_prefill_sends()
+
+    # Post-loop: process remaining 1 token + add +1 entry to match stream_generate.
+    for _ in range(2):
+        with mx.stream(generation_stream):
+            model(prompt[-1:][None], cache=_prompt_cache)
+            quantize_cache_fn(_prompt_cache)
+        flush_prefill_sends()
+
+    assert _prompt_cache is not None
+    mx.eval([c.state for c in _prompt_cache])  # type: ignore
+
+    # Final callback matching generate_step
+    prompt_progress_callback(total, total)
+
+    logger.info(
+        f"[R{rank}] Prefill: {n_real} real + {n_leading}+{n_trailing} dummy iterations, "
+        f"Processed {processed} tokens in {(time.perf_counter() - t_start) * 1000:.1f}ms"
+    )
+
+
 def prefill(
     model: Model,
     tokenizer: TokenizerWrapper,
@@ -63,6 +198,7 @@ def prefill(
     cache: KVCacheType,
     group: mx.distributed.Group | None,
     on_prefill_progress: Callable[[int, int], None] | None,
+    distributed_prompt_progress_callback: Callable[[], None] | None,
 ) -> tuple[float, int, list[CacheSnapshot]]:
     """Prefill the KV cache with prompt tokens.
 
@@ -94,31 +230,57 @@ def prefill(
         if on_prefill_progress is not None:
             on_prefill_progress(processed, total)
 
+    def combined_progress_callback(processed: int, total: int) -> None:
+        if distributed_prompt_progress_callback is not None:
+            distributed_prompt_progress_callback()
+        progress_callback(processed, total)
+
     set_pipeline_prefill(model, is_prefill=True)
 
     mx_barrier(group)
     logger.info("Starting prefill")
 
-    # Use max_tokens=1 because max_tokens=0 does not work.
-    # We just throw away the generated token - we only care about filling the cache
+    is_pipeline = _has_pipeline_communication_layer(model)
+
+    prefill_step_size = 4096
+
     try:
-        for _ in stream_generate(
-            model=model,
-            tokenizer=tokenizer,
-            prompt=prompt_tokens,
-            max_tokens=1,
-            sampler=sampler,
-            prompt_cache=cache,
-            prefill_step_size=4096,
-            kv_group_size=KV_GROUP_SIZE,
-            kv_bits=KV_BITS,
-            prompt_progress_callback=progress_callback,
-        ):
-            break  # Stop after first iteration - cache is now filled
+        if is_pipeline and num_tokens >= prefill_step_size:
+            set_pipeline_queue_sends(model, queue_sends=True)
+            assert group is not None, "Pipeline prefill requires a distributed group"
+            pipeline_parallel_prefill(
+                model=model,
+                prompt=prompt_tokens,
+                prompt_cache=cache,
+                prefill_step_size=prefill_step_size,
+                kv_group_size=KV_GROUP_SIZE,
+                kv_bits=KV_BITS,
+                prompt_progress_callback=progress_callback,
+                distributed_prompt_progress_callback=distributed_prompt_progress_callback,
+                group=group,
+            )
+        else:
+            # Use max_tokens=1 because max_tokens=0 does not work.
+            # We just throw away the generated token - we only care about filling the cache
+            for _ in stream_generate(
+                model=model,
+                tokenizer=tokenizer,
+                prompt=prompt_tokens,
+                max_tokens=1,
+                sampler=sampler,
+                prompt_cache=cache,
+                prefill_step_size=prefill_step_size,
+                kv_group_size=KV_GROUP_SIZE,
+                kv_bits=KV_BITS,
+                prompt_progress_callback=combined_progress_callback,
+            ):
+                break  # Stop after first iteration - cache is now filled
     except PrefillCancelled:
+        set_pipeline_queue_sends(model, queue_sends=False)
         set_pipeline_prefill(model, is_prefill=False)
         raise
 
+    set_pipeline_queue_sends(model, queue_sends=False)
     set_pipeline_prefill(model, is_prefill=False)
 
     # stream_generate added 1 extra generated token to the cache, so we should trim it.
@@ -131,7 +293,7 @@ def prefill(
                 cache[i] = deepcopy(pre_gen.states[i])  # type: ignore
         else:
             assert not isinstance(c, (ArraysCache, RotatingKVCache))
-            c.trim(2)  # pyright: ignore[reportUnknownMemberType]
+            c.trim(2)
 
     elapsed = time.perf_counter() - start_time
     tokens_per_sec = num_tokens / elapsed if elapsed > 0 else 0.0
@@ -248,6 +410,9 @@ def extract_top_logprobs(
     for i in range(top_logprobs):
         token_id = int(top_indices[i].item())
         token_logprob = float(top_values[i].item())
+        if math.isnan(token_logprob):
+            continue
+
         # Decode token ID to string
         token_str = tokenizer.decode([token_id])
         # Get byte representation
@@ -271,6 +436,7 @@ def mlx_generate(
     kv_prefix_cache: KVPrefixCache | None,
     group: mx.distributed.Group | None,
     on_prefill_progress: Callable[[int, int], None] | None = None,
+    distributed_prompt_progress_callback: Callable[[], None] | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -332,6 +498,7 @@ def mlx_generate(
         caches,
         group,
         on_prefill_progress,
+        distributed_prompt_progress_callback,
     )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 

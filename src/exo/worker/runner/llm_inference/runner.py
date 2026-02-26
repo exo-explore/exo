@@ -31,6 +31,7 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
+from exo.shared.types.mlx import Model
 from exo.shared.types.tasks import (
     ConnectToGroup,
     LoadModel,
@@ -63,7 +64,6 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import MpReceiver, MpSender
-from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import (
     PrefillCancelled,
@@ -97,6 +97,7 @@ def main(
         bound_instance.bound_runner_id,
         bound_instance.bound_shard,
     )
+    model_id = shard_metadata.model_card.model_id
     device_rank = shard_metadata.device_rank
     logger.info("hello from the runner")
     if getattr(shard_metadata, "immediate_exception", False):
@@ -273,20 +274,23 @@ def main(
                     def on_prefill_progress(
                         processed: int,
                         total: int,
-                        _task_id: TaskId = task.task_id,
-                        _group: mx.distributed.Group | None = group,
                     ) -> None:
                         if device_rank == 0:
                             event_sender.send(
                                 ChunkGenerated(
                                     command_id=command_id,
                                     chunk=PrefillProgressChunk(
-                                        model=shard_metadata.model_card.model_id,
+                                        model=model_id,
                                         processed_tokens=processed,
                                         total_tokens=total,
                                     ),
                                 )
                             )
+
+                    def distributed_prompt_progress_callback(
+                        _task_id: TaskId = task.task_id,
+                        _group: mx.distributed.Group | None = group,
+                    ) -> None:
                         cancelled_tasks.update(cancel_receiver.collect())
                         want_to_cancel = (_task_id in cancelled_tasks) or (
                             TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
@@ -308,6 +312,7 @@ def main(
                             prompt=prompt,
                             kv_prefix_cache=kv_prefix_cache,
                             on_prefill_progress=on_prefill_progress,
+                            distributed_prompt_progress_callback=distributed_prompt_progress_callback,
                             group=group,
                         )
 
@@ -325,7 +330,10 @@ def main(
                         # Model-specific output parsing for tool calls.
                         if isinstance(inference_model, GptOssModel):
                             mlx_generator = parse_gpt_oss(mlx_generator)
-                        elif isinstance(inference_model, DeepseekV32Model):
+                        elif (
+                            isinstance(inference_model, DeepseekV32Model)
+                            and "deepseek" in model_id.normalize().lower()
+                        ):
                             mlx_generator = parse_deepseek_v32(mlx_generator)
                         elif tool_parser:
                             mlx_generator = parse_tool_calls(mlx_generator, tool_parser)
@@ -355,7 +363,7 @@ def main(
                                                 command_id=command_id,
                                                 chunk=ErrorChunk(
                                                     error_message=response.text,
-                                                    model=shard_metadata.model_card.model_id,
+                                                    model=model_id,
                                                 ),
                                             )
                                         )
@@ -370,7 +378,7 @@ def main(
                                             ChunkGenerated(
                                                 command_id=command_id,
                                                 chunk=TokenChunk(
-                                                    model=shard_metadata.model_card.model_id,
+                                                    model=model_id,
                                                     text=response.text,
                                                     token_id=response.token,
                                                     usage=response.usage,
@@ -389,7 +397,7 @@ def main(
                                                 command_id=command_id,
                                                 chunk=ToolCallChunk(
                                                     tool_calls=response.tool_calls,
-                                                    model=shard_metadata.model_card.model_id,
+                                                    model=model_id,
                                                     usage=response.usage,
                                                     stats=response.stats,
                                                 ),
@@ -405,7 +413,7 @@ def main(
                                 ChunkGenerated(
                                     command_id=command_id,
                                     chunk=ErrorChunk(
-                                        model=shard_metadata.model_card.model_id,
+                                        model=model_id,
                                         finish_reason="error",
                                         error_message=str(e),
                                     ),
@@ -727,7 +735,7 @@ def parse_tool_calls(
     in_tool_call = False
     tool_call_text_parts: list[str] = []
     for response in responses:
-        if response.text.startswith(tool_parser.start_parsing):
+        if not in_tool_call and response.text.startswith(tool_parser.start_parsing):
             in_tool_call = True
 
         if in_tool_call:
@@ -765,10 +773,9 @@ def parse_tool_calls(
                 )
                 yield response
 
-            continue
-
-        # fallthrough
-        yield response
+        else:
+            # fallthrough
+            yield response
 
 
 EXO_RUNNER_MUST_FAIL = "EXO RUNNER MUST FAIL"

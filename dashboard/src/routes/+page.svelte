@@ -42,6 +42,7 @@
     setSelectedChatModel,
     selectedChatModel,
     sendMessage,
+    messages,
     debugMode,
     toggleDebugMode,
     topologyOnlyMode,
@@ -889,6 +890,7 @@
       availableModels.some((m) => m.id === defaults.modelId)
     ) {
       selectPreviewModel(defaults.modelId);
+      setSelectedChatModel(defaults.modelId);
     }
   }
 
@@ -1324,6 +1326,7 @@
 
   function handleModelPickerSelect(modelId: string) {
     selectPreviewModel(modelId);
+    setSelectedChatModel(modelId);
     saveLaunchDefaults();
     isModelPickerOpen = false;
   }
@@ -2284,7 +2287,8 @@
     selectedChatCategory = null;
     pendingAutoMessage = null;
     userForcedIdle = true;
-    setSelectedChatModel("");
+    // Restore chat model from the sidebar preview selection so both selectors stay in sync
+    setSelectedChatModel(selectedModelId ?? "");
     clearChat();
   }
 
@@ -2514,6 +2518,11 @@
         return;
       }
     }
+
+    // Fallthrough: model exists but has no active instance/download/loading state
+    chatLaunchState = "idle";
+    pendingChatModelId = null;
+    selectedChatCategory = null;
   });
 
   // Suggested prompts per category
@@ -2637,7 +2646,11 @@
   }
 
   // Launch a model for seamless chat
-  async function launchModelForChat(modelId: string, category: string) {
+  async function launchModelForChat(
+    modelId: string,
+    category: string,
+    skipCreate = false,
+  ) {
     userForcedIdle = false;
     pendingChatModelId = modelId;
     selectedChatCategory = category;
@@ -2645,7 +2658,7 @@
     // Check if already running — skip straight to chat
     if (hasRunningInstance(modelId)) {
       setSelectedChatModel(modelId);
-      createConversation();
+      if (!skipCreate) createConversation();
       chatLaunchState = "ready";
       return;
     }
@@ -2654,7 +2667,7 @@
     if (hasExistingInstance(modelId)) {
       setSelectedChatModel(modelId);
       pendingChatModelId = modelId;
-      createConversation();
+      if (!skipCreate) createConversation();
       const dlStatus = getModelDownloadStatus(modelId);
       if (dlStatus.isDownloading) {
         chatLaunchState = "downloading";
@@ -2707,7 +2720,7 @@
 
       setSelectedChatModel(modelId);
       recordRecentLaunch(modelId);
-      createConversation();
+      if (!skipCreate) createConversation();
       chatLaunchState = "downloading";
     } catch (error) {
       addToast({ type: "error", message: `Network error: ${error}` });
@@ -2993,6 +3006,7 @@
   // Handle model selection from the picker when opened from chat context
   function handleChatPickerSelect(modelId: string) {
     setSelectedChatModel(modelId);
+    selectPreviewModel(modelId);
     userForcedIdle = false;
     isModelPickerOpen = false;
   }
@@ -3012,6 +3026,7 @@
 
     // Model is selected and running — send directly
     if (model && hasRunningInstance(model)) {
+      chatLaunchState = "ready";
       sendMessage(content, files, null);
       return;
     }
@@ -3020,7 +3035,7 @@
     if (model) {
       pendingAutoMessage = { content, files };
       userForcedIdle = false;
-      launchModelForChat(model, "picker");
+      launchModelForChat(model, "picker", messages().length > 0);
       return;
     }
 
@@ -5804,43 +5819,7 @@
           class="flex-1 flex flex-col min-w-0 overflow-hidden"
           in:fade={{ duration: 300, delay: 100 }}
         >
-          {#if chatLaunchState === "idle"}
-            <!-- No running instance: show model selector -->
-            <div
-              class="flex-1 overflow-y-auto flex items-center justify-center px-8 py-6"
-            >
-              <ChatModelSelector
-                models={models.map((m) => ({
-                  id: m.id,
-                  name: m.name ?? "",
-                  base_model: m.base_model ?? "",
-                  storage_size_megabytes: m.storage_size_megabytes ?? 0,
-                  capabilities: m.capabilities ?? [],
-                  family: m.family ?? "",
-                  quantization: m.quantization ?? "",
-                }))}
-                clusterLabel={chatClusterLabel}
-                totalMemoryGB={availableMemoryGB()}
-                onSelect={handleChatModelSelect}
-                onAddModel={handleChatAddModel}
-              />
-            </div>
-            <div
-              class="flex-shrink-0 px-8 pb-6 pt-4 bg-gradient-to-t from-exo-black via-exo-black to-transparent"
-            >
-              <div class="max-w-7xl mx-auto">
-                <ChatForm
-                  placeholder="Ask anything — we'll pick the best model automatically"
-                  showModelSelector={!!bestRunningModelId}
-                  modelDisplayOverride={bestRunningModelId ?? undefined}
-                  modelTasks={modelTasks()}
-                  modelCapabilities={modelCapabilities()}
-                  onAutoSend={handleAutoSend}
-                  onOpenModelPicker={openChatModelPicker}
-                />
-              </div>
-            </div>
-          {:else if chatLaunchState !== "idle" && chatLaunchState !== "ready"}
+          {#if chatLaunchState !== "idle" && chatLaunchState !== "ready"}
             <!-- Model launching/downloading/loading: show progress -->
             <div class="flex-1 flex items-center justify-center px-8 py-6">
               <div class="flex flex-col items-center gap-6 max-w-md w-full">
@@ -5947,8 +5926,8 @@
                 />
               </div>
             </div>
-          {:else}
-            <!-- Normal chat: model is running -->
+          {:else if messages().length > 0 || chatLaunchState === "ready"}
+            <!-- Normal chat: show messages -->
             <div
               class="flex-1 overflow-y-auto px-8 py-6"
               bind:this={chatScrollRef}
@@ -6000,6 +5979,42 @@
                   modelTasks={modelTasks()}
                   modelCapabilities={modelCapabilities()}
                   onAutoSend={handleChatSend}
+                  onOpenModelPicker={openChatModelPicker}
+                />
+              </div>
+            </div>
+          {:else}
+            <!-- No running instance, no messages: show model selector -->
+            <div
+              class="flex-1 overflow-y-auto flex items-center justify-center px-8 py-6"
+            >
+              <ChatModelSelector
+                models={models.map((m) => ({
+                  id: m.id,
+                  name: m.name ?? "",
+                  base_model: m.base_model ?? "",
+                  storage_size_megabytes: m.storage_size_megabytes ?? 0,
+                  capabilities: m.capabilities ?? [],
+                  family: m.family ?? "",
+                  quantization: m.quantization ?? "",
+                }))}
+                clusterLabel={chatClusterLabel}
+                totalMemoryGB={availableMemoryGB()}
+                onSelect={handleChatModelSelect}
+                onAddModel={handleChatAddModel}
+              />
+            </div>
+            <div
+              class="flex-shrink-0 px-8 pb-6 pt-4 bg-gradient-to-t from-exo-black via-exo-black to-transparent"
+            >
+              <div class="max-w-7xl mx-auto">
+                <ChatForm
+                  placeholder="Ask anything — we'll pick the best model automatically"
+                  showModelSelector={!!bestRunningModelId}
+                  modelDisplayOverride={bestRunningModelId ?? undefined}
+                  modelTasks={modelTasks()}
+                  modelCapabilities={modelCapabilities()}
+                  onAutoSend={handleAutoSend}
                   onOpenModelPicker={openChatModelPicker}
                 />
               </div>

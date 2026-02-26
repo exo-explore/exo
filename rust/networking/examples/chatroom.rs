@@ -1,7 +1,9 @@
 use futures_lite::StreamExt;
-use libp2p::{gossipsub, identity, swarm::SwarmEvent};
-use networking::{discovery, swarm};
-use tokio::{io, io::AsyncBufReadExt as _, select};
+use libp2p::identity;
+use networking::swarm;
+use networking::swarm::{FromSwarm, ToSwarm};
+use tokio::sync::{mpsc, oneshot};
+use tokio::{io, io::AsyncBufReadExt as _};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
 
@@ -11,64 +13,69 @@ async fn main() {
         .with_env_filter(EnvFilter::from_default_env().add_directive(LevelFilter::INFO.into()))
         .try_init();
 
+    let (to_swarm, from_client) = mpsc::channel(20);
+
     // Configure swarm
-    let mut swarm =
-        swarm::create_swarm(identity::Keypair::generate_ed25519()).expect("Swarm creation failed");
+    let mut swarm = swarm::create_swarm(identity::Keypair::generate_ed25519(), from_client)
+        .expect("Swarm creation failed")
+        .into_stream();
 
     // Create a Gossipsub topic & subscribe
-    let topic = gossipsub::IdentTopic::new("test-net");
-    swarm
-        .behaviour_mut()
-        .gossipsub
-        .subscribe(&topic)
-        .expect("Subscribing to topic failed");
+    let (tx, rx) = oneshot::channel();
+    _ = to_swarm
+        .send(ToSwarm::Subscribe {
+            topic: "test-net".to_string(),
+            result_sender: tx,
+        })
+        .await
+        .expect("should send");
 
     // Read full lines from stdin
     let mut stdin = io::BufReader::new(io::stdin()).lines();
     println!("Enter messages via STDIN and they will be sent to connected peers using Gossipsub");
 
+    tokio::task::spawn(async move {
+        rx.await
+            .expect("tx not dropped")
+            .expect("subscribe shouldn't fail");
+        loop {
+            if let Ok(Some(line)) = stdin.next_line().await {
+                let (tx, rx) = oneshot::channel();
+                if let Err(e) = to_swarm
+                    .send(swarm::ToSwarm::Publish {
+                        topic: "test-net".to_string(),
+                        data: line.as_bytes().to_vec(),
+                        result_sender: tx,
+                    })
+                    .await
+                {
+                    println!("Send error: {e:?}");
+                    return;
+                };
+                match rx.await {
+                    Ok(Err(e)) => println!("Publish error: {e:?}"),
+                    Err(e) => println!("Publish error: {e:?}"),
+                    Ok(_) => {}
+                }
+            }
+        }
+    });
+
     // Kick it off
     loop {
-        select! {
-            // on gossipsub outgoing
-            Ok(Some(line)) = stdin.next_line() => {
-                if let Err(e) = swarm
-                    .behaviour_mut().gossipsub
-                    .publish(topic.clone(), line.as_bytes()) {
-                    println!("Publish error: {e:?}");
-                }
+        // on gossipsub outgoing
+        match swarm.next().await {
+            // on gossipsub incoming
+            Some(FromSwarm::Discovered { peer_id }) => {
+                println!("\n\nconnected to {peer_id}\n\n")
             }
-            event = swarm.next() => match event {
-                // on gossipsub incoming
-                Some(SwarmEvent::Behaviour(swarm::BehaviourEvent::Gossipsub(gossipsub::Event::Message {
-                    propagation_source: peer_id,
-                    message_id: id,
-                    message,
-                }))) => println!(
-                        "\n\nGot message: '{}' with id: {id} from peer: {peer_id}\n\n",
-                        String::from_utf8_lossy(&message.data),
-                    ),
-
-                // on discovery
-                Some(SwarmEvent::Behaviour(swarm::BehaviourEvent::Discovery(e)) )=> match e {
-                    discovery::Event::ConnectionEstablished {
-                        peer_id, connection_id, remote_ip, remote_tcp_port
-                    } => {
-                        println!("\n\nConnected to: {peer_id}; connection ID: {connection_id}; remote IP: {remote_ip}; remote TCP port: {remote_tcp_port}\n\n");
-                    }
-                    discovery::Event::ConnectionClosed {
-                        peer_id, connection_id, remote_ip, remote_tcp_port
-                    } => {
-                        eprintln!("\n\nDisconnected from: {peer_id}; connection ID: {connection_id}; remote IP: {remote_ip}; remote TCP port: {remote_tcp_port}\n\n");
-                    }
-                }
-
-                // ignore outgoing errors: those are normal
-                e@Some(SwarmEvent::OutgoingConnectionError { .. }) => { log::debug!("Outgoing connection error: {e:?}"); }
-
-                // otherwise log any other event
-                e => { log::info!("Other event {e:?}"); }
+            Some(FromSwarm::Expired { peer_id }) => {
+                println!("\n\ndisconnected from {peer_id}\n\n")
             }
+            Some(FromSwarm::Message { from, topic, data }) => {
+                println!("{topic}/{from}:\n{}", String::from_utf8_lossy(&data))
+            }
+            None => {}
         }
     }
 }

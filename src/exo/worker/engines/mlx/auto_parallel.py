@@ -49,6 +49,21 @@ TimeoutCallback = Callable[[], None]
 LayerLoadedCallback = Callable[[int, int], None]  # (layers_loaded, total_layers)
 
 
+_pending_prefill_sends: list[tuple[mx.array, int, mx.distributed.Group]] = []
+
+
+def flush_prefill_sends() -> None:
+    for output, dst, group in _pending_prefill_sends:
+        sent = mx.distributed.send(output, dst, group=group)
+        mx.async_eval(sent)
+    _pending_prefill_sends.clear()
+
+
+def clear_prefill_sends() -> None:
+    # Discard pending sends (e.g. on cancellation).
+    _pending_prefill_sends.clear()
+
+
 def eval_with_timeout(
     mlx_item: Any,  # pyright: ignore[reportAny]
     timeout_seconds: float = 60.0,
@@ -128,11 +143,11 @@ class PipelineFirstLayer(CustomMlxLayer):
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
+            # We want to avoid GPU timeout errors by evalling the distributed operation
+            # so that it stays on CPU, which does not have a timeout.
+            mx.eval(x)
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
-            if self.is_prefill:
-                # We want to avoid GPU timeout errors by evalling the distributed operation
-                # so that it stays on CPU, which does not have a timeout.
-                mx.eval(x)
+            mx.eval(x)
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -150,6 +165,7 @@ class PipelineLastLayer(CustomMlxLayer):
         self.group = group
         self.original_layer_signature = signature(self.original_layer.__call__)
         self.is_prefill: bool = False
+        self.queue_sends: bool = False
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         cache = self.original_layer_signature.bind_partial(
@@ -158,24 +174,33 @@ class PipelineLastLayer(CustomMlxLayer):
 
         output: mx.array = self.original_layer(x, *args, **kwargs)
 
+        # Eval layer output to materialize it before send — this splits the graph
+        # so the send is isolated and the receiving rank's recv can complete.
+        mx.eval(output)
+
         if self.r != self.s - 1:
-            output = mx.distributed.send(
-                output, (self.r + 1) % self.s, group=self.group
-            )
+            if self.queue_sends:
+                _pending_prefill_sends.append(
+                    (output, (self.r + 1) % self.s, self.group)
+                )
+            else:
+                output = mx.distributed.send(
+                    output, (self.r + 1) % self.s, group=self.group
+                )
             if cache is not None:
                 # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
                 # doesn't have .keys directly; access via first sub-cache.
                 _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
                 _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
-            if self.is_prefill:
-                mx.eval(output)
-                if cache is not None:
-                    mx.eval(_cache.keys)  # type: ignore
+            mx.eval(output)
+            if cache is not None:
+                mx.eval(_cache.keys)  # type: ignore
 
         if not self.is_prefill:
             output = mx.distributed.all_gather(output, group=self.group)[
                 -output.shape[0] :
             ]
+            mx.eval(output)
 
         return output
 
@@ -184,6 +209,12 @@ def set_pipeline_prefill(model: nn.Module, is_prefill: bool) -> None:
     for layer in model.layers:  # type: ignore
         if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
             layer.is_prefill = is_prefill
+
+
+def set_pipeline_queue_sends(model: nn.Module, queue_sends: bool) -> None:
+    for layer in model.layers:  # type: ignore
+        if isinstance(layer, PipelineLastLayer):
+            layer.queue_sends = queue_sends
 
 
 def get_inner_model(model: nn.Module) -> nn.Module:
@@ -852,6 +883,8 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                 layer.self_attn.o_proj = self.sharded_to_all_linear(
                     layer.self_attn.o_proj
                 )
+                layer.self_attn.n_heads //= self.N
+                layer.self_attn.n_kv_heads //= self.N
             else:
                 assert isinstance(layer, Qwen3NextDecoderLayer)
                 if hasattr(layer, "linear_attn"):

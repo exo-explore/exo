@@ -5,6 +5,7 @@ import Foundation
 private let customNamespaceKey = "EXOCustomNamespace"
 private let hfTokenKey = "EXOHFToken"
 private let enableImageModelsKey = "EXOEnableImageModels"
+private let offlineModeKey = "EXOOfflineMode"
 private let onboardingCompletedKey = "EXOOnboardingCompleted"
 
 @MainActor
@@ -58,6 +59,14 @@ final class ExoProcessController: ObservableObject {
     {
         didSet {
             UserDefaults.standard.set(enableImageModels, forKey: enableImageModelsKey)
+        }
+    }
+    @Published var offlineMode: Bool = {
+        return UserDefaults.standard.bool(forKey: offlineModeKey)
+    }()
+    {
+        didSet {
+            UserDefaults.standard.set(offlineMode, forKey: offlineModeKey)
         }
     }
 
@@ -266,6 +275,9 @@ final class ExoProcessController: ObservableObject {
         }
         if enableImageModels {
             environment["EXO_ENABLE_IMAGE_MODELS"] = "true"
+        }
+        if offlineMode {
+            environment["EXO_OFFLINE"] = "true"
         }
 
         var paths: [String] = []

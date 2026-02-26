@@ -155,6 +155,9 @@ pub(crate) mod ext {
 fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // install logger
     pyo3_log::init();
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder.enable_all();
+    pyo3_async_runtimes::tokio::init(builder);
 
     // TODO: for now this is all NOT a submodule, but figure out how to make the submodule system
     //       work with maturin, where the types generate correctly, in the right folder, without

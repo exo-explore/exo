@@ -2,6 +2,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, cast
@@ -23,9 +24,7 @@ from mlx_lm.models.deepseek_v3 import DeepseekV3Model
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelId
-from exo.worker.engines.mlx.constants import (
-    TRUST_REMOTE_CODE,
-)
+from exo.worker.engines.mlx.constants import TRUST_REMOTE_CODE
 
 try:
     from mlx_lm.tokenizer_utils import load_tokenizer
@@ -41,6 +40,7 @@ from pydantic import RootModel
 from exo.download.download_utils import build_model_path
 from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
+from exo.shared.types.mlx import Model
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     BoundInstance,
@@ -53,7 +53,6 @@ from exo.shared.types.worker.shards import (
     ShardMetadata,
     TensorShardMetadata,
 )
-from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.auto_parallel import (
     LayerLoadedCallback,
     TimeoutCallback,
@@ -100,14 +99,13 @@ def mlx_distributed_init(
     rank = bound_instance.bound_shard.device_rank
     logger.info(f"Starting initialization for rank {rank}")
 
-    coordination_file = None
-    try:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        coordination_file = str(
+            Path(tmpdir) / f"hosts_{bound_instance.instance.instance_id}_{rank}.json"
+        )
         # TODO: singleton instances
         match bound_instance.instance:
             case MlxRingInstance(hosts_by_node=hosts_by_node, ephemeral_port=_):
-                coordination_file = (
-                    f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
-                )
                 hosts_for_node = hosts_by_node[bound_instance.bound_node_id]
                 hosts_json = HostList.from_hosts(hosts_for_node).model_dump_json()
 
@@ -130,9 +128,6 @@ def mlx_distributed_init(
                     jaccl_devices[i][i] is None for i in range(len(jaccl_devices))
                 )
                 # Use RDMA connectivity matrix
-                coordination_file = (
-                    f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
-                )
                 jaccl_devices_json = json.dumps(jaccl_devices)
 
                 with open(coordination_file, "w") as f:
@@ -152,10 +147,6 @@ def mlx_distributed_init(
         logger.info(f"Rank {rank} mlx distributed initialization complete")
 
         return group
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            if coordination_file:
-                os.remove(coordination_file)
 
 
 def initialize_mlx(
@@ -215,6 +206,8 @@ def load_mlx_items(
         )
 
     set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
+
+    mx.clear_cache()
 
     return cast(Model, model), tokenizer
 
@@ -293,7 +286,11 @@ def shard_and_load(
 
 def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerWrapper:
     """Load tokenizer for a model shard. Delegates to load_tokenizer_for_model_id."""
-    return load_tokenizer_for_model_id(shard_metadata.model_card.model_id, model_path)
+    return load_tokenizer_for_model_id(
+        shard_metadata.model_card.model_id,
+        model_path,
+        trust_remote_code=shard_metadata.model_card.trust_remote_code,
+    )
 
 
 def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
@@ -325,7 +322,7 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
 
 
 def load_tokenizer_for_model_id(
-    model_id: ModelId, model_path: Path
+    model_id: ModelId, model_path: Path, *, trust_remote_code: bool = TRUST_REMOTE_CODE
 ) -> TokenizerWrapper:
     """
     Load tokenizer for a model given its ID and local path.
@@ -394,7 +391,7 @@ def load_tokenizer_for_model_id(
 
     tokenizer = load_tokenizer(
         model_path,
-        tokenizer_config_extra={"trust_remote_code": TRUST_REMOTE_CODE},
+        tokenizer_config_extra={"trust_remote_code": trust_remote_code},
         eos_token_ids=eos_token_ids,
     )
 

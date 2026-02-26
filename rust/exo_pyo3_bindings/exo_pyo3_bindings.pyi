@@ -2,7 +2,6 @@
 # ruff: noqa: E501, F401
 
 import builtins
-import enum
 import typing
 
 @typing.final
@@ -10,29 +9,6 @@ class AllQueuesFullError(builtins.Exception):
     def __new__(cls, *args: typing.Any) -> AllQueuesFullError: ...
     def __repr__(self) -> builtins.str: ...
     def __str__(self) -> builtins.str: ...
-
-@typing.final
-class ConnectionUpdate:
-    @property
-    def update_type(self) -> ConnectionUpdateType:
-        r"""
-        Whether this is a connection or disconnection event
-        """
-    @property
-    def peer_id(self) -> builtins.str:
-        r"""
-        Identity of the peer that we have connected to or disconnected from.
-        """
-    @property
-    def remote_ipv4(self) -> builtins.str:
-        r"""
-        Remote connection's IPv4 address.
-        """
-    @property
-    def remote_tcp_port(self) -> builtins.int:
-        r"""
-        Remote connection's TCP port.
-        """
 
 @typing.final
 class Keypair:
@@ -59,20 +35,14 @@ class Keypair:
         """
 
 @typing.final
+class MessageTooLargeError(builtins.Exception):
+    def __new__(cls, *args: typing.Any) -> MessageTooLargeError: ...
+    def __repr__(self) -> builtins.str: ...
+    def __str__(self) -> builtins.str: ...
+
+@typing.final
 class NetworkingHandle:
     def __new__(cls, identity: Keypair) -> NetworkingHandle: ...
-    async def connection_update_recv(self) -> ConnectionUpdate:
-        r"""
-        Receives the next `ConnectionUpdate` from networking.
-        """
-    async def connection_update_recv_many(self, limit: builtins.int) -> builtins.list[ConnectionUpdate]:
-        r"""
-        Receives at most `limit` `ConnectionUpdate`s from networking and returns them.
-        
-        For `limit = 0`, an empty collection of `ConnectionUpdate`s will be returned immediately.
-        For `limit > 0`, if there are no `ConnectionUpdate`s in the channel's queue this method
-        will sleep until a `ConnectionUpdate`s is sent.
-        """
     async def gossipsub_subscribe(self, topic: builtins.str) -> builtins.bool:
         r"""
         Subscribe to a `GossipSub` topic.
@@ -91,24 +61,7 @@ class NetworkingHandle:
         
         If no peers are found that subscribe to this topic, throws `NoPeersSubscribedToTopicError` exception.
         """
-    async def gossipsub_recv(self) -> tuple[builtins.str, bytes]:
-        r"""
-        Receives the next message from the `GossipSub` network.
-        """
-    async def gossipsub_recv_many(self, limit: builtins.int) -> builtins.list[tuple[builtins.str, bytes]]:
-        r"""
-        Receives at most `limit` messages from the `GossipSub` network and returns them.
-        
-        For `limit = 0`, an empty collection of messages will be returned immediately.
-        For `limit > 0`, if there are no messages in the channel's queue this method
-        will sleep until a message is sent.
-        """
-
-@typing.final
-class MessageTooLargeError(builtins.Exception):
-    def __new__(cls, *args: typing.Any) -> MessageTooLargeError: ...
-    def __repr__(self) -> builtins.str: ...
-    def __str__(self) -> builtins.str: ...
+    async def recv(self) -> PyFromSwarm: ...
 
 @typing.final
 class NoPeersSubscribedToTopicError(builtins.Exception):
@@ -116,11 +69,26 @@ class NoPeersSubscribedToTopicError(builtins.Exception):
     def __repr__(self) -> builtins.str: ...
     def __str__(self) -> builtins.str: ...
 
-@typing.final
-class ConnectionUpdateType(enum.Enum):
-    r"""
-    Connection or disconnection event discriminant type.
-    """
-    Connected = ...
-    Disconnected = ...
+class PyFromSwarm:
+    @typing.final
+    class Connection(PyFromSwarm):
+        __match_args__ = ("peer_id", "connected",)
+        @property
+        def peer_id(self) -> builtins.str: ...
+        @property
+        def connected(self) -> builtins.bool: ...
+        def __new__(cls, peer_id: builtins.str, connected: builtins.bool) -> PyFromSwarm.Connection: ...
+    
+    @typing.final
+    class Message(PyFromSwarm):
+        __match_args__ = ("origin", "topic", "data",)
+        @property
+        def origin(self) -> builtins.str: ...
+        @property
+        def topic(self) -> builtins.str: ...
+        @property
+        def data(self) -> bytes: ...
+        def __new__(cls, origin: builtins.str, topic: builtins.str, data: bytes) -> PyFromSwarm.Message: ...
+    
+    ...
 
