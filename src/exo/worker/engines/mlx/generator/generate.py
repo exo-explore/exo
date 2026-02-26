@@ -100,8 +100,11 @@ def pipeline_parallel_prefill(
         iter 2: R0 real[8192:10240] R1 real[4096:8192]
         iter 3: R0 dummy            R1 real[8192:10240]
 
-    This function is designed to match mlx_lm's stream_generate exactly in terms of side effects.
+    This function is designed to match mlx_lm's stream_generate exactly in terms of
+    side effects (given the same prefill step size)
     """
+    prefill_step_size = prefill_step_size // group.size()
+
     quantize_cache_fn: Callable[..., None] = functools.partial(
         maybe_quantize_kv_cache,
         quantized_kv_start=0,
@@ -238,6 +241,8 @@ def prefill(
 
     is_pipeline = _has_pipeline_communication_layer(model)
 
+    prefill_step_size = 4096
+
     try:
         if is_pipeline:
             assert group is not None, "Pipeline prefill requires a distributed group"
@@ -245,7 +250,7 @@ def prefill(
                 model=model,
                 prompt=prompt_tokens,
                 prompt_cache=cache,
-                prefill_step_size=4096,
+                prefill_step_size=prefill_step_size,
                 kv_group_size=KV_GROUP_SIZE,
                 kv_bits=KV_BITS,
                 prompt_progress_callback=progress_callback,
@@ -262,7 +267,7 @@ def prefill(
                 max_tokens=1,
                 sampler=sampler,
                 prompt_cache=cache,
-                prefill_step_size=4096,
+                prefill_step_size=prefill_step_size,
                 kv_group_size=KV_GROUP_SIZE,
                 kv_bits=KV_BITS,
                 prompt_progress_callback=combined_progress_callback,

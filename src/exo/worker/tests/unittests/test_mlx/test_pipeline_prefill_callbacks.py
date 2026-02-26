@@ -174,7 +174,9 @@ def _run_pipeline_device(
             n_layers=TOTAL_LAYERS,
         )
 
-        model, tokenizer = shard_and_load(shard_meta, group, on_timeout=None, on_layer_loaded=None)
+        model, tokenizer = shard_and_load(
+            shard_meta, group, on_timeout=None, on_layer_loaded=None
+        )
         model = cast(Any, model)
 
         prompt, task = _build_prompt(tokenizer, prompt_tokens)

@@ -143,7 +143,14 @@ class TestKVPrefixCacheWithModel:
         cache = make_kv_cache(model)
 
         _, _, snapshots = prefill(
-            model, tokenizer, make_sampler(0.0), tokens, cache, group=None, on_prefill_progress=None, distributed_prompt_progress_callback=None
+            model,
+            tokenizer,
+            make_sampler(0.0),
+            tokens,
+            cache,
+            group=None,
+            on_prefill_progress=None,
+            distributed_prompt_progress_callback=None,
         )
 
         # Cache should now hold the prompt tokens minus one
@@ -164,7 +171,14 @@ class TestKVPrefixCacheWithModel:
         cache = make_kv_cache(model)
 
         _, _, snapshots = prefill(
-            model, tokenizer, make_sampler(0.0), tokens, cache, group=None, on_prefill_progress=None, distributed_prompt_progress_callback=None
+            model,
+            tokenizer,
+            make_sampler(0.0),
+            tokens,
+            cache,
+            group=None,
+            on_prefill_progress=None,
+            distributed_prompt_progress_callback=None,
         )
 
         kv_prefix_cache = KVPrefixCache(None)
@@ -200,7 +214,14 @@ class TestKVPrefixCacheWithModel:
         cache = make_kv_cache(model)
 
         _, _, snapshots = prefill(
-            model, tokenizer, make_sampler(0.0), short_tokens, cache, group=None, on_prefill_progress=None, distributed_prompt_progress_callback=None
+            model,
+            tokenizer,
+            make_sampler(0.0),
+            short_tokens,
+            cache,
+            group=None,
+            on_prefill_progress=None,
+            distributed_prompt_progress_callback=None,
         )
 
         kv_prefix_cache = KVPrefixCache(None)
@@ -245,7 +266,14 @@ class TestKVPrefixCacheWithModel:
         cache = make_kv_cache(model)
 
         _, _, snapshots = prefill(
-            model, tokenizer, make_sampler(0.0), tokens, cache, group=None, on_prefill_progress=None, distributed_prompt_progress_callback=None
+            model,
+            tokenizer,
+            make_sampler(0.0),
+            tokens,
+            cache,
+            group=None,
+            on_prefill_progress=None,
+            distributed_prompt_progress_callback=None,
         )
 
         kv_prefix_cache = KVPrefixCache(None)
@@ -285,7 +313,14 @@ class TestKVPrefixCacheWithModel:
         cache = make_kv_cache(model)
 
         _, _, snapshots = prefill(
-            model, tokenizer, make_sampler(0.0), tokens, cache, group=None, on_prefill_progress=None, distributed_prompt_progress_callback=None
+            model,
+            tokenizer,
+            make_sampler(0.0),
+            tokens,
+            cache,
+            group=None,
+            on_prefill_progress=None,
+            distributed_prompt_progress_callback=None,
         )
 
         kv_prefix_cache = KVPrefixCache(None)
@@ -513,7 +548,16 @@ class TestKVPrefixCacheWithModel:
             prompt = apply_chat_template(tokenizer, task)
             tokens = encode_prompt(tokenizer, prompt)
             cache = make_kv_cache(model)
-            prefill(model, tokenizer, make_sampler(0.0), tokens, cache, group=None, on_prefill_progress=None, distributed_prompt_progress_callback=None)
+            prefill(
+                model,
+                tokenizer,
+                make_sampler(0.0),
+                tokens,
+                cache,
+                group=None,
+                on_prefill_progress=None,
+                distributed_prompt_progress_callback=None,
+            )
             kv_prefix_cache.add_kv_cache(tokens, cache)
             # Stagger _last_used so LRU order is deterministic
             kv_prefix_cache._last_used[i] = float(i)
@@ -538,7 +582,16 @@ class TestKVPrefixCacheWithModel:
             prompt = apply_chat_template(tokenizer, task)
             tokens = encode_prompt(tokenizer, prompt)
             cache = make_kv_cache(model)
-            prefill(model, tokenizer, make_sampler(0.0), tokens, cache, group=None, on_prefill_progress=None, distributed_prompt_progress_callback=None)
+            prefill(
+                model,
+                tokenizer,
+                make_sampler(0.0),
+                tokens,
+                cache,
+                group=None,
+                on_prefill_progress=None,
+                distributed_prompt_progress_callback=None,
+            )
             kv_prefix_cache.add_kv_cache(tokens, cache)
 
         # LRU entries should have been evicted (entries 0, 1, 2 in order of _last_used)
