@@ -31,6 +31,11 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
+from exo.shared.types.memory import (
+    Memory,
+    get_memory_pressure,
+    get_memory_pressure_threshold,
+)
 from exo.shared.types.tasks import (
     ConnectToGroup,
     LoadModel,
@@ -114,6 +119,7 @@ def main(
     group = None
     kv_prefix_cache: KVPrefixCache | None = None
     check_for_cancel_every: int | None = None
+    bytes_per_token = Memory.from_bytes(0)
 
     current_status: RunnerStatus = RunnerIdle()
     logger.info("runner created")
@@ -225,12 +231,14 @@ def main(
                     assert tokenizer
 
                     t = time.monotonic()
-                    toks = warmup_inference(
+                    toks, bytes_per_token = warmup_inference(
                         model=cast(Model, inference_model),
                         tokenizer=tokenizer,
                         group=group,
                     )
-                    logger.info(f"warmed up by generating {toks} tokens")
+                    logger.info(
+                        f"warmed up by generating {toks} tokens, {bytes_per_token}/token for KV cache"
+                    )
                     check_for_cancel_every = min(
                         math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
                     )
@@ -310,6 +318,7 @@ def main(
                             kv_prefix_cache=kv_prefix_cache,
                             on_prefill_progress=on_prefill_progress,
                             group=group,
+                            bytes_per_token=bytes_per_token,
                         )
 
                         if tokenizer.has_thinking:
@@ -336,6 +345,7 @@ def main(
 
                         completion_tokens = 0
                         tokens_since_last_cancel_check = check_for_cancel_every
+                        oom_stopped = False
                         for response in mlx_generator:
                             tokens_since_last_cancel_check += 1
                             if tokens_since_last_cancel_check >= check_for_cancel_every:
@@ -344,7 +354,14 @@ def main(
                                 want_to_cancel = (task.task_id in cancelled_tasks) or (
                                     TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
                                 )
-                                if mx_any(want_to_cancel, group):
+                                oom_local = (
+                                    bytes_per_token.in_bytes > 0
+                                    and get_memory_pressure()
+                                    > get_memory_pressure_threshold()
+                                )
+                                if mx_any(want_to_cancel or oom_local, group):
+                                    if not want_to_cancel:
+                                        oom_stopped = True
                                     break
 
                             match response:
@@ -399,6 +416,21 @@ def main(
                                                 ),
                                             )
                                         )
+
+                        if oom_stopped and device_rank == 0:
+                            event_sender.send(
+                                ChunkGenerated(
+                                    command_id=command_id,
+                                    chunk=ErrorChunk(
+                                        model=model_id,
+                                        error_message=(
+                                            "Generation stopped: running out of memory. "
+                                            "Please start a new conversation or compact "
+                                            "your messages."
+                                        ),
+                                    ),
+                                )
+                            )
 
                     except PrefillCancelled:
                         logger.info(f"Prefill cancelled for task {task.task_id}")

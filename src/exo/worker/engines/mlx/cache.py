@@ -1,8 +1,6 @@
-import os
 from copy import deepcopy
 
 import mlx.core as mx
-import psutil
 from mlx_lm.models.cache import (
     ArraysCache,
     CacheList,
@@ -12,29 +10,11 @@ from mlx_lm.models.cache import (
 )
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.types.memory import Memory
+from exo.shared.types.memory import MEMORY_THRESHOLD, Memory, get_memory_pressure
 from exo.shared.types.mlx import KVCacheType
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
 from exo.worker.runner.bootstrap import logger
-
-
-# Fraction of device memory above which LRU eviction kicks in.
-# Smaller machines need more aggressive eviction.
-def _default_memory_threshold() -> float:
-    total_gb = Memory.from_bytes(psutil.virtual_memory().total).in_gb
-    if total_gb >= 128:
-        return 0.85
-    if total_gb >= 64:
-        return 0.80
-    if total_gb >= 32:
-        return 0.75
-    return 0.70
-
-
-_MEMORY_THRESHOLD = float(
-    os.environ.get("EXO_MEMORY_THRESHOLD", _default_memory_threshold())
-)
 
 
 class CacheSnapshot:
@@ -91,6 +71,15 @@ class KVPrefixCache:
         self.caches.clear()
         self._snapshots.clear()
         self._last_used.clear()
+
+    def force_evict_all(self) -> int:
+        count = len(self.caches)
+        self.clear()
+        if count > 0:
+            logger.info(
+                f"Force-evicted all {count} prefix cache entries due to memory pressure"
+            )
+        return count
 
     def add_kv_cache(
         self,
@@ -217,7 +206,7 @@ class KVPrefixCache:
         # Evict LRU entries until below threshold
         while (
             len(self.caches) > 0
-            and self.get_memory_used_percentage() > _MEMORY_THRESHOLD
+            and self.get_memory_used_percentage() > MEMORY_THRESHOLD
         ):
             lru_index = self._last_used.index(min(self._last_used))
             evicted_tokens = len(self.prompts[lru_index])
@@ -230,7 +219,7 @@ class KVPrefixCache:
             )
 
     def get_memory_used_percentage(self) -> float:
-        local_pressure: float = get_memory_used_percentage()
+        local_pressure: float = get_memory_pressure()
 
         if self._group is None:
             return local_pressure
@@ -299,15 +288,47 @@ def get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
     return int(mx.sum(prefix_mask).item())
 
 
-def get_available_memory() -> Memory:
-    mem: int = psutil.virtual_memory().available
-    return Memory.from_bytes(mem)
+def _measure_single_cache_bytes(
+    entry: KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList,
+) -> int:
+    if isinstance(entry, CacheList):
+        return sum(
+            _measure_single_cache_bytes(c)  # pyright: ignore[reportArgumentType]
+            for c in entry.caches
+        )
+
+    total = 0
+    if isinstance(entry, ArraysCache):
+        state = entry.state  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        for arr in state:  # pyright: ignore[reportUnknownVariableType]
+            if isinstance(arr, mx.array):
+                total += arr.nbytes
+        return total
+
+    total = 0
+    for attr_name in ("keys", "values"):
+        val: object = getattr(entry, attr_name, None)
+        if val is None:
+            continue
+        if isinstance(val, mx.array):
+            total += val.nbytes
+        elif isinstance(val, (tuple, list)):
+            for arr in val:  # pyright: ignore[reportUnknownVariableType]
+                if isinstance(arr, mx.array):
+                    total += arr.nbytes
+
+    return total
 
 
-def get_memory_used_percentage() -> float:
-    mem = psutil.virtual_memory()
-    # percent is 0-100
-    return float(mem.percent / 100)
+def measure_cache_bytes(cache: KVCacheType) -> int:
+    return sum(_measure_single_cache_bytes(c) for c in cache)
+
+
+def measure_kv_cache_bytes_per_token(cache: KVCacheType) -> Memory:
+    offset = cache_length(cache)
+    if offset == 0:
+        return Memory.from_bytes(0)
+    return Memory.from_bytes(measure_cache_bytes(cache) // offset)
 
 
 def make_kv_cache(

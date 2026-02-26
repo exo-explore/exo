@@ -18,7 +18,7 @@ from exo.shared.types.api import (
     Usage,
 )
 from exo.shared.types.common import ModelId
-from exo.shared.types.memory import Memory
+from exo.shared.types.memory import Memory, get_memory_available_locally
 from exo.shared.types.mlx import KVCacheType
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import (
@@ -32,6 +32,7 @@ from exo.worker.engines.mlx.cache import (
     encode_prompt,
     has_non_kv_caches,
     make_kv_cache,
+    measure_kv_cache_bytes_per_token,
     snapshot_ssm_states,
 )
 from exo.worker.engines.mlx.constants import (
@@ -43,6 +44,7 @@ from exo.worker.engines.mlx.constants import (
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     fix_unmatched_think_end_tokens,
+    mx_any,
     mx_barrier,
 )
 from exo.worker.runner.bootstrap import logger
@@ -148,7 +150,8 @@ def warmup_inference(
     model: Model,
     tokenizer: TokenizerWrapper,
     group: mx.distributed.Group | None,
-) -> int:
+) -> tuple[int, Memory]:
+    """Run warmup inference and tokens_generated and bytes_per_token"""
     content = "Prompt to warm up the inference engine. Repeat this."
 
     warmup_prompt = apply_chat_template(
@@ -187,9 +190,12 @@ def warmup_inference(
 
     logger.info("Generated ALL warmup tokens")
 
+    bytes_per_token = measure_kv_cache_bytes_per_token(cache)
+    logger.info(f"Measured KV cache cost: {bytes_per_token} per token")
+
     mx_barrier(group)
 
-    return tokens_generated
+    return tokens_generated, bytes_per_token
 
 
 def ban_token_ids(token_ids: list[int]) -> Callable[[mx.array, mx.array], mx.array]:
@@ -267,6 +273,33 @@ def extract_top_logprobs(
     return selected_logprob, top_logprob_items
 
 
+def _check_memory_budget(
+    bytes_per_token: Memory,
+    total_sequence_tokens: int,
+    kv_prefix_cache: KVPrefixCache | None,
+    group: mx.distributed.Group | None,
+) -> str | None:
+    if bytes_per_token.in_bytes == 0:
+        return None
+
+    estimated = bytes_per_token * total_sequence_tokens
+    over_budget = estimated > get_memory_available_locally()
+
+    if not mx_any(over_budget, group):
+        return None
+
+    if kv_prefix_cache is not None and kv_prefix_cache.force_evict_all() > 0:
+        mx.clear_cache()
+        over_budget = estimated > get_memory_available_locally()
+        if not mx_any(over_budget, group):
+            return None
+
+    return (
+        "Not enough memory for this conversation. "
+        "Please start a new conversation or compact your messages."
+    )
+
+
 def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
@@ -275,7 +308,10 @@ def mlx_generate(
     kv_prefix_cache: KVPrefixCache | None,
     group: mx.distributed.Group | None,
     on_prefill_progress: Callable[[int, int], None] | None = None,
+    bytes_per_token: Memory | None = None,
 ) -> Generator[GenerationResponse]:
+    if bytes_per_token is None:
+        bytes_per_token = Memory()
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
     # TODO: Randomise task seed and set in taskparams, instead of hard coding as 42.
@@ -306,6 +342,23 @@ def mlx_generate(
             logger.info(
                 f"KV cache hit: {prefix_hit_length}/{len(all_prompt_tokens)} tokens cached ({100 * prefix_hit_length / len(all_prompt_tokens):.1f}%)"
             )
+
+    if bytes_per_token.in_bytes > 0:
+        oom_error = _check_memory_budget(
+            bytes_per_token=bytes_per_token,
+            total_sequence_tokens=len(all_prompt_tokens),
+            kv_prefix_cache=kv_prefix_cache,
+            group=group,
+        )
+        if oom_error is not None:
+            logger.warning(f"OOM prevention (prefill): {oom_error}")
+            yield GenerationResponse(
+                text=oom_error,
+                token=0,
+                finish_reason="error",
+                usage=None,
+            )
+            return
 
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = []
     if is_bench:

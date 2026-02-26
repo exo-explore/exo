@@ -15,6 +15,7 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
+from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import (
     ConnectToGroup,
     LoadModel,
@@ -114,7 +115,9 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     # initialize_mlx returns a mock group
     monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(MockGroup()))
     monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
-    monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
+    monkeypatch.setattr(
+        mlx_runner, "warmup_inference", make_nothin((1, Memory.from_bytes(0)))
+    )
     monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", nothin)
     monkeypatch.setattr(mlx_runner, "mx_any", make_nothin(False))
     # Mock apply_chat_template since we're using a fake tokenizer (integer 1).
