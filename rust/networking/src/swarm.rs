@@ -1,9 +1,11 @@
+use std::collections::HashSet;
 use std::pin::Pin;
 
+use crate::alias;
 use crate::swarm::transport::tcp_transport;
-use crate::{alias, discovery};
 pub use behaviour::{Behaviour, BehaviourEvent};
 use futures_lite::{Stream, StreamExt};
+use libp2p::mdns;
 use libp2p::{PeerId, SwarmBuilder, gossipsub, identity, swarm::SwarmEvent};
 use tokio::sync::{mpsc, oneshot};
 
@@ -68,7 +70,7 @@ impl Swarm {
                     }
                     event = swarm.next() => {
                         let Some(event) = event else { break };
-                        if let Some(item) = filter_swarm_event(event) {
+                        for item in filter_swarm_event(event) {
                             yield item;
                         }
                     }
@@ -115,7 +117,7 @@ fn on_message(swarm: &mut libp2p::Swarm<Behaviour>, message: ToSwarm) {
     }
 }
 
-fn filter_swarm_event(event: SwarmEvent<BehaviourEvent>) -> Option<FromSwarm> {
+fn filter_swarm_event(event: SwarmEvent<BehaviourEvent>) -> Vec<FromSwarm> {
     match event {
         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
             message:
@@ -126,19 +128,28 @@ fn filter_swarm_event(event: SwarmEvent<BehaviourEvent>) -> Option<FromSwarm> {
                     ..
                 },
             ..
-        })) => Some(FromSwarm::Message {
+        })) => vec![FromSwarm::Message {
             from: peer_id,
             topic: topic.into_string(),
             data,
-        }),
-        SwarmEvent::Behaviour(BehaviourEvent::Discovery(
-            discovery::Event::ConnectionEstablished { peer_id, .. },
-        )) => Some(FromSwarm::Discovered { peer_id }),
-        SwarmEvent::Behaviour(BehaviourEvent::Discovery(discovery::Event::ConnectionClosed {
-            peer_id,
-            ..
-        })) => Some(FromSwarm::Expired { peer_id }),
-        _ => None,
+        }],
+        SwarmEvent::Behaviour(BehaviourEvent::Discovery(mdns::Event::Discovered(peer_id))) => {
+            peer_id
+                .into_iter()
+                .map(|(pid, _)| pid)
+                .collect::<HashSet<PeerId>>()
+                .into_iter()
+                .map(|peer_id| FromSwarm::Discovered { peer_id })
+                .collect()
+        }
+        SwarmEvent::Behaviour(BehaviourEvent::Discovery(mdns::Event::Expired(peer_id))) => peer_id
+            .into_iter()
+            .map(|(pid, _)| pid)
+            .collect::<HashSet<PeerId>>()
+            .into_iter()
+            .map(|peer_id| FromSwarm::Discovered { peer_id })
+            .collect(),
+        _ => vec![],
     }
 }
 
@@ -233,25 +244,32 @@ mod transport {
 }
 
 mod behaviour {
-    use crate::{alias, discovery};
+    use crate::alias;
     use libp2p::swarm::NetworkBehaviour;
-    use libp2p::{gossipsub, identity};
+    use libp2p::{gossipsub, identity, mdns};
 
     /// Behavior of the Swarm which composes all desired behaviors:
     /// Right now its just [`discovery::Behaviour`] and [`gossipsub::Behaviour`].
     #[derive(NetworkBehaviour)]
     pub struct Behaviour {
-        pub discovery: discovery::Behaviour,
+        pub discovery: mdns::tokio::Behaviour,
         pub gossipsub: gossipsub::Behaviour,
     }
 
     impl Behaviour {
         pub fn new(keypair: &identity::Keypair) -> alias::AnyResult<Self> {
             Ok(Self {
-                discovery: discovery::Behaviour::new(keypair)?,
+                discovery: mdns_behaviour(keypair)?,
                 gossipsub: gossipsub_behaviour(keypair),
             })
         }
+    }
+
+    fn mdns_behaviour(keypair: &identity::Keypair) -> alias::AnyResult<mdns::tokio::Behaviour> {
+        Ok(mdns::tokio::Behaviour::new(
+            mdns::Config::default(),
+            keypair.public().to_peer_id(),
+        )?)
     }
 
     fn gossipsub_behaviour(keypair: &identity::Keypair) -> gossipsub::Behaviour {
