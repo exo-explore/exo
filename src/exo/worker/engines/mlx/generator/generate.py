@@ -259,7 +259,6 @@ def prefill(
                 distributed_prompt_progress_callback=distributed_prompt_progress_callback,
                 group=group,
             )
-            set_pipeline_queue_sends(model, queue_sends=True)
         else:
             # Use max_tokens=1 because max_tokens=0 does not work.
             # We just throw away the generated token - we only care about filling the cache
