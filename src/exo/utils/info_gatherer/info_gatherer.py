@@ -12,7 +12,7 @@ from anyio import fail_after, open_process, to_thread
 from anyio.streams.buffered import BufferedByteReceiveStream
 from anyio.streams.text import TextReceiveStream
 from loguru import logger
-from pydantic import ValidationError
+from pydantic import ConfigDict, ValidationError
 
 from exo.shared.constants import EXO_CONFIG_FILE, EXO_MODELS_DIR
 from exo.shared.types.memory import Memory
@@ -294,6 +294,8 @@ class ThunderboltBridgeInfo(TaggedModel):
 
 class NodeConfig(TaggedModel):
     """Node configuration from EXO_CONFIG_FILE, reloaded from the file only at startup. Other changes should come in through the API and propagate from there"""
+
+    model_config = ConfigDict(extra="ignore")
 
     @classmethod
     async def gather(cls) -> Self | None:

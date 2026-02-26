@@ -10,10 +10,11 @@ from mlx_lm.models.cache import (
 )
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.types.memory import MEMORY_THRESHOLD, Memory, get_memory_pressure
+from exo.shared.types.memory import Memory, get_memory_pressure
 from exo.shared.types.mlx import KVCacheType
+from exo.shared.types.settings import load_settings
 from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
+from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE
 from exo.worker.runner.bootstrap import logger
 
 
@@ -206,7 +207,7 @@ class KVPrefixCache:
         # Evict LRU entries until below threshold
         while (
             len(self.caches) > 0
-            and self.get_memory_used_percentage() > MEMORY_THRESHOLD
+            and self.get_memory_used_percentage() > load_settings().memory.memory_threshold
         ):
             lru_index = self._last_used.index(min(self._last_used))
             evicted_tokens = len(self.prompts[lru_index])
@@ -341,13 +342,14 @@ def make_kv_cache(
         return model.make_cache()  # type: ignore
 
     if max_kv_size is None:
-        if KV_CACHE_BITS is None:
+        kv_cache_bits = load_settings().generation.kv_cache_bits
+        if kv_cache_bits is None:
             logger.info("Using default KV cache")
             return [KVCache() for _ in model.layers]
         else:
             logger.info("Using quantized KV cache")
             return [
-                QuantizedKVCache(group_size=CACHE_GROUP_SIZE, bits=KV_CACHE_BITS)
+                QuantizedKVCache(group_size=CACHE_GROUP_SIZE, bits=kv_cache_bits)
                 for _ in model.layers
             ]
     else:
