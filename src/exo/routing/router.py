@@ -174,28 +174,42 @@ class Router:
         logger.info(f"Unsubscribed from {topic}")
 
     async def _networking_recv(self):
-        while True:
-            topic, data = await self._net.gossipsub_recv()
-            logger.trace(f"Received message on {topic} with payload {data}")
-            if topic not in self.topic_routers:
-                logger.warning(f"Received message on unknown or inactive topic {topic}")
-                continue
+        try:
+            while True:
+                topic, data = await self._net.gossipsub_recv()
+                logger.trace(f"Received message on {topic} with payload {data}")
+                if topic not in self.topic_routers:
+                    logger.warning(
+                        f"Received message on unknown or inactive topic {topic}"
+                    )
+                    continue
 
-            router = self.topic_routers[topic]
-            await router.publish_bytes(data)
+                router = self.topic_routers[topic]
+                await router.publish_bytes(data)
+        except Exception as exception:
+            logger.opt(exception=exception).error(
+                "Gossipsub receive loop terminated unexpectedly"
+            )
+            raise
 
     async def _networking_recv_connection_messages(self):
-        while True:
-            update = await self._net.connection_update_recv()
-            message = ConnectionMessage.from_update(update)
-            logger.trace(
-                f"Received message on connection_messages with payload {message}"
+        try:
+            while True:
+                update = await self._net.connection_update_recv()
+                message = ConnectionMessage.from_update(update)
+                logger.trace(
+                    f"Received message on connection_messages with payload {message}"
+                )
+                if CONNECTION_MESSAGES.topic in self.topic_routers:
+                    router = self.topic_routers[CONNECTION_MESSAGES.topic]
+                    assert router.topic.model_type == ConnectionMessage
+                    router = cast(TopicRouter[ConnectionMessage], router)
+                    await router.publish(message)
+        except Exception as exception:
+            logger.opt(exception=exception).error(
+                "Connection update receive loop terminated unexpectedly"
             )
-            if CONNECTION_MESSAGES.topic in self.topic_routers:
-                router = self.topic_routers[CONNECTION_MESSAGES.topic]
-                assert router.topic.model_type == ConnectionMessage
-                router = cast(TopicRouter[ConnectionMessage], router)
-                await router.publish(message)
+            raise
 
     async def _networking_publish(self):
         with self.networking_receiver as networked_items:

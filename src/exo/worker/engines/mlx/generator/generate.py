@@ -1,3 +1,4 @@
+import math
 import functools
 import time
 from copy import deepcopy
@@ -400,6 +401,9 @@ def extract_top_logprobs(
     for i in range(top_logprobs):
         token_id = int(top_indices[i].item())
         token_logprob = float(top_values[i].item())
+        if math.isnan(token_logprob):
+            continue
+
         # Decode token ID to string
         token_str = tokenizer.decode([token_id])
         # Get byte representation

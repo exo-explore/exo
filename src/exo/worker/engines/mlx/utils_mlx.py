@@ -2,6 +2,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, cast
@@ -98,14 +99,13 @@ def mlx_distributed_init(
     rank = bound_instance.bound_shard.device_rank
     logger.info(f"Starting initialization for rank {rank}")
 
-    coordination_file = None
-    try:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        coordination_file = str(
+            Path(tmpdir) / f"hosts_{bound_instance.instance.instance_id}_{rank}.json"
+        )
         # TODO: singleton instances
         match bound_instance.instance:
             case MlxRingInstance(hosts_by_node=hosts_by_node, ephemeral_port=_):
-                coordination_file = (
-                    f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
-                )
                 hosts_for_node = hosts_by_node[bound_instance.bound_node_id]
                 hosts_json = HostList.from_hosts(hosts_for_node).model_dump_json()
 
@@ -128,9 +128,6 @@ def mlx_distributed_init(
                     jaccl_devices[i][i] is None for i in range(len(jaccl_devices))
                 )
                 # Use RDMA connectivity matrix
-                coordination_file = (
-                    f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
-                )
                 jaccl_devices_json = json.dumps(jaccl_devices)
 
                 with open(coordination_file, "w") as f:
@@ -150,10 +147,6 @@ def mlx_distributed_init(
         logger.info(f"Rank {rank} mlx distributed initialization complete")
 
         return group
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            if coordination_file:
-                os.remove(coordination_file)
 
 
 def initialize_mlx(
@@ -213,6 +206,8 @@ def load_mlx_items(
         )
 
     set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
+
+    mx.clear_cache()
 
     return cast(Model, model), tokenizer
 
