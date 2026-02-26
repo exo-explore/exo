@@ -4,7 +4,13 @@ from pydantic import model_validator
 
 from exo.shared.models.model_cards import ModelTask
 from exo.shared.types.common import Host, Id, NodeId
-from exo.shared.types.worker.runners import RunnerId, ShardAssignments, ShardMetadata
+from exo.shared.types.worker.runners import RunnerId, ShardAssignments
+from exo.shared.types.worker.shards import (
+    PipelineShardMetadata,
+    Sharding,
+    ShardMetadata,
+    TensorShardMetadata,
+)
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
@@ -24,15 +30,39 @@ class BaseInstance(TaggedModel):
     def shard(self, runner_id: RunnerId) -> ShardMetadata | None:
         return self.shard_assignments.runner_to_shard.get(runner_id, None)
 
+    @staticmethod
+    def instance_meta() -> InstanceMeta: ...
+
+    def sharding(self) -> Sharding:
+        if all(
+            isinstance(sm, PipelineShardMetadata)
+            for sm in self.shard_assignments.runner_to_shard.values()
+        ):
+            return Sharding.Pipeline
+        if all(
+            isinstance(sm, TensorShardMetadata)
+            for sm in self.shard_assignments.runner_to_shard.values()
+        ):
+            return Sharding.Tensor
+        raise ValueError("shard metadata malformed")
+
 
 class MlxRingInstance(BaseInstance):
     hosts_by_node: dict[NodeId, list[Host]]
     ephemeral_port: int
 
+    @staticmethod
+    def instance_meta() -> InstanceMeta:
+        return InstanceMeta.MlxRing
+
 
 class MlxJacclInstance(BaseInstance):
     jaccl_devices: list[list[str | None]]
     jaccl_coordinators: dict[NodeId, str]
+
+    @staticmethod
+    def instance_meta() -> InstanceMeta:
+        return InstanceMeta.MlxJaccl
 
 
 # TODO: Single node instance
