@@ -1,4 +1,5 @@
 model_id = "mlx-community/Step-3.5-Flash-6bit"
+revision = "78bbe35b6d9f0a4fa6425416aedea6021e4c40ec"
 n_layers = 45
 hidden_size = 4096
 supports_tensor = true

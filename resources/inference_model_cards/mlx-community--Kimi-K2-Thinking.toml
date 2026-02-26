@@ -1,4 +1,5 @@
 model_id = "mlx-community/Kimi-K2-Thinking"
+revision = "035a0cdd221ae0dca6b03120e20704a251a7bc9b"
 n_layers = 61
 hidden_size = 7168
 supports_tensor = true

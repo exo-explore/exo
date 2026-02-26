@@ -1,4 +1,5 @@
 model_id = "mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit"
+revision = "9a2b46347bb170cb2924092175fa21554fe585a9"
 n_layers = 48
 hidden_size = 2048
 supports_tensor = true

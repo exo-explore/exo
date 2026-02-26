@@ -1,4 +1,5 @@
 model_id = "exolabs/Qwen-Image-Edit-2509-4bit"
+revision = "ac25e6566c3a94e52d988b017acde9d70945109a"
 n_layers = 60
 hidden_size = 1
 supports_tensor = false

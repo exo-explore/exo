@@ -1,4 +1,5 @@
 model_id = "mlx-community/Qwen3-0.6B-8bit"
+revision = "11de96878523501bcaa86104e3c186de07ff9068"
 n_layers = 28
 hidden_size = 1024
 supports_tensor = false

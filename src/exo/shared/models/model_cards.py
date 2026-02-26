@@ -5,7 +5,7 @@ import aiofiles
 import aiofiles.os as aios
 import tomlkit
 from anyio import Path, open_file
-from huggingface_hub import model_info
+from huggingface_hub import model_info, repo_info
 from loguru import logger
 from pydantic import (
     AliasChoices,
@@ -79,6 +79,7 @@ class ComponentInfo(CamelCaseModel):
 
 class ModelCard(CamelCaseModel):
     model_id: ModelId
+    revision: str | None = None
     storage_size: Memory
     n_layers: PositiveInt
     hidden_size: PositiveInt
@@ -127,12 +128,17 @@ class ModelCard(CamelCaseModel):
     async def fetch_from_hf(model_id: ModelId) -> "ModelCard":
         """Fetches storage size and number of layers for a Hugging Face model, returns Pydantic ModelMeta."""
         # TODO: failure if files do not exist
-        config_data = await fetch_config_data(model_id)
+        # Fetch repo info to get the latest commit SHA
+        repo = repo_info(model_id, repo_type="model")
+        revision = repo.sha
+
+        config_data = await fetch_config_data(model_id, revision)
         num_layers = config_data.layer_count
-        mem_size_bytes = await fetch_safetensors_size(model_id)
+        mem_size_bytes = await fetch_safetensors_size(model_id, revision)
 
         mc = ModelCard(
             model_id=ModelId(model_id),
+            revision=revision,
             storage_size=mem_size_bytes,
             n_layers=num_layers,
             hidden_size=config_data.hidden_size or 0,
@@ -219,7 +225,9 @@ class ConfigData(BaseModel):
         return data
 
 
-async def fetch_config_data(model_id: ModelId) -> ConfigData:
+async def fetch_config_data(
+    model_id: ModelId, revision: str | None = None
+) -> ConfigData:
     """Downloads and parses config.json for a model."""
     from exo.download.download_utils import (
         download_file_with_retry,
@@ -230,7 +238,7 @@ async def fetch_config_data(model_id: ModelId) -> ConfigData:
     await aios.makedirs(target_dir, exist_ok=True)
     config_path = await download_file_with_retry(
         model_id,
-        "main",
+        revision or "main",
         "config.json",
         target_dir,
         lambda curr_bytes, total_bytes, is_renamed: logger.debug(
@@ -241,7 +249,9 @@ async def fetch_config_data(model_id: ModelId) -> ConfigData:
         return ConfigData.model_validate_json(await f.read())
 
 
-async def fetch_safetensors_size(model_id: ModelId) -> Memory:
+async def fetch_safetensors_size(
+    model_id: ModelId, revision: str | None = None
+) -> Memory:
     """Gets model size from safetensors index or falls back to HF API."""
     from exo.download.download_utils import (
         download_file_with_retry,
@@ -253,7 +263,7 @@ async def fetch_safetensors_size(model_id: ModelId) -> Memory:
     await aios.makedirs(target_dir, exist_ok=True)
     index_path = await download_file_with_retry(
         model_id,
-        "main",
+        revision or "main",
         "model.safetensors.index.json",
         target_dir,
         lambda curr_bytes, total_bytes, is_renamed: logger.debug(

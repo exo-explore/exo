@@ -1,4 +1,5 @@
 model_id = "mlx-community/DeepSeek-V3.1-8bit"
+revision = "cd6c63546a6d33a8cc75158dc60d1746787306ac"
 n_layers = 61
 hidden_size = 7168
 supports_tensor = true

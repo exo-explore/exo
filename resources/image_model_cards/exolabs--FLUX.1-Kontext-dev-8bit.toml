@@ -1,4 +1,5 @@
 model_id = "exolabs/FLUX.1-Kontext-dev-8bit"
+revision = "cbf01164d429932b260d91872d62a7a4fe2634fa"
 n_layers = 57
 hidden_size = 1
 supports_tensor = false

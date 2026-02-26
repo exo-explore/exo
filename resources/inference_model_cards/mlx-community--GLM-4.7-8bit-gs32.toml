@@ -1,4 +1,5 @@
 model_id = "mlx-community/GLM-4.7-8bit-gs32"
+revision = "65b39750987b4230754dc0becc66e42b4c9da07b"
 n_layers = 91
 hidden_size = 5120
 supports_tensor = true

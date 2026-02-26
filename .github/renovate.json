@@ -1,0 +1,35 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "dependencyDashboard": true,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Pin HuggingFace model revisions to commit SHAs",
+      "managerFilePatterns": [
+        "^resources/inference_model_cards/.*\\.toml$",
+        "^resources/image_model_cards/.*\\.toml$"
+      ],
+      "matchStrings": [
+        "model_id = \"(?<packageName>[^\"]+)\"(?:\\n|\\r\\n?)revision = \"(?<currentValue>[^\"]+)\""
+      ],
+      "datasourceTemplate": "git-refs",
+      "depNameTemplate": "huggingface.co/{{packageName}}",
+      "currentValueTemplate": "main",
+      "versioningTemplate": "git"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchDatasources": ["git-refs"],
+      "matchPackageNames": ["huggingface.co/**"],
+      "groupName": null,
+      "automerge": false,
+      "prTitle": "chore: pin {{depName}} to {{newDigest}}",
+      "commitMessageTopic": "{{depName}} revision",
+      "commitMessageExtra": "to {{newDigest}}"
+    }
+  ]
+}

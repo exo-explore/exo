@@ -1,4 +1,5 @@
 model_id = "mlx-community/Meta-Llama-3.1-70B-Instruct-4bit"
+revision = "7772c93cf077b642f5503dd8d763a4176d7d406c"
 n_layers = 80
 hidden_size = 8192
 supports_tensor = true

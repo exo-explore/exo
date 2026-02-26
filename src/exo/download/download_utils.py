@@ -696,7 +696,8 @@ async def resolve_allow_patterns(shard: ShardMetadata) -> list[str]:
     # (iii) Tensor parallel requires all files.
     return ["*"]
     try:
-        weight_map = await get_weight_map(str(shard.model_card.model_id))
+        revision = shard.model_card.revision or "main"
+        weight_map = await get_weight_map(str(shard.model_card.model_id), revision)
         return get_allow_patterns(weight_map, shard)
     except Exception:
         logger.error(f"Error getting weight map for {shard.model_card.model_id=}")
@@ -730,7 +731,7 @@ async def download_shard(
     if not skip_download:
         logger.debug(f"Downloading {shard.model_card.model_id=}")
 
-    revision = "main"
+    revision = shard.model_card.revision or "main"
     target_dir = await ensure_models_dir() / str(shard.model_card.model_id).replace(
         "/", "--"
     )

@@ -1,4 +1,5 @@
 model_id = "mlx-community/MiniMax-M2.5-8bit"
+revision = "26af8b335da2017182616067c9342940a1c1ae73"
 n_layers = 62
 hidden_size = 3072
 supports_tensor = true

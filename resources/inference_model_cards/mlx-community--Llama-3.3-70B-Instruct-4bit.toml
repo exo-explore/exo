@@ -1,4 +1,5 @@
 model_id = "mlx-community/Llama-3.3-70B-Instruct-4bit"
+revision = "de2dfaf56839b7d0e834157d2401dee02726874d"
 n_layers = 80
 hidden_size = 8192
 supports_tensor = true

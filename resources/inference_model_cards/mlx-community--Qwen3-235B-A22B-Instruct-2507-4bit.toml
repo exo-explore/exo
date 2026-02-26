@@ -1,4 +1,5 @@
 model_id = "mlx-community/Qwen3-235B-A22B-Instruct-2507-4bit"
+revision = "4dbf8a62338880825560dff3f58f2e9f0c56210f"
 n_layers = 94
 hidden_size = 4096
 supports_tensor = true

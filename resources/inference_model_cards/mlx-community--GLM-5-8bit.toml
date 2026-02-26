@@ -1,4 +1,5 @@
 model_id = "mlx-community/GLM-5-8bit-MXFP8"
+revision = "aa833c40d178262d4ac8b92965807ef988e9340e"
 n_layers = 78
 hidden_size = 6144
 supports_tensor = true
