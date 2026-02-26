@@ -3,7 +3,6 @@
 //! this is here as a placeholder documentation
 //!
 //!
-pub mod discovery;
 pub mod swarm;
 
 /// Namespace for all the type/trait aliases used by this crate.
