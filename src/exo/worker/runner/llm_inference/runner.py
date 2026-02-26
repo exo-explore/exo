@@ -36,6 +36,7 @@ from exo.shared.types.memory import (
     get_memory_pressure,
     get_memory_pressure_threshold,
 )
+from exo.shared.types.settings import load_settings
 from exo.shared.types.tasks import (
     ConnectToGroup,
     LoadModel,
@@ -355,7 +356,8 @@ def main(
                                     TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
                                 )
                                 oom_local = (
-                                    bytes_per_token.in_bytes > 0
+                                    load_settings().memory.oom_prevention
+                                    and bytes_per_token.in_bytes > 0
                                     and get_memory_pressure()
                                     > get_memory_pressure_threshold()
                                 )

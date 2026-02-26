@@ -1,5 +1,4 @@
 import ctypes
-import os
 import sys
 from math import ceil
 from typing import Self, overload
@@ -157,24 +156,12 @@ class Memory(FrozenModel):
         return f"{val:.2f} {unit}".rstrip("0").rstrip(".") + f" {unit}"
 
 
-# Fraction of device memory above which LRU eviction kicks in.
-# Smaller machines need more aggressive eviction.
-def _default_memory_threshold() -> float:
-    total_gb = Memory.from_bytes(psutil.virtual_memory().total).in_gb
-    if total_gb >= 128:
-        return 0.85
-    if total_gb >= 64:
-        return 0.80
-    if total_gb >= 32:
-        return 0.75
-    return 0.70
+def _load_memory_settings() -> tuple[float, "Memory"]:
+    """Load memory threshold and floor from settings (lazy import to avoid circular dep)."""
+    from exo.shared.types.settings import load_settings
 
-
-MEMORY_THRESHOLD = float(
-    os.environ.get("EXO_MEMORY_THRESHOLD", _default_memory_threshold())
-)
-
-MEMORY_FLOOR = Memory.from_gb(float(os.environ.get("EXO_MEMORY_FLOOR", "5")))
+    s = load_settings()
+    return s.memory.memory_threshold, Memory.from_gb(s.memory.memory_floor_gb)
 
 _libc: ctypes.CDLL | None = None
 
@@ -217,9 +204,10 @@ def get_memory_pressure() -> float:
 
 
 def get_memory_limit() -> Memory:
+    threshold, floor = _load_memory_settings()
     total = psutil.virtual_memory().total
-    floor = min(int(total * (1 - MEMORY_THRESHOLD)), MEMORY_FLOOR.in_bytes)
-    return Memory.from_bytes(total - floor)
+    safety = min(int(total * (1 - threshold)), floor.in_bytes)
+    return Memory.from_bytes(total - safety)
 
 
 def get_memory_available_locally() -> Memory:

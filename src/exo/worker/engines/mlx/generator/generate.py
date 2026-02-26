@@ -20,6 +20,7 @@ from exo.shared.types.api import (
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory, get_memory_available_locally
 from exo.shared.types.mlx import KVCacheType
+from exo.shared.types.settings import load_settings
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
@@ -39,7 +40,6 @@ from exo.worker.engines.mlx.constants import (
     DEFAULT_TOP_LOGPROBS,
     KV_BITS,
     KV_GROUP_SIZE,
-    MAX_TOKENS,
 )
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
@@ -112,7 +112,7 @@ def prefill(
             max_tokens=1,
             sampler=sampler,
             prompt_cache=cache,
-            prefill_step_size=4096,
+            prefill_step_size=load_settings().generation.prefill_step_size,
             kv_group_size=KV_GROUP_SIZE,
             kv_bits=KV_BITS,
             prompt_progress_callback=progress_callback,
@@ -343,7 +343,7 @@ def mlx_generate(
                 f"KV cache hit: {prefix_hit_length}/{len(all_prompt_tokens)} tokens cached ({100 * prefix_hit_length / len(all_prompt_tokens):.1f}%)"
             )
 
-    if bytes_per_token.in_bytes > 0:
+    if bytes_per_token.in_bytes > 0 and load_settings().memory.oom_prevention:
         oom_error = _check_memory_budget(
             bytes_per_token=bytes_per_token,
             total_sequence_tokens=len(all_prompt_tokens),
@@ -395,7 +395,7 @@ def mlx_generate(
     # stream_generate starts from the last token
     last_token = prompt_tokens[-2:]
 
-    max_tokens = task.max_output_tokens or MAX_TOKENS
+    max_tokens = task.max_output_tokens or load_settings().generation.max_tokens
     accumulated_text = ""
     generated_text_parts: list[str] = []
     generation_start_time = time.perf_counter()

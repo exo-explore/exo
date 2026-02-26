@@ -166,6 +166,13 @@ from exo.shared.types.openai_responses import (
     ResponsesRequest,
     ResponsesResponse,
 )
+from exo.shared.types.settings import (
+    ExoSettings,
+    load_settings,
+)
+from exo.shared.types.settings import (
+    save_settings as save_settings_to_file,
+)
 from exo.shared.types.state import State
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
@@ -349,6 +356,8 @@ class API:
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
+        self.app.get("/settings")(self.get_settings)
+        self.app.post("/settings")(self.save_settings)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -1825,3 +1834,13 @@ class API:
         ONBOARDING_COMPLETE_FILE.parent.mkdir(parents=True, exist_ok=True)
         ONBOARDING_COMPLETE_FILE.write_text("true")
         return JSONResponse({"completed": True})
+
+    async def get_settings(self) -> JSONResponse:
+        settings = load_settings()
+        return JSONResponse(settings.model_dump())
+
+    async def save_settings(self, request: Request) -> JSONResponse:
+        body = cast(object, await request.json())
+        settings = ExoSettings.model_validate(body)
+        save_settings_to_file(settings)
+        return JSONResponse(settings.model_dump())
