@@ -160,7 +160,7 @@ def pipeline_parallel_prefill(
 
                 prompt_progress_callback(processed, total)
 
-            for _ in range(n_leading):
+            for _ in range(n_trailing):
                 if distributed_prompt_progress_callback is not None:
                     distributed_prompt_progress_callback()
 
