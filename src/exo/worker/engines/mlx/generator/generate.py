@@ -103,7 +103,7 @@ def pipeline_parallel_prefill(
     This function is designed to match mlx_lm's stream_generate exactly in terms of
     side effects (given the same prefill step size)
     """
-    prefill_step_size = prefill_step_size // group.size()
+    prefill_step_size = prefill_step_size // min(4, group.size())
 
     quantize_cache_fn: Callable[..., None] = functools.partial(
         maybe_quantize_kv_cache,
@@ -244,7 +244,7 @@ def prefill(
     prefill_step_size = 4096
 
     try:
-        if is_pipeline:
+        if is_pipeline and num_tokens >= prefill_step_size:
             assert group is not None, "Pipeline prefill requires a distributed group"
             pipeline_parallel_prefill(
                 model=model,
