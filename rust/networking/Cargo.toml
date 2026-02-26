@@ -21,9 +21,10 @@ extend = { workspace = true }
 delegate = { workspace = true }
 
 # async
-tokio = { workspace = true, features = ["full"] }
+async-stream = { workspace = true }
 futures-lite = { workspace = true }
 futures-timer = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
 
 # utility dependencies
 util = { workspace = true }
@@ -35,3 +36,4 @@ log = { workspace = true }
 
 # networking
 libp2p = { workspace = true, features = ["full"] }
+pin-project = "1.1.10"
