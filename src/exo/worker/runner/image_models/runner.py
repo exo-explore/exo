@@ -1,5 +1,4 @@
 import base64
-import resource
 import time
 from typing import TYPE_CHECKING, Literal
 
@@ -66,6 +65,7 @@ from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
 )
 from exo.worker.runner.bootstrap import logger
+from exo.worker.runner.runner_opts import RunnerOpts
 
 
 def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:
@@ -183,14 +183,12 @@ def _send_image_chunk(
 
 
 def main(
+    runner_opts: RunnerOpts,
     bound_instance: BoundInstance,
     event_sender: MpSender[Event],
     task_receiver: MpReceiver[Task],
     cancel_receiver: MpReceiver[TaskId],
 ):
-    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
-
     instance, runner_id, shard_metadata = (
         bound_instance.instance,
         bound_instance.bound_runner_id,

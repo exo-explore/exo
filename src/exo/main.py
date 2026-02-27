@@ -25,6 +25,7 @@ from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import CamelCaseModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
+from exo.worker.runner.runner_opts import RunnerOpts
 
 
 @dataclass
@@ -40,10 +41,11 @@ class Node:
 
     node_id: NodeId
     offline: bool
+    runner_opts: RunnerOpts
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
-    @classmethod
-    async def create(cls, args: "Args") -> Self:
+    @staticmethod
+    async def create(args: "Args") -> "Node":
         keypair = get_node_id_keypair()
         node_id = NodeId(keypair.to_node_id())
         session_id = SessionId(master_node_id=node_id, election_clock=0)
@@ -63,14 +65,28 @@ class Node:
 
         logger.info(f"Starting node {node_id}")
 
+        if args.fast_synch is True:
+            logger.info("FAST_SYNCH forced ON")
+        elif args.fast_synch is False:
+            logger.info("FAST_SYNCH forced OFF")
+        runner_opts = RunnerOpts(
+            fast_synch_override=args.fast_synch,
+            trust_remote_code_override=args.trust_remote_code,
+        )
+
+        if offline := args.offline:
+            logger.info(
+                "Running in OFFLINE mode — no internet checks, local models only"
+            )
+
         # Create DownloadCoordinator (unless --no-downloads)
         if not args.no_downloads:
             download_coordinator = DownloadCoordinator(
                 node_id,
-                exo_shard_downloader(offline=args.offline),
+                exo_shard_downloader(offline=offline),
                 event_sender=event_router.sender(),
                 download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
-                offline=args.offline,
+                offline=offline,
             )
         else:
             download_coordinator = None
@@ -90,6 +106,7 @@ class Node:
         if not args.no_worker:
             worker = Worker(
                 node_id,
+                runner_opts,
                 event_receiver=event_router.receiver(),
                 event_sender=event_router.sender(),
                 command_sender=router.sender(topics.COMMANDS),
@@ -123,7 +140,7 @@ class Node:
             election_result_sender=er_send,
         )
 
-        return cls(
+        return Node(
             router,
             event_router,
             download_coordinator,
@@ -134,6 +151,7 @@ class Node:
             api,
             node_id,
             args.offline,
+            runner_opts,
         )
 
     async def run(self):
@@ -238,6 +256,7 @@ class Node:
                         # TODO: add profiling etc to resource monitor
                         self.worker = Worker(
                             self.node_id,
+                            self.runner_opts,
                             event_receiver=self.event_router.receiver(),
                             event_sender=self.event_router.sender(),
                             command_sender=self.router.sender(topics.COMMANDS),
@@ -265,17 +284,6 @@ def main():
     logger.info("Starting EXO")
     logger.info(f"EXO_LIBP2P_NAMESPACE: {os.getenv('EXO_LIBP2P_NAMESPACE')}")
 
-    if args.offline:
-        logger.info("Running in OFFLINE mode — no internet checks, local models only")
-
-    # Set FAST_SYNCH override env var for runner subprocesses
-    if args.fast_synch is True:
-        os.environ["EXO_FAST_SYNCH"] = "on"
-        logger.info("FAST_SYNCH forced ON")
-    elif args.fast_synch is False:
-        os.environ["EXO_FAST_SYNCH"] = "off"
-        logger.info("FAST_SYNCH forced OFF")
-
     node = anyio.run(Node.create, args)
     try:
         anyio.run(node.run)
@@ -297,8 +305,11 @@ class Args(CamelCaseModel):
     tb_only: bool = False
     no_worker: bool = False
     no_downloads: bool = False
-    offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
+    offline: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
+    trust_remote_code: bool | None = (
+        None  # None = auto, True = force on, False = force off
+    )
 
     @classmethod
     def parse(cls) -> Self:
@@ -364,6 +375,20 @@ class Args(CamelCaseModel):
             action="store_false",
             dest="fast_synch",
             help="Force MLX FAST_SYNCH off",
+        )
+        trust_remote_code_group = parser.add_mutually_exclusive_group()
+        trust_remote_code_group.add_argument(
+            "--trust-remote-code",
+            action="store_true",
+            dest="trust_remote_code",
+            default=None,
+            help="Allow all models to execute custom code",
+        )
+        trust_remote_code_group.add_argument(
+            "--never-trust-remote-code",
+            action="store_false",
+            dest="trust_remote_code",
+            help="Deny all models from execute custom code",
         )
 
         args = parser.parse_args()

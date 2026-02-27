@@ -167,10 +167,12 @@ def load_mlx_items(
     group: Group | None,
     on_timeout: TimeoutCallback | None,
     on_layer_loaded: LayerLoadedCallback | None,
+    trust_remote_code: bool | None,
 ) -> tuple[Model, TokenizerWrapper]:
+    model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
+
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
-        model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
         start_time = time.perf_counter()
         model, _ = load_model(model_path, lazy=True, strict=False)
         # Eval layers one by one for progress reporting
@@ -189,12 +191,10 @@ def load_mlx_items(
         mx.eval(model)
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
-        tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
-
     else:
         logger.info("Starting distributed init")
         start_time = time.perf_counter()
-        model, tokenizer = shard_and_load(
+        model = shard_and_load(
             bound_instance.bound_shard,
             group=group,
             on_timeout=on_timeout,
@@ -204,6 +204,14 @@ def load_mlx_items(
         logger.info(
             f"Time taken to shard and load model: {(end_time - start_time):.2f}s"
         )
+
+    tokenizer = load_tokenizer_for_model_id(
+        bound_instance.bound_shard.model_card.model_id,
+        model_path,
+        trust_remote_code=trust_remote_code
+        if trust_remote_code is not None
+        else bound_instance.bound_shard.model_card.trust_remote_code,
+    )
 
     set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
 
@@ -217,9 +225,8 @@ def shard_and_load(
     group: Group,
     on_timeout: TimeoutCallback | None,
     on_layer_loaded: LayerLoadedCallback | None,
-) -> tuple[nn.Module, TokenizerWrapper]:
+) -> nn.Module:
     model_path = build_model_path(shard_metadata.model_card.model_id)
-
     model, _ = load_model(model_path, lazy=True, strict=False)
     logger.debug(model)
     if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
@@ -240,8 +247,6 @@ def shard_and_load(
         #    )
 
     assert isinstance(model, nn.Module)
-
-    tokenizer = get_tokenizer(model_path, shard_metadata)
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 
@@ -281,16 +286,7 @@ def shard_and_load(
     # Synchronize processes before generation to avoid timeout
     mx_barrier(group)
 
-    return model, tokenizer
-
-
-def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerWrapper:
-    """Load tokenizer for a model shard. Delegates to load_tokenizer_for_model_id."""
-    return load_tokenizer_for_model_id(
-        shard_metadata.model_card.model_id,
-        model_path,
-        trust_remote_code=shard_metadata.model_card.trust_remote_code,
-    )
+    return model
 
 
 def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:

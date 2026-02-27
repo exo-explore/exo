@@ -1,5 +1,4 @@
 import math
-import resource
 import time
 from collections.abc import Generator
 from functools import cache
@@ -79,19 +78,18 @@ from exo.worker.engines.mlx.utils_mlx import (
     mx_any,
 )
 from exo.worker.runner.bootstrap import logger
+from exo.worker.runner.runner_opts import RunnerOpts
 
 from .tool_parsers import ToolParser, make_mlx_parser
 
 
 def main(
+    runner_opts: RunnerOpts,
     bound_instance: BoundInstance,
     event_sender: MpSender[Event],
     task_receiver: MpReceiver[Task],
     cancel_receiver: MpReceiver[TaskId],
 ):
-    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
-
     instance, runner_id, shard_metadata = (
         bound_instance.instance,
         bound_instance.bound_runner_id,
@@ -194,6 +192,7 @@ def main(
                         group,
                         on_timeout=on_model_load_timeout,
                         on_layer_loaded=on_layer_loaded,
+                        trust_remote_code=runner_opts.trust_remote_code_override,
                     )
                     logger.info(
                         f"model has_tool_calling={tokenizer.has_tool_calling} using tokens {tokenizer.tool_call_start}, {tokenizer.tool_call_end}"

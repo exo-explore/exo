@@ -1,4 +1,5 @@
 from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import anyio
@@ -46,38 +47,34 @@ from exo.utils.info_gatherer.net_profile import check_reachable
 from exo.utils.keyed_backoff import KeyedBackoff
 from exo.utils.task_group import TaskGroup
 from exo.worker.plan import plan
+from exo.worker.runner.runner_opts import RunnerOpts
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
 
+@dataclass
 class Worker:
-    def __init__(
-        self,
-        node_id: NodeId,
-        *,
-        event_receiver: Receiver[IndexedEvent],
-        event_sender: Sender[Event],
-        # This is for requesting updates. It doesn't need to be a general command sender right now,
-        # but I think it's the correct way to be thinking about commands
-        command_sender: Sender[ForwarderCommand],
-        download_command_sender: Sender[ForwarderDownloadCommand],
-    ):
-        self.node_id: NodeId = node_id
-        self.event_receiver = event_receiver
-        self.event_sender = event_sender
-        self.command_sender = command_sender
-        self.download_command_sender = download_command_sender
+    node_id: NodeId
+    runner_opts: RunnerOpts
+    event_receiver: Receiver[IndexedEvent]
+    event_sender: Sender[Event]
+    # This is for requesting updates. It doesn't need to be a general command sender right now,
+    # but I think it's the correct way to be thinking about commands
+    command_sender: Sender[ForwarderCommand]
+    download_command_sender: Sender[ForwarderDownloadCommand]
+    state: State = field(init=False, default_factory=State)
+    runners: dict[RunnerId, RunnerSupervisor] = field(init=False, default_factory=dict)
+    _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
+    _system_id: SystemId = field(init=False, default_factory=SystemId)
 
-        self.state: State = State()
-        self.runners: dict[RunnerId, RunnerSupervisor] = {}
-        self._tg: TaskGroup = TaskGroup()
+    # Buffer for input image chunks (for image editing)
+    input_chunk_buffer: dict[CommandId, dict[int, str]] = field(
+        init=False, default_factory=dict
+    )
+    input_chunk_counts: dict[CommandId, int] = field(init=False, default_factory=dict)
 
-        self._system_id = SystemId()
-
-        # Buffer for input image chunks (for image editing)
-        self.input_chunk_buffer: dict[CommandId, dict[int, str]] = {}
-        self.input_chunk_counts: dict[CommandId, int] = {}
-
-        self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
+    _download_backoff: KeyedBackoff[ModelId] = field(
+        init=False, default_factory=lambda: KeyedBackoff(base=0.5, cap=10.0)
+    )
 
     async def run(self):
         logger.info("Starting Worker")
@@ -283,6 +280,7 @@ class Worker:
     def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
         """Creates and stores a new AssignedRunner with initial downloading status."""
         runner = RunnerSupervisor.create(
+            runner_opts=self.runner_opts,
             bound_instance=task.bound_instance,
             event_sender=self.event_sender.clone(),
         )

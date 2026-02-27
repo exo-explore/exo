@@ -40,6 +40,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import mp_channel
+from exo.worker.runner.runner_opts import RunnerOpts
 
 from ...constants import (
     CHAT_COMPLETION_TASK_ID,
@@ -184,6 +185,7 @@ def _run(tasks: Iterable[Task]):
             make_nothin(mx.array([1])),
         ):
             mlx_runner.main(
+                RunnerOpts(None, None),
                 bound_instance,
                 event_sender,  # pyright: ignore[reportArgumentType]
                 task_receiver,
