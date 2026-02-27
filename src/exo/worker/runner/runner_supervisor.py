@@ -52,6 +52,7 @@ class RunnerSupervisor:
     _tg: TaskGroup = field(default_factory=TaskGroup, init=False)
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
+    in_progress: set[TaskId] = field(default_factory=set, init=False)
     completed: set[TaskId] = field(default_factory=set, init=False)
     cancelled: set[TaskId] = field(default_factory=set, init=False)
     _cancel_watch_runner: anyio.CancelScope = field(
@@ -173,6 +174,7 @@ class RunnerSupervisor:
                         self.status = event.runner_status
                     if isinstance(event, TaskAcknowledged):
                         self.pending.pop(event.task_id).set()
+                        self.in_progress.add(event.task_id)
                         continue
                     if (
                         isinstance(event, TaskStatusUpdated)
@@ -189,6 +191,7 @@ class RunnerSupervisor:
                                 RunnerShuttingDown,
                             ),
                         )
+                        self.in_progress.discard(event.task_id)
                         self.completed.add(event.task_id)
                     await self._event_sender.send(event)
         except (ClosedResourceError, BrokenResourceError) as e:

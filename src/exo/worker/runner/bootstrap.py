@@ -33,10 +33,15 @@ def entrypoint(
     try:
         if bound_instance.is_image_model:
             from exo.worker.runner.image_models.runner import main
-        else:
-            from exo.worker.runner.llm_inference.runner import main
 
-        main(bound_instance, event_sender, task_receiver, cancel_receiver)
+            main(bound_instance, event_sender, task_receiver, cancel_receiver)
+        else:
+            from exo.worker.runner.llm_inference.runner import Runner
+
+            runner = Runner(
+                bound_instance, event_sender, task_receiver, cancel_receiver
+            )
+            runner.main()
 
     except ClosedResourceError:
         logger.warning("Runner communication closed unexpectedly")
