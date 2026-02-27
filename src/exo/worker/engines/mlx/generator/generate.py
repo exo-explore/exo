@@ -437,6 +437,7 @@ def mlx_generate(
     group: mx.distributed.Group | None,
     on_prefill_progress: Callable[[int, int], None] | None = None,
     distributed_prompt_progress_callback: Callable[[], None] | None = None,
+    on_generation_token: Callable[[], None] | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -643,6 +644,9 @@ def mlx_generate(
                     kv_prefix_cache.add_kv_cache(
                         full_prompt_tokens, caches, cache_snapshots
                     )
+
+        if on_generation_token is not None:
+            on_generation_token()
 
         yield GenerationResponse(
             text=text,

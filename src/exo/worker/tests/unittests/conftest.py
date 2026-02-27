@@ -20,6 +20,7 @@ class FakeRunnerSupervisor:
     bound_instance: BoundInstance
     status: RunnerStatus
     completed: set[TaskId] = field(default_factory=set)
+    pending: dict[TaskId, object] = field(default_factory=dict)
 
 
 class OtherTask(BaseTask):

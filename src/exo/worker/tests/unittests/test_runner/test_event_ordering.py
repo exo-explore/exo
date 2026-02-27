@@ -6,6 +6,7 @@ from typing import Callable
 import mlx.core as mx
 import pytest
 
+import exo.worker.runner.llm_inference.batch_generator as mlx_batch_generator
 import exo.worker.runner.llm_inference.runner as mlx_runner
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.events import (
@@ -115,26 +116,32 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(MockGroup()))
     monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
     monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
-    monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", nothin)
-    monkeypatch.setattr(mlx_runner, "mx_any", make_nothin(False))
+    monkeypatch.setattr(mlx_batch_generator, "_check_for_debug_prompts", nothin)
+    monkeypatch.setattr(mlx_batch_generator, "mx_any", make_nothin(False))
     # Mock apply_chat_template since we're using a fake tokenizer (integer 1).
     # Returns a prompt without thinking tag so detect_thinking_prompt_suffix returns None.
     monkeypatch.setattr(mlx_runner, "apply_chat_template", make_nothin("test prompt"))
+    monkeypatch.setattr(
+        mlx_batch_generator, "apply_chat_template", make_nothin("test prompt")
+    )
     monkeypatch.setattr(mlx_runner, "detect_thinking_prompt_suffix", make_nothin(False))
 
     def fake_generate(*_1: object, **_2: object):
         yield GenerationResponse(token=0, text="hi", finish_reason="stop", usage=None)
 
-    monkeypatch.setattr(mlx_runner, "mlx_generate", fake_generate)
+    monkeypatch.setattr(mlx_batch_generator, "mlx_generate", fake_generate)
 
 
 # Use a fake event_sender to remove test flakiness.
 class EventCollector:
-    def __init__(self) -> None:
+    def __init__(self, on_event: Callable[[Event], None] | None = None) -> None:
         self.events: list[Event] = []
+        self._on_event = on_event
 
     def send(self, event: Event) -> None:
         self.events.append(event)
+        if self._on_event:
+            self._on_event(event)
 
     def close(self) -> None:
         pass
@@ -159,7 +166,7 @@ class MockGroup:
         return 1
 
 
-def _run(tasks: Iterable[Task]):
+def _run(tasks: Iterable[Task], send_after_ready: list[Task] | None = None):
     bound_instance = get_bound_mlx_ring_instance(
         instance_id=INSTANCE_1_ID,
         model_id=MODEL_A_ID,
@@ -169,7 +176,23 @@ def _run(tasks: Iterable[Task]):
 
     task_sender, task_receiver = mp_channel[Task]()
     _cancel_sender, cancel_receiver = mp_channel[TaskId]()
-    event_sender = EventCollector()
+
+    on_event: Callable[[Event], None] | None = None
+    if send_after_ready:
+        _saw_running = False
+
+        def _on_event(event: Event) -> None:
+            nonlocal _saw_running
+            if isinstance(event, RunnerStatusUpdated):
+                if isinstance(event.runner_status, RunnerRunning):
+                    _saw_running = True
+                elif _saw_running and isinstance(event.runner_status, RunnerReady):
+                    for t in send_after_ready:
+                        task_sender.send(t)
+
+        on_event = _on_event
+
+    event_sender = EventCollector(on_event=on_event)
 
     with task_sender:
         for t in tasks:
@@ -183,18 +206,22 @@ def _run(tasks: Iterable[Task]):
             "exo.worker.runner.llm_inference.runner.mx.distributed.all_gather",
             make_nothin(mx.array([1])),
         ):
-            mlx_runner.main(
+            runner = mlx_runner.Runner(
                 bound_instance,
                 event_sender,  # pyright: ignore[reportArgumentType]
                 task_receiver,
                 cancel_receiver,
             )
+            runner.main()
 
         return event_sender.events
 
 
 def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
-    events = _run([INIT_TASK, LOAD_TASK, WARMUP_TASK, CHAT_TASK, SHUTDOWN_TASK])
+    events = _run(
+        [INIT_TASK, LOAD_TASK, WARMUP_TASK, CHAT_TASK],
+        send_after_ready=[SHUTDOWN_TASK],
+    )
 
     expected_chunk = ChunkGenerated(
         command_id=COMMAND_1_ID,

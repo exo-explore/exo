@@ -1,5 +1,6 @@
 import contextlib
 import multiprocessing as mp
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from math import inf
 from multiprocessing.synchronize import Event
@@ -280,6 +281,54 @@ class MpReceiver[T]:
         d = self.__dict__.copy()
         d.pop("__orig_class__", None)
         return d
+
+
+class NonBlockingGenerator[T](Generator[T | None, None, None]):
+    def __init__(self, source: MpReceiver[T] | Generator[T | None, None, None]) -> None:
+        self._receiver: MpReceiver[T] | None = None
+        self._inner: Generator[T | None, None, None] | None = None
+        if isinstance(source, MpReceiver):
+            self._receiver = source
+        else:
+            self._inner = source
+        self._exhausted = False
+
+    def send(self, value: None, /) -> T | None:
+        if self._exhausted:
+            raise StopIteration
+        if self._inner is not None:
+            try:
+                return next(self._inner)
+            except (StopIteration, ClosedResourceError):
+                self._exhausted = True
+                raise StopIteration from None
+        assert self._receiver is not None
+        try:
+            return self._receiver.receive_nowait()
+        except WouldBlock:
+            return None
+        except (EndOfStream, ClosedResourceError):
+            self._exhausted = True
+            raise StopIteration from None
+
+    def throw(
+        self,
+        typ: type[BaseException] | BaseException,
+        val: BaseException | object = None,
+        tb: TracebackType | None = None,
+        /,
+    ) -> T | None:
+        raise StopIteration
+
+    @property
+    def is_exhausted(self) -> bool:
+        return self._exhausted
+
+    def try_receive(self) -> T | None:
+        try:
+            return next(self)
+        except StopIteration:
+            return None
 
 
 class channel[T]:  # noqa: N801
