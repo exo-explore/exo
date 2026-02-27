@@ -73,6 +73,7 @@ from exo.shared.types.api import (
     BenchChatCompletionResponse,
     BenchImageGenerationResponse,
     BenchImageGenerationTaskParams,
+    CancelCommandResponse,
     ChatCompletionChoice,
     ChatCompletionMessage,
     ChatCompletionRequest,
@@ -322,6 +323,7 @@ class API:
         self.app.get("/images/{image_id}")(self.get_image)
         self.app.post("/v1/messages", response_model=None)(self.claude_messages)
         self.app.post("/v1/responses", response_model=None)(self.openai_responses)
+        self.app.post("/v1/cancel/{command_id}")(self.cancel_command)
 
         # Ollama API
         self.app.head("/ollama/")(self.ollama_version)
@@ -565,6 +567,23 @@ class API:
             message="Command received.",
             command_id=command.command_id,
             instance_id=instance_id,
+        )
+
+    async def cancel_command(self, command_id: CommandId) -> CancelCommandResponse:
+        """Cancel an active command by closing its stream and notifying workers."""
+        sender = self._text_generation_queues.get(command_id) or self._image_generation_queues.get(command_id)
+        if sender is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Command not found or already completed",
+            )
+
+        await self._send(TaskCancelled(cancelled_command_id=command_id))
+        sender.close()
+
+        return CancelCommandResponse(
+            message="Command cancelled.",
+            command_id=command_id,
         )
 
     async def _token_chunk_stream(
