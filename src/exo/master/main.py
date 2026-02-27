@@ -328,17 +328,22 @@ class Master:
                                         task_id=task_id,
                                     )
                                 )
-                        case TaskFinished():
-                            generated_events.append(
-                                TaskDeleted(
-                                    task_id=self.command_task_mapping[
-                                        command.finished_command_id
-                                    ]
+                            else:
+                                logger.warning(
+                                    f"Nonexistent command {command.cancelled_command_id} cancelled"
                                 )
-                            )
-                            self.command_task_mapping.pop(
-                                command.finished_command_id, None
-                            )
+                        case TaskFinished():
+                            if (
+                                task_id := self.command_task_mapping.pop(
+                                    command.finished_command_id, None
+                                )
+                            ) is not None:
+                                generated_events.append(TaskDeleted(task_id=task_id))
+                            else:
+                                logger.warning(
+                                    f"Finished command {command.finished_command_id} finished"
+                                )
+
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages
                             # rate limit to 1000 at a time
