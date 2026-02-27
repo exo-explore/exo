@@ -13,5 +13,6 @@ KV_CACHE_BITS: int | None = None
 
 DEFAULT_TOP_LOGPROBS: int = 5
 
-# TODO: We should really make this opt-in, but Kimi requires trust_remote_code=True
+# True for built-in models with known model cards; custom models added via API default to False
+# and can be overridden with the --trust-remote-code CLI flag.
 TRUST_REMOTE_CODE: bool = True
