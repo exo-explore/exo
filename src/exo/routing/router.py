@@ -239,25 +239,3 @@ def get_node_id_keypair(
     """
     # TODO(evan): bring back node id persistence once we figure out how to deal with duplicates
     return Keypair.generate()
-
-    def lock_path(path: str | bytes | PathLike[str] | PathLike[bytes]) -> Path:
-        return Path(str(path) + ".lock")
-
-    # operate with cross-process lock to avoid race conditions
-    with FileLock(lock_path(path)):
-        with open(path, "a+b") as f:  # opens in append-mode => starts at EOF
-            # if non-zero EOF, then file exists => use to get node-ID
-            if f.tell() != 0:
-                f.seek(0)  # go to start & read protobuf-encoded bytes
-                protobuf_encoded = f.read()
-
-                try:  # if decoded successfully, save & return
-                    return Keypair.from_bytes(protobuf_encoded)
-                except ValueError as e:  # on runtime error, assume corrupt file
-                    logger.warning(f"Encountered error when trying to get keypair: {e}")
-
-        # if no valid credentials, create new ones and persist
-        with open(path, "w+b") as f:
-            keypair = Keypair.generate_ed25519()
-            f.write(keypair.to_bytes())
-            return keypair
