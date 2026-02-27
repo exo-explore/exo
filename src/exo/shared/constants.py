@@ -8,12 +8,12 @@ _EXO_HOME_ENV = os.environ.get("EXO_HOME", None)
 
 
 def _get_xdg_dir(env_var: str, fallback: str) -> Path:
-    """Get XDG directory, prioritising EXO_HOME environment variable if its set. On non-Linux platforms, default to ~/.exo."""
+    """Get XDG directory, prioritising EXO_HOME environment variable if its set. On non-Linux platforms, default to ~/.exo. Cache home always prefers .cache/exo"""
 
     if _EXO_HOME_ENV is not None:
         return Path.home() / _EXO_HOME_ENV
 
-    if sys.platform != "linux":
+    if sys.platform != "linux" and env_var != "XDG_CACHE_HOME":
         return Path.home() / ".exo"
 
     xdg_value = os.environ.get(env_var, None)
@@ -54,10 +54,9 @@ DASHBOARD_DIR = (
 # Log files (data/logs or cache)
 EXO_LOG_DIR = EXO_CACHE_HOME / "exo_log"
 EXO_LOG = EXO_LOG_DIR / "exo.log"
-EXO_TEST_LOG = EXO_CACHE_HOME / "exo_test.log"
 
 # Identity (config)
-EXO_NODE_ID_KEYPAIR = EXO_CONFIG_HOME / "node_id.keypair"
+EXO_NODE_ID_KEYPAIR = EXO_CACHE_HOME / "node_id.keypair"
 EXO_CONFIG_FILE = EXO_CONFIG_HOME / "config.toml"
 
 # libp2p topics for event forwarding
