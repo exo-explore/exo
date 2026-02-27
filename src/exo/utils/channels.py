@@ -1,5 +1,6 @@
 import contextlib
 import multiprocessing as mp
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from math import inf
 from multiprocessing.synchronize import Event
@@ -280,6 +281,34 @@ class MpReceiver[T]:
         d = self.__dict__.copy()
         d.pop("__orig_class__", None)
         return d
+
+
+class NonBlockingGenerator[T](Generator[T | None, None, None]):
+    def __init__(self, source: MpReceiver[T] | Generator[T | None, None, None]) -> None:
+        self._inner: MpReceiver[T] | Generator[T | None, None, None] = source
+
+    def send(self, value: None, /) -> T | None:
+        if isinstance(self._inner, Generator):
+            try:
+                return next(self._inner)
+            except (StopIteration, ClosedResourceError):
+                raise StopIteration from None
+        else:
+            try:
+                return self._inner.receive_nowait()
+            except WouldBlock:
+                return None
+            except (EndOfStream, ClosedResourceError):
+                raise StopIteration from None
+
+    def throw(
+        self,
+        typ: type[BaseException] | BaseException,
+        val: BaseException | object = None,
+        tb: TracebackType | None = None,
+        /,
+    ) -> T | None:
+        raise StopIteration
 
 
 class channel[T]:  # noqa: N801
