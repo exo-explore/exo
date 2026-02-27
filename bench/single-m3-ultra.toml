@@ -2,10 +2,10 @@
 #
 # Shared constraints applied to ALL benchmarks in this file.
 constraints = [
-    "All(MacOsBuild(=25D125))",
-    "Hosts(=1)",
-    "All(Chip(m3_ultra))",
-    "All(GpuCores(=80))",
+  "All(MacOsBuild(=25D125))",
+  "Hosts(=1)",
+  "All(Chip(m3_ultra))",
+  "All(GpuCores(=80))",
 ]
 
 [topology]

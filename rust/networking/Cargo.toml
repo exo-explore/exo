@@ -28,7 +28,10 @@ tokio = { workspace = true, features = ["full"] }
 
 # utility dependencies
 util = { workspace = true }
-tracing-subscriber = { version = "0.3.19", features = ["default", "env-filter"] }
+tracing-subscriber = { version = "0.3.19", features = [
+  "default",
+  "env-filter",
+] }
 keccak-const = { workspace = true }
 
 # tracing/logging

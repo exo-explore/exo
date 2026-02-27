@@ -1,10 +1,6 @@
 [workspace]
 resolver = "3"
-members = [
-    "rust/networking",
-    "rust/exo_pyo3_bindings",
-    "rust/util",
-]
+members = ["rust/networking", "rust/exo_pyo3_bindings", "rust/util"]
 
 [workspace.package]
 version = "0.0.1"
