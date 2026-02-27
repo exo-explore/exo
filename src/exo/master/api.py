@@ -81,6 +81,8 @@ from exo.shared.types.api import (
     CreateInstanceResponse,
     DeleteDownloadResponse,
     DeleteInstanceResponse,
+    DeleteTracesRequest,
+    DeleteTracesResponse,
     ErrorInfo,
     ErrorResponse,
     FinishReason,
@@ -340,6 +342,7 @@ class API:
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
         self.app.get("/v1/traces")(self.list_traces)
+        self.app.post("/v1/traces/delete")(self.delete_traces)
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
         self.app.get("/v1/traces/{task_id}/stats")(self.get_trace_stats)
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
@@ -1707,8 +1710,12 @@ class API:
         await self._send_download(command)
         return DeleteDownloadResponse(command_id=command.command_id)
 
-    def _get_trace_path(self, task_id: str) -> Path:
-        return EXO_TRACING_CACHE_DIR / f"trace_{task_id}.json"
+    @staticmethod
+    def _get_trace_path(task_id: str) -> Path:
+        trace_path = EXO_TRACING_CACHE_DIR / f"trace_{task_id}.json"
+        if not trace_path.resolve().is_relative_to(EXO_TRACING_CACHE_DIR.resolve()):
+            raise HTTPException(status_code=400, detail=f"Invalid task ID: {task_id}")
+        return trace_path
 
     async def list_traces(self) -> TraceListResponse:
         traces: list[TraceListItem] = []
@@ -1806,6 +1813,18 @@ class API:
             media_type="application/json",
             filename=f"trace_{task_id}.json",
         )
+
+    async def delete_traces(self, request: DeleteTracesRequest) -> DeleteTracesResponse:
+        deleted: list[str] = []
+        not_found: list[str] = []
+        for task_id in request.task_ids:
+            trace_path = self._get_trace_path(task_id)
+            if trace_path.exists():
+                trace_path.unlink()
+                deleted.append(task_id)
+            else:
+                not_found.append(task_id)
+        return DeleteTracesResponse(deleted=deleted, not_found=not_found)
 
     async def get_onboarding(self) -> JSONResponse:
         return JSONResponse({"completed": ONBOARDING_COMPLETE_FILE.exists()})
