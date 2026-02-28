@@ -99,7 +99,7 @@ class Worker:
             self.command_sender.close()
             self.download_command_sender.close()
             for runner in self.runners.values():
-                runner.shutdown()
+                await runner.shutdown()
 
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
@@ -160,7 +160,7 @@ class Worker:
             # lets not kill the worker if a runner is unresponsive
             match task:
                 case CreateRunner():
-                    self._create_supervisor(task)
+                    await self._create_supervisor(task)
                     await self.event_sender.send(
                         TaskStatusUpdated(
                             task_id=task.task_id, task_status=TaskStatus.Complete
@@ -220,7 +220,7 @@ class Worker:
                             )
                         )
                     finally:
-                        runner.shutdown()
+                        await runner.shutdown()
                 case CancelTask(
                     cancelled_task_id=cancelled_task_id, runner_id=runner_id
                 ):
@@ -280,9 +280,9 @@ class Worker:
                 instance.shard_assignments.node_to_runner[self.node_id]
             ].start_task(task)
 
-    def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
+    async def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
         """Creates and stores a new AssignedRunner with initial downloading status."""
-        runner = RunnerSupervisor.create(
+        runner = await RunnerSupervisor.create(
             bound_instance=task.bound_instance,
             event_sender=self.event_sender.clone(),
         )

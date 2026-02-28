@@ -55,7 +55,7 @@ from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
     ShardMetadata,
 )
-from exo.utils.channels import MpReceiver, MpSender
+from exo.utils.fd_channels import FdReceiver, FdSender
 from exo.worker.engines.image import (
     DistributedImageModel,
     generate_image,
@@ -88,7 +88,7 @@ def _process_image_response(
     response: ImageGenerationResponse | PartialImageResponse,
     command_id: CommandId,
     shard_metadata: ShardMetadata,
-    event_sender: MpSender[Event],
+    event_sender: FdSender[Event],
     image_index: int,
 ) -> None:
     """Process a single image response and send chunks."""
@@ -111,7 +111,7 @@ def _process_image_response(
 
 
 def _send_traces_if_enabled(
-    event_sender: MpSender[Event],
+    event_sender: FdSender[Event],
     task_id: TaskId,
     rank: int,
 ) -> None:
@@ -144,7 +144,7 @@ def _send_image_chunk(
     encoded_data: str,
     command_id: CommandId,
     model_id: ModelId,
-    event_sender: MpSender[Event],
+    event_sender: FdSender[Event],
     image_index: int,
     is_partial: bool,
     partial_index: int | None = None,
@@ -184,9 +184,9 @@ def _send_image_chunk(
 
 def main(
     bound_instance: BoundInstance,
-    event_sender: MpSender[Event],
-    task_receiver: MpReceiver[Task],
-    cancel_receiver: MpReceiver[TaskId],
+    event_sender: FdSender[Event],
+    task_receiver: FdReceiver[Task],
+    cancel_receiver: FdReceiver[TaskId],
 ):
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))

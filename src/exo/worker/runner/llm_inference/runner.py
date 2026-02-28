@@ -63,7 +63,7 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
-from exo.utils.channels import MpReceiver, MpSender
+from exo.utils.fd_channels import FdReceiver, FdSender
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import (
     PrefillCancelled,
@@ -85,9 +85,9 @@ from .tool_parsers import ToolParser, make_mlx_parser
 
 def main(
     bound_instance: BoundInstance,
-    event_sender: MpSender[Event],
-    task_receiver: MpReceiver[Task],
-    cancel_receiver: MpReceiver[TaskId],
+    event_sender: FdSender[Event],
+    task_receiver: FdReceiver[Task],
+    cancel_receiver: FdReceiver[TaskId],
 ):
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))

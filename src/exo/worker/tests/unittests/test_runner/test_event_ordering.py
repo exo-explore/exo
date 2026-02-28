@@ -39,7 +39,6 @@ from exo.shared.types.worker.runners import (
     RunnerShuttingDown,
     RunnerWarmingUp,
 )
-from exo.utils.channels import mp_channel
 
 from ...constants import (
     CHAT_COMPLETION_TASK_ID,
@@ -139,8 +138,46 @@ class EventCollector:
     def close(self) -> None:
         pass
 
-    def join(self) -> None:
-        pass
+
+class MockFdReceiver[T]:
+    """Mock FdReceiver that iterates over a list of items."""
+
+    def __init__(self, items: list[T]) -> None:
+        self._items = items
+        self._index = 0
+        self._closed = False
+
+    def receive(self) -> T:
+        if self._closed:
+            raise StopIteration
+        if self._index >= len(self._items):
+            raise StopIteration
+        item = self._items[self._index]
+        self._index += 1
+        return item
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> T:
+        return self.receive()
+
+    def close(self) -> None:
+        self._closed = True
+
+    def collect(self) -> list[T]:
+        """Collect all remaining items."""
+        items = []
+        while self._index < len(self._items):
+            items.append(self._items[self._index])
+            self._index += 1
+        return items
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
 
 
 class MockTokenizer:
@@ -167,28 +204,21 @@ def _run(tasks: Iterable[Task]):
         node_id=NODE_A,
     )
 
-    task_sender, task_receiver = mp_channel[Task]()
-    _cancel_sender, cancel_receiver = mp_channel[TaskId]()
+    task_list = list(tasks)
+    task_receiver = MockFdReceiver[Task](task_list)
+    cancel_receiver = MockFdReceiver[TaskId]([])
     event_sender = EventCollector()
 
-    with task_sender:
-        for t in tasks:
-            task_sender.send(t)
-
-        # worst monkeypatch known to man
-        # this is some c++ nonsense
-        task_receiver.close = nothin
-        task_receiver.join = nothin
-        with unittest.mock.patch(
-            "exo.worker.runner.llm_inference.runner.mx.distributed.all_gather",
-            make_nothin(mx.array([1])),
-        ):
-            mlx_runner.main(
-                bound_instance,
-                event_sender,  # pyright: ignore[reportArgumentType]
-                task_receiver,
-                cancel_receiver,
-            )
+    with unittest.mock.patch(
+        "exo.worker.runner.llm_inference.runner.mx.distributed.all_gather",
+        make_nothin(mx.array([1])),
+    ):
+        mlx_runner.main(
+            bound_instance,
+            event_sender,  # pyright: ignore[reportArgumentType]
+            task_receiver,  # pyright: ignore[reportArgumentType]
+            cancel_receiver,  # pyright: ignore[reportArgumentType]
+        )
 
         return event_sender.events
 
