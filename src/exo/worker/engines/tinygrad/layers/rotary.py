@@ -25,11 +25,21 @@ def apply_rope(
     x: Tensor,
     cos_freqs: Tensor,
     sin_freqs: Tensor,
-    position_offset: int = 0,
+    position_offset: int | Tensor = 0,
 ) -> Tensor:
     seq_len = x.shape[2]
-    cos = cos_freqs[position_offset:position_offset + seq_len].reshape(1, 1, seq_len, -1)  # pyright: ignore[reportUnknownMemberType]
-    sin = sin_freqs[position_offset:position_offset + seq_len].reshape(1, 1, seq_len, -1)  # pyright: ignore[reportUnknownMemberType]
+
+    cos = cos_freqs
+    sin = sin_freqs
+
+    if isinstance(position_offset, Tensor):
+        # position_offset is shape (1,) — index into full tables.
+        # cos_freqs is (max_seq_len, dim/2), result: (1, dim/2) → (1, 1, 1, dim/2)
+        cos = cos_freqs[position_offset].reshape(1, 1, seq_len, -1)  # pyright: ignore[reportUnknownMemberType]
+        sin = sin_freqs[position_offset].reshape(1, 1, seq_len, -1)  # pyright: ignore[reportUnknownMemberType]
+    else:
+        cos = cos_freqs[position_offset:position_offset + seq_len].reshape(1, 1, seq_len, -1)  # pyright: ignore[reportUnknownMemberType]
+        sin = sin_freqs[position_offset:position_offset + seq_len].reshape(1, 1, seq_len, -1)  # pyright: ignore[reportUnknownMemberType]
 
     half = x.shape[-1] // 2
 

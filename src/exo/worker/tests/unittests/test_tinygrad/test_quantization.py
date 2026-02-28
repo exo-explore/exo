@@ -224,7 +224,7 @@ def test_quantized_linear_output_shape():
     assert out.shape == (1, 8, 32)
 
 def test_quantized_linear_caches_dequantized_weights():
-    """Second call reuses cached weights."""
+    """Weights are eagerly dequantized; second call reuses the same tensor."""
     from exo.worker.engines.tinygrad.quantization.layers import QuantizedLinear
     from exo.worker.engines.tinygrad.quantization.packing import pack_bits
 
@@ -237,29 +237,10 @@ def test_quantized_linear_caches_dequantized_weights():
         group_size=32,
     )
     x = Tensor.randn(1, 1, 32)
-    layer(x)
     assert layer._dequantized_weight is not None  # pyright: ignore[reportPrivateUsage]
     cached_ref = layer._dequantized_weight  # pyright: ignore[reportPrivateUsage]
     layer(x)
     assert layer._dequantized_weight is cached_ref  # pyright: ignore[reportPrivateUsage]
-
-def test_quantized_linear_clear_cache():
-    """clear_cache() resets the dequantized weight cache."""
-    from exo.worker.engines.tinygrad.quantization.layers import QuantizedLinear
-    from exo.worker.engines.tinygrad.quantization.packing import pack_bits
-
-    weight = Tensor.ones(16, 32, dtype=dtypes.float16)
-    packed = pack_bits(weight, bits=4)
-    layer = QuantizedLinear(
-        weight_q=packed,
-        scales=Tensor.ones(16, 1),
-        biases=Tensor.zeros(16, 1),
-        group_size=32,
-    )
-    layer(Tensor.randn(1, 1, 32))
-    assert layer._dequantized_weight is not None  # pyright: ignore[reportPrivateUsage]
-    layer.clear_cache()
-    assert layer._dequantized_weight is None  # pyright: ignore[reportPrivateUsage]
 
 def test_quantized_linear_in_out_features():
     """in_features and out_features reflect the original weight shape."""
@@ -318,26 +299,6 @@ def test_quantized_embedding_lookup():
     ids = Tensor([[0, 1, 2]])
     out = layer(ids)
     assert out.shape == (1, 3, 32)
-
-def test_quantized_embedding_clear_cache():
-    """clear_cache() resets the dequantized embedding cache."""
-    from exo.worker.engines.tinygrad.quantization.layers import QuantizedEmbedding
-    from exo.worker.engines.tinygrad.quantization.packing import pack_bits
-
-    weight = Tensor.ones(100, 32, dtype=dtypes.float16)
-    packed = pack_bits(weight, bits=4)
-    layer = QuantizedEmbedding(
-        num_embeddings=100,
-        embedding_dim=32,
-        weight_q=packed,
-        scales=Tensor.ones(100, 1),
-        biases=Tensor.zeros(100, 1),
-        group_size=32,
-    )
-    layer(Tensor([[0]]))
-    assert layer._dequantized_weight is not None  # pyright: ignore[reportPrivateUsage]
-    layer.clear_cache()
-    assert layer._dequantized_weight is None  # pyright: ignore[reportPrivateUsage]
 
 def test_quantized_embedding_is_final():
     """QuantizedEmbedding must be decorated with @final."""

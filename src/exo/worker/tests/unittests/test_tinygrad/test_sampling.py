@@ -44,7 +44,7 @@ def test_logprob_is_negative():
     from exo.worker.engines.tinygrad.sampling import sample_token
 
     logits = Tensor.randn(1, 1, 100)
-    result = sample_token(logits, temperature=0.7)
+    result = sample_token(logits, temperature=0.7, request_logprobs=True)
     assert result.logprob <= 0.0
 
 def test_greedy_logprob_is_highest():
@@ -52,7 +52,7 @@ def test_greedy_logprob_is_highest():
     from exo.worker.engines.tinygrad.sampling import sample_token
 
     logits = Tensor([[[0.1, 0.2, 0.9, 0.3]]])
-    result = sample_token(logits, temperature=0.0, top_logprobs_count=4)
+    result = sample_token(logits, temperature=0.0, top_logprobs_count=4, request_logprobs=True)
     # The selected token's logprob should match the top entry
     assert result.token_id == result.top_logprobs[0][0]
     assert abs(result.logprob - result.top_logprobs[0][1]) < 1e-5
@@ -62,7 +62,7 @@ def test_top_logprobs_count():
     from exo.worker.engines.tinygrad.sampling import sample_token
 
     logits = Tensor.randn(1, 1, 100)
-    result = sample_token(logits, temperature=0.0, top_logprobs_count=5)
+    result = sample_token(logits, temperature=0.0, top_logprobs_count=5, request_logprobs=True)
     assert len(result.top_logprobs) == 5
 
 def test_top_logprobs_empty_when_not_requested():
@@ -78,7 +78,7 @@ def test_top_logprobs_sorted_descending():
     from exo.worker.engines.tinygrad.sampling import sample_token
 
     logits = Tensor.randn(1, 1, 100)
-    result = sample_token(logits, temperature=0.0, top_logprobs_count=5)
+    result = sample_token(logits, temperature=0.0, top_logprobs_count=5, request_logprobs=True)
     logprobs = [lp for _, lp in result.top_logprobs]
     assert logprobs == sorted(logprobs, reverse=True)
 

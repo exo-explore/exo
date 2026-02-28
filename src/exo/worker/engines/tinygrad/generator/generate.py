@@ -1,7 +1,10 @@
+import struct
 import time
 from collections.abc import Callable, Generator
+from dataclasses import dataclass
 from typing import Any
 
+from tinygrad import TinyJit
 from tinygrad.dtype import dtypes
 from tinygrad.tensor import Tensor
 
@@ -21,13 +24,60 @@ from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.worker.engines.tinygrad.constants import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_TEMPERATURE,
+    DEFAULT_TOP_LOGPROBS,
     DEFAULT_TOP_P,
 )
 
+from ..cache import KVCache
 from ..forward import forward_pass
 from ..sampling import sample_token
 from ..weight_loader import TransformerWeights
 
+
+@dataclass
+class _JitState:
+    """Persistent decode state reused across requests."""
+    jit_decode: Callable[..., tuple[Tensor, ...]]
+    cache: KVCache
+    input_buffer: Tensor
+    position_buffer: Tensor
+
+_jit_registry: dict[int, _JitState] = {}
+
+def cleanup_jit_state() -> None:
+    """Called by engine cleanup to free all JIT state."""
+    _jit_registry.clear()
+
+
+def _build_jit_decode(
+    weights: TransformerWeights,
+    cache: KVCache,
+) -> Callable[..., tuple[Tensor, ...]]:
+    num_layers = len(weights.layers)
+
+    @TinyJit
+    def decode(
+        input_ids: Tensor, position: Tensor,
+        rope_cos_table: Tensor, rope_sin_table: Tensor,
+        *cache_kv: Tensor,
+    ) -> tuple[Tensor, ...]:
+        for i in range(num_layers):
+            cache._keys[i] = cache_kv[i]
+            cache._values[i] = cache_kv[num_layers + i]
+
+        logits, _ = forward_pass(
+            weights, input_ids, cache,
+            position_offset=position,
+            rope_cos=rope_cos_table, rope_sin=rope_sin_table,
+        )
+
+        # Realize everything at once — JIT captures one fused kernel schedule
+        # instead of 32 fragmented ones.
+        logits = logits.realize(*cache._keys, *cache._values)
+
+        return (logits, *cache._keys, *cache._values)
+
+    return decode
 
 def tinygrad_generate(
     model: TransformerWeights,
@@ -39,7 +89,6 @@ def tinygrad_generate(
     group: None = None,
 ) -> Generator[GenerationResponse]:
     input_ids = _encode_prompt(tokenizer, prompt)
-    input_tensor = Tensor([input_ids], dtype=dtypes.int32)
 
     max_tokens = task.max_output_tokens or DEFAULT_MAX_TOKENS
     temperature = task.temperature or DEFAULT_TEMPERATURE
@@ -52,18 +101,69 @@ def tinygrad_generate(
     print(f"[DEBUG] eos_ids={eos_ids}")
     prompt_tokens = len(input_ids)
 
-    # Prefill
+    model_key = id(model)
+    num_layers = len(model.layers)
+    state = _jit_registry.get(model_key)
+
+    if state is None:
+        # First request: create cache, JIT, and pre-allocate buffers
+        config = model.config
+        cache = KVCache(
+            num_layers=len(model.layers),
+            num_kv_heads=config.num_key_value_heads,
+            head_dim=config.head_dim,
+            max_seq_len=min(config.max_position_embeddings, 4096),
+        )
+        # Realize cache tensors — Tensor.zeros() produces lazy/const tensors
+        # that TinyJit rejects as inputs. Force device buffer allocation.
+        for i in range(len(model.layers)):
+            cache._keys[i] = cache._keys[i].contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
+            cache._values[i] = cache._values[i].contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
+        jit_decode = _build_jit_decode(model, cache)
+        input_buffer = Tensor.empty(1, 1, dtype=dtypes.int32).contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
+        position_buffer = Tensor.empty(1, dtype=dtypes.int32).contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
+        state = _JitState(
+            jit_decode=jit_decode,
+            cache=cache,
+            input_buffer=input_buffer,
+            position_buffer=position_buffer,
+        )
+        _jit_registry[model_key] = state
+
+    cache = state.cache
+    jit_decode = state.jit_decode
+
+    # Sequential prefill: process each prompt token through the JIT decode path.
+    # Always seq_len=1, reuses the same JIT graph — zero compilation after warmup.
+    if not input_ids:
+        raise ValueError("Prompt must contain at least one token")
+
     prefill_start = time.time()
-    logits, cache = forward_pass(model, input_tensor, cache=None, position_offset=0)
+    for i, token_id in enumerate(input_ids):
+        state.input_buffer._buffer().copyin(memoryview(bytearray(struct.pack('=i', token_id))))  # pyright: ignore[reportPrivateUsage]
+        state.position_buffer._buffer().copyin(memoryview(bytearray(struct.pack('=i', i))))  # pyright: ignore[reportPrivateUsage]
+        results = jit_decode(
+            state.input_buffer, state.position_buffer,
+            model.rope_cos, model.rope_sin,
+            *cache._keys, *cache._values,
+        )
+        logits = results[0]
+        for j in range(num_layers):
+            cache._keys[j] = results[1 + j]
+            cache._values[j] = results[1 + num_layers + j]
+
     prefill_time = time.time() - prefill_start
     prompt_tps = prompt_tokens / max(prefill_time, 1e-9)
+
+    position = prompt_tokens
 
     # Decode
     generation_start = time.time()
     for token_idx in range(max_tokens):
         result = sample_token(
-            logits, temperature=temperature, top_p=top_p,
+            logits, temperature=temperature, top_p=top_p,  # pyright: ignore[reportPossiblyUnboundVariable]
             top_logprobs_count=top_logprobs_count,
+            request_logprobs=request_logprobs,
         )
 
         token_text: str = tokenizer.decode([result.token_id])  # pyright: ignore[reportAny]
@@ -126,11 +226,19 @@ def tinygrad_generate(
         if finish_reason is not None:
             break
 
-        next_input = Tensor([[result.token_id]], dtype=dtypes.int32)
-        logits, cache = forward_pass(
-            model, next_input, cache,
-            position_offset=prompt_tokens + token_idx + 1,
+        state.input_buffer._buffer().copyin(memoryview(bytearray(struct.pack('=i', result.token_id))))  # pyright: ignore[reportPrivateUsage]
+        state.position_buffer._buffer().copyin(memoryview(bytearray(struct.pack('=i', position))))  # pyright: ignore[reportPrivateUsage]
+        results = jit_decode(
+            state.input_buffer, state.position_buffer,
+            model.rope_cos, model.rope_sin,
+            *cache._keys, *cache._values,
         )
+
+        logits = results[0]
+        for i in range(num_layers):
+            cache._keys[i] = results[1 + i]
+            cache._values[i] = results[1 + num_layers + i]
+        position += 1
 
 def warmup_inference(model: TransformerWeights, tokenizer: Any, group: None = None) -> int:  # pyright: ignore[reportAny]
     """Run a full generation loop to warm up forward pass, KV cache, and sampling."""
@@ -141,6 +249,8 @@ def warmup_inference(model: TransformerWeights, tokenizer: Any, group: None = No
     warmup_task = TextGenerationTaskParams(
         model=CommonModelId("warmup"),
         input=[InputMessage(role="user", content="Time to warm up!")],
+        logprobs=True,
+        top_logprobs=DEFAULT_TOP_LOGPROBS,
     )
 
     prompt: str = apply_chat_template(tokenizer, warmup_task)

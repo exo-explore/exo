@@ -95,7 +95,8 @@ def _mlx_cleanup() -> None:
 
 
 def _tinygrad_cleanup() -> None:
-    pass
+    from exo.worker.engines.tinygrad.generator.generate import cleanup_jit_state
+    cleanup_jit_state()
 
 
 def _tinygrad_detect_thinking(prompt: str, tokenizer: Any) -> bool:  # pyright: ignore[reportAny]

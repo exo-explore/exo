@@ -16,13 +16,15 @@ class TransfomerBlockBuilder(NamedTuple):
     sin_freqs: Tensor
     layer: LayerWeights
     idx: int
-    offset: int
+    offset: int | Tensor
 
 def forward_pass(
     weights: TransformerWeights,
     input_ids: Tensor,
     cache: KVCache | None,
-    position_offset: int = 0,
+    position_offset: int | Tensor = 0,
+    rope_cos: Tensor | None = None,
+    rope_sin: Tensor | None = None,
 ) -> tuple[Tensor, KVCache]:
     config = weights.config
     _batch, seq_len = input_ids.shape
@@ -30,11 +32,29 @@ def forward_pass(
     x = apply_embedding(weights.embed_tokens, input_ids)
 
     if cache is None:
-       cache = KVCache(num_layers = len(weights.layers))
+        """
+            I am reducing the max_seq_len down to 4096 to work
+            with consumer grade GPUs. Unlike Apple systems,
+            most computers have memory statically partionined
+            if using integrated memory. With discrete GPUs, the
+            VRAM issue becomes explicit.
+
+            When testing out on my AMD RX6600M, this is my way
+            of handling OOM errors.
+        """
+        cache = KVCache(
+            num_layers = len(weights.layers),
+            num_kv_heads = config.num_key_value_heads,
+            head_dim = config.head_dim,
+            max_seq_len = min(config.max_position_embeddings, 4096),
+        )
+
+    cos = rope_cos if rope_cos is not None else weights.rope_cos
+    sin = rope_sin if rope_sin is not None else weights.rope_sin
 
     for layer_idx, layer in enumerate(weights.layers):
         builder = TransfomerBlockBuilder(
-           weights.rope_cos, weights.rope_sin, 
+            cos, sin,
             layer, layer_idx, position_offset,
         )
         x = _transformer_block(x, config, cache, builder)
@@ -63,6 +83,7 @@ def _transformer_block(
                 sin_freqs = builder.sin_freqs,
                 cache = cache, layer_idx = builder.idx,
                 position_offset = builder.offset,
+                cache_position = builder.offset,
                 num_heads = config.num_attention_heads,
                 num_kv_heads = config.num_key_value_heads,
                 head_dim = config.head_dim,

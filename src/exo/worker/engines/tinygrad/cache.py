@@ -1,31 +1,68 @@
+from tinygrad.dtype import dtypes
 from tinygrad.tensor import Tensor
 
 
 class KVCache:
-    def __init__(self, num_layers: int) -> None:
-        self._keys: list[Tensor | None] = [None] * num_layers
-        self._values: list[Tensor | None] = [None] * num_layers
+    def __init__(self, 
+                 num_layers: int, 
+                 num_kv_heads: int, 
+                 head_dim: int, 
+                 max_seq_len: int,
+                 ) -> None:
+        self._keys: list[Tensor] = [Tensor.zeros(1, num_kv_heads, max_seq_len, head_dim, dtype=dtypes.float16) for _ in range(num_layers)]  # pyright: ignore[reportUnknownMemberType]
+        self._values: list[Tensor] = [Tensor.zeros(1, num_kv_heads, max_seq_len, head_dim, dtype=dtypes.float16) for _ in range(num_layers)]  # pyright: ignore[reportUnknownMemberType]
+
+        self.max_seq_len = max_seq_len
+        self._positions: Tensor = Tensor.arange(max_seq_len).reshape(1, 1, max_seq_len, 1)  # pyright: ignore[reportUnknownMemberType]
+        self.col_indices: Tensor = Tensor.arange(max_seq_len).reshape(1, 1, 1, max_seq_len)  # pyright: ignore[reportUnknownMemberType]
 
     def update(
         self,
         layers_idx: int,
         key: Tensor,
         value: Tensor,
+        position: int | Tensor = 0,
     ) -> tuple[Tensor, Tensor]:
-        if self._keys[layers_idx] is None:
-            self._keys[layers_idx] = key
-            self._values[layers_idx] = value
-        else:
-            existing_k = self._keys[layers_idx]
-            existing_v = self._values[layers_idx]
-            assert existing_k is not None and existing_v is not None
-            self._keys[layers_idx] = existing_k.cat(key, dim=2)
-            self._values[layers_idx] = existing_v.cat(value, dim=2)
+        seq_len = key.shape[2]
 
-        result_k = self._keys[layers_idx]
-        result_v = self._values[layers_idx]
-        assert result_k is not None and result_v is not None
-        return result_k, result_v
+        """
+            Mask: For positions:
+            [self.position, self.position + seq_len]
+
+            We are using mask + pad since tinygrad tensor
+            cannot handle slice assignment. 
+        """
+
+        positions = self._positions
+
+        if isinstance(position, Tensor):
+            mask = positions == position
+            self._keys[layers_idx] = Tensor.where(
+                mask, key.half(), self._keys[layers_idx]
+            )
+            self._values[layers_idx] = Tensor.where(
+                mask, value.half(), self._values[layers_idx]
+            )
+        else:
+            mask = (positions >= position) & (positions < position + seq_len)
+            pad_prev = position
+            pad_next = self.max_seq_len - position - seq_len
+            new_k = key.pad(
+                ((0, 0), (0, 0), (pad_prev, pad_next), (0, 0))
+            ).half()
+            new_v = value.pad(
+                ((0, 0), (0, 0), (pad_prev, pad_next), (0, 0))
+            ).half()
+
+            self._keys[layers_idx] = Tensor.where(
+                mask, new_k, self._keys[layers_idx]
+            )
+
+            self._values[layers_idx] = Tensor.where(
+                mask, new_v, self._values[layers_idx]
+            )
+
+        return self._keys[layers_idx], self._values[layers_idx]
 
     @property
     def seq_len(self) -> int:
