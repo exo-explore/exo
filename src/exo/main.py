@@ -221,6 +221,8 @@ class Node:
                         self.router.sender(topics.LOCAL_EVENTS),
                     )
                     self._tg.start_soon(self.event_router.run)
+                    if self.master:
+                        self.master.event_sender = self.event_router.sender()
                     if self.download_coordinator:
                         self.download_coordinator.shutdown()
                         self.download_coordinator = DownloadCoordinator(
