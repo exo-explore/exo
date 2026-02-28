@@ -176,6 +176,17 @@ class Node:
                 # - Shutdown and re-create the worker
                 # - Shut down and re-create the API
 
+                if result.is_new_master:
+                    await anyio.sleep(0)
+                    self.event_router.shutdown()
+                    self.event_router = EventRouter(
+                        result.session_id,
+                        self.router.sender(topics.COMMANDS),
+                        self.router.receiver(topics.GLOBAL_EVENTS),
+                        self.router.sender(topics.LOCAL_EVENTS),
+                    )
+                    self._tg.start_soon(self.event_router.run)
+
                 if (
                     result.session_id.master_node_id == self.node_id
                     and self.master is not None
@@ -212,15 +223,6 @@ class Node:
                         f"Node {result.session_id.master_node_id} elected master"
                     )
                 if result.is_new_master:
-                    await anyio.sleep(0)
-                    self.event_router.shutdown()
-                    self.event_router = EventRouter(
-                        result.session_id,
-                        self.router.sender(topics.COMMANDS),
-                        self.router.receiver(topics.GLOBAL_EVENTS),
-                        self.router.sender(topics.LOCAL_EVENTS),
-                    )
-                    self._tg.start_soon(self.event_router.run)
                     if self.download_coordinator:
                         self.download_coordinator.shutdown()
                         self.download_coordinator = DownloadCoordinator(
