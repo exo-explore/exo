@@ -27,6 +27,7 @@ class TokenChunk(BaseChunk):
     stats: GenerationStats | None = None
     logprob: float | None = None
     top_logprobs: list[TopLogprobItem] | None = None
+    is_thinking: bool = False
 
 
 class ErrorChunk(BaseChunk):

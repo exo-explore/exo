@@ -145,7 +145,23 @@ class ResponseFunctionCallItem(BaseModel, frozen=True):
     status: ResponseStatus = "completed"
 
 
-ResponseItem = ResponseMessageItem | ResponseFunctionCallItem
+class ResponseReasoningSummaryText(BaseModel, frozen=True):
+    """Summary text part in a reasoning output item."""
+
+    type: Literal["summary_text"] = "summary_text"
+    text: str
+
+
+class ResponseReasoningItem(BaseModel, frozen=True):
+    """Reasoning output item in response output array."""
+
+    type: Literal["reasoning"] = "reasoning"
+    id: str
+    summary: list[ResponseReasoningSummaryText] = Field(default_factory=list)
+    status: ResponseStatus = "completed"
+
+
+ResponseItem = ResponseMessageItem | ResponseFunctionCallItem | ResponseReasoningItem
 
 
 class ResponseUsage(BaseModel, frozen=True):
@@ -273,6 +289,58 @@ class ResponseFunctionCallArgumentsDoneEvent(BaseModel, frozen=True):
     arguments: str
 
 
+class ResponseReasoningSummaryPartAddedEvent(BaseModel, frozen=True):
+    """Event sent when a reasoning summary part is added."""
+
+    type: Literal["response.reasoning_summary_part.added"] = (
+        "response.reasoning_summary_part.added"
+    )
+    sequence_number: int
+    item_id: str
+    output_index: int
+    summary_index: int
+    part: ResponseReasoningSummaryText
+
+
+class ResponseReasoningSummaryTextDeltaEvent(BaseModel, frozen=True):
+    """Event sent for reasoning summary text delta during streaming."""
+
+    type: Literal["response.reasoning_summary_text.delta"] = (
+        "response.reasoning_summary_text.delta"
+    )
+    sequence_number: int
+    item_id: str
+    output_index: int
+    summary_index: int
+    delta: str
+
+
+class ResponseReasoningSummaryTextDoneEvent(BaseModel, frozen=True):
+    """Event sent when reasoning summary text is done."""
+
+    type: Literal["response.reasoning_summary_text.done"] = (
+        "response.reasoning_summary_text.done"
+    )
+    sequence_number: int
+    item_id: str
+    output_index: int
+    summary_index: int
+    text: str
+
+
+class ResponseReasoningSummaryPartDoneEvent(BaseModel, frozen=True):
+    """Event sent when a reasoning summary part is done."""
+
+    type: Literal["response.reasoning_summary_part.done"] = (
+        "response.reasoning_summary_part.done"
+    )
+    sequence_number: int
+    item_id: str
+    output_index: int
+    summary_index: int
+    part: ResponseReasoningSummaryText
+
+
 class ResponseCompletedEvent(BaseModel, frozen=True):
     """Event sent when response is completed."""
 
@@ -292,5 +360,9 @@ ResponsesStreamEvent = (
     | ResponseOutputItemDoneEvent
     | ResponseFunctionCallArgumentsDeltaEvent
     | ResponseFunctionCallArgumentsDoneEvent
+    | ResponseReasoningSummaryPartAddedEvent
+    | ResponseReasoningSummaryTextDeltaEvent
+    | ResponseReasoningSummaryTextDoneEvent
+    | ResponseReasoningSummaryPartDoneEvent
     | ResponseCompletedEvent
 )

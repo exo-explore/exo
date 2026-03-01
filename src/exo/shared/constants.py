@@ -33,6 +33,15 @@ EXO_MODELS_DIR = (
     if _EXO_MODELS_DIR_ENV is None
     else Path.home() / _EXO_MODELS_DIR_ENV
 )
+
+# Read-only search path for pre-downloaded models (colon-separated directories)
+_EXO_MODELS_PATH_ENV = os.environ.get("EXO_MODELS_PATH", None)
+EXO_MODELS_PATH: tuple[Path, ...] | None = (
+    tuple(Path(p).expanduser() for p in _EXO_MODELS_PATH_ENV.split(":") if p)
+    if _EXO_MODELS_PATH_ENV is not None
+    else None
+)
+
 _RESOURCES_DIR_ENV = os.environ.get("EXO_RESOURCES_DIR", None)
 RESOURCES_DIR = (
     find_resources() if _RESOURCES_DIR_ENV is None else Path.home() / _RESOURCES_DIR_ENV

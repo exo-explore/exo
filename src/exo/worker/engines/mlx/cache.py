@@ -22,7 +22,7 @@ from exo.worker.runner.bootstrap import logger
 # Fraction of device memory above which LRU eviction kicks in.
 # Smaller machines need more aggressive eviction.
 def _default_memory_threshold() -> float:
-    total_gb = psutil.virtual_memory().total / (1024**3)
+    total_gb = Memory.from_bytes(psutil.virtual_memory().total).in_gb
     if total_gb >= 128:
         return 0.85
     if total_gb >= 64:

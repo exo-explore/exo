@@ -34,6 +34,14 @@ from exo.shared.architecture.master.adapters.claude import (
     collect_claude_response,
     generate_claude_stream,
 )
+from exo.shared.architecture.master.adapters.ollama import (
+    collect_ollama_chat_response,
+    collect_ollama_generate_response,
+    generate_ollama_chat_stream,
+    generate_ollama_generate_stream,
+    ollama_generate_request_to_text_generation,
+    ollama_request_to_text_generation,
+)
 from exo.shared.architecture.master.adapters.responses import (
     collect_responses_response,
     generate_responses_stream,
@@ -46,6 +54,7 @@ from exo.shared.architecture.master.placement import (
 )
 from exo.shared.constants import (
     DASHBOARD_DIR,
+    EXO_CACHE_HOME,
     EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
@@ -135,16 +144,28 @@ from exo.shared.types.commands import (
     TaskFinished,
     TextGeneration,
 )
-from exo.shared.types.common import CommandId, Id, NodeId, SessionId
+from exo.shared.types.common import CommandId, Id, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
-    ForwarderEvent,
+    GlobalForwarderEvent,
     IndexedEvent,
-    PrefillProgress,
     TracesMerged,
 )
 from exo.shared.types.memory import Memory
+from exo.shared.types.ollama_api import (
+    OllamaChatRequest,
+    OllamaChatResponse,
+    OllamaGenerateRequest,
+    OllamaGenerateResponse,
+    OllamaModelDetails,
+    OllamaModelTag,
+    OllamaPsModel,
+    OllamaPsResponse,
+    OllamaShowRequest,
+    OllamaShowResponse,
+    OllamaTagsResponse,
+)
 from exo.shared.types.openai_responses import (
     ResponsesRequest,
     ResponsesResponse,
@@ -163,6 +184,7 @@ from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
 
 _API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
+ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
 
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
@@ -185,8 +207,7 @@ class API:
         session_id: SessionId,
         *,
         port: int,
-        # Ideally this would be a MasterForwarderEvent but type system says no :(
-        global_event_receiver: Receiver[ForwarderEvent],
+        global_event_receiver: Receiver[GlobalForwarderEvent],
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
@@ -194,6 +215,7 @@ class API:
     ) -> None:
         self.state = State()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
+        self._system_id = SystemId()
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.global_event_receiver = global_event_receiver
@@ -245,6 +267,7 @@ class API:
         self._event_log.close()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
         self.state = State()
+        self._system_id = SystemId()
         self.session_id = new_session_id
         self.event_buffer = OrderedBuffer[Event]()
         self._text_generation_queues = {}
@@ -309,6 +332,21 @@ class API:
         self.app.get("/images/{image_id}")(self.get_image)
         self.app.post("/v1/messages", response_model=None)(self.claude_messages)
         self.app.post("/v1/responses", response_model=None)(self.openai_responses)
+
+        # Ollama API
+        self.app.head("/ollama/")(self.ollama_version)
+        self.app.head("/ollama/api/version")(self.ollama_version)
+        self.app.post("/ollama/api/chat", response_model=None)(self.ollama_chat)
+        self.app.post("/ollama/api/api/chat", response_model=None)(self.ollama_chat)
+        self.app.post("/ollama/api/v1/chat", response_model=None)(self.ollama_chat)
+        self.app.post("/ollama/api/generate", response_model=None)(self.ollama_generate)
+        self.app.get("/ollama/api/tags")(self.ollama_tags)
+        self.app.get("/ollama/api/api/tags")(self.ollama_tags)
+        self.app.get("/ollama/api/v1/tags")(self.ollama_tags)
+        self.app.post("/ollama/api/show")(self.ollama_show)
+        self.app.get("/ollama/api/ps")(self.ollama_ps)
+        self.app.get("/ollama/api/version")(self.ollama_version)
+
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(self.stream_events)
         self.app.post("/download/start")(self.start_download)
@@ -317,6 +355,8 @@ class API:
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
         self.app.get("/v1/traces/{task_id}/stats")(self.get_trace_stats)
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
+        self.app.get("/onboarding")(self.get_onboarding)
+        self.app.post("/onboarding")(self.complete_onboarding)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -569,7 +609,7 @@ class API:
             command = TaskCancelled(cancelled_command_id=command_id)
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(
-                    ForwarderCommand(origin=self.node_id, command=command)
+                    ForwarderCommand(origin=self._system_id, command=command)
                 )
             raise
         finally:
@@ -917,7 +957,7 @@ class API:
             command = TaskCancelled(cancelled_command_id=command_id)
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(
-                    ForwarderCommand(origin=self.node_id, command=command)
+                    ForwarderCommand(origin=self._system_id, command=command)
                 )
             raise
         finally:
@@ -1003,7 +1043,7 @@ class API:
             command = TaskCancelled(cancelled_command_id=command_id)
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(
-                    ForwarderCommand(origin=self.node_id, command=command)
+                    ForwarderCommand(origin=self._system_id, command=command)
                 )
             raise
         finally:
@@ -1309,6 +1349,163 @@ class API:
                 media_type="application/json",
             )
 
+    async def _ollama_root(self) -> JSONResponse:
+        """Respond to HEAD / from Ollama CLI connectivity checks."""
+        return JSONResponse(content="Ollama is running")
+
+    async def ollama_chat(
+        self, request: Request
+    ) -> OllamaChatResponse | StreamingResponse:
+        """Ollama Chat API — accepts JSON regardless of Content-Type."""
+        body = await request.body()
+        payload = OllamaChatRequest.model_validate_json(body)
+        task_params = ollama_request_to_text_generation(payload)
+        resolved_model = await self._resolve_and_validate_text_model(
+            ModelId(task_params.model)
+        )
+        task_params = task_params.model_copy(update={"model": resolved_model})
+
+        command = TextGeneration(task_params=task_params)
+        await self._send(command)
+
+        if payload.stream:
+            return StreamingResponse(
+                generate_ollama_chat_stream(
+                    command.command_id,
+                    self._token_chunk_stream(command.command_id),
+                ),
+                media_type="application/x-ndjson",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "close",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+        else:
+            return StreamingResponse(
+                collect_ollama_chat_response(
+                    command.command_id,
+                    self._token_chunk_stream(command.command_id),
+                ),
+                media_type="application/json",
+            )
+
+    async def ollama_generate(
+        self, request: Request
+    ) -> OllamaGenerateResponse | StreamingResponse:
+        """Ollama Generate API — accepts JSON regardless of Content-Type."""
+        body = await request.body()
+        payload = OllamaGenerateRequest.model_validate_json(body)
+        task_params = ollama_generate_request_to_text_generation(payload)
+        resolved_model = await self._resolve_and_validate_text_model(
+            ModelId(task_params.model)
+        )
+        task_params = task_params.model_copy(update={"model": resolved_model})
+
+        command = TextGeneration(task_params=task_params)
+        await self._send(command)
+
+        if payload.stream:
+            return StreamingResponse(
+                generate_ollama_generate_stream(
+                    command.command_id,
+                    self._token_chunk_stream(command.command_id),
+                ),
+                media_type="application/x-ndjson",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "close",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+        else:
+            return StreamingResponse(
+                collect_ollama_generate_response(
+                    command.command_id,
+                    self._token_chunk_stream(command.command_id),
+                ),
+                media_type="application/json",
+            )
+
+    async def ollama_tags(self) -> OllamaTagsResponse:
+        """Returns list of models in Ollama tags format. We return the downloaded ones only."""
+
+        def none_if_empty(value: str) -> str | None:
+            return value or None
+
+        downloaded_model_ids: set[str] = set()
+        for node_downloads in self.state.downloads.values():
+            for dl in node_downloads:
+                if isinstance(dl, DownloadCompleted):
+                    downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
+
+        cards = [
+            c for c in await get_model_cards() if c.model_id in downloaded_model_ids
+        ]
+
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        return OllamaTagsResponse(
+            models=[
+                OllamaModelTag(
+                    name=str(card.model_id),
+                    model=str(card.model_id),
+                    modified_at=now,
+                    size=card.storage_size.in_bytes,
+                    digest="sha256:000000000000",
+                    details=OllamaModelDetails(
+                        family=none_if_empty(card.family),
+                        quantization_level=none_if_empty(card.quantization),
+                    ),
+                )
+                for card in cards
+            ]
+        )
+
+    async def ollama_show(self, request: Request) -> OllamaShowResponse:
+        """Returns model information in Ollama show format."""
+        body = await request.body()
+        payload = OllamaShowRequest.model_validate_json(body)
+        model_name = payload.name or payload.model
+        if not model_name:
+            raise HTTPException(status_code=400, detail="name or model is required")
+        try:
+            card = await ModelCard.load(ModelId(model_name))
+        except Exception as exc:
+            raise HTTPException(
+                status_code=404, detail=f"Model not found: {model_name}"
+            ) from exc
+
+        return OllamaShowResponse(
+            modelfile=f"FROM {card.model_id}",
+            template="{{ .Prompt }}",
+            details=OllamaModelDetails(
+                family=card.family or None,
+                quantization_level=card.quantization or None,
+            ),
+        )
+
+    async def ollama_ps(self) -> OllamaPsResponse:
+        """Returns list of running models (active instances)."""
+        models: list[OllamaPsModel] = []
+        seen: set[str] = set()
+        for instance in self.state.instances.values():
+            model_id = str(instance.shard_assignments.model_id)
+            if model_id in seen:
+                continue
+            seen.add(model_id)
+            models.append(
+                OllamaPsModel(
+                    name=model_id,
+                    model=model_id,
+                    size=0,
+                )
+            )
+        return OllamaPsResponse(models=models)
+
+    async def ollama_version(self) -> dict[str, str]:
+        """Returns version information for Ollama API compatibility."""
+        return {"version": "exo v1.0"}
+
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
         total_available = Memory()
@@ -1338,7 +1535,7 @@ class API:
                     name=card.model_id.short(),
                     description="",
                     tags=[],
-                    storage_size_megabytes=int(card.storage_size.in_mb),
+                    storage_size_megabytes=card.storage_size.in_mb,
                     supports_tensor=card.supports_tensor,
                     tasks=[task.value for task in card.tasks],
                     is_custom=is_custom_card(card.model_id),
@@ -1444,6 +1641,8 @@ class API:
     async def _apply_state(self):
         with self.global_event_receiver as events:
             async for f_event in events:
+                if f_event.session != self.session_id:
+                    continue
                 if f_event.origin != self.session_id.master_node_id:
                     continue
                 self.event_buffer.ingest(f_event.origin_idx, f_event.event)
@@ -1470,22 +1669,6 @@ class API:
                                 await queue.send(event.chunk)
                             except BrokenResourceError:
                                 self._text_generation_queues.pop(event.command_id, None)
-
-                    elif isinstance(event, PrefillProgress):
-                        if queue := self._text_generation_queues.get(
-                            event.command_id, None
-                        ):
-                            try:
-                                await queue.send(
-                                    PrefillProgressChunk(
-                                        model=event.model,
-                                        processed_tokens=event.processed_tokens,
-                                        total_tokens=event.total_tokens,
-                                    )
-                                )
-                            except BrokenResourceError:
-                                self._text_generation_queues.pop(event.command_id, None)
-
                     if isinstance(event, TracesMerged):
                         self._save_merged_trace(event)
 
@@ -1523,12 +1706,12 @@ class API:
         while self.paused:
             await self.paused_ev.wait()
         await self.command_sender.send(
-            ForwarderCommand(origin=self.node_id, command=command)
+            ForwarderCommand(origin=self._system_id, command=command)
         )
 
     async def _send_download(self, command: DownloadCommand):
         await self.download_command_sender.send(
-            ForwarderDownloadCommand(origin=self.node_id, command=command)
+            ForwarderDownloadCommand(origin=self._system_id, command=command)
         )
 
     async def start_download(
@@ -1650,3 +1833,11 @@ class API:
             media_type="application/json",
             filename=f"trace_{task_id}.json",
         )
+
+    async def get_onboarding(self) -> JSONResponse:
+        return JSONResponse({"completed": ONBOARDING_COMPLETE_FILE.exists()})
+
+    async def complete_onboarding(self) -> JSONResponse:
+        ONBOARDING_COMPLETE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ONBOARDING_COMPLETE_FILE.write_text("true")
+        return JSONResponse({"completed": True})

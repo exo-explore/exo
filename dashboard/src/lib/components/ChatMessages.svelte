@@ -807,8 +807,8 @@
       >
         AWAITING INPUT
       </p>
-      <p class="text-sm sm:text-xs text-exo-light-gray tracking-wider mt-1">
-        ENTER A QUERY TO BEGIN
+      <p class="text-xs text-white/30 tracking-wider mt-1.5 font-mono">
+        Type a message below &middot; Shift+Enter for newline
       </p>
     </div>
   {/if}
@@ -823,6 +823,7 @@
       onclick={scrollToBottom}
       class="sticky bottom-4 left-1/2 -translate-x-1/2 w-10 h-10 rounded-full bg-exo-dark-gray/90 border border-exo-medium-gray/50 flex items-center justify-center text-exo-light-gray hover:text-exo-yellow hover:border-exo-yellow/50 transition-all shadow-lg cursor-pointer z-10"
       title="Scroll to bottom"
+      aria-label="Scroll to bottom of messages"
     >
       <svg
         class="w-5 h-5"

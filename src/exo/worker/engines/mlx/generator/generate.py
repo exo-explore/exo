@@ -61,6 +61,10 @@ generation_stream = mx.new_stream(mx.default_device())
 _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
 
 
+class PrefillCancelled(BaseException):
+    """Raised when prefill is cancelled via the progress callback."""
+
+
 def prefill(
     model: Model,
     tokenizer: TokenizerWrapper,
@@ -76,7 +80,7 @@ def prefill(
     then trims off the extra generated token.
 
     Returns:
-        tokens_per_sec
+        (tokens_per_sec, num_tokens, snapshots)
     """
     num_tokens = len(prompt_tokens)
     if num_tokens == 0:
@@ -87,6 +91,7 @@ def prefill(
     has_ssm = has_non_kv_caches(cache)
     snapshots: list[CacheSnapshot] = []
 
+    # TODO(evan): kill the callbacks/runner refactor
     def progress_callback(processed: int, total: int) -> None:
         elapsed = time.perf_counter() - start_time
         tok_per_sec = processed / elapsed if elapsed > 0 else 0
@@ -106,19 +111,23 @@ def prefill(
 
     # Use max_tokens=1 because max_tokens=0 does not work.
     # We just throw away the generated token - we only care about filling the cache
-    for _ in stream_generate(
-        model=model,
-        tokenizer=tokenizer,
-        prompt=prompt_tokens,
-        max_tokens=1,
-        sampler=sampler,
-        prompt_cache=cache,
-        prefill_step_size=4096,
-        kv_group_size=KV_GROUP_SIZE,
-        kv_bits=KV_BITS,
-        prompt_progress_callback=progress_callback,
-    ):
-        break  # Stop after first iteration - cache is now filled
+    try:
+        for _ in stream_generate(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt_tokens,
+            max_tokens=1,
+            sampler=sampler,
+            prompt_cache=cache,
+            prefill_step_size=4096,
+            kv_group_size=KV_GROUP_SIZE,
+            kv_bits=KV_BITS,
+            prompt_progress_callback=progress_callback,
+        ):
+            break  # Stop after first iteration - cache is now filled
+    except PrefillCancelled:
+        set_pipeline_prefill(model, is_prefill=False)
+        raise
 
     set_pipeline_prefill(model, is_prefill=False)
 

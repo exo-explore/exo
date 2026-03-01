@@ -29,13 +29,14 @@ from exo.shared.types.commands import (
     TestCommand,
     TextGeneration,
 )
-from exo.shared.types.common import CommandId, NodeId, SessionId
+from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     Event,
-    ForwarderEvent,
+    GlobalForwarderEvent,
     IndexedEvent,
     InputChunkReceived,
     InstanceDeleted,
+    LocalForwarderEvent,
     NodeGatheredInfo,
     NodeTimedOut,
     TaskCreated,
@@ -71,8 +72,8 @@ class Master:
         session_id: SessionId,
         *,
         command_receiver: Receiver[ForwarderCommand],
-        local_event_receiver: Receiver[ForwarderEvent],
-        global_event_sender: Sender[ForwarderEvent],
+        local_event_receiver: Receiver[LocalForwarderEvent],
+        global_event_sender: Sender[GlobalForwarderEvent],
         download_command_sender: Sender[ForwarderDownloadCommand],
     ):
         self.state = State()
@@ -87,10 +88,11 @@ class Master:
         send, recv = channel[Event]()
         self.event_sender: Sender[Event] = send
         self._loopback_event_receiver: Receiver[Event] = recv
-        self._loopback_event_sender: Sender[ForwarderEvent] = (
+        self._loopback_event_sender: Sender[LocalForwarderEvent] = (
             local_event_receiver.clone_sender()
         )
-        self._multi_buffer = MultiSourceBuffer[NodeId, Event]()
+        self._system_id = SystemId()
+        self._multi_buffer = MultiSourceBuffer[SystemId, Event]()
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
@@ -288,7 +290,7 @@ class Master:
                             ):
                                 await self.download_command_sender.send(
                                     ForwarderDownloadCommand(
-                                        origin=self.node_id, command=cmd
+                                        origin=self._system_id, command=cmd
                                     )
                                 )
                             generated_events.extend(transition_events)
@@ -414,8 +416,8 @@ class Master:
         with self._loopback_event_receiver as events:
             async for event in events:
                 await self._loopback_event_sender.send(
-                    ForwarderEvent(
-                        origin=NodeId(f"master_{self.node_id}"),
+                    LocalForwarderEvent(
+                        origin=self._system_id,
                         origin_idx=local_index,
                         session=self.session_id,
                         event=event,
@@ -427,7 +429,7 @@ class Master:
     async def _send_event(self, event: IndexedEvent):
         # Convenience method since this line is ugly
         await self.global_event_sender.send(
-            ForwarderEvent(
+            GlobalForwarderEvent(
                 origin=self.node_id,
                 origin_idx=event.idx,
                 session=self.session_id,

@@ -59,7 +59,11 @@ def chat_request_to_text_generation(
             chat_template_messages.append({"role": "system", "content": content})
         else:
             # Skip messages with no meaningful content
-            if msg.content is None and msg.thinking is None and msg.tool_calls is None:
+            if (
+                msg.content is None
+                and msg.reasoning_content is None
+                and msg.tool_calls is None
+            ):
                 continue
 
             if msg.role in ("user", "assistant", "developer"):
@@ -111,6 +115,11 @@ def chunk_to_response(
             ]
         )
 
+    if chunk.is_thinking:
+        delta = ChatCompletionMessage(role="assistant", reasoning_content=chunk.text)
+    else:
+        delta = ChatCompletionMessage(role="assistant", content=chunk.text)
+
     return ChatCompletionResponse(
         id=command_id,
         created=int(time.time()),
@@ -118,7 +127,7 @@ def chunk_to_response(
         choices=[
             StreamingChoiceResponse(
                 index=0,
-                delta=ChatCompletionMessage(role="assistant", content=chunk.text),
+                delta=delta,
                 logprobs=logprobs,
                 finish_reason=chunk.finish_reason,
             )
@@ -208,6 +217,7 @@ async def collect_chat_response(
     # FastAPI handles the cancellation better but wouldn't auto-serialize for some reason
     """Collect all token chunks and return a single ChatCompletionResponse."""
     text_parts: list[str] = []
+    thinking_parts: list[str] = []
     tool_calls: list[ToolCall] = []
     logprobs_content: list[LogprobsContentItem] = []
     model: str | None = None
@@ -228,7 +238,10 @@ async def collect_chat_response(
                 if model is None:
                     model = chunk.model
                 last_usage = chunk.usage or last_usage
-                text_parts.append(chunk.text)
+                if chunk.is_thinking:
+                    thinking_parts.append(chunk.text)
+                else:
+                    text_parts.append(chunk.text)
                 if chunk.logprob is not None:
                     logprobs_content.append(
                         LogprobsContentItem(
@@ -258,6 +271,7 @@ async def collect_chat_response(
         raise ValueError(error_message)
 
     combined_text = "".join(text_parts)
+    combined_thinking = "".join(thinking_parts) if thinking_parts else None
     assert model is not None
 
     yield ChatCompletionResponse(
@@ -270,6 +284,7 @@ async def collect_chat_response(
                 message=ChatCompletionMessage(
                     role="assistant",
                     content=combined_text,
+                    reasoning_content=combined_thinking,
                     tool_calls=tool_calls if tool_calls else None,
                 ),
                 logprobs=Logprobs(content=logprobs_content)

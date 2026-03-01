@@ -55,8 +55,11 @@ from exo.shared.types.worker.shards import (
 )
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.auto_parallel import (
+    LayerLoadedCallback,
     TimeoutCallback,
     eval_with_timeout,
+    get_inner_model,
+    get_layers,
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
@@ -174,13 +177,28 @@ def initialize_mlx(
 def load_mlx_items(
     bound_instance: BoundInstance,
     group: Group | None,
-    on_timeout: TimeoutCallback | None = None,
+    on_timeout: TimeoutCallback | None,
+    on_layer_loaded: LayerLoadedCallback | None,
 ) -> tuple[Model, TokenizerWrapper]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
         start_time = time.perf_counter()
-        model, _ = load_model(model_path, strict=True)
+        model, _ = load_model(model_path, lazy=True, strict=False)
+        # Eval layers one by one for progress reporting
+        try:
+            inner = get_inner_model(model)
+            layers = get_layers(inner)
+            total = len(layers)
+            for i, layer in enumerate(layers):
+                mx.eval(layer)  # type: ignore
+                if on_layer_loaded is not None:
+                    on_layer_loaded(i, total)
+        except ValueError as e:
+            logger.opt(exception=e).debug(
+                "Model architecture doesn't support layer-by-layer progress tracking"
+            )
+        mx.eval(model)
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
         tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
@@ -189,7 +207,10 @@ def load_mlx_items(
         logger.info("Starting distributed init")
         start_time = time.perf_counter()
         model, tokenizer = shard_and_load(
-            bound_instance.bound_shard, group=group, on_timeout=on_timeout
+            bound_instance.bound_shard,
+            group=group,
+            on_timeout=on_timeout,
+            on_layer_loaded=on_layer_loaded,
         )
         end_time = time.perf_counter()
         logger.info(
@@ -204,7 +225,8 @@ def load_mlx_items(
 def shard_and_load(
     shard_metadata: ShardMetadata,
     group: Group,
-    on_timeout: TimeoutCallback | None = None,
+    on_timeout: TimeoutCallback | None,
+    on_layer_loaded: LayerLoadedCallback | None,
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
@@ -235,20 +257,24 @@ def shard_and_load(
 
     # Estimate timeout based on model size (5x default for large queued workloads)
     base_timeout = float(os.environ.get("EXO_MODEL_LOAD_TIMEOUT", "300"))
-    model_size_gb = get_weights_size(shard_metadata).in_bytes / (1024**3)
-    timeout_seconds = base_timeout + model_size_gb
+    model_size = get_weights_size(shard_metadata)
+    timeout_seconds = base_timeout + model_size.in_gb
     logger.info(
         f"Evaluating model parameters with timeout of {timeout_seconds:.0f}s "
-        f"(model size: {model_size_gb:.1f}GB)"
+        f"(model size: {model_size.in_gb:.1f}GB)"
     )
 
     match shard_metadata:
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
-            model = tensor_auto_parallel(model, group, timeout_seconds, on_timeout)
+            model = tensor_auto_parallel(
+                model, group, timeout_seconds, on_timeout, on_layer_loaded
+            )
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
-            model = pipeline_auto_parallel(model, group, shard_metadata)
+            model = pipeline_auto_parallel(
+                model, group, shard_metadata, on_layer_loaded=on_layer_loaded
+            )
             eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
         case CfgShardMetadata():
             raise ValueError(
@@ -461,6 +487,19 @@ def _patch_lossy_chat_template(template: str) -> str | None:
     return patched if n > 0 else None
 
 
+def _needs_dsml_encoding(task_params: TextGenerationTaskParams) -> bool:
+    if "deepseek-v3.2" not in task_params.model.lower():
+        return False
+    # Use DSML encoding when tools are provided or tool results are in the conversation
+    if task_params.tools:
+        return True
+    if task_params.chat_template_messages:
+        return any(
+            msg.get("role") == "tool" for msg in task_params.chat_template_messages
+        )
+    return False
+
+
 def apply_chat_template(
     tokenizer: TokenizerWrapper,
     task_params: TextGenerationTaskParams,
@@ -472,7 +511,6 @@ def apply_chat_template(
 
     When chat_template_messages is available (from Chat Completions API),
     uses those directly to preserve tool_calls, thinking, and other fields.
-    Otherwise builds messages from the task params input/instructions.
     """
     formatted_messages: list[dict[str, Any]] = []
     if task_params.chat_template_messages is not None:
@@ -499,6 +537,19 @@ def apply_chat_template(
     if formatted_messages and formatted_messages[-1].get("role") == "assistant":
         partial_assistant_content = cast(str, formatted_messages[-1].get("content", ""))
         formatted_messages = formatted_messages[:-1]
+
+    if _needs_dsml_encoding(task_params):
+        from exo.worker.engines.mlx.dsml_encoding import encode_messages
+
+        prompt = encode_messages(
+            messages=formatted_messages,
+            thinking_mode="thinking" if task_params.enable_thinking else "chat",
+            tools=task_params.tools,
+        )
+        if partial_assistant_content:
+            prompt += partial_assistant_content
+        logger.info(prompt)
+        return prompt
 
     extra_kwargs: dict[str, Any] = {}
     if task_params.enable_thinking is not None:
@@ -620,18 +671,17 @@ def set_wired_limit_for_model(model_size: Memory):
     if not mx.metal.is_available():
         return
 
-    model_bytes = model_size.in_bytes
-    max_rec_size = int(mx.metal.device_info()["max_recommended_working_set_size"])
-    if model_bytes > 0.9 * max_rec_size:
-        model_mb = model_bytes // 2**20
-        max_rec_mb = max_rec_size // 2**20
+    max_rec_size = Memory.from_bytes(
+        int(mx.metal.device_info()["max_recommended_working_set_size"])
+    )
+    if model_size > 0.9 * max_rec_size:
         logger.warning(
-            f"Generating with a model that requires {model_mb} MB "
-            f"which is close to the maximum recommended size of {max_rec_mb} "
+            f"Generating with a model that requires {model_size.in_float_mb:.1f} MB "
+            f"which is close to the maximum recommended size of {max_rec_size.in_float_mb:.1f} "
             "MB. This can be slow. See the documentation for possible work-arounds: "
             "https://github.com/ml-explore/mlx-lm/tree/main#large-models"
         )
-    mx.set_wired_limit(max_rec_size)
+    mx.set_wired_limit(max_rec_size.in_bytes)
     logger.info(f"Wired limit set to {max_rec_size}.")
 
 

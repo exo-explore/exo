@@ -2,7 +2,6 @@
 //!
 
 use pin_project::pin_project;
-use pyo3::marker::Ungil;
 use pyo3::prelude::*;
 use std::{
     future::Future,
@@ -26,8 +25,8 @@ where
 
 impl<F> Future for AllowThreads<F>
 where
-    F: Future + Ungil,
-    F::Output: Ungil,
+    F: Future + Send,
+    F::Output: Send,
 {
     type Output = F::Output;
 

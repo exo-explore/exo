@@ -15,7 +15,6 @@ from exo.shared.types.events import (
     NodeDownloadProgress,
     NodeGatheredInfo,
     NodeTimedOut,
-    PrefillProgress,
     RunnerDeleted,
     RunnerStatusUpdated,
     TaskAcknowledged,
@@ -65,7 +64,6 @@ def event_apply(event: Event, state: State) -> State:
             | ChunkGenerated()
             | TaskAcknowledged()
             | InputChunkReceived()
-            | PrefillProgress()
             | TracesCollected()
             | TracesMerged()
         ):  # Pass-through events that don't modify state

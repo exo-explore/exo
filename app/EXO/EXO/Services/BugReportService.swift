@@ -38,7 +38,8 @@ struct BugReportService {
     func sendReport(
         baseURL: URL = URL(string: "http://127.0.0.1:52415")!,
         now: Date = Date(),
-        isManual: Bool = false
+        isManual: Bool = false,
+        userDescription: String? = nil
     ) async throws -> BugReportOutcome {
         let timestamp = Self.runTimestampString(now)
         let dayPrefix = Self.dayPrefixString(now)
@@ -60,7 +61,8 @@ struct BugReportService {
             ifconfig: ifconfigText,
             debugInfo: debugInfo,
             isManual: isManual,
-            clusterTbBridgeStatus: clusterTbBridgeStatus
+            clusterTbBridgeStatus: clusterTbBridgeStatus,
+            userDescription: userDescription
         )
 
         let eventLogFiles = readAllEventLogs()
@@ -306,7 +308,8 @@ struct BugReportService {
         ifconfig: String,
         debugInfo: DebugInfo,
         isManual: Bool,
-        clusterTbBridgeStatus: [[String: Any]]?
+        clusterTbBridgeStatus: [[String: Any]]?,
+        userDescription: String? = nil
     ) -> Data? {
         let system = readSystemMetadata()
         let exo = readExoMetadata()
@@ -322,6 +325,9 @@ struct BugReportService {
         ]
         if let tbStatus = clusterTbBridgeStatus {
             payload["cluster_thunderbolt_bridge"] = tbStatus
+        }
+        if let desc = userDescription, !desc.isEmpty {
+            payload["user_description"] = desc
         }
         return try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted])
     }
