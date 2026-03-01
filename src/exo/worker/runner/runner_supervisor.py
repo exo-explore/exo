@@ -1,7 +1,8 @@
 import contextlib
 import signal
 from dataclasses import dataclass, field
-from multiprocessing import Process
+from multiprocessing import Pipe, Process
+from multiprocessing.connection import Connection
 from typing import Self
 
 import anyio
@@ -52,6 +53,7 @@ class RunnerSupervisor:
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
     completed: set[TaskId] = field(default_factory=set, init=False)
     cancelled: set[TaskId] = field(default_factory=set, init=False)
+    _death_conn: Connection
 
     @classmethod
     def create(
@@ -65,6 +67,8 @@ class RunnerSupervisor:
         task_sender, task_recv = mp_channel[Task]()
         cancel_sender, cancel_recv = mp_channel[TaskId]()
 
+        parent_conn, child_conn = Pipe()
+
         runner_process = Process(
             target=entrypoint,
             args=(
@@ -73,8 +77,9 @@ class RunnerSupervisor:
                 task_recv,
                 cancel_recv,
                 logger,
+                child_conn,
             ),
-            daemon=True,
+            daemon=False,
         )
 
         shard_metadata = bound_instance.bound_shard
@@ -88,6 +93,7 @@ class RunnerSupervisor:
             _task_sender=task_sender,
             _cancel_sender=cancel_sender,
             _event_sender=event_sender,
+            _death_conn=parent_conn,
         )
 
         return self
@@ -98,6 +104,7 @@ class RunnerSupervisor:
 
     def shutdown(self):
         logger.info("Runner supervisor shutting down")
+        self._death_conn.close()
         self._ev_recv.close()
         self._task_sender.close()
         self._event_sender.close()

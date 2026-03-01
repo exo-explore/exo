@@ -207,12 +207,17 @@ def _build_weight(
     raise KeyError(f"Weight key '{key}' not found (also tried {qweight_key})")
 
 def _load_all_safetensors(path: Path) -> dict[str, Tensor]:
+    from tinygrad.helpers import Context, BEAM  # pyright: ignore[reportPrivateUsage]
+
     merged: dict[str, Tensor] = {}
 
-    for safetensor_file in sorted(path.glob("*.safetensors")):
-        shard = safe_load(str(safetensor_file))
-        for key, tensor in shard.items():
-            merged[key] = tensor.to(Device.DEFAULT).contiguous().realize()
+    # Disable BEAM during weight loading. Copy kernels (DISK -> GPU) have unique
+    # shapes per tensor and don't benefit from beam search optimisation.
+    with Context(BEAM=0):
+        for safetensor_file in sorted(path.glob("*.safetensors")):
+            shard = safe_load(str(safetensor_file))
+            for key, tensor in shard.items():
+                merged[key] = tensor.to(Device.DEFAULT).contiguous().realize()
 
     if not merged:
         raise FileNotFoundError(f"No .safetensors file found in {path}")

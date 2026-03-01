@@ -1,4 +1,7 @@
 import os
+import threading
+import signal
+from multiprocessing.connection import Connection
 
 import loguru
 
@@ -10,6 +13,25 @@ from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 
 logger: "loguru.Logger" = loguru.logger
 
+def _start_parent_death_watchdog(conn: Connection) -> None:
+    """Watch for parent death via a multiprocessing.Connection.
+
+    The parent holds the other end of the pipe. When the parent dies,
+    the OS closes its end and our recv() returns with EOFError.
+    This is a POSIX and Windows guarantee, making it cross-platform.
+    """
+
+    def _watchdog() -> None:
+        try:
+            conn.recv()
+        except (EOFError, OSError):
+            pass
+        finally:
+            conn.close()
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    t = threading.Thread(target=_watchdog, daemon=True)
+    t.start()
 
 def entrypoint(
     bound_instance: BoundInstance,
@@ -17,7 +39,10 @@ def entrypoint(
     task_receiver: MpReceiver[Task],
     cancel_receiver: MpReceiver[TaskId],
     _logger: "loguru.Logger",
+    parent_death_conn: Connection,
 ) -> None:
+    _start_parent_death_watchdog(parent_death_conn)
+
     fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
     if fast_synch_override == "on" or (
         fast_synch_override != "off"
