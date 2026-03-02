@@ -16,9 +16,9 @@ requires_mlx = pytest.mark.skipif(
     reason="MLX native backend not available (missing CUDA/Metal libraries)",
 )
 
-def test_runner_imports_without_mlx() -> None:
-    """runner.py must be importable on Linux where MLX is absent."""
-    from exo.worker.runner.runner import (
+def test_tinygrad_runner_imports_without_mlx() -> None:
+    """tinygrad_runner.py must be importable on Linux where MLX is absent."""
+    from exo.worker.runner.llm_inference.tinygrad_runner import (
         main,  # noqa: F401  # pyright: ignore[reportUnusedImport]
     )
 

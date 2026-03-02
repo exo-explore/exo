@@ -1,13 +1,17 @@
 import os
-import threading
 import signal
+import threading
 from multiprocessing.connection import Connection
 
 import loguru
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
 from exo.shared.types.tasks import Task, TaskId
-from exo.shared.types.worker.instances import BoundInstance, MlxJacclInstance
+from exo.shared.types.worker.instances import (
+    BoundInstance,
+    MlxJacclInstance,
+    TinygradInstance,
+)
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 
@@ -43,26 +47,33 @@ def entrypoint(
 ) -> None:
     _start_parent_death_watchdog(parent_death_conn)
 
-    fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
-    if fast_synch_override == "on" or (
-        fast_synch_override != "off"
-        and (
-            isinstance(bound_instance.instance, MlxJacclInstance)
-            and len(bound_instance.instance.jaccl_devices) >= 2
-        )
-    ):
-        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
-    else:
-        os.environ["MLX_METAL_FAST_SYNCH"] = "0"
+    is_tinygrad = isinstance(bound_instance.instance, TinygradInstance)
+
+    if not is_tinygrad:
+        fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
+        if fast_synch_override == "on" or (
+            fast_synch_override != "off"
+            and (
+                isinstance(bound_instance.instance, MlxJacclInstance)
+                and len(bound_instance.instance.jaccl_devices) >= 2
+            )
+        ):
+            os.environ["MLX_METAL_FAST_SYNCH"] = "1"
+        else:
+            os.environ["MLX_METAL_FAST_SYNCH"] = "0"
 
     global logger
     logger = _logger
 
-    logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
+    if not is_tinygrad:
+        logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
 
-    # Import main after setting global logger - this lets us just import logger from this module
+    # Import main after setting global logger - this lets us just import logger from this module.
+    # Guard by instance type: TinygradInstance must never import MLX modules (macOS-only).
     try:
-        if bound_instance.is_image_model:
+        if is_tinygrad:
+            from exo.worker.runner.llm_inference.tinygrad_runner import main
+        elif bound_instance.is_image_model:
             from exo.worker.runner.image_models.runner import main
         else:
             from exo.worker.runner.llm_inference.runner import main
