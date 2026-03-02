@@ -35,6 +35,9 @@ from mlx_lm.models.qwen3_moe import Model as Qwen3MoeModel
 from mlx_lm.models.qwen3_moe import Qwen3MoeDecoderLayer, Qwen3MoeSparseMoeBlock
 from mlx_lm.models.qwen3_next import Model as Qwen3NextModel
 from mlx_lm.models.qwen3_next import Qwen3NextDecoderLayer, Qwen3NextSparseMoeBlock
+from mlx_lm.models.qwen3_5 import Model as Qwen3_5TextModel
+from mlx_lm.models.qwen3_5 import DecoderLayer as Qwen3_5DecoderLayer, SparseMoeBlock as Qwen3_5SparseMoeBlock
+from mlx_lm.models.qwen3_5_moe import Model as Qwen3_5MoeModel
 from mlx_lm.models.step3p5 import Model as Step35Model
 from mlx_lm.models.step3p5 import Step3p5MLP as Step35MLP
 from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
@@ -470,7 +473,7 @@ def tensor_auto_parallel(
             all_to_sharded_linear_in_place,
             sharded_to_all_linear_in_place,
         )
-    elif isinstance(model, (Qwen3MoeModel, Qwen3NextModel)):
+    elif isinstance(model, (Qwen3MoeModel, Qwen3NextModel, Qwen3_5TextModel, Qwen3_5MoeModel)):
         tensor_parallel_sharding_strategy = QwenShardingStrategy(
             group,
             all_to_sharded_linear,
@@ -865,7 +868,7 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
         on_timeout: TimeoutCallback | None,
         on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
-        model = cast(Qwen3MoeModel | Qwen3NextModel, model)
+        model = cast(Qwen3MoeModel | Qwen3NextModel | Qwen3_5TextModel | Qwen3_5MoeModel, model)
         total = len(model.layers)
         for i, layer in enumerate(model.layers):
             eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
@@ -886,16 +889,39 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                 layer.self_attn.n_heads //= self.N
                 layer.self_attn.n_kv_heads //= self.N
             else:
-                assert isinstance(layer, Qwen3NextDecoderLayer)
+                assert isinstance(layer, (Qwen3NextDecoderLayer, Qwen3_5DecoderLayer))
                 if hasattr(layer, "linear_attn"):
                     linear_attn = layer.linear_attn
 
-                    linear_attn.in_proj_qkvz = self.all_to_sharded_linear(
-                        linear_attn.in_proj_qkvz
-                    )
-                    linear_attn.in_proj_ba = self.all_to_sharded_linear(
-                        linear_attn.in_proj_ba
-                    )
+                    if hasattr(linear_attn, "in_proj_qkvz"):
+                        # Qwen3-Next: combined projections
+                        linear_attn.in_proj_qkvz = self.all_to_sharded_linear(
+                            linear_attn.in_proj_qkvz
+                        )
+                        linear_attn.in_proj_ba = self.all_to_sharded_linear(
+                            linear_attn.in_proj_ba
+                        )
+                    else:
+                        # Qwen3.5: separate projections
+                        # in_proj_qkv has sections [q(key_dim), k(key_dim), v(value_dim)]
+                        # that must be split section-aware, not as a contiguous block
+                        key_dim = linear_attn.key_dim
+                        value_dim = linear_attn.value_dim
+                        linear_attn.in_proj_qkv = shard_linear(
+                            linear_attn.in_proj_qkv,
+                            "all-to-sharded",
+                            segments=[key_dim, key_dim + key_dim],
+                            group=self.group,
+                        )
+                        linear_attn.in_proj_z = self.all_to_sharded_linear(
+                            linear_attn.in_proj_z
+                        )
+                        linear_attn.in_proj_b = self.all_to_sharded_linear(
+                            linear_attn.in_proj_b
+                        )
+                        linear_attn.in_proj_a = self.all_to_sharded_linear(
+                            linear_attn.in_proj_a
+                        )
                     linear_attn.out_proj = self.sharded_to_all_linear(
                         linear_attn.out_proj
                     )
@@ -957,11 +983,11 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                     layer.self_attn.num_key_value_heads //= self.N
 
             # Shard the MoE.
-            if isinstance(layer.mlp, (Qwen3MoeSparseMoeBlock, Qwen3NextSparseMoeBlock)):
+            if isinstance(layer.mlp, (Qwen3MoeSparseMoeBlock, Qwen3NextSparseMoeBlock, Qwen3_5SparseMoeBlock)):
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
                 self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
-                if isinstance(layer.mlp, Qwen3NextSparseMoeBlock):
+                if isinstance(layer.mlp, (Qwen3NextSparseMoeBlock, Qwen3_5SparseMoeBlock)):
                     self.all_to_sharded_linear_in_place(
                         layer.mlp.shared_expert.gate_proj
                     )
