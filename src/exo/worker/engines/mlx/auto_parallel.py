@@ -165,12 +165,20 @@ class PipelineLastLayer(CustomMlxLayer):
             if cache is not None:
                 # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
                 # doesn't have .keys directly; access via first sub-cache.
+                # ArraysCache (used by SSM layers in hybrid models like Qwen3-Next)
+                # doesn't have .keys at all; use cache[0] from its internal list.
                 _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
-                _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
+                if hasattr(_cache, "keys") and _cache.keys is not None:  # type: ignore
+                    _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
+                elif hasattr(_cache, "cache") and _cache.cache[0] is not None:  # type: ignore
+                    _cache.cache[0] = mx.depends(_cache.cache[0], output)  # type: ignore
             if self.is_prefill:
                 mx.eval(output)
                 if cache is not None:
-                    mx.eval(_cache.keys)  # type: ignore
+                    if hasattr(_cache, "keys") and _cache.keys is not None:  # type: ignore
+                        mx.eval(_cache.keys)  # type: ignore
+                    elif hasattr(_cache, "cache") and _cache.cache[0] is not None:  # type: ignore
+                        mx.eval(_cache.cache[0])  # type: ignore
 
         if not self.is_prefill:
             output = mx.distributed.all_gather(output, group=self.group)[
@@ -316,7 +324,10 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
         if cache is not None:
             last = cache[-1]  # type: ignore
             dep_cache = last[0] if hasattr(last, "caches") else last  # type: ignore
-            dep_cache.keys = mx.depends(dep_cache.keys, logits)  # type: ignore
+            if hasattr(dep_cache, "keys") and dep_cache.keys is not None:  # type: ignore
+                dep_cache.keys = mx.depends(dep_cache.keys, logits)  # type: ignore
+            elif hasattr(dep_cache, "cache") and dep_cache.cache[0] is not None:  # type: ignore
+                dep_cache.cache[0] = mx.depends(dep_cache.cache[0], logits)  # type: ignore
 
         return logits
 
@@ -344,7 +355,10 @@ def patch_tensor_model[T](model: T) -> T:
         if cache is not None and len(cache) > 0:  # pyright: ignore[reportAny]
             last = cache[-1]  # pyright: ignore[reportAny]
             dep_cache = last[0] if hasattr(last, "caches") else last  # pyright: ignore[reportAny]
-            dep_cache.keys = mx.depends(dep_cache.keys, logits)  # pyright: ignore[reportAny,reportUnknownMemberType]
+            if hasattr(dep_cache, "keys") and dep_cache.keys is not None:  # pyright: ignore[reportAny,reportUnknownMemberType]
+                dep_cache.keys = mx.depends(dep_cache.keys, logits)  # pyright: ignore[reportAny,reportUnknownMemberType]
+            elif hasattr(dep_cache, "cache") and dep_cache.cache[0] is not None:  # pyright: ignore[reportAny,reportUnknownMemberType]
+                dep_cache.cache[0] = mx.depends(dep_cache.cache[0], logits)  # pyright: ignore[reportAny,reportUnknownMemberType]
 
         return logits
 
