@@ -407,9 +407,9 @@ def create_http_session(
         sock_read_timeout = 30
         sock_connect_timeout = 10
     else:
-        total_timeout = 1800
+        total_timeout = 7200
         connect_timeout = 60
-        sock_read_timeout = 60
+        sock_read_timeout = 300
         sock_connect_timeout = 60
 
     ssl_context = ssl.create_default_context(
@@ -487,7 +487,7 @@ async def download_file_with_retry(
     on_connection_lost: Callable[[], None] = lambda: None,
     skip_internet: bool = False,
 ) -> Path:
-    n_attempts = 3
+    n_attempts = 5
     for attempt in range(n_attempts):
         try:
             return await _download_file(
@@ -845,12 +845,16 @@ async def download_shard(
 
     semaphore = asyncio.Semaphore(max_parallel_downloads)
 
+    _pending_progress_tasks: set[asyncio.Task[None]] = set()
+
     def schedule_progress(
         file: FileListEntry, curr_bytes: int, total_bytes: int, is_renamed: bool
     ) -> None:
-        asyncio.create_task(
+        task = asyncio.create_task(
             on_progress_wrapper(file, curr_bytes, total_bytes, is_renamed)
         )
+        _pending_progress_tasks.add(task)
+        task.add_done_callback(_pending_progress_tasks.discard)
 
     async def download_with_semaphore(file: FileListEntry) -> None:
         async with semaphore:
@@ -870,6 +874,10 @@ async def download_shard(
         await asyncio.gather(
             *[download_with_semaphore(file) for file in filtered_file_list]
         )
+        # Drain all in-flight progress callbacks so file_progress reflects
+        # the true "complete" state before computing the final summary.
+        if _pending_progress_tasks:
+            await asyncio.gather(*_pending_progress_tasks, return_exceptions=True)
     final_repo_progress = calculate_repo_progress(
         shard, shard.model_card.model_id, revision, file_progress, all_start_time
     )

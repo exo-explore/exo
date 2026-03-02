@@ -140,9 +140,9 @@ class DownloadCoordinator:
         # Check if already downloading, complete, or recently failed
         if model_id in self.download_status:
             status = self.download_status[model_id]
-            if isinstance(status, (DownloadOngoing, DownloadCompleted, DownloadFailed)):
+            if isinstance(status, (DownloadOngoing, DownloadCompleted)):
                 logger.debug(
-                    f"Download for {model_id} already in progress, complete, or failed, skipping"
+                    f"Download for {model_id} already in progress or complete, skipping"
                 )
                 return
 
@@ -340,6 +340,11 @@ class DownloadCoordinator:
                     await self.event_sender.send(
                         NodeDownloadProgress(download_progress=status)
                     )
+
+                    # Auto-resume incomplete downloads with partial data on disk
+                    if not self.offline and progress.status != "complete" and progress.downloaded.in_bytes > 0:
+                        self._start_download_task(progress.shard, progress)
+
                 # Scan EXO_MODELS_PATH for pre-downloaded models
                 if EXO_MODELS_PATH is not None:
                     for card in await get_model_cards():
