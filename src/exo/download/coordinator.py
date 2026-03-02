@@ -428,7 +428,7 @@ class DownloadCoordinator:
                     )
 
                     # Auto-resume incomplete downloads with partial data on disk
-                    if not self.offline and progress.downloaded.in_bytes > 0:
+                    if not self.offline and progress.status != "complete" and progress.downloaded.in_bytes > 0:
                         self._start_download_task(progress.shard, progress)
 
                 # Scan EXO_MODELS_PATH for pre-downloaded models
