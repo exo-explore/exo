@@ -31,13 +31,14 @@ from mlx_lm.models.llama import Model as LlamaModel
 from mlx_lm.models.minimax import MiniMaxAttention
 from mlx_lm.models.minimax import Model as MiniMaxModel
 from mlx_lm.models.ministral3 import Model as Ministral3Model
+from mlx_lm.models.qwen3_5 import DecoderLayer as Qwen3_5DecoderLayer
+from mlx_lm.models.qwen3_5 import Model as Qwen3_5TextModel
+from mlx_lm.models.qwen3_5 import SparseMoeBlock as Qwen3_5SparseMoeBlock
+from mlx_lm.models.qwen3_5_moe import Model as Qwen3_5MoeModel
 from mlx_lm.models.qwen3_moe import Model as Qwen3MoeModel
 from mlx_lm.models.qwen3_moe import Qwen3MoeDecoderLayer, Qwen3MoeSparseMoeBlock
 from mlx_lm.models.qwen3_next import Model as Qwen3NextModel
 from mlx_lm.models.qwen3_next import Qwen3NextDecoderLayer, Qwen3NextSparseMoeBlock
-from mlx_lm.models.qwen3_5 import Model as Qwen3_5TextModel
-from mlx_lm.models.qwen3_5 import DecoderLayer as Qwen3_5DecoderLayer, SparseMoeBlock as Qwen3_5SparseMoeBlock
-from mlx_lm.models.qwen3_5_moe import Model as Qwen3_5MoeModel
 from mlx_lm.models.step3p5 import Model as Step35Model
 from mlx_lm.models.step3p5 import Step3p5MLP as Step35MLP
 from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
