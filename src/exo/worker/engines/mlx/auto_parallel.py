@@ -38,6 +38,7 @@ from mlx_lm.models.qwen3_next import Qwen3NextDecoderLayer, Qwen3NextSparseMoeBl
 from mlx_lm.models.step3p5 import Model as Step35Model
 from mlx_lm.models.step3p5 import Step3p5MLP as Step35MLP
 from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
+from mlx_lm.models.qwen3_5 import Qwen3_5TextModel
 
 from exo.shared.logging import logger
 from exo.shared.types.worker.shards import PipelineShardMetadata
@@ -190,10 +191,13 @@ class PipelineLastLayer(CustomMlxLayer):
             if cache is not None:
                 # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
                 # doesn't have .keys directly; access via first sub-cache.
+                # ArraysCache (used by hybrid SSM/attention models like Qwen3.5)
+                # has no .keys attribute at all — guard before accessing.
                 _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
-                _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
+                if hasattr(_cache, "keys"):
+                    _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
             mx.eval(output)
-            if cache is not None:
+            if cache is not None and hasattr(_cache, "keys"):  # type: ignore
                 mx.eval(_cache.keys)  # type: ignore
 
         if not self.is_prefill:
@@ -318,6 +322,21 @@ def pipeline_auto_parallel(
         inner_model_instance._swa_idx = 0 if not sliding_layers else sliding_layers[0]
         inner_model_instance._full_idx = 0 if not full_layers else full_layers[0]
 
+    if isinstance(inner_model_instance, Qwen3_5TextModel):
+        # fa_idx and ssm_idx are global layer indices set during __init__.
+        # After pipeline layer slicing they must point to the first full-attention
+        # and first linear (SSM) layer in the local slice, respectively.
+        # If the local slice contains no full-attention layers (all SSM), fa_idx
+        # defaults to 0 so that create_attention_mask receives a valid cache entry.
+        full_attn_layers = [
+            i for i, layer in enumerate(layers) if not getattr(layer, "is_linear", True)
+        ]
+        linear_layers = [
+            i for i, layer in enumerate(layers) if getattr(layer, "is_linear", False)
+        ]
+        inner_model_instance.fa_idx = full_attn_layers[0] if full_attn_layers else 0
+        inner_model_instance.ssm_idx = linear_layers[0] if linear_layers else 0
+
     _set_layers(model, layers)
 
     assert isinstance(layers, list), (
@@ -347,7 +366,8 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
         if cache is not None:
             last = cache[-1]  # type: ignore
             dep_cache = last[0] if hasattr(last, "caches") else last  # type: ignore
-            dep_cache.keys = mx.depends(dep_cache.keys, logits)  # type: ignore
+            if hasattr(dep_cache, "keys"):
+                dep_cache.keys = mx.depends(dep_cache.keys, logits)  # type: ignore
 
         return logits
 
