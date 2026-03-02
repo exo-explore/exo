@@ -1,6 +1,8 @@
 from collections.abc import Generator
 from functools import cache
 
+from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
+from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     HarmonyEncodingName,
@@ -11,15 +13,51 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
 )
 
 from exo.shared.types.api import ToolCallItem
+from exo.shared.types.common import ModelId
+from exo.shared.types.mlx import Model
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
+from exo.worker.engines.mlx.utils_mlx import (
+    detect_thinking_prompt_suffix,
+)
 from exo.worker.runner.bootstrap import logger
-from exo.worker.runner.llm_inference.tool_parsers import ToolParser
+
+from .tool_parsers import ToolParser
 
 
 @cache
 def get_gpt_oss_encoding():
     encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
     return encoding
+
+
+def apply_all_parsers(
+    receiver: Generator[GenerationResponse | None],
+    prompt: str,
+    tool_parser: ToolParser | None,
+    tokenizer: TokenizerWrapper,
+    model_type: type[Model],
+    model_id: ModelId,
+) -> Generator[GenerationResponse | ToolCallResponse | None]:
+    mlx_generator = receiver
+
+    if tokenizer.has_thinking:
+        mlx_generator = parse_thinking_models(
+            mlx_generator,
+            tokenizer,
+            starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
+        )
+
+    if issubclass(model_type, GptOssModel):
+        mlx_generator = parse_gpt_oss(mlx_generator)
+    elif (
+        issubclass(model_type, DeepseekV32Model)
+        and "deepseek" in model_id.normalize().lower()
+    ):
+        mlx_generator = parse_deepseek_v32(mlx_generator)
+    elif tool_parser:
+        mlx_generator = parse_tool_calls(mlx_generator, tool_parser)
+
+    return mlx_generator
 
 
 def parse_gpt_oss(
@@ -269,9 +307,6 @@ def parse_thinking_models(
     for response in responses:
         if response is None:
             yield None
-            continue
-        if isinstance(response, ToolCallResponse):
-            yield response
             continue
 
         is_think_tag = (

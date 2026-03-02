@@ -1,6 +1,9 @@
+import itertools
+import math
+import time
 from abc import ABC, abstractmethod
 from collections import deque
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -13,26 +16,63 @@ from exo.shared.types.events import ChunkGenerated, Event
 from exo.shared.types.mlx import Model
 from exo.shared.types.tasks import TaskId, TextGeneration
 from exo.shared.types.text_generation import TextGenerationTaskParams
-from exo.shared.types.worker.runner_response import GenerationResponse
+from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.mlx.cache import KVPrefixCache
-from exo.worker.engines.mlx.generator.generate import PrefillCancelled, mlx_generate
+from exo.worker.engines.mlx.generator.generate import (
+    PrefillCancelled,
+    mlx_generate,
+    warmup_inference,
+)
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     mx_any,
 )
+from exo.worker.runner.bootstrap import logger
+
+from .model_output_parsers import apply_all_parsers
+from .tool_parsers import ToolParser
+
+
+class Cancelled:
+    pass
+
+
+class Finished:
+    pass
+
+
+class SendableGenerator[T]:
+    def __init__(self):
+        self._q = deque[T]()
+
+    def push(self, t: T):
+        self._q.append(t)
+
+    def gen(self) -> Generator[T | None]:
+        while True:
+            if len(self._q) == 0:
+                yield None
+            else:
+                yield self._q.popleft()
 
 
 class InferenceGenerator(ABC):
     @abstractmethod
+    def warmup(self) -> None: ...
+
+    @abstractmethod
     def submit(
         self,
         task: TextGeneration,
-        sender: MpSender[GenerationResponse],
     ) -> None: ...
 
     @abstractmethod
-    def step(self) -> set[TaskId]: ...
+    def step(
+        self,
+    ) -> Iterable[
+        tuple[TaskId, ToolCallResponse | GenerationResponse | Cancelled | Finished]
+    ]: ...
 
     @abstractmethod
     def close(self) -> None: ...
@@ -45,8 +85,6 @@ EXO_RUNNER_MUST_TIMEOUT = "EXO RUNNER MUST TIMEOUT"
 
 def _check_for_debug_prompts(task_params: TextGenerationTaskParams) -> None:
     """Check for debug prompt triggers in the input."""
-    import time
-
     from exo.worker.engines.mlx.utils_mlx import mlx_force_oom
 
     if len(task_params.input) == 0:
@@ -68,92 +106,117 @@ class SequentialGenerator(InferenceGenerator):
     tokenizer: TokenizerWrapper
     group: mx.distributed.Group | None
     kv_prefix_cache: KVPrefixCache | None
+    tool_parser: ToolParser | None
     model_id: ModelId
     device_rank: int
     cancel_receiver: MpReceiver[TaskId]
     event_sender: MpSender[Event]
-    check_for_cancel_every: int
+    check_for_cancel_every: int = 50
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
-    _maybe_queue: list[tuple[TextGeneration, MpSender[GenerationResponse]]] = field(
-        default_factory=list, init=False
-    )
-    _queue: deque[tuple[TextGeneration, MpSender[GenerationResponse]]] = field(
-        default_factory=deque, init=False
-    )
+    _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
+    _queue: deque[TextGeneration] = field(default_factory=deque, init=False)
     _active: (
         tuple[
             TextGeneration,
-            MpSender[GenerationResponse],
             Generator[GenerationResponse],
+            SendableGenerator[GenerationResponse],
+            Generator[GenerationResponse | ToolCallResponse | None],
         ]
         | None
     ) = field(default=None, init=False)
-    _pending_close: MpSender[GenerationResponse] | None = field(
-        default=None, init=False
-    )
+
+    def warmup(self):
+        logger.info(f"warming up inference for instance: {self.model_id}")
+
+        t = time.monotonic()
+        toks = warmup_inference(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            group=self.group,
+        )
+        logger.info(f"warmed up by generating {toks} tokens")
+        check_for_cancel_every = min(
+            math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
+        )
+        if self.group is not None:
+            self.check_for_cancel_every = int(
+                mx.max(
+                    mx.distributed.all_gather(
+                        mx.array([check_for_cancel_every]),
+                        group=self.group,
+                    )
+                ).item()
+            )
+
+        logger.info(
+            f"runner checking for cancellation every {check_for_cancel_every} tokens"
+        )
 
     def submit(
         self,
         task: TextGeneration,
-        sender: MpSender[GenerationResponse],
     ) -> None:
         self._cancelled_tasks.discard(TaskId("CANCEL_CURRENT_TASK"))
-        self._maybe_queue.append((task, sender))
+        self._maybe_queue.append(task)
 
     def agree_on_tasks(self) -> None:
         """Agree between all ranks about the task ordering (some may have received in different order or not at all)."""
-        agreed, different = mx_all_gather_tasks(
-            [task for task, _ in self._maybe_queue], self.group
-        )
-        self._queue.extend(
-            (task, sender) for task, sender in self._maybe_queue if task in agreed
-        )
-        self._maybe_queue = [
-            (task, sender) for task, sender in self._maybe_queue if task in different
-        ]
+        agreed, different = mx_all_gather_tasks(self._maybe_queue, self.group)
+        self._queue.extend(task for task in self._maybe_queue if task in agreed)
+        self._maybe_queue = [task for task in self._maybe_queue if task in different]
 
-    def step(self) -> set[TaskId]:
-        if self._pending_close is not None:
-            self._pending_close.close()
-            self._pending_close = None
-
+    def step(
+        self,
+    ) -> Iterable[
+        tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
+    ]:
         if self._active is None:
             self.agree_on_tasks()
 
             if self._queue:
                 self._start_next()
             else:
-                return self._cancelled_tasks
+                return map(lambda task: (task, Cancelled()), self._cancelled_tasks)
 
-        if self._active is None:
-            return self._cancelled_tasks
+        assert self._active is not None
 
-        task, sender, gen = self._active
+        task, gen, send, recv = self._active
+        response = None
         try:
-            response = next(gen)
-            sender.send(response)
+            send.push(next(gen))
+            response = next(recv)
         except (StopIteration, PrefillCancelled):
-            self._pending_close = sender
+            response = Finished()
             self._active = None
             if self._queue:
                 self._start_next()
         except Exception as e:
             self._send_error(task, e)
-            sender.close()
             self._active = None
             raise
-        return self._cancelled_tasks
+        return itertools.chain(
+            [] if response is None else [(task.task_id, response)],
+            map(lambda task: (task, Cancelled()), self._cancelled_tasks),
+        )
 
     def _start_next(self) -> None:
-        task, sender = self._queue.popleft()
+        task = self._queue.popleft()
         try:
             gen = self._build_generator(task)
         except Exception as e:
             self._send_error(task, e)
-            sender.close()
             raise
-        self._active = (task, sender, gen)
+        send = SendableGenerator[GenerationResponse]()
+        recv = apply_all_parsers(
+            send.gen(),
+            apply_chat_template(self.tokenizer, task.task_params),
+            self.tool_parser,
+            self.tokenizer,
+            type(self.model),
+            self.model_id,
+        )
+        self._active = (task, gen, send, recv)
 
     def _send_error(self, task: TextGeneration, e: Exception) -> None:
         if self.device_rank == 0:
