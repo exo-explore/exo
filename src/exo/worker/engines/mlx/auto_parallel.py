@@ -474,7 +474,9 @@ def tensor_auto_parallel(
             all_to_sharded_linear_in_place,
             sharded_to_all_linear_in_place,
         )
-    elif isinstance(model, (Qwen3MoeModel, Qwen3NextModel, Qwen3_5TextModel, Qwen3_5MoeModel)):
+    elif isinstance(
+        model, (Qwen3MoeModel, Qwen3NextModel, Qwen3_5TextModel, Qwen3_5MoeModel)
+    ):
         tensor_parallel_sharding_strategy = QwenShardingStrategy(
             group,
             all_to_sharded_linear,
@@ -869,7 +871,9 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
         on_timeout: TimeoutCallback | None,
         on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
-        model = cast(Qwen3MoeModel | Qwen3NextModel | Qwen3_5TextModel | Qwen3_5MoeModel, model)
+        model = cast(
+            Qwen3MoeModel | Qwen3NextModel | Qwen3_5TextModel | Qwen3_5MoeModel, model
+        )
         total = len(model.layers)
         for i, layer in enumerate(model.layers):
             eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
@@ -984,11 +988,20 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                     layer.self_attn.num_key_value_heads //= self.N
 
             # Shard the MoE.
-            if isinstance(layer.mlp, (Qwen3MoeSparseMoeBlock, Qwen3NextSparseMoeBlock, Qwen3_5SparseMoeBlock)):
+            if isinstance(
+                layer.mlp,
+                (
+                    Qwen3MoeSparseMoeBlock,
+                    Qwen3NextSparseMoeBlock,
+                    Qwen3_5SparseMoeBlock,
+                ),
+            ):
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
                 self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
-                if isinstance(layer.mlp, (Qwen3NextSparseMoeBlock, Qwen3_5SparseMoeBlock)):
+                if isinstance(
+                    layer.mlp, (Qwen3NextSparseMoeBlock, Qwen3_5SparseMoeBlock)
+                ):
                     self.all_to_sharded_linear_in_place(
                         layer.mlp.shared_expert.gate_proj
                     )
