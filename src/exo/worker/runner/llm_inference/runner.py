@@ -287,11 +287,17 @@ def main(
                                     ),
                                 )
                             )
-                        cancelled_tasks.update(cancel_receiver.collect())
+                        new_cancels = cancel_receiver.collect()
+                        if new_cancels:
+                            logger.warning(f"[PREFILL DEBUG] cancel_receiver.collect() returned: {new_cancels}")
+                        cancelled_tasks.update(new_cancels)
                         want_to_cancel = (_task_id in cancelled_tasks) or (
                             TaskId("CANCEL_CURRENT_TASK") in cancelled_tasks
                         )
-                        if mx_any(want_to_cancel, _group):
+                        logger.info(f"[PREFILL DEBUG] rank={device_rank} task={_task_id[:8]} want_to_cancel={want_to_cancel} cancelled_tasks={cancelled_tasks} processed={processed}/{total}")
+                        any_cancel = mx_any(want_to_cancel, _group)
+                        logger.info(f"[PREFILL DEBUG] rank={device_rank} mx_any result={any_cancel}")
+                        if any_cancel:
                             raise PrefillCancelled()
 
                     try:
