@@ -169,20 +169,28 @@ def warmup_inference(
 
     mx_barrier(group)
 
+    # CRITICAL FIX: Set pipeline prefill mode before warmup to use send/recv
+    # instead of all_gather. Without this, 3-node pipeline parallel deadlocks
+    # because all_gather requires all ranks simultaneously during sequential prefill.
+    set_pipeline_prefill(model, is_prefill=True)
+
     logger.info("Generating warmup tokens")
-    for _r in stream_generate(
-        model=model,
-        tokenizer=tokenizer,
-        prompt=warmup_prompt,
-        max_tokens=50,
-        sampler=sampler,
-        prompt_cache=cache,
-        prefill_step_size=2048,
-        kv_group_size=KV_GROUP_SIZE,
-        kv_bits=KV_BITS,
-    ):
-        logger.info("Generated warmup token: " + str(_r.text))
-        tokens_generated += 1
+    try:
+        for _r in stream_generate(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=warmup_prompt,
+            max_tokens=50,
+            sampler=sampler,
+            prompt_cache=cache,
+            prefill_step_size=2048,
+            kv_group_size=KV_GROUP_SIZE,
+            kv_bits=KV_BITS,
+        ):
+            logger.info("Generated warmup token: " + str(_r.text))
+            tokens_generated += 1
+    finally:
+        set_pipeline_prefill(model, is_prefill=False)
 
     logger.info("Generated ALL warmup tokens")
 
