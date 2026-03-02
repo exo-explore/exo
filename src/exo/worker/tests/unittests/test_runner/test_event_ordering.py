@@ -110,26 +110,44 @@ def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Even
         assert test_event == true_event, f"{test_event} != {true_event}"
 
 
-@pytest.fixture
-def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
-    # initialize_mlx returns a mock group
-    monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(MockGroup()))
-    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
-    monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
-    monkeypatch.setattr(mlx_batch_generator, "_check_for_debug_prompts", nothin)
-    monkeypatch.setattr(mlx_batch_generator, "mx_any", make_nothin(False))
-    # Mock apply_chat_template since we're using a fake tokenizer (integer 1).
-    # Returns a prompt without thinking tag so detect_thinking_prompt_suffix returns None.
-    monkeypatch.setattr(mlx_runner, "apply_chat_template", make_nothin("test prompt"))
-    monkeypatch.setattr(
-        mlx_batch_generator, "apply_chat_template", make_nothin("test prompt")
-    )
-    monkeypatch.setattr(mlx_runner, "detect_thinking_prompt_suffix", make_nothin(False))
+class FakeExoBatchGenerator:
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        self._uid_counter = 0
+        self._pending: dict[int, GenerationResponse] = {}
 
-    def fake_generate(*_1: object, **_2: object):
-        yield GenerationResponse(token=0, text="hi", finish_reason="stop", usage=None)
+    @property
+    def has_work(self) -> bool:
+        return bool(self._pending)
 
-    monkeypatch.setattr(mlx_batch_generator, "mlx_generate", fake_generate)
+    def submit(
+        self,
+        task_params: object = None,
+        prompt: object = None,
+        on_prefill_progress: object = None,
+        distributed_prompt_progress_callback: object = None,
+        on_generation_token: object = None,
+    ) -> int:
+        uid = self._uid_counter
+        self._uid_counter += 1
+        self._pending[uid] = GenerationResponse(
+            text="hi",
+            token=0,
+            finish_reason="stop",
+            usage=None,
+        )
+        return uid
+
+    def step(self) -> list[tuple[int, GenerationResponse]]:
+        results = list(self._pending.items())
+        self._pending.clear()
+        return results
+
+    def cancel(self, uids: list[int]) -> None:
+        for uid in uids:
+            self._pending.pop(uid, None)
+
+    def close(self) -> None:
+        pass
 
 
 # Use a fake event_sender to remove test flakiness.
@@ -156,6 +174,17 @@ class MockTokenizer:
     tool_call_end = None
     has_tool_calling = False
     has_thinking = False
+    think_start = None
+    think_end = None
+    eos_token_ids: list[int] = []
+
+    @staticmethod
+    def decode(_tokens: list[int]) -> str:
+        return "hi"
+
+    @staticmethod
+    def encode(_text: str, add_special_tokens: bool = True) -> list[int]:
+        return [0]
 
 
 class MockGroup:
@@ -164,6 +193,20 @@ class MockGroup:
 
     def size(self) -> int:
         return 1
+
+
+@pytest.fixture
+def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(MockGroup()))
+    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
+    monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
+    monkeypatch.setattr(mlx_runner, "apply_chat_template", make_nothin("test prompt"))
+    monkeypatch.setattr(mlx_runner, "detect_thinking_prompt_suffix", make_nothin(False))
+    monkeypatch.setattr(mlx_runner, "KVPrefixCache", make_nothin(None))
+    monkeypatch.setattr(
+        mlx_batch_generator, "apply_chat_template", make_nothin("test prompt")
+    )
+    monkeypatch.setattr(mlx_batch_generator, "ExoBatchGenerator", FakeExoBatchGenerator)
 
 
 def _run(tasks: Iterable[Task], send_after_ready: list[Task] | None = None):

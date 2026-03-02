@@ -1,4 +1,5 @@
 import math
+import os
 import resource
 import time
 from collections.abc import Generator
@@ -64,6 +65,7 @@ from exo.worker.engines.mlx.utils_mlx import (
 )
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.batch_generator import (
+    BatchGenerator,
     InferenceGenerator,
     SequentialGenerator,
 )
@@ -275,7 +277,8 @@ class Runner:
                         f"runner initialized in {time.time() - self.setup_start_time} seconds"
                     )
 
-                    self.generator = SequentialGenerator(
+                    generator_cls = SequentialGenerator if os.environ.get("EXO_NO_BATCH") == "1" else BatchGenerator
+                    self.generator = generator_cls(
                         model=self.inference_model,
                         tokenizer=self.tokenizer,
                         group=self.group,
@@ -411,6 +414,10 @@ class Runner:
                     logger.warning("repeat task - potential error")
                     continue
                 self.seen.add(task.task_id)
+                cancelled = self.generator.step()
+                was_cancelled = (text_task.task_id in cancelled) or (
+                    TaskId("CANCEL_CURRENT_TASK") in cancelled
+                )
 
                 match task:
                     case TextGeneration():

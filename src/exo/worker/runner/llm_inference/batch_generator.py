@@ -15,6 +15,7 @@ from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.mlx.cache import KVPrefixCache
+from exo.worker.engines.mlx.generator.batch_generate import ExoBatchGenerator
 from exo.worker.engines.mlx.generator.generate import PrefillCancelled, mlx_generate
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
@@ -204,4 +205,148 @@ class SequentialGenerator(InferenceGenerator):
         )
 
     def close(self) -> None:
+        del self.model, self.tokenizer, self.group
+
+
+@dataclass(eq=False)
+class BatchGenerator(InferenceGenerator):
+    model: Model
+    tokenizer: TokenizerWrapper
+    group: mx.distributed.Group | None
+    kv_prefix_cache: KVPrefixCache | None
+    model_id: ModelId
+    device_rank: int
+    cancel_receiver: MpReceiver[TaskId]
+    event_sender: MpSender[Event]
+    check_for_cancel_every: int
+
+    _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
+    _mlx_gen: ExoBatchGenerator = field(init=False)
+    _active_tasks: dict[int, tuple[TextGeneration, MpSender[GenerationResponse]]] = (
+        field(default_factory=dict, init=False)
+    )
+    _pending_closes: list[MpSender[GenerationResponse]] = field(
+        default_factory=list, init=False
+    )
+
+    def __post_init__(self) -> None:
+        self._mlx_gen = ExoBatchGenerator(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            group=self.group,
+            kv_prefix_cache=self.kv_prefix_cache,
+        )
+
+    def submit(
+        self,
+        task: TextGeneration,
+        sender: MpSender[GenerationResponse],
+    ) -> None:
+        self._cancelled_tasks.discard(TaskId("CANCEL_CURRENT_TASK"))
+        self._submit_task(task, sender)
+
+    def step(self) -> set[TaskId]:
+        for sender in self._pending_closes:
+            sender.close()
+        self._pending_closes.clear()
+
+        if not self._mlx_gen.has_work:
+            return self._cancelled_tasks
+
+        try:
+            results = self._mlx_gen.step()
+        except PrefillCancelled:
+            for _task, sender in self._active_tasks.values():
+                self._pending_closes.append(sender)
+            self._active_tasks.clear()
+            return self._cancelled_tasks
+
+        for uid, response in results:
+            if uid not in self._active_tasks:
+                continue
+
+            _task, sender = self._active_tasks[uid]
+            sender.send(response)
+
+            if response.finish_reason is not None:
+                del self._active_tasks[uid]
+
+        return self._cancelled_tasks
+
+    def _submit_task(
+        self, task: TextGeneration, sender: MpSender[GenerationResponse]
+    ) -> None:
+        try:
+            uid = self._build_generator(task)
+        except PrefillCancelled:
+            self._pending_closes.append(sender)
+            return
+        except Exception as e:
+            self._send_error(task, e)
+            sender.close()
+            raise
+        self._active_tasks[uid] = (task, sender)
+
+    def _send_error(self, task: TextGeneration, e: Exception) -> None:
+        if self.device_rank == 0:
+            self.event_sender.send(
+                ChunkGenerated(
+                    command_id=task.command_id,
+                    chunk=ErrorChunk(
+                        model=self.model_id,
+                        finish_reason="error",
+                        error_message=str(e),
+                    ),
+                )
+            )
+
+    def _build_generator(self, task: TextGeneration) -> int:
+        _check_for_debug_prompts(task.task_params)
+        prompt = apply_chat_template(self.tokenizer, task.task_params)
+
+        def on_prefill_progress(processed: int, total: int) -> None:
+            if self.device_rank == 0:
+                self.event_sender.send(
+                    ChunkGenerated(
+                        command_id=task.command_id,
+                        chunk=PrefillProgressChunk(
+                            model=self.model_id,
+                            processed_tokens=processed,
+                            total_tokens=total,
+                        ),
+                    )
+                )
+
+        def distributed_prompt_progress_callback() -> None:
+            self._cancelled_tasks.update(self.cancel_receiver.collect())
+            want_to_cancel = (task.task_id in self._cancelled_tasks) or (
+                TaskId("CANCEL_CURRENT_TASK") in self._cancelled_tasks
+            )
+            if mx_any(want_to_cancel, self.group):
+                raise PrefillCancelled()
+
+        tokens_since_cancel_check = self.check_for_cancel_every
+
+        def on_generation_token() -> None:
+            nonlocal tokens_since_cancel_check
+            tokens_since_cancel_check += 1
+            if tokens_since_cancel_check >= self.check_for_cancel_every:
+                tokens_since_cancel_check = 0
+                self._cancelled_tasks.update(self.cancel_receiver.collect())
+                want_to_cancel = (task.task_id in self._cancelled_tasks) or (
+                    TaskId("CANCEL_CURRENT_TASK") in self._cancelled_tasks
+                )
+                if mx_any(want_to_cancel, self.group):
+                    raise PrefillCancelled()
+
+        return self._mlx_gen.submit(
+            task_params=task.task_params,
+            prompt=prompt,
+            on_prefill_progress=on_prefill_progress,
+            distributed_prompt_progress_callback=distributed_prompt_progress_callback,
+            on_generation_token=on_generation_token,
+        )
+
+    def close(self) -> None:
+        self._mlx_gen.close()
         del self.model, self.tokenizer, self.group
