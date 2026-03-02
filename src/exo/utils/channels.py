@@ -284,22 +284,16 @@ class MpReceiver[T]:
 
 
 class NonBlockingGenerator[T](Generator[T | None, None, None]):
-    def __init__(self, source: MpReceiver[T] | Generator[T | None, None, None]) -> None:
-        self._inner: MpReceiver[T] | Generator[T | None, None, None] = source
+    def __init__(self, source: MpReceiver[T]) -> None:
+        self._inner: MpReceiver[T] = source
 
     def send(self, value: None, /) -> T | None:
-        if isinstance(self._inner, Generator):
-            try:
-                return next(self._inner)
-            except (StopIteration, ClosedResourceError):
-                raise StopIteration from None
-        else:
-            try:
-                return self._inner.receive_nowait()
-            except WouldBlock:
-                return None
-            except (EndOfStream, ClosedResourceError):
-                raise StopIteration from None
+        try:
+            return self._inner.receive_nowait()
+        except WouldBlock:
+            return None
+        except (EndOfStream, ClosedResourceError):
+            raise StopIteration from None
 
     def throw(
         self,

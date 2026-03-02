@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Generator
 from dataclasses import dataclass, field
+from typing import cast
 
 import mlx.core as mx
 from mlx_lm.tokenizer_utils import TokenizerWrapper
@@ -74,6 +75,9 @@ class SequentialGenerator(InferenceGenerator):
     check_for_cancel_every: int
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
+    _maybe_queue: list[tuple[TextGeneration, MpSender[GenerationResponse]]] = field(
+        default_factory=list, init=False
+    )
     _queue: deque[tuple[TextGeneration, MpSender[GenerationResponse]]] = field(
         default_factory=deque, init=False
     )
@@ -95,9 +99,19 @@ class SequentialGenerator(InferenceGenerator):
         sender: MpSender[GenerationResponse],
     ) -> None:
         self._cancelled_tasks.discard(TaskId("CANCEL_CURRENT_TASK"))
-        self._queue.append((task, sender))
-        if self._active is None:
-            self._start_next()
+        self._maybe_queue.append((task, sender))
+
+    def agree_on_tasks(self) -> None:
+        """Agree between all ranks about the task ordering (some may have received in different order or not at all)."""
+        agreed, different = mx_all_gather_tasks(
+            [task for task, _ in self._maybe_queue], self.group
+        )
+        self._queue.extend(
+            (task, sender) for task, sender in self._maybe_queue if task in agreed
+        )
+        self._maybe_queue = [
+            (task, sender) for task, sender in self._maybe_queue if task in different
+        ]
 
     def step(self) -> set[TaskId]:
         if self._pending_close is not None:
@@ -105,6 +119,8 @@ class SequentialGenerator(InferenceGenerator):
             self._pending_close = None
 
         if self._active is None:
+            self.agree_on_tasks()
+
             if self._queue:
                 self._start_next()
             else:
@@ -177,6 +193,8 @@ class SequentialGenerator(InferenceGenerator):
             if mx_any(want_to_cancel, self.group):
                 raise PrefillCancelled()
 
+            self.agree_on_tasks()
+
         tokens_since_cancel_check = self.check_for_cancel_every
 
         def on_generation_token() -> None:
@@ -190,6 +208,8 @@ class SequentialGenerator(InferenceGenerator):
                 )
                 if mx_any(want_to_cancel, self.group):
                     raise PrefillCancelled()
+
+                self.agree_on_tasks()
 
         return mlx_generate(
             model=self.model,
@@ -205,3 +225,55 @@ class SequentialGenerator(InferenceGenerator):
 
     def close(self) -> None:
         del self.model, self.tokenizer, self.group
+
+
+def mx_all_gather_tasks(
+    tasks: list[TextGeneration],
+    group: mx.distributed.Group | None,
+) -> tuple[list[TextGeneration], list[TextGeneration]]:
+    def encode_task_id(task_id: TaskId) -> list[int]:
+        utf8_task_id = task_id.encode()
+        return [
+            int.from_bytes(utf8_task_id[i : i + 1]) for i in range(len(utf8_task_id))
+        ]
+
+    def decode_task_id(encoded_task_id: list[int]) -> TaskId:
+        return TaskId(
+            bytes.decode(b"".join((x).to_bytes(length=1) for x in encoded_task_id))
+        )
+
+    uuid_byte_length = 36
+
+    n_tasks = len(tasks)
+    all_counts = cast(
+        list[int],
+        mx.distributed.all_gather(mx.array([n_tasks]), group=group).tolist(),
+    )
+    max_tasks = max(all_counts)
+    world_size: int = 1 if group is None else group.size()
+
+    if max_tasks == 0:
+        return [], []
+
+    padded = [encode_task_id(task.task_id) for task in tasks] + [
+        [0] * uuid_byte_length
+    ] * (max_tasks - n_tasks)
+    gathered = cast(
+        list[list[list[int]]],
+        mx.distributed.all_gather(mx.array(padded), group=group)
+        .reshape(world_size, max_tasks, -1)
+        .tolist(),
+    )
+    all_task_ids: list[list[TaskId]] = [
+        [decode_task_id(encoded_task_id) for encoded_task_id in rank_tasks[:count]]
+        for rank_tasks, count in zip(gathered, all_counts, strict=True)
+    ]
+
+    agreed_ids: set[TaskId] = set(all_task_ids[0])
+    for rank_tasks in all_task_ids[1:]:
+        agreed_ids &= set(rank_tasks)
+
+    local_tasks = {task.task_id: task for task in tasks}
+    agreed = [local_tasks[tid] for tid in sorted(agreed_ids)]
+    different = [task for task in tasks if task.task_id not in agreed_ids]
+    return agreed, different
