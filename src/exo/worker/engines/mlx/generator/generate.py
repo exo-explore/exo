@@ -180,7 +180,7 @@ def warmup_inference(
             model=model,
             tokenizer=tokenizer,
             prompt=warmup_prompt,
-            max_tokens=50,
+            max_tokens=8,
             sampler=sampler,
             prompt_cache=cache,
             prefill_step_size=2048,
