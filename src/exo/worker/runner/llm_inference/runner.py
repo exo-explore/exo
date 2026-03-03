@@ -59,6 +59,7 @@ from exo.worker.engines.mlx.utils_mlx import (
 )
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.batch_generator import (
+    BatchGenerator,
     InferenceGenerator,
     SequentialGenerator,
 )
@@ -397,18 +398,35 @@ class Builder:
     def build(
         self,
     ) -> InferenceGenerator:
+        import os
+
         assert self.model_id
         assert self.inference_model
         assert self.tokenizer
 
-        return SequentialGenerator(
+        device_rank = 0 if self.group is None else self.group.rank()
+        if os.environ.get("EXO_NO_BATCH"):
+            logger.info("using SequentialGenerator (batching disabled)")
+            return SequentialGenerator(
+                model=self.inference_model,
+                tokenizer=self.tokenizer,
+                group=self.group,
+                tool_parser=self.tool_parser,
+                kv_prefix_cache=self.kv_prefix_cache,
+                model_id=self.model_id,
+                device_rank=device_rank,
+                cancel_receiver=self.cancel_receiver,
+                event_sender=self.event_sender,
+            )
+        logger.info("using BatchGenerator")
+        return BatchGenerator(
             model=self.inference_model,
             tokenizer=self.tokenizer,
             group=self.group,
             tool_parser=self.tool_parser,
             kv_prefix_cache=self.kv_prefix_cache,
             model_id=self.model_id,
-            device_rank=0 if self.group is None else self.group.rank(),
+            device_rank=device_rank,
             cancel_receiver=self.cancel_receiver,
             event_sender=self.event_sender,
         )

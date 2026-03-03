@@ -8,7 +8,6 @@ from typing import Any, cast
 
 import mlx.core as mx
 import pytest
-from anyio import WouldBlock
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.common import CommandId, ModelId
@@ -18,7 +17,7 @@ from exo.shared.types.tasks import TaskId, TextGeneration
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.instances import InstanceId
 from exo.shared.types.worker.runner_response import GenerationResponse
-from exo.utils.channels import MpReceiver, MpSender, mp_channel
+from exo.utils.channels import MpSender, mp_channel
 from exo.worker.engines.mlx.cache import CacheSnapshot, KVPrefixCache, cache_length
 from exo.worker.engines.mlx.generator.generate import mlx_generate
 from exo.worker.engines.mlx.utils_mlx import (
@@ -73,19 +72,6 @@ def _collect_mlx_generate(
     return tokens
 
 
-def _drain_receiver(
-    receiver: MpReceiver[GenerationResponse],
-) -> list[GenerationResponse]:
-    """Collect all currently available responses from the receiver."""
-    out: list[GenerationResponse] = []
-    try:
-        while True:
-            out.append(receiver.receive_nowait())
-    except WouldBlock:
-        pass
-    return out
-
-
 def _collect_batch_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
@@ -96,14 +82,13 @@ def _collect_batch_generate(
     _cancel_sender, cancel_receiver = mp_channel[TaskId]()
     event_sender: MpSender[Event]
     event_sender, _event_receiver = mp_channel[Event]()
-    response_sender: MpSender[GenerationResponse]
-    response_sender, response_receiver = mp_channel[GenerationResponse]()
 
     batch_gen = BatchGenerator(
         model=model,
         tokenizer=tokenizer,
         group=None,
         kv_prefix_cache=kv_prefix_cache,
+        tool_parser=None,
         model_id=ModelId("test"),
         device_rank=0,
         cancel_receiver=cancel_receiver,
@@ -118,17 +103,16 @@ def _collect_batch_generate(
         instance_id=InstanceId("test-instance"),
     )
 
-    batch_gen.submit(task, response_sender)
+    batch_gen.submit(task)
 
     tokens: list[int] = []
-    while batch_gen._mlx_gen.has_work:  # pyright: ignore[reportPrivateUsage]
-        batch_gen.step()
-        for resp in _drain_receiver(response_receiver):
-            tokens.append(resp.token)
-
-    # Drain any remaining responses
-    for resp in _drain_receiver(response_receiver):
-        tokens.append(resp.token)
+    while True:
+        results = list(batch_gen.step())
+        for _task_id, result in results:
+            if isinstance(result, GenerationResponse):
+                tokens.append(result.token)
+        if not batch_gen._mlx_gen.has_work:  # pyright: ignore[reportPrivateUsage]
+            break
 
     batch_gen.close()
     return tokens

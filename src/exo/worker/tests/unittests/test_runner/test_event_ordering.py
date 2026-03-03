@@ -110,6 +110,7 @@ def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Even
         test_event.event_id = true_event.event_id
         assert test_event == true_event, f"{test_event} != {true_event}"
 
+
 @pytest.fixture
 def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     # initialize_mlx returns a mock group
@@ -134,7 +135,6 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
         mlx_model_output_parsers, "detect_thinking_prompt_suffix", make_nothin(False)
     )
     monkeypatch.setattr(mlx_batch_generator, "ExoBatchGenerator", FakeExoBatchGenerator)
-
 
 
 class FakeExoBatchGenerator:
