@@ -258,6 +258,6 @@ def get_node_id_keypair(
 
         # if no valid credentials, create new ones and persist
         with open(path, "w+b") as f:
-            keypair = Keypair.generate_ed25519()
+            keypair = Keypair.generate()
             f.write(keypair.to_bytes())
             return keypair
