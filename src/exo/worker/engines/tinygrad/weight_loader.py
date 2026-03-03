@@ -20,13 +20,10 @@ LinearWeight = Tensor | QuantizedLinear
 EmbedWeight = Tensor | QuantizedEmbedding
 
 class LayerWeights(NamedTuple):
-    q_proj: LinearWeight
-    k_proj: LinearWeight
-    v_proj: LinearWeight
+    qkv_proj: LinearWeight       # Merged Q+K+V
     o_proj: LinearWeight
 
-    gate_proj: LinearWeight
-    up_proj: LinearWeight
+    gate_up_proj: LinearWeight   # Merged gate+up
     down_proj: LinearWeight
 
     input_norm: Tensor
@@ -104,6 +101,47 @@ def load_transformer_weights(
         rope_sin = rope_sin.realize(),
     )
 
+def _merge_linear_weights(*weights: LinearWeight) -> LinearWeight:
+    """Merge multiple LinearWeight objects by concatenating along the output dimension (dim 0).
+
+    For quantized weights, concatenates packed uint32, scales, and biases directly —
+    no extra memory from dequantization. For non-quantized or mixed weights, dequantizes
+    first then concatenates plain Tensors.
+    """
+    if all(isinstance(w, QuantizedLinear) for w in weights):
+        qls = [w for w in weights if isinstance(w, QuantizedLinear)]
+        merged_tensor = qls[0].weight_q.tensor.cat(
+            *[w.weight_q.tensor for w in qls[1:]], dim=0
+        ).contiguous().realize()
+        merged_scales = qls[0].scales.cat(
+            *[w.scales for w in qls[1:]], dim=0
+        ).contiguous().realize()
+        merged_biases = qls[0].biases.cat(
+            *[w.biases for w in qls[1:]], dim=0
+        ).contiguous().realize()
+        return QuantizedLinear(
+            weight_q=PackedTensor(
+                tensor=merged_tensor,
+                original_shape=(
+                    sum(w.weight_q.original_shape[0] for w in qls),
+                    qls[0].weight_q.original_shape[1],
+                ),
+                pack_factor=qls[0].weight_q.pack_factor,
+                bits=qls[0].weight_q.bits,
+            ),
+            scales=merged_scales,
+            biases=merged_biases,
+            group_size=qls[0].group_size,
+        )
+    # Non-quantized or mixed: dequantize if needed, then cat
+    tensors: list[Tensor] = []
+    for w in weights:
+        if isinstance(w, QuantizedLinear):
+            tensors.append(w.dequantize())
+        else:
+            tensors.append(w)
+    return tensors[0].cat(*tensors[1:], dim=0).contiguous().realize()
+
 def _build_layer_weights(
     raw: dict[str, Tensor],
     prefix: str,
@@ -116,13 +154,19 @@ def _build_layer_weights(
     q_norm = raw.get(f"{prefix}.{spec.q_norm_key}.weight") if spec.q_norm_key else None
     k_norm = raw.get(f"{prefix}.{spec.k_norm_key}.weight") if spec.k_norm_key else None
 
+    q_proj = _build_weight(raw, key(spec.q_proj_key), config)
+    k_proj = _build_weight(raw, key(spec.k_proj_key), config)
+    v_proj = _build_weight(raw, key(spec.v_proj_key), config)
+    qkv_proj = _merge_linear_weights(q_proj, k_proj, v_proj)
+
+    gate_proj = _build_weight(raw, key(spec.gate_proj_key), config)
+    up_proj = _build_weight(raw, key(spec.up_proj_key), config)
+    gate_up_proj = _merge_linear_weights(gate_proj, up_proj)
+
     return LayerWeights(
-        q_proj=_build_weight(raw, key(spec.q_proj_key), config),
-        k_proj=_build_weight(raw, key(spec.k_proj_key), config),
-        v_proj=_build_weight(raw, key(spec.v_proj_key), config),
+        qkv_proj=qkv_proj,
         o_proj=_build_weight(raw, key(spec.o_proj_key), config),
-        gate_proj=_build_weight(raw, key(spec.gate_proj_key), config),
-        up_proj=_build_weight(raw, key(spec.up_proj_key), config),
+        gate_up_proj=gate_up_proj,
         down_proj=_build_weight(raw, key(spec.down_proj_key), config),
         input_norm=raw[f"{prefix}.{spec.input_norm_key}.weight"],
         post_attn_norm=raw[f"{prefix}.{spec.post_attn_norm_key}.weight"],
@@ -207,7 +251,7 @@ def _build_weight(
     raise KeyError(f"Weight key '{key}' not found (also tried {qweight_key})")
 
 def _load_all_safetensors(path: Path) -> dict[str, Tensor]:
-    from tinygrad.helpers import Context, BEAM  # pyright: ignore[reportPrivateUsage]
+    from tinygrad.helpers import Context
 
     merged: dict[str, Tensor] = {}
 

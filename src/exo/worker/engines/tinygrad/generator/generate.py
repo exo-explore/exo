@@ -6,6 +6,7 @@ from typing import Any
 
 from tinygrad import TinyJit
 from tinygrad.dtype import dtypes
+from tinygrad.helpers import Context
 from tinygrad.tensor import Tensor
 
 from exo.shared.model_config import ModelConfig
@@ -24,7 +25,6 @@ from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.worker.engines.tinygrad.constants import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_TEMPERATURE,
-    DEFAULT_TOP_LOGPROBS,
     DEFAULT_TOP_P,
 )
 
@@ -131,26 +131,41 @@ def tinygrad_generate(
         _jit_registry[model_key] = state
 
     cache = state.cache
-    jit_decode = state.jit_decode
 
-    # Sequential prefill: process each prompt token through the JIT decode path.
-    # Always seq_len=1, reuses the same JIT graph — zero compilation after warmup.
+    # Batched prefill: process all prompt tokens in a single forward pass.
+    # Uses position_offset=0 (int) which triggers local attention (seq_len × seq_len)
+    # instead of full-cache attention, producing ~324 kernel dispatches total
+    # instead of 324 × N token-by-token dispatches.
+    # BEAM is disabled because prefill shapes vary per prompt length (not cacheable)
+    # and BEAM may select WMMA kernels incompatible with RDNA 2 (gfx1032).
     if not input_ids:
         raise ValueError("Prompt must contain at least one token")
 
     prefill_start = time.time()
-    for i, token_id in enumerate(input_ids):
-        state.input_buffer._buffer().copyin(memoryview(bytearray(struct.pack('=i', token_id))))  # pyright: ignore[reportPrivateUsage]
-        state.position_buffer._buffer().copyin(memoryview(bytearray(struct.pack('=i', i))))  # pyright: ignore[reportPrivateUsage]
-        results = jit_decode(
-            state.input_buffer, state.position_buffer,
-            model.rope_cos, model.rope_sin,
-            *cache._keys, *cache._values,
+    prompt_tensor = Tensor(input_ids, dtype=dtypes.int32).reshape(1, -1).contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
+    with Context(BEAM=0):
+        logits, _ = forward_pass(
+            model, prompt_tensor, cache,
+            position_offset=0,
+            rope_cos=model.rope_cos, rope_sin=model.rope_sin,
         )
-        logits = results[0]
-        for j in range(num_layers):
-            cache._keys[j] = results[1 + j]
-            cache._values[j] = results[1 + num_layers + j]
+        # Take last token's logits for the first decode step.
+        logits = logits[:, -1:, :].contiguous()  # pyright: ignore[reportUnknownMemberType]
+        # Make cache tensors contiguous for JIT compatibility.
+        for i in range(num_layers):
+            cache._keys[i] = cache._keys[i].contiguous()  # pyright: ignore[reportUnknownMemberType]
+            cache._values[i] = cache._values[i].contiguous()  # pyright: ignore[reportUnknownMemberType]
+        # Realize everything at once — same pattern as _build_jit_decode.
+        logits = logits.realize(*cache._keys, *cache._values)
+
+    # Rebuild the JIT after prefill. The batched prefill creates entirely new
+    # cache tensor objects (via Tensor.where + contiguous + realize) that differ
+    # from the JIT's captured output buffers. Rebuilding ensures the JIT
+    # re-captures with the correct buffer objects. The cost is 2 slow decode
+    # steps per request (cnt=0 jit-ignore, cnt=1 jit-capture), after which
+    # all subsequent tokens use fast JIT replay.
+    jit_decode = _build_jit_decode(model, cache)
+    state.jit_decode = jit_decode
 
     prefill_time = time.time() - prefill_start
     prompt_tps = prompt_tokens / max(prefill_time, 1e-9)
@@ -249,8 +264,6 @@ def warmup_inference(model: TransformerWeights, tokenizer: Any, group: None = No
     warmup_task = TextGenerationTaskParams(
         model=CommonModelId("warmup"),
         input=[InputMessage(role="user", content="Time to warm up!")],
-        logprobs=True,
-        top_logprobs=DEFAULT_TOP_LOGPROBS,
     )
 
     prompt: str = apply_chat_template(tokenizer, warmup_task)

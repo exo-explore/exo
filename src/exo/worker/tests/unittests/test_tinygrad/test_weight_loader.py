@@ -71,12 +71,9 @@ def test_layer_weights_is_named_tuple():
 
     assert hasattr(LayerWeights, "_fields")
     fields = LayerWeights._fields
-    assert "q_proj" in fields
-    assert "k_proj" in fields
-    assert "v_proj" in fields
+    assert "qkv_proj" in fields
     assert "o_proj" in fields
-    assert "gate_proj" in fields
-    assert "up_proj" in fields
+    assert "gate_up_proj" in fields
     assert "down_proj" in fields
     assert "input_norm" in fields
     assert "post_attn_norm" in fields

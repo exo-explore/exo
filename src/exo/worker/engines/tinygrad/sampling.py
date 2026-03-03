@@ -20,20 +20,18 @@ def sample_token(
     if temperature == 0:
         token_id = int(last_logits.argmax().item())  # pyright: ignore[reportUnknownMemberType]
     else:
-        probs = (last_logits / temperature).softmax(axis = -1)
+        # Gumble-max trick for reducing GPU -> CPU sync.
 
-        r = Tensor.rand(1)  # pyright: ignore[reportUnknownMemberType]
-        cumsum = probs.cumsum(axis = 0)
-        mask = (cumsum > r).float()
-        token_id = int(mask.argmax().item())  # pyright: ignore[reportUnknownMemberType]
+        scaled = last_logits / temperature
+        gumble_noise = -(-Tensor.rand(scaled.shape).log()).log()
+        token_id = int((scaled + gumble_noise).argmax().item())
 
     selected_logprob: float = 0.0
     top_logprobs: list[tuple[int, float]] = []
 
     if request_logprobs:
         log_probs = last_logits.log_softmax(axis = -1)
-        log_probs_list: list[float] = log_probs.tolist()  # pyright: ignore[reportAssignmentType]
-        selected_logprob = log_probs_list[token_id]
+        selected_logprob = float(log_probs[token_id].item())
 
         if top_logprobs_count > 0:
             values, indices = log_probs.topk(top_logprobs_count)

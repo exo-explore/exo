@@ -580,6 +580,7 @@ class AppStore {
   debugMode = $state(false);
   topologyOnlyMode = $state(false);
   chatSidebarVisible = $state(true); // Shown by default
+  enableLogprobs = $state(false);
 
   // Image generation params
   imageGenerationParams = $state<ImageGenerationParams>({
@@ -608,6 +609,7 @@ class AppStore {
       this.loadTopologyOnlyModeFromStorage();
       this.loadChatSidebarVisibleFromStorage();
       this.loadImageGenerationParamsFromStorage();
+      this.loadEnableLogprobsFromStorage();
     }
   }
 
@@ -674,6 +676,25 @@ class AppStore {
       localStorage.setItem("exo-debug-mode", this.debugMode ? "true" : "false");
     } catch (error) {
       console.error("Failed to save debug mode:", error);
+    }
+  }
+
+  private loadEnableLogprobsFromStorage() {
+    try {
+      const stored = localStorage.getItem("exo-enable-logprobs");
+      if (stored !== null) {
+        this.enableLogprobs = stored === "true";
+      }
+    } catch (error) {
+      console.error("Failed to load enable logprobs:", error);
+    }
+  }
+
+  private saveEnableLogprobsToStorage() {
+    try {
+      localStorage.setItem("exo-enable-logprobs", this.enableLogprobs ? "true" : "false");
+    } catch (error) {
+      console.error("Failed to save enable logprobs:", error);
     }
   }
 
@@ -1213,6 +1234,20 @@ class AppStore {
     this.saveDebugModeToStorage();
   }
 
+  getEnableLogprobs(): boolean {
+    return this.enableLogprobs;
+  }
+
+  setEnableLogprobs(enabled: boolean) {
+    this.enableLogprobs = enabled;
+    this.saveEnableLogprobsToStorage();
+  }
+
+  toggleEnableLogprobs() {
+    this.enableLogprobs = !this.enableLogprobs;
+    this.saveEnableLogprobsToStorage();
+  }
+
   getTopologyOnlyMode(): boolean {
     return this.topologyOnlyMode;
   }
@@ -1658,8 +1693,7 @@ class AppStore {
           model: modelToUse,
           messages: apiMessages,
           stream: true,
-          logprobs: true,
-          top_logprobs: 5,
+          ...(this.enableLogprobs && { logprobs: true, top_logprobs: 5 }),
         }),
       });
 
@@ -1865,8 +1899,7 @@ class AppStore {
           model: modelToUse,
           messages: apiMessages,
           stream: true,
-          logprobs: true,
-          top_logprobs: 5,
+          ...(this.enableLogprobs && { logprobs: true, top_logprobs: 5 }),
         }),
       });
 
@@ -2345,8 +2378,7 @@ class AppStore {
           messages: apiMessages,
           temperature: 0.7,
           stream: true,
-          logprobs: true,
-          top_logprobs: 5,
+          ...(this.enableLogprobs && { logprobs: true, top_logprobs: 5 }),
           ...(enableThinking != null && {
             enable_thinking: enableThinking,
           }),
@@ -3254,6 +3286,10 @@ export const toggleSidebar = () => appStore.toggleSidebar();
 export const toggleDebugMode = () => appStore.toggleDebugMode();
 export const setDebugMode = (enabled: boolean) =>
   appStore.setDebugMode(enabled);
+export const enableLogprobs = () => appStore.getEnableLogprobs();
+export const toggleEnableLogprobs = () => appStore.toggleEnableLogprobs();
+export const setEnableLogprobs = (enabled: boolean) =>
+  appStore.setEnableLogprobs(enabled);
 export const toggleTopologyOnlyMode = () => appStore.toggleTopologyOnlyMode();
 export const setTopologyOnlyMode = (enabled: boolean) =>
   appStore.setTopologyOnlyMode(enabled);

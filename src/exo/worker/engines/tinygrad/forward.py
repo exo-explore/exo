@@ -77,8 +77,8 @@ def _transformer_block(
     match config.architecture_spec.attention_type:
         case "grouped_query" | "multi_head":
             x = grouped_query_attention(
-                x, q_proj = layer.q_proj, k_proj = layer.k_proj,
-                v_proj = layer.v_proj, o_proj = layer.o_proj,
+                x, qkv_proj = layer.qkv_proj,
+                o_proj = layer.o_proj,
                 cos_freqs = builder.cos_freqs,
                 sin_freqs = builder.sin_freqs,
                 cache = cache, layer_idx = builder.idx,
@@ -103,7 +103,7 @@ def _transformer_block(
     match config.architecture_spec.mlp_type:
         case "swiglu":
             x = swiglu_mlp(
-                x, layer.gate_proj, layer.up_proj, layer.down_proj
+                x, layer.gate_up_proj, layer.down_proj
             )
         case "moe_top_k":
             raise NotImplementedError(

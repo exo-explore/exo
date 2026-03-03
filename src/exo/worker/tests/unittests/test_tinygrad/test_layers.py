@@ -99,14 +99,13 @@ def test_lm_head_shape():
 # --- MLP ---
 
 def test_swiglu_mlp_shape():
-    """SwiGLU MLP: hidden_size in, hidden_size out."""
+    """SwiGLU MLP: hidden_size in, hidden_size out (merged gate+up proj)."""
     from exo.worker.engines.tinygrad.layers.mlp import swiglu_mlp
 
     x = Tensor.randn(1, 4, 2048)
-    gate = Tensor.randn(8192, 2048)
-    up = Tensor.randn(8192, 2048)
+    gate_up = Tensor.randn(16384, 2048)  # gate(8192) + up(8192) merged
     down = Tensor.randn(2048, 8192)
-    out = swiglu_mlp(x, gate, up, down)
+    out = swiglu_mlp(x, gate_up, down)
     assert out.shape == (1, 4, 2048)
 
 # --- Attention ---

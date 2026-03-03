@@ -223,8 +223,8 @@ def test_quantized_linear_output_shape():
     out = layer(x)
     assert out.shape == (1, 8, 32)
 
-def test_quantized_linear_caches_dequantized_weights():
-    """Weights are eagerly dequantized; second call reuses the same tensor."""
+def test_quantized_linear_dequantize_returns_correct_shape():
+    """dequantize() returns a tensor with the original weight shape."""
     from exo.worker.engines.tinygrad.quantization.layers import QuantizedLinear
     from exo.worker.engines.tinygrad.quantization.packing import pack_bits
 
@@ -236,11 +236,8 @@ def test_quantized_linear_caches_dequantized_weights():
         biases=Tensor.zeros(16, 1),
         group_size=32,
     )
-    x = Tensor.randn(1, 1, 32)
-    assert layer._dequantized_weight is not None  # pyright: ignore[reportPrivateUsage]
-    cached_ref = layer._dequantized_weight  # pyright: ignore[reportPrivateUsage]
-    layer(x)
-    assert layer._dequantized_weight is cached_ref  # pyright: ignore[reportPrivateUsage]
+    dequantized = layer.dequantize()
+    assert dequantized.shape == (16, 32)
 
 def test_quantized_linear_in_out_features():
     """in_features and out_features reflect the original weight shape."""

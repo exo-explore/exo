@@ -18,9 +18,7 @@ def linear_forward(x: Tensor, weight: LinearWeight) -> Tensor:
 
 def grouped_query_attention(
     x: Tensor,
-    q_proj: LinearWeight,
-    k_proj: LinearWeight,
-    v_proj: LinearWeight,
+    qkv_proj: LinearWeight,
     o_proj: LinearWeight,
     cos_freqs: Tensor,
     sin_freqs: Tensor,
@@ -37,9 +35,12 @@ def grouped_query_attention(
 ) -> Tensor:
     _batch, seq_len, _ = x.shape
 
-    q = linear_forward(x, q_proj).reshape(int(_batch), seq_len, num_heads, head_dim).permute(0, 2, 1, 3)  # pyright: ignore[reportUnknownMemberType]
-    k = linear_forward(x, k_proj).reshape(int(_batch), seq_len, num_kv_heads, head_dim).permute(0, 2, 1, 3)  # pyright: ignore[reportUnknownMemberType]
-    v = linear_forward(x, v_proj).reshape(int(_batch), seq_len, num_kv_heads, head_dim).permute(0, 2, 1, 3)  # pyright: ignore[reportUnknownMemberType]
+    q_dim = num_heads * head_dim
+    kv_dim = num_kv_heads * head_dim
+    qkv = linear_forward(x, qkv_proj)
+    q = qkv[..., :q_dim].reshape(int(_batch), seq_len, num_heads, head_dim).permute(0, 2, 1, 3)  # pyright: ignore[reportUnknownMemberType]
+    k = qkv[..., q_dim:q_dim + kv_dim].reshape(int(_batch), seq_len, num_kv_heads, head_dim).permute(0, 2, 1, 3)  # pyright: ignore[reportUnknownMemberType]
+    v = qkv[..., q_dim + kv_dim:].reshape(int(_batch), seq_len, num_kv_heads, head_dim).permute(0, 2, 1, 3)  # pyright: ignore[reportUnknownMemberType]
 
     if q_norm is not None:
         q = rms_norm(q, q_norm, rms_norm_eps)
@@ -65,8 +66,12 @@ def grouped_query_attention(
 
     if num_kv_heads < num_heads:
         repeat_factor = num_heads // num_kv_heads
-        k_attn = k_attn.repeat_interleave(repeat_factor, dim = 1)  # pyright: ignore[reportUnknownMemberType]
-        v_attn = v_attn.repeat_interleave(repeat_factor, dim = 1)  # pyright: ignore[reportUnknownMemberType]
+        k_attn = k_attn.unsqueeze(2).expand(
+            int(_batch), num_kv_heads, repeat_factor, -1, head_dim,
+        ).reshape(int(_batch), num_heads, -1, head_dim)  # pyright: ignore[reportUnknownMemberType]
+        v_attn = v_attn.unsqueeze(2).expand(
+            int(_batch), num_kv_heads, repeat_factor, -1, head_dim,
+        ).reshape(int(_batch), num_heads, -1, head_dim) # pyright: ignore[reportUnknownMemberType]
 
     scale = 1.0 / math.sqrt(head_dim)
     scores: Tensor = (q @ k_attn.transpose(-2, -1)) * scale

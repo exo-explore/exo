@@ -30,15 +30,14 @@ class QuantizedLinear:
         self.biases = biases
         self.group_size = group_size
         self.bias = bias
-        self._dequantized_weight: Tensor = self._dequantize().realize()
 
     def __call__(self, x: Tensor) -> Tensor:
-        result = x @ self._dequantized_weight.T
+        result = x @ self.dequantize().T
         if self.bias is not None:
             result = result + self.bias
         return result
 
-    def _dequantize(self) -> Tensor:
+    def dequantize(self) -> Tensor:
         unpacked = unpack_bits(self.weight_q)
         return affine_dequantize(
             unpacked,  self.scales,
@@ -74,12 +73,11 @@ class QuantizedEmbedding:
         self.scales = scales
         self.biases = biases
         self.group_size = group_size
-        self._dequantized_weight: Tensor = self._dequantize().realize()
 
     def __call__(self, indices: Tensor) -> Tensor:
-        return self._dequantized_weight[indices]
+        return self.dequantize()[indices]
 
-    def _dequantize(self) -> Tensor:
+    def dequantize(self) -> Tensor:
         unpacked = unpack_bits(self.weight_q)
         return affine_dequantize(
             unpacked, self.scales, self.biases, self.group_size
