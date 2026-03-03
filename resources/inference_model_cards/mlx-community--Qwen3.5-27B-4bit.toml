@@ -1,0 +1,12 @@
+model_id = "mlx-community/Qwen3.5-27B-4bit"
+n_layers = 64
+hidden_size = 5120
+supports_tensor = false
+tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "4bit"
+base_model = "Qwen3.5 27B"
+capabilities = ["text", "thinking", "thinking_toggle"]
+
+[storage_size]
+in_bytes = 16054266848
