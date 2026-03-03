@@ -10,21 +10,16 @@ import mlx.core as mx
 import pytest
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.types.common import CommandId, ModelId
-from exo.shared.types.events import Event
+from exo.shared.types.common import ModelId
 from exo.shared.types.mlx import KVCacheType, Model
-from exo.shared.types.tasks import TaskId, TextGeneration
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
-from exo.shared.types.worker.instances import InstanceId
-from exo.shared.types.worker.runner_response import GenerationResponse
-from exo.utils.channels import MpSender, mp_channel
 from exo.worker.engines.mlx.cache import CacheSnapshot, KVPrefixCache, cache_length
+from exo.worker.engines.mlx.generator.batch_generate import ExoBatchGenerator
 from exo.worker.engines.mlx.generator.generate import mlx_generate
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     load_tokenizer_for_model_id,
 )
-from exo.worker.runner.llm_inference.batch_generator import BatchGenerator
 
 from .test_prefix_cache_architectures import (
     ARCHITECTURES,
@@ -78,44 +73,53 @@ def _collect_batch_generate(
     task_params: TextGenerationTaskParams,
     kv_prefix_cache: KVPrefixCache | None,
 ) -> list[int]:
-    """Run BatchGenerator and collect output token IDs."""
-    _cancel_sender, cancel_receiver = mp_channel[TaskId]()
-    event_sender: MpSender[Event]
-    event_sender, _event_receiver = mp_channel[Event]()
-
-    batch_gen = BatchGenerator(
+    """Run ExoBatchGenerator and collect raw output token IDs"""
+    exo_gen = ExoBatchGenerator(
         model=model,
         tokenizer=tokenizer,
         group=None,
         kv_prefix_cache=kv_prefix_cache,
-        tool_parser=None,
-        model_id=ModelId("test"),
-        device_rank=0,
-        cancel_receiver=cancel_receiver,
-        event_sender=event_sender,
-        check_for_cancel_every=100,
     )
 
-    task = TextGeneration(
-        task_id=TaskId("test-batch"),
-        command_id=CommandId("test-cmd"),
-        task_params=task_params,
-        instance_id=InstanceId("test-instance"),
-    )
-
-    batch_gen.submit(task)
+    prompt = apply_chat_template(tokenizer=tokenizer, task_params=task_params)
+    exo_gen.submit(task_params=task_params, prompt=prompt)
 
     tokens: list[int] = []
-    while True:
-        results = list(batch_gen.step())
-        for _task_id, result in results:
-            if isinstance(result, GenerationResponse):
-                tokens.append(result.token)
-        if not batch_gen._mlx_gen.has_work:  # pyright: ignore[reportPrivateUsage]
-            break
+    while exo_gen.has_work:
+        results = exo_gen.step()
+        for _uid, response in results:
+            tokens.append(response.token)
 
-    batch_gen.close()
+    exo_gen.close()
     return tokens
+
+
+def _assert_state_equal(sa: object, sb: object, label: str) -> None:
+    """Compare two state items, handling both plain arrays and tuples of arrays (CacheList)."""
+    if isinstance(sa, tuple):
+        assert isinstance(sb, tuple), f"{label}: type mismatch"
+        for k, (arr_a, arr_b) in enumerate(
+            zip(
+                cast(tuple[mx.array, ...], sa),
+                cast(tuple[mx.array, ...], sb),
+                strict=True,
+            )
+        ):
+            a_f = mx.array(arr_a).astype(mx.float32)
+            b_f = mx.array(arr_b).astype(mx.float32)
+            if a_f.size == 0:
+                assert b_f.size == 0, f"{label}[{k}]: size mismatch"
+                continue
+            diff = float(mx.max(mx.abs(a_f - b_f)).item())
+            assert diff == 0.0, f"{label}[{k}]: max diff {diff}"
+    else:
+        sa_f = mx.array(cast(mx.array, sa)).astype(mx.float32)
+        sb_f = mx.array(cast(mx.array, sb)).astype(mx.float32)
+        if sa_f.size == 0:
+            assert sb_f.size == 0, f"{label}: size mismatch"
+            return
+        diff = float(mx.max(mx.abs(sa_f - sb_f)).item())
+        assert diff == 0.0, f"{label}: max diff {diff}"
 
 
 def _compare_cache_arrays(
@@ -142,13 +146,7 @@ def _compare_cache_arrays(
             assert sa is not None and sb is not None, (
                 f"{label}Layer {i}, state {j}: one is None"
             )
-            sa_f = mx.array(sa).astype(mx.float32)
-            sb_f = mx.array(sb).astype(mx.float32)
-            if sa_f.size == 0:
-                assert sb_f.size == 0, f"{label}Layer {i}, state {j}: size mismatch"
-                continue
-            diff = float(mx.max(mx.abs(sa_f - sb_f)).item())
-            assert diff == 0.0, f"{label}Layer {i}, state {j}: max diff {diff}"
+            _assert_state_equal(sa, sb, f"{label}Layer {i}, state {j}")
 
 
 def _safe_state(cache: object) -> list[object]:
@@ -199,16 +197,10 @@ def _compare_snapshots(
                 if arr_a is None and arr_b is None:
                     continue
                 assert arr_a is not None and arr_b is not None
-                a_f = mx.array(arr_a).astype(mx.float32)  # pyright: ignore[reportArgumentType]
-                b_f = mx.array(arr_b).astype(mx.float32)  # pyright: ignore[reportArgumentType]
-                if a_f.size == 0:
-                    assert b_f.size == 0, (
-                        f"{label}Snapshot {k}, layer {layer_i}, state {st_j}: size mismatch"
-                    )
-                    continue
-                diff = float(mx.max(mx.abs(a_f - b_f)).item())
-                assert diff == 0.0, (
-                    f"{label}Snapshot {k}, layer {layer_i}, state {st_j}: diff {diff}"
+                _assert_state_equal(
+                    arr_a,
+                    arr_b,
+                    f"{label}Snapshot {k}, layer {layer_i}, state {st_j}",
                 )
 
 
