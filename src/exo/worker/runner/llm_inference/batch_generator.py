@@ -357,13 +357,9 @@ class BatchGenerator(InferenceGenerator):
             self._active_tasks[uid] = (task, queue, output_generator)
 
         if not self._mlx_gen.has_work:
-            return map(lambda task: (task, Cancelled()), self._cancelled_tasks)
+            return self._drain_cancellations()
 
-        try:
-            results = self._mlx_gen.step()
-        except PrefillCancelled:
-            self._active_tasks.clear()
-            return map(lambda task: (task, Cancelled()), self._cancelled_tasks)
+        results = self._mlx_gen.step()
 
         output: list[
             tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
@@ -383,10 +379,35 @@ class BatchGenerator(InferenceGenerator):
                 output.append((task.task_id, Finished()))
                 del self._active_tasks[uid]
 
-        return itertools.chain(
-            output,
-            map(lambda task: (task, Cancelled()), self._cancelled_tasks),
-        )
+        return itertools.chain(output, self._drain_cancellations())
+
+    def _drain_cancellations(
+        self,
+    ) -> list[tuple[TaskId, Cancelled]]:
+        if not self._cancelled_tasks:
+            return []
+
+        cancel_all = TaskId("CANCEL_CURRENT_TASK") in self._cancelled_tasks
+
+        uids_to_cancel: list[int] = []
+        results: list[tuple[TaskId, Cancelled]] = []
+
+        for uid, (task, _, _) in list(self._active_tasks.items()):
+            if task.task_id in self._cancelled_tasks or cancel_all:
+                uids_to_cancel.append(uid)
+                results.append((task.task_id, Cancelled()))
+                del self._active_tasks[uid]
+
+        if uids_to_cancel:
+            self._mlx_gen.cancel(uids_to_cancel)
+
+        already_cancelled = {tid for tid, _ in results}
+        for tid in self._cancelled_tasks:
+            if tid != TaskId("CANCEL_CURRENT_TASK") and tid not in already_cancelled:
+                results.append((tid, Cancelled()))
+
+        self._cancelled_tasks.clear()
+        return results
 
     def _send_error(self, task: TextGeneration, e: Exception) -> None:
         if self.device_rank == 0:
@@ -440,7 +461,7 @@ class BatchGenerator(InferenceGenerator):
                     TaskId("CANCEL_CURRENT_TASK") in self._cancelled_tasks
                 )
                 if mx_any(want_to_cancel, self.group):
-                    raise PrefillCancelled()
+                    self._cancelled_tasks.add(task.task_id)
 
                 self.agree_on_tasks()
 
