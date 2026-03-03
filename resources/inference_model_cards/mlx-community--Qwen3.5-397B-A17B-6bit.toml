@@ -1,0 +1,12 @@
+model_id = "mlx-community/Qwen3.5-397B-A17B-6bit"
+n_layers = 60
+hidden_size = 4096
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "6bit"
+base_model = "Qwen3.5 397B A17B"
+capabilities = ["text", "thinking", "thinking_toggle"]
+
+[storage_size]
+in_bytes = 322946674272
