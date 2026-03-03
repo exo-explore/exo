@@ -29,7 +29,7 @@ def filter_cycles_by_memory(
             continue
 
         total_mem = sum(
-            (node_memory[node_id].ram_available for node_id in cycle.node_ids),
+            (node_memory[node_id].ram_total for node_id in cycle.node_ids),
             start=Memory(),
         )
         if total_mem >= required_memory:
