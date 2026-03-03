@@ -319,6 +319,9 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
         return [151336, 151329, 151338]
     elif "gpt-oss" in model_id_lower:
         return [200002, 200012]
+    elif "qwen3.5" in model_id_lower or "qwen-3.5" in model_id_lower:
+        # For Qwen3.5: 248046 (<|im_end|>), 248044 (<|endoftext|>)
+        return [248046, 248044]
     return None
 
 

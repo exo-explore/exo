@@ -7,6 +7,7 @@ import mlx.core as mx
 import pytest
 
 import exo.worker.runner.llm_inference.batch_generator as mlx_batch_generator
+import exo.worker.runner.llm_inference.model_output_parsers as mlx_model_output_parsers
 import exo.worker.runner.llm_inference.runner as mlx_runner
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.events import (
@@ -109,6 +110,32 @@ def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Even
         test_event.event_id = true_event.event_id
         assert test_event == true_event, f"{test_event} != {true_event}"
 
+@pytest.fixture
+def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
+    # initialize_mlx returns a mock group
+    monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(MockGroup()))
+    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
+    monkeypatch.setattr(mlx_batch_generator, "warmup_inference", make_nothin(1))
+    monkeypatch.setattr(mlx_batch_generator, "_check_for_debug_prompts", nothin)
+    monkeypatch.setattr(mlx_batch_generator, "mx_any", make_nothin(False))
+
+    def fake_all_gather(
+        tasks: list[TextGeneration], group: object
+    ) -> tuple[list[TextGeneration], list[TextGeneration]]:
+        return (tasks, [])
+
+    monkeypatch.setattr(mlx_batch_generator, "mx_all_gather_tasks", fake_all_gather)
+    # Mock apply_chat_template since we're using a fake tokenizer (integer 1).
+    # Returns a prompt without thinking tag so detect_thinking_prompt_suffix returns None.
+    monkeypatch.setattr(
+        mlx_batch_generator, "apply_chat_template", make_nothin("test prompt")
+    )
+    monkeypatch.setattr(
+        mlx_model_output_parsers, "detect_thinking_prompt_suffix", make_nothin(False)
+    )
+    monkeypatch.setattr(mlx_batch_generator, "ExoBatchGenerator", FakeExoBatchGenerator)
+
+
 
 class FakeExoBatchGenerator:
     def __init__(self, *_args: object, **_kwargs: object) -> None:
@@ -193,20 +220,6 @@ class MockGroup:
 
     def size(self) -> int:
         return 1
-
-
-@pytest.fixture
-def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(MockGroup()))
-    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
-    monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
-    monkeypatch.setattr(mlx_runner, "apply_chat_template", make_nothin("test prompt"))
-    monkeypatch.setattr(mlx_runner, "detect_thinking_prompt_suffix", make_nothin(False))
-    monkeypatch.setattr(mlx_runner, "KVPrefixCache", make_nothin(None))
-    monkeypatch.setattr(
-        mlx_batch_generator, "apply_chat_template", make_nothin("test prompt")
-    )
-    monkeypatch.setattr(mlx_batch_generator, "ExoBatchGenerator", FakeExoBatchGenerator)
 
 
 def _run(tasks: Iterable[Task], send_after_ready: list[Task] | None = None):

@@ -1,14 +1,11 @@
-import math
-import os
 import resource
 import time
-from collections.abc import Generator
+from dataclasses import dataclass
 from enum import Enum
 
 import mlx.core as mx
 from anyio import WouldBlock
-from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
-from mlx_lm.models.gpt_oss import Model as GptOssModel
+from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelTask
 from exo.shared.types.chunks import (
@@ -16,7 +13,7 @@ from exo.shared.types.chunks import (
     TokenChunk,
     ToolCallChunk,
 )
-from exo.shared.types.common import CommandId
+from exo.shared.types.common import CommandId, ModelId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -54,28 +51,19 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
-from exo.utils.channels import MpReceiver, MpSender, NonBlockingGenerator, mp_channel
+from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.mlx.cache import KVPrefixCache
-from exo.worker.engines.mlx.generator.generate import warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
-    apply_chat_template,
-    detect_thinking_prompt_suffix,
     initialize_mlx,
     load_mlx_items,
 )
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.batch_generator import (
-    BatchGenerator,
     InferenceGenerator,
     SequentialGenerator,
 )
-from exo.worker.runner.llm_inference.model_output_parsers import (
-    parse_deepseek_v32,
-    parse_gpt_oss,
-    parse_thinking_models,
-    parse_tool_calls,
-)
 
+from .batch_generator import Cancelled, Finished
 from .tool_parsers import ToolParser, make_mlx_parser
 
 
@@ -116,20 +104,14 @@ class Runner:
 
         self.setup_start_time = time.time()
 
-        self.inference_model: Model | None = None
-        self.tokenizer = None
-        self.tool_parser: ToolParser | None = None
-        self.group = None
-        self.kv_prefix_cache: KVPrefixCache | None = None
-        self.generator: InferenceGenerator | None = None
+        self.generator: Builder | InferenceGenerator = Builder(
+            self.model_id, self.event_sender, self.cancel_receiver
+        )
 
         self.seen: set[TaskId] = set()
         self.active_tasks: dict[
             TaskId,
-            tuple[
-                TextGeneration,
-                Generator[GenerationResponse | ToolCallResponse | None],
-            ],
+            TextGeneration,
         ] = {}
 
         logger.info("runner created")
@@ -143,9 +125,9 @@ class Runner:
             )
         )
 
-    def send_task_status(self, task: Task, status: TaskStatus):
+    def send_task_status(self, task_id: TaskId, task_status: TaskStatus):
         self.event_sender.send(
-            TaskStatusUpdated(task_id=task.task_id, task_status=status)
+            TaskStatusUpdated(task_id=task_id, task_status=task_status)
         )
 
     def acknowledge_task(self, task: Task):
@@ -163,138 +145,101 @@ class Runner:
                     break
 
     def handle_first_task(self, task: Task):
-        self.send_task_status(task, TaskStatus.Running)
+        self.send_task_status(task.task_id, TaskStatus.Running)
 
         match task:
             case ConnectToGroup() if isinstance(
                 self.current_status, (RunnerIdle, RunnerFailed)
             ):
+                assert isinstance(self.generator, Builder)
                 logger.info("runner connecting")
                 self.update_status(RunnerConnecting())
                 self.acknowledge_task(task)
 
-                self.group = initialize_mlx(self.bound_instance)
+                self.generator.group = initialize_mlx(self.bound_instance)
 
-                self.send_task_status(task, TaskStatus.Complete)
+                self.send_task_status(task.task_id, TaskStatus.Complete)
                 self.update_status(RunnerConnected())
                 logger.info("runner connected")
 
             # we load the model if it's connected with a group, or idle without a group. we should never tell a model to connect if it doesn't need to
-            case LoadModel():
-                if (
+            case LoadModel() if isinstance(self.generator, Builder) and (
+                (
                     isinstance(self.current_status, RunnerConnected)
-                    and self.group is not None
-                ) or (
-                    isinstance(self.current_status, RunnerIdle) and self.group is None
-                ):
-                    total_layers = (
-                        self.shard_metadata.end_layer - self.shard_metadata.start_layer
-                    )
-                    logger.info("runner loading")
+                    and self.generator.group is not None
+                )
+                or (
+                    isinstance(self.current_status, RunnerIdle)
+                    and self.generator.group is None
+                )
+            ):
+                total_layers = (
+                    self.shard_metadata.end_layer - self.shard_metadata.start_layer
+                )
+                logger.info("runner loading")
 
+                self.update_status(
+                    RunnerLoading(layers_loaded=0, total_layers=total_layers)
+                )
+                self.acknowledge_task(task)
+
+                def on_model_load_timeout() -> None:
                     self.update_status(
-                        RunnerLoading(layers_loaded=0, total_layers=total_layers)
+                        RunnerFailed(error_message="Model loading timed out")
                     )
-                    self.acknowledge_task(task)
+                    time.sleep(0.5)
 
-                    def on_model_load_timeout() -> None:
-                        self.update_status(
-                            RunnerFailed(error_message="Model loading timed out")
-                        )
-                        time.sleep(0.5)
-
-                    def on_layer_loaded(layers_loaded: int, total: int) -> None:
-                        self.update_status(
-                            RunnerLoading(
-                                layers_loaded=layers_loaded, total_layers=total
-                            )
-                        )
-
-                    assert (
-                        ModelTask.TextGeneration in self.shard_metadata.model_card.tasks
-                    ), (
-                        f"Incorrect model task(s): {self.shard_metadata.model_card.tasks}"
+                def on_layer_loaded(layers_loaded: int, total: int) -> None:
+                    self.update_status(
+                        RunnerLoading(layers_loaded=layers_loaded, total_layers=total)
                     )
-                    self.inference_model, self.tokenizer = load_mlx_items(
+
+                assert (
+                    ModelTask.TextGeneration in self.shard_metadata.model_card.tasks
+                ), f"Incorrect model task(s): {self.shard_metadata.model_card.tasks}"
+                self.generator.inference_model, self.generator.tokenizer = (
+                    load_mlx_items(
                         self.bound_instance,
-                        self.group,
+                        self.generator.group,
                         on_timeout=on_model_load_timeout,
                         on_layer_loaded=on_layer_loaded,
                     )
-                    logger.info(
-                        f"model has_tool_calling={self.tokenizer.has_tool_calling} using tokens {self.tokenizer.tool_call_start}, {self.tokenizer.tool_call_end}"
-                    )
-                    if self.tokenizer.has_tool_calling:
-                        assert self.tokenizer.tool_call_start
-                        assert self.tokenizer.tool_call_end
-                        assert self.tokenizer.tool_parser  # pyright: ignore[reportAny]
-                        self.tool_parser = make_mlx_parser(
-                            self.tokenizer.tool_call_start,
-                            self.tokenizer.tool_call_end,
-                            self.tokenizer.tool_parser,  # pyright: ignore[reportAny]
-                        )
-                    self.kv_prefix_cache = KVPrefixCache(self.group)
-
-                    self.send_task_status(task, TaskStatus.Complete)
-                    self.update_status(RunnerLoaded())
-                    logger.info("runner loaded")
-
-            case StartWarmup():
-                if isinstance(self.current_status, RunnerLoaded):
-                    logger.info("runner warming up")
-
-                    self.update_status(RunnerWarmingUp())
-                    self.acknowledge_task(task)
-
-                    logger.info(f"warming up inference for instance: {self.instance}")
-                    assert self.inference_model
-                    assert self.tokenizer
-
-                    t = time.monotonic()
-                    toks = warmup_inference(
-                        model=self.inference_model,
-                        tokenizer=self.tokenizer,
-                        group=self.group,
-                    )
-                    logger.info(f"warmed up by generating {toks} tokens")
-                    check_for_cancel_every = min(
-                        math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
-                    )
-                    if self.group is not None:
-                        check_for_cancel_every = int(
-                            mx.max(
-                                mx.distributed.all_gather(
-                                    mx.array([check_for_cancel_every]),
-                                    group=self.group,
-                                )
-                            ).item()
-                        )
-
-                    logger.info(
-                        f"runner checking for cancellation every {check_for_cancel_every} tokens"
-                    )
-                    logger.info(
-                        f"runner initialized in {time.time() - self.setup_start_time} seconds"
+                )
+                logger.info(
+                    f"model has_tool_calling={self.generator.tokenizer.has_tool_calling} using tokens {self.generator.tokenizer.tool_call_start}, {self.generator.tokenizer.tool_call_end}"
+                )
+                tok = self.generator.tokenizer
+                if tok.tool_call_start and tok.tool_call_end and tok.tool_parser:  # pyright: ignore[reportAny]
+                    self.generator.tool_parser = make_mlx_parser(
+                        tok.tool_call_start,
+                        tok.tool_call_end,
+                        tok.tool_parser,  # pyright: ignore[reportAny]
                     )
 
-                    generator_cls = SequentialGenerator if os.environ.get("EXO_NO_BATCH") == "1" else BatchGenerator
-                    self.generator = generator_cls(
-                        model=self.inference_model,
-                        tokenizer=self.tokenizer,
-                        group=self.group,
-                        kv_prefix_cache=self.kv_prefix_cache,
-                        model_id=self.model_id,
-                        device_rank=self.device_rank,
-                        cancel_receiver=self.cancel_receiver,
-                        event_sender=self.event_sender,
-                        check_for_cancel_every=check_for_cancel_every,
-                    )
+                self.generator = self.generator.build()
 
-                    self.send_task_status(task, TaskStatus.Complete)
-                    self.update_status(RunnerReady())
-                    logger.info("runner ready")
+                self.send_task_status(task.task_id, TaskStatus.Complete)
+                self.update_status(RunnerLoaded())
+                logger.info("runner loaded")
 
-            case TextGeneration():
+            case StartWarmup() if isinstance(self.current_status, RunnerLoaded):
+                assert isinstance(self.generator, InferenceGenerator)
+                logger.info("runner warming up")
+
+                self.update_status(RunnerWarmingUp())
+                self.acknowledge_task(task)
+
+                self.generator.warmup()
+
+                logger.info(
+                    f"runner initialized in {time.time() - self.setup_start_time} seconds"
+                )
+
+                self.send_task_status(task.task_id, TaskStatus.Complete)
+                self.update_status(RunnerReady())
+                logger.info("runner ready")
+
+            case TextGeneration() if isinstance(self.current_status, RunnerReady):
                 return_code = self.handle_generation_tasks(starting_task=task)
                 if return_code == ExitCode.Shutdown:
                     return
@@ -312,61 +257,23 @@ class Runner:
         logger.info("runner shutting down")
         self.update_status(RunnerShuttingDown())
         self.acknowledge_task(task)
-        if self.generator is not None:
+        if isinstance(self.generator, InferenceGenerator):
             self.generator.close()
         mx.clear_cache()
         import gc
 
         gc.collect()
-        self.send_task_status(task, TaskStatus.Complete)
+        self.send_task_status(task.task_id, TaskStatus.Complete)
         self.update_status(RunnerShutdown())
 
-    def get_non_blocking_generator(
-        self,
-        task: TextGeneration,
-        receiver: MpReceiver[GenerationResponse],
-    ) -> Generator[GenerationResponse | ToolCallResponse | None]:
-        assert self.tokenizer
-        assert self.inference_model
-
-        mlx_generator: Generator[GenerationResponse | ToolCallResponse | None] = (
-            NonBlockingGenerator(receiver)
-        )
-
-        if self.tokenizer.has_thinking:
-            prompt = apply_chat_template(self.tokenizer, task.task_params)
-            mlx_generator = parse_thinking_models(
-                mlx_generator,
-                self.tokenizer,
-                starts_in_thinking=detect_thinking_prompt_suffix(
-                    prompt, self.tokenizer
-                ),
-            )
-
-        if isinstance(self.inference_model, GptOssModel):
-            mlx_generator = parse_gpt_oss(mlx_generator)
-        elif (
-            isinstance(self.inference_model, DeepseekV32Model)
-            and "deepseek" in self.model_id.normalize().lower()
-        ):
-            mlx_generator = parse_deepseek_v32(mlx_generator)
-        elif self.tool_parser:
-            mlx_generator = parse_tool_calls(mlx_generator, self.tool_parser)
-
-        return mlx_generator
-
     def submit_text_generation(self, task: TextGeneration):
-        assert self.generator is not None
-        sender, receiver = mp_channel[GenerationResponse]()
-        self.active_tasks[task.task_id] = (
-            task,
-            self.get_non_blocking_generator(task, receiver),
-        )
-        self.generator.submit(task, sender)
+        assert isinstance(self.generator, InferenceGenerator)
+        self.active_tasks[task.task_id] = task
+        self.generator.submit(task)
 
     def handle_generation_tasks(self, starting_task: TextGeneration):
         assert isinstance(self.current_status, RunnerReady)
-        assert self.generator
+        assert isinstance(self.generator, InferenceGenerator)
 
         logger.info(f"received chat request: {starting_task}")
         self.update_status(RunnerRunning())
@@ -377,32 +284,20 @@ class Runner:
         self.submit_text_generation(starting_task)
 
         while self.active_tasks:
-            cancelled = self.generator.step()
+            results = self.generator.step()
 
             finished: list[TaskId] = []
-            for task_id, (text_task, gen) in self.active_tasks.items():
-                try:
-                    response = next(gen)
-                    if response is None:
-                        continue
-                except StopIteration:
-                    finished.append(task_id)
-                    continue
-
-                self.send_response(response, text_task.command_id)
-
-                was_cancelled = (text_task.task_id in cancelled) or (
-                    TaskId("CANCEL_CURRENT_TASK") in cancelled
-                )
-
-                is_finished = (
-                    isinstance(response, ToolCallResponse)
-                    or response.finish_reason is not None
-                )
-                if is_finished or was_cancelled:
-                    if not was_cancelled:
-                        self.send_task_status(text_task, TaskStatus.Complete)
-                    finished.append(task_id)
+            for task_id, result in results:
+                match result:
+                    case Cancelled():
+                        finished.append(task_id)
+                    case Finished():
+                        self.send_task_status(task_id, TaskStatus.Complete)
+                        finished.append(task_id)
+                    case _:
+                        self.send_response(
+                            result, self.active_tasks[task_id].command_id
+                        )
 
             for task_id in finished:
                 del self.active_tasks[task_id]
@@ -414,10 +309,6 @@ class Runner:
                     logger.warning("repeat task - potential error")
                     continue
                 self.seen.add(task.task_id)
-                cancelled = self.generator.step()
-                was_cancelled = (text_task.task_id in cancelled) or (
-                    TaskId("CANCEL_CURRENT_TASK") in cancelled
-                )
 
                 match task:
                     case TextGeneration():
@@ -490,3 +381,34 @@ class Runner:
                             ),
                         )
                     )
+
+
+@dataclass
+class Builder:
+    model_id: ModelId
+    event_sender: MpSender[Event]
+    cancel_receiver: MpReceiver[TaskId]
+    inference_model: Model | None = None
+    tokenizer: TokenizerWrapper | None = None
+    tool_parser: ToolParser | None = None
+    group: mx.distributed.Group | None = None
+    kv_prefix_cache: KVPrefixCache | None = None
+
+    def build(
+        self,
+    ) -> InferenceGenerator:
+        assert self.model_id
+        assert self.inference_model
+        assert self.tokenizer
+
+        return SequentialGenerator(
+            model=self.inference_model,
+            tokenizer=self.tokenizer,
+            group=self.group,
+            tool_parser=self.tool_parser,
+            kv_prefix_cache=self.kv_prefix_cache,
+            model_id=self.model_id,
+            device_rank=0 if self.group is None else self.group.rank(),
+            cancel_receiver=self.cancel_receiver,
+            event_sender=self.event_sender,
+        )

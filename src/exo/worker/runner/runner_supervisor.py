@@ -158,6 +158,7 @@ class RunnerSupervisor:
     async def cancel_task(self, task_id: TaskId):
         if task_id in self.completed:
             logger.info(f"Unable to cancel {task_id} as it has been completed")
+            self.cancelled.add(task_id)
             return
         self.cancelled.add(task_id)
         with anyio.move_on_after(0.5) as scope:

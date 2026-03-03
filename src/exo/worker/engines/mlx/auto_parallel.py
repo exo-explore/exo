@@ -16,6 +16,7 @@ from mlx.nn.layers.distributed import (
 from mlx_lm.models.base import (
     scaled_dot_product_attention,  # pyright: ignore[reportUnknownVariableType]
 )
+from mlx_lm.models.cache import ArraysCache, KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
 from mlx_lm.models.deepseek_v32 import DeepseekV32MLP
@@ -31,10 +32,19 @@ from mlx_lm.models.llama import Model as LlamaModel
 from mlx_lm.models.minimax import MiniMaxAttention
 from mlx_lm.models.minimax import Model as MiniMaxModel
 from mlx_lm.models.ministral3 import Model as Ministral3Model
+from mlx_lm.models.qwen3_5 import DecoderLayer as Qwen3_5DecoderLayer
+from mlx_lm.models.qwen3_5 import Model as Qwen3_5TextModel
+from mlx_lm.models.qwen3_5 import Qwen3_5TextModel as Qwen3_5TextModelInner
+from mlx_lm.models.qwen3_5 import SparseMoeBlock as Qwen3_5SparseMoeBlock
+from mlx_lm.models.qwen3_5_moe import Model as Qwen3_5MoeModel
 from mlx_lm.models.qwen3_moe import Model as Qwen3MoeModel
 from mlx_lm.models.qwen3_moe import Qwen3MoeDecoderLayer, Qwen3MoeSparseMoeBlock
 from mlx_lm.models.qwen3_next import Model as Qwen3NextModel
-from mlx_lm.models.qwen3_next import Qwen3NextDecoderLayer, Qwen3NextSparseMoeBlock
+from mlx_lm.models.qwen3_next import (
+    Qwen3NextDecoderLayer,
+    Qwen3NextGatedDeltaNet,
+    Qwen3NextSparseMoeBlock,
+)
 from mlx_lm.models.step3p5 import Model as Step35Model
 from mlx_lm.models.step3p5 import Step3p5MLP as Step35MLP
 from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
@@ -191,9 +201,10 @@ class PipelineLastLayer(CustomMlxLayer):
                 # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
                 # doesn't have .keys directly; access via first sub-cache.
                 _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
-                _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
+                if hasattr(_cache, "keys"):  # pyright: ignore[reportAny]
+                    _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
             mx.eval(output)
-            if cache is not None:
+            if cache is not None and hasattr(_cache, "keys"):  # type: ignore
                 mx.eval(_cache.keys)  # type: ignore
 
         if not self.is_prefill:
@@ -246,6 +257,32 @@ def get_layers(inner_model_instance: nn.Module) -> list[_LayerCallable]:
         raise ValueError("Model must have either a 'layers' or 'h' attribute")
 
     return layers
+
+
+def _patch_qwen35_cache(
+    model: Qwen3_5TextModel,
+    fa_idx: int,
+    has_full_attn: bool,
+    ssm_idx: int,
+    has_linear: bool,
+) -> None:
+    # Hacks to make make_mask happy.
+    original = model.make_cache
+
+    def patched() -> list[ArraysCache | KVCache]:
+        cache: list[ArraysCache | KVCache] = original()
+        if not has_full_attn:
+            entry = cache[fa_idx]
+            orig_make_mask = entry.make_mask
+            entry.make_mask = lambda n, **_kw: orig_make_mask(n)  # type: ignore
+        if not has_linear:
+            orig_ssm_make_mask = cache[ssm_idx].make_mask
+            cache[ssm_idx].make_mask = (  # type: ignore
+                lambda n, **kw: orig_ssm_make_mask(n, **kw) if kw else None  # type: ignore
+            )
+        return cache
+
+    model.make_cache = patched
 
 
 def pipeline_auto_parallel(
@@ -318,6 +355,24 @@ def pipeline_auto_parallel(
         inner_model_instance._swa_idx = 0 if not sliding_layers else sliding_layers[0]
         inner_model_instance._full_idx = 0 if not full_layers else full_layers[0]
 
+    if isinstance(inner_model_instance, Qwen3_5TextModelInner):
+        full_attn_layers = [
+            i for i, layer in enumerate(layers) if not getattr(layer, "is_linear", True)
+        ]
+        linear_layers = [
+            i for i, layer in enumerate(layers) if getattr(layer, "is_linear", False)
+        ]
+        inner_model_instance.fa_idx = full_attn_layers[0] if full_attn_layers else 0
+        inner_model_instance.ssm_idx = linear_layers[0] if linear_layers else 0
+        if not full_attn_layers or not linear_layers:
+            _patch_qwen35_cache(
+                cast(Qwen3_5TextModel, model),
+                fa_idx=inner_model_instance.fa_idx,
+                has_full_attn=bool(full_attn_layers),
+                ssm_idx=inner_model_instance.ssm_idx,
+                has_linear=bool(linear_layers),
+            )
+
     _set_layers(model, layers)
 
     assert isinstance(layers, list), (
@@ -347,7 +402,8 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
         if cache is not None:
             last = cache[-1]  # type: ignore
             dep_cache = last[0] if hasattr(last, "caches") else last  # type: ignore
-            dep_cache.keys = mx.depends(dep_cache.keys, logits)  # type: ignore
+            if hasattr(dep_cache, "keys") and dep_cache.keys is not None:  # type: ignore
+                dep_cache.keys = mx.depends(dep_cache.keys, logits)  # type: ignore
 
         return logits
 
@@ -470,7 +526,9 @@ def tensor_auto_parallel(
             all_to_sharded_linear_in_place,
             sharded_to_all_linear_in_place,
         )
-    elif isinstance(model, (Qwen3MoeModel, Qwen3NextModel)):
+    elif isinstance(
+        model, (Qwen3MoeModel, Qwen3NextModel, Qwen3_5TextModel, Qwen3_5MoeModel)
+    ):
         tensor_parallel_sharding_strategy = QwenShardingStrategy(
             group,
             all_to_sharded_linear,
@@ -865,7 +923,9 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
         on_timeout: TimeoutCallback | None,
         on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
-        model = cast(Qwen3MoeModel | Qwen3NextModel, model)
+        model = cast(
+            Qwen3MoeModel | Qwen3NextModel | Qwen3_5TextModel | Qwen3_5MoeModel, model
+        )
         total = len(model.layers)
         for i, layer in enumerate(model.layers):
             eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
@@ -886,16 +946,39 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                 layer.self_attn.n_heads //= self.N
                 layer.self_attn.n_kv_heads //= self.N
             else:
-                assert isinstance(layer, Qwen3NextDecoderLayer)
+                assert isinstance(layer, (Qwen3NextDecoderLayer, Qwen3_5DecoderLayer))
                 if hasattr(layer, "linear_attn"):
                     linear_attn = layer.linear_attn
 
-                    linear_attn.in_proj_qkvz = self.all_to_sharded_linear(
-                        linear_attn.in_proj_qkvz
-                    )
-                    linear_attn.in_proj_ba = self.all_to_sharded_linear(
-                        linear_attn.in_proj_ba
-                    )
+                    if isinstance(linear_attn, Qwen3NextGatedDeltaNet):
+                        # Qwen3-Next: combined projections
+                        linear_attn.in_proj_qkvz = self.all_to_sharded_linear(
+                            linear_attn.in_proj_qkvz
+                        )
+                        linear_attn.in_proj_ba = self.all_to_sharded_linear(
+                            linear_attn.in_proj_ba
+                        )
+                    else:
+                        # Qwen3.5: separate projections
+                        # in_proj_qkv has sections [q(key_dim), k(key_dim), v(value_dim)]
+                        # that must be split section-aware, not as a contiguous block
+                        key_dim = linear_attn.key_dim
+                        value_dim = linear_attn.value_dim
+                        linear_attn.in_proj_qkv = shard_linear(
+                            linear_attn.in_proj_qkv,
+                            "all-to-sharded",
+                            segments=[key_dim, key_dim + key_dim],
+                            group=self.group,
+                        )
+                        linear_attn.in_proj_z = self.all_to_sharded_linear(
+                            linear_attn.in_proj_z
+                        )
+                        linear_attn.in_proj_b = self.all_to_sharded_linear(
+                            linear_attn.in_proj_b
+                        )
+                        linear_attn.in_proj_a = self.all_to_sharded_linear(
+                            linear_attn.in_proj_a
+                        )
                     linear_attn.out_proj = self.sharded_to_all_linear(
                         linear_attn.out_proj
                     )
@@ -957,11 +1040,20 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                     layer.self_attn.num_key_value_heads //= self.N
 
             # Shard the MoE.
-            if isinstance(layer.mlp, (Qwen3MoeSparseMoeBlock, Qwen3NextSparseMoeBlock)):
+            if isinstance(
+                layer.mlp,
+                (
+                    Qwen3MoeSparseMoeBlock,
+                    Qwen3NextSparseMoeBlock,
+                    Qwen3_5SparseMoeBlock,
+                ),
+            ):
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
                 self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
-                if isinstance(layer.mlp, Qwen3NextSparseMoeBlock):
+                if isinstance(
+                    layer.mlp, (Qwen3NextSparseMoeBlock, Qwen3_5SparseMoeBlock)
+                ):
                     self.all_to_sharded_linear_in_place(
                         layer.mlp.shared_expert.gate_proj
                     )

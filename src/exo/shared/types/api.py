@@ -262,6 +262,11 @@ class DeleteInstanceResponse(BaseModel):
     instance_id: InstanceId
 
 
+class CancelCommandResponse(BaseModel):
+    message: str
+    command_id: CommandId
+
+
 ImageSize = Literal[
     "auto",
     "512x512",
