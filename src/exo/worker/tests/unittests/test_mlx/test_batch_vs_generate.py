@@ -37,7 +37,8 @@ def _make_task() -> TextGenerationTaskParams:
         model=ModelId("test"),
         input=[InputMessage(role="user", content="Hello, what is 2+2?")],
         max_output_tokens=10,
-        temperature=0.0,
+        temperature=0.7,
+        seed=42,
     )
 
 
@@ -254,13 +255,12 @@ class TestBatchVsGenerate:
             task = _make_task()
 
             # ── Run mlx_generate path ──
+            # Seed is set inside mlx_generate/ExoBatchGenerator.submit from task.seed
             kv_mlx = KVPrefixCache(None)
-            mx.random.seed(42)
             mlx_tokens = _collect_mlx_generate(model, tokenizer, task, kv_mlx)
 
             # ── Run batch generator path ──
             kv_batch = KVPrefixCache(None)
-            mx.random.seed(42)
             batch_tokens = _collect_batch_generate(model, tokenizer, task, kv_batch)
 
             # ── Compare output tokens ──
