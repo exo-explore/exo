@@ -1,5 +1,4 @@
 import itertools
-import math
 import time
 from abc import ABC, abstractmethod
 from collections import deque
@@ -29,7 +28,6 @@ from exo.worker.engines.mlx.utils_mlx import (
     mx_all_gather_tasks,
     mx_any,
 )
-from exo.worker.runner.bootstrap import logger
 
 from .model_output_parsers import apply_all_parsers
 from .tool_parsers import ToolParser
@@ -84,36 +82,6 @@ EXO_RUNNER_MUST_OOM = "EXO RUNNER MUST OOM"
 EXO_RUNNER_MUST_TIMEOUT = "EXO RUNNER MUST TIMEOUT"
 
 
-def warmup(
-    model: Model,
-    tokenizer: TokenizerWrapper,
-    group: mx.distributed.Group | None,
-    model_id: ModelId,
-) -> int:
-    logger.info(f"warming up inference for instance: {model_id}")
-
-    t = time.monotonic()
-    toks = warmup_inference(model=model, tokenizer=tokenizer, group=group)
-    logger.info(f"warmed up by generating {toks} tokens")
-    check_for_cancel_every = min(
-        math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
-    )
-    if group is not None:
-        check_for_cancel_every = int(
-            mx.max(
-                mx.distributed.all_gather(
-                    mx.array([check_for_cancel_every]),
-                    group=group,
-                )
-            ).item()
-        )
-
-    logger.info(
-        f"runner checking for cancellation every {check_for_cancel_every} tokens"
-    )
-    return check_for_cancel_every
-
-
 def _check_for_debug_prompts(task_params: TextGenerationTaskParams) -> None:
     """Check for debug prompt triggers in the input."""
     from exo.worker.engines.mlx.utils_mlx import mlx_force_oom
@@ -161,8 +129,11 @@ class SequentialGenerator(InferenceGenerator):
     ) = field(default=None, init=False)
 
     def warmup(self):
-        self.check_for_cancel_every = warmup(
-            self.model, self.tokenizer, self.group, self.model_id
+        self.check_for_cancel_every = warmup_inference(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            group=self.group,
+            model_id=self.model_id,
         )
 
     def submit(
@@ -337,8 +308,11 @@ class BatchGenerator(InferenceGenerator):
         )
 
     def warmup(self):
-        self.check_for_cancel_every = warmup(
-            self.model, self.tokenizer, self.group, self.model_id
+        self.check_for_cancel_every = warmup_inference(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            group=self.group,
+            model_id=self.model_id,
         )
 
     def submit(
