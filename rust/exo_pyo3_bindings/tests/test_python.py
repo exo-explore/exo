@@ -7,7 +7,7 @@ from exo_pyo3_bindings import Keypair, NetworkingHandle, NoPeersSubscribedToTopi
 @pytest.mark.asyncio
 async def test_sleep_on_multiple_items() -> None:
     print("PYTHON: starting handle")
-    h = NetworkingHandle(Keypair.generate_ed25519())
+    h = NetworkingHandle(Keypair.generate())
 
     ct = asyncio.create_task(_await_cons(h))
     mt = asyncio.create_task(_await_msg(h))
