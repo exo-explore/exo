@@ -7,6 +7,7 @@ import mlx.core as mx
 import pytest
 
 import exo.worker.runner.llm_inference.batch_generator as mlx_batch_generator
+import exo.worker.runner.llm_inference.model_output_parsers as mlx_model_output_parsers
 import exo.worker.runner.llm_inference.runner as mlx_runner
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.events import (
@@ -120,11 +121,12 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_batch_generator, "mx_any", make_nothin(False))
     # Mock apply_chat_template since we're using a fake tokenizer (integer 1).
     # Returns a prompt without thinking tag so detect_thinking_prompt_suffix returns None.
-    monkeypatch.setattr(mlx_runner, "apply_chat_template", make_nothin("test prompt"))
     monkeypatch.setattr(
         mlx_batch_generator, "apply_chat_template", make_nothin("test prompt")
     )
-    monkeypatch.setattr(mlx_runner, "detect_thinking_prompt_suffix", make_nothin(False))
+    monkeypatch.setattr(
+        mlx_model_output_parsers, "detect_thinking_prompt_suffix", make_nothin(False)
+    )
 
     def fake_generate(*_1: object, **_2: object):
         yield GenerationResponse(token=0, text="hi", finish_reason="stop", usage=None)
