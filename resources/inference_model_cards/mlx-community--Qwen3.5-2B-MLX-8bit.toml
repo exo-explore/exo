@@ -1,7 +1,7 @@
 model_id = "mlx-community/Qwen3.5-2B-MLX-8bit"
 n_layers = 24
 hidden_size = 2048
-supports_tensor = false
+supports_tensor = true
 tasks = ["TextGeneration"]
 family = "qwen"
 quantization = "8bit"

@@ -51,8 +51,10 @@ from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
 from exo.shared.logging import logger
 from exo.shared.types.worker.shards import PipelineShardMetadata
 
+from mlx_lm.models.cache import ArraysCache, KVCache
+
 if TYPE_CHECKING:
-    from mlx_lm.models.cache import ArraysCache, Cache, KVCache
+    from mlx_lm.models.cache import Cache
 
 TimeoutCallback = Callable[[], None]
 LayerLoadedCallback = Callable[[int, int], None]  # (layers_loaded, total_layers)
