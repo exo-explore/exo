@@ -26,6 +26,7 @@ exo connects all your devices into an AI cluster. Not only does exo enable runni
 - **Topology-Aware Auto Parallel**: exo figures out the best way to split your model across all available devices based on a realtime view of your device topology. It takes into account device resources and network latency/bandwidth between each link.
 - **Tensor Parallelism**: exo supports sharding models, for up to 1.8x speedup on 2 devices and 3.2x speedup on 4 devices.
 - **MLX Support**: exo uses [MLX](https://github.com/ml-explore/mlx) as an inference backend and [MLX distributed](https://ml-explore.github.io/mlx/build/html/usage/distributed.html) for distributed communication.
+- **Experimental tinygrad support:** exo uses [tinygrad](https://github.com/tinygrad/tinygrad) as an inference backend for non-Apple systems, with support for AMD (ROCm/HIP) and NVIDIA (CUDA) GPU backends. The current implementation works on single instance, **model sharding will be tested in the near future.**
 
 ## Dashboard
 
@@ -136,6 +137,8 @@ This starts the exo dashboard and API at http://localhost:52415/
 **Installation methods:**
 
 **Option 1: Using system package manager (Ubuntu/Debian example):**
+
+- For Ubuntu/Debian based distros
 ```bash
 # Install Node.js and npm
 sudo apt update
@@ -147,6 +150,16 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Install Rust (using rustup)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup toolchain install nightly
+```
+
+- For Arch based distros
+```bash
+sudo pacman -S uv rustup
+
+# Install the nightly toolchain
+rustup toolchain install nightly
+```
+```
 ```
 
 **Option 2: Using Homebrew on Linux (if preferred):**
@@ -164,7 +177,149 @@ rustup toolchain install nightly
 
 **Note:** The `macmon` package is macOS-only and not required for Linux.
 
-Clone the repo, build the dashboard, and run exo:
+**Install GPU drivers for tinygrad**
+
+The tinygrad inference backend supports multiple GPU backends. Install the appropriate
+drivers for your hardware. The backend is selected at runtime via the `DEV` environment
+variable (e.g. `DEV=HIP`, `DEV=CUDA`). If not set, tinygrad auto-detects the best
+available backend.
+
+<details>
+<summary><strong>AMD GPUs (ROCm / HIP)</strong></summary>
+
+ROCm provides GPU compute support for AMD GPUs. The tinygrad backend uses different
+device modes depending on your GPU architecture:
+
+| GPU Architecture | Device | Notes |
+|---|---|---|
+| **RDNA 3+** (RX 7000 series, MI300, etc.) | `DEV=AMD` | Optimized HCQ backend |
+| **RDNA 2** (RX 6000 series) | `DEV=HIP` | HIP runtime backend |
+
+> **Important:** The `DEV=AMD` backend (HCQ) only supports RDNA 3 and newer. RDNA 2 users
+> **must** use `DEV=HIP`. Both modes require a ROCm installation.
+
+**Ubuntu / Debian:**
+
+```bash
+# Install prerequisites
+sudo apt update && sudo apt install -y wget gpg
+
+# Add the AMD ROCm repository
+# Check https://rocm.docs.amd.com/en/latest/deploy/linux/install.html for the latest version
+wget https://repo.radeon.com/amdgpu-install/6.4/ubuntu/$(lsb_release -cs)/amdgpu-install_6.4.60400-1_all.deb
+sudo apt install -y ./amdgpu-install_6.4.60400-1_all.deb
+
+# Install ROCm HIP libraries
+sudo amdgpu-install --usecase=hip --no-dkms
+
+# Add your user to the render and video groups
+sudo usermod -aG render,video $USER
+```
+
+> For Debian, replace `$(lsb_release -cs)` with the equivalent Ubuntu codename
+> (e.g. `noble` for Debian Trixie). Check [AMD's documentation](https://rocm.docs.amd.com/en/latest/deploy/linux/install.html)
+> for supported versions.
+
+**Fedora:**
+
+```bash
+# Install prerequisites
+sudo dnf install -y kernel-headers kernel-devel
+
+# Add the AMD ROCm repository
+# Check https://rocm.docs.amd.com/en/latest/deploy/linux/install.html for the latest version
+sudo tee /etc/yum.repos.d/amdgpu.repo <<'EOF'
+[amdgpu]
+name=amdgpu
+baseurl=https://repo.radeon.com/amdgpu/6.4/el/9/main/x86_64/
+enabled=1
+gpgcheck=1
+gpgkey=https://repo.radeon.com/rocm/rocm.gpg.key
+EOF
+
+sudo tee /etc/yum.repos.d/rocm.repo <<'EOF'
+[rocm]
+name=rocm
+baseurl=https://repo.radeon.com/rocm/el9/6.4/main
+enabled=1
+gpgcheck=1
+gpgkey=https://repo.radeon.com/rocm/rocm.gpg.key
+EOF
+
+sudo dnf install -y rocm-hip-runtime hip-devel
+
+# Add your user to the render and video groups
+sudo usermod -aG render,video $USER
+```
+
+**Arch:**
+
+```bash
+# Install ROCm HIP from official repositories
+sudo pacman -S rocm-hip-runtime rocm-hip-sdk
+
+# Add your user to the render and video groups
+sudo usermod -aG render,video $USER
+```
+
+**Running exo with AMD GPU:**
+
+```bash
+# RDNA 3+ GPUs
+DEV=AMD uv run exo
+
+# RDNA 2 GPUs (RX 6000 series)
+DEV=HIP uv run exo
+```
+
+</details>
+
+<details>
+<summary><strong>NVIDIA GPUs (CUDA)</strong></summary>
+
+NVIDIA GPUs require proprietary drivers and the CUDA toolkit.
+
+**Ubuntu / Debian:**
+
+```bash
+# Option 1: Install via ubuntu-drivers (Ubuntu only, simplest method)
+sudo add-apt-repository ppa:graphics-drivers/ppa && sudo apt update
+sudo ubuntu-drivers autoinstall
+
+# Option 2: Install CUDA toolkit directly (Ubuntu / Debian)
+# Check https://developer.nvidia.com/cuda-downloads for the latest version
+sudo apt install -y nvidia-driver-560 nvidia-cuda-toolkit
+```
+
+**Fedora:**
+
+```bash
+# Enable RPM Fusion repositories
+sudo dnf install -y \
+  https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
+  https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+
+# Install NVIDIA drivers and CUDA
+sudo dnf install -y akmod-nvidia xorg-x11-drv-nvidia-cuda
+```
+
+**Arch:**
+
+```bash
+# Install NVIDIA drivers and CUDA toolkit
+sudo pacman -S nvidia cuda
+```
+
+**Running exo with NVIDIA GPU:**
+
+```bash
+DEV=CUDA uv run exo
+```
+
+</details>
+
+> **Tip:** You can verify your GPU is detected by running with debug logging:
+> `DEBUG=1 DEV=HIP uv run exo` (substitute your device backend).
 
 ```bash
 # Clone exo
@@ -178,8 +333,6 @@ uv run exo
 ```
 
 This starts the exo dashboard and API at http://localhost:52415/
-
-**Important note for Linux users:** Currently, exo runs on CPU on Linux. GPU support for Linux platforms is under development. If you'd like to see support for your specific Linux hardware, please [search for existing feature requests](https://github.com/exo-explore/exo/issues) or create a new one.
 
 **Configuration Options:**
 
@@ -426,7 +579,7 @@ The tool outputs performance metrics including prompt tokens per second (prompt_
 
 ## Hardware Accelerator Support
 
-On macOS, exo uses the GPU. On Linux, exo currently runs on CPU. We are working on extending hardware accelerator support. If you'd like support for a new hardware platform, please [search for an existing feature request](https://github.com/exo-explore/exo/issues) and add a thumbs up so we know what hardware is important to the community.
+On macOS, exo uses the GPU via [MLX](https://github.com/ml-explore/mlx). On Linux, exo uses the GPU via [tinygrad](https://github.com/tinygrad/tinygrad) with support for AMD (ROCm/HIP) and NVIDIA (CUDA) backends. See the [Linux installation guide](#run-from-source-linux) for GPU driver setup. If you'd like support for a new hardware platform, please [search for an existing feature request](https://github.com/exo-explore/exo/issues) and add a thumbs up so we know what hardware is important to the community.
 
 ---
 
