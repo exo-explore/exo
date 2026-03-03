@@ -69,7 +69,17 @@ def place_instance(
     required_nodes: set[NodeId] | None = None,
 ) -> dict[InstanceId, Instance]:
     cycles = topology.get_cycles()
-    candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
+    candidate_cycles = filter(lambda it: len(it) >= command.min_nodes, cycles)
+    nodes_with_exo = set[NodeId]()
+    for instance in current_instances.values():
+        nodes_with_exo |= instance.shard_assignments.node_to_runner.keys()
+    candidate_cycles = [
+        Cycle(
+            cycle.node_ids,
+            has_other_placement=any(node in nodes_with_exo for node in cycle),
+        )
+        for cycle in candidate_cycles
+    ]
 
     # Filter to cycles containing all required nodes (subset matching)
     if required_nodes:

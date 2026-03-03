@@ -9,6 +9,7 @@ from exo.utils.pydantic_ext import FrozenModel
 @dataclass(frozen=True)
 class Cycle:
     node_ids: list[NodeId]
+    has_other_placement: bool = False
 
     def __len__(self) -> int:
         return self.node_ids.__len__()
