@@ -159,8 +159,7 @@ sudo pacman -S uv rustup
 # Install the nightly toolchain
 rustup toolchain install nightly
 ```
-```
-```
+
 
 **Option 2: Using Homebrew on Linux (if preferred):**
 ```bash
