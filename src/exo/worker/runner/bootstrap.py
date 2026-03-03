@@ -1,4 +1,5 @@
 import os
+import resource
 
 import loguru
 
@@ -8,10 +9,13 @@ from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 
+from .runner_opts import RunnerOpts
+
 logger: "loguru.Logger" = loguru.logger
 
 
 def entrypoint(
+    runner_opts: RunnerOpts,
     bound_instance: BoundInstance,
     event_sender: MpSender[Event],
     task_receiver: MpReceiver[Task],
@@ -20,12 +24,17 @@ def entrypoint(
 ) -> None:
     global logger
     logger = _logger
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
 
-    fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
-    if fast_synch_override != "off":
-        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
+    fast_synch_override = runner_opts.fast_synch_override
+    if fast_synch_override is not None:
+        if fast_synch_override:
+            os.environ["MLX_METAL_FAST_SYNCH"] = "1"
+        else:
+            os.environ["MLX_METAL_FAST_SYNCH"] = "0"
     else:
-        os.environ["MLX_METAL_FAST_SYNCH"] = "0"
+        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
 
     logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
 
@@ -36,7 +45,7 @@ def entrypoint(
         else:
             from exo.worker.runner.llm_inference.runner import main
 
-        main(bound_instance, event_sender, task_receiver, cancel_receiver)
+        main(runner_opts, bound_instance, event_sender, task_receiver, cancel_receiver)
 
     except ClosedResourceError:
         logger.warning("Runner communication closed unexpectedly")
