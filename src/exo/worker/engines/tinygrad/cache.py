@@ -54,13 +54,17 @@ class KVCache:
                 ((0, 0), (0, 0), (pad_prev, pad_next), (0, 0))
             ).half()
 
-            self._keys[layers_idx] = Tensor.where(
-                mask, new_k, self._keys[layers_idx]
-            )
+            self._keys[layers_idx] = new_k
+            self._values[layers_idx] = new_v
 
-            self._values[layers_idx] = Tensor.where(
-                mask, new_v, self._values[layers_idx]
-            )
+            if position > 0:
+                self._keys[layers_idx] = Tensor.where(
+                    mask, new_k, self._keys[layers_idx]
+                )
+
+                self._values[layers_idx] = Tensor.where(
+                    mask, new_v, self._values[layers_idx]
+                )
 
         return self._keys[layers_idx], self._values[layers_idx]
 

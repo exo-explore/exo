@@ -33,6 +33,20 @@ from ..forward import forward_pass
 from ..sampling import sample_token
 from ..weight_loader import TransformerWeights
 
+_PREFILL_BUCKETS: list[int] = [32, 64, 128, 256, 512]
+
+def _pad_to_bucket(input_ids: list[int], pad_id: int = 0) -> list[int]:
+    """
+        Padding input_ids to the nearest bucket size will cache the tensor
+        sizes. This will increase the guarentee to hit the cache, leading to
+        quicker time to first token.
+    """
+
+    for bucket in _PREFILL_BUCKETS:
+        if len(input_ids) <= bucket:
+            return input_ids + [pad_id] * (bucket - len(input_ids))
+    return input_ids
+
 
 @dataclass
 class _JitState:
@@ -100,6 +114,7 @@ def tinygrad_generate(
     eos_ids = _get_eos_ids(tokenizer, model.config)
     print(f"[DEBUG] eos_ids={eos_ids}")
     prompt_tokens = len(input_ids)
+    input_ids = _pad_to_bucket(input_ids)
 
     model_key = id(model)
     num_layers = len(model.layers)
@@ -149,8 +164,8 @@ def tinygrad_generate(
             position_offset=0,
             rope_cos=model.rope_cos, rope_sin=model.rope_sin,
         )
-        # Take last token's logits for the first decode step.
-        logits = logits[:, -1:, :].contiguous()  # pyright: ignore[reportUnknownMemberType]
+        # Take the real last token's logits (not the padded last position).
+        logits = logits[:, prompt_tokens - 1:prompt_tokens, :].contiguous()  # pyright: ignore[reportUnknownMemberType]
         # Make cache tensors contiguous for JIT compatibility.
         for i in range(num_layers):
             cache._keys[i] = cache._keys[i].contiguous()  # pyright: ignore[reportUnknownMemberType]
@@ -274,7 +289,34 @@ def warmup_inference(model: TransformerWeights, tokenizer: Any, group: None = No
         if tokens_generated >= 5:
             break
 
+    _warmup_prefill_buckets(model)
+
     return tokens_generated
+
+
+def _warmup_prefill_buckets(model: TransformerWeights) -> None:
+    """Pre-compile prefill kernels at each bucket size to avoid first-request compilation."""
+    model_key = id(model)
+    state = _jit_registry.get(model_key)
+    if state is None:
+        return
+
+    cache = state.cache
+    num_layers = len(model.layers)
+
+    with Context(BEAM=0):
+        for bucket_size in _PREFILL_BUCKETS:
+            dummy = Tensor.zeros(1, bucket_size, dtype=dtypes.int32).contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
+            logits, _ = forward_pass(
+                model, dummy, cache,
+                position_offset=0,
+                rope_cos=model.rope_cos, rope_sin=model.rope_sin,
+            )
+            logits = logits[:, -1:, :].contiguous()  # pyright: ignore[reportUnknownMemberType]
+            for i in range(num_layers):
+                cache._keys[i] = cache._keys[i].contiguous()  # pyright: ignore[reportUnknownMemberType]
+                cache._values[i] = cache._values[i].contiguous()  # pyright: ignore[reportUnknownMemberType]
+            logits.realize(*cache._keys, *cache._values)
 
 def _encode_prompt(tokenizer: Any, prompt: str) -> list[int]:  # pyright: ignore[reportAny]
     result: Any = tokenizer.encode(prompt)  # pyright: ignore[reportAny]

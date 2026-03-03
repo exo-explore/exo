@@ -59,6 +59,9 @@ def forward_pass(
         )
         x = _transformer_block(x, config, cache, builder)
 
+        if isinstance(position_offset, int):
+            x = x.realize(cache._keys[layer_idx], cache._values[layer_idx])
+
     x = rms_norm(x, weights.final_norm, config.rms_norm_eps)
     logits = apply_lm_head(x, weights.lm_head)
 
