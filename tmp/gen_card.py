@@ -5,9 +5,13 @@ Usage:
 
 Model Cards require cleanup for family & quantization data
 """
+
 import sys
+
 import anyio
+
 from exo.shared.models.model_cards import ModelCard, ModelId
+
 
 async def main():
     if len(sys.argv) == 1:
@@ -17,7 +21,13 @@ async def main():
     for arg in sys.argv[1:]:
         mid = ModelId(arg)
         mc = await ModelCard.fetch_from_hf(mid)
-        await mc.save(anyio.Path(__file__).parent.parent / "resources" / "inference_model_cards" / (mid.normalize() + ".toml"))
+        await mc.save(
+            anyio.Path(__file__).parent.parent
+            / "resources"
+            / "inference_model_cards"
+            / (mid.normalize() + ".toml")
+        )
+
 
 if __name__ == "__main__":
     anyio.run(main)

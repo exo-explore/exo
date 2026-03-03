@@ -16,6 +16,7 @@ from mlx.nn.layers.distributed import (
 from mlx_lm.models.base import (
     scaled_dot_product_attention,  # pyright: ignore[reportUnknownVariableType]
 )
+from mlx_lm.models.cache import ArraysCache, KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
 from mlx_lm.models.deepseek_v32 import DeepseekV32MLP
@@ -50,8 +51,6 @@ from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
 
 from exo.shared.logging import logger
 from exo.shared.types.worker.shards import PipelineShardMetadata
-
-from mlx_lm.models.cache import ArraysCache, KVCache
 
 if TYPE_CHECKING:
     from mlx_lm.models.cache import Cache
@@ -260,15 +259,27 @@ def get_layers(inner_model_instance: nn.Module) -> list[_LayerCallable]:
     return layers
 
 
-def _patch_qwen35_cache(model: Qwen3_5TextModel, fa_idx: int) -> None:
-    # Patch make_cache so cache[fa_idx].make_mask accepts create_attention_mask kwargs.
+def _patch_qwen35_cache(
+    model: Qwen3_5TextModel,
+    fa_idx: int,
+    has_full_attn: bool,
+    ssm_idx: int,
+    has_linear: bool,
+) -> None:
+    # Hacks to make make_mask happy.
     original = model.make_cache
 
     def patched() -> list[ArraysCache | KVCache]:
         cache: list[ArraysCache | KVCache] = original()
-        entry = cache[fa_idx]
-        orig_make_mask = entry.make_mask
-        entry.make_mask = lambda n, **_kw: orig_make_mask(n)  # type: ignore
+        if not has_full_attn:
+            entry = cache[fa_idx]
+            orig_make_mask = entry.make_mask
+            entry.make_mask = lambda n, **_kw: orig_make_mask(n)  # type: ignore
+        if not has_linear:
+            orig_ssm_make_mask = cache[ssm_idx].make_mask
+            cache[ssm_idx].make_mask = (
+                lambda n, **kw: orig_ssm_make_mask(n, **kw) if kw else None
+            )  # type: ignore
         return cache
 
     model.make_cache = patched
@@ -353,9 +364,13 @@ def pipeline_auto_parallel(
         ]
         inner_model_instance.fa_idx = full_attn_layers[0] if full_attn_layers else 0
         inner_model_instance.ssm_idx = linear_layers[0] if linear_layers else 0
-        if not full_attn_layers:
+        if not full_attn_layers or not linear_layers:
             _patch_qwen35_cache(
-                cast(Qwen3_5TextModel, model), inner_model_instance.fa_idx
+                cast(Qwen3_5TextModel, model),
+                fa_idx=inner_model_instance.fa_idx,
+                has_full_attn=bool(full_attn_layers),
+                ssm_idx=inner_model_instance.ssm_idx,
+                has_linear=bool(linear_layers),
             )
 
     _set_layers(model, layers)

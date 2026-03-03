@@ -6,7 +6,7 @@ tasks = ["TextGeneration"]
 family = "qwen"
 quantization = "8bit"
 base_model = "Qwen3.5 2B"
-capabilities = ["text", "thinking", "thinking_toggle"]
+capabilities = ["text", "thinking"]
 
 [storage_size]
 in_bytes = 2662787264

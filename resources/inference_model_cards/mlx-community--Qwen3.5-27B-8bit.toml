@@ -1,12 +1,12 @@
-model_id = "mlx-community/Qwen3.5-9B-8bit"
-n_layers = 32
-hidden_size = 4096
+model_id = "mlx-community/Qwen3.5-27B-8bit"
+n_layers = 64
+hidden_size = 5120
 supports_tensor = true
 tasks = ["TextGeneration"]
 family = "qwen"
 quantization = "8bit"
-base_model = "Qwen3.5 9B"
+base_model = "Qwen3.5 27B"
 capabilities = ["text", "thinking"]
 
 [storage_size]
-in_bytes = 10426433504
+in_bytes = 29500943328
