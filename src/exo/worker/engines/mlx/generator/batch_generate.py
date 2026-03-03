@@ -158,7 +158,7 @@ class ExoBatchGenerator:
                 c.values = c._trim(trim_size, c.values)
                 c._idx = c.max_size
 
-        last_tokens = all_prompt_tokens[-2:]
+        last_tokens = prompt_tokens[-2:]
 
         logits_processors: list[Any] = []
         if is_bench:

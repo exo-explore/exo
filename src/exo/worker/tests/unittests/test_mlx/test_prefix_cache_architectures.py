@@ -183,6 +183,8 @@ ARCHITECTURES: list[ArchSpec] = [
     ArchSpec("gpt_oss", "gpt-oss-20b-MXFP4-Q8", "gpt_oss"),
     ArchSpec("step3p5", "Step-3.5-Flash-4bit", "step3p5"),
     ArchSpec("kimi_k25", "Kimi-K2.5", "kimi_k25"),
+    ArchSpec("qwen3_5", "Qwen3.5-2B-MLX-8bit", "qwen3_5"),
+    ArchSpec("qwen3_5_moe", "Qwen3.5-35B-A3B-4bit", "qwen3_5_moe"),
 ]
 
 
