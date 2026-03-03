@@ -42,7 +42,7 @@ class Finished:
     pass
 
 
-class SendableGenerator[T]:
+class GeneratorQueue[T]:
     def __init__(self):
         self._q = deque[T]()
 
@@ -119,8 +119,11 @@ class SequentialGenerator(InferenceGenerator):
     _active: (
         tuple[
             TextGeneration,
+            # mlx generator that does work
             Generator[GenerationResponse],
-            SendableGenerator[GenerationResponse],
+            # queue that the 1st generator should push to and 3rd generator should pull from
+            GeneratorQueue[GenerationResponse],
+            # generator to get parsed outputs
             Generator[GenerationResponse | ToolCallResponse | None],
         ]
         | None
@@ -181,11 +184,11 @@ class SequentialGenerator(InferenceGenerator):
 
         assert self._active is not None
 
-        task, gen, send, recv = self._active
+        task, mlx_gen, queue, output_generator = self._active
         response = None
         try:
-            send.push(next(gen))
-            response = next(recv)
+            queue.push(next(mlx_gen))
+            response = next(output_generator)
         except (StopIteration, PrefillCancelled):
             response = Finished()
             self._active = None
@@ -203,20 +206,20 @@ class SequentialGenerator(InferenceGenerator):
     def _start_next(self) -> None:
         task = self._queue.popleft()
         try:
-            gen = self._build_generator(task)
+            mlx_gen = self._build_generator(task)
         except Exception as e:
             self._send_error(task, e)
             raise
-        send = SendableGenerator[GenerationResponse]()
-        recv = apply_all_parsers(
-            send.gen(),
+        queue = GeneratorQueue[GenerationResponse]()
+        output_generator = apply_all_parsers(
+            queue.gen(),
             apply_chat_template(self.tokenizer, task.task_params),
             self.tool_parser,
             self.tokenizer,
             type(self.model),
             self.model_id,
         )
-        self._active = (task, gen, send, recv)
+        self._active = (task, mlx_gen, queue, output_generator)
 
     def _send_error(self, task: TextGeneration, e: Exception) -> None:
         if self.device_rank == 0:

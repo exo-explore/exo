@@ -104,7 +104,6 @@ class Runner:
 
         self.setup_start_time = time.time()
 
-        self.group: mx.distributed.Group | None = None
         self.generator: Builder | InferenceGenerator = Builder(
             self.model_id, self.event_sender, self.cancel_receiver
         )
@@ -157,18 +156,23 @@ class Runner:
                 self.update_status(RunnerConnecting())
                 self.acknowledge_task(task)
 
-                self.group = self.generator.group = initialize_mlx(self.bound_instance)
+                self.generator.group = initialize_mlx(self.bound_instance)
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
                 self.update_status(RunnerConnected())
                 logger.info("runner connected")
 
             # we load the model if it's connected with a group, or idle without a group. we should never tell a model to connect if it doesn't need to
-            case LoadModel() if (
-                isinstance(self.current_status, RunnerConnected)
-                and self.group is not None
-            ) or (isinstance(self.current_status, RunnerIdle) and self.group is None):
-                assert isinstance(self.generator, Builder)
+            case LoadModel() if isinstance(self.generator, Builder) and (
+                (
+                    isinstance(self.current_status, RunnerConnected)
+                    and self.generator.group is not None
+                )
+                or (
+                    isinstance(self.current_status, RunnerIdle)
+                    and self.generator.group is None
+                )
+            ):
                 total_layers = (
                     self.shard_metadata.end_layer - self.shard_metadata.start_layer
                 )
