@@ -1,10 +1,13 @@
 import anyio
+import multiprocessing as mp
 import pytest
+from typing import cast
 
+from exo.shared.models.model_cards import ModelId
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import ChunkGenerated, Event, RunnerStatusUpdated
-from exo.shared.types.tasks import TaskId, TextGeneration
+from exo.shared.types.tasks import Task, TaskId, TextGeneration
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerFailed, RunnerId
@@ -35,13 +38,13 @@ class _DeadProcess:
 @pytest.mark.asyncio
 async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> None:
     event_sender, event_receiver = channel[Event]()
-    task_sender, _ = mp_channel()
-    cancel_sender, _ = mp_channel()
-    _, ev_recv = mp_channel()
+    task_sender, _task_recv = mp_channel[Task]()
+    cancel_sender, _cancel_recv = mp_channel[TaskId]()
+    _ev_send, ev_recv = mp_channel[Event]()
 
     bound_instance: BoundInstance = get_bound_mlx_ring_instance(
         instance_id=InstanceId("instance-a"),
-        model_id="mlx-community/Llama-3.2-1B-Instruct-4bit",
+        model_id=ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit"),
         runner_id=RunnerId("runner-a"),
         node_id=NodeId("node-a"),
     )
@@ -49,7 +52,7 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
     supervisor = RunnerSupervisor(
         shard_metadata=bound_instance.bound_shard,
         bound_instance=bound_instance,
-        runner_process=_DeadProcess(),  # type: ignore[arg-type]
+        runner_process=cast("mp.Process", _DeadProcess()),
         initialize_timeout=400,
         _ev_recv=ev_recv,
         _task_sender=task_sender,
@@ -71,7 +74,7 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
     supervisor.in_flight[task.task_id] = task
     supervisor.shutdown = lambda: None  # type: ignore[method-assign]
 
-    await supervisor._check_runner(RuntimeError("boom"))
+    await supervisor._check_runner(RuntimeError("boom"))  # pyright: ignore[reportPrivateUsage]
 
     got_chunk = await event_receiver.receive()
     got_status = await event_receiver.receive()
