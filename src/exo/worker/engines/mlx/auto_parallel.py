@@ -277,9 +277,9 @@ def _patch_qwen35_cache(
             entry.make_mask = lambda n, **_kw: orig_make_mask(n)  # type: ignore
         if not has_linear:
             orig_ssm_make_mask = cache[ssm_idx].make_mask
-            cache[ssm_idx].make_mask = (
-                lambda n, **kw: orig_ssm_make_mask(n, **kw) if kw else None
-            )  # type: ignore
+            cache[ssm_idx].make_mask = (  # type: ignore
+                lambda n, **kw: orig_ssm_make_mask(n, **kw) if kw else None  # type: ignore
+            )
         return cache
 
     model.make_cache = patched
