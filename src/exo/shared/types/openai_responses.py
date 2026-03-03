@@ -12,6 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from exo.shared.types.common import ModelId
+from exo.shared.types.text_generation import ReasoningEffort
 
 # Type aliases
 ResponseStatus = Literal["completed", "failed", "in_progress", "incomplete"]
@@ -71,6 +72,13 @@ ResponseInputItem = (
 )
 
 
+class Reasoning(BaseModel, frozen=True):
+    """Reasoning configuration for OpenAI Responses API."""
+
+    effort: ReasoningEffort | None = None
+    summary: Literal["auto", "concise", "detailed"] | None = None
+
+
 class ResponsesRequest(BaseModel, frozen=True):
     """Request body for OpenAI Responses API.
 
@@ -89,8 +97,15 @@ class ResponsesRequest(BaseModel, frozen=True):
     stream: bool = False
     tools: list[dict[str, Any]] | None = None
     metadata: dict[str, str] | None = None
+    reasoning: Reasoning | None = None
 
     # --- exo extensions (not in OpenAI Responses API spec) ---
+    enable_thinking: bool | None = Field(
+        default=None,
+        description="[exo extension] Boolean thinking toggle. Not part of the OpenAI Responses API.",
+        json_schema_extra={"x-exo-extension": True},
+    )
+
     top_k: int | None = Field(
         default=None,
         description="[exo extension] Top-k sampling parameter. Not part of the OpenAI Responses API.",

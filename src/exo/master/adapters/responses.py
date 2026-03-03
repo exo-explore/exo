@@ -42,7 +42,11 @@ from exo.shared.types.openai_responses import (
     ResponseTextDoneEvent,
     ResponseUsage,
 )
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo.shared.types.text_generation import (
+    InputMessage,
+    TextGenerationTaskParams,
+    resolve_reasoning_params,
+)
 
 
 def _format_sse(event: ResponsesStreamEvent) -> str:
@@ -119,6 +123,11 @@ def responses_request_to_text_generation(
         )
         built_chat_template = chat_template_messages if chat_template_messages else None
 
+    effort_from_reasoning = request.reasoning.effort if request.reasoning else None
+    resolved_effort, resolved_thinking = resolve_reasoning_params(
+        effort_from_reasoning, request.enable_thinking
+    )
+
     return TextGenerationTaskParams(
         model=request.model,
         input=input_value,
@@ -132,6 +141,8 @@ def responses_request_to_text_generation(
         stop=request.stop,
         seed=request.seed,
         chat_template_messages=built_chat_template or request.chat_template_messages,
+        reasoning_effort=resolved_effort,
+        enable_thinking=resolved_thinking,
     )
 
 
