@@ -162,7 +162,13 @@ class RunnerSupervisor:
             return
         self.cancelled.add(task_id)
         with anyio.move_on_after(0.5) as scope:
-            await self._cancel_sender.send_async(task_id)
+            try:
+                await self._cancel_sender.send_async(task_id)
+            except ClosedResourceError:
+                # typically occurs when trying to shut down a failed instance
+                logger.warning(
+                    f"Cancelling task {task_id} failed, runner closed communication"
+                )
         if scope.cancel_called:
             logger.error("RunnerSupervisor cancel pipe blocked")
             await self._check_runner(TimeoutError("cancel pipe blocked"))
