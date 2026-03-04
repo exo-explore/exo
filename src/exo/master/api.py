@@ -1586,26 +1586,42 @@ class API:
     async def search_models(
         self, query: str = "", limit: int = 20
     ) -> list[HuggingFaceSearchResult]:
-        """Search HuggingFace Hub for mlx-community models."""
+        """Search HuggingFace Hub — tries mlx-community first, falls back to all of HuggingFace."""
         from huggingface_hub import list_models
 
-        results = list_models(
-            search=query or None,
-            author="mlx-community",
-            sort="downloads",
-            limit=limit,
-        )
-        return [
-            HuggingFaceSearchResult(
-                id=m.id,
-                author=m.author or "",
-                downloads=m.downloads or 0,
-                likes=m.likes or 0,
-                last_modified=str(m.last_modified or ""),
-                tags=list(m.tags or []),
+        def _to_results(models: object) -> list[HuggingFaceSearchResult]:
+            return [
+                HuggingFaceSearchResult(
+                    id=m.id,
+                    author=m.author or "",
+                    downloads=m.downloads or 0,
+                    likes=m.likes or 0,
+                    last_modified=str(m.last_modified or ""),
+                    tags=list(m.tags or []),
+                )
+                for m in models
+            ]
+
+        # Search mlx-community first
+        mlx_results = _to_results(
+            list_models(
+                search=query or None,
+                author="mlx-community",
+                sort="downloads",
+                limit=limit,
             )
-            for m in results
-        ]
+        )
+        if mlx_results:
+            return mlx_results
+
+        # Fall back to searching all of HuggingFace
+        return _to_results(
+            list_models(
+                search=query or None,
+                sort="downloads",
+                limit=limit,
+            )
+        )
 
     async def run(self):
         shutdown_ev = anyio.Event()
