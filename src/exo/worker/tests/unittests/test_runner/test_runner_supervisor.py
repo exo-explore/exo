@@ -1,7 +1,8 @@
-import anyio
 import multiprocessing as mp
-import pytest
 from typing import cast
+
+import anyio
+import pytest
 
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.chunks import ErrorChunk
@@ -38,9 +39,9 @@ class _DeadProcess:
 @pytest.mark.asyncio
 async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> None:
     event_sender, event_receiver = channel[Event]()
-    task_sender, _task_recv = mp_channel[Task]()
-    cancel_sender, _cancel_recv = mp_channel[TaskId]()
-    _ev_send, ev_recv = mp_channel[Event]()
+    task_sender, _ = mp_channel[Task]()
+    cancel_sender, _ = mp_channel[TaskId]()
+    _, ev_recv = mp_channel[Event]()
 
     bound_instance: BoundInstance = get_bound_mlx_ring_instance(
         instance_id=InstanceId("instance-a"),
@@ -52,7 +53,7 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
     supervisor = RunnerSupervisor(
         shard_metadata=bound_instance.bound_shard,
         bound_instance=bound_instance,
-        runner_process=cast("mp.Process", _DeadProcess()),
+        runner_process=cast("mp.Process", cast(object, _DeadProcess())),
         initialize_timeout=400,
         _ev_recv=ev_recv,
         _task_sender=task_sender,
@@ -71,8 +72,8 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
             stream=True,
         ),
     )
-    supervisor.in_flight[task.task_id] = task
-    supervisor.shutdown = lambda: None  # type: ignore[method-assign]
+    supervisor.in_progress[task.task_id] = task
+    supervisor.shutdown = lambda: None
 
     await supervisor._check_runner(RuntimeError("boom"))  # pyright: ignore[reportPrivateUsage]
 
