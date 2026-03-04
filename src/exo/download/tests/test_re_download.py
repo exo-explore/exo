@@ -1,6 +1,7 @@
 """Tests that re-downloading a previously deleted model completes successfully."""
 
 import asyncio
+import contextlib
 from collections.abc import AsyncIterator, Awaitable
 from datetime import timedelta
 from pathlib import Path
@@ -9,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 from exo.download.coordinator import DownloadCoordinator
 from exo.download.download_utils import RepoDownloadProgress
-from exo.download.impl_shard_downloader import CachedShardDownloader, SingletonShardDownloader
+from exo.download.impl_shard_downloader import SingletonShardDownloader
 from exo.download.shard_downloader import ShardDownloader
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.commands import (
@@ -62,7 +63,9 @@ class FakeShardDownloader(ShardDownloader):
         self._progress_callbacks.append(callback)
 
     async def ensure_shard(
-        self, shard: ShardMetadata, config_only: bool = False  # noqa: ARG002
+        self,
+        shard: ShardMetadata,
+        config_only: bool = False,  # noqa: ARG002
     ) -> Path:
         # Simulate a completed download by firing the progress callback
         progress = RepoDownloadProgress(
@@ -86,18 +89,26 @@ class FakeShardDownloader(ShardDownloader):
         self,
     ) -> AsyncIterator[tuple[Path, RepoDownloadProgress]]:
         if False:  # noqa: SIM108  # empty async generator
-            yield (Path(), RepoDownloadProgress(  # pyright: ignore[reportUnreachable]
-                repo_id="", repo_revision="", shard=_make_shard(),
-                completed_files=0, total_files=0, downloaded=Memory.from_bytes(0),
-                downloaded_this_session=Memory.from_bytes(0), total=Memory.from_bytes(0),
-                overall_speed=0, overall_eta=timedelta(seconds=0), status="not_started",
-            ))
-
-    def invalidate(self, model_id: ModelId) -> None:
-        pass
+            yield (
+                Path(),
+                RepoDownloadProgress(  # pyright: ignore[reportUnreachable]
+                    repo_id="",
+                    repo_revision="",
+                    shard=_make_shard(),
+                    completed_files=0,
+                    total_files=0,
+                    downloaded=Memory.from_bytes(0),
+                    downloaded_this_session=Memory.from_bytes(0),
+                    total=Memory.from_bytes(0),
+                    overall_speed=0,
+                    overall_eta=timedelta(seconds=0),
+                    status="not_started",
+                ),
+            )
 
     async def get_shard_download_status_for_shard(
-        self, shard: ShardMetadata,
+        self,
+        shard: ShardMetadata,
     ) -> RepoDownloadProgress:
         return RepoDownloadProgress(
             repo_id=str(shard.model_card.model_id),
@@ -122,9 +133,8 @@ async def test_re_download_after_delete_completes() -> None:
     cmd_send, cmd_recv = channel[ForwarderDownloadCommand]()
     event_send, event_recv = channel[Event]()
 
-    # Wrap in CachedShardDownloader + SingletonShardDownloader to match production
     fake_downloader = FakeShardDownloader()
-    wrapped_downloader = SingletonShardDownloader(CachedShardDownloader(fake_downloader))
+    wrapped_downloader = SingletonShardDownloader(fake_downloader)
     coordinator = DownloadCoordinator(
         node_id=NODE_ID,
         shard_downloader=wrapped_downloader,
@@ -178,10 +188,8 @@ async def test_re_download_after_delete_completes() -> None:
         finally:
             coordinator.shutdown()
             coordinator_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await coordinator_task
-            except asyncio.CancelledError:
-                pass
 
 
 async def _wait_for_download_completed(
