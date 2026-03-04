@@ -32,12 +32,17 @@ from .test_prefix_cache_architectures import (
 )
 
 
-def _make_task() -> TextGenerationTaskParams:
+def _make_task(
+    content: str = "Hello, what is 2+2?",
+    max_tokens: int = 10,
+    seed: int = 42,
+) -> TextGenerationTaskParams:
     return TextGenerationTaskParams(
         model=ModelId("test"),
-        input=[InputMessage(role="user", content="Hello, what is 2+2?")],
-        max_output_tokens=10,
-        temperature=0.0,
+        input=[InputMessage(role="user", content=content)],
+        max_output_tokens=max_tokens,
+        temperature=0.7,
+        seed=seed,
     )
 
 
@@ -254,13 +259,12 @@ class TestBatchVsGenerate:
             task = _make_task()
 
             # ── Run mlx_generate path ──
+            # Seed is set inside mlx_generate/ExoBatchGenerator.submit from task.seed
             kv_mlx = KVPrefixCache(None)
-            mx.random.seed(42)
             mlx_tokens = _collect_mlx_generate(model, tokenizer, task, kv_mlx)
 
             # ── Run batch generator path ──
             kv_batch = KVPrefixCache(None)
-            mx.random.seed(42)
             batch_tokens = _collect_batch_generate(model, tokenizer, task, kv_batch)
 
             # ── Compare output tokens ──
@@ -298,5 +302,88 @@ class TestBatchVsGenerate:
                 label=f"[{spec.name}] ",
             )
 
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    @pytest.mark.parametrize(
+        "spec",
+        ARCHITECTURES,
+        ids=[a.name for a in ARCHITECTURES],
+    )
+    def test_concurrent_batch_completes(self, spec: ArchSpec) -> None:
+        """Two requests processed concurrently must both complete without
+        crashing and produce non-empty output.
+
+        Note: batch decode logits are NOT bit-exact with sequential because
+        Metal's matmul kernel picks different reduction tiling for B=1 vs B=2
+        when L=1 (decode step). This introduces sub-ULP float16 diffs in
+        gate_proj/down_proj/lm_head which swiglu amplifies by |up_values|.
+        With random weights these accumulate into argmax flips; with trained
+        weights the diffs are absorbed and output matches exactly (verified
+        with real Llama-3.2-1B-Instruct-4bit weights).
+        """
+        if not _arch_available(spec):
+            pytest.skip(f"Model {spec.hub_name} not cached locally")
+
+        snapshot = _find_snapshot(spec.hub_name)
+        assert snapshot is not None
+
+        tmpdir = Path(tempfile.mkdtemp(prefix=f"exo_concurrent_{spec.name}_"))
+        try:
+            with open(snapshot / "config.json") as f:
+                cfg = cast(dict[str, Any], json.load(f))
+            reduced = _reduce_config(copy.deepcopy(cfg))
+            (tmpdir / "config.json").write_text(json.dumps(reduced))
+
+            tok_src = snapshot
+            if spec.tokenizer_hub is not None:
+                alt = _find_snapshot(spec.tokenizer_hub)
+                if alt is not None:
+                    tok_src = alt
+            _copy_tokenizer(tok_src, tmpdir)
+
+            model_id = ModelId(f"mlx-community/{spec.hub_name}")
+            tokenizer = load_tokenizer_for_model_id(model_id, tmpdir)
+            mx.random.seed(0)
+            model = _build_model(spec.module, reduced)
+
+            # Two different prompts → different prompt lengths.
+            task_a = _make_task(content="Hello, what is 2+2?", seed=42)
+            task_a = task_a.model_copy(update={"temperature": 0.0})
+            task_b = _make_task(
+                content="Write a short poem about the ocean and the sky.",
+                seed=99,
+            )
+            task_b = task_b.model_copy(update={"temperature": 0.0})
+
+            # ── Concurrent: submit both to one ExoBatchGenerator ──
+            exo_gen = ExoBatchGenerator(
+                model=model,
+                tokenizer=tokenizer,
+                group=None,
+                kv_prefix_cache=None,
+            )
+
+            prompt_a = apply_chat_template(tokenizer=tokenizer, task_params=task_a)
+            prompt_b = apply_chat_template(tokenizer=tokenizer, task_params=task_b)
+            uid_a = exo_gen.submit(task_params=task_a, prompt=prompt_a)
+            uid_b = exo_gen.submit(task_params=task_b, prompt=prompt_b)
+
+            batch_tokens: dict[int, list[int]] = {uid_a: [], uid_b: []}
+            finished: set[int] = set()
+            while exo_gen.has_work:
+                results = exo_gen.step()
+                for uid, response in results:
+                    batch_tokens[uid].append(response.token)
+                    if response.finish_reason is not None:
+                        finished.add(uid)
+
+            exo_gen.close()
+
+            # ── Verify both completed ──
+            assert len(batch_tokens[uid_a]) > 0, "No tokens for task A"
+            assert len(batch_tokens[uid_b]) > 0, "No tokens for task B"
+            assert uid_a in finished, "Task A never finished"
+            assert uid_b in finished, "Task B never finished"
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)

@@ -24,6 +24,7 @@ import json
 import sys
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -253,6 +254,12 @@ def main() -> int:
         "--repeat", type=int, default=1, help="Repetitions per (pp,tg) pair."
     )
     ap.add_argument(
+        "--concurrency",
+        nargs="+",
+        default=["1"],
+        help="Concurrency levels (ints). Accepts commas. E.g. --concurrency 1,2,4,8. Default 1.",
+    )
+    ap.add_argument(
         "--warmup",
         type=int,
         default=0,
@@ -282,6 +289,10 @@ def main() -> int:
     if args.repeat <= 0:
         logger.error("--repeat must be >= 1")
         return 2
+    concurrency_list = parse_int_list(args.concurrency)
+    if not concurrency_list or any(c <= 0 for c in concurrency_list):
+        logger.error("--concurrency values must be >= 1")
+        return 2
 
     # Log pairing mode
     use_combinations = args.all_combinations or len(pp_list) != len(tg_list)
@@ -293,7 +304,7 @@ def main() -> int:
         logger.info(f"pp/tg mode: tandem (zip) - {len(pp_list)} pairs")
 
     client = ExoClient(args.host, args.port, timeout_s=args.timeout)
-    short_id, full_model_id = resolve_model_short_id(client, args.model)
+    short_id, full_model_id = resolve_model_short_id(client, args.model, force_download=args.force_download)
 
     tokenizer = load_tokenizer_for_bench(full_model_id)
     if tokenizer is None:
@@ -392,36 +403,106 @@ def main() -> int:
                 pp_tg_pairs = list(zip(pp_list, tg_list, strict=True))
 
             for pp, tg in pp_tg_pairs:
+              for concurrency in concurrency_list:
+                logger.info(f"--- pp={pp} tg={tg} concurrency={concurrency} ---")
                 runs: list[dict[str, Any]] = []
                 for r in range(args.repeat):
                     time.sleep(3)
-                    try:
-                        row, actual_pp_tokens = run_one_completion(
-                            client, full_model_id, pp, tg, prompt_sizer
+
+                    if concurrency <= 1:
+                        # Sequential: single request
+                        try:
+                            row, actual_pp_tokens = run_one_completion(
+                                client, full_model_id, pp, tg, prompt_sizer
+                            )
+                        except Exception as e:
+                            logger.error(e)
+                            continue
+                        row.update(
+                            {
+                                "model_short_id": short_id,
+                                "model_id": full_model_id,
+                                "placement_sharding": sharding,
+                                "placement_instance_meta": instance_meta,
+                                "placement_nodes": n_nodes,
+                                "instance_id": instance_id,
+                                "pp_tokens": actual_pp_tokens,
+                                "tg": tg,
+                                "repeat_index": r,
+                                "concurrency": 1,
+                                **(
+                                    {"download_duration_s": download_duration_s}
+                                    if download_duration_s is not None
+                                    else {}
+                                ),
+                            }
                         )
-                    except Exception as e:
-                        logger.error(e)
-                        continue
-                    row.update(
-                        {
-                            "model_short_id": short_id,
-                            "model_id": full_model_id,
-                            "placement_sharding": sharding,
-                            "placement_instance_meta": instance_meta,
-                            "placement_nodes": n_nodes,
-                            "instance_id": instance_id,
-                            "pp_tokens": actual_pp_tokens,
-                            "tg": tg,
-                            "repeat_index": r,
-                            **(
-                                {"download_duration_s": download_duration_s}
-                                if download_duration_s is not None
-                                else {}
-                            ),
-                        }
-                    )
-                    runs.append(row)
-                    all_rows.append(row)
+                        runs.append(row)
+                        all_rows.append(row)
+                    else:
+                        # Concurrent: fire N requests in parallel
+                        # Each thread gets its own ExoClient (separate HTTP connection)
+                        batch_results: list[tuple[dict[str, Any], int]] = []
+                        batch_errors = 0
+
+                        def _run_concurrent(idx: int) -> tuple[dict[str, Any], int]:
+                            c = ExoClient(args.host, args.port, timeout_s=args.timeout)
+                            return run_one_completion(
+                                c, full_model_id, pp, tg, prompt_sizer
+                            )
+
+                        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                            futures = {
+                                pool.submit(_run_concurrent, i): i
+                                for i in range(concurrency)
+                            }
+                            for fut in as_completed(futures):
+                                try:
+                                    batch_results.append(fut.result())
+                                except Exception as e:
+                                    logger.error(f"Concurrent request failed: {e}")
+                                    batch_errors += 1
+
+                        for idx, (row, actual_pp_tokens) in enumerate(batch_results):
+                            row.update(
+                                {
+                                    "model_short_id": short_id,
+                                    "model_id": full_model_id,
+                                    "placement_sharding": sharding,
+                                    "placement_instance_meta": instance_meta,
+                                    "placement_nodes": n_nodes,
+                                    "instance_id": instance_id,
+                                    "pp_tokens": actual_pp_tokens,
+                                    "tg": tg,
+                                    "repeat_index": r,
+                                    "concurrency": concurrency,
+                                    "concurrent_index": idx,
+                                    **(
+                                        {"download_duration_s": download_duration_s}
+                                        if download_duration_s is not None
+                                        else {}
+                                    ),
+                                }
+                            )
+                            runs.append(row)
+                            all_rows.append(row)
+
+                        if batch_results:
+                            total_gen_tokens = sum(
+                                x["stats"]["generation_tokens"]
+                                for x, _ in batch_results
+                            )
+                            max_gen_time = max(
+                                x["stats"]["generation_tokens"] / x["stats"]["generation_tps"]
+                                for x, _ in batch_results
+                                if x["stats"]["generation_tps"] > 0
+                            )
+                            agg_gen_tps = total_gen_tokens / max_gen_time if max_gen_time > 0 else 0
+                            logger.info(
+                                f"[concurrent {concurrency}x]  "
+                                f"agg_gen_tps={agg_gen_tps:.2f}  "
+                                f"errors={batch_errors}"
+                            )
 
                 if runs:
                     prompt_tps = mean(x["stats"]["prompt_tps"] for x in runs)
