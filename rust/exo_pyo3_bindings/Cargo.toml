@@ -54,9 +54,6 @@ delegate = { workspace = true }
 tokio = { workspace = true, features = ["full", "tracing"] }
 futures-lite = { workspace = true }
 
-# utility dependencies
-util = { workspace = true }
-
 # Tracing
 log = { workspace = true }
 env_logger = "0.11"
