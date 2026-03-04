@@ -11,7 +11,7 @@ pub(crate) mod alias {
     pub type AnyError = Box<dyn Error + Send + Sync + 'static>;
     pub type AnyResult<T> = Result<T, AnyError>;
 }
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 
 pub use behaviour::{Behaviour, BehaviourEvent};
@@ -127,7 +127,13 @@ fn on_swarm_event(
             }
             ret
         }
-        SwarmEvent::ConnectionClosed { peer_id, .. } => vec![FromSwarm::Expired { peer_id }],
+        SwarmEvent::Behaviour(BehaviourEvent::Discovery(mdns::Event::Expired(peers))) => peers
+            .into_iter()
+            .map(|(peer_id, _)| peer_id)
+            .collect::<HashSet<PeerId>>()
+            .into_iter()
+            .map(|peer_id| FromSwarm::Expired { peer_id })
+            .collect(),
         _ => vec![],
     }
 }
