@@ -70,6 +70,22 @@ def entrypoint(
 
     # Import main after setting global logger - this lets us just import logger from this module.
     # Guard by instance type: TinygradInstance must never import MLX modules (macOS-only).
+    if is_tinygrad:
+        # Default JIT=1 and BEAM=2 for decode inference. Prefill/weight-loading
+        # paths override BEAM with Context(BEAM=0). User can still override via env.
+        os.environ.setdefault("JIT", "1")
+        os.environ.setdefault("BEAM", "2")
+
+        # Set TC based on sharding strategy:
+        # Tensor parallelism → TC=1, Pipeline → TC=0
+        from exo.shared.types.worker.shards import TensorShardMetadata
+
+        if not os.environ.get("TC"):
+            if isinstance(bound_instance.bound_shard, TensorShardMetadata):
+                os.environ["TC"] = "1"
+            else:
+                os.environ["TC"] = "0"
+
     try:
         if is_tinygrad:
             from exo.worker.runner.llm_inference.tinygrad_runner import main
