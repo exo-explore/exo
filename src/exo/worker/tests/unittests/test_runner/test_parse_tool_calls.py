@@ -1,6 +1,6 @@
 """Tests for parse_tool_calls generator, especially unclosed tool call handling."""
-import json
 
+import json
 from collections.abc import Generator
 from typing import Any
 
@@ -41,6 +41,7 @@ class TestParseToolCalls:
             parse_tool_calls(
                 _make_responses(texts, finish_on_last=False),
                 _dummy_parser,
+                tools=None,
             )
         )
 
@@ -54,6 +55,7 @@ class TestParseToolCalls:
             parse_tool_calls(
                 _make_responses(texts),
                 _dummy_parser,
+                tools=None,
             )
         )
 
@@ -78,6 +80,7 @@ class TestParseToolCalls:
             parse_tool_calls(
                 _make_responses(texts, finish_on_last=False),
                 make_mlx_parser("<tool_call>", "</tool_call>", _failing_parser),
+                tools=None,
             )
         )
 
@@ -122,7 +125,9 @@ class TestParseToolCalls:
         results = list(
             parse_tool_calls(
                 _make_responses(["<tool_call>", "process", "</tool_call>"]),
-                make_mlx_parser("<tool_call>", "</tool_call>", _parser_with_string_args),
+                make_mlx_parser(
+                    "<tool_call>", "</tool_call>", _parser_with_string_args
+                ),
                 tools,
             )
         )

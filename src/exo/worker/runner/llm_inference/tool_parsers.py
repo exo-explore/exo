@@ -10,10 +10,20 @@ from exo.shared.types.api import ToolCallItem
 class ToolParser:
     start_parsing: str
     end_parsing: str
-    parse_tool_calls: Callable[[str], list[ToolCallItem] | None]
+    _inner_parser: Callable[[str], list[ToolCallItem] | None]
+
+    def parse(
+        self, text: str, tools: list[dict[str, Any]] | None
+    ) -> list[ToolCallItem] | None:
+        parsed = self._inner_parser(text)
+        if parsed is None:
+            return None
+        if tools is not None:
+            parsed = _coerce_tool_calls_to_schema(parsed, tools)
+        return parsed
 
 
-def _json_type_matches(value: Any, expected_type: str) -> bool:
+def _json_type_matches(value: Any, expected_type: str) -> bool:  # pyright: ignore[reportAny]
     if expected_type == "object":
         return isinstance(value, dict)
     if expected_type == "array":
@@ -33,59 +43,59 @@ def _json_type_matches(value: Any, expected_type: str) -> bool:
     return False
 
 
-def _coerce_tool_arg_with_schema(value: Any, schema: dict[str, Any]) -> Any:
+def _coerce_tool_arg_with_schema(value: Any, schema: dict[str, Any]) -> Any:  # pyright: ignore[reportAny]
     schema_type = schema.get("type")
 
     if isinstance(schema_type, list):
-        for candidate in schema_type:
+        for candidate in schema_type:  # pyright: ignore[reportUnknownVariableType]
             if not isinstance(candidate, str):
                 continue
             if candidate == "null" and value is None:
                 return None
             candidate_schema = {**schema, "type": candidate}
-            coerced = _coerce_tool_arg_with_schema(value, candidate_schema)
+            coerced = _coerce_tool_arg_with_schema(value, candidate_schema)  # pyright: ignore[reportAny]
             if _json_type_matches(coerced, candidate):
-                return coerced
-        return value
+                return coerced  # pyright: ignore[reportAny]
+        return value  # pyright: ignore[reportAny]
 
     if not isinstance(schema_type, str):
-        return value
+        return value  # pyright: ignore[reportAny]
 
     if schema_type == "object":
-        parsed = value
+        parsed = value  # pyright: ignore[reportAny]
         if isinstance(parsed, str):
             try:
-                parsed = json.loads(parsed)
+                parsed = json.loads(parsed)  # pyright: ignore[reportAny]
             except Exception:
-                return value
+                return value  # pyright: ignore[reportAny]
         if not isinstance(parsed, dict):
-            return value
+            return value  # pyright: ignore[reportAny]
         properties = schema.get("properties")
         if not isinstance(properties, dict):
-            return parsed
+            return parsed  # pyright: ignore[reportUnknownVariableType]
         return {
             key: (
-                _coerce_tool_arg_with_schema(prop_value, prop_schema)
+                _coerce_tool_arg_with_schema(prop_value, prop_schema)  # pyright: ignore[reportUnknownArgumentType]
                 if isinstance(prop_schema, dict)
                 else prop_value
             )
-            for key, prop_value in parsed.items()
-            for prop_schema in [properties.get(key)]
+            for key, prop_value in parsed.items()  # pyright: ignore[reportUnknownVariableType]
+            for prop_schema in [properties.get(key)]  # type: ignore
         }
 
     if schema_type == "array":
-        parsed = value
+        parsed = value  # pyright: ignore[reportAny]
         if isinstance(parsed, str):
             try:
-                parsed = json.loads(parsed)
+                parsed = json.loads(parsed)  # pyright: ignore[reportAny]
             except Exception:
-                return value
+                return value  # pyright: ignore[reportAny]
         if not isinstance(parsed, list):
-            return value
+            return value  # pyright: ignore[reportAny]
         item_schema = schema.get("items")
         if not isinstance(item_schema, dict):
-            return parsed
-        return [_coerce_tool_arg_with_schema(item, item_schema) for item in parsed]
+            return parsed  # pyright: ignore[reportUnknownVariableType]
+        return [_coerce_tool_arg_with_schema(item, item_schema) for item in parsed]  # type: ignore
 
     if schema_type == "integer":
         if isinstance(value, bool):
@@ -126,24 +136,19 @@ def _coerce_tool_arg_with_schema(value: Any, schema: dict[str, Any]) -> Any:
                 return False
         return value
 
-    return value
+    return value  # pyright: ignore[reportAny]
 
 
 def _coerce_tool_calls_to_schema(
-    tool_calls: list[ToolCallItem], tools: list[dict[str, Any]] | None
+    tool_calls: list[ToolCallItem], tools: list[dict[str, Any]]
 ) -> list[ToolCallItem]:
-    if not tools:
-        return tool_calls
-
     schema_by_name: dict[str, dict[str, Any]] = {}
     for tool in tools:
-        if not isinstance(tool, dict):
-            continue
         function = tool.get("function")
         if not isinstance(function, dict):
             continue
-        name = function.get("name")
-        parameters = function.get("parameters")
+        name = function.get("name")  # type: ignore
+        parameters = function.get("parameters")  # type: ignore
         if isinstance(name, str) and isinstance(parameters, dict):
             schema_by_name[name] = parameters
 
@@ -158,7 +163,7 @@ def _coerce_tool_calls_to_schema(
             continue
 
         try:
-            parsed_args = json.loads(tool_call.arguments)
+            parsed_args = json.loads(tool_call.arguments)  # pyright: ignore[reportAny]
         except Exception:
             coerced_calls.append(tool_call)
             continue
@@ -167,7 +172,7 @@ def _coerce_tool_calls_to_schema(
             coerced_calls.append(tool_call)
             continue
 
-        coerced_args = _coerce_tool_arg_with_schema(parsed_args, schema)
+        coerced_args = _coerce_tool_arg_with_schema(parsed_args, schema)  # pyright: ignore[reportAny]
         if not isinstance(coerced_args, dict):
             coerced_calls.append(tool_call)
             continue
@@ -176,15 +181,6 @@ def _coerce_tool_calls_to_schema(
             tool_call.model_copy(update={"arguments": json.dumps(coerced_args)})
         )
     return coerced_calls
-
-
-def execute_tool_parser(
-    tool_parser: ToolParser, text: str, tools: list[dict[str, Any]] | None = None
-) -> list[ToolCallItem] | None:
-    parsed = tool_parser.parse_tool_calls(text)
-    if parsed is None:
-        return None
-    return _coerce_tool_calls_to_schema(parsed, tools)
 
 
 def make_mlx_parser(
@@ -208,7 +204,7 @@ def make_mlx_parser(
     return ToolParser(
         start_parsing=tool_call_start,
         end_parsing=tool_call_end,
-        parse_tool_calls=parse_tool_calls,
+        _inner_parser=parse_tool_calls,
     )
 
 
@@ -237,7 +233,7 @@ def make_json_parser() -> ToolParser:
     return ToolParser(
         start_parsing="<tool_call>",
         end_parsing="</tool_call>",
-        parse_tool_calls=_parse_json_calls,
+        _inner_parser=_parse_json_calls,
     )
 
 

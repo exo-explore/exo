@@ -22,7 +22,7 @@ from exo.worker.engines.mlx.utils_mlx import (
 )
 from exo.worker.runner.bootstrap import logger
 
-from .tool_parsers import ToolParser, execute_tool_parser
+from .tool_parsers import ToolParser
 
 
 @cache
@@ -38,7 +38,7 @@ def apply_all_parsers(
     tokenizer: TokenizerWrapper,
     model_type: type[Model],
     model_id: ModelId,
-    tools: list[dict[str, Any]] | None = None,
+    tools: list[dict[str, Any]] | None,
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
     mlx_generator = receiver
 
@@ -329,7 +329,7 @@ def parse_thinking_models(
 def parse_tool_calls(
     responses: Generator[GenerationResponse | None],
     tool_parser: ToolParser,
-    tools: list[dict[str, Any]] | None = None,
+    tools: list[dict[str, Any]] | None,
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
     in_tool_call = False
     tool_call_text_parts: list[str] = []
@@ -344,9 +344,7 @@ def parse_tool_calls(
             tool_call_text_parts.append(response.text)
             if response.text.endswith(tool_parser.end_parsing):
                 # parse the actual tool calls from the tool call text
-                parsed = execute_tool_parser(
-                    tool_parser, "".join(tool_call_text_parts).strip(), tools
-                )
+                parsed = tool_parser.parse("".join(tool_call_text_parts).strip(), tools)
                 logger.info(f"parsed {tool_call_text_parts=} into {parsed=}")
                 if parsed is not None:
                     yield ToolCallResponse(
