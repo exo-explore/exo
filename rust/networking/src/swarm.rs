@@ -1,11 +1,12 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::pin::Pin;
 
 use crate::alias;
 use crate::swarm::transport::tcp_transport;
 pub use behaviour::{Behaviour, BehaviourEvent};
 use futures_lite::{Stream, StreamExt};
-use libp2p::mdns;
+use libp2p::swarm::dial_opts::DialOpts;
+use libp2p::{Multiaddr, mdns};
 use libp2p::{PeerId, SwarmBuilder, gossipsub, identity, swarm::SwarmEvent};
 use tokio::sync::{mpsc, oneshot};
 
@@ -61,7 +62,7 @@ impl Swarm {
             mut swarm,
             mut from_client,
         } = self;
-        let stream = async_stream::stream! {
+        Box::pin(async_stream::stream! {
             loop {
                 tokio::select! {
                     msg = from_client.recv() => {
@@ -70,14 +71,51 @@ impl Swarm {
                     }
                     event = swarm.next() => {
                         let Some(event) = event else { break };
-                        for item in filter_swarm_event(event) {
+                        for item in on_swarm_event(&mut swarm, event) {
                             yield item;
                         }
                     }
                 }
             }
-        };
-        Box::pin(stream)
+        })
+    }
+}
+
+fn on_swarm_event(
+    swarm: &mut libp2p::Swarm<Behaviour>,
+    event: SwarmEvent<BehaviourEvent>,
+) -> Vec<FromSwarm> {
+    match event {
+        SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
+            message:
+                gossipsub::Message {
+                    source: Some(peer_id),
+                    topic,
+                    data,
+                    ..
+                },
+            ..
+        })) => vec![FromSwarm::Message {
+            from: peer_id,
+            topic: topic.into_string(),
+            data,
+        }],
+        SwarmEvent::Behaviour(BehaviourEvent::Discovery(mdns::Event::Discovered(peer_id))) => {
+            let mut base = HashMap::<PeerId, Vec<Multiaddr>>::default();
+            peer_id
+                .into_iter()
+                .for_each(|(pid, addr)| base.entry(pid).or_default().push(addr));
+            let ret = base
+                .keys()
+                .map(|&peer_id| FromSwarm::Discovered { peer_id })
+                .collect::<Vec<_>>();
+            for (pid, addrs) in base.into_iter() {
+                _ = swarm.dial(DialOpts::peer_id(pid).addresses(addrs).build());
+            }
+            ret
+        }
+        SwarmEvent::ConnectionClosed { peer_id, .. } => vec![FromSwarm::Expired { peer_id }],
+        _ => vec![],
     }
 }
 
@@ -114,42 +152,6 @@ fn on_message(swarm: &mut libp2p::Swarm<Behaviour>, message: ToSwarm) {
                 .publish(gossipsub::IdentTopic::new(topic), data);
             _ = result_sender.send(result);
         }
-    }
-}
-
-fn filter_swarm_event(event: SwarmEvent<BehaviourEvent>) -> Vec<FromSwarm> {
-    match event {
-        SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
-            message:
-                gossipsub::Message {
-                    source: Some(peer_id),
-                    topic,
-                    data,
-                    ..
-                },
-            ..
-        })) => vec![FromSwarm::Message {
-            from: peer_id,
-            topic: topic.into_string(),
-            data,
-        }],
-        SwarmEvent::Behaviour(BehaviourEvent::Discovery(mdns::Event::Discovered(peer_id))) => {
-            peer_id
-                .into_iter()
-                .map(|(pid, _)| pid)
-                .collect::<HashSet<PeerId>>()
-                .into_iter()
-                .map(|peer_id| FromSwarm::Discovered { peer_id })
-                .collect()
-        }
-        SwarmEvent::Behaviour(BehaviourEvent::Discovery(mdns::Event::Expired(peer_id))) => peer_id
-            .into_iter()
-            .map(|(pid, _)| pid)
-            .collect::<HashSet<PeerId>>()
-            .into_iter()
-            .map(|peer_id| FromSwarm::Discovered { peer_id })
-            .collect(),
-        _ => vec![],
     }
 }
 
