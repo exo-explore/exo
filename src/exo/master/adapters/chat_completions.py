@@ -26,7 +26,11 @@ from exo.shared.types.chunks import (
     ToolCallChunk,
 )
 from exo.shared.types.common import CommandId
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo.shared.types.text_generation import (
+    InputMessage,
+    TextGenerationTaskParams,
+    resolve_reasoning_params,
+)
 
 
 def chat_request_to_text_generation(
@@ -75,6 +79,10 @@ def chat_request_to_text_generation(
             dumped: dict[str, Any] = msg_copy.model_dump(exclude_none=True)
             chat_template_messages.append(dumped)
 
+    resolved_effort, resolved_thinking = resolve_reasoning_params(
+        request.reasoning_effort, request.enable_thinking
+    )
+
     return TextGenerationTaskParams(
         model=request.model,
         input=input_messages
@@ -89,7 +97,8 @@ def chat_request_to_text_generation(
         seed=request.seed,
         stream=request.stream,
         tools=request.tools,
-        enable_thinking=request.enable_thinking,
+        reasoning_effort=resolved_effort,
+        enable_thinking=resolved_thinking,
         chat_template_messages=chat_template_messages
         if chat_template_messages
         else None,
