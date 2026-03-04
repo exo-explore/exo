@@ -61,17 +61,17 @@ def grouped_query_attention(
     else:
         # Decode (JIT): use full pre-allocated cache K,V.
         # Shapes are fixed (max_seq_len) which is required for TinyJit replay.
-        k_attn = cache._keys[layer_idx]
-        v_attn = cache._values[layer_idx]
+        k_attn = cache.keys[layer_idx]
+        v_attn = cache.values[layer_idx]
 
     if num_kv_heads < num_heads:
         repeat_factor = num_heads // num_kv_heads
-        k_attn = k_attn.unsqueeze(2).expand(
+        k_attn = k_attn.unsqueeze(2).expand(  # pyright: ignore[reportUnknownMemberType]
             int(_batch), num_kv_heads, repeat_factor, -1, head_dim,
-        ).reshape(int(_batch), num_heads, -1, head_dim)  # pyright: ignore[reportUnknownMemberType]
-        v_attn = v_attn.unsqueeze(2).expand(
+        ).reshape(int(_batch), num_heads, -1, head_dim)
+        v_attn = v_attn.unsqueeze(2).expand(  # pyright: ignore[reportUnknownMemberType]
             int(_batch), num_kv_heads, repeat_factor, -1, head_dim,
-        ).reshape(int(_batch), num_heads, -1, head_dim) # pyright: ignore[reportUnknownMemberType]
+        ).reshape(int(_batch), num_heads, -1, head_dim)
 
     scale = 1.0 / math.sqrt(head_dim)
     scores: Tensor = (q @ k_attn.transpose(-2, -1)) * scale

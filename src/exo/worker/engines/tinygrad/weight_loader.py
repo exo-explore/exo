@@ -1,20 +1,19 @@
 from pathlib import Path
 from typing import Literal, NamedTuple, overload
 
+from tinygrad.device import Device
 from tinygrad.nn.state import safe_load
 from tinygrad.tensor import Tensor
-from tinygrad.device import Device
 
 from exo.shared.architecture import ArchitectureSpec
 from exo.shared.model_config import ModelConfig
+from exo.worker.engines.tinygrad.layers.rotary import compute_rope_frequencies
 from exo.worker.engines.tinygrad.quantization.layers import (
     QuantizedEmbedding,
     QuantizedLinear,
 )
 from exo.worker.engines.tinygrad.quantization.packing import PackedTensor
 from exo.worker.engines.tinygrad.quantization.shapes import infer_weight_shape
-from exo.worker.engines.tinygrad.layers.rotary import compute_rope_frequencies
-
 
 LinearWeight = Tensor | QuantizedLinear
 EmbedWeight = Tensor | QuantizedEmbedding
@@ -65,18 +64,19 @@ def load_transformer_weights(
         f"{spec.embed_key}.weight",
         config, is_embedding = True)
 
+    lm_head: LinearWeight
     if config.tie_word_embeddings:
         if isinstance(embed_tokens, QuantizedEmbedding):
-            lm_head: LinearWeight = QuantizedLinear(
+            lm_head = QuantizedLinear(
                 weight_q = embed_tokens.weight_q,
                 scales = embed_tokens.scales,
                 biases = embed_tokens.biases,
                 group_size = embed_tokens.group_size,
             )
         else:
-            lm_head: LinearWeight = embed_tokens
+            lm_head = embed_tokens
     else:
-        lm_head: LinearWeight = _build_weight(
+        lm_head = _build_weight(
             raw_weights, f"{spec.lm_head_key}.weight", config,
         )
 
@@ -112,13 +112,13 @@ def _merge_linear_weights(*weights: LinearWeight) -> LinearWeight:
         qls = [w for w in weights if isinstance(w, QuantizedLinear)]
         merged_tensor = qls[0].weight_q.tensor.cat(
             *[w.weight_q.tensor for w in qls[1:]], dim=0
-        ).contiguous().realize()
+        ).contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
         merged_scales = qls[0].scales.cat(
             *[w.scales for w in qls[1:]], dim=0
-        ).contiguous().realize()
+        ).contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
         merged_biases = qls[0].biases.cat(
             *[w.biases for w in qls[1:]], dim=0
-        ).contiguous().realize()
+        ).contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
         return QuantizedLinear(
             weight_q=PackedTensor(
                 tensor=merged_tensor,
@@ -140,7 +140,7 @@ def _merge_linear_weights(*weights: LinearWeight) -> LinearWeight:
             tensors.append(w.dequantize())
         else:
             tensors.append(w)
-    return tensors[0].cat(*tensors[1:], dim=0).contiguous().realize()
+    return tensors[0].cat(*tensors[1:], dim=0).contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
 
 def _build_layer_weights(
     raw: dict[str, Tensor],
@@ -261,7 +261,7 @@ def _load_all_safetensors(path: Path) -> dict[str, Tensor]:
         for safetensor_file in sorted(path.glob("*.safetensors")):
             shard = safe_load(str(safetensor_file))
             for key, tensor in shard.items():
-                merged[key] = tensor.to(Device.DEFAULT).contiguous().realize()
+                merged[key] = tensor.to(Device.DEFAULT).contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
 
     if not merged:
         raise FileNotFoundError(f"No .safetensors file found in {path}")

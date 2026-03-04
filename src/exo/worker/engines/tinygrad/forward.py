@@ -8,10 +8,10 @@ from exo.worker.engines.tinygrad.layers.attention import grouped_query_attention
 from exo.worker.engines.tinygrad.layers.embedding import apply_embedding, apply_lm_head
 from exo.worker.engines.tinygrad.layers.mlp import swiglu_mlp
 from exo.worker.engines.tinygrad.layers.normalization import rms_norm
-from exo.worker.engines.tinygrad.layers.rotary import compute_rope_frequencies
 from exo.worker.engines.tinygrad.weight_loader import LayerWeights, TransformerWeights
 
-class TransfomerBlockBuilder(NamedTuple):
+
+class TransformerBlockBuilder(NamedTuple):
     cos_freqs: Tensor
     sin_freqs: Tensor
     layer: LayerWeights
@@ -27,7 +27,7 @@ def forward_pass(
     rope_sin: Tensor | None = None,
 ) -> tuple[Tensor, KVCache]:
     config = weights.config
-    _batch, seq_len = input_ids.shape
+    _batch, _seq_len = input_ids.shape
 
     x = apply_embedding(weights.embed_tokens, input_ids)
 
@@ -53,14 +53,14 @@ def forward_pass(
     sin = rope_sin if rope_sin is not None else weights.rope_sin
 
     for layer_idx, layer in enumerate(weights.layers):
-        builder = TransfomerBlockBuilder(
+        builder = TransformerBlockBuilder(
             cos, sin,
             layer, layer_idx, position_offset,
         )
         x = _transformer_block(x, config, cache, builder)
 
         if isinstance(position_offset, int):
-            x = x.realize(cache._keys[layer_idx], cache._values[layer_idx])
+            x = x.realize(cache.keys[layer_idx], cache.values[layer_idx])
 
     x = rms_norm(x, weights.final_norm, config.rms_norm_eps)
     logits = apply_lm_head(x, weights.lm_head)
@@ -71,7 +71,7 @@ def _transformer_block(
     x: Tensor,
     config: ModelConfig,
     cache: KVCache,
-    builder: TransfomerBlockBuilder,
+    builder: TransformerBlockBuilder,
 ) -> Tensor:
     residual = x
     layer = builder.layer

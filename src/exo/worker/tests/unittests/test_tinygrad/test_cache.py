@@ -55,4 +55,4 @@ def test_cache_layers_are_independent():
     v = Tensor.ones(1, 8, 3, 64)
     cache.update(0, k, v, position=0)
     # Layer 1 should still be all zeros (pre-allocated but untouched)
-    assert float(cache._keys[1].sum().item()) == 0.0  # pyright: ignore[reportPrivateUsage]
+    assert float(cache.keys[1].sum().item()) == 0.0

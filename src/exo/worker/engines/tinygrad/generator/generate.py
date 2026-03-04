@@ -4,8 +4,8 @@ from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from typing import Any
 
-from tinygrad import TinyJit
 from tinygrad.dtype import dtypes
+from tinygrad.engine.jit import TinyJit
 from tinygrad.helpers import Context
 from tinygrad.tensor import Tensor
 
@@ -76,8 +76,8 @@ def _build_jit_decode(
         *cache_kv: Tensor,
     ) -> tuple[Tensor, ...]:
         for i in range(num_layers):
-            cache._keys[i] = cache_kv[i]
-            cache._values[i] = cache_kv[num_layers + i]
+            cache.keys[i] = cache_kv[i]
+            cache.values[i] = cache_kv[num_layers + i]
 
         logits, _ = forward_pass(
             weights, input_ids, cache,
@@ -87,9 +87,9 @@ def _build_jit_decode(
 
         # Realize everything at once — JIT captures one fused kernel schedule
         # instead of 32 fragmented ones.
-        logits = logits.realize(*cache._keys, *cache._values)
+        logits = logits.realize(*cache.keys, *cache.values)
 
-        return (logits, *cache._keys, *cache._values)
+        return (logits, *cache.keys, *cache.values)
 
     return decode
 
@@ -132,8 +132,8 @@ def tinygrad_generate(
         # Realize cache tensors — Tensor.zeros() produces lazy/const tensors
         # that TinyJit rejects as inputs. Force device buffer allocation.
         for i in range(len(model.layers)):
-            cache._keys[i] = cache._keys[i].contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
-            cache._values[i] = cache._values[i].contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
+            cache.keys[i] = cache.keys[i].contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
+            cache.values[i] = cache.values[i].contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
         jit_decode = _build_jit_decode(model, cache)
         input_buffer = Tensor.empty(1, 1, dtype=dtypes.int32).contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
         position_buffer = Tensor.empty(1, dtype=dtypes.int32).contiguous().realize()  # pyright: ignore[reportUnknownMemberType]
@@ -168,10 +168,10 @@ def tinygrad_generate(
         logits = logits[:, prompt_tokens - 1:prompt_tokens, :].contiguous()  # pyright: ignore[reportUnknownMemberType]
         # Make cache tensors contiguous for JIT compatibility.
         for i in range(num_layers):
-            cache._keys[i] = cache._keys[i].contiguous()  # pyright: ignore[reportUnknownMemberType]
-            cache._values[i] = cache._values[i].contiguous()  # pyright: ignore[reportUnknownMemberType]
+            cache.keys[i] = cache.keys[i].contiguous()  # pyright: ignore[reportUnknownMemberType]
+            cache.values[i] = cache.values[i].contiguous()  # pyright: ignore[reportUnknownMemberType]
         # Realize everything at once — same pattern as _build_jit_decode.
-        logits = logits.realize(*cache._keys, *cache._values)
+        logits = logits.realize(*cache.keys, *cache.values)
 
     # Rebuild the JIT after prefill. The batched prefill creates entirely new
     # cache tensor objects (via Tensor.where + contiguous + realize) that differ
@@ -191,7 +191,7 @@ def tinygrad_generate(
     generation_start = time.time()
     for token_idx in range(max_tokens):
         result = sample_token(
-            logits, temperature=temperature, top_p=top_p,  # pyright: ignore[reportPossiblyUnboundVariable]
+            logits, temperature=temperature, top_p=top_p,
             top_logprobs_count=top_logprobs_count,
             request_logprobs=request_logprobs,
         )
@@ -261,13 +261,13 @@ def tinygrad_generate(
         results = jit_decode(
             state.input_buffer, state.position_buffer,
             model.rope_cos, model.rope_sin,
-            *cache._keys, *cache._values,
+            *cache.keys, *cache.values,
         )
 
         logits = results[0]
         for i in range(num_layers):
-            cache._keys[i] = results[1 + i]
-            cache._values[i] = results[1 + num_layers + i]
+            cache.keys[i] = results[1 + i]
+            cache.values[i] = results[1 + num_layers + i]
         position += 1
 
 def warmup_inference(model: TransformerWeights, tokenizer: Any, group: None = None) -> int:  # pyright: ignore[reportAny]
@@ -314,9 +314,9 @@ def _warmup_prefill_buckets(model: TransformerWeights) -> None:
             )
             logits = logits[:, -1:, :].contiguous()  # pyright: ignore[reportUnknownMemberType]
             for i in range(num_layers):
-                cache._keys[i] = cache._keys[i].contiguous()  # pyright: ignore[reportUnknownMemberType]
-                cache._values[i] = cache._values[i].contiguous()  # pyright: ignore[reportUnknownMemberType]
-            logits.realize(*cache._keys, *cache._values)
+                cache.keys[i] = cache.keys[i].contiguous()  # pyright: ignore[reportUnknownMemberType]
+                cache.values[i] = cache.values[i].contiguous()  # pyright: ignore[reportUnknownMemberType]
+            logits.realize(*cache.keys, *cache.values)
 
 def _encode_prompt(tokenizer: Any, prompt: str) -> list[int]:  # pyright: ignore[reportAny]
     result: Any = tokenizer.encode(prompt)  # pyright: ignore[reportAny]

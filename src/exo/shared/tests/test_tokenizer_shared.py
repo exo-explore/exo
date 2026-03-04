@@ -31,7 +31,7 @@ def test_unknown_model_returns_none() -> None:
     """Unknown models should return None (use tokenizer default)."""
     from exo.shared.tokenizer.eos_tokens import get_eos_token_ids_for_model
 
-    assert get_eos_token_ids_for_model(ModelId("meta-llama/Llama-3.2-1B")) is None
+    assert get_eos_token_ids_for_model(ModelId("unknown-org/UnknownModel-7B")) is None
 
 
 def test_chat_template_chatml_fallback() -> None:

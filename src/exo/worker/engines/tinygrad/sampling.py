@@ -23,8 +23,8 @@ def sample_token(
         # Gumble-max trick for reducing GPU -> CPU sync.
 
         scaled = last_logits / temperature
-        gumble_noise = -(-Tensor.rand(scaled.shape).log()).log()
-        token_id = int((scaled + gumble_noise).argmax().item())
+        gumble_noise = -(-Tensor.rand(scaled.shape).log()).log()  # pyright: ignore[reportUnknownMemberType]
+        token_id = int((scaled + gumble_noise).argmax().item())  # pyright: ignore[reportUnknownMemberType]
 
     selected_logprob: float = 0.0
     top_logprobs: list[tuple[int, float]] = []
@@ -35,7 +35,7 @@ def sample_token(
 
         if top_logprobs_count > 0:
             values, indices = log_probs.topk(top_logprobs_count)
-            top_logprobs = [(int(idx), float(val)) for val, idx in zip(values.tolist(), indices.tolist())]
+            top_logprobs = [(int(idx), float(val)) for val, idx in zip(values.tolist(), indices.tolist(), strict=True)]  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType, reportArgumentType]
 
     return SampleResult(
         token_id=token_id,
