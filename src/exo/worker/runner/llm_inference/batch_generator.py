@@ -218,6 +218,7 @@ class SequentialGenerator(InferenceGenerator):
             self.tokenizer,
             type(self.model),
             self.model_id,
+            task.task_params.tools,
         )
         self._active = (task, mlx_gen, queue, output_generator)
 
