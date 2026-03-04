@@ -262,7 +262,7 @@ class RunnerSupervisor:
                             chunk=ErrorChunk(
                                 model=self.shard_metadata.model_card.model_id,
                                 error_message=(
-                                    "Runner crashed before completing command "
+                                    "Runner shutdown before completing command "
                                     f"({cause})"
                                 ),
                             ),

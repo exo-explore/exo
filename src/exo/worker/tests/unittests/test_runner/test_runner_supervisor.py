@@ -83,7 +83,7 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
     assert isinstance(got_chunk, ChunkGenerated)
     assert got_chunk.command_id == command_id
     assert isinstance(got_chunk.chunk, ErrorChunk)
-    assert "Runner crashed before completing command" in got_chunk.chunk.error_message
+    assert "Runner shutdown before completing command" in got_chunk.chunk.error_message
 
     assert isinstance(got_status, RunnerStatusUpdated)
     assert isinstance(got_status.runner_status, RunnerFailed)
