@@ -3,7 +3,7 @@ import contextlib
 import json
 import random
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
@@ -775,7 +775,7 @@ class API:
         return resolved_model
 
     def stream_events(self) -> StreamingResponse:
-        def _generate_json_array(events: Iterator[Event]) -> Iterator[str]:
+        def _generate_json_array(events: Iterable[Event]) -> Iterable[str]:
             yield "["
             first = True
             for event in events:
@@ -1587,9 +1587,9 @@ class API:
         self, query: str = "", limit: int = 20
     ) -> list[HuggingFaceSearchResult]:
         """Search HuggingFace Hub — tries mlx-community first, falls back to all of HuggingFace."""
-        from huggingface_hub import list_models
+        from huggingface_hub import ModelInfo, list_models
 
-        def _to_results(models: object) -> list[HuggingFaceSearchResult]:
+        def _to_results(models: Iterable[ModelInfo]) -> list[HuggingFaceSearchResult]:
             return [
                 HuggingFaceSearchResult(
                     id=m.id,
