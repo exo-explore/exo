@@ -1,5 +1,6 @@
 """Tests for parse_tool_calls generator, especially unclosed tool call handling."""
 
+import json
 from collections.abc import Generator
 from typing import Any
 
@@ -40,6 +41,7 @@ class TestParseToolCalls:
             parse_tool_calls(
                 _make_responses(texts, finish_on_last=False),
                 _dummy_parser,
+                tools=None,
             )
         )
 
@@ -53,6 +55,7 @@ class TestParseToolCalls:
             parse_tool_calls(
                 _make_responses(texts),
                 _dummy_parser,
+                tools=None,
             )
         )
 
@@ -77,9 +80,101 @@ class TestParseToolCalls:
             parse_tool_calls(
                 _make_responses(texts, finish_on_last=False),
                 make_mlx_parser("<tool_call>", "</tool_call>", _failing_parser),
+                tools=None,
             )
         )
 
         assert len(results) == 1
         assert isinstance(results[0], GenerationResponse)
         assert results[0].text == "<tool_call>bad content</tool_call>"
+
+    def test_tool_schema_coerces_string_arguments_to_expected_types(self):
+        """Tool argument values should be coerced using provided JSON schema."""
+
+        def _parser_with_string_args(_text: str) -> dict[str, Any]:
+            return {
+                "name": "process",
+                "arguments": {
+                    "action": "output",
+                    "id": "0",
+                    "verbose": "true",
+                    "temperature": "0.75",
+                },
+            }
+
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "process",
+                    "description": "Manage background processes",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action": {"type": "string"},
+                            "id": {"type": "integer"},
+                            "verbose": {"type": "boolean"},
+                            "temperature": {"type": "number"},
+                        },
+                        "required": ["action"],
+                    },
+                },
+            }
+        ]
+
+        results = list(
+            parse_tool_calls(
+                _make_responses(["<tool_call>", "process", "</tool_call>"]),
+                make_mlx_parser(
+                    "<tool_call>", "</tool_call>", _parser_with_string_args
+                ),
+                tools,
+            )
+        )
+
+        assert len(results) == 1
+        assert isinstance(results[0], ToolCallResponse)
+
+        args = json.loads(results[0].tool_calls[0].arguments)  # pyright: ignore[reportAny]
+        assert args == {
+            "action": "output",
+            "id": 0,
+            "verbose": True,
+            "temperature": 0.75,
+        }
+
+    def test_schema_coercion_skips_unknown_tools(self):
+        """If no matching tool schema exists, arguments should remain unchanged."""
+
+        def _parser_with_string_id(_text: str) -> dict[str, Any]:
+            return {
+                "name": "process",
+                "arguments": {"action": "output", "id": "0"},
+            }
+
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "different_tool",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"id": {"type": "integer"}},
+                    },
+                },
+            }
+        ]
+
+        results = list(
+            parse_tool_calls(
+                _make_responses(["<tool_call>", "process", "</tool_call>"]),
+                make_mlx_parser("<tool_call>", "</tool_call>", _parser_with_string_id),
+                tools,
+            )
+        )
+
+        assert len(results) == 1
+        assert isinstance(results[0], ToolCallResponse)
+
+        args = json.loads(results[0].tool_calls[0].arguments)  # pyright: ignore[reportAny]
+        assert args == {"action": "output", "id": "0"}
