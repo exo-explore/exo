@@ -571,9 +571,9 @@ class API:
 
     async def cancel_command(self, command_id: CommandId) -> CancelCommandResponse:
         """Cancel an active command by closing its stream and notifying workers."""
-        sender = self._text_generation_queues.get(
-            command_id
-        ) or self._image_generation_queues.get(command_id)
+        sender = self._text_generation_queues.pop(
+            command_id, None
+        ) or self._image_generation_queues.pop(command_id, None)
         if sender is None:
             raise HTTPException(
                 status_code=404,
