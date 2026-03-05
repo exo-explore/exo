@@ -304,7 +304,9 @@ def main() -> int:
         logger.info(f"pp/tg mode: tandem (zip) - {len(pp_list)} pairs")
 
     client = ExoClient(args.host, args.port, timeout_s=args.timeout)
-    short_id, full_model_id = resolve_model_short_id(client, args.model, force_download=args.force_download)
+    short_id, full_model_id = resolve_model_short_id(
+        client, args.model, force_download=args.force_download
+    )
 
     tokenizer = load_tokenizer_for_bench(full_model_id)
     if tokenizer is None:
@@ -403,67 +405,21 @@ def main() -> int:
                 pp_tg_pairs = list(zip(pp_list, tg_list, strict=True))
 
             for pp, tg in pp_tg_pairs:
-              for concurrency in concurrency_list:
-                logger.info(f"--- pp={pp} tg={tg} concurrency={concurrency} ---")
-                runs: list[dict[str, Any]] = []
-                for r in range(args.repeat):
-                    time.sleep(3)
+                for concurrency in concurrency_list:
+                    logger.info(f"--- pp={pp} tg={tg} concurrency={concurrency} ---")
+                    runs: list[dict[str, Any]] = []
+                    for r in range(args.repeat):
+                        time.sleep(3)
 
-                    if concurrency <= 1:
-                        # Sequential: single request
-                        try:
-                            row, actual_pp_tokens = run_one_completion(
-                                client, full_model_id, pp, tg, prompt_sizer
-                            )
-                        except Exception as e:
-                            logger.error(e)
-                            continue
-                        row.update(
-                            {
-                                "model_short_id": short_id,
-                                "model_id": full_model_id,
-                                "placement_sharding": sharding,
-                                "placement_instance_meta": instance_meta,
-                                "placement_nodes": n_nodes,
-                                "instance_id": instance_id,
-                                "pp_tokens": actual_pp_tokens,
-                                "tg": tg,
-                                "repeat_index": r,
-                                "concurrency": 1,
-                                **(
-                                    {"download_duration_s": download_duration_s}
-                                    if download_duration_s is not None
-                                    else {}
-                                ),
-                            }
-                        )
-                        runs.append(row)
-                        all_rows.append(row)
-                    else:
-                        # Concurrent: fire N requests in parallel
-                        # Each thread gets its own ExoClient (separate HTTP connection)
-                        batch_results: list[tuple[dict[str, Any], int]] = []
-                        batch_errors = 0
-
-                        def _run_concurrent(idx: int) -> tuple[dict[str, Any], int]:
-                            c = ExoClient(args.host, args.port, timeout_s=args.timeout)
-                            return run_one_completion(
-                                c, full_model_id, pp, tg, prompt_sizer
-                            )
-
-                        with ThreadPoolExecutor(max_workers=concurrency) as pool:
-                            futures = {
-                                pool.submit(_run_concurrent, i): i
-                                for i in range(concurrency)
-                            }
-                            for fut in as_completed(futures):
-                                try:
-                                    batch_results.append(fut.result())
-                                except Exception as e:
-                                    logger.error(f"Concurrent request failed: {e}")
-                                    batch_errors += 1
-
-                        for idx, (row, actual_pp_tokens) in enumerate(batch_results):
+                        if concurrency <= 1:
+                            # Sequential: single request
+                            try:
+                                row, actual_pp_tokens = run_one_completion(
+                                    client, full_model_id, pp, tg, prompt_sizer
+                                )
+                            except Exception as e:
+                                logger.error(e)
+                                continue
                             row.update(
                                 {
                                     "model_short_id": short_id,
@@ -475,8 +431,7 @@ def main() -> int:
                                     "pp_tokens": actual_pp_tokens,
                                     "tg": tg,
                                     "repeat_index": r,
-                                    "concurrency": concurrency,
-                                    "concurrent_index": idx,
+                                    "concurrency": 1,
                                     **(
                                         {"download_duration_s": download_duration_s}
                                         if download_duration_s is not None
@@ -486,39 +441,95 @@ def main() -> int:
                             )
                             runs.append(row)
                             all_rows.append(row)
+                        else:
+                            # Concurrent: fire N requests in parallel
+                            # Each thread gets its own ExoClient (separate HTTP connection)
+                            batch_results: list[tuple[dict[str, Any], int]] = []
+                            batch_errors = 0
 
-                        if batch_results:
-                            total_gen_tokens = sum(
-                                x["stats"]["generation_tokens"]
-                                for x, _ in batch_results
-                            )
-                            max_gen_time = max(
-                                x["stats"]["generation_tokens"] / x["stats"]["generation_tps"]
-                                for x, _ in batch_results
-                                if x["stats"]["generation_tps"] > 0
-                            )
-                            agg_gen_tps = total_gen_tokens / max_gen_time if max_gen_time > 0 else 0
-                            logger.info(
-                                f"[concurrent {concurrency}x]  "
-                                f"agg_gen_tps={agg_gen_tps:.2f}  "
-                                f"errors={batch_errors}"
-                            )
+                            def _run_concurrent(idx: int) -> tuple[dict[str, Any], int]:
+                                c = ExoClient(
+                                    args.host, args.port, timeout_s=args.timeout
+                                )
+                                return run_one_completion(
+                                    c, full_model_id, pp, tg, prompt_sizer
+                                )
 
-                if runs:
-                    prompt_tps = mean(x["stats"]["prompt_tps"] for x in runs)
-                    gen_tps = mean(x["stats"]["generation_tps"] for x in runs)
-                    ptok = mean(x["stats"]["prompt_tokens"] for x in runs)
-                    gtok = mean(x["stats"]["generation_tokens"] for x in runs)
-                    peak = mean(
-                        x["stats"]["peak_memory_usage"]["inBytes"] for x in runs
-                    )
+                            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                                futures = {
+                                    pool.submit(_run_concurrent, i): i
+                                    for i in range(concurrency)
+                                }
+                                for fut in as_completed(futures):
+                                    try:
+                                        batch_results.append(fut.result())
+                                    except Exception as e:
+                                        logger.error(f"Concurrent request failed: {e}")
+                                        batch_errors += 1
 
-                    logger.info(
-                        f"prompt_tps={prompt_tps:.2f} gen_tps={gen_tps:.2f}    "
-                        f"prompt_tokens={ptok} gen_tokens={gtok}    "
-                        f"peak_memory={format_peak_memory(peak)}\n"
-                    )
-                time.sleep(2)
+                            for idx, (row, actual_pp_tokens) in enumerate(
+                                batch_results
+                            ):
+                                row.update(
+                                    {
+                                        "model_short_id": short_id,
+                                        "model_id": full_model_id,
+                                        "placement_sharding": sharding,
+                                        "placement_instance_meta": instance_meta,
+                                        "placement_nodes": n_nodes,
+                                        "instance_id": instance_id,
+                                        "pp_tokens": actual_pp_tokens,
+                                        "tg": tg,
+                                        "repeat_index": r,
+                                        "concurrency": concurrency,
+                                        "concurrent_index": idx,
+                                        **(
+                                            {"download_duration_s": download_duration_s}
+                                            if download_duration_s is not None
+                                            else {}
+                                        ),
+                                    }
+                                )
+                                runs.append(row)
+                                all_rows.append(row)
+
+                            if batch_results:
+                                total_gen_tokens = sum(
+                                    x["stats"]["generation_tokens"]
+                                    for x, _ in batch_results
+                                )
+                                max_gen_time = max(
+                                    x["stats"]["generation_tokens"]
+                                    / x["stats"]["generation_tps"]
+                                    for x, _ in batch_results
+                                    if x["stats"]["generation_tps"] > 0
+                                )
+                                agg_gen_tps = (
+                                    total_gen_tokens / max_gen_time
+                                    if max_gen_time > 0
+                                    else 0
+                                )
+                                logger.info(
+                                    f"[concurrent {concurrency}x]  "
+                                    f"agg_gen_tps={agg_gen_tps:.2f}  "
+                                    f"errors={batch_errors}"
+                                )
+
+                    if runs:
+                        prompt_tps = mean(x["stats"]["prompt_tps"] for x in runs)
+                        gen_tps = mean(x["stats"]["generation_tps"] for x in runs)
+                        ptok = mean(x["stats"]["prompt_tokens"] for x in runs)
+                        gtok = mean(x["stats"]["generation_tokens"] for x in runs)
+                        peak = mean(
+                            x["stats"]["peak_memory_usage"]["inBytes"] for x in runs
+                        )
+
+                        logger.info(
+                            f"prompt_tps={prompt_tps:.2f} gen_tps={gen_tps:.2f}    "
+                            f"prompt_tokens={ptok} gen_tokens={gtok}    "
+                            f"peak_memory={format_peak_memory(peak)}\n"
+                        )
+                    time.sleep(2)
         finally:
             try:
                 client.request_json("DELETE", f"/instance/{instance_id}")

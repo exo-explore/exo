@@ -9,7 +9,6 @@ import mlx.core as mx
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.constants import EXO_MAX_CONCURRENT_REQUESTS
-
 from exo.shared.types.chunks import ErrorChunk, PrefillProgressChunk
 from exo.shared.types.common import ModelId
 from exo.shared.types.events import ChunkGenerated, Event

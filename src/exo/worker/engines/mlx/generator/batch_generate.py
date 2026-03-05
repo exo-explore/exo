@@ -1,6 +1,3 @@
-# pyright: reportAny=false, reportUnknownVariableType=false
-# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
-# pyright: reportAttributeAccessIssue=false, reportUnknownLambdaType=false
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, cast
@@ -111,7 +108,7 @@ def _rpad_update_and_fetch(self: Any, keys: mx.array, values: mx.array) -> Any:
     py_offsets: list[int] | None = self._py_offsets
 
     # Fast path: no right padding (B=1 or equal-length sequences)
-    if py_offsets is None or not self._has_rpad:
+    if py_offsets is None or not self._has_rpad or len(py_offsets) != batch_size:
         prev = self._idx
         if self.keys is None or (prev + n_new) > self.keys.shape[2]:
             n_kv_heads = keys.shape[1]
@@ -165,10 +162,16 @@ def _rpad_update_and_fetch(self: Any, keys: mx.array, values: mx.array) -> Any:
     return self.keys[..., : self._idx, :], self.values[..., : self._idx, :]
 
 
-def _rpad_make_mask(self: Any, n: int, return_array: bool = False, **kwargs: Any) -> Any:
+def _rpad_make_mask(
+    self: Any, n: int, return_array: bool = False, **kwargs: Any
+) -> Any:
     if self._has_rpad:
-        return create_causal_mask(n, offset=self._idx, right_padding=self._rpad, **kwargs)
-    return create_causal_mask(n, offset=self._idx, left_padding=self.left_padding, **kwargs)
+        return create_causal_mask(
+            n, offset=self._idx, right_padding=self._rpad, **kwargs
+        )
+    return create_causal_mask(
+        n, offset=self._idx, left_padding=self.left_padding, **kwargs
+    )
 
 
 def _rpad_finalize(self: Any) -> None:
@@ -178,14 +181,25 @@ def _rpad_finalize(self: Any) -> None:
     if not self._has_rpad and self.keys is not None:
         lp = self.left_padding
         if bool(mx.any(lp > 0).item()):
-            self.keys = dynamic_roll(self.keys, lp[:, None], axis=2)
-            self.values = dynamic_roll(self.values, lp[:, None], axis=2)
+            self.keys = self.keys[..., : self._idx, :]
+            self.values = self.values[..., : self._idx, :]
+            self.keys = dynamic_roll(self.keys, -lp[:, None], axis=2)
+            self.values = dynamic_roll(self.values, -lp[:, None], axis=2)
             self._rpad = lp
             self.left_padding = mx.zeros_like(lp)
             self._has_rpad = True
+            # Set per-element offsets so update_and_fetch writes at the correct
+            # position for each sequence (not at the shared _idx).
+            self._py_offsets = self.offset.tolist()
 
 
-def _rpad_prepare(self: Any, *, left_padding: Any = None, lengths: Any = None, right_padding: Any = None) -> None:
+def _rpad_prepare(
+    self: Any,
+    *,
+    left_padding: Any = None,
+    lengths: Any = None,
+    right_padding: Any = None,
+) -> None:
     if left_padding is not None:
         if self.keys is not None:
             raise ValueError("Left padding can only be added to an empty BatchKVCache")
@@ -202,12 +216,16 @@ def _rpad_filter(self: Any, batch_indices: Any) -> None:
         self.keys = self.keys[batch_indices]
         self.values = self.values[batch_indices]
     self.left_padding = self.left_padding[batch_indices]
-    self._rpad = self._rpad[batch_indices]
     self.offset = self.offset[batch_indices]
     if self._py_offsets is not None:
         # Rebuild _py_offsets from the filtered offset array to stay in sync
         self._py_offsets = self.offset.tolist()
         self._idx = max(self._py_offsets)
+        # Recalculate _rpad relative to new _idx: each element's padding is
+        # the gap between its offset and the max offset in the batch.
+        self._rpad = mx.array([self._idx - o for o in self._py_offsets])
+    else:
+        self._rpad = self._rpad[batch_indices]
     self._has_rpad = bool(mx.any(self._rpad > 0).item())
 
 

@@ -165,7 +165,9 @@ def wait_for_instance_gone(
     raise TimeoutError(f"Instance {instance_id} did not get deleted within {timeout=}")
 
 
-def resolve_model_short_id(client: ExoClient, model_arg: str, *, force_download: bool = False) -> tuple[str, str]:
+def resolve_model_short_id(
+    client: ExoClient, model_arg: str, *, force_download: bool = False
+) -> tuple[str, str]:
     models = client.request_json("GET", "/models") or {}
     data = models.get("data") or []
 
@@ -183,7 +185,9 @@ def resolve_model_short_id(client: ExoClient, model_arg: str, *, force_download:
 
     if force_download and "/" in model_arg:
         logger.info(f"Model not in /models, adding from HuggingFace: {model_arg}")
-        result = client.request_json("POST", "/models/add", body={"model_id": model_arg})
+        result = client.request_json(
+            "POST", "/models/add", body={"model_id": model_arg}
+        )
         if result:
             short_id = str(result.get("name") or model_arg.rsplit("/", 1)[-1])
             full_id = str(result.get("hugging_face_id") or model_arg)
