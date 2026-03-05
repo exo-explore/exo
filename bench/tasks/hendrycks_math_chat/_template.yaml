@@ -1,0 +1,17 @@
+dataset_path: EleutherAI/hendrycks_math
+process_docs: !function utils.process_docs
+output_type: generate_until
+training_split: train
+test_split: test
+doc_to_text: "Problem: {{problem}}\nAnswer:"
+process_results: !function utils.process_results
+doc_to_target: "{{answer}}"
+generation_kwargs:
+  do_sample: false
+  temperature: 0
+metric_list:
+  - metric: exact_match
+    aggregation: mean
+    higher_is_better: true
+metadata:
+  version: 2.0

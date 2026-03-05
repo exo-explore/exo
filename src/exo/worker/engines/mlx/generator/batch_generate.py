@@ -244,6 +244,51 @@ def _rpad_trim(self: Any, n: int) -> int:
     return n
 
 
+def _to_left_padded(cache: Any) -> None:
+    """Convert a right-padded BatchKVCache to left-padded (right-justified) layout."""
+    if not getattr(cache, "_has_rpad", False) or cache.keys is None:
+        return
+    rpad = cache._rpad
+    if bool(mx.any(rpad > 0).item()):
+        cache.keys = cache.keys[..., : cache._idx, :]
+        cache.values = cache.values[..., : cache._idx, :]
+        cache.keys = dynamic_roll(cache.keys, rpad[:, None], axis=2)
+        cache.values = dynamic_roll(cache.values, rpad[:, None], axis=2)
+        cache.left_padding = rpad
+    cache._rpad = mx.zeros(cache.keys.shape[0], dtype=mx.int32)
+    cache._has_rpad = False
+    cache._py_offsets = None
+
+
+_stock_extend = BatchKVCache.extend
+_stock_extract = BatchKVCache.extract
+
+
+def _rpad_extract(self: Any, idx: int) -> Any:
+    """Extract a single sequence's cache, respecting right-padded layout."""
+    if self._has_rpad and self._py_offsets is not None:
+        from mlx_lm.models.cache import KVCache
+
+        end = self._py_offsets[idx]
+        cache = KVCache()
+        cache.keys = mx.contiguous(self.keys[idx : idx + 1, :, :end, :])
+        cache.values = mx.contiguous(self.values[idx : idx + 1, :, :end, :])
+        cache.offset = end
+        return cache
+    return _stock_extract(self, idx)
+
+
+def _rpad_extend(self: Any, other: Any) -> None:
+    """Extend batch cache, converting right-padded caches to left-padded first."""
+    _to_left_padded(self)
+    _to_left_padded(other)
+    _stock_extend(self, other)
+    batch_size = self.keys.shape[0]
+    self._rpad = mx.zeros(batch_size, dtype=mx.int32)
+    self._has_rpad = False
+    self._py_offsets = None
+
+
 BatchKVCache.__init__ = _rpad_init
 BatchKVCache.merge = _rpad_merge
 BatchKVCache.update_and_fetch = _rpad_update_and_fetch
@@ -251,6 +296,8 @@ BatchKVCache.make_mask = _rpad_make_mask
 BatchKVCache.finalize = _rpad_finalize
 BatchKVCache.prepare = _rpad_prepare
 BatchKVCache.filter = _rpad_filter
+BatchKVCache.extend = _rpad_extend
+BatchKVCache.extract = _rpad_extract
 BatchKVCache.size = _rpad_size
 BatchKVCache.trim = _rpad_trim
 BatchKVCache.is_trimmable = lambda self: True
