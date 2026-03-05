@@ -510,21 +510,25 @@
     if (!containerRef || !browser) return;
 
     function handleDelegatedClick(event: MouseEvent) {
-      const codeBtn = (event.target as HTMLElement).closest('.copy-code-btn') as HTMLButtonElement | null;
+      const codeBtn = (event.target as HTMLElement).closest(
+        ".copy-code-btn",
+      ) as HTMLButtonElement | null;
       if (codeBtn) {
         handleCopyClick({ currentTarget: codeBtn } as unknown as Event);
         return;
       }
-      const mathBtn = (event.target as HTMLElement).closest('.copy-math-btn') as HTMLButtonElement | null;
+      const mathBtn = (event.target as HTMLElement).closest(
+        ".copy-math-btn",
+      ) as HTMLButtonElement | null;
       if (mathBtn) {
         handleMathCopyClick({ currentTarget: mathBtn } as unknown as Event);
         return;
       }
     }
 
-    containerRef.addEventListener('click', handleDelegatedClick);
+    containerRef.addEventListener("click", handleDelegatedClick);
     return () => {
-      containerRef?.removeEventListener('click', handleDelegatedClick);
+      containerRef?.removeEventListener("click", handleDelegatedClick);
     };
   });
 </script>
