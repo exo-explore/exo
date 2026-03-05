@@ -3,7 +3,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Sequence
 
-from exo.shared.architecture.master.placement_utils import (
+from exo.master.placement_utils import (
     Cycle,
     filter_cycles_by_memory,
     get_mlx_jaccl_coordinators,

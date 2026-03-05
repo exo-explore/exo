@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from exo.shared.architecture.master.event_log import DiskEventLog
+from exo.master.event_log import DiskEventLog
 from exo.shared.types.events import TestEvent
 
 

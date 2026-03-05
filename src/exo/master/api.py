@@ -23,18 +23,17 @@ from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from loguru import logger
 
-from exo.shared.apply import apply
-from exo.shared.architecture.master.adapters.chat_completions import (
+from exo.master.adapters.chat_completions import (
     chat_request_to_text_generation,
     collect_chat_response,
     generate_chat_stream,
 )
-from exo.shared.architecture.master.adapters.claude import (
+from exo.master.adapters.claude import (
     claude_request_to_text_generation,
     collect_claude_response,
     generate_claude_stream,
 )
-from exo.shared.architecture.master.adapters.ollama import (
+from exo.master.adapters.ollama import (
     collect_ollama_chat_response,
     collect_ollama_generate_response,
     generate_ollama_chat_stream,
@@ -42,16 +41,17 @@ from exo.shared.architecture.master.adapters.ollama import (
     ollama_generate_request_to_text_generation,
     ollama_request_to_text_generation,
 )
-from exo.shared.architecture.master.adapters.responses import (
+from exo.master.adapters.responses import (
     collect_responses_response,
     generate_responses_stream,
     responses_request_to_text_generation,
 )
-from exo.shared.architecture.master.event_log import DiskEventLog
-from exo.shared.architecture.master.image_store import ImageStore
-from exo.shared.architecture.master.placement import (
+from exo.master.event_log import DiskEventLog
+from exo.master.image_store import ImageStore
+from exo.master.placement import (
     place_instance as get_instance_placements,
 )
+from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
     EXO_CACHE_HOME,

@@ -14,9 +14,9 @@ from pydantic import PositiveInt
 import exo.routing.topics as topics
 from exo.download.coordinator import DownloadCoordinator
 from exo.download.impl_shard_downloader import exo_shard_downloader
+from exo.master.api import API  # TODO: should API be in master?
+from exo.master.main import Master
 from exo.routing.router import Router, get_node_id_keypair
-from exo.shared.architecture.master.api import API  # TODO: should API be in master?
-from exo.shared.architecture.master.main import Master
 from exo.shared.constants import EXO_LOG
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
