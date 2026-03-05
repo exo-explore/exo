@@ -118,7 +118,7 @@ def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> S
 
     replaced = False
     for i, existing_dp in enumerate(current):
-        if existing_dp.shard_metadata == dp.shard_metadata:
+        if existing_dp.shard_metadata.model_card.model_id == dp.shard_metadata.model_card.model_id:
             current[i] = dp
             replaced = True
             break
