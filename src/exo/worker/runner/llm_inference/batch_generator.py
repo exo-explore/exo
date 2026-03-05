@@ -191,14 +191,18 @@ class SequentialGenerator(InferenceGenerator):
             self._send_error(task, e)
             raise
         queue = GeneratorQueue[GenerationResponse]()
-        output_generator = apply_all_parsers(
-            queue.gen(),
-            apply_chat_template(self.tokenizer, task.task_params),
-            self.tool_parser,
-            self.tokenizer,
-            type(self.model),
-            self.model_id,
-        )
+
+        if task.task_params.bench:
+            output_generator = queue.gen()
+        else:
+            output_generator = apply_all_parsers(
+                queue.gen(),
+                apply_chat_template(self.tokenizer, task.task_params),
+                self.tool_parser,
+                self.tokenizer,
+                type(self.model),
+                self.model_id,
+            )
         self._active = (task, mlx_gen, queue, output_generator)
 
     def _send_error(self, task: TextGeneration, e: Exception) -> None:
@@ -345,15 +349,19 @@ class BatchGenerator(InferenceGenerator):
             except Exception as e:
                 self._send_error(task, e)
                 raise
+
             queue = GeneratorQueue[GenerationResponse]()
-            output_generator = apply_all_parsers(
-                queue.gen(),
-                apply_chat_template(self.tokenizer, task.task_params),
-                self.tool_parser,
-                self.tokenizer,
-                type(self.model),
-                self.model_id,
-            )
+            if task.task_params.bench:
+                output_generator = queue.gen()
+            else:
+                output_generator = apply_all_parsers(
+                    queue.gen(),
+                    apply_chat_template(self.tokenizer, task.task_params),
+                    self.tool_parser,
+                    self.tokenizer,
+                    type(self.model),
+                    self.model_id,
+                )
             self._active_tasks[uid] = (task, queue, output_generator)
 
         if not self._mlx_gen.has_work:
