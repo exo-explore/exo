@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 import mlx.core as mx
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+from exo.shared.constants import EXO_MAX_CONCURRENT_REQUESTS
+
 from exo.shared.types.chunks import ErrorChunk, PrefillProgressChunk
 from exo.shared.types.common import ModelId
 from exo.shared.types.events import ChunkGenerated, Event
@@ -340,7 +342,7 @@ class BatchGenerator(InferenceGenerator):
         self.agree_on_tasks()
 
         # Submit any queued tasks to the engine
-        while self._queue:
+        while self._queue and len(self._active_tasks) < EXO_MAX_CONCURRENT_REQUESTS:
             task = self._queue.popleft()
             try:
                 uid = self._build_generator(task)
