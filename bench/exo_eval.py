@@ -64,7 +64,7 @@ MAX_RETRIES = 30
 DEFAULT_MAX_TOKENS = 16_384
 REASONING_MAX_TOKENS = 131_072
 TEMPERATURE_NON_REASONING = 0.0
-TEMPERATURE_REASONING = 0.6
+TEMPERATURE_REASONING = 1.0
 
 # MC answer extraction: 8 fallback regex patterns.
 # All patterns are tried; the match at the latest text position wins
@@ -499,20 +499,25 @@ async def _call_api(
     max_tokens: int,
     timeout: float | None,
     system_message: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> ApiResult:
     messages = []
     if system_message:
         messages.append({"role": "system", "content": system_message})
     messages.append({"role": "user", "content": prompt})
 
+    body: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if reasoning_effort is not None:
+        body["reasoning_effort"] = reasoning_effort
+
     resp = await client.post(
         f"{base_url}/v1/chat/completions",
-        json={
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        },
+        json=body,
         timeout=timeout,
     )
     resp.raise_for_status()
@@ -539,6 +544,7 @@ async def call_with_retries(
     max_tokens: int,
     timeout: float | None = None,
     system_message: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> ApiResult | None:
     for attempt in range(MAX_RETRIES):
         try:
@@ -551,6 +557,7 @@ async def call_with_retries(
                 max_tokens,
                 timeout,
                 system_message,
+                reasoning_effort,
             )
         except Exception as e:
             if attempt < MAX_RETRIES - 1:
@@ -578,6 +585,7 @@ async def evaluate_benchmark(
     concurrency: int = 1,
     limit: int | None = None,
     timeout: float | None = None,
+    reasoning_effort: str | None = None,
 ) -> list[QuestionResult]:
     """Run a benchmark. Returns per-question results."""
     import datasets
@@ -659,6 +667,7 @@ async def evaluate_benchmark(
                 max_tokens,
                 timeout,
                 system_message=system_msg,
+                reasoning_effort=reasoning_effort,
             )
             elapsed = time.monotonic() - t0
 
@@ -1084,6 +1093,12 @@ def main() -> int:
         help="Per-request timeout in seconds (default: no timeout).",
     )
     ap.add_argument(
+        "--reasoning-effort",
+        default=None,
+        choices=["low", "medium", "high"],
+        help="Override reasoning effort (default: 'high' for reasoning models, none for non-reasoning).",
+    )
+    ap.add_argument(
         "--results-dir",
         default="eval_results",
         help="Directory for result JSON files (default: eval_results).",
@@ -1204,12 +1219,17 @@ def main() -> int:
     else:
         max_tokens = REASONING_MAX_TOKENS if is_reasoning else DEFAULT_MAX_TOKENS
 
+    if args.reasoning_effort is not None:
+        reasoning_effort = args.reasoning_effort
+    else:
+        reasoning_effort = "high" if is_reasoning else None
     base_url = f"http://{args.host}:{args.port}"
 
     logger.info(f"Model: {full_model_id}")
     logger.info(
         f"Settings: temperature={temperature}, max_tokens={max_tokens}, "
         f"reasoning={'yes' if is_reasoning else 'no'}"
+        + (f", reasoning_effort={reasoning_effort}" if reasoning_effort else "")
     )
 
     try:
@@ -1230,6 +1250,7 @@ def main() -> int:
                             concurrency=c,
                             limit=args.limit,
                             timeout=args.request_timeout,
+                            reasoning_effort=reasoning_effort,
                         )
                     )
                     if results:
@@ -1257,6 +1278,7 @@ def main() -> int:
                         concurrency=args.num_concurrent,
                         limit=args.limit,
                         timeout=args.request_timeout,
+                        reasoning_effort=reasoning_effort,
                     )
                 )
                 if results:

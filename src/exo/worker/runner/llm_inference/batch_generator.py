@@ -206,6 +206,7 @@ class SequentialGenerator(InferenceGenerator):
                 self.tokenizer,
                 type(self.model),
                 self.model_id,
+                task.task_params.tools,
             )
         self._active = (task, mlx_gen, queue, output_generator)
 
@@ -365,6 +366,7 @@ class BatchGenerator(InferenceGenerator):
                     self.tokenizer,
                     type(self.model),
                     self.model_id,
+                    task.task_params.tools
                 )
             self._active_tasks[uid] = (task, queue, output_generator)
 
