@@ -8,6 +8,8 @@ from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, NodeId, SystemId
 from exo.shared.types.instance_link import InstanceLinkId
+from exo.shared.types.memory import Memory
+from exo.shared.types.storage import StoragePolicy
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
@@ -103,6 +105,12 @@ class DeleteInstanceLink(BaseCommand):
 DownloadCommand = StartDownload | DeleteDownload | CancelDownload
 
 
+class SetStorageConfig(BaseCommand):
+    target_node_id: NodeId
+    max_storage: Memory | None
+    storage_policy: StoragePolicy
+
+
 Command = (
     TestCommand
     | RequestEventLog
@@ -119,6 +127,7 @@ Command = (
     | DeleteCustomModelCard
     | SetInstanceLink
     | DeleteInstanceLink
+    | SetStorageConfig
 )
 
 
