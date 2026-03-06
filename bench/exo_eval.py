@@ -500,6 +500,7 @@ async def _call_api(
     timeout: float | None,
     system_message: str | None = None,
     reasoning_effort: str | None = None,
+    top_p: float | None = None,
 ) -> ApiResult:
     messages = []
     if system_message:
@@ -514,6 +515,8 @@ async def _call_api(
     }
     if reasoning_effort is not None:
         body["reasoning_effort"] = reasoning_effort
+    if top_p is not None:
+        body["top_p"] = top_p
 
     resp = await client.post(
         f"{base_url}/v1/chat/completions",
@@ -545,6 +548,7 @@ async def call_with_retries(
     timeout: float | None = None,
     system_message: str | None = None,
     reasoning_effort: str | None = None,
+    top_p: float | None = None,
 ) -> ApiResult | None:
     for attempt in range(MAX_RETRIES):
         try:
@@ -558,6 +562,7 @@ async def call_with_retries(
                 timeout,
                 system_message,
                 reasoning_effort,
+                top_p,
             )
         except Exception as e:
             if attempt < MAX_RETRIES - 1:
@@ -586,6 +591,7 @@ async def evaluate_benchmark(
     limit: int | None = None,
     timeout: float | None = None,
     reasoning_effort: str | None = None,
+    top_p: float | None = None,
 ) -> list[QuestionResult]:
     """Run a benchmark. Returns per-question results."""
     import datasets
@@ -668,6 +674,7 @@ async def evaluate_benchmark(
                 timeout,
                 system_message=system_msg,
                 reasoning_effort=reasoning_effort,
+                top_p=top_p,
             )
             elapsed = time.monotonic() - t0
 
@@ -1071,6 +1078,7 @@ def main() -> int:
     ap.add_argument(
         "--temperature", type=float, default=None, help="Override temperature."
     )
+    ap.add_argument("--top-p", type=float, default=None, help="Override top_p.")
     ap.add_argument(
         "--max-tokens", type=int, default=None, help="Override max output tokens."
     )
@@ -1206,9 +1214,14 @@ def main() -> int:
             f"Defaulting to non-reasoning. Use --reasoning to override."
         )
 
-    # Resolve temperature and max_tokens
+    # Resolve temperature, max_tokens, reasoning_effort
+    # Priority: CLI flag > per-model config > global defaults
+    cfg = model_config or {}
+
     if args.temperature is not None:
         temperature = args.temperature
+    elif "temperature" in cfg:
+        temperature = float(cfg["temperature"])
     else:
         temperature = (
             TEMPERATURE_REASONING if is_reasoning else TEMPERATURE_NON_REASONING
@@ -1216,11 +1229,22 @@ def main() -> int:
 
     if args.max_tokens is not None:
         max_tokens = args.max_tokens
+    elif "max_tokens" in cfg:
+        max_tokens = int(cfg["max_tokens"])
     else:
         max_tokens = REASONING_MAX_TOKENS if is_reasoning else DEFAULT_MAX_TOKENS
 
+    if args.top_p is not None:
+        top_p: float | None = args.top_p
+    elif "top_p" in cfg:
+        top_p = float(cfg["top_p"])
+    else:
+        top_p = None  # let server use its default
+
     if args.reasoning_effort is not None:
         reasoning_effort = args.reasoning_effort
+    elif "reasoning_effort" in cfg:
+        reasoning_effort = str(cfg["reasoning_effort"])
     else:
         reasoning_effort = "high" if is_reasoning else None
     base_url = f"http://{args.host}:{args.port}"
@@ -1228,7 +1252,8 @@ def main() -> int:
     logger.info(f"Model: {full_model_id}")
     logger.info(
         f"Settings: temperature={temperature}, max_tokens={max_tokens}, "
-        f"reasoning={'yes' if is_reasoning else 'no'}"
+        + (f"top_p={top_p}, " if top_p is not None else "")
+        + f"reasoning={'yes' if is_reasoning else 'no'}"
         + (f", reasoning_effort={reasoning_effort}" if reasoning_effort else "")
     )
 
@@ -1251,6 +1276,7 @@ def main() -> int:
                             limit=args.limit,
                             timeout=args.request_timeout,
                             reasoning_effort=reasoning_effort,
+                            top_p=top_p,
                         )
                     )
                     if results:
@@ -1279,6 +1305,7 @@ def main() -> int:
                         limit=args.limit,
                         timeout=args.request_timeout,
                         reasoning_effort=reasoning_effort,
+                        top_p=top_p,
                     )
                 )
                 if results:

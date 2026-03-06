@@ -1,11 +1,9 @@
 import itertools
-import math
 import time
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Generator, Iterable
 from dataclasses import dataclass, field
-from typing import cast
 
 import mlx.core as mx
 from mlx_lm.tokenizer_utils import TokenizerWrapper
@@ -31,7 +29,6 @@ from exo.worker.engines.mlx.utils_mlx import (
     mx_all_gather_tasks,
     mx_any,
 )
-from exo.worker.runner.bootstrap import logger
 
 from .model_output_parsers import apply_all_parsers
 from .tool_parsers import ToolParser
@@ -366,7 +363,7 @@ class BatchGenerator(InferenceGenerator):
                     self.tokenizer,
                     type(self.model),
                     self.model_id,
-                    task.task_params.tools
+                    task.task_params.tools,
                 )
             self._active_tasks[uid] = (task, queue, output_generator)
 

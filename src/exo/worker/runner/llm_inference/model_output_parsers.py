@@ -348,7 +348,7 @@ def parse_tool_calls(
         if response.text.endswith(tool_parser.end_parsing):
             # parse the actual tool calls from the tool call text
             combined = "".join(tool_call_text_parts)
-            parsed = tool_parser.parse_tool_calls(combined.strip())
+            parsed = tool_parser.parse(combined.strip(), tools=None)
             logger.info(f"parsed {tool_call_text_parts=} into {parsed=}")
             in_tool_call = False
             tool_call_text_parts = []

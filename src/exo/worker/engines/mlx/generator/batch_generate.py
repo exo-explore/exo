@@ -205,6 +205,8 @@ class ExoBatchGenerator:
             return []
 
         responses = self._mlx_gen.next()
+        mx.clear_cache()
+
         results: list[tuple[int, GenerationResponse]] = []
 
         for response in responses:
