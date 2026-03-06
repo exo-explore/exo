@@ -1,6 +1,7 @@
 model_id = "mlx-community/gpt-oss-120b-MXFP4-Q8"
 n_layers = 36
 hidden_size = 2880
+num_key_value_heads = 8
 supports_tensor = true
 tasks = ["TextGeneration"]
 family = "gpt-oss"
