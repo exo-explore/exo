@@ -1,6 +1,7 @@
 import base64
 import contextlib
 import json
+import os
 import random
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
@@ -697,10 +698,30 @@ class API:
             "TODO: we should send a notification to the user to download the model"
         )
 
+    def _enforce_text_generation_backpressure(self) -> None:
+        """Protect workers from overload by limiting concurrent text streams.
+
+        Sub-agent workloads can issue many concurrent requests (for example, parallel
+        tool-calling clients). A bounded number of in-flight streams prevents runaway
+        queue growth and OOM cascades on smaller clusters.
+        """
+        max_in_flight = int(os.getenv("EXO_MAX_IN_FLIGHT_TEXT_GENERATIONS", "2"))
+        in_flight = len(self._text_generation_queues)
+        if in_flight >= max_in_flight:
+            raise HTTPException(
+                status_code=HTTPStatus.TOO_MANY_REQUESTS,
+                detail=(
+                    "Server is busy processing other generations. "
+                    f"in_flight={in_flight}, limit={max_in_flight}. "
+                    "Retry shortly or reduce client-side parallelism."
+                ),
+            )
+
     async def chat_completions(
         self, payload: ChatCompletionRequest
     ) -> ChatCompletionResponse | StreamingResponse:
         """OpenAI Chat Completions API - adapter."""
+        self._enforce_text_generation_backpressure()
         task_params = chat_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
@@ -735,6 +756,7 @@ class API:
     async def bench_chat_completions(
         self, payload: BenchChatCompletionRequest
     ) -> BenchChatCompletionResponse:
+        self._enforce_text_generation_backpressure()
         task_params = chat_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
