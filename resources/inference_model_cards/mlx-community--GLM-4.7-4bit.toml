@@ -1,6 +1,7 @@
 model_id = "mlx-community/GLM-4.7-4bit"
 n_layers = 91
 hidden_size = 5120
+num_key_value_heads = 8
 supports_tensor = true
 tasks = ["TextGeneration"]
 family = "glm"

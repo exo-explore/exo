@@ -1,6 +1,7 @@
 model_id = "mlx-community/Qwen3-Coder-480B-A35B-Instruct-8bit"
 n_layers = 62
 hidden_size = 6144
+num_key_value_heads = 8
 supports_tensor = true
 tasks = ["TextGeneration"]
 family = "qwen"

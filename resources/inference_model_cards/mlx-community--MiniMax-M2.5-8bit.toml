@@ -1,6 +1,7 @@
 model_id = "mlx-community/MiniMax-M2.5-8bit"
 n_layers = 62
 hidden_size = 3072
+num_key_value_heads = 8
 supports_tensor = true
 tasks = ["TextGeneration"]
 family = "minimax"
