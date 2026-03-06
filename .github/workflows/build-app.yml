@@ -314,11 +314,18 @@ jobs:
           SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$BUILD_KEYCHAIN_PATH" | awk -F '"' '{print $2}')
           APP_ENTITLEMENTS="$GITHUB_WORKSPACE/app/EXO/EXO/EXO.entitlements"
 
-          # Sign frameworks (Sparkle) inside-out
-          find EXO.app/Contents/Frameworks -name "*.framework" -print0 | \
-            while IFS= read -r -d '' framework; do
+          # Sign all binaries inside Frameworks directory inside-out
+          # (Sparkle has nested XPC services, Updater.app, and Autoupdate that all need signing)
+          find EXO.app/Contents/Frameworks -type f \( -perm -111 -o -name "*.dylib" \) -print0 | \
+            while IFS= read -r -d '' file; do
               /usr/bin/codesign --force --timestamp --options runtime \
-                --sign "$SIGNING_IDENTITY" "$framework"
+                --sign "$SIGNING_IDENTITY" "$file"
+            done
+          # Then sign framework bundles, XPC services, and .app bundles
+          find EXO.app/Contents/Frameworks -name "*.xpc" -o -name "*.app" -o -name "*.framework" | sort -r | \
+            while IFS= read -r bundle; do
+              /usr/bin/codesign --force --timestamp --options runtime \
+                --sign "$SIGNING_IDENTITY" "$bundle"
             done
 
           # Sign the main app binary with entitlements (no --deep!)
