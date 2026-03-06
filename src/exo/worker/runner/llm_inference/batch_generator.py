@@ -375,6 +375,7 @@ class BatchGenerator(InferenceGenerator):
         ] = []
         for uid, response in results:
             if uid not in self._active_tasks:
+                # should we error here?
                 continue
 
             task, queue, output_generator = self._active_tasks[uid]

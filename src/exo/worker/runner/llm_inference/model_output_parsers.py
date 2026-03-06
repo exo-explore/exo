@@ -42,7 +42,8 @@ def apply_all_parsers(
     if tokenizer.has_thinking:
         mlx_generator = parse_thinking_models(
             mlx_generator,
-            tokenizer,
+            tokenizer.think_start,
+            tokenizer.think_end,
             starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
         )
 
@@ -294,7 +295,8 @@ def _could_be_dsml_prefix(text: str) -> bool:
 
 def parse_thinking_models(
     responses: Generator[GenerationResponse | None],
-    tokenizer: TokenizerWrapper,
+    think_start: str | None,
+    think_end: str | None,
     starts_in_thinking: bool = True,
 ) -> Generator[GenerationResponse | None]:
     """Route thinking tokens via is_thinking flag.
@@ -302,28 +304,23 @@ def parse_thinking_models(
     Swallows think tag tokens, sets is_thinking on all others.
     Always yields tokens with finish_reason to avoid hanging the chunk stream.
     """
-    in_thinking = starts_in_thinking
+    is_thinking = starts_in_thinking
     for response in responses:
         if response is None:
             yield None
             continue
-        if isinstance(response, ToolCallResponse):
-            yield response
+        if response.finish_reason is not None:
+            yield response.model_copy(update={"is_thinking": False})
             continue
 
-        is_think_tag = (
-            tokenizer.think_end is not None and response.text == tokenizer.think_end
-        ) or (
-            tokenizer.think_start is not None and response.text == tokenizer.think_start
-        )
-
-        if is_think_tag:
-            in_thinking = response.text != tokenizer.think_end
-            # Never swallow finish_reason — the chunk stream needs it to terminate.
-            if response.finish_reason is not None:
-                yield response.model_copy(update={"text": "", "is_thinking": False})
+        if response.text == think_start:
+            is_thinking = True
             continue
-        yield response.model_copy(update={"is_thinking": in_thinking})
+        if response.text == think_end:
+            is_thinking = False
+            continue
+
+        yield response.model_copy(update={"is_thinking": is_thinking})
 
 
 def parse_tool_calls(
@@ -335,44 +332,41 @@ def parse_tool_calls(
         if response is None:
             yield None
             continue
+
         if not in_tool_call and response.text.startswith(tool_parser.start_parsing):
             in_tool_call = True
 
-        if in_tool_call:
-            tool_call_text_parts.append(response.text)
-            if response.text.endswith(tool_parser.end_parsing):
-                # parse the actual tool calls from the tool call text
-                parsed = tool_parser.parse_tool_calls(
-                    "".join(tool_call_text_parts).strip()
-                )
-                logger.info(f"parsed {tool_call_text_parts=} into {parsed=}")
-                if parsed is not None:
-                    yield ToolCallResponse(
-                        tool_calls=parsed, usage=response.usage, stats=response.stats
-                    )
-                else:
-                    logger.warning(
-                        f"tool call parsing failed for text {''.join(tool_call_text_parts)}"
-                    )
-                    response.text = "".join(tool_call_text_parts)
-                    yield response
+        if not in_tool_call:
+            yield response
+            continue
 
-                in_tool_call = False
-                tool_call_text_parts = []
+        tool_call_text_parts.append(response.text)
+        if response.text.endswith(tool_parser.end_parsing):
+            # parse the actual tool calls from the tool call text
+            combined = "".join(tool_call_text_parts)
+            parsed = tool_parser.parse_tool_calls(combined.strip())
+            logger.info(f"parsed {tool_call_text_parts=} into {parsed=}")
+            in_tool_call = False
+            tool_call_text_parts = []
+
+            if parsed is None:
+                logger.warning(f"tool call parsing failed for text {combined}")
+                yield response.model_copy(update={"text": combined})
                 continue
 
-            if response.finish_reason is not None:
-                logger.info(
-                    "tool call parsing interrupted, yield partial tool call as text"
-                )
-                response = response.model_copy(
-                    update={
-                        "text": "".join(tool_call_text_parts),
-                        "token": 0,
-                    }
-                )
-                yield response
+            yield ToolCallResponse(
+                tool_calls=parsed, usage=response.usage, stats=response.stats
+            )
+            continue
 
-        else:
-            # fallthrough
+        if response.finish_reason is not None:
+            logger.info(
+                "tool call parsing interrupted, yield partial tool call as text"
+            )
+            response = response.model_copy(
+                update={
+                    "text": "".join(tool_call_text_parts),
+                    "token": 0,
+                }
+            )
             yield response

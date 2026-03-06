@@ -62,7 +62,7 @@ from loguru import logger
 
 MAX_RETRIES = 30
 DEFAULT_MAX_TOKENS = 16_384
-REASONING_MAX_TOKENS = 65_536
+REASONING_MAX_TOKENS = 131_072
 TEMPERATURE_NON_REASONING = 0.0
 TEMPERATURE_REASONING = 0.6
 
@@ -258,6 +258,10 @@ class QuestionResult:
     gold_answer: str
     correct: bool
     error: str | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    reasoning_tokens: int = 0
+    elapsed_s: float = 0.0
 
 
 @dataclass
@@ -478,6 +482,14 @@ def format_livecodebench_question(doc: dict) -> tuple[str, str | None, dict]:
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class ApiResult:
+    content: str
+    prompt_tokens: int
+    completion_tokens: int
+    reasoning_tokens: int
+
+
 async def _call_api(
     client: httpx.AsyncClient,
     base_url: str,
@@ -487,7 +499,7 @@ async def _call_api(
     max_tokens: int,
     timeout: float | None,
     system_message: str | None = None,
-) -> str:
+) -> ApiResult:
     messages = []
     if system_message:
         messages.append({"role": "system", "content": system_message})
@@ -508,7 +520,14 @@ async def _call_api(
     content = data["choices"][0]["message"]["content"]
     if not content or not content.strip():
         raise ValueError("Empty response from model")
-    return content
+    usage = data.get("usage", {})
+    details = usage.get("completion_tokens_details", {})
+    return ApiResult(
+        content=content,
+        prompt_tokens=usage.get("prompt_tokens", 0),
+        completion_tokens=usage.get("completion_tokens", 0),
+        reasoning_tokens=details.get("reasoning_tokens", 0) if details else 0,
+    )
 
 
 async def call_with_retries(
@@ -520,7 +539,7 @@ async def call_with_retries(
     max_tokens: int,
     timeout: float | None = None,
     system_message: str | None = None,
-) -> str | None:
+) -> ApiResult | None:
     for attempt in range(MAX_RETRIES):
         try:
             return await _call_api(
@@ -567,15 +586,18 @@ async def evaluate_benchmark(
     logger.info(f"Loading dataset {config.dataset_name}...")
 
     try:
-        kwargs = {}
         if benchmark_name == "livecodebench":
-            kwargs["version_tag"] = "release_v6"
-        ds = datasets.load_dataset(
-            config.dataset_name,
-            config.dataset_config,
-            split=config.split,
-            **kwargs,
-        )
+            ds = datasets.load_dataset(
+                "json",
+                data_files="hf://datasets/livecodebench/code_generation_lite/*.jsonl",
+                split="train",
+            )
+        else:
+            ds = datasets.load_dataset(
+                config.dataset_name,
+                config.dataset_config,
+                split=config.split,
+            )
     except Exception as e:
         logger.error(f"Failed to load dataset: {e}")
         if "gated" in str(e).lower() or "login" in str(e).lower():
@@ -627,7 +649,8 @@ async def evaluate_benchmark(
             raise ValueError(f"Unknown benchmark: {benchmark_name}")
 
         async with semaphore:
-            response = await call_with_retries(
+            t0 = time.monotonic()
+            api_result = await call_with_retries(
                 http_client,
                 base_url,
                 model,
@@ -637,8 +660,9 @@ async def evaluate_benchmark(
                 timeout,
                 system_message=system_msg,
             )
+            elapsed = time.monotonic() - t0
 
-        if response is None:
+        if api_result is None:
             result = QuestionResult(
                 question_id=idx,
                 prompt=prompt,
@@ -647,71 +671,98 @@ async def evaluate_benchmark(
                 gold_answer=gold,
                 correct=False,
                 error="API failure after retries",
+                elapsed_s=elapsed,
             )
-        elif config.kind == "mc":
-            extracted = extract_mc_answer(response, valid_letters)
-            result = QuestionResult(
-                question_id=idx,
-                prompt=prompt,
-                response=response,
-                extracted_answer=extracted,
-                gold_answer=gold,
-                correct=(extracted == gold) if extracted else False,
-            )
-        elif config.kind == "math":
-            extracted = extract_boxed_answer(response)
-            correct = check_aime_answer(extracted, int(gold)) if extracted else False
-            result = QuestionResult(
-                question_id=idx,
-                prompt=prompt,
-                response=response,
-                extracted_answer=extracted,
-                gold_answer=gold,
-                correct=correct,
-            )
-        elif config.kind == "code":
-            code = extract_code_block(response)
-            if code is None:
+        else:
+            response = api_result.content
+            stats = {
+                "prompt_tokens": api_result.prompt_tokens,
+                "completion_tokens": api_result.completion_tokens,
+                "elapsed_s": elapsed,
+            }
+
+            if config.kind == "mc":
+                extracted = extract_mc_answer(response, valid_letters)
                 result = QuestionResult(
                     question_id=idx,
                     prompt=prompt,
                     response=response,
-                    extracted_answer=None,
+                    extracted_answer=extracted,
                     gold_answer=gold,
-                    correct=False,
-                    error="No code block extracted",
+                    correct=(extracted == gold) if extracted else False,
+                    **stats,
                 )
-            elif benchmark_name == "humaneval":
-                passed = run_humaneval_test(
-                    exec_meta["prompt"],
-                    code,
-                    exec_meta["test"],
-                    exec_meta["entry_point"],
+            elif config.kind == "math":
+                extracted = extract_boxed_answer(response)
+                correct = (
+                    check_aime_answer(extracted, int(gold)) if extracted else False
                 )
                 result = QuestionResult(
                     question_id=idx,
                     prompt=prompt,
                     response=response,
-                    extracted_answer="pass" if passed else "fail",
+                    extracted_answer=extracted,
                     gold_answer=gold,
-                    correct=passed,
+                    correct=correct,
+                    **stats,
                 )
-            elif benchmark_name == "livecodebench":
-                passed = run_livecodebench_test(
-                    code,
-                    exec_meta["test_inputs"],
-                    exec_meta["test_outputs"],
-                    exec_meta["test_type"],
-                    exec_meta["func_name"],
-                )
-                result = QuestionResult(
-                    question_id=idx,
-                    prompt=prompt,
-                    response=response,
-                    extracted_answer="pass" if passed else "fail",
-                    gold_answer=gold,
-                    correct=passed,
-                )
+            elif config.kind == "code":
+                code = extract_code_block(response)
+                if code is None:
+                    result = QuestionResult(
+                        question_id=idx,
+                        prompt=prompt,
+                        response=response,
+                        extracted_answer=None,
+                        gold_answer=gold,
+                        correct=False,
+                        error="No code block extracted",
+                        **stats,
+                    )
+                elif benchmark_name == "humaneval":
+                    passed = run_humaneval_test(
+                        exec_meta["prompt"],
+                        code,
+                        exec_meta["test"],
+                        exec_meta["entry_point"],
+                    )
+                    result = QuestionResult(
+                        question_id=idx,
+                        prompt=prompt,
+                        response=response,
+                        extracted_answer="pass" if passed else "fail",
+                        gold_answer=gold,
+                        correct=passed,
+                        **stats,
+                    )
+                elif benchmark_name == "livecodebench":
+                    passed = run_livecodebench_test(
+                        code,
+                        exec_meta["test_inputs"],
+                        exec_meta["test_outputs"],
+                        exec_meta["test_type"],
+                        exec_meta["func_name"],
+                    )
+                    result = QuestionResult(
+                        question_id=idx,
+                        prompt=prompt,
+                        response=response,
+                        extracted_answer="pass" if passed else "fail",
+                        gold_answer=gold,
+                        correct=passed,
+                        **stats,
+                    )
+                else:
+                    result = QuestionResult(
+                        question_id=idx,
+                        prompt=prompt,
+                        response=response,
+                        extracted_answer=None,
+                        gold_answer=gold,
+                        correct=False,
+                        error="Unknown code benchmark",
+                        **stats,
+                    )
             else:
                 result = QuestionResult(
                     question_id=idx,
@@ -720,18 +771,9 @@ async def evaluate_benchmark(
                     extracted_answer=None,
                     gold_answer=gold,
                     correct=False,
-                    error="Unknown code benchmark",
+                    error="Unsupported kind",
+                    **stats,
                 )
-        else:
-            result = QuestionResult(
-                question_id=idx,
-                prompt=prompt,
-                response=response,
-                extracted_answer=None,
-                gold_answer=gold,
-                correct=False,
-                error="Unsupported kind",
-            )
 
         results[idx] = result
 
@@ -769,8 +811,19 @@ def print_results(
     no_extract = sum(1 for r in results if r.extracted_answer is None and not r.error)
     accuracy = correct / max(total, 1)
 
+    total_prompt_tokens = sum(r.prompt_tokens for r in results)
+    total_completion_tokens = sum(r.completion_tokens for r in results)
+    total_elapsed = sum(r.elapsed_s for r in results)
+    wall_clock = max(r.elapsed_s for r in results) if results else 0.0
+    avg_gen_tps = total_completion_tokens / total_elapsed if total_elapsed > 0 else 0.0
+
     label = f"[c={concurrency}] " if concurrency is not None else ""
     print(f"\n{label}{benchmark_name}: {correct}/{total} ({accuracy:.1%})")
+    print(
+        f"  tokens: {total_prompt_tokens:,} prompt + {total_completion_tokens:,} completion"
+        f"  |  avg gen tps: {avg_gen_tps:.1f}"
+        f"  |  total time: {total_elapsed:.1f}s  wall clock: {wall_clock:.1f}s"
+    )
     if errors:
         print(f"  API errors: {errors}")
     if no_extract:
@@ -783,6 +836,11 @@ def print_results(
         "total": total,
         "errors": errors,
         "no_extract": no_extract,
+        "total_prompt_tokens": total_prompt_tokens,
+        "total_completion_tokens": total_completion_tokens,
+        "total_elapsed_s": total_elapsed,
+        "wall_clock_s": wall_clock,
+        "avg_gen_tps": avg_gen_tps,
     }
 
 
@@ -795,14 +853,21 @@ def print_comparison(
     print(f"COMPARISON: {benchmark_name}")
     print(f"{'=' * 70}")
 
-    header = f"{'Concurrency':<15} {'Accuracy':>10} {'Correct':>10} {'Total':>10}"
+    header = f"{'Concurrency':<15} {'Accuracy':>10} {'Correct':>10} {'Total':>10} {'Comp Tokens':>12} {'Wall Clock':>12} {'Avg Gen TPS':>12}"
     print(header)
     print("-" * len(header))
     for c in levels:
         r = results_by_c[c]
         correct = sum(q.correct for q in r)
         total = len(r)
-        print(f"c={c:<13} {correct / max(total, 1):>10.1%} {correct:>10} {total:>10}")
+        comp_tok = sum(q.completion_tokens for q in r)
+        total_elapsed = sum(q.elapsed_s for q in r)
+        avg_tps = comp_tok / total_elapsed if total_elapsed > 0 else 0.0
+        wall = max(q.elapsed_s for q in r) if r else 0.0
+        print(
+            f"c={c:<13} {correct / max(total, 1):>10.1%} {correct:>10} {total:>10}"
+            f" {comp_tok:>12,} {wall:>11.1f}s {avg_tps:>12.1f}"
+        )
 
     if len(levels) >= 2:
         base_results = results_by_c[levels[0]]
@@ -927,6 +992,9 @@ def save_results(
                 "correct": r.correct,
                 "error": r.error,
                 "response_length": len(r.response),
+                "prompt_tokens": r.prompt_tokens,
+                "completion_tokens": r.completion_tokens,
+                "elapsed_s": round(r.elapsed_s, 2),
             }
             for r in results
         ],

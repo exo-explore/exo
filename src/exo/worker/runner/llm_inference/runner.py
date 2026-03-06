@@ -1,4 +1,3 @@
-import resource
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -65,7 +64,7 @@ from exo.worker.runner.llm_inference.batch_generator import (
 )
 
 from .batch_generator import Cancelled, Finished
-from .tool_parsers import ToolParser, make_mlx_parser
+from .tool_parsers import make_mlx_parser
 
 
 class ExitCode(str, Enum):
@@ -85,9 +84,6 @@ class Runner:
         self.task_receiver = task_receiver
         self.cancel_receiver = cancel_receiver
         self.bound_instance = bound_instance
-
-        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-        resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
 
         self.instance, self.runner_id, self.shard_metadata = (
             self.bound_instance.instance,
@@ -206,16 +202,6 @@ class Runner:
                         on_layer_loaded=on_layer_loaded,
                     )
                 )
-                logger.info(
-                    f"model has_tool_calling={self.generator.tokenizer.has_tool_calling} using tokens {self.generator.tokenizer.tool_call_start}, {self.generator.tokenizer.tool_call_end}"
-                )
-                tok = self.generator.tokenizer
-                if tok.tool_call_start and tok.tool_call_end and tok.tool_parser:  # pyright: ignore[reportAny]
-                    self.generator.tool_parser = make_mlx_parser(
-                        tok.tool_call_start,
-                        tok.tool_call_end,
-                        tok.tool_parser,  # pyright: ignore[reportAny]
-                    )
 
                 self.generator = self.generator.build()
 
@@ -391,9 +377,7 @@ class Builder:
     cancel_receiver: MpReceiver[TaskId]
     inference_model: Model | None = None
     tokenizer: TokenizerWrapper | None = None
-    tool_parser: ToolParser | None = None
     group: mx.distributed.Group | None = None
-    kv_prefix_cache: KVPrefixCache | None = None
 
     def build(
         self,
@@ -404,6 +388,23 @@ class Builder:
         assert self.inference_model
         assert self.tokenizer
 
+        tool_parser = None
+        logger.info(
+            f"model has_tool_calling={self.tokenizer.has_tool_calling} using tokens {self.tokenizer.tool_call_start}, {self.tokenizer.tool_call_end}"
+        )
+        if (
+            self.tokenizer.tool_call_start
+            and self.tokenizer.tool_call_end
+            and self.tokenizer.tool_parser  # type: ignore
+        ):
+            tool_parser = make_mlx_parser(
+                self.tokenizer.tool_call_start,
+                self.tokenizer.tool_call_end,
+                self.tokenizer.tool_parser,  # type: ignore
+            )
+
+        kv_prefix_cache = KVPrefixCache(self.group)
+
         device_rank = 0 if self.group is None else self.group.rank()
         if os.environ.get("EXO_NO_BATCH"):
             logger.info("using SequentialGenerator (batching disabled)")
@@ -411,8 +412,8 @@ class Builder:
                 model=self.inference_model,
                 tokenizer=self.tokenizer,
                 group=self.group,
-                tool_parser=self.tool_parser,
-                kv_prefix_cache=self.kv_prefix_cache,
+                tool_parser=tool_parser,
+                kv_prefix_cache=kv_prefix_cache,
                 model_id=self.model_id,
                 device_rank=device_rank,
                 cancel_receiver=self.cancel_receiver,
@@ -423,8 +424,8 @@ class Builder:
             model=self.inference_model,
             tokenizer=self.tokenizer,
             group=self.group,
-            tool_parser=self.tool_parser,
-            kv_prefix_cache=self.kv_prefix_cache,
+            tool_parser=tool_parser,
+            kv_prefix_cache=kv_prefix_cache,
             model_id=self.model_id,
             device_rank=device_rank,
             cancel_receiver=self.cancel_receiver,

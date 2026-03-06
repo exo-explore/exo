@@ -6,9 +6,7 @@ import mlx.core as mx
 from mlx_lm.generate import (
     BatchGenerator as MlxBatchGenerator,
 )
-from mlx_lm.models.cache import (
-    RotatingKVCache,
-)
+from mlx_lm.models.cache import RotatingKVCache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
