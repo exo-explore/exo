@@ -117,7 +117,7 @@ def parse_gpt_oss(
             if delta:
                 tool_arg_parts.append(delta)
             if response.finish_reason is not None:
-                yield response.model_copy(update={"text": ""})
+                yield response.model_copy(update={"text": "".join(tool_arg_parts)})
                 tool_arg_parts = []
             continue
 

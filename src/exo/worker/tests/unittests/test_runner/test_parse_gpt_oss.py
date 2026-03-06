@@ -234,11 +234,11 @@ class TestParseGptOssMaxTokensTruncation:
         ]
         assert "length" in finish_reasons
 
-    def test_truncated_tool_call_emits_empty_text(self):
+    def test_truncated_tool_call_emits_partial_args(self):
         results = _collect(TRUNCATED_TOOL_CALL_TOKENS, last_finish_reason="length")
         gen_responses = [r for r in results if isinstance(r, GenerationResponse)]
         last = [r for r in gen_responses if r.finish_reason is not None][-1]
-        assert last.text == ""
+        assert len(last.text) > 0
 
     def test_truncated_plain_text_still_works(self):
         results = _collect(PLAIN_TEXT_TOKENS, last_finish_reason="length")
