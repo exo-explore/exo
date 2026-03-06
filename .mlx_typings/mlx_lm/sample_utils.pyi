@@ -48,7 +48,7 @@ def make_logits_processors(
     logit_bias: Optional[Dict[int, float]] = ...,
     repetition_penalty: Optional[float] = ...,
     repetition_context_size: Optional[int] = ...,
-):  # -> list[Any]:
+) -> list[Callable[[mx.array, mx.array], mx.array]]:
     """
     Make logits processors for use with ``generate_step``.
 

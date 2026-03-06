@@ -10,7 +10,7 @@ from mlx_lm.generate import (
     stream_generate,
 )
 from mlx_lm.models.cache import ArraysCache, RotatingKVCache
-from mlx_lm.sample_utils import make_sampler
+from mlx_lm.sample_utils import make_logits_processors, make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.api import (
@@ -470,11 +470,16 @@ def mlx_generate(
                 f"KV cache hit: {prefix_hit_length}/{len(all_prompt_tokens)} tokens cached ({100 * prefix_hit_length / len(all_prompt_tokens):.1f}%)"
             )
 
-    logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = []
+    logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = (
+        make_logits_processors(
+            repetition_penalty=task.repetition_penalty,
+            repetition_context_size=task.repetition_context_size,
+        )
+    )
     if is_bench:
         # Only sample length eos tokens
         eos_ids = eos_ids_from_tokenizer(tokenizer)
-        logits_processors = [ban_token_ids(eos_ids)]
+        logits_processors = [ban_token_ids(eos_ids)] + logits_processors
 
     sampler = make_sampler(
         temp=task.temperature if task.temperature is not None else 0.7,
