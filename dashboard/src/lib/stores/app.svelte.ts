@@ -8,6 +8,11 @@
  */
 
 import { browser } from "$app/environment";
+import { addToast } from "$lib/stores/toast.svelte";
+import {
+  getDownloadTag,
+  extractModelIdFromDownload,
+} from "$lib/utils/downloads";
 
 // UUID generation fallback for browsers without crypto.randomUUID
 function generateUUID(): string {
@@ -253,6 +258,13 @@ interface RawStateResponse {
   nodeDisk?: Record<
     string,
     { total: { inBytes: number }; available: { inBytes: number } }
+  >;
+  nodeStorageConfig?: Record<
+    string,
+    {
+      maxStorage: { inBytes: number } | null;
+      storagePolicy: "manual" | "auto-evict";
+    }
   >;
 }
 
@@ -568,6 +580,15 @@ class AppStore {
     >
   >({});
   nodeRdmaCtl = $state<Record<string, { enabled: boolean }>>({});
+  nodeStorageConfig = $state<
+    Record<
+      string,
+      {
+        maxStorage: { inBytes: number } | null;
+        storagePolicy: "manual" | "auto-evict";
+      }
+    >
+  >({});
   nodeThunderboltBridge = $state<
     Record<
       string,
@@ -1311,6 +1332,7 @@ class AppStore {
         this.runners = data.runners;
       }
       if (data.downloads) {
+        this.detectEvictions(this.downloads, data.downloads);
         this.downloads = data.downloads;
       }
       if (data.nodeDisk) {
@@ -1326,6 +1348,7 @@ class AppStore {
       this.thunderboltBridgeCycles = data.thunderboltBridgeCycles ?? [];
       // Thunderbolt bridge status per node
       this.nodeThunderboltBridge = data.nodeThunderboltBridge ?? {};
+      this.nodeStorageConfig = data.nodeStorageConfig ?? {};
       this.lastUpdate = Date.now();
       // Connection recovered
       if (!this.isConnected) {
@@ -1436,6 +1459,63 @@ class AppStore {
     if (this.selectedPreviewModelId) {
       this.fetchPlacementPreviews(this.selectedPreviewModelId, false);
     }
+  }
+
+  /**
+   * Detect models that were evicted (completed -> not completed) and show toasts.
+   */
+  private detectEvictions(
+    oldDownloads: Record<string, unknown[]>,
+    newDownloads: Record<string, unknown[]>,
+  ) {
+    if (Object.keys(oldDownloads).length === 0) return;
+
+    const wasCompleted = new Map<string, Set<string>>();
+    for (const [nodeId, entries] of Object.entries(oldDownloads)) {
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        const tagged = getDownloadTag(entry);
+        if (!tagged || tagged[0] !== "DownloadCompleted") continue;
+        const modelId = extractModelIdFromDownload(tagged[1]);
+        if (!modelId) continue;
+        if (!wasCompleted.has(nodeId)) wasCompleted.set(nodeId, new Set());
+        wasCompleted.get(nodeId)!.add(modelId);
+      }
+    }
+
+    for (const [nodeId, modelIds] of wasCompleted) {
+      const newEntries = newDownloads[nodeId];
+      const stillCompleted = new Set<string>();
+      if (Array.isArray(newEntries)) {
+        for (const entry of newEntries) {
+          const tagged = getDownloadTag(entry);
+          if (!tagged || tagged[0] !== "DownloadCompleted") continue;
+          const mid = extractModelIdFromDownload(tagged[1]);
+          if (mid) stillCompleted.add(mid);
+        }
+      }
+
+      for (const modelId of modelIds) {
+        if (!stillCompleted.has(modelId)) {
+          const shortName = modelId.split("/").pop() ?? modelId;
+          const nodeLabel = this.getNodeFriendlyName(nodeId);
+          addToast({
+            type: "info",
+            message: `Model evicted on ${nodeLabel}: ${shortName}`,
+            duration: 6000,
+          });
+        }
+      }
+    }
+  }
+
+  private getNodeFriendlyName(nodeId: string): string {
+    const nodeInfo = this.topologyData?.nodes?.[nodeId];
+    return (
+      nodeInfo?.friendly_name ??
+      nodeInfo?.system_info?.chip ??
+      nodeId.slice(0, 4)
+    );
   }
 
   /**
@@ -3304,6 +3384,29 @@ class AppStore {
     }
   }
 
+  async setStorageConfig(
+    nodeId: string,
+    maxStorageGb: number | null,
+    storagePolicy: "manual" | "auto-evict",
+  ): Promise<void> {
+    try {
+      const response = await fetch(`/storage/${encodeURIComponent(nodeId)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxStorageGb, storagePolicy }),
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to set storage config: ${response.status} - ${errorText}`,
+        );
+      }
+    } catch (error) {
+      console.error("Error setting storage config:", error);
+      throw error;
+    }
+  }
+
   /**
    * List all available traces
    */
@@ -3381,6 +3484,7 @@ export const instances = () => appStore.instances;
 export const runners = () => appStore.runners;
 export const downloads = () => appStore.downloads;
 export const nodeDisk = () => appStore.nodeDisk;
+export const nodeStorageConfig = () => appStore.nodeStorageConfig;
 export const placementPreviews = () => appStore.placementPreviews;
 export const selectedPreviewModelId = () => appStore.selectedPreviewModelId;
 export const isLoadingPreviews = () => appStore.isLoadingPreviews;
@@ -3506,6 +3610,11 @@ export const cancelDownload = (nodeId: string, modelId: string) =>
   appStore.cancelDownload(nodeId, modelId);
 export const deleteDownload = (nodeId: string, modelId: string) =>
   appStore.deleteDownload(nodeId, modelId);
+export const setStorageConfig = (
+  nodeId: string,
+  maxStorageGb: number | null,
+  storagePolicy: "manual" | "auto-evict",
+) => appStore.setStorageConfig(nodeId, maxStorageGb, storagePolicy);
 
 // Trace actions
 export const listTraces = () => appStore.listTraces();

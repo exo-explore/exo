@@ -1581,12 +1581,14 @@
     progress: DownloadProgress | null;
     perNode: NodeDownloadStatus[];
     failedError: string | null;
+    rejectedError: string | null;
   } {
     const empty = {
       isDownloading: false,
       progress: null,
       perNode: [] as NodeDownloadStatus[],
       failedError: null,
+      rejectedError: null,
     };
 
     if (!downloadsData || Object.keys(downloadsData).length === 0) {
@@ -1628,6 +1630,19 @@
               (downloadPayload.errorMessage as string) ||
               (downloadPayload.error_message as string) ||
               "Download failed",
+            rejectedError: null,
+          };
+        }
+
+        // DownloadRejected — storage limit exceeded
+        if (downloadKind === "DownloadRejected") {
+          return {
+            isDownloading: false,
+            progress: null,
+            perNode: Array.from(perNodeMap.values()),
+            failedError: null,
+            rejectedError:
+              (downloadPayload.reason as string) || "Storage limit exceeded",
           };
         }
 
@@ -1722,6 +1737,7 @@
         progress: null,
         perNode,
         failedError: null,
+        rejectedError: null,
       };
     }
 
@@ -1742,6 +1758,7 @@
       },
       perNode,
       failedError: null,
+      rejectedError: null,
     };
   }
 
@@ -1822,6 +1839,17 @@
         errorMessage: result.failedError,
         progress: null,
         statusText: "FAILED",
+        perNode: [],
+      };
+    }
+
+    if (result.rejectedError) {
+      return {
+        isDownloading: false,
+        isFailed: true,
+        errorMessage: result.rejectedError,
+        progress: null,
+        statusText: "REJECTED",
         perNode: [],
       };
     }
@@ -2461,6 +2489,7 @@
   // ── Instance status transition toasts ──
   // Track previous statuses so we can detect meaningful transitions and fire toasts.
   let previousInstanceStatuses: Record<string, string> = {};
+  let previousInstanceModelIds: Record<string, string> = {};
 
   $effect(() => {
     const currentStatuses: Record<string, string> = {};
@@ -2475,7 +2504,13 @@
     if (Object.keys(prev).length > 0) {
       for (const [id, currentStatus] of Object.entries(currentStatuses)) {
         const prevStatus = prev[id];
-        if (!prevStatus || prevStatus === currentStatus) continue;
+        if (prevStatus === currentStatus) continue;
+        if (
+          !prevStatus &&
+          currentStatus !== "REJECTED" &&
+          currentStatus !== "FAILED"
+        )
+          continue;
 
         const modelId = getInstanceModelId(instanceData[id]);
         const shortName = modelId
@@ -2509,6 +2544,14 @@
           addToast({ type: "error", message: `Model failed: ${shortName}` });
         }
 
+        if (prevStatus !== "REJECTED" && currentStatus === "REJECTED") {
+          addToast({
+            type: "warning",
+            message: `Storage limit exceeded: ${shortName}`,
+            duration: 8000,
+          });
+        }
+
         // Any -> Shutdown
         if (prevStatus !== "SHUTDOWN" && currentStatus === "SHUTDOWN") {
           addToast({ type: "info", message: `Model shut down: ${shortName}` });
@@ -2516,7 +2559,31 @@
       }
     }
 
+    // Detect instances that disappeared while in early states (e.g. rejected download)
+    if (Object.keys(prev).length > 0) {
+      for (const [id, prevStatus] of Object.entries(prev)) {
+        if (id in currentStatuses) continue; // still exists
+        if (prevStatus === "PREPARING" || prevStatus === "DOWNLOADING") {
+          const modelId = previousInstanceModelIds[id];
+          const shortName = modelId
+            ? (modelId.split("/").pop() ?? modelId)
+            : id.slice(0, 8);
+          addToast({
+            type: "warning",
+            message: `Download cancelled: ${shortName} — insufficient storage`,
+            duration: 8000,
+          });
+        }
+      }
+    }
+
     previousInstanceStatuses = currentStatuses;
+    const modelIds: Record<string, string> = {};
+    for (const [id, inst] of Object.entries(instanceData)) {
+      const mid = getInstanceModelId(inst);
+      if (mid) modelIds[id] = mid;
+    }
+    previousInstanceModelIds = modelIds;
   });
 
   // ── Connection status toasts ──
