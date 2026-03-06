@@ -206,6 +206,7 @@ class API:
         download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
+        max_in_flight_text_generations: int = 2,
     ) -> None:
         self.state = State()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
@@ -217,6 +218,7 @@ class API:
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
         self.port = port
+        self.max_in_flight_text_generations = max_in_flight_text_generations
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -705,7 +707,7 @@ class API:
         tool-calling clients). A bounded number of in-flight streams prevents runaway
         queue growth and OOM cascades on smaller clusters.
         """
-        max_in_flight = int(os.getenv("EXO_MAX_IN_FLIGHT_TEXT_GENERATIONS", "2"))
+        max_in_flight = self.max_in_flight_text_generations
         in_flight = len(self._text_generation_queues)
         if in_flight >= max_in_flight:
             raise HTTPException(
