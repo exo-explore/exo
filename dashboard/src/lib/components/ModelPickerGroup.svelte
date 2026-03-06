@@ -32,6 +32,7 @@
     group: ModelGroup;
     isExpanded: boolean;
     isFavorite: boolean;
+    isHighlighted?: boolean;
     selectedModelId: string | null;
     canModelFit: (id: string) => boolean;
     getModelFitStatus: (id: string) => ModelFitStatus;
@@ -48,6 +49,7 @@
     group,
     isExpanded,
     isFavorite,
+    isHighlighted = false,
     selectedModelId,
     canModelFit,
     getModelFitStatus,
@@ -150,10 +152,11 @@
 </script>
 
 <div
+  data-model-ids={group.variants.map((v) => v.id).join(" ")}
   class="border-b border-white/5 last:border-b-0 {!anyVariantFits &&
   !anyVariantHasInstance
     ? 'opacity-50'
-    : ''}"
+    : ''} {isHighlighted ? 'model-just-added' : ''}"
 >
   <!-- Main row -->
   <div
@@ -644,3 +647,21 @@
     </div>
   {/if}
 </div>
+
+<style>
+  .model-just-added {
+    animation: highlightFade 4s ease-out forwards;
+  }
+
+  @keyframes highlightFade {
+    0%,
+    40% {
+      background-color: rgba(20, 83, 45, 0.25);
+      box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.4);
+    }
+    100% {
+      background-color: transparent;
+      box-shadow: none;
+    }
+  }
+</style>

@@ -555,6 +555,8 @@ def apply_chat_template(
         # Jinja ignores unknown variables, so passing both is safe.
         extra_kwargs["enable_thinking"] = task_params.enable_thinking
         extra_kwargs["thinking"] = task_params.enable_thinking
+    if task_params.reasoning_effort is not None:
+        extra_kwargs["reasoning_effort"] = task_params.reasoning_effort
 
     patched_template: str | None = None
     if task_params.tools:

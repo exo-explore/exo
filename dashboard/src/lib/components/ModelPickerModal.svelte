@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { fade, fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import FamilySidebar from "./FamilySidebar.svelte";
@@ -7,6 +8,7 @@
   import HuggingFaceResultItem from "./HuggingFaceResultItem.svelte";
   import { getNodesWithModelDownloaded } from "$lib/utils/downloads";
   import { getRecentEntries } from "$lib/stores/recents.svelte";
+  import { addToast } from "$lib/stores/toast.svelte";
 
   interface ModelInfo {
     id: string;
@@ -191,6 +193,13 @@
   let hfSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   let manualModelId = $state("");
   let addModelError = $state<string | null>(null);
+  let justAddedModelId = $state<string | null>(null);
+  let justAddedTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Inline HuggingFace search in main search bar
+  let mainSearchHfResults = $state<HuggingFaceModel[]>([]);
+  let mainSearchHfLoading = $state(false);
+  let mainSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Reset transient state when modal opens, but preserve tab selection
   $effect(() => {
@@ -200,6 +209,11 @@
       showFilters = false;
       manualModelId = "";
       addModelError = null;
+      justAddedModelId = null;
+      if (justAddedTimer) {
+        clearTimeout(justAddedTimer);
+        justAddedTimer = null;
+      }
     }
   });
 
@@ -212,6 +226,50 @@
     ) {
       fetchTrendingModels();
     }
+  });
+
+  // Inline HuggingFace search when local search returns no results
+  $effect(() => {
+    const query = searchQuery.trim();
+    const noLocalResults = filteredGroups.length === 0;
+
+    if (mainSearchDebounceTimer) {
+      clearTimeout(mainSearchDebounceTimer);
+      mainSearchDebounceTimer = null;
+    }
+
+    if (
+      selectedFamily === "huggingface" ||
+      selectedFamily === "recents" ||
+      selectedFamily === "favorites" ||
+      query.length < 2 ||
+      !noLocalResults
+    ) {
+      mainSearchHfResults = [];
+      mainSearchHfLoading = false;
+      return;
+    }
+
+    mainSearchHfLoading = true;
+    mainSearchDebounceTimer = setTimeout(async () => {
+      try {
+        const response = await fetch(
+          `/models/search?query=${encodeURIComponent(query)}&limit=10`,
+        );
+        if (response.ok) {
+          const results: HuggingFaceModel[] = await response.json();
+          mainSearchHfResults = results.filter(
+            (r) => !existingModelIds.has(r.id),
+          );
+        } else {
+          mainSearchHfResults = [];
+        }
+      } catch {
+        mainSearchHfResults = [];
+      } finally {
+        mainSearchHfLoading = false;
+      }
+    }, 500);
   });
 
   async function fetchTrendingModels() {
@@ -274,6 +332,24 @@
     addModelError = null;
     try {
       await onAddModel(modelId);
+      // Success: show toast, switch to All Models, highlight the model
+      const shortName = modelId.split("/").pop() || modelId;
+      addToast({ type: "success", message: `Added ${shortName}` });
+      justAddedModelId = modelId;
+      selectedFamily = null;
+      searchQuery = "";
+      // Scroll to the newly added model after DOM update
+      await tick();
+      const el = document.querySelector(
+        `[data-model-ids~="${CSS.escape(modelId)}"]`,
+      );
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      // Clear highlight after 4 seconds
+      if (justAddedTimer) clearTimeout(justAddedTimer);
+      justAddedTimer = setTimeout(() => {
+        justAddedModelId = null;
+        justAddedTimer = null;
+      }, 4000);
     } catch (error) {
       addModelError =
         error instanceof Error ? error.message : "Failed to add model";
@@ -841,6 +917,8 @@
                 {group}
                 isExpanded={expandedGroups.has(group.id)}
                 isFavorite={favorites.has(group.id)}
+                isHighlighted={justAddedModelId !== null &&
+                  group.variants.some((v) => v.id === justAddedModelId)}
                 {selectedModelId}
                 {canModelFit}
                 {getModelFitStatus}
@@ -910,6 +988,8 @@
               {group}
               isExpanded={expandedGroups.has(group.id)}
               isFavorite={favorites.has(group.id)}
+              isHighlighted={justAddedModelId !== null &&
+                group.variants.some((v) => v.id === justAddedModelId)}
               {selectedModelId}
               {canModelFit}
               {getModelFitStatus}
@@ -937,6 +1017,8 @@
               {group}
               isExpanded={expandedGroups.has(group.id)}
               isFavorite={favorites.has(group.id)}
+              isHighlighted={justAddedModelId !== null &&
+                group.variants.some((v) => v.id === justAddedModelId)}
               {selectedModelId}
               {canModelFit}
               {getModelFitStatus}
@@ -948,6 +1030,55 @@
               {instanceStatuses}
             />
           {/each}
+          <!-- Inline HuggingFace search results (shown when no local results match) -->
+          {#if filteredGroups.length === 0 && searchQuery.trim().length >= 2 && selectedFamily !== "huggingface" && selectedFamily !== "recents" && selectedFamily !== "favorites"}
+            {#if mainSearchHfLoading}
+              <div
+                class="flex items-center gap-2 px-3 py-2 border-t border-orange-400/20 bg-orange-950/20"
+              >
+                <span
+                  class="w-4 h-4 border-2 border-orange-400 border-t-transparent rounded-full animate-spin"
+                ></span>
+                <span class="text-xs font-mono text-orange-400/60"
+                  >Searching HuggingFace...</span
+                >
+              </div>
+            {:else if mainSearchHfResults.length > 0}
+              <div
+                class="sticky top-0 z-10 flex items-center gap-2 px-3 py-2 bg-orange-950/30 border-y border-orange-400/20 backdrop-blur-sm"
+              >
+                <span
+                  class="text-xs font-mono text-orange-400 tracking-wider uppercase"
+                  >From HuggingFace</span
+                >
+              </div>
+              {#each mainSearchHfResults as model}
+                <HuggingFaceResultItem
+                  {model}
+                  isAdded={existingModelIds.has(model.id)}
+                  isAdding={addingModelId === model.id}
+                  onAdd={() => handleAddModel(model.id)}
+                  onSelect={() => handleSelectHfModel(model.id)}
+                  downloadedOnNodes={downloadsData
+                    ? getNodesWithModelDownloaded(downloadsData, model.id).map(
+                        getNodeName,
+                      )
+                    : []}
+                />
+              {/each}
+              <button
+                type="button"
+                class="w-full px-3 py-2 text-xs font-mono text-orange-400/60 hover:text-orange-400 hover:bg-orange-500/10 transition-colors text-center"
+                onclick={() => {
+                  hfSearchQuery = searchQuery;
+                  searchHuggingFace(searchQuery);
+                  selectedFamily = "huggingface";
+                }}
+              >
+                See all results on Hub
+              </button>
+            {/if}
+          {/if}
         {/if}
       </div>
     </div>

@@ -12,13 +12,22 @@ from anyio import (
 )
 from loguru import logger
 
+from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.events import (
+    ChunkGenerated,
     Event,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
 )
-from exo.shared.types.tasks import Task, TaskId, TaskStatus
+from exo.shared.types.tasks import (
+    ImageEdits,
+    ImageGeneration,
+    Task,
+    TaskId,
+    TaskStatus,
+    TextGeneration,
+)
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import (
     RunnerConnecting,
@@ -52,7 +61,7 @@ class RunnerSupervisor:
     _tg: TaskGroup = field(default_factory=TaskGroup, init=False)
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
-    in_progress: set[TaskId] = field(default_factory=set, init=False)
+    in_progress: dict[TaskId, Task] = field(default_factory=dict, init=False)
     completed: set[TaskId] = field(default_factory=set, init=False)
     cancelled: set[TaskId] = field(default_factory=set, init=False)
     _cancel_watch_runner: anyio.CancelScope = field(
@@ -148,9 +157,11 @@ class RunnerSupervisor:
         logger.info(f"Starting task {task}")
         event = anyio.Event()
         self.pending[task.task_id] = event
+        self.in_progress[task.task_id] = task
         try:
             await self._task_sender.send_async(task)
         except ClosedResourceError:
+            self.in_progress.pop(task.task_id, None)
             logger.warning(f"Task {task} dropped, runner closed communication.")
             return
         await event.wait()
@@ -181,7 +192,6 @@ class RunnerSupervisor:
                         self.status = event.runner_status
                     if isinstance(event, TaskAcknowledged):
                         self.pending.pop(event.task_id).set()
-                        self.in_progress.add(event.task_id)
                         continue
                     if (
                         isinstance(event, TaskStatusUpdated)
@@ -198,7 +208,7 @@ class RunnerSupervisor:
                                 RunnerShuttingDown,
                             ),
                         )
-                        self.in_progress.discard(event.task_id)
+                        self.in_progress.pop(event.task_id, None)
                         self.completed.add(event.task_id)
                     await self._event_sender.send(event)
         except (ClosedResourceError, BrokenResourceError) as e:
@@ -242,6 +252,22 @@ class RunnerSupervisor:
             cause = f"exitcode={rc}"
 
         logger.opt(exception=e).error(f"Runner terminated with {cause}")
+
+        for task in self.in_progress.values():
+            if isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
+                with anyio.CancelScope(shield=True):
+                    await self._event_sender.send(
+                        ChunkGenerated(
+                            command_id=task.command_id,
+                            chunk=ErrorChunk(
+                                model=self.shard_metadata.model_card.model_id,
+                                error_message=(
+                                    "Runner shutdown before completing command "
+                                    f"({cause})"
+                                ),
+                            ),
+                        )
+                    )
 
         try:
             self.status = RunnerFailed(error_message=f"Terminated ({cause})")

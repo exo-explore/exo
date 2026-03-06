@@ -1,5 +1,6 @@
 from collections.abc import Generator
 from functools import cache
+from typing import Any
 
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
 from mlx_lm.models.gpt_oss import Model as GptOssModel
@@ -36,6 +37,7 @@ def apply_all_parsers(
     tokenizer: TokenizerWrapper,
     model_type: type[Model],
     model_id: ModelId,
+    tools: list[dict[str, Any]] | None,
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
     mlx_generator = receiver
 
@@ -55,7 +57,7 @@ def apply_all_parsers(
     ):
         mlx_generator = parse_deepseek_v32(mlx_generator)
     elif tool_parser:
-        mlx_generator = parse_tool_calls(mlx_generator, tool_parser)
+        mlx_generator = parse_tool_calls(mlx_generator, tool_parser, tools)
 
     return mlx_generator
 
@@ -324,7 +326,9 @@ def parse_thinking_models(
 
 
 def parse_tool_calls(
-    responses: Generator[GenerationResponse | None], tool_parser: ToolParser
+    responses: Generator[GenerationResponse | None],
+    tool_parser: ToolParser,
+    tools: list[dict[str, Any]] | None,
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
     in_tool_call = False
     tool_call_text_parts: list[str] = []
