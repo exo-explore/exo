@@ -8,6 +8,7 @@ from exo.shared.topology import Connection
 from exo.shared.types.chunks import Chunk, InputImageChunk
 from exo.shared.types.common import CommandId, Id, ModelId, NodeId, SessionId, SystemId
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
+from exo.shared.types.storage import StorageConfig
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
@@ -146,6 +147,12 @@ class InstanceLinkDeleted(BaseEvent):
     link_id: InstanceLinkId
 
 
+@final
+class StorageConfigUpdated(BaseEvent):
+    node_id: NodeId
+    storage_config: StorageConfig
+
+
 Event = (
     TestEvent
     | TaskCreated
@@ -169,6 +176,7 @@ Event = (
     | CustomModelCardDeleted
     | InstanceLinkCreated
     | InstanceLinkDeleted
+    | StorageConfigUpdated
 )
 
 
