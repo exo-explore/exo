@@ -19,7 +19,7 @@ from exo.shared.types.commands import (
     StartDownload,
 )
 from exo.shared.types.common import NodeId, SystemId
-from exo.shared.types.events import Event, NodeDownloadProgress
+from exo.shared.types.events import Event, IndexedEvent, NodeDownloadProgress
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
@@ -132,6 +132,7 @@ async def test_re_download_after_delete_completes() -> None:
     cmd_send: Sender[ForwarderDownloadCommand]
     cmd_send, cmd_recv = channel[ForwarderDownloadCommand]()
     event_send, event_recv = channel[Event]()
+    _idx_send, idx_recv = channel[IndexedEvent]()
 
     fake_downloader = FakeShardDownloader()
     wrapped_downloader = SingletonShardDownloader(fake_downloader)
@@ -139,6 +140,7 @@ async def test_re_download_after_delete_completes() -> None:
         node_id=NODE_ID,
         shard_downloader=wrapped_downloader,
         download_command_receiver=cmd_recv,
+        event_receiver=idx_recv,
         event_sender=event_send,
     )
 

@@ -21,6 +21,7 @@ from exo.shared.types.events import (
     NodeGatheredInfo,
     NodeTimedOut,
     RunnerStatusUpdated,
+    StorageConfigUpdated,
     TaskAcknowledged,
     TaskCreated,
     TaskDeleted,
@@ -33,6 +34,7 @@ from exo.shared.types.events import (
     TracesMerged,
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
+from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     NodeIdentity,
     NodeNetworkInfo,
@@ -41,6 +43,7 @@ from exo.shared.types.profiling import (
     ThunderboltBridgeStatus,
 )
 from exo.shared.types.state import State
+from exo.shared.types.storage import StorageConfig
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
@@ -122,6 +125,8 @@ def event_apply(event: Event, state: State) -> State:
             return apply_instance_link_created(event, state)
         case InstanceLinkDeleted():
             return apply_instance_link_deleted(event, state)
+        case StorageConfigUpdated():
+            return apply_storage_config_updated(event, state)
 
 
 def apply(state: State, event: IndexedEvent) -> State:
@@ -319,6 +324,11 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
     node_rdma_ctl = {
         key: value for key, value in state.node_rdma_ctl.items() if key != event.node_id
     }
+    node_storage_config = {
+        key: value
+        for key, value in state.node_storage_config.items()
+        if key != event.node_id
+    }
     # Only recompute cycles if the leaving node had TB bridge enabled
     leaving_node_status = state.node_thunderbolt_bridge.get(event.node_id)
     leaving_node_had_tb_enabled = (
@@ -341,6 +351,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
             "node_thunderbolt": node_thunderbolt,
             "node_thunderbolt_bridge": node_thunderbolt_bridge,
             "node_rdma_ctl": node_rdma_ctl,
+            "node_storage_config": node_storage_config,
             "thunderbolt_bridge_cycles": thunderbolt_bridge_cycles,
         }
     )
@@ -372,7 +383,18 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
         case NodeDiskUsage():
             update["node_disk"] = {**state.node_disk, event.node_id: info.disk_usage}
         case NodeConfig():
-            pass
+            storage_config = StorageConfig(
+                max_storage=(
+                    Memory.from_bytes(info.max_storage_bytes)
+                    if info.max_storage_bytes is not None
+                    else None
+                ),
+                storage_policy=info.storage_policy,
+            )
+            update["node_storage_config"] = {
+                **state.node_storage_config,
+                event.node_id: storage_config,
+            }
         case MiscData():
             current_identity = state.node_identities.get(event.node_id, NodeIdentity())
             new_identity = current_identity.model_copy(
@@ -462,6 +484,14 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 topology.remove_all_rdma_connections_touching(event.node_id)
 
     return state.model_copy(update=update)
+
+
+def apply_storage_config_updated(event: StorageConfigUpdated, state: State) -> State:
+    new_node_storage_config = {
+        **state.node_storage_config,
+        event.node_id: event.storage_config,
+    }
+    return state.model_copy(update={"node_storage_config": new_node_storage_config})
 
 
 def apply_topology_edge_created(event: TopologyEdgeCreated, state: State) -> State:

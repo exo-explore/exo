@@ -21,6 +21,7 @@ from exo.shared.types.profiling import (
     NetworkInterfaceInfo,
     ThunderboltBridgeStatus,
 )
+from exo.shared.types.storage import StoragePolicy
 from exo.shared.types.thunderbolt import (
     ThunderboltConnection,
     ThunderboltConnectivity,
@@ -294,6 +295,9 @@ class ThunderboltBridgeInfo(TaggedModel):
 class NodeConfig(TaggedModel):
     """Node configuration from EXO_CONFIG_FILE, reloaded from the file only at startup. Other changes should come in through the API and propagate from there"""
 
+    max_storage_bytes: int | None = None
+    storage_policy: StoragePolicy = "manual"
+
     @classmethod
     async def gather(cls) -> Self | None:
         cfg_file = anyio.Path(EXO_CONFIG_FILE)
@@ -303,6 +307,9 @@ class NodeConfig(TaggedModel):
             try:
                 contents = (await f.read()).decode("utf-8")
                 data = tomllib.loads(contents)
+                if "max_storage_gb" in data:
+                    gb_value: float = float(data.pop("max_storage_gb"))  # pyright: ignore[reportAny]
+                    data["max_storage_bytes"] = round(gb_value * (1024**3))
                 return cls.model_validate(data)
             except (tomllib.TOMLDecodeError, UnicodeDecodeError, ValidationError):
                 logger.warning("Invalid config file, skipping...")
