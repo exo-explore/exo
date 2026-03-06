@@ -116,6 +116,9 @@ def parse_gpt_oss(
         if current_tool_name is not None:
             if delta:
                 tool_arg_parts.append(delta)
+            if response.finish_reason is not None:
+                yield response.model_copy(update={"text": "".join(tool_arg_parts)})
+                tool_arg_parts = []
             continue
 
         if ch == "analysis" and not thinking:

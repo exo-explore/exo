@@ -1,5 +1,6 @@
 from collections.abc import Generator
 
+from exo.shared.types.api import FinishReason
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
     ToolCallResponse,
@@ -83,6 +84,7 @@ THINKING_THEN_TOOL_TOKENS: list[tuple[int, str]] = [
 
 def _make_gen_responses(
     tokens: list[tuple[int, str]],
+    last_finish_reason: FinishReason = "stop",
 ) -> list[GenerationResponse]:
     """Build GenerationResponse list from (token_id, text) pairs."""
     responses: list[GenerationResponse] = []
@@ -92,7 +94,7 @@ def _make_gen_responses(
             GenerationResponse(
                 text=text,
                 token=tid,
-                finish_reason="stop" if is_last else None,
+                finish_reason=last_finish_reason if is_last else None,
                 usage=None,
             )
         )
@@ -101,11 +103,12 @@ def _make_gen_responses(
 
 def _collect(
     tokens: list[tuple[int, str]],
+    last_finish_reason: FinishReason = "stop",
 ) -> list[GenerationResponse | ToolCallResponse]:
     """Feed tokens through parse_gpt_oss and collect all yielded responses."""
 
     def _gen() -> Generator[GenerationResponse, None, None]:
-        yield from _make_gen_responses(tokens)
+        yield from _make_gen_responses(tokens, last_finish_reason)
 
     return list(x for x in parse_gpt_oss(_gen()) if x is not None)
 
@@ -171,3 +174,80 @@ class TestParseGptOssThinkingThenToolCall:
         tc = _get_tool_call(results)
         assert tc.tool_calls[0].name == "get_current_weather"
         assert "Tokyo" in tc.tool_calls[0].arguments
+
+
+# fmt: off
+# Truncated tool call: recipient + channel + message + partial args, no <|call|>
+TRUNCATED_TOOL_CALL_TOKENS: list[tuple[int, str]] = [
+    (316,    " to"),
+    (28,     "="),
+    (44580,  "functions"),
+    (775,    ".get"),
+    (23981,  "_current"),
+    (170154, "_weather"),
+    (_CHANNEL, "<|channel|>"),
+    (12606,  "comment"),
+    (815,    "ary"),
+    (5701,   " json"),
+    (_MESSAGE, "<|message|>"),
+    (10848,  '{"'),
+    (7693,   "location"),
+    (1243,   '":'),
+    (392,    ' "'),
+    (173844, "Tokyo"),
+    # No <|call|> — generation truncated here
+]
+
+# Plain text tokens (no tool call)
+PLAIN_TEXT_TOKENS: list[tuple[int, str]] = [
+    (_CHANNEL, "<|channel|>"),
+    (35644,  "analysis"),
+    (_MESSAGE, "<|message|>"),
+    (12845,  "Let"),
+    (668,    " me"),
+    (2411,   " think"),
+    (1078,   " about"),
+    (495,    " this"),
+    (13,     "."),
+    (_END,   "<|end|>"),
+    (_START, "<|start|>"),
+    (_ASSISTANT, "assistant"),
+    (_CHANNEL, "<|channel|>"),
+    (12606,  "comment"),
+    (815,    "ary"),
+    (_MESSAGE, "<|message|>"),
+    (9906,   "Hello"),
+    (14,     ","),
+    (2989,   " world"),
+]
+# fmt: on
+
+
+class TestParseGptOssMaxTokensTruncation:
+    """Truncated tool calls must still yield finish_reason."""
+
+    def test_truncated_tool_call_yields_finish_reason(self):
+        results = _collect(TRUNCATED_TOOL_CALL_TOKENS, last_finish_reason="length")
+        gen_responses = [r for r in results if isinstance(r, GenerationResponse)]
+        finish_reasons = [
+            r.finish_reason for r in gen_responses if r.finish_reason is not None
+        ]
+        assert "length" in finish_reasons
+
+    def test_truncated_tool_call_emits_partial_args(self):
+        results = _collect(TRUNCATED_TOOL_CALL_TOKENS, last_finish_reason="length")
+        gen_responses = [r for r in results if isinstance(r, GenerationResponse)]
+        last = [r for r in gen_responses if r.finish_reason is not None][-1]
+        assert len(last.text) > 0
+
+    def test_truncated_plain_text_still_works(self):
+        results = _collect(PLAIN_TEXT_TOKENS, last_finish_reason="length")
+        gen_responses = [r for r in results if isinstance(r, GenerationResponse)]
+        finish_reasons = [
+            r.finish_reason for r in gen_responses if r.finish_reason is not None
+        ]
+        assert "length" in finish_reasons
+        # Verify non-empty text was yielded (delta text differs from raw token text
+        # due to Harmony encoding, so we just check something was emitted)
+        all_text = "".join(r.text for r in gen_responses)
+        assert len(all_text) > 0
