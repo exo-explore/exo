@@ -49,6 +49,12 @@
     toggleTopologyOnlyMode,
     chatSidebarVisible,
     toggleChatSidebarVisible,
+    mobileChatSidebarOpen,
+    toggleMobileChatSidebar,
+    setMobileChatSidebarOpen,
+    mobileRightSidebarOpen,
+    toggleMobileRightSidebar,
+    setMobileRightSidebarOpen,
     nodeThunderbolt,
     nodeRdmaCtl,
     thunderboltBridgeCycles,
@@ -79,6 +85,8 @@
   const debugEnabled = $derived(debugMode());
   const topologyOnlyEnabled = $derived(topologyOnlyMode());
   const sidebarVisible = $derived(chatSidebarVisible());
+  const mobileChatOpen = $derived(mobileChatSidebarOpen());
+  const mobileRightOpen = $derived(mobileRightSidebarOpen());
   const tbBridgeCycles = $derived(thunderboltBridgeCycles());
   const tbBridgeData = $derived(nodeThunderboltBridge());
   const identitiesData = $derived(nodeIdentities());
@@ -4604,16 +4612,35 @@
       showSidebarToggle={true}
       {sidebarVisible}
       onToggleSidebar={toggleChatSidebarVisible}
+      showMobileMenuToggle={true}
+      mobileMenuOpen={mobileChatOpen}
+      onToggleMobileMenu={toggleMobileChatSidebar}
+      showMobileRightToggle={!chatStarted && !topologyOnlyEnabled}
+      {mobileRightOpen}
+      onToggleMobileRight={toggleMobileRightSidebar}
       downloadProgress={activeDownloadSummary}
+    />
+  {/if}
+
+  <!-- Mobile Chat Sidebar Drawer -->
+  {#if !topologyOnlyEnabled}
+    <ChatSidebar
+      isMobileDrawer={true}
+      isOpen={mobileChatOpen}
+      onClose={() => setMobileChatSidebarOpen(false)}
+      onNewChat={handleNewChat}
+      onSelectConversation={() => {
+        userForcedIdle = false;
+      }}
     />
   {/if}
 
   <!-- Main Content -->
   <main class="flex-1 flex overflow-hidden relative">
-    <!-- Left: Conversation History Sidebar (hidden in topology-only mode, welcome state, or when toggled off) -->
+    <!-- Left: Conversation History Sidebar (hidden in topology-only mode, welcome state, or when toggled off) - Desktop only -->
     {#if !topologyOnlyEnabled && sidebarVisible}
       <div
-        class="w-80 flex-shrink-0 border-r border-exo-yellow/10"
+        class="hidden md:block w-80 flex-shrink-0 border-r border-exo-yellow/10"
         role="complementary"
         aria-label="Conversation history"
       >
@@ -4923,11 +4950,33 @@
           </div>
         </div>
 
-        <!-- Right Sidebar: Instance Controls (wider on welcome page for better visibility) -->
+        <!-- Mobile Right Sidebar Drawer (Instances) -->
+        {#if mobileRightOpen}
+          <!-- Overlay backdrop -->
+          <button
+            type="button"
+            class="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
+            onclick={() => setMobileRightSidebarOpen(false)}
+            aria-label="Close instances panel"
+          ></button>
+          <!-- Drawer panel -->
+          <aside
+            class="fixed right-0 top-0 bottom-0 w-80 bg-exo-dark-gray border-l border-exo-yellow/10 z-50 flex flex-col md:hidden overflow-y-auto"
+            aria-label="Instance controls mobile"
+          >
+            {@render rightSidebarContent()}
+          </aside>
+        {/if}
+
+        <!-- Right Sidebar: Instance Controls (wider on welcome page for better visibility) - Desktop only -->
         <aside
-          class="w-80 border-l border-exo-yellow/10 bg-exo-dark-gray flex flex-col flex-shrink-0"
+          class="hidden md:flex w-80 border-l border-exo-yellow/10 bg-exo-dark-gray flex-col flex-shrink-0"
           aria-label="Instance controls"
         >
+          {@render rightSidebarContent()}
+        </aside>
+
+        {#snippet rightSidebarContent()}
           <!-- Running Instances Panel (only shown when instances exist) - Scrollable -->
           {#if instanceCount > 0}
             <div class="p-4 flex-shrink-0">
@@ -5809,7 +5858,7 @@
               {/if}
             </div>
           </div>
-        </aside>
+        {/snippet}
       </div>
     {:else}
       <!-- CHAT STATE: Chat + Mini-Map -->
@@ -6022,10 +6071,10 @@
           {/if}
         </div>
 
-        <!-- Right: Mini-Map Sidebar -->
+        <!-- Right: Mini-Map Sidebar - Desktop only -->
         {#if minimized}
           <aside
-            class="w-80 border-l border-exo-yellow/20 bg-exo-dark-gray flex flex-col flex-shrink-0 overflow-y-auto"
+            class="hidden md:flex w-80 border-l border-exo-yellow/20 bg-exo-dark-gray flex-col flex-shrink-0 overflow-y-auto"
             in:fly={{ x: 100, duration: 400, easing: cubicInOut }}
             aria-label="Cluster topology"
           >
