@@ -165,7 +165,9 @@ def wait_for_instance_gone(
     raise TimeoutError(f"Instance {instance_id} did not get deleted within {timeout=}")
 
 
-def resolve_model_short_id(client: ExoClient, model_arg: str) -> tuple[str, str]:
+def resolve_model_short_id(
+    client: ExoClient, model_arg: str, *, force_download: bool = False
+) -> tuple[str, str]:
     models = client.request_json("GET", "/models") or {}
     data = models.get("data") or []
 
@@ -179,6 +181,16 @@ def resolve_model_short_id(client: ExoClient, model_arg: str) -> tuple[str, str]
         if m.get("hugging_face_id") == model_arg:
             short_id = str(m["name"])
             full_id = str(m["hugging_face_id"])
+            return short_id, full_id
+
+    if force_download and "/" in model_arg:
+        logger.info(f"Model not in /models, adding from HuggingFace: {model_arg}")
+        result = client.request_json(
+            "POST", "/models/add", body={"model_id": model_arg}
+        )
+        if result:
+            short_id = str(result.get("name") or model_arg.rsplit("/", 1)[-1])
+            full_id = str(result.get("hugging_face_id") or model_arg)
             return short_id, full_id
 
     raise ValueError(f"Model not found in /models: {model_arg}")
@@ -445,6 +457,11 @@ def add_common_instance_args(ap: argparse.ArgumentParser) -> None:
         "--port", type=int, default=int(os.environ.get("EXO_PORT", "52415"))
     )
     ap.add_argument("--model", required=True, help="Model short id or huggingface id")
+    ap.add_argument(
+        "--force-download",
+        action="store_true",
+        help="If model not in /models, add it from HuggingFace via exo and download.",
+    )
     ap.add_argument(
         "--max-nodes",
         type=int,

@@ -96,13 +96,16 @@
         "lib/python3.13/site-packages/nvidia*"
       ];
 
-      exoVenv = (pythonSet.mkVirtualEnv "exo-env" workspace.deps.default).overrideAttrs {
+      # Exclude bench deps from main env (bench has its own benchVenv)
+      exoDeps = removeAttrs workspace.deps.default [ "exo-bench" ];
+
+      exoVenv = (pythonSet.mkVirtualEnv "exo-env" exoDeps).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;
       };
 
       # Virtual environment with dev dependencies for testing
       testVenv = (pythonSet.mkVirtualEnv "exo-test-env" (
-        workspace.deps.default // {
+        exoDeps // {
           exo = [ "dev" ]; # Include pytest, pytest-asyncio, pytest-env
         }
       )).overrideAttrs {
@@ -158,6 +161,7 @@
           exo-test-env = testVenv;
         } // {
         exo-bench = mkBenchScript "exo-bench" (inputs.self + /bench/exo_bench.py);
+        exo-eval = mkBenchScript "exo-eval" (inputs.self + /bench/exo_eval.py);
         exo-eval-tool-calls = mkBenchScript "exo-eval-tool-calls" (inputs.self + /bench/eval_tool_calls.py);
         exo-get-all-models-on-cluster = mkSimplePythonScript "exo-get-all-models-on-cluster" (inputs.self + /tests/get_all_models_on_cluster.py);
       };

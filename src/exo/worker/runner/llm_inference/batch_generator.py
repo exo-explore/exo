@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import mlx.core as mx
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+from exo.shared.constants import EXO_MAX_CONCURRENT_REQUESTS
 from exo.shared.types.chunks import ErrorChunk, PrefillProgressChunk
 from exo.shared.types.common import ModelId
 from exo.shared.types.events import ChunkGenerated, Event
@@ -191,14 +192,18 @@ class SequentialGenerator(InferenceGenerator):
             self._send_error(task, e)
             raise
         queue = GeneratorQueue[GenerationResponse]()
-        output_generator = apply_all_parsers(
-            queue.gen(),
-            apply_chat_template(self.tokenizer, task.task_params),
-            self.tool_parser,
-            self.tokenizer,
-            type(self.model),
-            self.model_id,
-        )
+
+        if task.task_params.bench:
+            output_generator = queue.gen()
+        else:
+            output_generator = apply_all_parsers(
+                queue.gen(),
+                apply_chat_template(self.tokenizer, task.task_params),
+                self.tool_parser,
+                self.tokenizer,
+                type(self.model),
+                self.model_id,
+            )
         self._active = (task, mlx_gen, queue, output_generator)
 
     def _send_error(self, task: TextGeneration, e: Exception) -> None:
@@ -336,7 +341,7 @@ class BatchGenerator(InferenceGenerator):
         self.agree_on_tasks()
 
         # Submit any queued tasks to the engine
-        while self._queue:
+        while self._queue and len(self._active_tasks) < EXO_MAX_CONCURRENT_REQUESTS:
             task = self._queue.popleft()
             try:
                 uid = self._build_generator(task)
@@ -345,15 +350,19 @@ class BatchGenerator(InferenceGenerator):
             except Exception as e:
                 self._send_error(task, e)
                 raise
+
             queue = GeneratorQueue[GenerationResponse]()
-            output_generator = apply_all_parsers(
-                queue.gen(),
-                apply_chat_template(self.tokenizer, task.task_params),
-                self.tool_parser,
-                self.tokenizer,
-                type(self.model),
-                self.model_id,
-            )
+            if task.task_params.bench:
+                output_generator = queue.gen()
+            else:
+                output_generator = apply_all_parsers(
+                    queue.gen(),
+                    apply_chat_template(self.tokenizer, task.task_params),
+                    self.tool_parser,
+                    self.tokenizer,
+                    type(self.model),
+                    self.model_id,
+                )
             self._active_tasks[uid] = (task, queue, output_generator)
 
         if not self._mlx_gen.has_work:

@@ -184,6 +184,15 @@ class ExoBatchGenerator:
                 c.values = c._trim(trim_size, c.values)
                 c._idx = c.max_size
 
+        if not is_bench:
+            self._save_prefix_cache(
+                all_prompt_tokens,
+                list(cache),
+                cache_snapshots,
+                prefix_hit_length,
+                matched_index,
+            )
+
         last_tokens = prompt_tokens[-2:]
 
         logits_processors: list[Any] = []
@@ -323,7 +332,6 @@ class ExoBatchGenerator:
             )
 
             if is_done:
-                self._save_prefix_cache(state, cast(KVCacheType, response.prompt_cache))
                 del self._active_tasks[response.uid]
             elif max_stop_len > 0 and len(state.accumulated_text) > max_stop_len:
                 state.accumulated_text = state.accumulated_text[-max_stop_len:]
@@ -338,38 +346,37 @@ class ExoBatchGenerator:
     def close(self) -> None:
         self._mlx_gen.close()
 
-    def _save_prefix_cache(self, state: _EngineTask, prompt_cache: KVCacheType) -> None:
-        if self.kv_prefix_cache is None or state.task_params.bench:
+    def _save_prefix_cache(
+        self,
+        all_prompt_tokens: mx.array,
+        cache: KVCacheType,
+        cache_snapshots: list[CacheSnapshot] | None,
+        prefix_hit_length: int,
+        matched_index: int | None,
+    ) -> None:
+        if self.kv_prefix_cache is None:
             return
 
         try:
-            generated_tokens_array = mx.array(
-                self.tokenizer.encode(
-                    "".join(state.generated_text_parts), add_special_tokens=False
-                )
-            )
-            full_prompt_tokens = mx.concatenate(
-                [state.all_prompt_tokens, generated_tokens_array]
-            )
             hit_ratio = (
-                state.prefix_hit_length / len(state.all_prompt_tokens)
-                if len(state.all_prompt_tokens) > 0
+                prefix_hit_length / len(all_prompt_tokens)
+                if len(all_prompt_tokens) > 0
                 else 0.0
             )
             if (
-                state.matched_index is not None
+                matched_index is not None
                 and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
             ):
                 self.kv_prefix_cache.update_kv_cache(
-                    state.matched_index,
-                    full_prompt_tokens,
-                    prompt_cache,
-                    state.cache_snapshots,
-                    restore_pos=state.prefix_hit_length,
+                    matched_index,
+                    all_prompt_tokens,
+                    cache,
+                    cache_snapshots,
+                    restore_pos=prefix_hit_length,
                 )
             else:
                 self.kv_prefix_cache.add_kv_cache(
-                    full_prompt_tokens, prompt_cache, state.cache_snapshots
+                    all_prompt_tokens, cache, cache_snapshots
                 )
         except Exception:
             logger.warning("Failed to save prefix cache", exc_info=True)
