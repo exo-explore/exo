@@ -21,7 +21,10 @@ from exo.shared.constants import EXO_LOG
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
+from exo.shared.types.memory import Memory
+from exo.shared.types.storage import StorageConfig, StoragePolicy
 from exo.utils.channels import Receiver, channel
+from exo.utils.info_gatherer.info_gatherer import NodeConfig
 from exo.utils.pydantic_ext import CamelCaseModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
@@ -67,14 +70,18 @@ class Node:
 
         logger.info(f"Starting node {node_id}")
 
+        storage_config = await cls._load_storage_config(args)
+
         # Create DownloadCoordinator (unless --no-downloads)
         if not args.no_downloads:
             download_coordinator = DownloadCoordinator(
                 node_id,
                 exo_shard_downloader(offline=args.offline),
-                event_sender=event_router.sender(),
                 download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
+                event_receiver=event_router.receiver(),
+                event_sender=event_router.sender(),
                 offline=args.offline,
+                storage_config=storage_config,
             )
         else:
             download_coordinator = None
@@ -165,6 +172,31 @@ class Node:
             sys.exit(1)
         self._tg.cancel_tasks()
 
+    @staticmethod
+    async def _load_storage_config(args: "Args") -> StorageConfig:
+        """Load storage config: start from config.toml, overlay CLI args."""
+        # Start from config.toml as the base
+        base_max_storage: Memory | None = None
+        base_policy: StoragePolicy = "manual"
+
+        node_config = await NodeConfig.gather()
+        if node_config is not None:
+            if node_config.max_storage_bytes is not None:
+                base_max_storage = Memory.from_bytes(node_config.max_storage_bytes)
+            base_policy = node_config.storage_policy
+
+        # CLI args override individual fields (non-default values only)
+        max_storage = (
+            Memory.from_gb(args.max_storage_gb)
+            if args.max_storage_gb is not None
+            else base_max_storage
+        )
+        storage_policy = (
+            args.storage_policy if args.storage_policy != "manual" else base_policy
+        )
+
+        return StorageConfig(max_storage=max_storage, storage_policy=storage_policy)
+
     async def _elect_loop(self):
         with self.election_result_receiver as results:
             async for result in results:
@@ -229,15 +261,20 @@ class Node:
                 if result.is_new_master:
                     if self.download_coordinator:
                         self.download_coordinator.shutdown()
+                        storage_config = self.download_coordinator.storage_config
+                        active_model_ids = self.download_coordinator._active_model_ids  # pyright: ignore[reportPrivateUsage]
                         self.download_coordinator = DownloadCoordinator(
                             self.node_id,
                             exo_shard_downloader(offline=self.offline),
-                            event_sender=self.event_router.sender(),
                             download_command_receiver=self.router.receiver(
                                 topics.DOWNLOAD_COMMANDS
                             ),
+                            event_receiver=self.event_router.receiver(),
+                            event_sender=self.event_router.sender(),
                             offline=self.offline,
+                            storage_config=storage_config,
                         )
+                        self.download_coordinator._active_model_ids = active_model_ids  # pyright: ignore[reportPrivateUsage]
                         self._tg.start_soon(self.download_coordinator.run)
                     if self.worker:
                         self.worker.shutdown()

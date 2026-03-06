@@ -24,6 +24,7 @@ from exo.shared.types.commands import (
     PlaceInstance,
     RequestEventLog,
     SendInputChunk,
+    SetStorageConfig,
     TaskCancelled,
     TaskFinished,
     TestCommand,
@@ -39,8 +40,10 @@ from exo.shared.types.events import (
     InputChunkReceived,
     InstanceDeleted,
     LocalForwarderEvent,
+    NodeDownloadProgress,
     NodeGatheredInfo,
     NodeTimedOut,
+    StorageConfigUpdated,
     TaskCreated,
     TaskDeleted,
     TaskStatusUpdated,
@@ -49,6 +52,7 @@ from exo.shared.types.events import (
     TracesMerged,
 )
 from exo.shared.types.state import State
+from exo.shared.types.storage import StorageConfig
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
 )
@@ -62,6 +66,7 @@ from exo.shared.types.tasks import (
 from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
+from exo.shared.types.worker.downloads import DownloadRejected
 from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, Sender
 from exo.utils.disk_event_log import DiskEventLog
@@ -96,6 +101,7 @@ class Master:
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
+        self._has_new_rejections = False
 
     async def run(self):
         logger.info("Starting Master")
@@ -357,6 +363,16 @@ class Master:
                             generated_events.append(
                                 CustomModelCardDeleted(model_id=command.model_id)
                             )
+                        case SetStorageConfig():
+                            generated_events.append(
+                                StorageConfigUpdated(
+                                    node_id=command.target_node_id,
+                                    storage_config=StorageConfig(
+                                        max_storage=command.max_storage,
+                                        storage_policy=command.storage_policy,
+                                    ),
+                                )
+                            )
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages
                             # rate limit to 1000 at a time
@@ -383,6 +399,39 @@ class Master:
                             InstanceDeleted(instance_id=instance_id)
                         )
                         break
+
+            # kill instances whose downloads were rejected (storage limit exceeded)
+            if self._has_new_rejections:
+                self._has_new_rejections = False
+                rejected_instances: set[InstanceId] = set()
+                for instance_id, instance in self.state.instances.items():
+                    for node_id in instance.shard_assignments.node_to_runner:
+                        node_downloads = self.state.downloads.get(node_id, ())
+                        for dp in node_downloads:
+                            if (
+                                isinstance(dp, DownloadRejected)
+                                and dp.shard_metadata.model_card.model_id
+                                == instance.shard_assignments.model_id
+                            ):
+                                rejected_instances.add(instance_id)
+                                break
+
+                for instance_id in rejected_instances:
+                    logger.info(f"Deleting instance {instance_id} — download rejected")
+                    for task in self.state.tasks.values():
+                        if task.instance_id == instance_id and task.task_status in (
+                            TaskStatus.Pending,
+                            TaskStatus.Running,
+                        ):
+                            await self.event_sender.send(
+                                TaskStatusUpdated(
+                                    task_id=task.task_id,
+                                    task_status=TaskStatus.Failed,
+                                )
+                            )
+                    await self.event_sender.send(
+                        InstanceDeleted(instance_id=instance_id)
+                    )
 
             # time out dead nodes
             for node_id, time in self.state.last_seen.items():
@@ -412,6 +461,11 @@ class Master:
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
                     indexed = IndexedEvent(event=event, idx=len(self._event_log))
                     self.state = apply(self.state, indexed)
+
+                    if isinstance(event, NodeDownloadProgress) and isinstance(
+                        event.download_progress, DownloadRejected
+                    ):
+                        self._has_new_rejections = True
 
                     event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
                     if isinstance(event, NodeGatheredInfo):
