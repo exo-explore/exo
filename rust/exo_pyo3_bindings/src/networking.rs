@@ -11,7 +11,7 @@ use crate::networking::exception::{
 use crate::pyclass;
 use futures_lite::{Stream, StreamExt as _};
 use libp2p::gossipsub::PublishError;
-use networking::swarm::{FromSwarm, ToSwarm, create_swarm};
+use networking::{FromSwarm, ToSwarm, create_swarm};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::{PyModule, PyModuleMethods as _};
 use pyo3::types::PyBytes;

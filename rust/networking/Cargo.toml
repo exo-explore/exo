@@ -27,7 +27,6 @@ futures-timer = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 # utility dependencies
-util = { workspace = true }
 tracing-subscriber = { version = "0.3.19", features = [
   "default",
   "env-filter",
