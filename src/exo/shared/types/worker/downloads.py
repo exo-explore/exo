@@ -47,8 +47,19 @@ class DownloadOngoing(BaseDownloadProgress):
     download_progress: DownloadProgressData
 
 
+class DownloadRejected(BaseDownloadProgress):
+    reason: str
+    required: Memory
+    available: Memory
+    limit: Memory
+
+
 DownloadProgress = (
-    DownloadPending | DownloadCompleted | DownloadFailed | DownloadOngoing
+    DownloadPending
+    | DownloadCompleted
+    | DownloadFailed
+    | DownloadOngoing
+    | DownloadRejected
 )
 
 
