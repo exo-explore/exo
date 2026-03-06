@@ -47,15 +47,6 @@ Each adapter implements two key functions:
 1. **Request conversion**: Converts API-specific requests to `TextGenerationTaskParams`
 2. **Response generation**: Converts internal `TokenChunk` streams back to API-specific formats (streaming and non-streaming)
 
-### Separation of Concerns
-
-The adapter pattern ensures that:
-- API-specific types never cross into internal systems (worker, runner, event sourcing)
-- Internal systems only see `TextGenerationTaskParams` and `TokenChunk` objects
-- New API formats can be added without modifying core inference logic
-- Each API format maintains its own streaming behavior and response structure
-
-All adapters live in `src/exo/master/adapters/` and are registered in the API system.
 
 ## Topics
 
