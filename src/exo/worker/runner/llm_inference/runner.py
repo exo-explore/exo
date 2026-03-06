@@ -395,12 +395,12 @@ class Builder:
         if (
             self.tokenizer.tool_call_start
             and self.tokenizer.tool_call_end
-            and self.tokenizer.tool_parser
-        ):  # pyright: ignore[reportAny]
+            and self.tokenizer.tool_parser  # type: ignore
+        ):
             tool_parser = make_mlx_parser(
                 self.tokenizer.tool_call_start,
                 self.tokenizer.tool_call_end,
-                self.tokenizer.tool_parser,  # pyright: ignore[reportAny]
+                self.tokenizer.tool_parser,  # type: ignore
             )
 
         kv_prefix_cache = KVPrefixCache(self.group)
