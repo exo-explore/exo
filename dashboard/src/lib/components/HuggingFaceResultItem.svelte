@@ -36,8 +36,12 @@
     return num.toString();
   }
 
-  // Extract model name from full ID (e.g., "mlx-community/Llama-3.2-1B" -> "Llama-3.2-1B")
-  const modelName = $derived(model.id.split("/").pop() || model.id);
+  // Show short name for mlx-community models, full ID for everything else
+  const modelName = $derived(
+    model.author === "mlx-community"
+      ? model.id.split("/").pop() || model.id
+      : model.id,
+  );
 </script>
 
 <div

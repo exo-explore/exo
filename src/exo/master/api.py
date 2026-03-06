@@ -3,7 +3,7 @@ import contextlib
 import json
 import random
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
@@ -775,7 +775,7 @@ class API:
         return resolved_model
 
     def stream_events(self) -> StreamingResponse:
-        def _generate_json_array(events: Iterator[Event]) -> Iterator[str]:
+        def _generate_json_array(events: Iterable[Event]) -> Iterable[str]:
             yield "["
             first = True
             for event in events:
@@ -1586,26 +1586,42 @@ class API:
     async def search_models(
         self, query: str = "", limit: int = 20
     ) -> list[HuggingFaceSearchResult]:
-        """Search HuggingFace Hub for mlx-community models."""
-        from huggingface_hub import list_models
+        """Search HuggingFace Hub — tries mlx-community first, falls back to all of HuggingFace."""
+        from huggingface_hub import ModelInfo, list_models
 
-        results = list_models(
-            search=query or None,
-            author="mlx-community",
-            sort="downloads",
-            limit=limit,
-        )
-        return [
-            HuggingFaceSearchResult(
-                id=m.id,
-                author=m.author or "",
-                downloads=m.downloads or 0,
-                likes=m.likes or 0,
-                last_modified=str(m.last_modified or ""),
-                tags=list(m.tags or []),
+        def _to_results(models: Iterable[ModelInfo]) -> list[HuggingFaceSearchResult]:
+            return [
+                HuggingFaceSearchResult(
+                    id=m.id,
+                    author=m.author or "",
+                    downloads=m.downloads or 0,
+                    likes=m.likes or 0,
+                    last_modified=str(m.last_modified or ""),
+                    tags=list(m.tags or []),
+                )
+                for m in models
+            ]
+
+        # Search mlx-community first
+        mlx_results = _to_results(
+            list_models(
+                search=query or None,
+                author="mlx-community",
+                sort="downloads",
+                limit=limit,
             )
-            for m in results
-        ]
+        )
+        if mlx_results:
+            return mlx_results
+
+        # Fall back to searching all of HuggingFace
+        return _to_results(
+            list_models(
+                search=query or None,
+                sort="downloads",
+                limit=limit,
+            )
+        )
 
     async def run(self):
         shutdown_ev = anyio.Event()
