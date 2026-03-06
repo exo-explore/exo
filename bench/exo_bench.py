@@ -447,12 +447,14 @@ def main() -> int:
                             batch_results: list[tuple[dict[str, Any], int]] = []
                             batch_errors = 0
 
-                            def _run_concurrent(idx: int) -> tuple[dict[str, Any], int]:
+                            def _run_concurrent(
+                                idx: int, *, _pp: int = pp, _tg: int = tg
+                            ) -> tuple[dict[str, Any], int]:
                                 c = ExoClient(
                                     args.host, args.port, timeout_s=args.timeout
                                 )
                                 return run_one_completion(
-                                    c, full_model_id, pp, tg, prompt_sizer
+                                    c, full_model_id, _pp, _tg, prompt_sizer
                                 )
 
                             with ThreadPoolExecutor(max_workers=concurrency) as pool:
@@ -494,20 +496,10 @@ def main() -> int:
                                 all_rows.append(row)
 
                             if batch_results:
-                                total_gen_tokens = sum(
-                                    x["stats"]["generation_tokens"]
-                                    for x, _ in batch_results
-                                )
-                                max_gen_time = max(
-                                    x["stats"]["generation_tokens"]
-                                    / x["stats"]["generation_tps"]
+                                agg_gen_tps = sum(
+                                    x["stats"]["generation_tps"]
                                     for x, _ in batch_results
                                     if x["stats"]["generation_tps"] > 0
-                                )
-                                agg_gen_tps = (
-                                    total_gen_tokens / max_gen_time
-                                    if max_gen_time > 0
-                                    else 0
                                 )
                                 logger.info(
                                     f"[concurrent {concurrency}x]  "

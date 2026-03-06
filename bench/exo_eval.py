@@ -1,52 +1,47 @@
 # type: ignore
 #!/usr/bin/env python3
-"""Quality evaluation for exo using lm-evaluation-harness.
+"""Quality evaluation for exo — matches Artificial Analysis methodology.
 
-Runs standard LLM benchmarks against exo's OpenAI-compatible API and
-optionally compares results across concurrency levels to verify batching
-doesn't degrade quality.
+Runs LLM benchmarks against exo's OpenAI-compatible API using the same
+prompts, temperature settings, and answer extraction as Artificial Analysis.
 
-NOTE: Only `generate_until` tasks work with chat completions APIs.
-`loglikelihood` tasks (MMLU, HellaSwag, ARC) will NOT work.
+Supported benchmarks:
+  gpqa_diamond   - Graduate-level science QA (198 questions, 4-choice MC)
+  mmlu_pro       - Multi-task language understanding (12K questions, 10-choice MC)
+  aime_2024      - Math olympiad 2024 (30 problems, integer answers)
+  aime_2025      - Math olympiad 2025 (30 problems, integer answers)
+  humaneval      - Python code generation (164 problems, pass@1)
+  livecodebench  - Competitive programming (880+ problems, pass@1)
 
-Only generate_until tasks work with chat completions APIs.
+Model configs in eval_configs/models.toml auto-detect reasoning/non-reasoning
+settings per model. Override with --reasoning / --no-reasoning.
 
-Working tasks:
-  gsm8k                        - Grade school math (free-form)
-  hendrycks_math_chat          - MATH benchmark, all subjects (custom, uses math_verify)
-  hendrycks_math_chat_algebra  - MATH algebra only
-  drop                         - Reading comprehension (extractive QA)
-  ifeval                       - Instruction following
-  truthfulqa_gen               - Truthfulness (generative)
-  triviaqa                     - Open-domain trivia QA
-  gpqa_diamond_cot_zeroshot    - Graduate-level science QA (chain-of-thought)
-  leaderboard_bbh              - BIG-Bench Hard (23 subtasks, CoT)
-  humaneval                    - Python code generation
-  mbpp                         - Basic Python programming
-  aime24                       - Math olympiad (AMC/AIME 2024)
-  nq_open                      - Natural Questions (open-domain)
-  coqa                         - Conversational QA
+Usage:
+  uv run python exo_eval.py --model <model-id> --tasks gpqa_diamond
+  uv run python exo_eval.py --model <model-id> --tasks humaneval,livecodebench --limit 50
+  uv run python exo_eval.py --model <model-id> --tasks gpqa_diamond --compare-concurrency 1,4
 
-NOT working (loglikelihood): mmlu, hellaswag, arc_challenge, winogrande, gpqa_diamond_zeroshot
-NOT working (broken extraction): hendrycks_math (use hendrycks_math_chat instead)
-
-Start exo first, then run:
-    uv run python exo_eval.py --model <model-id> --tasks gsm8k
-    uv run python exo_eval.py --model <model-id> --tasks gsm8k --limit 50 --compare-concurrency 1,4
-    uv run python exo_eval.py --model <model-id> --tasks hendrycks_math_chat --limit 100
+References:
+  https://artificialanalysis.ai/methodology/intelligence-benchmarking
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import json
+import random
+import re
 import subprocess
 import sys
 import time
+import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
 from harness import (
     ExoClient,
     ExoHttpError,
@@ -61,384 +56,1000 @@ from harness import (
 )
 from loguru import logger
 
+# ---------------------------------------------------------------------------
+# Artificial Analysis constants
+# ---------------------------------------------------------------------------
 
-_AVAILABLE_TASKS = [
-    ("gsm8k",                       "Grade school math (free-form)"),
-    ("hendrycks_math_chat",         "MATH benchmark, all 7 subjects"),
-    ("hendrycks_math_chat_algebra", "MATH — algebra only"),
-    ("drop",                        "Reading comprehension (extractive QA)"),
-    ("ifeval",                      "Instruction following evaluation"),
-    ("truthfulqa_gen",              "Truthfulness (generative)"),
-    ("triviaqa",                    "Open-domain trivia QA"),
-    ("gpqa_diamond_cot_zeroshot",   "Graduate-level science QA (CoT)"),
-    ("leaderboard_bbh",            "BIG-Bench Hard (23 subtasks, CoT)"),
-    ("humaneval",                   "Python code generation"),
-    ("mbpp",                        "Basic Python programming"),
-    ("aime24",                      "Math olympiad (AIME 2024)"),
-    ("nq_open",                     "Natural Questions (open-domain)"),
-    ("coqa",                        "Conversational QA"),
+MAX_RETRIES = 30
+DEFAULT_MAX_TOKENS = 16_384
+REASONING_MAX_TOKENS = 65_536
+TEMPERATURE_NON_REASONING = 0.0
+TEMPERATURE_REASONING = 0.6
+
+# MC answer extraction: 8 fallback regex patterns.
+# All patterns are tried; the match at the latest text position wins
+# (handles models that self-correct during reasoning).
+_MC_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(
+        r"(?i)[\*\_]{0,2}Answer[\*\_]{0,2}\s*:[\s\*\_]{0,2}\s*([A-Z])(?![a-zA-Z0-9])"
+    ),
+    re.compile(r"\\boxed\{[^}]*([A-Z])[^}]*\}"),
+    re.compile(r"(?i)answer is ([a-zA-Z])"),
+    re.compile(r"(?i)answer is \\\(([a-zA-Z])"),
+    re.compile(r"([A-Z])\)\s*[^A-Z]*$"),
+    re.compile(r"([A-Z])\s+is\s+the\s+correct\s+answer"),
+    re.compile(r"([A-Z])\s*$"),
+    re.compile(r"([A-Z])\s*\."),
 ]
 
+# Code extraction: last ```python ... ``` block (AA regex)
+_CODE_BLOCK_RE = re.compile(r"```(?:python|Python)?\s*\n(.*?)```", re.DOTALL)
 
-def pick_tasks_interactive() -> str:
-    """Show a simple TUI for selecting eval tasks."""
+
+# ---------------------------------------------------------------------------
+# Model config loading
+# ---------------------------------------------------------------------------
+
+
+def load_model_config(model_id: str) -> dict[str, Any] | None:
+    """Look up model in eval_configs/models.toml. Returns config dict or None."""
+    config_path = Path(__file__).resolve().parent / "eval_configs" / "models.toml"
+    if not config_path.exists():
+        return None
+    with open(config_path, "rb") as f:
+        data = tomllib.load(f)
+    for entry in data.get("model", []):
+        patterns = entry.get("patterns", [])
+        if any(p in model_id for p in patterns):
+            return entry
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Answer extraction
+# ---------------------------------------------------------------------------
+
+
+def extract_mc_answer(text: str, valid_letters: str = "ABCD") -> str | None:
+    """Extract MC answer. Last match by text position wins."""
+    valid_set = set(valid_letters)
+    best: tuple[int, str] | None = None
+    for pattern in _MC_PATTERNS:
+        for m in pattern.finditer(text):
+            letter = m.group(1).upper()
+            if letter in valid_set:
+                pos = m.start()
+                if best is None or pos >= best[0]:
+                    best = (pos, letter)
+    return best[1] if best else None
+
+
+def extract_boxed_answer(text: str) -> str | None:
+    r"""Extract content from the last \boxed{...}."""
+    matches: list[str] = []
+    idx = 0
+    while True:
+        pos = text.find("\\boxed{", idx)
+        if pos < 0:
+            break
+        depth = 0
+        i = pos + len("\\boxed{")
+        start = i
+        while i < len(text):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                if depth == 0:
+                    matches.append(text[start:i])
+                    break
+                depth -= 1
+            i += 1
+        idx = i + 1 if i < len(text) else len(text)
+    return matches[-1].strip() if matches else None
+
+
+def extract_code_block(text: str) -> str | None:
+    """Extract the last Python code block from markdown response."""
+    matches = _CODE_BLOCK_RE.findall(text)
+    if matches:
+        return matches[-1].strip()
+    # Fallback: try raw code after last ```
+    lines = text.split("\n")
+    backtick_lines = [i for i, line in enumerate(lines) if "```" in line]
+    if len(backtick_lines) >= 2:
+        return "\n".join(lines[backtick_lines[-2] + 1 : backtick_lines[-1]])
+    return None
+
+
+def check_aime_answer(extracted: str, gold: int) -> bool:
+    """Check if extracted AIME answer matches gold integer."""
+    try:
+        return int(extracted.strip()) == gold
+    except ValueError:
+        pass
+    try:
+        from math_verify import parse, verify
+
+        return verify(parse(str(gold)), parse(extracted))
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Code execution sandbox
+# ---------------------------------------------------------------------------
+
+
+def execute_code(
+    code: str, stdin_input: str | None = None, timeout: float = 10.0
+) -> tuple[bool, str]:
+    """Execute Python code in subprocess. Returns (passed, stderr_or_stdout)."""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            input=stdin_input,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if result.returncode == 0:
+            return True, result.stdout
+        return False, result.stderr
+    except subprocess.TimeoutExpired:
+        return False, "Execution timed out"
+    except Exception as e:
+        return False, str(e)
+
+
+def run_humaneval_test(
+    prompt: str, completion: str, test: str, entry_point: str
+) -> bool:
+    """Execute HumanEval test case. Returns True if all assertions pass."""
+    check_program = prompt + completion + "\n" + test + f"\ncheck({entry_point})"
+    passed, _ = execute_code(check_program, timeout=10.0)
+    return passed
+
+
+def run_livecodebench_test(
+    code: str,
+    test_inputs: list[str],
+    test_outputs: list[str],
+    test_type: str,
+    func_name: str | None = None,
+) -> bool:
+    """Execute LiveCodeBench test case. Returns True if all tests pass."""
+    for inp, expected_out in zip(test_inputs, test_outputs, strict=True):
+        expected_out = expected_out.strip()
+        if test_type == "functional" and func_name:
+            # Call function with parsed input, compare output
+            check_code = (
+                f"{code}\n\n"
+                f"import json\n"
+                f"args = json.loads({json.dumps(inp)})\n"
+                f"if isinstance(args, list):\n"
+                f"    result = {func_name}(*args)\n"
+                f"else:\n"
+                f"    result = {func_name}(args)\n"
+                f"expected = json.loads({json.dumps(expected_out)})\n"
+                f"assert result == expected, f'Got {{result}}, expected {{expected}}'\n"
+            )
+            passed, _ = execute_code(check_code, timeout=10.0)
+        else:
+            # stdin/stdout test
+            passed, stdout = execute_code(code, stdin_input=inp, timeout=10.0)
+            if passed:
+                passed = stdout.strip() == expected_out
+        if not passed:
+            return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Benchmark definitions
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class QuestionResult:
+    question_id: int
+    prompt: str
+    response: str
+    extracted_answer: str | None
+    gold_answer: str
+    correct: bool
+    error: str | None = None
+
+
+@dataclass
+class BenchmarkConfig:
+    name: str
+    description: str
+    dataset_name: str
+    dataset_config: str | None
+    split: str
+    kind: str  # "mc", "math", "code"
+
+
+BENCHMARKS: dict[str, BenchmarkConfig] = {
+    "gpqa_diamond": BenchmarkConfig(
+        name="gpqa_diamond",
+        description="Graduate-level science QA (198 Q, 4-choice MC)",
+        dataset_name="Idavidrein/gpqa",
+        dataset_config="gpqa_diamond",
+        split="train",
+        kind="mc",
+    ),
+    "mmlu_pro": BenchmarkConfig(
+        name="mmlu_pro",
+        description="Multi-task language understanding (12K Q, 10-choice MC)",
+        dataset_name="TIGER-Lab/MMLU-Pro",
+        dataset_config=None,
+        split="test",
+        kind="mc",
+    ),
+    "aime_2024": BenchmarkConfig(
+        name="aime_2024",
+        description="Math olympiad 2024 (30 problems, integer answers)",
+        dataset_name="HuggingFaceH4/aime_2024",
+        dataset_config=None,
+        split="train",
+        kind="math",
+    ),
+    "aime_2025": BenchmarkConfig(
+        name="aime_2025",
+        description="Math olympiad 2025 (30 problems, integer answers)",
+        dataset_name="MathArena/aime_2025",
+        dataset_config=None,
+        split="train",
+        kind="math",
+    ),
+    "humaneval": BenchmarkConfig(
+        name="humaneval",
+        description="Python code generation (164 problems, pass@1)",
+        dataset_name="openai/openai_humaneval",
+        dataset_config=None,
+        split="test",
+        kind="code",
+    ),
+    "livecodebench": BenchmarkConfig(
+        name="livecodebench",
+        description="Competitive programming (880+ problems, pass@1)",
+        dataset_name="livecodebench/code_generation_lite",
+        dataset_config=None,
+        split="test",
+        kind="code",
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Prompt formatters
+# ---------------------------------------------------------------------------
+
+_GPQA_INSTRUCTION = (
+    "Answer the following multiple choice question. "
+    "The last line of your response should be in the following format: "
+    "'Answer: A/B/C/D' (e.g. 'Answer: A')."
+)
+
+_MMLU_PRO_INSTRUCTION = (
+    "Answer the following multiple choice question. "
+    "The last line of your response should be in the following format: "
+    "'Answer: A/B/C/D/E/F/G/H/I/J' (e.g. 'Answer: A')."
+)
+
+_AIME_INSTRUCTION = (
+    "Solve the following math problem step by step. "
+    "Put your answer inside \\boxed{}.\n"
+    "Remember to put your answer inside \\boxed{}."
+)
+
+_HUMANEVAL_INSTRUCTION = (
+    "Complete the following Python function. Return only the function body "
+    "inside a ```python code block. Do not include the function signature."
+)
+
+# LiveCodeBench: AA uses original prompts without custom system prompts
+_LCB_SYSTEM = (
+    "You are an expert Python programmer. You will be given a question "
+    "(problem specification) and will generate a correct Python program "
+    "that matches the specification and passes all tests."
+)
+
+_LCB_WITH_STARTER = (
+    "### Question:\n{question}\n\n"
+    "### Format: You will use the following starter code to write the "
+    "solution to the problem and enclose your code within delimiters.\n"
+    "```python\n{starter_code}\n```\n\n"
+    "### Answer: (use the provided format with backticks)\n"
+)
+
+_LCB_WITHOUT_STARTER = (
+    "### Question:\n{question}\n\n"
+    "### Format: Read the inputs from stdin solve the problem and write "
+    "the answer to stdout (do not directly test on the sample inputs). "
+    "Enclose your code within delimiters as follows. Ensure that when the "
+    "python program runs, it reads the inputs, runs the algorithm and "
+    "writes output to STDOUT.\n"
+    "```python\n# YOUR CODE HERE\n```\n\n"
+    "### Answer: (use the provided format with backticks)\n"
+)
+
+
+def format_gpqa_question(doc: dict, idx: int) -> tuple[str, str]:
+    """Returns (prompt, correct_letter)."""
+    correct = doc["Correct Answer"]
+    choices = [
+        correct,
+        doc["Incorrect Answer 1"],
+        doc["Incorrect Answer 2"],
+        doc["Incorrect Answer 3"],
+    ]
+    rng = random.Random(idx)
+    order = rng.sample(range(4), 4)
+    shuffled = [choices[i] for i in order]
+    correct_letter = "ABCD"[order.index(0)]
+    choices_text = "\n".join(f"{L}) {shuffled[i]}" for i, L in enumerate("ABCD"))
+    return f"{_GPQA_INSTRUCTION}\n\n{doc['Question']}\n\n{choices_text}", correct_letter
+
+
+def format_mmlu_pro_question(doc: dict) -> tuple[str, str]:
+    """Returns (prompt, correct_letter)."""
+    options = doc["options"]
+    letters = "ABCDEFGHIJ"
+    choices_text = "\n".join(f"{letters[i]}) {opt}" for i, opt in enumerate(options))
+    return f"{_MMLU_PRO_INSTRUCTION}\n\n{doc['question']}\n\n{choices_text}", doc[
+        "answer"
+    ]
+
+
+def format_aime_question(doc: dict) -> tuple[str, int]:
+    """Returns (prompt, correct_answer_int)."""
+    return f"{_AIME_INSTRUCTION}\n\n{doc['problem']}", int(doc["answer"])
+
+
+def format_humaneval_question(doc: dict) -> tuple[str, dict]:
+    """Returns (prompt, metadata_for_execution)."""
+    prompt = f"{_HUMANEVAL_INSTRUCTION}\n\n```python\n{doc['prompt']}```"
+    meta = {
+        "prompt": doc["prompt"],
+        "test": doc["test"],
+        "entry_point": doc["entry_point"],
+    }
+    return prompt, meta
+
+
+def format_livecodebench_question(doc: dict) -> tuple[str, str | None, dict]:
+    """Returns (prompt, system_message, metadata_for_execution)."""
+    starter_code = doc.get("starter_code", "")
+    question_content = doc["question_content"]
+
+    if starter_code and starter_code.strip():
+        user_msg = _LCB_WITH_STARTER.format(
+            question=question_content, starter_code=starter_code
+        )
+    else:
+        user_msg = _LCB_WITHOUT_STARTER.format(question=question_content)
+
+    # Parse test cases
+    public_tests = (
+        json.loads(doc["public_test_cases"])
+        if isinstance(doc["public_test_cases"], str)
+        else doc["public_test_cases"]
+    )
+    private_tests = doc.get("private_test_cases", "[]")
+    if isinstance(private_tests, str):
+        try:
+            private_tests = json.loads(private_tests)
+        except Exception:
+            import base64
+            import pickle
+            import zlib
+
+            private_tests = json.loads(
+                pickle.loads(
+                    zlib.decompress(base64.b64decode(private_tests.encode("utf-8")))
+                )
+            )
+
+    all_tests = public_tests + (
+        private_tests if isinstance(private_tests, list) else []
+    )
+    test_inputs = [t["input"] for t in all_tests]
+    test_outputs = [t["output"] for t in all_tests]
+    test_type = all_tests[0]["testtype"] if all_tests else "stdin"
+
+    metadata = doc.get("metadata", "{}")
+    if isinstance(metadata, str):
+        metadata = json.loads(metadata)
+    func_name = metadata.get("func_name")
+
+    meta = {
+        "test_inputs": test_inputs,
+        "test_outputs": test_outputs,
+        "test_type": test_type,
+        "func_name": func_name,
+    }
+    return user_msg, _LCB_SYSTEM, meta
+
+
+# ---------------------------------------------------------------------------
+# API client with retries
+# ---------------------------------------------------------------------------
+
+
+async def _call_api(
+    client: httpx.AsyncClient,
+    base_url: str,
+    model: str,
+    prompt: str,
+    temperature: float,
+    max_tokens: int,
+    timeout: float | None,
+    system_message: str | None = None,
+) -> str:
+    messages = []
+    if system_message:
+        messages.append({"role": "system", "content": system_message})
+    messages.append({"role": "user", "content": prompt})
+
+    resp = await client.post(
+        f"{base_url}/v1/chat/completions",
+        json={
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        },
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    content = data["choices"][0]["message"]["content"]
+    if not content or not content.strip():
+        raise ValueError("Empty response from model")
+    return content
+
+
+async def call_with_retries(
+    client: httpx.AsyncClient,
+    base_url: str,
+    model: str,
+    prompt: str,
+    temperature: float,
+    max_tokens: int,
+    timeout: float | None = None,
+    system_message: str | None = None,
+) -> str | None:
+    for attempt in range(MAX_RETRIES):
+        try:
+            return await _call_api(
+                client,
+                base_url,
+                model,
+                prompt,
+                temperature,
+                max_tokens,
+                timeout,
+                system_message,
+            )
+        except Exception as e:
+            if attempt < MAX_RETRIES - 1:
+                wait = min(2**attempt, 60)
+                logger.warning(
+                    f"Attempt {attempt + 1}/{MAX_RETRIES} failed: {e}. Retrying in {wait}s..."
+                )
+                await asyncio.sleep(wait)
+            else:
+                logger.error(f"All {MAX_RETRIES} retries exhausted. Last error: {e}")
+                return None
+
+
+# ---------------------------------------------------------------------------
+# Evaluation runners
+# ---------------------------------------------------------------------------
+
+
+async def evaluate_benchmark(
+    benchmark_name: str,
+    base_url: str,
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    concurrency: int = 1,
+    limit: int | None = None,
+    timeout: float | None = None,
+) -> list[QuestionResult]:
+    """Run a benchmark. Returns per-question results."""
+    import datasets
+
+    config = BENCHMARKS[benchmark_name]
+    logger.info(f"Loading dataset {config.dataset_name}...")
+
+    try:
+        kwargs = {}
+        if benchmark_name == "livecodebench":
+            kwargs["version_tag"] = "release_v6"
+        ds = datasets.load_dataset(
+            config.dataset_name,
+            config.dataset_config,
+            split=config.split,
+            **kwargs,
+        )
+    except Exception as e:
+        logger.error(f"Failed to load dataset: {e}")
+        if "gated" in str(e).lower() or "login" in str(e).lower():
+            logger.error("Dataset requires authentication. Run: huggingface-cli login")
+        return []
+
+    total = len(ds)
+    if limit and limit < total:
+        ds = ds.select(range(limit))
+        total = limit
+
+    logger.info(
+        f"Evaluating {benchmark_name}: {total} questions, concurrency={concurrency}, "
+        f"temperature={temperature}, max_tokens={max_tokens}"
+    )
+
+    if config.kind == "code":
+        logger.warning(
+            "Code benchmarks execute model-generated code. Use a sandboxed environment."
+        )
+
+    semaphore = asyncio.Semaphore(concurrency)
+    results: list[QuestionResult | None] = [None] * total
+    completed = 0
+    lock = asyncio.Lock()
+
+    async def process_question(
+        idx: int, doc: dict, http_client: httpx.AsyncClient
+    ) -> None:
+        nonlocal completed
+        system_msg = None
+
+        if benchmark_name == "gpqa_diamond":
+            prompt, gold = format_gpqa_question(doc, idx)
+            valid_letters = "ABCD"
+        elif benchmark_name == "mmlu_pro":
+            prompt, gold = format_mmlu_pro_question(doc)
+            valid_letters = "ABCDEFGHIJ"[: len(doc["options"])]
+        elif benchmark_name.startswith("aime"):
+            prompt, gold_int = format_aime_question(doc)
+            gold = str(gold_int)
+        elif benchmark_name == "humaneval":
+            prompt, exec_meta = format_humaneval_question(doc)
+            gold = "pass"
+        elif benchmark_name == "livecodebench":
+            prompt, system_msg, exec_meta = format_livecodebench_question(doc)
+            gold = "pass"
+        else:
+            raise ValueError(f"Unknown benchmark: {benchmark_name}")
+
+        async with semaphore:
+            response = await call_with_retries(
+                http_client,
+                base_url,
+                model,
+                prompt,
+                temperature,
+                max_tokens,
+                timeout,
+                system_message=system_msg,
+            )
+
+        if response is None:
+            result = QuestionResult(
+                question_id=idx,
+                prompt=prompt,
+                response="",
+                extracted_answer=None,
+                gold_answer=gold,
+                correct=False,
+                error="API failure after retries",
+            )
+        elif config.kind == "mc":
+            extracted = extract_mc_answer(response, valid_letters)
+            result = QuestionResult(
+                question_id=idx,
+                prompt=prompt,
+                response=response,
+                extracted_answer=extracted,
+                gold_answer=gold,
+                correct=(extracted == gold) if extracted else False,
+            )
+        elif config.kind == "math":
+            extracted = extract_boxed_answer(response)
+            correct = check_aime_answer(extracted, int(gold)) if extracted else False
+            result = QuestionResult(
+                question_id=idx,
+                prompt=prompt,
+                response=response,
+                extracted_answer=extracted,
+                gold_answer=gold,
+                correct=correct,
+            )
+        elif config.kind == "code":
+            code = extract_code_block(response)
+            if code is None:
+                result = QuestionResult(
+                    question_id=idx,
+                    prompt=prompt,
+                    response=response,
+                    extracted_answer=None,
+                    gold_answer=gold,
+                    correct=False,
+                    error="No code block extracted",
+                )
+            elif benchmark_name == "humaneval":
+                passed = run_humaneval_test(
+                    exec_meta["prompt"],
+                    code,
+                    exec_meta["test"],
+                    exec_meta["entry_point"],
+                )
+                result = QuestionResult(
+                    question_id=idx,
+                    prompt=prompt,
+                    response=response,
+                    extracted_answer="pass" if passed else "fail",
+                    gold_answer=gold,
+                    correct=passed,
+                )
+            elif benchmark_name == "livecodebench":
+                passed = run_livecodebench_test(
+                    code,
+                    exec_meta["test_inputs"],
+                    exec_meta["test_outputs"],
+                    exec_meta["test_type"],
+                    exec_meta["func_name"],
+                )
+                result = QuestionResult(
+                    question_id=idx,
+                    prompt=prompt,
+                    response=response,
+                    extracted_answer="pass" if passed else "fail",
+                    gold_answer=gold,
+                    correct=passed,
+                )
+            else:
+                result = QuestionResult(
+                    question_id=idx,
+                    prompt=prompt,
+                    response=response,
+                    extracted_answer=None,
+                    gold_answer=gold,
+                    correct=False,
+                    error="Unknown code benchmark",
+                )
+        else:
+            result = QuestionResult(
+                question_id=idx,
+                prompt=prompt,
+                response=response,
+                extracted_answer=None,
+                gold_answer=gold,
+                correct=False,
+                error="Unsupported kind",
+            )
+
+        results[idx] = result
+
+        async with lock:
+            completed += 1
+            n = completed
+        if n % max(1, total // 20) == 0 or n == total:
+            correct_so_far = sum(1 for r in results if r is not None and r.correct)
+            answered = sum(1 for r in results if r is not None)
+            logger.info(
+                f"  [{n}/{total}] {correct_so_far}/{answered} correct "
+                f"({correct_so_far / max(answered, 1):.1%})"
+            )
+
+    async with httpx.AsyncClient() as http_client:
+        tasks = [process_question(i, doc, http_client) for i, doc in enumerate(ds)]
+        await asyncio.gather(*tasks)
+
+    return [r for r in results if r is not None]
+
+
+# ---------------------------------------------------------------------------
+# Results display
+# ---------------------------------------------------------------------------
+
+
+def print_results(
+    benchmark_name: str,
+    results: list[QuestionResult],
+    concurrency: int | None = None,
+) -> dict[str, Any]:
+    total = len(results)
+    correct = sum(r.correct for r in results)
+    errors = sum(1 for r in results if r.error)
+    no_extract = sum(1 for r in results if r.extracted_answer is None and not r.error)
+    accuracy = correct / max(total, 1)
+
+    label = f"[c={concurrency}] " if concurrency is not None else ""
+    print(f"\n{label}{benchmark_name}: {correct}/{total} ({accuracy:.1%})")
+    if errors:
+        print(f"  API errors: {errors}")
+    if no_extract:
+        print(f"  No answer extracted: {no_extract}")
+
+    return {
+        "benchmark": benchmark_name,
+        "accuracy": accuracy,
+        "correct": correct,
+        "total": total,
+        "errors": errors,
+        "no_extract": no_extract,
+    }
+
+
+def print_comparison(
+    benchmark_name: str,
+    results_by_c: dict[int, list[QuestionResult]],
+) -> None:
+    levels = sorted(results_by_c.keys())
+    print(f"\n{'=' * 70}")
+    print(f"COMPARISON: {benchmark_name}")
+    print(f"{'=' * 70}")
+
+    header = f"{'Concurrency':<15} {'Accuracy':>10} {'Correct':>10} {'Total':>10}"
+    print(header)
+    print("-" * len(header))
+    for c in levels:
+        r = results_by_c[c]
+        correct = sum(q.correct for q in r)
+        total = len(r)
+        print(f"c={c:<13} {correct / max(total, 1):>10.1%} {correct:>10} {total:>10}")
+
+    if len(levels) >= 2:
+        base_results = results_by_c[levels[0]]
+        test_results = results_by_c[levels[-1]]
+        changed = sum(
+            1
+            for br, tr in zip(base_results, test_results, strict=True)
+            if br.correct != tr.correct
+        )
+        total = min(len(base_results), len(test_results))
+        print(
+            f"\nQuestions with different correctness (c={levels[0]} vs c={levels[-1]}): {changed}/{total}"
+        )
+        if changed == 0:
+            print("Batching produced identical quality.")
+        elif changed <= total * 0.01:
+            print("Negligible quality difference from batching.")
+        else:
+            print(
+                f"WARNING: {changed / max(total, 1) * 100:.1f}% of questions changed."
+            )
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Interactive task picker
+# ---------------------------------------------------------------------------
+
+
+def pick_tasks_interactive() -> list[str]:
     import termios
     import tty
 
     if not sys.stdin.isatty():
-        logger.error("No --tasks specified and stdin is not a terminal. Use --tasks to specify tasks.")
-        return ""
+        logger.error("No --tasks specified and stdin is not a terminal.")
+        return []
 
-    selected: list[bool] = [False] * len(_AVAILABLE_TASKS)
+    items = [(name, cfg.description) for name, cfg in BENCHMARKS.items()]
+    selected: list[bool] = [False] * len(items)
     cursor = 0
-    total_lines = len(_AVAILABLE_TASKS) + 4  # header + blank + tasks + blank + status
+    total_lines = len(items) + 4
 
     def write(s: str) -> None:
         sys.stdout.write(s)
 
     def render(first: bool = False) -> None:
         if not first:
-            # Move cursor to top of our output area
             write(f"\033[{total_lines}A")
-        # Clear from cursor to end of screen
         write("\033[J")
-        write("\033[1mSelect tasks\033[0m (up/down move, space toggle, enter confirm, q quit)\r\n\r\n")
-        for i, (name, desc) in enumerate(_AVAILABLE_TASKS):
+        write(
+            "\033[1mSelect benchmarks\033[0m (up/down, space toggle, enter confirm, q quit)\r\n\r\n"
+        )
+        for i, (name, desc) in enumerate(items):
             marker = ">" if i == cursor else " "
             check = "x" if selected[i] else " "
-            if i == cursor:
-                write(f"\033[7m  {marker} [{check}] {name:<35} {desc}\033[0m\r\n")
-            else:
-                write(f"  {marker} [{check}] {name:<35} {desc}\r\n")
-        n = sum(selected)
-        write(f"\r\n  {n} task{'s' if n != 1 else ''} selected\r\n")
+            line = f"  {marker} [{check}] {name:<17} {desc}"
+            write(f"\033[7m{line}\033[0m\r\n" if i == cursor else f"{line}\r\n")
+        write(f"\r\n  {sum(selected)} selected\r\n")
         sys.stdout.flush()
 
     fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
+    old = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
-        # Hide cursor
         write("\033[?25l")
         render(first=True)
         while True:
             ch = sys.stdin.read(1)
-            if ch == "q" or ch == "\x03":  # q or Ctrl-C
+            if ch in ("q", "\x03"):
                 write("\033[?25h\033[0m\r\n")
-                return ""
-            elif ch == "\r" or ch == "\n":
+                return []
+            elif ch in ("\r", "\n"):
                 break
             elif ch == " ":
                 selected[cursor] = not selected[cursor]
-            elif ch == "\x1b":  # escape sequence
+            elif ch == "\x1b":
                 seq = sys.stdin.read(2)
-                if seq == "[A":  # up
-                    cursor = (cursor - 1) % len(_AVAILABLE_TASKS)
-                elif seq == "[B":  # down
-                    cursor = (cursor + 1) % len(_AVAILABLE_TASKS)
+                if seq == "[A":
+                    cursor = (cursor - 1) % len(items)
+                elif seq == "[B":
+                    cursor = (cursor + 1) % len(items)
             render()
     finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        # Show cursor
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
         write("\033[?25h\033[0m\r\n")
         sys.stdout.flush()
 
-    chosen = [name for (name, _), sel in zip(_AVAILABLE_TASKS, selected) if sel]
-    if not chosen:
-        logger.warning("No tasks selected.")
-        return ""
-    tasks = ",".join(chosen)
-    logger.info(f"Selected tasks: {tasks}")
-    return tasks
+    chosen = [name for (name, _), sel in zip(items, selected, strict=True) if sel]
+    if chosen:
+        logger.info(f"Selected: {', '.join(chosen)}")
+    return chosen
 
 
-def fetch_context_length(model_id: str) -> int:
-    """Fetch max context length from the model's HuggingFace config.json."""
-    try:
-        from huggingface_hub import hf_hub_download
-        config_path = hf_hub_download(model_id, "config.json")
-        with open(config_path) as f:
-            config = json.load(f)
-        for key in ("max_position_embeddings", "max_sequence_length", "seq_length", "n_positions"):
-            if key in config:
-                return int(config[key])
-    except Exception as e:
-        logger.warning(f"Could not fetch context length from HuggingFace: {e}")
-    return 4096
+# ---------------------------------------------------------------------------
+# Results persistence
+# ---------------------------------------------------------------------------
+
+
+def save_results(
+    results_dir: str,
+    benchmark_name: str,
+    model: str,
+    concurrency: int,
+    results: list[QuestionResult],
+    scores: dict[str, Any],
+) -> Path:
+    out_dir = Path(results_dir) / model.replace("/", "_") / benchmark_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    path = out_dir / f"c{concurrency}_{ts}.json"
+
+    data = {
+        "benchmark": benchmark_name,
+        "model": model,
+        "concurrency": concurrency,
+        "scores": scores,
+        "results": [
+            {
+                "question_id": r.question_id,
+                "extracted_answer": r.extracted_answer,
+                "gold_answer": r.gold_answer,
+                "correct": r.correct,
+                "error": r.error,
+                "response_length": len(r.response),
+            }
+            for r in results
+        ],
+    }
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+    logger.info(f"Results saved to {path}")
+    return path
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 
 def parse_int_list(values: list[str]) -> list[int]:
     items: list[int] = []
     for v in values:
         for part in v.split(","):
-            part = part.strip()
-            if part:
-                items.append(int(part))
+            if part.strip():
+                items.append(int(part.strip()))
     return items
-
-
-def build_lm_eval_cmd(
-    *,
-    model_id: str,
-    base_url: str,
-    tasks: str,
-    num_concurrent: int,
-    timeout: int,
-    max_gen_toks: int,
-    num_fewshot: int | None,
-    limit: int | None,
-    output_path: str,
-    tasks_dir: str,
-    extra_args: list[str],
-) -> list[str]:
-    model_args = (
-        f"model={model_id},"
-        f"base_url={base_url},"
-        f"num_concurrent={num_concurrent},"
-        f"tokenized_requests=False,"
-        f"max_gen_toks={max_gen_toks},"
-        f"timeout={timeout}"
-    )
-
-    cmd = [
-        sys.executable,
-        "-m",
-        "lm_eval",
-        "--model",
-        "local-chat-completions",
-        "--tasks",
-        tasks,
-        "--model_args",
-        model_args,
-        "--apply_chat_template",
-        "--log_samples",
-        # Override task-level stop tokens — many tasks use problematic ones like '.'
-        # that break chat completions. <|im_end|> is the correct stop for chat models.
-        "--gen_kwargs",
-        "until=<|im_end|>",
-        # Include custom task configs (e.g. hendrycks_math_chat with math_verify)
-        "--include_path",
-        tasks_dir,
-        "--output_path",
-        output_path,
-    ]
-
-    if num_fewshot is not None:
-        cmd.extend(["--num_fewshot", str(num_fewshot)])
-    if limit is not None:
-        cmd.extend(["--limit", str(limit)])
-
-    cmd.extend(extra_args)
-    return cmd
-
-
-def run_lm_eval(cmd: list[str]) -> int:
-    logger.info(f"Running: {' '.join(cmd)}")
-    proc = subprocess.run(cmd)
-    return proc.returncode
-
-
-def load_results(results_dir: str) -> dict[str, Any] | None:
-    results_path = Path(results_dir)
-    if not results_path.exists():
-        return None
-
-    # lm-eval writes results to {output_path}/{model_name}/{timestamp}/results.json
-    # Find the most recent results.json
-    results_files = sorted(results_path.rglob("results.json"), key=lambda p: p.stat().st_mtime)
-    if not results_files:
-        return None
-
-    with open(results_files[-1]) as f:
-        return json.load(f)
-
-
-def extract_scores(results: dict[str, Any]) -> dict[str, dict[str, float]]:
-    """Extract task -> {metric: score} from lm-eval results JSON."""
-    scores: dict[str, dict[str, float]] = {}
-    for task_name, task_data in results.get("results", {}).items():
-        task_scores: dict[str, float] = {}
-        for key, value in task_data.items():
-            if key.endswith(",none") or key.endswith(",flexible-extract") or key.endswith(",strict-match"):
-                # Strip the filter suffix for readability
-                metric = key.rsplit(",", 1)[0]
-                if isinstance(value, (int, float)):
-                    task_scores[metric] = float(value)
-        if task_scores:
-            scores[task_name] = task_scores
-    return scores
-
-
-def print_comparison(
-    results_by_concurrency: dict[int, dict[str, dict[str, float]]],
-) -> None:
-    """Print a comparison table across concurrency levels."""
-    concurrency_levels = sorted(results_by_concurrency.keys())
-
-    # Collect all tasks and metrics
-    all_tasks: set[str] = set()
-    for scores in results_by_concurrency.values():
-        all_tasks.update(scores.keys())
-
-    print("\n" + "=" * 80)
-    print("QUALITY COMPARISON ACROSS CONCURRENCY LEVELS")
-    print("=" * 80)
-
-    header = f"{'Task':<30} {'Metric':<20}"
-    for c in concurrency_levels:
-        header += f" {'c=' + str(c):>10}"
-    if len(concurrency_levels) > 1:
-        header += f" {'Delta':>10}"
-    print(header)
-    print("-" * len(header))
-
-    for task in sorted(all_tasks):
-        # Collect metrics from all concurrency levels for this task
-        all_metrics: set[str] = set()
-        for scores in results_by_concurrency.values():
-            if task in scores:
-                all_metrics.update(scores[task].keys())
-
-        for metric in sorted(all_metrics):
-            row = f"{task:<30} {metric:<20}"
-            values: list[float] = []
-            for c in concurrency_levels:
-                val = results_by_concurrency.get(c, {}).get(task, {}).get(metric)
-                if val is not None:
-                    row += f" {val:>10.4f}"
-                    values.append(val)
-                else:
-                    row += f" {'N/A':>10}"
-
-            if len(values) >= 2:
-                delta = values[-1] - values[0]
-                marker = " " if abs(delta) < 0.001 else (" !!!" if abs(delta) > 0.05 else " *")
-                row += f" {delta:>+10.4f}{marker}"
-
-            print(row)
-
-    print()
-    if len(concurrency_levels) > 1:
-        print("Legend: !!! = >5% delta (significant), * = >0.1% delta (minor)")
-    print()
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(
         prog="exo-eval",
-        description="Run quality evaluations (MMLU, GSM8K, etc.) against exo.",
+        description="Quality evaluation for exo — matches Artificial Analysis methodology.",
     )
     add_common_instance_args(ap)
+
     ap.add_argument(
         "--tasks",
         default=None,
-        help=(
-            "Comma-separated lm-eval task names. "
-            "If omitted, shows an interactive picker. "
-            "Only generate_until tasks work with chat APIs."
-        ),
-    )
-    ap.add_argument(
-        "--num-fewshot",
-        type=int,
-        default=None,
-        help="Number of few-shot examples. If not set, uses lm-eval task default.",
+        help="Comma-separated benchmark names. Omit for interactive picker.",
     )
     ap.add_argument(
         "--limit",
         type=int,
         default=None,
-        help="Max examples per task (for faster iteration).",
+        help="Max questions per benchmark (for fast iteration).",
+    )
+
+    reasoning_group = ap.add_mutually_exclusive_group()
+    reasoning_group.add_argument(
+        "--reasoning",
+        action="store_true",
+        default=None,
+        help="Force reasoning-model settings (temperature=0.6, max_tokens=65536).",
+    )
+    reasoning_group.add_argument(
+        "--no-reasoning",
+        action="store_true",
+        default=False,
+        help="Force non-reasoning settings (temperature=0, max_tokens=16384).",
+    )
+
+    ap.add_argument(
+        "--temperature", type=float, default=None, help="Override temperature."
+    )
+    ap.add_argument(
+        "--max-tokens", type=int, default=None, help="Override max output tokens."
     )
     ap.add_argument(
         "--num-concurrent",
         type=int,
         default=1,
-        help="Number of concurrent requests to lm-eval API (default: 1).",
+        help="Concurrent API requests (default: 1).",
     )
     ap.add_argument(
         "--compare-concurrency",
         nargs="+",
         default=None,
-        help="Run eval at multiple concurrency levels and compare quality. E.g. --compare-concurrency 1,4",
+        help="Run at multiple concurrency levels and compare. E.g. --compare-concurrency 1,4",
     )
     ap.add_argument(
-        "--eval-timeout",
-        type=int,
-        default=7200,
-        help="Per-request timeout in seconds for lm-eval API calls (default: 7200).",
+        "--request-timeout",
+        type=float,
+        default=None,
+        help="Per-request timeout in seconds (default: no timeout).",
     )
     ap.add_argument(
         "--results-dir",
         default="eval_results",
-        help="Directory for lm-eval output (default: bench/eval_results).",
-    )
-    ap.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print the lm-eval command without running it.",
+        help="Directory for result JSON files (default: eval_results).",
     )
     ap.add_argument(
         "--skip-instance-setup",
         action="store_true",
-        help="Skip instance management (assume model is already running).",
+        help="Skip exo instance management (assumes model is already running).",
     )
 
-    args, extra_args = ap.parse_known_args()
-    extra_args = [a for a in extra_args if a != "--"]
+    args, _ = ap.parse_known_args()
 
-    if args.tasks is None:
-        args.tasks = pick_tasks_interactive()
-        if not args.tasks:
-            return 0
+    # Resolve tasks
+    if args.tasks:
+        task_names = [t.strip() for t in args.tasks.split(",") if t.strip()]
+    else:
+        task_names = pick_tasks_interactive()
+    if not task_names:
+        return 0
 
-    # Block tasks that don't work with chat completions APIs
-    _BROKEN_EXTRACTION = {
-        "hendrycks_math": "hendrycks_math_chat",
-        "hendrycks_math_algebra": "hendrycks_math_chat_algebra",
-        "hendrycks_math_counting_and_prob": "hendrycks_math_chat_counting_and_prob",
-        "hendrycks_math_geometry": "hendrycks_math_chat_geometry",
-        "hendrycks_math_intermediate_algebra": "hendrycks_math_chat_intermediate_algebra",
-        "hendrycks_math_num_theory": "hendrycks_math_chat_num_theory",
-        "hendrycks_math_prealgebra": "hendrycks_math_chat_prealgebra",
-        "hendrycks_math_precalc": "hendrycks_math_chat_precalc",
-    }
-    _LOGLIKELIHOOD_TASKS = {
-        "mmlu", "hellaswag", "arc_easy", "arc_challenge", "winogrande",
-        "piqa", "boolq", "openbookqa", "sciq", "lambada_openai",
-        "gpqa_diamond_zeroshot", "gpqa_diamond_n_shot",
-        "gpqa_main_zeroshot", "gpqa_main_n_shot",
-        "gpqa_extended_zeroshot", "gpqa_extended_n_shot",
-    }
-    for task in args.tasks.split(","):
-        task = task.strip()
-        if task in _BROKEN_EXTRACTION:
-            logger.error(
-                f"Task '{task}' has broken answer extraction for chat models. "
-                f"Use '{_BROKEN_EXTRACTION[task]}' instead (same benchmark, uses math_verify)."
-            )
-            return 1
-        if task in _LOGLIKELIHOOD_TASKS:
-            logger.error(
-                f"Task '{task}' uses loglikelihood scoring which doesn't work with chat completions APIs. "
-                f"Use generate_until tasks instead: gsm8k, hendrycks_math_chat, drop, ifeval, "
-                f"truthfulqa_gen, triviaqa, gpqa_diamond_cot_zeroshot, leaderboard_bbh, humaneval, mbpp"
-            )
+    for t in task_names:
+        if t not in BENCHMARKS:
+            logger.error(f"Unknown benchmark '{t}'. Available: {', '.join(BENCHMARKS)}")
             return 1
 
+    # Instance management
     client = ExoClient(args.host, args.port, timeout_s=args.timeout)
-
     instance_id: str | None = None
 
     if not args.skip_instance_setup:
         short_id, full_model_id = resolve_model_short_id(
-            client, args.model, force_download=args.force_download
+            client,
+            args.model,
+            force_download=args.force_download,
         )
-
         selected = settle_and_fetch_placements(
-            client, full_model_id, args, settle_timeout=args.settle_timeout
+            client,
+            full_model_id,
+            args,
+            settle_timeout=args.settle_timeout,
         )
-
         if not selected:
             logger.error("No valid placements matched your filters.")
             return 1
@@ -451,23 +1062,18 @@ def main() -> int:
             ),
             reverse=True,
         )
-
         preview = selected[0]
         instance = preview["instance"]
         instance_id = instance_id_from_instance(instance)
-        sharding = str(preview["sharding"])
-        instance_meta = str(preview["instance_meta"])
-        n_nodes = nodes_used_in_instance(instance)
 
         logger.info(
-            f"PLACEMENT: {sharding} / {instance_meta} / nodes={n_nodes}"
+            f"PLACEMENT: {preview['sharding']} / {preview['instance_meta']} / "
+            f"nodes={nodes_used_in_instance(instance)}"
         )
 
         settle_deadline = (
             time.monotonic() + args.settle_timeout if args.settle_timeout > 0 else None
         )
-
-        logger.info("Planning phase: checking downloads...")
         download_duration = run_planning_phase(
             client,
             full_model_id,
@@ -478,104 +1084,116 @@ def main() -> int:
         )
         if download_duration is not None:
             logger.info(f"Download: {download_duration:.1f}s")
-        else:
-            logger.info("Download: model already cached")
 
         client.request_json("POST", "/instance", body={"instance": instance})
         try:
             wait_for_instance_ready(client, instance_id)
         except (RuntimeError, TimeoutError) as e:
-            logger.error(f"Failed to initialize placement: {e}")
+            logger.error(f"Failed to initialize: {e}")
             with contextlib.suppress(ExoHttpError):
                 client.request_json("DELETE", f"/instance/{instance_id}")
             return 1
-
         time.sleep(1)
     else:
-        # No instance management — just use the model arg directly
         full_model_id = args.model
 
-    max_gen_toks = fetch_context_length(full_model_id)
-    logger.info(f"max_gen_toks={max_gen_toks} (from model context_length)")
+    # Auto-detect reasoning from model config
+    model_config = load_model_config(full_model_id)
+    if args.reasoning:
+        is_reasoning = True
+    elif args.no_reasoning:
+        is_reasoning = False
+    elif model_config is not None:
+        is_reasoning = model_config.get("reasoning", False)
+        logger.info(
+            f"Auto-detected from config: {model_config['name']} → "
+            f"{'reasoning' if is_reasoning else 'non-reasoning'}"
+        )
+    else:
+        is_reasoning = False
+        logger.warning(
+            f"Model '{full_model_id}' not found in eval_configs/models.toml. "
+            f"Defaulting to non-reasoning. Use --reasoning to override."
+        )
 
-    base_url = f"http://{args.host}:{args.port}/v1/chat/completions"
-    tasks_dir = str(Path(__file__).resolve().parent / "tasks")
+    # Resolve temperature and max_tokens
+    if args.temperature is not None:
+        temperature = args.temperature
+    else:
+        temperature = (
+            TEMPERATURE_REASONING if is_reasoning else TEMPERATURE_NON_REASONING
+        )
+
+    if args.max_tokens is not None:
+        max_tokens = args.max_tokens
+    else:
+        max_tokens = REASONING_MAX_TOKENS if is_reasoning else DEFAULT_MAX_TOKENS
+
+    base_url = f"http://{args.host}:{args.port}"
+
+    logger.info(f"Model: {full_model_id}")
+    logger.info(
+        f"Settings: temperature={temperature}, max_tokens={max_tokens}, "
+        f"reasoning={'yes' if is_reasoning else 'no'}"
+    )
 
     try:
         if args.compare_concurrency:
             concurrency_levels = parse_int_list(args.compare_concurrency)
-            results_by_concurrency: dict[int, dict[str, dict[str, float]]] = {}
-
-            for concurrency in concurrency_levels:
-                output_path = f"{args.results_dir}/c{concurrency}"
-                cmd = build_lm_eval_cmd(
-                    model_id=full_model_id,
-                    base_url=base_url,
-                    tasks=args.tasks,
-                    num_concurrent=concurrency,
-                    timeout=args.eval_timeout,
-                    max_gen_toks=max_gen_toks,
-                    num_fewshot=args.num_fewshot,
-                    limit=args.limit,
-                    output_path=output_path,
-                    tasks_dir=tasks_dir,
-                    extra_args=extra_args,
-                )
-
-                if args.dry_run:
-                    print(f"[c={concurrency}] {' '.join(cmd)}")
-                    continue
-
-                logger.info(f"Running eval at concurrency={concurrency}")
-                rc = run_lm_eval(cmd)
-                if rc != 0:
-                    logger.error(f"lm-eval failed with exit code {rc} at concurrency={concurrency}")
-                    continue
-
-                results = load_results(output_path)
-                if results:
-                    scores = extract_scores(results)
-                    results_by_concurrency[concurrency] = scores
-
-            if not args.dry_run and results_by_concurrency:
-                print_comparison(results_by_concurrency)
-
+            for task_name in task_names:
+                results_by_c: dict[int, list[QuestionResult]] = {}
+                for c in concurrency_levels:
+                    logger.info(f"\n{'=' * 50}")
+                    logger.info(f"Running {task_name} at concurrency={c}")
+                    results = asyncio.run(
+                        evaluate_benchmark(
+                            task_name,
+                            base_url,
+                            full_model_id,
+                            temperature,
+                            max_tokens,
+                            concurrency=c,
+                            limit=args.limit,
+                            timeout=args.request_timeout,
+                        )
+                    )
+                    if results:
+                        scores = print_results(task_name, results, concurrency=c)
+                        save_results(
+                            args.results_dir,
+                            task_name,
+                            full_model_id,
+                            c,
+                            results,
+                            scores,
+                        )
+                        results_by_c[c] = results
+                if len(results_by_c) >= 2:
+                    print_comparison(task_name, results_by_c)
         else:
-            cmd = build_lm_eval_cmd(
-                model_id=full_model_id,
-                base_url=base_url,
-                tasks=args.tasks,
-                num_concurrent=args.num_concurrent,
-                timeout=args.eval_timeout,
-                max_gen_toks=max_gen_toks,
-                num_fewshot=args.num_fewshot,
-                limit=args.limit,
-                output_path=args.results_dir,
-                tasks_dir=tasks_dir,
-                extra_args=extra_args,
-            )
-
-            if args.dry_run:
-                print(" ".join(cmd))
-                return 0
-
-            rc = run_lm_eval(cmd)
-            if rc != 0:
-                logger.error(f"lm-eval failed with exit code {rc}")
-                return rc
-
-            results = load_results(args.results_dir)
-            if results:
-                scores = extract_scores(results)
-                # Print a simple summary
-                print("\n" + "=" * 60)
-                print("EVALUATION RESULTS")
-                print("=" * 60)
-                for task, metrics in sorted(scores.items()):
-                    for metric, value in sorted(metrics.items()):
-                        print(f"  {task:<30} {metric:<20} {value:.4f}")
-                print()
-
+            for task_name in task_names:
+                results = asyncio.run(
+                    evaluate_benchmark(
+                        task_name,
+                        base_url,
+                        full_model_id,
+                        temperature,
+                        max_tokens,
+                        concurrency=args.num_concurrent,
+                        limit=args.limit,
+                        timeout=args.request_timeout,
+                    )
+                )
+                if results:
+                    scores = print_results(task_name, results)
+                    save_results(
+                        args.results_dir,
+                        task_name,
+                        full_model_id,
+                        args.num_concurrent,
+                        results,
+                        scores,
+                    )
     finally:
         if instance_id is not None:
             try:
@@ -584,7 +1202,6 @@ def main() -> int:
                 if e.status != 404:
                     raise
             wait_for_instance_gone(client, instance_id)
-            logger.debug(f"Deleted instance {instance_id}")
 
     return 0
 

@@ -11,6 +11,8 @@ dependencies = [
   "tiktoken>=0.12.0",
   "jinja2>=3.1.0",
   "protobuf>=5.29.0",
+  "datasets>=2.0.0",
+  "math-verify>=0.7.0",
   "lm-eval[api,math]>=0.4.0",
 ]
 

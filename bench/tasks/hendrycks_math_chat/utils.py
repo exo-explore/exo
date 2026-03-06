@@ -28,10 +28,7 @@ def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
     parsed_candidate = parse(candidate)
     parsed_gold = parse(doc["solution"], extraction_config=[LatexExtractionConfig()])
 
-    if verify(parsed_gold, parsed_candidate):
-        retval = 1
-    else:
-        retval = 0
+    retval = 1 if verify(parsed_gold, parsed_candidate) else 0
 
     return {"exact_match": retval}
 
