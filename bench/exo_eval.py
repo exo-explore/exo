@@ -678,6 +678,7 @@ async def evaluate_benchmark(
             stats = {
                 "prompt_tokens": api_result.prompt_tokens,
                 "completion_tokens": api_result.completion_tokens,
+                "reasoning_tokens": api_result.reasoning_tokens,
                 "elapsed_s": elapsed,
             }
 
@@ -813,17 +814,21 @@ def print_results(
 
     total_prompt_tokens = sum(r.prompt_tokens for r in results)
     total_completion_tokens = sum(r.completion_tokens for r in results)
+    total_reasoning_tokens = sum(r.reasoning_tokens for r in results)
     total_elapsed = sum(r.elapsed_s for r in results)
     wall_clock = max(r.elapsed_s for r in results) if results else 0.0
     avg_gen_tps = total_completion_tokens / total_elapsed if total_elapsed > 0 else 0.0
 
     label = f"[c={concurrency}] " if concurrency is not None else ""
     print(f"\n{label}{benchmark_name}: {correct}/{total} ({accuracy:.1%})")
-    print(
-        f"  tokens: {total_prompt_tokens:,} prompt + {total_completion_tokens:,} completion"
+    tok_line = f"  tokens: {total_prompt_tokens:,} prompt + {total_completion_tokens:,} completion"
+    if total_reasoning_tokens > 0:
+        tok_line += f" ({total_reasoning_tokens:,} reasoning)"
+    tok_line += (
         f"  |  avg gen tps: {avg_gen_tps:.1f}"
         f"  |  total time: {total_elapsed:.1f}s  wall clock: {wall_clock:.1f}s"
     )
+    print(tok_line)
     if errors:
         print(f"  API errors: {errors}")
     if no_extract:
@@ -838,6 +843,7 @@ def print_results(
         "no_extract": no_extract,
         "total_prompt_tokens": total_prompt_tokens,
         "total_completion_tokens": total_completion_tokens,
+        "total_reasoning_tokens": total_reasoning_tokens,
         "total_elapsed_s": total_elapsed,
         "wall_clock_s": wall_clock,
         "avg_gen_tps": avg_gen_tps,
@@ -994,6 +1000,7 @@ def save_results(
                 "response_length": len(r.response),
                 "prompt_tokens": r.prompt_tokens,
                 "completion_tokens": r.completion_tokens,
+                "reasoning_tokens": r.reasoning_tokens,
                 "elapsed_s": round(r.elapsed_s, 2),
             }
             for r in results
