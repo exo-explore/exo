@@ -133,6 +133,16 @@ class DownloadCoordinator:
         if model_id in self.active_downloads and model_id in self.download_status:
             logger.info(f"Cancelling download for {model_id}")
             self.active_downloads.pop(model_id).cancel()
+            current_status = self.download_status[model_id]
+            pending = DownloadPending(
+                shard_metadata=current_status.shard_metadata,
+                node_id=self.node_id,
+                model_directory=self._model_dir(model_id),
+            )
+            self.download_status[model_id] = pending
+            await self.event_sender.send(
+                NodeDownloadProgress(download_progress=pending)
+            )
 
     async def _start_download(self, shard: ShardMetadata) -> None:
         model_id = shard.model_card.model_id
