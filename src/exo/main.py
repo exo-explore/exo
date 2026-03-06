@@ -338,6 +338,8 @@ class Args(FrozenModel):
     no_stdio: bool = False
     bootstrap_peers: list[str] = []
     libp2p_port: int
+    max_storage_gb: float | None = None
+    storage_policy: StoragePolicy = "manual"
 
     @classmethod
     def parse(cls) -> Self:
@@ -429,6 +431,20 @@ class Args(FrozenModel):
             action="store_false",
             dest="fast_synch",
             help="Force MLX FAST_SYNCH off",
+        )
+        parser.add_argument(
+            "--max-storage-gb",
+            type=float,
+            dest="max_storage_gb",
+            default=None,
+            help="Maximum storage for downloaded models in GB (default: unlimited)",
+        )
+        parser.add_argument(
+            "--storage-policy",
+            choices=["manual", "auto-evict"],
+            dest="storage_policy",
+            default="manual",
+            help="Storage policy: 'manual' rejects on exceed, 'auto-evict' removes LRU models",
         )
 
         args = parser.parse_args()
