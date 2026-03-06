@@ -297,8 +297,8 @@ class DownloadCoordinator:
             del self.download_status[model_id]
 
     async def _emit_existing_download_progress(self) -> None:
-        try:
-            while True:
+        while True:
+            try:
                 logger.debug(
                     "DownloadCoordinator: Fetching and emitting existing download progress..."
                 )
@@ -386,8 +386,8 @@ class DownloadCoordinator:
                 logger.debug(
                     "DownloadCoordinator: Done emitting existing download progress."
                 )
-                await anyio.sleep(60)
-        except Exception as e:
-            logger.error(
-                f"DownloadCoordinator: Error emitting existing download progress: {e}"
-            )
+            except Exception as e:
+                logger.error(
+                    f"DownloadCoordinator: Error emitting existing download progress: {e}"
+                )
+            await anyio.sleep(60)
