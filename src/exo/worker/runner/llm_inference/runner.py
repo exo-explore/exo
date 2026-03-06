@@ -216,6 +216,8 @@ class Runner:
                         tok.tool_parser,  # pyright: ignore[reportAny]
                     )
 
+                self.generator.kv_prefix_cache = KVPrefixCache(self.generator.group)
+
                 self.generator = self.generator.build()
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
