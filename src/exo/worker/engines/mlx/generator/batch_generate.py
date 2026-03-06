@@ -6,7 +6,7 @@ import mlx.core as mx
 from mlx_lm.generate import (
     BatchGenerator as MlxBatchGenerator,
 )
-from mlx_lm.models.cache import BatchKVCache, RotatingKVCache
+from mlx_lm.models.cache import RotatingKVCache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
@@ -37,29 +37,6 @@ from exo.worker.engines.mlx.generator.generate import (
 )
 from exo.worker.engines.mlx.utils_mlx import fix_unmatched_think_end_tokens
 from exo.worker.runner.bootstrap import logger
-
-# KVCache.make_mask returns None for N=1, but BatchKVCache.make_mask always returns a
-# real mask array. Passing a redundant all-True mask to SDPA produces broken output.
-# Return None when the mask would be all-True.
-_orig_make_mask: Any = BatchKVCache.make_mask  # type: ignore
-
-
-def _patched_batch_make_mask(
-    self: BatchKVCache, n: int, return_array: bool = False, **kwargs: object
-) -> mx.array | str | None:
-    if (
-        n == 1
-        and kwargs.get("window_size") is None
-        and bool(mx.all(self.left_padding == 0).item())  # type: ignore
-    ):
-        return None
-    return cast(
-        mx.array | str | None,
-        _orig_make_mask(self, n, return_array=return_array, **kwargs),
-    )
-
-
-BatchKVCache.make_mask = _patched_batch_make_mask  # type: ignore
 
 _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
 
