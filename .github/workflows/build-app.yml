@@ -285,9 +285,20 @@ jobs:
           security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" "$BUILD_KEYCHAIN_PATH"
           SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$BUILD_KEYCHAIN_PATH" | awk -F '"' '{print $2}')
           RUNTIME_DIR="EXO.app/Contents/Resources/exo"
-          find "$RUNTIME_DIR" -type f \( -perm -111 -o -name "*.dylib" -o -name "*.so" \) -print0 |
+          RUNTIME_ENTITLEMENTS="$GITHUB_WORKSPACE/packaging/entitlements/runtime.entitlements"
+
+          # Sign .so and .dylib files first (no entitlements needed for libraries)
+          find "$RUNTIME_DIR" -type f \( -name "*.dylib" -o -name "*.so" \) -print0 |
             while IFS= read -r -d '' file; do
               /usr/bin/codesign --force --timestamp --options runtime \
+                --sign "$SIGNING_IDENTITY" "$file"
+            done
+
+          # Sign executables with entitlements (they load libraries via dlopen)
+          find "$RUNTIME_DIR" -type f -perm -111 ! -name "*.dylib" ! -name "*.so" -print0 |
+            while IFS= read -r -d '' file; do
+              /usr/bin/codesign --force --timestamp --options runtime \
+                --entitlements "$RUNTIME_ENTITLEMENTS" \
                 --sign "$SIGNING_IDENTITY" "$file"
             done
 
@@ -301,8 +312,29 @@ jobs:
           cd output
           security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" "$BUILD_KEYCHAIN_PATH"
           SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$BUILD_KEYCHAIN_PATH" | awk -F '"' '{print $2}')
-          /usr/bin/codesign --deep --force --timestamp --options runtime \
+          APP_ENTITLEMENTS="$GITHUB_WORKSPACE/app/EXO/EXO/EXO.entitlements"
+
+          # Sign frameworks (Sparkle) inside-out
+          find EXO.app/Contents/Frameworks -name "*.framework" -print0 | \
+            while IFS= read -r -d '' framework; do
+              /usr/bin/codesign --force --timestamp --options runtime \
+                --sign "$SIGNING_IDENTITY" "$framework"
+            done
+
+          # Sign the main app binary with entitlements (no --deep!)
+          /usr/bin/codesign --force --timestamp --options runtime \
+            --entitlements "$APP_ENTITLEMENTS" \
+            --sign "$SIGNING_IDENTITY" EXO.app/Contents/MacOS/EXO
+
+          # Sign the outer app bundle with entitlements
+          /usr/bin/codesign --force --timestamp --options runtime \
+            --entitlements "$APP_ENTITLEMENTS" \
             --sign "$SIGNING_IDENTITY" EXO.app
+
+          # Verify the complete signature chain
+          /usr/bin/codesign --verify --deep --strict --verbose=2 EXO.app
+          echo "Verifying entitlements are embedded:"
+          /usr/bin/codesign -d --entitlements - EXO.app/Contents/MacOS/EXO
           mkdir -p dmg-root
           cp -R EXO.app dmg-root/
           ln -s /Applications dmg-root/Applications
