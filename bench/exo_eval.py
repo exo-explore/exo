@@ -62,7 +62,7 @@ from loguru import logger
 
 MAX_RETRIES = 30
 DEFAULT_MAX_TOKENS = 16_384
-REASONING_MAX_TOKENS = 65_536
+REASONING_MAX_TOKENS = 131_072
 TEMPERATURE_NON_REASONING = 0.0
 TEMPERATURE_REASONING = 0.6
 
@@ -260,6 +260,7 @@ class QuestionResult:
     error: str | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    reasoning_tokens: int = 0
     elapsed_s: float = 0.0
 
 
@@ -486,6 +487,7 @@ class ApiResult:
     content: str
     prompt_tokens: int
     completion_tokens: int
+    reasoning_tokens: int
 
 
 async def _call_api(
@@ -519,10 +521,12 @@ async def _call_api(
     if not content or not content.strip():
         raise ValueError("Empty response from model")
     usage = data.get("usage", {})
+    details = usage.get("completion_tokens_details", {})
     return ApiResult(
         content=content,
         prompt_tokens=usage.get("prompt_tokens", 0),
         completion_tokens=usage.get("completion_tokens", 0),
+        reasoning_tokens=details.get("reasoning_tokens", 0) if details else 0,
     )
 
 
