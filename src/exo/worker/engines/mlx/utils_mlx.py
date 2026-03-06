@@ -680,8 +680,10 @@ def set_wired_limit_for_model(model_size: Memory):
             "MB. This can be slow. See the documentation for possible work-arounds: "
             "https://github.com/ml-explore/mlx-lm/tree/main#large-models"
         )
-    mx.set_wired_limit(max_rec_size.in_bytes)
-    logger.info(f"Wired limit set to {max_rec_size}.")
+    kv_cache_buffer = Memory.from_bytes(4 * 1024**3)
+    wired_limit = Memory.from_bytes(min(max_rec_size.in_bytes, (model_size + kv_cache_buffer).in_bytes))
+    mx.set_wired_limit(wired_limit.in_bytes)
+    logger.info(f"Wired limit set to {wired_limit} (model={model_size}, buffer={kv_cache_buffer}).")
 
 
 def mlx_cleanup(
