@@ -30,7 +30,7 @@ There are currently 5 major systems:
 
 ## API Layer
 
-The API system uses an adapter pattern to support multiple API formats while keeping the internal inference systems decoupled from API-specific logic.
+The API system uses multiple adapters to support multiple API formats, converting them to a single request / response type.
 
 ### Adapter Pattern
 
