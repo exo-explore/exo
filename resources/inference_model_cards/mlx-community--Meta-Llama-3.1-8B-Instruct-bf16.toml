@@ -1,6 +1,7 @@
 model_id = "mlx-community/Meta-Llama-3.1-8B-Instruct-bf16"
 n_layers = 32
 hidden_size = 4096
+num_key_value_heads = 8
 supports_tensor = true
 tasks = ["TextGeneration"]
 family = "llama"
