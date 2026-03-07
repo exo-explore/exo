@@ -41,13 +41,13 @@
 </script>
 
 <div
-  class="flex flex-col gap-1 py-2 px-1 border-r border-exo-yellow/10 bg-exo-medium-gray/30 min-w-[64px] overflow-y-auto scrollbar-hide"
+  class="flex flex-col gap-1 py-2 px-1 border-r border-exo-yellow/10 bg-exo-medium-gray/30 min-w-[72px] sm:min-w-[64px] overflow-y-auto scrollbar-hide"
 >
   <!-- All models (no filter) -->
   <button
     type="button"
     onclick={() => onSelect(null)}
-    class="group flex flex-col items-center justify-center p-2 rounded transition-all duration-200 cursor-pointer {selectedFamily ===
+    class="group flex flex-col items-center justify-center p-2 sm:p-2 rounded transition-all duration-200 cursor-pointer min-h-[44px] sm:min-h-0 {selectedFamily ===
     null
       ? 'bg-exo-yellow/20 border-l-2 border-exo-yellow'
       : 'hover:bg-white/5 border-l-2 border-transparent'}"
