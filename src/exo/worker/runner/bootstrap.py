@@ -76,15 +76,7 @@ def entrypoint(
         os.environ.setdefault("JIT", "1")
         os.environ.setdefault("BEAM", "2")
 
-        # Set TC based on sharding strategy:
-        # Tensor parallelism → TC=1, Pipeline → TC=0
-        from exo.shared.types.worker.shards import TensorShardMetadata
-
-        if not os.environ.get("TC"):
-            if isinstance(bound_instance.bound_shard, TensorShardMetadata):
-                os.environ["TC"] = "1"
-            else:
-                os.environ["TC"] = "0"
+        os.environ.setdefault("TC", "1")
 
     try:
         if is_tinygrad:
