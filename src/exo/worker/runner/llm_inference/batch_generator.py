@@ -133,15 +133,21 @@ class SequentialGenerator(InferenceGenerator):
         logger.info(f"warming up inference for instance: {self.model_id}")
 
         t = time.monotonic()
-        toks = warmup_inference(
-            model=self.model,
-            tokenizer=self.tokenizer,
-            group=self.group,
-        )
-        logger.info(f"warmed up by generating {toks} tokens")
-        check_for_cancel_every = min(
-            math.ceil(toks / min(time.monotonic() - t, 0.001)), 100
-        )
+        toks = 0
+        try:
+            toks = warmup_inference(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                group=self.group,
+            )
+            logger.info(f"warmed up by generating {toks} tokens")
+        except RuntimeError as e:
+            logger.warning(
+                f"Warmup inference failed (continuing without warmup): {e}"
+            )
+
+        elapsed = max(time.monotonic() - t, 0.001)
+        check_for_cancel_every = max(1, min(math.ceil(toks / elapsed), 100))
         if self.group is not None:
             self.check_for_cancel_every = int(
                 mx.max(
@@ -151,9 +157,12 @@ class SequentialGenerator(InferenceGenerator):
                     )
                 ).item()
             )
+        else:
+            self.check_for_cancel_every = check_for_cancel_every
 
         logger.info(
-            f"runner checking for cancellation every {check_for_cancel_every} tokens"
+            "runner checking for cancellation every "
+            f"{self.check_for_cancel_every} tokens"
         )
 
     def submit(
