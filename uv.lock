@@ -525,7 +525,7 @@ requires-dist = [
     { name = "mflux", specifier = "==0.15.5" },
     { name = "mlx", marker = "sys_platform == 'darwin'", git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks" },
     { name = "mlx", extras = ["cpu"], marker = "sys_platform == 'linux'", specifier = "==0.30.6" },
-    { name = "mlx-lm", git = "https://github.com/ml-explore/mlx-lm?rev=834fac934c4e04de9b3d723e2b9287a2c60cfd4a" },
+    { name = "mlx-lm", git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Feval-left-padding-in-batched-rotation" },
     { name = "msgspec", specifier = ">=0.19.0" },
     { name = "openai-harmony", specifier = ">=0.0.8" },
     { name = "pillow", specifier = ">=11.0,<12.0" },
@@ -1385,8 +1385,8 @@ wheels = [
 
 [[package]]
 name = "mlx-lm"
-version = "0.30.8"
-source = { git = "https://github.com/ml-explore/mlx-lm?rev=834fac934c4e04de9b3d723e2b9287a2c60cfd4a#834fac934c4e04de9b3d723e2b9287a2c60cfd4a" }
+version = "0.31.0"
+source = { git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Feval-left-padding-in-batched-rotation#5e0c484cfb5c68d281a71409927ee1bb75adaae2" }
 dependencies = [
     { name = "jinja2", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", version = "0.30.7.dev20260225+257d5692", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#257d5692fc7af6bba3b8afaeb63c549b7d1e43d5" }, marker = "sys_platform == 'darwin'" },
