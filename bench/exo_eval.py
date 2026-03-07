@@ -592,6 +592,7 @@ async def evaluate_benchmark(
     timeout: float | None = None,
     reasoning_effort: str | None = None,
     top_p: float | None = None,
+    difficulty: str | None = None,
 ) -> list[QuestionResult]:
     """Run a benchmark. Returns per-question results."""
     import datasets
@@ -617,6 +618,10 @@ async def evaluate_benchmark(
         if "gated" in str(e).lower() or "login" in str(e).lower():
             logger.error("Dataset requires authentication. Run: huggingface-cli login")
         return []
+
+    if difficulty and "difficulty" in ds.column_names:
+        ds = ds.filter(lambda x: x["difficulty"] == difficulty)
+        logger.info(f"Filtered to {len(ds)} {difficulty} problems")
 
     total = len(ds)
     if limit and limit < total:
@@ -1107,6 +1112,12 @@ def main() -> int:
         help="Override reasoning effort (default: 'high' for reasoning models, none for non-reasoning).",
     )
     ap.add_argument(
+        "--difficulty",
+        default=None,
+        choices=["easy", "medium", "hard"],
+        help="Filter by difficulty (livecodebench only). E.g. --difficulty hard",
+    )
+    ap.add_argument(
         "--results-dir",
         default="eval_results",
         help="Directory for result JSON files (default: eval_results).",
@@ -1277,6 +1288,7 @@ def main() -> int:
                             timeout=args.request_timeout,
                             reasoning_effort=reasoning_effort,
                             top_p=top_p,
+                            difficulty=args.difficulty,
                         )
                     )
                     if results:
@@ -1306,6 +1318,7 @@ def main() -> int:
                         timeout=args.request_timeout,
                         reasoning_effort=reasoning_effort,
                         top_p=top_p,
+                        difficulty=args.difficulty,
                     )
                 )
                 if results:
