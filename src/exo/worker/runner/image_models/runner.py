@@ -1,5 +1,4 @@
 import base64
-import resource
 import time
 from typing import TYPE_CHECKING, Literal
 
@@ -194,9 +193,6 @@ class Runner:
         self.task_receiver = task_receiver
         self.cancel_receiver = cancel_receiver
         self.bound_instance = bound_instance
-
-        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-        resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
 
         self.instance, self.runner_id, self.shard_metadata = (
             bound_instance.instance,

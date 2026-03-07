@@ -1,4 +1,5 @@
 import os
+import resource
 
 import loguru
 
@@ -20,6 +21,9 @@ def entrypoint(
 ) -> None:
     global logger
     logger = _logger
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
 
     fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
     if fast_synch_override != "off":
