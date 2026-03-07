@@ -125,6 +125,7 @@ extend-exclude = [
   "shared/protobufs/**",
   "*mlx_typings/**",
   "rust/exo_pyo3_bindings/**",
+  "bench/vendor/**",
 ]
 
 [tool.ruff.lint]

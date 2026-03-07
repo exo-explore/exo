@@ -31,9 +31,9 @@ import argparse
 import asyncio
 import contextlib
 import json
+import multiprocessing
 import random
 import re
-import subprocess
 import sys
 import time
 import tomllib
@@ -176,72 +176,86 @@ def check_aime_answer(extracted: str, gold: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Code execution sandbox
+# Code execution — official evaluation harnesses
 # ---------------------------------------------------------------------------
 
+# LiveCodeBench: vendored from https://github.com/LiveCodeBench/LiveCodeBench
+# run_test() must execute in a child process because reliability_guard()
+# permanently disables OS functions (os.kill, subprocess.Popen, etc.).
 
-def execute_code(
-    code: str, stdin_input: str | None = None, timeout: float = 10.0
-) -> tuple[bool, str]:
-    """Execute Python code in subprocess. Returns (passed, stderr_or_stdout)."""
+
+def _lcb_worker(
+    sample: dict,
+    code: str,
+    timeout: int,
+    result_holder: list[Any],
+    metadata_holder: list[Any],
+) -> None:
+    """Target for multiprocessing.Process — runs vendored LCB run_test."""
+    from vendor.lcb_testing_util import run_test
+
     try:
-        result = subprocess.run(
-            [sys.executable, "-c", code],
-            input=stdin_input,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        if result.returncode == 0:
-            return True, result.stdout
-        return False, result.stderr
-    except subprocess.TimeoutExpired:
-        return False, "Execution timed out"
+        results, metadata = run_test(sample, test=code, debug=False, timeout=timeout)
+        result_holder.append(results)
+        metadata_holder.append(metadata)
     except Exception as e:
-        return False, str(e)
-
-
-def run_humaneval_test(
-    prompt: str, completion: str, test: str, entry_point: str
-) -> bool:
-    """Execute HumanEval test case. Returns True if all assertions pass."""
-    check_program = prompt + completion + "\n" + test + f"\ncheck({entry_point})"
-    passed, _ = execute_code(check_program, timeout=10.0)
-    return passed
+        result_holder.append([-4])
+        metadata_holder.append({"error_code": -4, "error_message": str(e)})
 
 
 def run_livecodebench_test(
     code: str,
-    test_inputs: list[str],
-    test_outputs: list[str],
-    test_type: str,
-    func_name: str | None = None,
-) -> bool:
-    """Execute LiveCodeBench test case. Returns True if all tests pass."""
-    for inp, expected_out in zip(test_inputs, test_outputs, strict=True):
-        expected_out = expected_out.strip()
-        if test_type == "functional" and func_name:
-            # Call function with parsed input, compare output
-            check_code = (
-                f"{code}\n\n"
-                f"import json\n"
-                f"args = json.loads({json.dumps(inp)})\n"
-                f"if isinstance(args, list):\n"
-                f"    result = {func_name}(*args)\n"
-                f"else:\n"
-                f"    result = {func_name}(args)\n"
-                f"expected = json.loads({json.dumps(expected_out)})\n"
-                f"assert result == expected, f'Got {{result}}, expected {{expected}}'\n"
-            )
-            passed, _ = execute_code(check_code, timeout=10.0)
-        else:
-            # stdin/stdout test
-            passed, stdout = execute_code(code, stdin_input=inp, timeout=10.0)
-            if passed:
-                passed = stdout.strip() == expected_out
-        if not passed:
-            return False
-    return True
+    sample: dict,
+    timeout: int = 6,
+) -> tuple[bool, str]:
+    """Run LCB evaluation in a subprocess. Returns (passed, diagnostic_info)."""
+    manager = multiprocessing.Manager()
+    result_holder = manager.list()
+    metadata_holder = manager.list()
+
+    proc = multiprocessing.Process(
+        target=_lcb_worker,
+        args=(sample, code, timeout, result_holder, metadata_holder),
+    )
+    proc.start()
+
+    # Global timeout: (per-test timeout + 1) * num_tests + 5
+    num_tests = len(json.loads(sample["input_output"]).get("inputs", []))
+    global_timeout = (timeout + 1) * num_tests + 5
+    proc.join(timeout=global_timeout)
+
+    if proc.is_alive():
+        proc.kill()
+        proc.join()
+        return False, "Global timeout exceeded"
+
+    if not result_holder:
+        return False, "No results returned from worker"
+
+    results = list(result_holder[0])
+    metadata = dict(metadata_holder[0]) if metadata_holder else {}
+
+    # LCB convention: True = pass, negative int = failure code
+    all_passed = all(r is True or r == 1 for r in results)
+    if all_passed:
+        return True, ""
+
+    diag = metadata.get("error_message", "")
+    if not diag and "output" in metadata:
+        diag = f"Got {metadata['output']}, expected {metadata.get('expected', '?')}"
+    return False, diag
+
+
+def run_humaneval_test(
+    problem: dict, completion: str, timeout: float = 10.0
+) -> tuple[bool, str]:
+    """Run HumanEval evaluation using the official human_eval package."""
+    from human_eval.execution import check_correctness
+
+    result = check_correctness(problem, completion, timeout)
+    passed = result["passed"]
+    diag = "" if passed else result.get("result", "failed")
+    return passed, diag
 
 
 # ---------------------------------------------------------------------------
@@ -415,10 +429,15 @@ def format_aime_question(doc: dict) -> tuple[str, int]:
 def format_humaneval_question(doc: dict) -> tuple[str, dict]:
     """Returns (prompt, metadata_for_execution)."""
     prompt = f"{_HUMANEVAL_INSTRUCTION}\n\n```python\n{doc['prompt']}```"
+    # Pass the full problem dict — check_correctness needs task_id, prompt,
+    # test, entry_point
     meta = {
-        "prompt": doc["prompt"],
-        "test": doc["test"],
-        "entry_point": doc["entry_point"],
+        "problem": {
+            "task_id": doc["task_id"],
+            "prompt": doc["prompt"],
+            "test": doc["test"],
+            "entry_point": doc["entry_point"],
+        },
     }
     return prompt, meta
 
@@ -461,18 +480,22 @@ def format_livecodebench_question(doc: dict) -> tuple[str, str | None, dict]:
     )
     test_inputs = [t["input"] for t in all_tests]
     test_outputs = [t["output"] for t in all_tests]
-    test_type = all_tests[0]["testtype"] if all_tests else "stdin"
 
     metadata = doc.get("metadata", "{}")
     if isinstance(metadata, str):
         metadata = json.loads(metadata)
     func_name = metadata.get("func_name")
 
+    # Build the sample dict in official LCB format for run_test()
+    input_output: dict[str, Any] = {
+        "inputs": test_inputs,
+        "outputs": test_outputs,
+    }
+    if func_name:
+        input_output["fn_name"] = func_name
+
     meta = {
-        "test_inputs": test_inputs,
-        "test_outputs": test_outputs,
-        "test_type": test_type,
-        "func_name": func_name,
+        "sample": {"input_output": json.dumps(input_output)},
     }
     return user_msg, _LCB_SYSTEM, meta
 
@@ -742,11 +765,9 @@ async def evaluate_benchmark(
                         **stats,
                     )
                 elif benchmark_name == "humaneval":
-                    passed = run_humaneval_test(
-                        exec_meta["prompt"],
+                    passed, diag = run_humaneval_test(
+                        exec_meta["problem"],
                         code,
-                        exec_meta["test"],
-                        exec_meta["entry_point"],
                     )
                     result = QuestionResult(
                         question_id=idx,
@@ -755,15 +776,13 @@ async def evaluate_benchmark(
                         extracted_answer="pass" if passed else "fail",
                         gold_answer=gold,
                         correct=passed,
+                        error=diag if not passed else None,
                         **stats,
                     )
                 elif benchmark_name == "livecodebench":
-                    passed = run_livecodebench_test(
+                    passed, diag = run_livecodebench_test(
                         code,
-                        exec_meta["test_inputs"],
-                        exec_meta["test_outputs"],
-                        exec_meta["test_type"],
-                        exec_meta["func_name"],
+                        exec_meta["sample"],
                     )
                     result = QuestionResult(
                         question_id=idx,
@@ -772,6 +791,7 @@ async def evaluate_benchmark(
                         extracted_answer="pass" if passed else "fail",
                         gold_answer=gold,
                         correct=passed,
+                        error=diag if not passed else None,
                         **stats,
                     )
                 else:
@@ -1014,11 +1034,12 @@ def save_results(
         "results": [
             {
                 "question_id": r.question_id,
+                "prompt": r.prompt,
+                "response": r.response,
                 "extracted_answer": r.extracted_answer,
                 "gold_answer": r.gold_answer,
                 "correct": r.correct,
                 "error": r.error,
-                "response_length": len(r.response),
                 "prompt_tokens": r.prompt_tokens,
                 "completion_tokens": r.completion_tokens,
                 "reasoning_tokens": r.reasoning_tokens,
