@@ -30,11 +30,11 @@
 </script>
 
 <header
-  class="relative z-20 flex items-center justify-center px-6 pt-8 pb-4 bg-exo-dark-gray"
+  class="relative z-20 flex items-center justify-center px-4 sm:px-6 pt-4 sm:pt-8 pb-3 sm:pb-4 bg-exo-dark-gray"
 >
   <!-- Left: Sidebar Toggle -->
   {#if showSidebarToggle}
-    <div class="absolute left-6 top-1/2 -translate-y-1/2">
+    <div class="hidden lg:block absolute left-6 top-1/2 -translate-y-1/2">
       <button
         onclick={handleToggleSidebar}
         class="p-2 rounded border border-exo-light-gray/30 hover:border-exo-yellow/50 hover:bg-exo-medium-gray/30 transition-colors cursor-pointer"
@@ -83,19 +83,19 @@
     <img
       src="/exo-logo.png"
       alt="EXO"
-      class="h-18 drop-shadow-[0_0_4px_rgba(255,215,0,0.3)]"
+      class="h-14 sm:h-18 drop-shadow-[0_0_4px_rgba(255,215,0,0.3)]"
     />
   </button>
 
   <!-- Right: Home + Downloads -->
   <nav
-    class="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-4"
+    class="absolute right-4 sm:right-6 top-1/2 -translate-y-1/2 flex items-center gap-2 sm:gap-4"
     aria-label="Main navigation"
   >
     {#if showHome}
       <button
         onclick={handleHome}
-        class="text-sm text-white/70 hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-2 cursor-pointer"
+        class="text-xs sm:text-sm text-white/70 hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-1.5 sm:gap-2 cursor-pointer"
         title="Back to topology view"
       >
         <svg
@@ -111,12 +111,12 @@
             d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
           />
         </svg>
-        Home
+        <span class="hidden sm:inline">Home</span>
       </button>
     {/if}
     <a
       href="/#/downloads"
-      class="text-sm text-white/70 hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-2 cursor-pointer"
+      class="text-xs sm:text-sm text-white/70 hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-1.5 sm:gap-2 cursor-pointer"
       title="View downloads overview"
     >
       {#if downloadProgress}
@@ -168,7 +168,7 @@
           <path d="M5 21h14" />
         </svg>
       {/if}
-      Downloads
+      <span class="hidden sm:inline">Downloads</span>
     </a>
   </nav>
 </header>

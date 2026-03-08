@@ -916,11 +916,27 @@
   // Slider dragging state
   let isDraggingSlider = $state(false);
   let sliderTrackElement: HTMLDivElement | null = $state(null);
+  let mobileControlsOpen = $state(false);
+  let mobileChatPanelOpen = $state(false);
 
   // Instances container ref for scrolling
   let instancesContainerRef: HTMLDivElement | null = $state(null);
   // Chat scroll container ref for precise scroll behavior
   let chatScrollRef: HTMLDivElement | null = $state(null);
+
+  $effect(() => {
+    // Keep the mobile sheet scoped to the welcome screen only.
+    if (chatStarted || topologyOnlyEnabled || showOnboardingOverlay) {
+      mobileControlsOpen = false;
+    }
+  });
+
+  $effect(() => {
+    // Keep the chat mobile panel scoped to chat mode when topology is minimized.
+    if (!chatStarted || !minimized || topologyOnlyEnabled || showOnboardingOverlay) {
+      mobileChatPanelOpen = false;
+    }
+  });
 
   // Instance hover state for highlighting nodes in topology
   let hoveredInstanceId = $state<string | null>(null);
@@ -4613,7 +4629,7 @@
     <!-- Left: Conversation History Sidebar (hidden in topology-only mode, welcome state, or when toggled off) -->
     {#if !topologyOnlyEnabled && sidebarVisible}
       <div
-        class="w-80 flex-shrink-0 border-r border-exo-yellow/10"
+        class="hidden lg:block w-80 flex-shrink-0 border-r border-exo-yellow/10"
         role="complementary"
         aria-label="Conversation history"
       >
@@ -4921,13 +4937,66 @@
               />
             </div>
           </div>
+
+          {#if !mobileControlsOpen}
+            <button
+              type="button"
+              class="fixed bottom-5 right-4 z-30 lg:hidden inline-flex items-center gap-2 px-3 py-2 rounded border border-exo-yellow/40 bg-exo-dark-gray/95 text-xs text-exo-yellow font-mono tracking-wider uppercase shadow-lg shadow-black/50 backdrop-blur-sm"
+              onclick={() => (mobileControlsOpen = true)}
+              aria-label="Open models and instances panel"
+            >
+              <svg
+                class="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="1.8"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M4 6h16M4 12h16M4 18h10"
+                />
+              </svg>
+              Models &amp; Instances
+            </button>
+          {/if}
         </div>
+
+        {#if mobileControlsOpen}
+          <button
+            type="button"
+            class="fixed inset-0 z-30 bg-black/65 lg:hidden"
+            onclick={() => (mobileControlsOpen = false)}
+            aria-label="Close models and instances panel"
+          ></button>
+        {/if}
 
         <!-- Right Sidebar: Instance Controls (wider on welcome page for better visibility) -->
         <aside
-          class="w-80 border-l border-exo-yellow/10 bg-exo-dark-gray flex flex-col flex-shrink-0"
+          class="bg-exo-dark-gray flex flex-col border-exo-yellow/10 fixed inset-x-0 bottom-0 z-40 h-[min(82vh,760px)] w-full border-t shadow-2xl shadow-black/70 transition-transform duration-300 ease-out lg:relative lg:inset-auto lg:bottom-auto lg:z-auto lg:h-auto lg:w-80 lg:flex-shrink-0 lg:border-l lg:border-t-0 lg:shadow-none {mobileControlsOpen
+            ? 'translate-y-0'
+            : 'translate-y-full lg:translate-y-0'}"
           aria-label="Instance controls"
         >
+          <div class="lg:hidden px-4 pt-2 pb-3 border-b border-exo-yellow/20">
+            <div class="w-10 h-1 rounded-full bg-exo-medium-gray/70 mx-auto mb-2"
+            ></div>
+            <div class="flex items-center justify-between gap-3">
+              <p class="text-xs text-exo-yellow font-mono uppercase tracking-[0.2em]">
+                Controls
+              </p>
+              <button
+                type="button"
+                class="px-2.5 py-1 rounded border border-exo-medium-gray/50 text-[11px] text-exo-light-gray font-mono uppercase tracking-wider"
+                onclick={() => (mobileControlsOpen = false)}
+                aria-label="Close controls panel"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+
           <!-- Running Instances Panel (only shown when instances exist) - Scrollable -->
           {#if instanceCount > 0}
             <div class="p-4 flex-shrink-0">
@@ -6022,13 +6091,66 @@
           {/if}
         </div>
 
+        {#if minimized && !mobileChatPanelOpen}
+          <button
+            type="button"
+            class="fixed bottom-24 right-4 z-30 lg:hidden inline-flex items-center gap-2 px-3 py-2 rounded border border-exo-yellow/40 bg-exo-dark-gray/95 text-xs text-exo-yellow font-mono tracking-wider uppercase shadow-lg shadow-black/50 backdrop-blur-sm"
+            onclick={() => (mobileChatPanelOpen = true)}
+            aria-label="Open topology and instances panel"
+          >
+            <svg
+              class="w-4 h-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="1.8"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M4 6h16M4 12h16M4 18h10"
+              />
+            </svg>
+            Topology &amp; Instances
+          </button>
+        {/if}
+
+        {#if minimized && mobileChatPanelOpen}
+          <button
+            type="button"
+            class="fixed inset-0 z-30 bg-black/65 lg:hidden"
+            onclick={() => (mobileChatPanelOpen = false)}
+            aria-label="Close topology and instances panel"
+          ></button>
+        {/if}
+
         <!-- Right: Mini-Map Sidebar -->
         {#if minimized}
           <aside
-            class="w-80 border-l border-exo-yellow/20 bg-exo-dark-gray flex flex-col flex-shrink-0 overflow-y-auto"
+            class="bg-exo-dark-gray flex flex-col border-exo-yellow/20 fixed inset-x-0 bottom-0 z-40 h-[min(82vh,760px)] w-full border-t shadow-2xl shadow-black/70 transition-transform duration-300 ease-out lg:relative lg:inset-auto lg:bottom-auto lg:z-auto lg:h-auto lg:w-80 lg:flex-shrink-0 lg:border-l lg:border-t-0 lg:shadow-none {mobileChatPanelOpen
+              ? 'translate-y-0'
+              : 'translate-y-full lg:translate-y-0'}"
             in:fly={{ x: 100, duration: 400, easing: cubicInOut }}
             aria-label="Cluster topology"
           >
+            <div class="lg:hidden px-4 pt-2 pb-3 border-b border-exo-yellow/20">
+              <div class="w-10 h-1 rounded-full bg-exo-medium-gray/70 mx-auto mb-2"
+              ></div>
+              <div class="flex items-center justify-between gap-3">
+                <p class="text-xs text-exo-yellow font-mono uppercase tracking-[0.2em]">
+                  Cluster
+                </p>
+                <button
+                  type="button"
+                  class="px-2.5 py-1 rounded border border-exo-medium-gray/50 text-[11px] text-exo-light-gray font-mono uppercase tracking-wider"
+                  onclick={() => (mobileChatPanelOpen = false)}
+                  aria-label="Close cluster panel"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
             <!-- Topology Section - clickable to go back to main view -->
             <button
               class="p-4 border-b border-exo-medium-gray/30 w-full text-left cursor-pointer hover:bg-exo-medium-gray/10 transition-colors"
