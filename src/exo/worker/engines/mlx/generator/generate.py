@@ -506,6 +506,7 @@ def mlx_generate(
     sampler = make_sampler(
         temp=task.temperature if task.temperature is not None else 0.7,
         top_p=task.top_p if task.top_p is not None else 1.0,
+        min_p=task.min_p if task.min_p is not None else 0.05,
         top_k=task.top_k if task.top_k is not None else 0,
     )
 

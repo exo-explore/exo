@@ -148,11 +148,16 @@ def extract_boxed_answer(text: str) -> str | None:
     return matches[-1].strip() if matches else None
 
 
-def extract_code_block(text: str) -> str | None:
-    """Extract the last Python code block from markdown response."""
+def extract_code_block(text: str, preserve_indent: bool = False) -> str | None:
+    """Extract the last Python code block from markdown response.
+
+    If preserve_indent is True, only strip trailing whitespace (keeps leading
+    indentation intact — needed for HumanEval function-body completions).
+    """
     matches = _CODE_BLOCK_RE.findall(text)
     if matches:
-        return matches[-1].strip()
+        raw = matches[-1]
+        return raw.rstrip() if preserve_indent else raw.strip()
     # Fallback: try raw code after last ```
     lines = text.split("\n")
     backtick_lines = [i for i, line in enumerate(lines) if "```" in line]
@@ -752,7 +757,9 @@ async def evaluate_benchmark(
                     **stats,
                 )
             elif config.kind == "code":
-                code = extract_code_block(response)
+                # HumanEval needs preserved indentation (function body completion)
+                keep_indent = benchmark_name == "humaneval"
+                code = extract_code_block(response, preserve_indent=keep_indent)
                 if code is None:
                     result = QuestionResult(
                         question_id=idx,

@@ -134,6 +134,7 @@ class ExoBatchGenerator:
             if task_params.temperature is not None
             else 0.7,
             top_p=task_params.top_p if task_params.top_p is not None else 1.0,
+            min_p=task_params.min_p if task_params.min_p is not None else 0.05,
             top_k=task_params.top_k if task_params.top_k is not None else 0,
         )
 
