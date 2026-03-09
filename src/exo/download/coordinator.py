@@ -184,13 +184,9 @@ class DownloadCoordinator:
         except (FileNotFoundError, TOMLKitError, UnicodeDecodeError):
             pass
 
-        if config.max_storage is not None:
-            doc["max_storage_gb"] = round(config.max_storage.in_gb, 2)
-        else:
-            doc.pop("max_storage_gb", None)  # pyright: ignore[reportUnknownMemberType]
-            doc.pop("max_storage_bytes", None)  # pyright: ignore[reportUnknownMemberType]
-
-        doc["storage_policy"] = config.storage_policy
+        # Clear max_storage_gb so it doesn't linger when max_storage is None
+        doc.pop("max_storage_gb", None)  # pyright: ignore[reportUnknownMemberType]
+        doc.update(config.to_disk())  # pyright: ignore[reportUnknownMemberType]
 
         await cfg_path.write_text(tomlkit.dumps(doc))  # pyright: ignore[reportUnknownMemberType]
         logger.debug(f"Persisted storage config to {cfg_path}")
