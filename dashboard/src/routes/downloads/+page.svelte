@@ -48,6 +48,7 @@
         limitBytes: number;
         modelDirectory?: string;
       }
+    | { kind: "evicted"; evictedFor: string; modelDirectory?: string }
     | { kind: "not_present" };
 
   type ModelCardInfo = {
@@ -168,6 +169,7 @@
     downloading: 4,
     pending: 3,
     rejected: 2,
+    evicted: 1,
     failed: 1,
     not_present: 0,
   };
@@ -354,6 +356,11 @@
             };
           } else if (tag === "DownloadFailed") {
             cell = { kind: "failed", modelDirectory };
+          } else if (tag === "DownloadEvicted") {
+            const evictedFor =
+              ((payload.evicted_for ?? payload.evictedFor) as string) ??
+              "unknown";
+            cell = { kind: "evicted", evictedFor, modelDirectory };
           } else {
             const downloaded = getBytes(
               payload.downloaded ??
@@ -796,6 +803,51 @@
                             onclick={() =>
                               startDownload(col.nodeId, row.shardMetadata!)}
                             title="Retry download on this node"
+                          >
+                            <svg
+                              class="w-5 h-5"
+                              viewBox="0 0 20 20"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                            >
+                              <path
+                                d="M10 3v10m0 0l-3-3m3 3l3-3M3 17h14"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              ></path>
+                            </svg>
+                          </button>
+                        {/if}
+                      </div>
+                    {:else if cell.kind === "evicted"}
+                      <div
+                        class="flex flex-col items-center gap-1"
+                        title="Evicted for {cell.evictedFor}"
+                      >
+                        <svg
+                          class="w-5 h-5 text-blue-400"
+                          viewBox="0 0 20 20"
+                          fill="currentColor"
+                        >
+                          <path
+                            fill-rule="evenodd"
+                            d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                            clip-rule="evenodd"
+                          ></path>
+                        </svg>
+                        <span
+                          class="text-[10px] text-blue-400/80 leading-tight text-center max-w-[100px] truncate"
+                        >
+                          Evicted for {cell.evictedFor.split("/").pop()}
+                        </span>
+                        {#if row.shardMetadata}
+                          <button
+                            type="button"
+                            class="text-white/50 hover:text-exo-yellow transition-colors cursor-pointer"
+                            onclick={() =>
+                              startDownload(col.nodeId, row.shardMetadata!)}
+                            title="Re-download on this node"
                           >
                             <svg
                               class="w-5 h-5"
