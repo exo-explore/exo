@@ -1,3 +1,4 @@
+import os
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -382,8 +383,6 @@ class Builder:
     def build(
         self,
     ) -> InferenceGenerator:
-        import os
-
         assert self.model_id
         assert self.inference_model
         assert self.tokenizer

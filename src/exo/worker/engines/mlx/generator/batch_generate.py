@@ -1,13 +1,13 @@
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, cast
+from typing import Callable, cast
 
 import mlx.core as mx
 from mlx_lm.generate import (
     BatchGenerator as MlxBatchGenerator,
 )
 from mlx_lm.models.cache import RotatingKVCache
-from mlx_lm.sample_utils import make_sampler
+from mlx_lm.sample_utils import make_logits_processors, make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.api import (
@@ -59,7 +59,7 @@ class _EngineTask:
     cache_snapshots: list[CacheSnapshot] | None
     on_generation_token: Callable[[], None] | None = None
     generated_text_parts: list[str] = field(default_factory=list)
-    accumulated_text: str = ""
+    potential_stop_sequence_text: str = ""
     completion_tokens: int = 0
     generation_start_time: float = 0.0
     in_thinking: bool = False
@@ -73,11 +73,11 @@ class ExoBatchGenerator:
     group: mx.distributed.Group | None
     kv_prefix_cache: KVPrefixCache | None
 
-    _mlx_gen: MlxBatchGenerator = field(init=False)
+    _exo_gen: MlxBatchGenerator = field(init=False)
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
-        self._mlx_gen = MlxBatchGenerator(
+        self._exo_gen = MlxBatchGenerator(
             model=self.model,
             stop_tokens=set(eos_ids_from_tokenizer(self.tokenizer)),
             prefill_step_size=4096,
@@ -87,8 +87,8 @@ class ExoBatchGenerator:
     def has_work(self) -> bool:
         return (
             bool(self._active_tasks)
-            or bool(self._mlx_gen.unprocessed_prompts)
-            or self._mlx_gen.active_batch is not None
+            or bool(self._exo_gen.unprocessed_prompts)
+            or self._exo_gen.active_batch is not None
         )
 
     def submit(
@@ -126,7 +126,7 @@ class ExoBatchGenerator:
         else:
             cache = make_kv_cache(self.model)
 
-        seed = task_params.seed or 42
+        seed = task_params.seed if task_params.seed is not None else 42
         mx.random.seed(seed)
 
         sampler = make_sampler(
@@ -173,14 +173,20 @@ class ExoBatchGenerator:
 
         last_tokens = prompt_tokens[-2:]
 
-        logits_processors: list[Any] = []
+        logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = (
+            make_logits_processors(
+                repetition_penalty=task_params.repetition_penalty,
+                repetition_context_size=task_params.repetition_context_size,
+            )
+        )
         if is_bench:
+            # Only sample length eos tokens
             eos_ids = eos_ids_from_tokenizer(self.tokenizer)
-            logits_processors = [ban_token_ids(eos_ids)]
+            logits_processors = [ban_token_ids(eos_ids)] + logits_processors
 
         max_tokens = task_params.max_output_tokens or MAX_TOKENS
 
-        uids = self._mlx_gen.insert(
+        uids = self._exo_gen.insert(
             prompts=[last_tokens.tolist()],
             max_tokens=[max_tokens],
             caches=[list(cache)],
@@ -188,8 +194,12 @@ class ExoBatchGenerator:
             logits_processors=[logits_processors],
         )
 
-        self._active_tasks[uids[0]] = _EngineTask(
-            uid=uids[0],
+        assert len(uids) == 1
+
+        uid = uids[0]
+
+        self._active_tasks[uid] = _EngineTask(
+            uid=uid,
             task_params=task_params,
             all_prompt_tokens=all_prompt_tokens,
             prefix_hit_length=prefix_hit_length,
@@ -199,19 +209,21 @@ class ExoBatchGenerator:
             generation_start_time=time.perf_counter(),
         )
 
-        return uids[0]
+        return uid
 
     def step(self) -> list[tuple[int, GenerationResponse]]:
         if not self.has_work:
             return []
 
-        responses = self._mlx_gen.next()
-        mx.clear_cache()
+        responses = self._exo_gen.next()
 
         results: list[tuple[int, GenerationResponse]] = []
 
         for response in responses:
             if response.uid not in self._active_tasks:
+                logger.warning(
+                    f"response uid {response.uid} was not found - should be active"
+                )
                 continue
 
             state = self._active_tasks[response.uid]
@@ -224,7 +236,7 @@ class ExoBatchGenerator:
             )
             state.completion_tokens += 1
             state.generated_text_parts.append(text)
-            state.accumulated_text += text
+            state.potential_stop_sequence_text += text
 
             think_start = self.tokenizer.think_start
             think_end = self.tokenizer.think_end
@@ -244,10 +256,14 @@ class ExoBatchGenerator:
 
             if stop_sequences:
                 for stop_seq in stop_sequences:
-                    if stop_seq in state.accumulated_text:
-                        stop_index = state.accumulated_text.find(stop_seq)
-                        text_before_stop = state.accumulated_text[:stop_index]
-                        chunk_start = len(state.accumulated_text) - len(text)
+                    if stop_seq in state.potential_stop_sequence_text:
+                        stop_index = state.potential_stop_sequence_text.find(stop_seq)
+                        text_before_stop = state.potential_stop_sequence_text[
+                            :stop_index
+                        ]
+                        chunk_start = len(state.potential_stop_sequence_text) - len(
+                            text
+                        )
                         text = text_before_stop[chunk_start:]
                         finish_reason = "stop"
                         break
@@ -273,7 +289,7 @@ class ExoBatchGenerator:
                     if generation_elapsed > 0
                     else 0.0
                 )
-                mlx_stats = self._mlx_gen.stats()
+                mlx_stats = self._exo_gen.stats()
                 stats = GenerationStats(
                     prompt_tps=float(mlx_stats.prompt_tps)
                     if mlx_stats.prompt_time > 0
@@ -313,18 +329,23 @@ class ExoBatchGenerator:
 
             if is_done:
                 del self._active_tasks[response.uid]
-            elif max_stop_len > 0 and len(state.accumulated_text) > max_stop_len:
-                state.accumulated_text = state.accumulated_text[-max_stop_len:]
+            elif (
+                max_stop_len > 0
+                and len(state.potential_stop_sequence_text) > max_stop_len
+            ):
+                state.potential_stop_sequence_text = state.potential_stop_sequence_text[
+                    -max_stop_len:
+                ]
 
         return results
 
     def cancel(self, uids: list[int]) -> None:
-        self._mlx_gen.remove(uids)
+        self._exo_gen.remove(uids)
         for uid in uids:
             self._active_tasks.pop(uid, None)
 
     def close(self) -> None:
-        self._mlx_gen.close()
+        self._exo_gen.close()
 
     def _save_prefix_cache(
         self,

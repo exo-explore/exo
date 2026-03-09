@@ -29,6 +29,7 @@ from exo.worker.engines.mlx.utils_mlx import (
     mx_all_gather_tasks,
     mx_any,
 )
+from exo.worker.runner.bootstrap import logger
 
 from .model_output_parsers import apply_all_parsers
 from .tool_parsers import ToolParser
@@ -339,13 +340,14 @@ class BatchGenerator(InferenceGenerator):
     ) -> Iterable[
         tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
     ]:
-        self.agree_on_tasks()
+        if not self._queue:
+            self.agree_on_tasks()
 
         # Submit any queued tasks to the engine
         while self._queue and len(self._active_tasks) < EXO_MAX_CONCURRENT_REQUESTS:
             task = self._queue.popleft()
             try:
-                uid = self._build_generator(task)
+                uid = self._start_task(task)
             except PrefillCancelled:
                 continue
             except Exception as e:
@@ -368,7 +370,7 @@ class BatchGenerator(InferenceGenerator):
             self._active_tasks[uid] = (task, queue, output_generator)
 
         if not self._mlx_gen.has_work:
-            return self._drain_cancellations()
+            return self._apply_cancellations()
 
         results = self._mlx_gen.step()
 
@@ -378,6 +380,7 @@ class BatchGenerator(InferenceGenerator):
         for uid, response in results:
             if uid not in self._active_tasks:
                 # should we error here?
+                logger.warning(f"{uid=} not found in active tasks")
                 continue
 
             task, queue, output_generator = self._active_tasks[uid]
@@ -391,9 +394,9 @@ class BatchGenerator(InferenceGenerator):
                 output.append((task.task_id, Finished()))
                 del self._active_tasks[uid]
 
-        return itertools.chain(output, self._drain_cancellations())
+        return itertools.chain(output, self._apply_cancellations())
 
-    def _drain_cancellations(
+    def _apply_cancellations(
         self,
     ) -> list[tuple[TaskId, Cancelled]]:
         if not self._cancelled_tasks:
@@ -434,7 +437,7 @@ class BatchGenerator(InferenceGenerator):
                 )
             )
 
-    def _build_generator(self, task: TextGeneration) -> int:
+    def _start_task(self, task: TextGeneration) -> int:
         _check_for_debug_prompts(task.task_params)
         prompt = apply_chat_template(self.tokenizer, task.task_params)
 

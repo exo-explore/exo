@@ -784,6 +784,9 @@ def mx_all_gather_tasks(
     padded = [encode_task_id(task.task_id) for task in tasks] + [
         [0] * uuid_byte_length
     ] * (max_tasks - n_tasks)
+
+    assert all(len(encoded_task_id) == uuid_byte_length for encoded_task_id in padded)
+
     gathered = cast(
         list[list[list[int]]],
         mx.distributed.all_gather(mx.array(padded), group=group)
@@ -795,9 +798,7 @@ def mx_all_gather_tasks(
         for rank_tasks, count in zip(gathered, all_counts, strict=True)
     ]
 
-    agreed_ids: set[TaskId] = set(all_task_ids[0])
-    for rank_tasks in all_task_ids[1:]:
-        agreed_ids &= set(rank_tasks)
+    agreed_ids = set[TaskId].intersection(*(set(tids) for tids in all_task_ids))
 
     local_tasks = {task.task_id: task for task in tasks}
     agreed = [local_tasks[tid] for tid in sorted(agreed_ids)]
