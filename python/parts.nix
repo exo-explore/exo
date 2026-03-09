@@ -43,6 +43,27 @@
             final.setuptools
           ];
         });
+        # rouge-score and sacrebleu don't declare setuptools as a build dependency
+        rouge-score = prev.rouge-score.overrideAttrs (old: {
+          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+            final.setuptools
+          ];
+        });
+        sacrebleu = prev.sacrebleu.overrideAttrs (old: {
+          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+            final.setuptools
+          ];
+        });
+        sqlitedict = prev.sqlitedict.overrideAttrs (old: {
+          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+            final.setuptools
+          ];
+        });
+        word2number = prev.word2number.overrideAttrs (old: {
+          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+            final.setuptools
+          ];
+        });
       } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
         # Use our pure Nix-built MLX with Metal support (macOS only)
         mlx = self'.packages.mlx;

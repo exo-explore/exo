@@ -18,6 +18,9 @@ class TaskId(Id):
     pass
 
 
+CANCEL_ALL_TASKS = TaskId("CANCEL_ALL_TASKS")
+
+
 class TaskStatus(str, Enum):
     Pending = "Pending"
     Running = "Running"

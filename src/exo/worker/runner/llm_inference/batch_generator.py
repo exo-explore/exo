@@ -13,7 +13,7 @@ from exo.shared.types.chunks import ErrorChunk, PrefillProgressChunk
 from exo.shared.types.common import ModelId
 from exo.shared.types.events import ChunkGenerated, Event
 from exo.shared.types.mlx import Model
-from exo.shared.types.tasks import TaskId, TextGeneration
+from exo.shared.types.tasks import CANCEL_ALL_TASKS, TaskId, TextGeneration
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.utils.channels import MpReceiver, MpSender
@@ -59,6 +59,14 @@ class GeneratorQueue[T]:
 
 
 class InferenceGenerator(ABC):
+    _cancelled_tasks: set[TaskId]
+
+    def should_cancel(self, task_id: TaskId) -> bool:
+        return (
+            task_id in self._cancelled_tasks
+            or CANCEL_ALL_TASKS in self._cancelled_tasks
+        )
+
     @abstractmethod
     def warmup(self) -> None: ...
 
@@ -116,6 +124,8 @@ class SequentialGenerator(InferenceGenerator):
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
+    _maybe_cancel: list[TextGeneration] = field(default_factory=list, init=False)
+    _all_tasks: dict[TaskId, TextGeneration] = field(default_factory=dict, init=False)
     _queue: deque[TextGeneration] = field(default_factory=deque, init=False)
     _active: (
         tuple[
@@ -142,7 +152,8 @@ class SequentialGenerator(InferenceGenerator):
         self,
         task: TextGeneration,
     ) -> None:
-        self._cancelled_tasks.discard(TaskId("CANCEL_CURRENT_TASK"))
+        self._cancelled_tasks.discard(CANCEL_ALL_TASKS)
+        self._all_tasks[task.task_id] = task
         self._maybe_queue.append(task)
 
     def agree_on_tasks(self) -> None:
@@ -150,6 +161,23 @@ class SequentialGenerator(InferenceGenerator):
         agreed, different = mx_all_gather_tasks(self._maybe_queue, self.group)
         self._queue.extend(task for task in self._maybe_queue if task in agreed)
         self._maybe_queue = [task for task in self._maybe_queue if task in different]
+
+    def agree_on_cancellations(self) -> None:
+        """Agree between all ranks about which tasks to cancel."""
+        has_cancel_all = False
+        for task_id in self.cancel_receiver.collect():
+            if task_id == CANCEL_ALL_TASKS:
+                has_cancel_all = True
+                continue
+            if task_id in self._all_tasks:
+                self._maybe_cancel.append(self._all_tasks[task_id])
+
+        if mx_any(has_cancel_all, self.group):
+            self._cancelled_tasks.add(CANCEL_ALL_TASKS)
+
+        agreed, different = mx_all_gather_tasks(self._maybe_cancel, self.group)
+        self._cancelled_tasks.update(task.task_id for task in agreed)
+        self._maybe_cancel = list(different)
 
     def step(
         self,
@@ -239,11 +267,8 @@ class SequentialGenerator(InferenceGenerator):
                 )
 
         def distributed_prompt_progress_callback() -> None:
-            self._cancelled_tasks.update(self.cancel_receiver.collect())
-            want_to_cancel = (task.task_id in self._cancelled_tasks) or (
-                TaskId("CANCEL_CURRENT_TASK") in self._cancelled_tasks
-            )
-            if mx_any(want_to_cancel, self.group):
+            self.agree_on_cancellations()
+            if self.should_cancel(task.task_id):
                 raise PrefillCancelled()
 
             self.agree_on_tasks()
@@ -255,11 +280,8 @@ class SequentialGenerator(InferenceGenerator):
             tokens_since_cancel_check += 1
             if tokens_since_cancel_check >= self.check_for_cancel_every:
                 tokens_since_cancel_check = 0
-                self._cancelled_tasks.update(self.cancel_receiver.collect())
-                want_to_cancel = (task.task_id in self._cancelled_tasks) or (
-                    TaskId("CANCEL_CURRENT_TASK") in self._cancelled_tasks
-                )
-                if mx_any(want_to_cancel, self.group):
+                self.agree_on_cancellations()
+                if self.should_cancel(task.task_id):
                     raise PrefillCancelled()
 
                 self.agree_on_tasks()
@@ -295,6 +317,8 @@ class BatchGenerator(InferenceGenerator):
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
+    _maybe_cancel: list[TextGeneration] = field(default_factory=list, init=False)
+    _all_tasks: dict[TaskId, TextGeneration] = field(default_factory=dict, init=False)
     _queue: deque[TextGeneration] = field(default_factory=deque, init=False)
     _mlx_gen: ExoBatchGenerator = field(init=False)
     _active_tasks: dict[
@@ -326,7 +350,8 @@ class BatchGenerator(InferenceGenerator):
         self,
         task: TextGeneration,
     ) -> None:
-        self._cancelled_tasks.discard(TaskId("CANCEL_CURRENT_TASK"))
+        self._cancelled_tasks.discard(CANCEL_ALL_TASKS)
+        self._all_tasks[task.task_id] = task
         self._maybe_queue.append(task)
 
     def agree_on_tasks(self) -> None:
@@ -334,6 +359,23 @@ class BatchGenerator(InferenceGenerator):
         agreed, different = mx_all_gather_tasks(self._maybe_queue, self.group)
         self._queue.extend(task for task in self._maybe_queue if task in agreed)
         self._maybe_queue = [task for task in self._maybe_queue if task in different]
+
+    def agree_on_cancellations(self) -> None:
+        """Agree between all ranks about which tasks to cancel."""
+        has_cancel_all = False
+        for task_id in self.cancel_receiver.collect():
+            if task_id == CANCEL_ALL_TASKS:
+                has_cancel_all = True
+                continue
+            if task_id in self._all_tasks:
+                self._maybe_cancel.append(self._all_tasks[task_id])
+
+        if mx_any(has_cancel_all, self.group):
+            self._cancelled_tasks.add(CANCEL_ALL_TASKS)
+
+        agreed, different = mx_all_gather_tasks(self._maybe_cancel, self.group)
+        self._cancelled_tasks.update(task.task_id for task in agreed)
+        self._maybe_cancel = list(different)
 
     def step(
         self,
@@ -402,7 +444,7 @@ class BatchGenerator(InferenceGenerator):
         if not self._cancelled_tasks:
             return []
 
-        cancel_all = TaskId("CANCEL_CURRENT_TASK") in self._cancelled_tasks
+        cancel_all = CANCEL_ALL_TASKS in self._cancelled_tasks
 
         uids_to_cancel: list[int] = []
         results: list[tuple[TaskId, Cancelled]] = []
@@ -418,7 +460,7 @@ class BatchGenerator(InferenceGenerator):
 
         already_cancelled = {tid for tid, _ in results}
         for tid in self._cancelled_tasks:
-            if tid != TaskId("CANCEL_CURRENT_TASK") and tid not in already_cancelled:
+            if tid != CANCEL_ALL_TASKS and tid not in already_cancelled:
                 results.append((tid, Cancelled()))
 
         self._cancelled_tasks.clear()
@@ -455,11 +497,8 @@ class BatchGenerator(InferenceGenerator):
                 )
 
         def distributed_prompt_progress_callback() -> None:
-            self._cancelled_tasks.update(self.cancel_receiver.collect())
-            want_to_cancel = (task.task_id in self._cancelled_tasks) or (
-                TaskId("CANCEL_CURRENT_TASK") in self._cancelled_tasks
-            )
-            if mx_any(want_to_cancel, self.group):
+            self.agree_on_cancellations()
+            if self.should_cancel(task.task_id):
                 raise PrefillCancelled()
 
             self.agree_on_tasks()
@@ -471,11 +510,8 @@ class BatchGenerator(InferenceGenerator):
             tokens_since_cancel_check += 1
             if tokens_since_cancel_check >= self.check_for_cancel_every:
                 tokens_since_cancel_check = 0
-                self._cancelled_tasks.update(self.cancel_receiver.collect())
-                want_to_cancel = (task.task_id in self._cancelled_tasks) or (
-                    TaskId("CANCEL_CURRENT_TASK") in self._cancelled_tasks
-                )
-                if mx_any(want_to_cancel, self.group):
+                self.agree_on_cancellations()
+                if self.should_cancel(task.task_id):
                     self._cancelled_tasks.add(task.task_id)
 
                 self.agree_on_tasks()
