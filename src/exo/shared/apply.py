@@ -30,7 +30,6 @@ from exo.shared.types.events import (
     TracesCollected,
     TracesMerged,
 )
-from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     NodeIdentity,
     NodeNetworkInfo,
@@ -39,7 +38,6 @@ from exo.shared.types.profiling import (
     ThunderboltBridgeStatus,
 )
 from exo.shared.types.state import State
-from exo.shared.types.storage import StorageConfig
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
@@ -304,17 +302,9 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
         case NodeDiskUsage():
             update["node_disk"] = {**state.node_disk, event.node_id: info.disk_usage}
         case NodeConfig():
-            storage_config = StorageConfig(
-                max_storage=(
-                    Memory.from_bytes(info.max_storage_bytes)
-                    if info.max_storage_bytes is not None
-                    else None
-                ),
-                storage_policy=info.storage_policy,
-            )
             update["node_storage_config"] = {
                 **state.node_storage_config,
-                event.node_id: storage_config,
+                event.node_id: info.storage_config,
             }
         case MiscData():
             current_identity = state.node_identities.get(event.node_id, NodeIdentity())

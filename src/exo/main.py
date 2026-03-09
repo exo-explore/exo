@@ -175,24 +175,17 @@ class Node:
     @staticmethod
     async def _load_storage_config(args: "Args") -> StorageConfig:
         """Load storage config: start from config.toml, overlay CLI args."""
-        # Start from config.toml as the base
-        base_max_storage: Memory | None = None
-        base_policy: StoragePolicy = "manual"
-
         node_config = await NodeConfig.gather()
-        if node_config is not None:
-            if node_config.max_storage_bytes is not None:
-                base_max_storage = Memory.from_bytes(node_config.max_storage_bytes)
-            base_policy = node_config.storage_policy
+        base = node_config.storage_config if node_config is not None else StorageConfig()
 
         # CLI args override individual fields (non-default values only)
         max_storage = (
             Memory.from_gb(args.max_storage_gb)
             if args.max_storage_gb is not None
-            else base_max_storage
+            else base.max_storage
         )
         storage_policy = (
-            args.storage_policy if args.storage_policy != "manual" else base_policy
+            args.storage_policy if args.storage_policy != "manual" else base.storage_policy
         )
 
         return StorageConfig(max_storage=max_storage, storage_policy=storage_policy)
