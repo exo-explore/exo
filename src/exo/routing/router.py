@@ -102,8 +102,15 @@ class TopicRouter[T: CamelCaseModel]:
 
 class Router:
     @classmethod
-    def create(cls, identity: Keypair) -> "Router":
-        return cls(handle=NetworkingHandle(identity))
+    def create(
+        cls,
+        identity: Keypair,
+        bootstrap_peers: list[str] | None = None,
+        listen_port: int | None = None,
+    ) -> "Router":
+        return cls(
+            handle=NetworkingHandle(identity, bootstrap_peers or [], listen_port)
+        )
 
     def __init__(self, handle: NetworkingHandle):
         self.topic_routers: dict[str, TopicRouter[CamelCaseModel]] = {}
