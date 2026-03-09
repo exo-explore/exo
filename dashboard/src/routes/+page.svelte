@@ -1582,6 +1582,7 @@
     perNode: NodeDownloadStatus[];
     failedError: string | null;
     rejectedError: string | null;
+    evicted: boolean;
   } {
     const empty = {
       isDownloading: false,
@@ -1589,6 +1590,7 @@
       perNode: [] as NodeDownloadStatus[],
       failedError: null,
       rejectedError: null,
+      evicted: false,
     };
 
     if (!downloadsData || Object.keys(downloadsData).length === 0) {
@@ -1631,6 +1633,7 @@
               (downloadPayload.error_message as string) ||
               "Download failed",
             rejectedError: null,
+            evicted: false,
           };
         }
 
@@ -1643,6 +1646,19 @@
             failedError: null,
             rejectedError:
               (downloadPayload.reason as string) || "Storage limit exceeded",
+            evicted: false,
+          };
+        }
+
+        // DownloadEvicted — model was evicted from storage
+        if (downloadKind === "DownloadEvicted") {
+          return {
+            isDownloading: false,
+            progress: null,
+            perNode: Array.from(perNodeMap.values()),
+            failedError: null,
+            rejectedError: null,
+            evicted: true,
           };
         }
 
@@ -1738,6 +1754,7 @@
         perNode,
         failedError: null,
         rejectedError: null,
+        evicted: false,
       };
     }
 
@@ -1759,6 +1776,7 @@
       perNode,
       failedError: null,
       rejectedError: null,
+      evicted: false,
     };
   }
 
@@ -1850,6 +1868,17 @@
         errorMessage: result.rejectedError,
         progress: null,
         statusText: "REJECTED",
+        perNode: [],
+      };
+    }
+
+    if (result.evicted) {
+      return {
+        isDownloading: false,
+        isFailed: false,
+        errorMessage: null,
+        progress: null,
+        statusText: "EVICTED",
         perNode: [],
       };
     }
@@ -2489,7 +2518,6 @@
   // ── Instance status transition toasts ──
   // Track previous statuses so we can detect meaningful transitions and fire toasts.
   let previousInstanceStatuses: Record<string, string> = {};
-  let previousInstanceModelIds: Record<string, string> = {};
 
   $effect(() => {
     const currentStatuses: Record<string, string> = {};
@@ -2556,34 +2584,19 @@
         if (prevStatus !== "SHUTDOWN" && currentStatus === "SHUTDOWN") {
           addToast({ type: "info", message: `Model shut down: ${shortName}` });
         }
-      }
-    }
 
-    // Detect instances that disappeared while in early states (e.g. rejected download)
-    if (Object.keys(prev).length > 0) {
-      for (const [id, prevStatus] of Object.entries(prev)) {
-        if (id in currentStatuses) continue; // still exists
-        if (prevStatus === "PREPARING" || prevStatus === "DOWNLOADING") {
-          const modelId = previousInstanceModelIds[id];
-          const shortName = modelId
-            ? (modelId.split("/").pop() ?? modelId)
-            : id.slice(0, 8);
+        // Any -> Evicted
+        if (prevStatus !== "EVICTED" && currentStatus === "EVICTED") {
           addToast({
-            type: "warning",
-            message: `Download cancelled: ${shortName} — insufficient storage`,
-            duration: 8000,
+            type: "info",
+            message: `Model evicted: ${shortName}`,
+            duration: 6000,
           });
         }
       }
     }
 
     previousInstanceStatuses = currentStatuses;
-    const modelIds: Record<string, string> = {};
-    for (const [id, inst] of Object.entries(instanceData)) {
-      const mid = getInstanceModelId(inst);
-      if (mid) modelIds[id] = mid;
-    }
-    previousInstanceModelIds = modelIds;
   });
 
   // ── Connection status toasts ──
