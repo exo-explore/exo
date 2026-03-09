@@ -134,11 +134,47 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         mlx_model_output_parsers, "detect_thinking_prompt_suffix", make_nothin(False)
     )
+    monkeypatch.setattr(mlx_batch_generator, "ExoBatchGenerator", FakeExoBatchGenerator)
 
-    def fake_generate(*_1: object, **_2: object):
-        yield GenerationResponse(token=0, text="hi", finish_reason="stop", usage=None)
 
-    monkeypatch.setattr(mlx_batch_generator, "mlx_generate", fake_generate)
+class FakeExoBatchGenerator:
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        self._uid_counter = 0
+        self._pending: dict[int, GenerationResponse] = {}
+
+    @property
+    def has_work(self) -> bool:
+        return bool(self._pending)
+
+    def submit(
+        self,
+        task_params: object = None,
+        prompt: object = None,
+        on_prefill_progress: object = None,
+        distributed_prompt_progress_callback: object = None,
+        on_generation_token: object = None,
+    ) -> int:
+        uid = self._uid_counter
+        self._uid_counter += 1
+        self._pending[uid] = GenerationResponse(
+            text="hi",
+            token=0,
+            finish_reason="stop",
+            usage=None,
+        )
+        return uid
+
+    def step(self) -> list[tuple[int, GenerationResponse]]:
+        results = list(self._pending.items())
+        self._pending.clear()
+        return results
+
+    def cancel(self, uids: list[int]) -> None:
+        for uid in uids:
+            self._pending.pop(uid, None)
+
+    def close(self) -> None:
+        pass
 
 
 # Use a fake event_sender to remove test flakiness.
@@ -165,6 +201,17 @@ class MockTokenizer:
     tool_call_end = None
     has_tool_calling = False
     has_thinking = False
+    think_start = None
+    think_end = None
+    eos_token_ids: list[int] = []
+
+    @staticmethod
+    def decode(_tokens: list[int]) -> str:
+        return "hi"
+
+    @staticmethod
+    def encode(_text: str, add_special_tokens: bool = True) -> list[int]:
+        return [0]
 
 
 class MockGroup:

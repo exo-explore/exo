@@ -62,7 +62,7 @@ members = ["rust/exo_pyo3_bindings", "bench"]
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
-mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", rev = "834fac934c4e04de9b3d723e2b9287a2c60cfd4a" }
+mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/eval-left-padding-in-batched-rotation" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }
 # mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }
@@ -125,6 +125,7 @@ extend-exclude = [
   "shared/protobufs/**",
   "*mlx_typings/**",
   "rust/exo_pyo3_bindings/**",
+  "bench/vendor/**",
 ]
 
 [tool.ruff.lint]

@@ -1,5 +1,4 @@
 import base64
-import resource
 import time
 from typing import TYPE_CHECKING, Literal
 
@@ -21,6 +20,7 @@ from exo.shared.types.events import (
     TracesCollected,
 )
 from exo.shared.types.tasks import (
+    CANCEL_ALL_TASKS,
     ConnectToGroup,
     ImageEdits,
     ImageGeneration,
@@ -195,9 +195,6 @@ class Runner:
         self.cancel_receiver = cancel_receiver
         self.bound_instance = bound_instance
 
-        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-        resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
-
         self.instance, self.runner_id, self.shard_metadata = (
             bound_instance.instance,
             bound_instance.bound_runner_id,
@@ -244,11 +241,11 @@ class Runner:
                 if task.task_id in self.seen:
                     logger.warning("repeat task - potential error")
                 self.seen.add(task.task_id)
-                self.cancelled_tasks.discard(TaskId("CANCEL_CURRENT_TASK"))
+                self.cancelled_tasks.discard(CANCEL_ALL_TASKS)
                 self.send_task_status(task, TaskStatus.Running)
                 self.handle_task(task)
                 was_cancelled = (task.task_id in self.cancelled_tasks) or (
-                    TaskId("CANCEL_CURRENT_TASK") in self.cancelled_tasks
+                    CANCEL_ALL_TASKS in self.cancelled_tasks
                 )
                 if not was_cancelled:
                     self.send_task_status(task, TaskStatus.Complete)

@@ -309,7 +309,11 @@ def warmup_inference(
     model: Model,
     tokenizer: TokenizerWrapper,
     group: mx.distributed.Group | None,
+    model_id: ModelId,
 ) -> int:
+    logger.info(f"warming up inference for instance: {model_id}")
+    t = time.monotonic()
+
     content = "Prompt to warm up the inference engine. Repeat this."
 
     warmup_prompt = apply_chat_template(
@@ -350,7 +354,25 @@ def warmup_inference(
 
     mx_barrier(group)
 
-    return tokens_generated
+    logger.info(f"warmed up by generating {tokens_generated} tokens")
+    check_for_cancel_every = min(
+        math.ceil(tokens_generated / min(time.monotonic() - t, 0.001)), 100
+    )
+    if group is not None:
+        check_for_cancel_every = int(
+            mx.max(
+                mx.distributed.all_gather(
+                    mx.array([check_for_cancel_every]),
+                    group=group,
+                )
+            ).item()
+        )
+
+    logger.info(
+        f"runner checking for cancellation every {check_for_cancel_every} tokens"
+    )
+
+    return check_for_cancel_every
 
 
 def ban_token_ids(token_ids: list[int]) -> Callable[[mx.array, mx.array], mx.array]:
@@ -484,6 +506,7 @@ def mlx_generate(
     sampler = make_sampler(
         temp=task.temperature if task.temperature is not None else 0.7,
         top_p=task.top_p if task.top_p is not None else 1.0,
+        min_p=task.min_p if task.min_p is not None else 0.05,
         top_k=task.top_k if task.top_k is not None else 0,
     )
 
