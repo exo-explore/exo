@@ -115,12 +115,13 @@ def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> S
     """
     dp = event.download_progress
     node_id = dp.node_id
+    model_id = dp.shard_metadata.model_card.model_id
 
     current = list(state.downloads.get(node_id, ()))
 
     replaced = False
     for i, existing_dp in enumerate(current):
-        if existing_dp.shard_metadata == dp.shard_metadata:
+        if existing_dp.shard_metadata.model_card.model_id == model_id:
             current[i] = dp
             replaced = True
             break
