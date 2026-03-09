@@ -20,6 +20,7 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.storage import StorageConfig
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
+    DownloadEvicted,
     DownloadPending,
     DownloadRejected,
 )
@@ -128,7 +129,8 @@ class TestStartDownloadAutoEviction:
 
         # MODEL_A (oldest) should have been evicted
         mock_delete.assert_called_once_with(MODEL_A)
-        assert MODEL_A not in coordinator.download_status
+        assert isinstance(coordinator.download_status[MODEL_A], DownloadEvicted)
+        assert coordinator.download_status[MODEL_A].evicted_for == MODEL_NEW
 
     @patch(
         "exo.download.coordinator.delete_model",

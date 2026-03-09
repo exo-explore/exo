@@ -50,6 +50,7 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.storage import StorageConfig
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
+    DownloadEvicted,
     DownloadFailed,
     DownloadOngoing,
     DownloadPending,
@@ -78,7 +79,6 @@ class DownloadCoordinator:
     # LRU tracking
     _model_last_used: dict[ModelId, datetime] = field(default_factory=dict)
     _active_model_ids: set[ModelId] = field(default_factory=set)
-    _recently_evicted: set[ModelId] = field(default_factory=set)
 
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
@@ -423,8 +423,6 @@ class DownloadCoordinator:
                 logger.debug(
                     "DownloadCoordinator: Fetching and emitting existing download progress..."
                 )
-                # Track which evicted models the scanner still sees on disk
-                evicted_still_on_disk: set[ModelId] = set()
 
                 async for (
                     _,
@@ -432,8 +430,9 @@ class DownloadCoordinator:
                 ) in self.shard_downloader.get_shard_download_status():
                     model_id = progress.shard.model_card.model_id
 
-                    if model_id in self._recently_evicted:
-                        evicted_still_on_disk.add(model_id)
+                    # Don't overwrite DownloadEvicted — the model may still be on disk
+                    # while deletion is finishing
+                    if isinstance(self.download_status.get(model_id), DownloadEvicted):
                         continue
 
                     # Active downloads emit progress via the callback — don't overwrite
@@ -515,8 +514,6 @@ class DownloadCoordinator:
                                 NodeDownloadProgress(download_progress=path_completed)
                             )
 
-                self._recently_evicted = evicted_still_on_disk
-
                 logger.debug(
                     "DownloadCoordinator: Done emitting existing download progress."
                 )
@@ -572,6 +569,8 @@ class DownloadCoordinator:
             logger.info(
                 f"Auto-evicting model {evict_model_id} to free space for {model_id}"
             )
+            # Capture shard_metadata before _delete_download removes it
+            evicted_status = self.download_status.get(evict_model_id)
             success = await self._delete_download(evict_model_id)
             if not success:
                 current_used = calculate_used_storage(
@@ -584,7 +583,20 @@ class DownloadCoordinator:
                     current_available,
                 )
                 return False
-            self._recently_evicted.add(evict_model_id)
+
+            # Overwrite the DownloadPending that _delete_download emitted
+            # with an explicit DownloadEvicted status
+            if evicted_status is not None:
+                evicted = DownloadEvicted(
+                    shard_metadata=evicted_status.shard_metadata,
+                    node_id=self.node_id,
+                    model_directory=self._model_dir(evict_model_id),
+                    evicted_for=model_id,
+                )
+                self.download_status[evict_model_id] = evicted
+                await self.event_sender.send(
+                    NodeDownloadProgress(download_progress=evicted)
+                )
 
         return True
 
