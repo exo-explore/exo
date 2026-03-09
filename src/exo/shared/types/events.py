@@ -73,10 +73,6 @@ class RunnerStatusUpdated(BaseEvent):
     runner_status: RunnerStatus
 
 
-class RunnerDeleted(BaseEvent):
-    runner_id: RunnerId
-
-
 class NodeTimedOut(BaseEvent):
     node_id: NodeId
 
@@ -142,7 +138,6 @@ Event = (
     | InstanceCreated
     | InstanceDeleted
     | RunnerStatusUpdated
-    | RunnerDeleted
     | NodeTimedOut
     | NodeGatheredInfo
     | NodeDownloadProgress

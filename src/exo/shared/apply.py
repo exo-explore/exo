@@ -15,7 +15,6 @@ from exo.shared.types.events import (
     NodeDownloadProgress,
     NodeGatheredInfo,
     NodeTimedOut,
-    RunnerDeleted,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskCreated,
@@ -40,7 +39,7 @@ from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
-from exo.shared.types.worker.runners import RunnerId, RunnerStatus
+from exo.shared.types.worker.runners import RunnerId, RunnerShutdown, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import (
     MacmonMetrics,
     MacThunderboltConnections,
@@ -78,8 +77,6 @@ def event_apply(event: Event, state: State) -> State:
             return apply_node_download_progress(event, state)
         case NodeGatheredInfo():
             return apply_node_gathered_info(event, state)
-        case RunnerDeleted():
-            return apply_runner_deleted(event, state)
         case RunnerStatusUpdated():
             return apply_runner_status_updated(event, state)
         case TaskCreated():
@@ -191,19 +188,14 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
 
 
 def apply_runner_status_updated(event: RunnerStatusUpdated, state: State) -> State:
-    new_runners: Mapping[RunnerId, RunnerStatus] = {
+    if isinstance(event.runner_status, RunnerShutdown):
+        new_runners: Mapping[RunnerId, RunnerStatus] = {
+            rid: rs for rid, rs in state.runners.items() if rid != event.runner_id
+        }
+        return state.model_copy(update={"runners": new_runners})
+    new_runners = {
         **state.runners,
         event.runner_id: event.runner_status,
-    }
-    return state.model_copy(update={"runners": new_runners})
-
-
-def apply_runner_deleted(event: RunnerDeleted, state: State) -> State:
-    assert event.runner_id in state.runners, (
-        "RunnerDeleted before any RunnerStatusUpdated events"
-    )
-    new_runners: Mapping[RunnerId, RunnerStatus] = {
-        rid: rs for rid, rs in state.runners.items() if rid != event.runner_id
     }
     return state.model_copy(update={"runners": new_runners})
 
