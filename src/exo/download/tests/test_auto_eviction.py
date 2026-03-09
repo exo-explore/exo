@@ -129,8 +129,9 @@ class TestStartDownloadAutoEviction:
 
         # MODEL_A (oldest) should have been evicted
         mock_delete.assert_called_once_with(MODEL_A)
-        assert isinstance(coordinator.download_status[MODEL_A], DownloadEvicted)
-        assert coordinator.download_status[MODEL_A].evicted_for == MODEL_NEW
+        evicted_status = coordinator.download_status[MODEL_A]
+        assert isinstance(evicted_status, DownloadEvicted)
+        assert evicted_status.evicted_for == MODEL_NEW
 
     @patch(
         "exo.download.coordinator.delete_model",
