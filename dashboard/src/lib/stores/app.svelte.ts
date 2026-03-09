@@ -8,11 +8,6 @@
  */
 
 import { browser } from "$app/environment";
-import { addToast } from "$lib/stores/toast.svelte";
-import {
-  getDownloadTag,
-  extractModelIdFromDownload,
-} from "$lib/utils/downloads";
 
 // UUID generation fallback for browsers without crypto.randomUUID
 function generateUUID(): string {
@@ -1331,7 +1326,6 @@ class AppStore {
         this.runners = data.runners;
       }
       if (data.downloads) {
-        this.detectEvictions(this.downloads, data.downloads);
         this.downloads = data.downloads;
       }
       if (data.nodeDisk) {
@@ -1458,63 +1452,6 @@ class AppStore {
     if (this.selectedPreviewModelId) {
       this.fetchPlacementPreviews(this.selectedPreviewModelId, false);
     }
-  }
-
-  /**
-   * Detect models that were evicted (completed -> not completed) and show toasts.
-   */
-  private detectEvictions(
-    oldDownloads: Record<string, unknown[]>,
-    newDownloads: Record<string, unknown[]>,
-  ) {
-    if (Object.keys(oldDownloads).length === 0) return;
-
-    const wasCompleted = new Map<string, Set<string>>();
-    for (const [nodeId, entries] of Object.entries(oldDownloads)) {
-      if (!Array.isArray(entries)) continue;
-      for (const entry of entries) {
-        const tagged = getDownloadTag(entry);
-        if (!tagged || tagged[0] !== "DownloadCompleted") continue;
-        const modelId = extractModelIdFromDownload(tagged[1]);
-        if (!modelId) continue;
-        if (!wasCompleted.has(nodeId)) wasCompleted.set(nodeId, new Set());
-        wasCompleted.get(nodeId)!.add(modelId);
-      }
-    }
-
-    for (const [nodeId, modelIds] of wasCompleted) {
-      const newEntries = newDownloads[nodeId];
-      const stillCompleted = new Set<string>();
-      if (Array.isArray(newEntries)) {
-        for (const entry of newEntries) {
-          const tagged = getDownloadTag(entry);
-          if (!tagged || tagged[0] !== "DownloadCompleted") continue;
-          const mid = extractModelIdFromDownload(tagged[1]);
-          if (mid) stillCompleted.add(mid);
-        }
-      }
-
-      for (const modelId of modelIds) {
-        if (!stillCompleted.has(modelId)) {
-          const shortName = modelId.split("/").pop() ?? modelId;
-          const nodeLabel = this.getNodeFriendlyName(nodeId);
-          addToast({
-            type: "info",
-            message: `Model evicted on ${nodeLabel}: ${shortName}`,
-            duration: 6000,
-          });
-        }
-      }
-    }
-  }
-
-  private getNodeFriendlyName(nodeId: string): string {
-    const nodeInfo = this.topologyData?.nodes?.[nodeId];
-    return (
-      nodeInfo?.friendly_name ??
-      nodeInfo?.system_info?.chip ??
-      nodeId.slice(0, 4)
-    );
   }
 
   /**
