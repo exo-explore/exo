@@ -76,7 +76,6 @@ class DownloadCoordinator:
     download_status: dict[ModelId, DownloadProgress] = field(default_factory=dict)
     active_downloads: dict[ModelId, anyio.CancelScope] = field(default_factory=dict)
 
-    # LRU tracking
     _model_last_used: dict[ModelId, datetime] = field(default_factory=dict)
     _active_model_ids: set[ModelId] = field(default_factory=set)
 
@@ -229,7 +228,6 @@ class DownloadCoordinator:
                     f"Download for {model_id} already in progress, complete, or failed, skipping"
                 )
                 return
-            # Clear previous DownloadRejected so retries can proceed.
             if isinstance(status, DownloadRejected):
                 del self.download_status[model_id]
 
@@ -425,7 +423,6 @@ class DownloadCoordinator:
                     if model_id in self.active_downloads:
                         continue
 
-                    # Don't overwrite rejected status — it should persist until user retries
                     if isinstance(self.download_status.get(model_id), DownloadRejected):
                         continue
 
