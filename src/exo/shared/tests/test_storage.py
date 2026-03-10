@@ -193,8 +193,8 @@ class TestCalculateUsedStorage:
             ),
         ]
         used = calculate_used_storage(downloads)
-        # 5 GiB completed + 3 GiB ongoing downloaded = 8 GiB
-        assert abs(used.in_gb - 8.0) < 0.01
+        # 5 GiB completed + 10 GiB ongoing total = 15 GiB
+        assert abs(used.in_gb - 15.0) < 0.01
 
     def test_empty_downloads(self) -> None:
         assert calculate_used_storage([]).in_bytes == 0
