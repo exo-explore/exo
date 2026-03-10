@@ -73,6 +73,9 @@ class SwitchGLU(nn.Module):
     def __call__(self, x, indices) -> mx.array: ...
 
 class SwitchMLP(nn.Module):
+    fc1: SwitchLinear
+    fc2: SwitchLinear
+
     def __init__(
         self,
         input_dims: int,

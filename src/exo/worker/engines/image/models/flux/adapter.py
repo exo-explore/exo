@@ -93,7 +93,7 @@ class FluxModelAdapter(ModelAdapter[Flux1, Transformer]):
 
     @property
     def hidden_dim(self) -> int:
-        return self._transformer.x_embedder.weight.shape[0]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        return self._transformer.x_embedder.weight.shape[0]
 
     @property
     def needs_cfg(self) -> bool:

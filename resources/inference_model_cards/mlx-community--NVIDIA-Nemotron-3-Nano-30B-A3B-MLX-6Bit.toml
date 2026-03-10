@@ -1,0 +1,12 @@
+model_id = "mlx-community/NVIDIA-Nemotron-3-Nano-30B-A3B-MLX-6Bit"
+n_layers = 52
+hidden_size = 2688
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "nemotron"
+quantization = "6bit"
+base_model = "NVIDIA Nemotron-3-Nano-30B-A3B"
+capabilities = ["text"]
+
+[storage_size]
+in_bytes = 25667611392
