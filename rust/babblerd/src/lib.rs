@@ -135,32 +135,23 @@ pub mod if_watcher {
 }
 pub mod babel {
     #[tracing::instrument(skip(sock, receiver))]
-    pub async fn handle_listener(
-        sock: UnixStream,
-        mut receiver: broadcast::Receiver<String>,
-    ) -> std::io::Result<()> {
+    pub async fn handle_listener(sock: UnixStream, mut receiver: broadcast::Receiver<String>) {
         tracing::info!("new socket conn");
         let (read, mut write) = sock.into_split();
         let mut read = BufReader::new(read).lines();
-        let res = loop {
+        loop {
             tokio::select! {
                 read = read.next_line() => {
-                    if let None = read? {
-                        break Ok(());
-                    }
+                    let Ok(Some(_)) = read else { break; };
                 }
                 recv = receiver.recv() => {
-                    if let Ok(s) = recv {
-                        if let Err(e) = write.write_all(format!("{s}\n").as_bytes()).await {
-                            break Err(e)
-                        };
-                        continue;
-                    }
+                    let Ok(s) = recv else { break; };
+                    let Ok(()) = write.write_all(format!("{s}\n").as_bytes()).await else { break; };
                 }
             };
-        };
+        }
         tracing::info!("closing socket conn");
-        write.shutdown().await.and(res)
+        _ = write.shutdown().await;
     }
 
     #[cfg(target_os = "macos")]
@@ -188,6 +179,14 @@ pub mod babel {
 
     pub struct BabeldProcess {
         proc: tokio::process::Child,
+    }
+    impl Drop for BabeldProcess {
+        fn drop(&mut self) {
+            // emergency sigkill babeld process to prevent leakage
+            if self.proc.try_wait().is_err() {
+                _ = self.proc.start_kill();
+            }
+        }
     }
     impl BabeldProcess {
         #[tracing::instrument]
@@ -339,7 +338,7 @@ pub mod babel {
 
         let mut babel = BabeldProcess::spawn(first_iface)?;
         let ret = babel.supervise(recv, send).await;
-        babel.shutdown().await?;
+        _ = babel.shutdown().await;
         ret
     }
 }
