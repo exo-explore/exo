@@ -546,6 +546,7 @@ async def _call_api(
     top_k: int | None = None,
     min_p: float | None = None,
     repetition_penalty: float | None = None,
+    repetition_context_size: int | None = None,
 ) -> ApiResult:
     messages = []
     if system_message:
@@ -570,6 +571,7 @@ async def _call_api(
         body["min_p"] = min_p
     if repetition_penalty is not None:
         body["repetition_penalty"] = repetition_penalty
+        body["repetition_context_size"] = repetition_context_size or 64
 
     resp = await client.post(
         f"{base_url}/v1/chat/completions",
@@ -606,6 +608,7 @@ async def call_with_retries(
     top_k: int | None = None,
     min_p: float | None = None,
     repetition_penalty: float | None = None,
+    repetition_context_size: int | None = None,
 ) -> ApiResult | None:
     for attempt in range(MAX_RETRIES):
         try:
@@ -624,6 +627,7 @@ async def call_with_retries(
                 top_k,
                 min_p,
                 repetition_penalty,
+                repetition_context_size,
             )
         except Exception as e:
             if attempt < MAX_RETRIES - 1:
@@ -661,6 +665,7 @@ async def evaluate_benchmark(
     top_k: int | None = None,
     min_p: float | None = None,
     repetition_penalty: float | None = None,
+    repetition_context_size: int | None = None,
 ) -> list[QuestionResult]:
     """Run a benchmark. Returns per-question results."""
     import datasets
@@ -760,6 +765,7 @@ async def evaluate_benchmark(
                 top_k=top_k,
                 min_p=min_p,
                 repetition_penalty=repetition_penalty,
+                repetition_context_size=repetition_context_size,
             )
             elapsed = time.monotonic() - t0
 
@@ -1236,6 +1242,10 @@ def main() -> int:
     ap.add_argument(
         "--repetition-penalty", type=float, default=None, help="Override repetition_penalty."
     )
+    ap.add_argument(
+        "--repetition-context-size", type=int, default=None,
+        help="Context window for repetition penalty (default: 64 when repetition_penalty is set).",
+    )
 
     args, _ = ap.parse_known_args()
 
@@ -1373,6 +1383,7 @@ def main() -> int:
     top_k: int | None = args.top_k
     min_p: float | None = args.min_p
     repetition_penalty: float | None = args.repetition_penalty
+    repetition_context_size: int | None = args.repetition_context_size
 
     base_url = f"http://{args.host}:{args.port}"
 
@@ -1421,6 +1432,7 @@ def main() -> int:
                             top_k=top_k,
                             min_p=min_p,
                             repetition_penalty=repetition_penalty,
+                            repetition_context_size=repetition_context_size,
                         )
                     )
                     if results:
@@ -1458,6 +1470,7 @@ def main() -> int:
                         top_k=top_k,
                         min_p=min_p,
                         repetition_penalty=repetition_penalty,
+                        repetition_context_size=repetition_context_size,
                     )
                 )
                 if results:
