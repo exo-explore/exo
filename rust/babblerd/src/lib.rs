@@ -145,8 +145,11 @@ pub mod babel {
                     let Ok(Some(_)) = read else { break; };
                 }
                 recv = receiver.recv() => {
-                    let Ok(s) = recv else { break; };
-                    let Ok(()) = write.write_all(format!("{s}\n").as_bytes()).await else { break; };
+                    let res = match recv {
+                        Err(_) => { tracing::debug!("receiver closed, dropping connection"); break; },
+                        Ok(s) => write.write_all(format!("{s}\n").as_bytes()).await,
+                    };
+                    if let Err(e) = res { tracing::warn!(error=%e, "failed to write to socket"); break; };
                 }
             };
         }
@@ -160,7 +163,7 @@ pub mod babel {
     const PRIVATE_SOCK_PATH: &str = "/run/babeld.sock";
 
     use std::io;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use futures_lite::FutureExt;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
@@ -218,12 +221,14 @@ pub mod babel {
             write.write_all(cmd.as_bytes()).await?;
             loop {
                 let Some(line) = read.next_line().await? else {
+                    tracing::warn!("babeld closed unexpectedly");
                     return Ok(None);
                 };
                 tracing::info!("[babel] {:?}", line);
                 if line == "ok" {
                     return Ok(Some(true));
                 } else if line == "bad" {
+                    tracing::warn!("malformed message sent to babeld");
                     return Ok(Some(false));
                 }
             }
@@ -249,9 +254,24 @@ pub mod babel {
                 }
             }
             tracing::info!("babeld ok");
-            Self::query(&mut babel_lines, &mut writer, "monitor\n").await?;
+            if Self::query(&mut babel_lines, &mut writer, "monitor\n")
+                .await?
+                .is_none()
+            {
+                return Ok(());
+            };
 
+            let mut time = Instant::now();
             loop {
+                if Instant::now() - time > Duration::from_secs(5) {
+                    if Self::query(&mut babel_lines, &mut writer, "dump\n")
+                        .await?
+                        .is_none()
+                    {
+                        return Ok(());
+                    };
+                    time = Instant::now();
+                }
                 tokio::select! {
                     babble = recv.recv() => {
                         tracing::debug!("[babble] {:?}", babble);
