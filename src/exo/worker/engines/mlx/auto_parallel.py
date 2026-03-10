@@ -1354,7 +1354,7 @@ class NemotronHShardingStrategy(TensorParallelShardingStrategy):
         )
 
         indices = mx.concatenate([gate_idx, conv_ssm_idx, b_idx, c_idx, dt_idx])
-        mixer.in_proj.weight = mixer.in_proj.weight[indices]  # pyright: ignore[reportUnknownMemberType]
+        mixer.in_proj.weight = mixer.in_proj.weight[indices]
 
         # === out_proj: input is intermediate_size (sharded) → hidden_size (reduce) ===
         mixer.out_proj = self.sharded_to_all_linear(mixer.out_proj)
@@ -1385,7 +1385,7 @@ class NemotronHShardingStrategy(TensorParallelShardingStrategy):
         mixer.D = mixer.D[h_start:h_end]
 
         # === Norm: weight is intermediate_size ===
-        mixer.norm.weight = mixer.norm.weight[  # pyright: ignore[reportUnknownMemberType]
+        mixer.norm.weight = mixer.norm.weight[
             rank * is_per_rank : (rank + 1) * is_per_rank
         ]
 

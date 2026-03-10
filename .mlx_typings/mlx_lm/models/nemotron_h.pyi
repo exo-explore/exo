@@ -61,6 +61,8 @@ class NemotronHMamba2Mixer(nn.Module):
     dt_bias: mx.array
     A_log: mx.array
     D: mx.array
+    norm: nn.RMSNorm
+    heads_per_group: int
     out_proj: nn.Linear
 
     def __init__(self, args: ModelArgs) -> None: ...

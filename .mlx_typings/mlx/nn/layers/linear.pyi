@@ -40,6 +40,10 @@ class Linear(Module):
         bias (bool, optional): If set to ``False`` then the layer will
           not use a bias. Default is ``True``.
     """
+
+    weight: mx.array
+    bias: mx.array | None
+
     def __init__(self, input_dims: int, output_dims: int, bias: bool = ...) -> None: ...
     def __call__(self, x: mx.array) -> mx.array: ...
     def to_quantized(
