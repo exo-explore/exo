@@ -653,9 +653,9 @@ async def evaluate_benchmark(
     try:
         if benchmark_name == "livecodebench":
             ds = datasets.load_dataset(
-                "json",
-                data_files="hf://datasets/livecodebench/code_generation_lite/*.jsonl",
-                split="train",
+                "livecodebench/code_generation_lite",
+                split="test",
+                trust_remote_code=True,
             )
         else:
             ds = datasets.load_dataset(
