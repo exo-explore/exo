@@ -112,7 +112,9 @@
             };
           };
 
-          packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin (
+          packages = {
+            babeld = pkgs.callPackage ./nix/babeld.nix { };
+          } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin (
             let
               uvLock = builtins.fromTOML (builtins.readFile ./uv.lock);
               mlxPackage = builtins.head (builtins.filter (p: p.name == "mlx" && p.source ? git) uvLock.package);
