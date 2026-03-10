@@ -17,7 +17,7 @@ def calculate_used_storage(downloads: Sequence[DownloadProgress]) -> Memory:
         if isinstance(dp, DownloadCompleted):
             total = total + dp.total
         elif isinstance(dp, DownloadOngoing):
-            total = total + dp.download_progress.downloaded
+            total = total + dp.download_progress.total
     return total
 
 
