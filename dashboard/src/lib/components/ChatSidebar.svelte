@@ -18,12 +18,18 @@
     class?: string;
     onNewChat?: () => void;
     onSelectConversation?: () => void;
+    isMobileDrawer?: boolean;
+    isOpen?: boolean;
+    onClose?: () => void;
   }
 
   let {
     class: className = "",
     onNewChat,
     onSelectConversation,
+    isMobileDrawer = false,
+    isOpen = false,
+    onClose,
   }: Props = $props();
 
   const conversationList = $derived(conversations());
@@ -53,6 +59,10 @@
   function handleSelectConversation(id: string) {
     onSelectConversation?.();
     loadConversation(id);
+    // Close mobile drawer when selecting a conversation
+    if (isMobileDrawer && isOpen) {
+      onClose?.();
+    }
   }
 
   function handleStartEdit(id: string, name: string, event: MouseEvent) {
@@ -252,9 +262,7 @@
   }
 </script>
 
-<aside
-  class="flex flex-col h-full bg-exo-dark-gray border-r border-exo-yellow/10 {className}"
->
+{#snippet sidebarContent()}
   <!-- Header -->
   <div class="p-4">
     <button
@@ -591,4 +599,30 @@
       </button>
     </div>
   </div>
-</aside>
+{/snippet}
+
+{#if isMobileDrawer}
+  <!-- Mobile drawer with overlay -->
+  {#if isOpen}
+    <!-- Overlay backdrop -->
+    <button
+      type="button"
+      class="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
+      onclick={() => onClose?.()}
+      aria-label="Close sidebar"
+    ></button>
+    <!-- Drawer panel -->
+    <aside
+      class="fixed left-0 top-0 bottom-0 w-72 bg-exo-dark-gray border-r border-exo-yellow/10 z-50 flex flex-col md:hidden"
+    >
+      {@render sidebarContent()}
+    </aside>
+  {/if}
+{:else}
+  <!-- Desktop sidebar -->
+  <aside
+    class="flex flex-col h-full bg-exo-dark-gray border-r border-exo-yellow/10 {className}"
+  >
+    {@render sidebarContent()}
+  </aside>
+{/if}
