@@ -28,9 +28,7 @@ async fn main() -> color_eyre::Result<()> {
         .init();
     if !std::env::var("PATH").unwrap().contains("babeld") {
         tracing::error!("babeld not found on path");
-        Err(babblerd::Error::Other(
-            "babeld not found on path".to_string(),
-        ))?;
+        return Err(babblerd::BabbleError::Other("babeld not found on path".to_owned()).into());
     }
     let res = inner_main().await;
     _ = std::fs::remove_file(PUBLIC_SOCK_PATH);
@@ -110,8 +108,8 @@ async fn inner_main() -> color_eyre::Result<()> {
                         res??;
                         drop(recv);
                         babel.await??;
-                        while let Some(res) = listeners.join_next().await {
-                            res?;
+                        while let Some(res2) = listeners.join_next().await {
+                            res2?;
                         }
                         State::Idle
                     }
@@ -120,8 +118,8 @@ async fn inner_main() -> color_eyre::Result<()> {
                         drop(recv);
                         watcher.abort();
                         _ = watcher.await;
-                        while let Some(res) = listeners.join_next().await {
-                            res?;
+                        while let Some(res2) = listeners.join_next().await {
+                            res2?;
                         }
                         State::Idle
                     }
