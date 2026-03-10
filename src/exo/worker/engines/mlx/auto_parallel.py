@@ -288,7 +288,7 @@ def _patch_hybrid_cache(
         if not has_full_attn:
             entry = cache[fa_idx]
             orig_make_mask = entry.make_mask
-            entry.make_mask = lambda n, **_kw: orig_make_mask(n)  # type: ignore[assignment]
+            entry.make_mask = lambda n, **_kw: orig_make_mask(n)  # type: ignore
         if not has_linear:
             orig_ssm_make_mask = cache[ssm_idx].make_mask
 
@@ -297,7 +297,7 @@ def _patch_hybrid_cache(
             ) -> mx.array | Literal["causal"] | None:
                 return orig_ssm_make_mask(n, **kw) if kw else None
 
-            cache[ssm_idx].make_mask = _ssm_mask  # type: ignore[assignment]
+            cache[ssm_idx].make_mask = _ssm_mask  # type: ignore
         return cache
 
     model.make_cache = patched
