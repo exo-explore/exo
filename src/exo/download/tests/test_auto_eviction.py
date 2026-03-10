@@ -539,9 +539,7 @@ class TestClearRejections:
 
     async def test_clear_rejections_on_policy_only_change(self) -> None:
         """clear_rejections fires even when only the policy changes (no limit change)."""
-        config = StorageConfig(
-            max_storage=Memory.from_gb(10), storage_policy="manual"
-        )
+        config = StorageConfig(max_storage=Memory.from_gb(10), storage_policy="manual")
         rejected = DownloadRejected(
             node_id=NODE_ID,
             shard_metadata=_shard(MODEL_A, 4),
