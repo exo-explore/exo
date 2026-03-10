@@ -231,20 +231,7 @@ class DownloadCoordinator:
                 return
             # Clear previous DownloadRejected so retries can proceed.
             if isinstance(status, DownloadRejected):
-                if self.storage_config.storage_policy == "auto-evict":
-                    # Emit DownloadPending to update global state — prevents master
-                    # from deleting the instance while auto-eviction is in progress.
-                    pending = DownloadPending(
-                        shard_metadata=status.shard_metadata,
-                        node_id=self.node_id,
-                        model_directory=self._model_dir(model_id),
-                    )
-                    self.download_status[model_id] = pending
-                    await self.event_sender.send(
-                        NodeDownloadProgress(download_progress=pending)
-                    )
-                else:
-                    del self.download_status[model_id]
+                del self.download_status[model_id]
 
         # Check EXO_MODELS_PATH for pre-downloaded models
         found_path = resolve_model_in_path(model_id)
@@ -370,7 +357,7 @@ class DownloadCoordinator:
         self._tg.start_soon(download_wrapper, scope)
         self.active_downloads[model_id] = scope
 
-    async def _delete_download(self, model_id: ModelId) -> bool:
+    async def _remove_model_from_disk(self, model_id: ModelId) -> bool:
         # Protect read-only models (from EXO_MODELS_PATH) from deletion
         if model_id in self.download_status:
             current = self.download_status[model_id]
@@ -394,6 +381,12 @@ class DownloadCoordinator:
             return False
 
         logger.info(f"Successfully deleted model {model_id}")
+        return True
+
+    async def _delete_download(self, model_id: ModelId) -> bool:
+        success = await self._remove_model_from_disk(model_id)
+        if not success:
+            return False
 
         # Emit pending status to reset UI state, then remove from local tracking
         if model_id in self.download_status:
@@ -562,9 +555,8 @@ class DownloadCoordinator:
             logger.info(
                 f"Auto-evicting model {evict_model_id} to free space for {model_id}"
             )
-            # Capture shard_metadata before _delete_download removes it
             evicted_status = self.download_status.get(evict_model_id)
-            success = await self._delete_download(evict_model_id)
+            success = await self._remove_model_from_disk(evict_model_id)
             if not success:
                 current_used = calculate_used_storage(
                     list(self.download_status.values())
@@ -577,8 +569,6 @@ class DownloadCoordinator:
                 )
                 return False
 
-            # Overwrite the DownloadPending that _delete_download emitted
-            # with an explicit DownloadEvicted status
             if evicted_status is not None:
                 evicted = DownloadEvicted(
                     shard_metadata=evicted_status.shard_metadata,
