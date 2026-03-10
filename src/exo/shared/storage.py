@@ -57,7 +57,6 @@ def get_lru_eviction_candidates(
             continue
         candidates.append((model_id, dp))
 
-    # Sort by last-used time, oldest first
     candidates.sort(
         key=lambda item: model_last_used.get(item[0], datetime.min.replace(tzinfo=UTC))
     )
