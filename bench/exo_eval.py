@@ -85,6 +85,9 @@ _MC_PATTERNS: list[re.Pattern[str]] = [
 # Code extraction: last ```python ... ``` block (AA regex)
 _CODE_BLOCK_RE = re.compile(r"```(?:python|Python)?\s*\n(.*?)```", re.DOTALL)
 
+# LCB-compatible extraction mode (--lcb-compat): use line-based extraction
+# matching official LiveCodeBench extract_code() behavior.
+
 
 # ---------------------------------------------------------------------------
 # Model config loading
@@ -148,12 +151,22 @@ def extract_boxed_answer(text: str) -> str | None:
     return matches[-1].strip() if matches else None
 
 
-def extract_code_block(text: str, preserve_indent: bool = False) -> str | None:
+def extract_code_block(text: str, preserve_indent: bool = False, lcb_compat: bool = False) -> str | None:
     """Extract the last Python code block from markdown response.
 
     If preserve_indent is True, only strip trailing whitespace (keeps leading
     indentation intact — needed for HumanEval function-body completions).
+
+    If lcb_compat is True, use the official LiveCodeBench extract_code() logic:
+    line-based search for ```, extract between last two backtick lines.
     """
+    if lcb_compat:
+        lines = text.split("\n")
+        backtick_lines = [i for i, line in enumerate(lines) if "```" in line]
+        if len(backtick_lines) < 2:
+            return ""
+        return "\n".join(lines[backtick_lines[-2] + 1 : backtick_lines[-1]])
+
     matches = _CODE_BLOCK_RE.findall(text)
     if matches:
         raw = matches[-1]
@@ -384,7 +397,7 @@ _LCB_WITH_STARTER = (
     "### Format: You will use the following starter code to write the "
     "solution to the problem and enclose your code within delimiters.\n"
     "```python\n{starter_code}\n```\n\n"
-    "### Answer: (use the provided format with backticks)\n"
+    "### Answer: (use the provided format with backticks)\n\n"
 )
 
 _LCB_WITHOUT_STARTER = (
@@ -395,7 +408,7 @@ _LCB_WITHOUT_STARTER = (
     "python program runs, it reads the inputs, runs the algorithm and "
     "writes output to STDOUT.\n"
     "```python\n# YOUR CODE HERE\n```\n\n"
-    "### Answer: (use the provided format with backticks)\n"
+    "### Answer: (use the provided format with backticks)\n\n"
 )
 
 
@@ -529,6 +542,7 @@ async def _call_api(
     system_message: str | None = None,
     reasoning_effort: str | None = None,
     top_p: float | None = None,
+    enable_thinking: bool | None = None,
 ) -> ApiResult:
     messages = []
     if system_message:
@@ -545,6 +559,8 @@ async def _call_api(
         body["reasoning_effort"] = reasoning_effort
     if top_p is not None:
         body["top_p"] = top_p
+    if enable_thinking is not None:
+        body["enable_thinking"] = enable_thinking
 
     resp = await client.post(
         f"{base_url}/v1/chat/completions",
@@ -577,6 +593,7 @@ async def call_with_retries(
     system_message: str | None = None,
     reasoning_effort: str | None = None,
     top_p: float | None = None,
+    enable_thinking: bool | None = None,
 ) -> ApiResult | None:
     for attempt in range(MAX_RETRIES):
         try:
@@ -591,6 +608,7 @@ async def call_with_retries(
                 system_message,
                 reasoning_effort,
                 top_p,
+                enable_thinking,
             )
         except Exception as e:
             if attempt < MAX_RETRIES - 1:
@@ -621,6 +639,10 @@ async def evaluate_benchmark(
     reasoning_effort: str | None = None,
     top_p: float | None = None,
     difficulty: str | None = None,
+    start_index: int | None = None,
+    end_index: int | None = None,
+    lcb_compat: bool = False,
+    enable_thinking: bool | None = None,
 ) -> list[QuestionResult]:
     """Run a benchmark. Returns per-question results."""
     import datasets
@@ -650,6 +672,12 @@ async def evaluate_benchmark(
     if difficulty and "difficulty" in ds.column_names:
         ds = ds.filter(lambda x: x["difficulty"] == difficulty)
         logger.info(f"Filtered to {len(ds)} {difficulty} problems")
+
+    if start_index is not None or end_index is not None:
+        si = start_index or 0
+        ei = end_index or len(ds)
+        ds = ds.select(range(si, min(ei, len(ds))))
+        logger.info(f"Sliced to [{si}:{ei}] → {len(ds)} problems")
 
     total = len(ds)
     if limit and limit < total:
@@ -708,6 +736,7 @@ async def evaluate_benchmark(
                 system_message=system_msg,
                 reasoning_effort=reasoning_effort,
                 top_p=top_p,
+                enable_thinking=enable_thinking,
             )
             elapsed = time.monotonic() - t0
 
@@ -759,8 +788,9 @@ async def evaluate_benchmark(
             elif config.kind == "code":
                 # HumanEval needs preserved indentation (function body completion)
                 keep_indent = benchmark_name == "humaneval"
-                code = extract_code_block(response, preserve_indent=keep_indent)
-                if code is None:
+                code = extract_code_block(response, preserve_indent=keep_indent,
+                                          lcb_compat=(lcb_compat and benchmark_name == "livecodebench"))
+                if not code:
                     result = QuestionResult(
                         question_id=idx,
                         prompt=prompt,
@@ -1093,6 +1123,18 @@ def main() -> int:
         default=None,
         help="Max questions per benchmark (for fast iteration).",
     )
+    ap.add_argument(
+        "--start-index",
+        type=int,
+        default=None,
+        help="Start index for problem range (inclusive). Applied after difficulty filter.",
+    )
+    ap.add_argument(
+        "--end-index",
+        type=int,
+        default=None,
+        help="End index for problem range (exclusive). Applied after difficulty filter.",
+    )
 
     reasoning_group = ap.add_mutually_exclusive_group()
     reasoning_group.add_argument(
@@ -1154,6 +1196,17 @@ def main() -> int:
         "--skip-instance-setup",
         action="store_true",
         help="Skip exo instance management (assumes model is already running).",
+    )
+    ap.add_argument(
+        "--lcb-compat",
+        action="store_true",
+        help="Use LiveCodeBench-compatible code extraction and prompt format.",
+    )
+    ap.add_argument(
+        "--enable-thinking",
+        action="store_true",
+        default=False,
+        help="Send enable_thinking=true in API request (for Qwen/DeepSeek thinking mode).",
     )
 
     args, _ = ap.parse_known_args()
@@ -1286,6 +1339,9 @@ def main() -> int:
         reasoning_effort = str(cfg["reasoning_effort"])
     else:
         reasoning_effort = "high" if is_reasoning else None
+
+    enable_thinking = True if args.enable_thinking else None
+
     base_url = f"http://{args.host}:{args.port}"
 
     logger.info(f"Model: {full_model_id}")
@@ -1317,6 +1373,10 @@ def main() -> int:
                             reasoning_effort=reasoning_effort,
                             top_p=top_p,
                             difficulty=args.difficulty,
+                            start_index=args.start_index,
+                            end_index=args.end_index,
+                            lcb_compat=args.lcb_compat,
+                            enable_thinking=enable_thinking,
                         )
                     )
                     if results:
@@ -1347,6 +1407,10 @@ def main() -> int:
                         reasoning_effort=reasoning_effort,
                         top_p=top_p,
                         difficulty=args.difficulty,
+                        start_index=args.start_index,
+                        end_index=args.end_index,
+                        lcb_compat=args.lcb_compat,
+                        enable_thinking=enable_thinking,
                     )
                 )
                 if results:
