@@ -7,7 +7,6 @@ import mlx.nn as nn
 from .cache import ArraysCache, KVCache
 from .switch_layers import SwitchMLP
 
-
 @dataclass
 class ModelArgs:
     model_type: str
@@ -48,7 +47,6 @@ class ModelArgs:
     def from_dict(cls, params: dict[str, Any]) -> ModelArgs: ...
     def __post_init__(self) -> None: ...
 
-
 class NemotronHMamba2Mixer(nn.Module):
     num_heads: int
     hidden_size: int
@@ -73,7 +71,6 @@ class NemotronHMamba2Mixer(nn.Module):
         cache: Optional[ArraysCache] = None,
     ) -> mx.array: ...
 
-
 class NemotronHAttention(nn.Module):
     hidden_size: int
     num_heads: int
@@ -93,14 +90,14 @@ class NemotronHAttention(nn.Module):
         cache: Optional[KVCache] = None,
     ) -> mx.array: ...
 
-
 class NemotronHMLP(nn.Module):
     up_proj: nn.Linear
     down_proj: nn.Linear
 
-    def __init__(self, args: ModelArgs, intermediate_size: Optional[int] = None) -> None: ...
+    def __init__(
+        self, args: ModelArgs, intermediate_size: Optional[int] = None
+    ) -> None: ...
     def __call__(self, x: mx.array) -> mx.array: ...
-
 
 class NemotronHMoE(nn.Module):
     num_experts_per_tok: int
@@ -109,7 +106,6 @@ class NemotronHMoE(nn.Module):
 
     def __init__(self, config: ModelArgs) -> None: ...
     def __call__(self, x: mx.array) -> mx.array: ...
-
 
 class NemotronHBlock(nn.Module):
     block_type: str
@@ -124,7 +120,6 @@ class NemotronHBlock(nn.Module):
         cache: Optional[Any] = None,
     ) -> mx.array: ...
 
-
 class NemotronHModel(nn.Module):
     embeddings: nn.Embedding
     layers: list[NemotronHBlock]
@@ -138,7 +133,6 @@ class NemotronHModel(nn.Module):
         inputs: mx.array,
         cache: Optional[Any] = None,
     ) -> mx.array: ...
-
 
 class Model(nn.Module):
     args: ModelArgs

@@ -255,7 +255,9 @@ def get_inner_model(model: nn.Module) -> nn.Module:
     if isinstance(inner, nn.Module):
         return inner
 
-    raise ValueError("Model must either have a 'model', 'transformer', or 'backbone' attribute")
+    raise ValueError(
+        "Model must either have a 'model', 'transformer', or 'backbone' attribute"
+    )
 
 
 def get_layers(inner_model_instance: nn.Module) -> list[_LayerCallable]:
@@ -290,7 +292,9 @@ def _patch_hybrid_cache(
         if not has_linear:
             orig_ssm_make_mask = cache[ssm_idx].make_mask
 
-            def _ssm_mask(n: int, **kw: bool | int | None) -> mx.array | Literal["causal"] | None:
+            def _ssm_mask(
+                n: int, **kw: bool | int | None
+            ) -> mx.array | Literal["causal"] | None:
                 return orig_ssm_make_mask(n, **kw) if kw else None
 
             cache[ssm_idx].make_mask = _ssm_mask  # type: ignore[assignment]
@@ -1332,11 +1336,22 @@ class NemotronHShardingStrategy(TensorParallelShardingStrategy):
         dt_start = c_start + n_groups * ssm_state_size
 
         # Build index tensor for this rank's slice of each section
-        gate_idx = mx.arange(gate_start + rank * is_per_rank, gate_start + (rank + 1) * is_per_rank)
-        conv_ssm_idx = mx.arange(conv_ssm_start + rank * is_per_rank, conv_ssm_start + (rank + 1) * is_per_rank)
-        b_idx = mx.arange(b_start + rank * bc_per_rank, b_start + (rank + 1) * bc_per_rank)
-        c_idx = mx.arange(c_start + rank * bc_per_rank, c_start + (rank + 1) * bc_per_rank)
-        dt_idx = mx.arange(dt_start + rank * heads_per_rank, dt_start + (rank + 1) * heads_per_rank)
+        gate_idx = mx.arange(
+            gate_start + rank * is_per_rank, gate_start + (rank + 1) * is_per_rank
+        )
+        conv_ssm_idx = mx.arange(
+            conv_ssm_start + rank * is_per_rank,
+            conv_ssm_start + (rank + 1) * is_per_rank,
+        )
+        b_idx = mx.arange(
+            b_start + rank * bc_per_rank, b_start + (rank + 1) * bc_per_rank
+        )
+        c_idx = mx.arange(
+            c_start + rank * bc_per_rank, c_start + (rank + 1) * bc_per_rank
+        )
+        dt_idx = mx.arange(
+            dt_start + rank * heads_per_rank, dt_start + (rank + 1) * heads_per_rank
+        )
 
         indices = mx.concatenate([gate_idx, conv_ssm_idx, b_idx, c_idx, dt_idx])
         mixer.in_proj.weight = mixer.in_proj.weight[indices]  # pyright: ignore[reportUnknownMemberType]
@@ -1347,7 +1362,10 @@ class NemotronHShardingStrategy(TensorParallelShardingStrategy):
         # === conv1d: depthwise conv on conv_dim channels ===
         # conv_dim layout: [ssm_hidden:IS | B:NG*SS | C:NG*SS]
         conv_ssm_idx_local = mx.arange(rank * is_per_rank, (rank + 1) * is_per_rank)
-        conv_b_idx = mx.arange(intermediate_size + rank * bc_per_rank, intermediate_size + (rank + 1) * bc_per_rank)
+        conv_b_idx = mx.arange(
+            intermediate_size + rank * bc_per_rank,
+            intermediate_size + (rank + 1) * bc_per_rank,
+        )
         conv_c_idx = mx.arange(
             intermediate_size + n_groups * ssm_state_size + rank * bc_per_rank,
             intermediate_size + n_groups * ssm_state_size + (rank + 1) * bc_per_rank,
@@ -1367,7 +1385,9 @@ class NemotronHShardingStrategy(TensorParallelShardingStrategy):
         mixer.D = mixer.D[h_start:h_end]
 
         # === Norm: weight is intermediate_size ===
-        mixer.norm.weight = mixer.norm.weight[rank * is_per_rank : (rank + 1) * is_per_rank]  # pyright: ignore[reportUnknownMemberType]
+        mixer.norm.weight = mixer.norm.weight[  # pyright: ignore[reportUnknownMemberType]
+            rank * is_per_rank : (rank + 1) * is_per_rank
+        ]
 
         # === Update dimensions ===
         mixer.num_heads = heads_per_rank
