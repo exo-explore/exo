@@ -15,13 +15,13 @@ from pydantic import ValidationError
 
 from exo.shared.constants import EXO_CONFIG_FILE, EXO_MODELS_DIR
 from exo.shared.types.memory import Memory
-from exo.shared.types.storage import StorageConfig
 from exo.shared.types.profiling import (
     DiskUsage,
     MemoryUsage,
     NetworkInterfaceInfo,
     ThunderboltBridgeStatus,
 )
+from exo.shared.types.storage import StorageConfig
 from exo.shared.types.thunderbolt import (
     ThunderboltConnection,
     ThunderboltConnectivity,

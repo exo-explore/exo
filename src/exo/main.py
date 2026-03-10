@@ -176,7 +176,9 @@ class Node:
     async def _load_storage_config(args: "Args") -> StorageConfig:
         """Load storage config: start from config.toml, overlay CLI args."""
         node_config = await NodeConfig.gather()
-        base = node_config.storage_config if node_config is not None else StorageConfig()
+        base = (
+            node_config.storage_config if node_config is not None else StorageConfig()
+        )
 
         # CLI args override individual fields (non-default values only)
         max_storage = (
@@ -185,7 +187,9 @@ class Node:
             else base.max_storage
         )
         storage_policy = (
-            args.storage_policy if args.storage_policy != "manual" else base.storage_policy
+            args.storage_policy
+            if args.storage_policy is not None
+            else base.storage_policy
         )
 
         return StorageConfig(max_storage=max_storage, storage_policy=storage_policy)
@@ -348,7 +352,7 @@ class Args(CamelCaseModel):
     bootstrap_peers: list[str] = []
     libp2p_port: int
     max_storage_gb: float | None = None
-    storage_policy: StoragePolicy = "manual"
+    storage_policy: StoragePolicy | None = None
 
     @classmethod
     def parse(cls) -> Self:
@@ -447,8 +451,8 @@ class Args(CamelCaseModel):
             "--storage-policy",
             choices=["manual", "auto-evict"],
             dest="storage_policy",
-            default="manual",
-            help="Storage policy: 'manual' rejects on exceed, 'auto-evict' removes LRU models",
+            default=None,
+            help="Storage policy: 'manual' rejects on exceed, 'auto-evict' removes LRU models (default: manual)",
         )
 
         args = parser.parse_args()
