@@ -26,28 +26,111 @@ pub mod error {
     }
 }
 pub mod if_watcher {
-    use std::{collections::HashSet, net::Ipv6Addr, path::PathBuf};
+    #[cfg(target_os = "linux")]
+    use std::path::PathBuf;
+    use std::{
+        collections::HashMap,
+        net::{IpAddr, Ipv6Addr},
+    };
 
     use futures_lite::StreamExt;
     use ipnet::Ipv6Net;
     use n0_watcher::Watcher;
-    use netwatch::interfaces::IpNet;
+    use netwatch::interfaces::{Interface, IpNet};
     use tokio::sync::mpsc;
 
     use crate::{
+        BabbleError, Result,
         babel::Babble,
-        ip_manager::add_ip,
-        {BabbleError, Result},
+        ip_manager::{add_ip, remove_ip},
     };
 
-    pub const PREFIX: Ipv6Net = Ipv6Net::new_assert(
-        Ipv6Addr::new(0xfde0, 0x20c6, 0x1fa7, 0xffff, 0, 0, 0, 0),
-        64,
-    );
+    pub const PREFIX: Ipv6Net =
+        Ipv6Net::new_assert(Ipv6Addr::new(0xfde0, 0x20c6, 0x1fa7, 0, 0, 0, 0, 0), 48);
+
+    trait IfaceExt {
+        fn has_link_local_v6(&self) -> bool;
+        fn is_real_interface(&self) -> bool;
+        fn will_babel(&self) -> bool;
+        fn get_v6_in(&self, prefix: Ipv6Net) -> Option<Ipv6Addr>;
+    }
+    impl IfaceExt for Interface {
+        fn will_babel(&self) -> bool {
+            self.has_link_local_v6() && self.is_real_interface() && self.is_up()
+        }
+
+        fn has_link_local_v6(&self) -> bool {
+            let mut has = false;
+            for addr in self.addrs() {
+                let IpAddr::V6(a) = addr.addr() else {
+                    continue;
+                };
+                if a.is_unicast_link_local() {
+                    has = true;
+                    break;
+                }
+            }
+            has
+        }
+        fn is_real_interface(&self) -> bool {
+            #[cfg(target_os = "macos")]
+            if !self.name().starts_with("en") {
+                tracing::debug!("skipping non 'en' interface {}", self.name());
+                return false;
+            }
+            #[cfg(target_os = "linux")]
+            {
+                if !PathBuf::from(format!("/sys/class/net/{}/device", self.name())).exists() {
+                    tracing::debug!(
+                        "skipping interface {} as it doesn't correspond to a physical link",
+                        self.name()
+                    );
+                    return false;
+                }
+                let dev_type_path = PathBuf::from(format!("/sys/class/net/{}/type", self.name()));
+                if !dev_type_path.exists() {
+                    tracing::debug!(
+                        "skipping interface {} with no type file at {:?}",
+                        self.name(),
+                        dev_type_path.to_str()
+                    );
+                    return false;
+                }
+                let Ok(dev_type) = std::fs::read_to_string(dev_type_path) else {
+                    return false;
+                };
+                if dev_type.trim() != "1" {
+                    tracing::debug!(
+                        "skipping interface {} with type {:?}",
+                        self.name(),
+                        dev_type
+                    );
+                    return false;
+                }
+            }
+            true
+        }
+        fn get_v6_in(&self, prefix: Ipv6Net) -> Option<Ipv6Addr> {
+            for addr in self.addrs() {
+                if let IpNet::V6(v6) = addr
+                    && prefix.contains(&v6.addr())
+                {
+                    return Some(v6.addr());
+                }
+            }
+            None
+        }
+    }
 
     #[tracing::instrument(skip(send))]
     pub async fn watch(send: mpsc::Sender<Babble>) -> Result<()> {
-        let mut ready_ifaces = HashSet::new();
+        let mut ready_ifaces = HashMap::new();
+        let ip_node_id: u128 = (rand::random::<u64>() as u128) << 16;
+        let my_range: Ipv6Net = Ipv6Net::new_assert(
+            Ipv6Addr::from_bits(PREFIX.addr().to_bits() | ip_node_id),
+            112,
+        );
+        let mut iface_num: u16 = 0;
 
         tracing::info!("starting interface monitor");
         let mon = netwatch::netmon::Monitor::new()
@@ -57,75 +140,53 @@ pub mod if_watcher {
 
         while let Some(s) = mon_stream.next().await {
             let mut not_seen = ready_ifaces.clone();
-            for iface in s.interfaces.values().filter(|iface| iface.is_up()) {
-                if not_seen.contains(iface.name()) {
-                    assert!(not_seen.remove(iface.name()));
+            for iface in s.interfaces.values().filter(|iface| iface.will_babel()) {
+                if not_seen.contains_key(iface.name()) {
+                    assert!(not_seen.remove(iface.name()).is_some());
                     continue;
-                }
-                #[cfg(target_os = "macos")]
-                if !iface.name().starts_with("en") {
-                    tracing::debug!("skipping non 'en' interface {}", iface.name());
-                    continue;
-                }
-                #[cfg(target_os = "linux")]
-                {
-                    if !PathBuf::from(format!("/sys/class/net/{}/device", iface.name())).exists() {
-                        tracing::debug!(
-                            "skipping interface {} as it doesn't correspond to a physical link",
-                            iface.name()
-                        );
-                        continue;
-                    }
-                    let dev_type_path =
-                        PathBuf::from(format!("/sys/class/net/{}/type", iface.name()));
-                    if !dev_type_path.exists() {
-                        tracing::debug!(
-                            "skipping interface {} with no type file at {:?}",
-                            iface.name(),
-                            dev_type_path.to_str()
-                        );
-                        continue;
-                    }
-                    let dev_type = tokio::fs::read_to_string(dev_type_path).await?;
-                    if dev_type.trim() != "1" {
-                        tracing::debug!(
-                            "skipping interface {} with type {:?}",
-                            iface.name(),
-                            dev_type
-                        );
-                        continue;
-                    }
-                }
-                let mut found_addr = false;
-                for addr in iface.addrs() {
-                    if let IpNet::V6(v6) = addr
-                        && PREFIX.contains(&v6.addr())
-                    {
-                        found_addr = true;
-                        break;
-                    }
                 }
 
-                if !found_addr {
-                    let lower: u64 = rand::random();
-                    let upper = 0xfde0_20c6_1fa7_ffff_u64;
-                    let addr = Ipv6Addr::from_bits((u128::from(upper) << 64) | u128::from(lower));
-                    tracing::info!("adding new ip {} to {}", addr, iface.name());
-                    add_ip(addr, iface)?;
+                let my_ip = iface.get_v6_in(my_range);
+                let mut has_removed = false;
+                for addr in iface.addrs() {
+                    if let IpNet::V6(v6) = addr
+                        && PREFIX.contains(&v6)
+                        && !my_range.contains(&v6)
+                    {
+                        tracing::info!("removing stale ip {v6} from {}", iface.name());
+                        // don't really care if this fails
+                        _ = remove_ip(v6.addr(), iface).await;
+                        has_removed = true;
+                    }
+                }
+                if has_removed {
+                    continue;
+                }
+                if my_ip.is_none() {
+                    let addr = Ipv6Addr::from_bits(my_range.addr().to_bits() | (iface_num as u128));
+                    iface_num += 1;
+                    assert!(iface_num < u16::MAX, "Really? u16::MAX interfaces?");
+                    tracing::info!("adding new ip {addr} to {}", iface.name());
+                    add_ip(addr, iface).await?;
                 }
 
                 tracing::info!("telling babeld to watch {}", iface.name());
                 let Ok(()) = send.send(Babble::AddIface(iface.name().to_owned())).await else {
                     return Ok(());
                 };
-                ready_ifaces.insert(iface.name().to_owned());
+                ready_ifaces.insert(iface.name().to_owned(), iface.clone());
             }
-            for iface in not_seen {
-                tracing::info!("telling babeld to stop watching {iface}");
-                let Ok(()) = send.send(Babble::RemoveIface(iface.clone())).await else {
+            for (name, iface) in not_seen.iter() {
+                tracing::info!("telling babeld to stop watching {name}");
+                if let Some(v6) = iface.get_v6_in(PREFIX) {
+                    tracing::info!("removing stale ip {v6} from {name}");
+                    // don't really care if this fails
+                    _ = remove_ip(v6, iface).await;
+                }
+                assert!(ready_ifaces.remove(name).is_some());
+                let Ok(()) = send.send(Babble::RemoveIface(name.to_owned())).await else {
                     return Ok(());
                 };
-                assert!(ready_ifaces.remove(&iface));
             }
         }
         tracing::info!("stopping interface monitor");
@@ -373,23 +434,43 @@ pub mod babel {
 }
 pub(crate) mod ip_manager {
     pub(crate) use sys::add_ip;
+    pub(crate) use sys::remove_ip;
 
     #[cfg(target_os = "linux")]
     mod sys {
         use netwatch::interfaces::Interface;
 
         use crate::{BabbleError, Result};
-        use std::{net::Ipv6Addr, process::Command};
+        use std::net::Ipv6Addr;
+        use tokio::process::Command;
 
         #[tracing::instrument]
-        pub fn add_ip(v6: Ipv6Addr, iface: &Interface) -> Result<()> {
+        pub async fn add_ip(v6: Ipv6Addr, iface: &Interface) -> Result<()> {
             let out = Command::new("ip")
                 .arg("addr")
                 .arg("add")
                 .arg(format!("{v6}/128"))
                 .arg("dev")
                 .arg(iface.name())
-                .output()?;
+                .output()
+                .await?;
+            if out.status.success() {
+                Ok(())
+            } else {
+                Err(BabbleError::FailedToSetIp)
+            }
+        }
+
+        #[tracing::instrument]
+        pub async fn remove_ip(v6: Ipv6Addr, iface: &Interface) -> Result<()> {
+            let out = Command::new("ip")
+                .arg("addr")
+                .arg("del")
+                .arg(format!("{v6}/128"))
+                .arg("dev")
+                .arg(iface.name())
+                .output()
+                .await?;
             if out.status.success() {
                 Ok(())
             } else {
@@ -404,16 +485,34 @@ pub(crate) mod ip_manager {
 
         use crate::BabbleError;
         use crate::Result;
-        use std::{net::Ipv6Addr, process::Command};
+        use std::net::Ipv6Addr;
+        use tokio::process::Command;
 
         #[tracing::instrument]
-        pub fn add_ip(v6: Ipv6Addr, iface: &Interface) -> Result<()> {
+        pub async fn add_ip(v6: Ipv6Addr, iface: &Interface) -> Result<()> {
             let out = Command::new("ifconfig")
                 .arg(iface.name())
                 .arg("inet6")
                 .arg(format!("{v6}/128"))
                 .arg("add")
-                .output()?;
+                .output()
+                .await?;
+            if out.status.success() {
+                Ok(())
+            } else {
+                Err(BabbleError::FailedToSetIp)
+            }
+        }
+
+        #[tracing::instrument]
+        pub async fn remove_ip(v6: Ipv6Addr, iface: &Interface) -> Result<()> {
+            let out = Command::new("ifconfig")
+                .arg(iface.name())
+                .arg("inet6")
+                .arg(format!("{v6}/128"))
+                .arg("delete")
+                .output()
+                .await?;
             if out.status.success() {
                 Ok(())
             } else {
