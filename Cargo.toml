@@ -1,6 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["rust/networking", "rust/exo_pyo3_bindings", "rust/util"]
+members = [
+  "rust/networking",
+  "rust/exo_pyo3_bindings",
+  "rust/util",
+  "rust/babblerd",
+]
 
 [workspace.package]
 version = "0.0.1"
@@ -43,7 +48,6 @@ log = "0.4"
 
 # networking
 libp2p = "0.56"
-libp2p-tcp = "0.44"
 
 [workspace.lints.rust]
 static_mut_refs = "warn"      # Or use "warn" instead of deny

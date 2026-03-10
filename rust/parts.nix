@@ -1,7 +1,7 @@
 { inputs, ... }:
 {
   perSystem =
-    { inputs', pkgs, lib, ... }:
+    { inputs', self', pkgs, lib, ... }:
     let
       # Fenix nightly toolchain with all components
       rustToolchain = inputs'.fenix.packages.stable.withComponents [
@@ -79,7 +79,7 @@
       };
 
       config = {
-        packages = {
+        packages = rec {
           # Python bindings wheel via maturin
           exo_pyo3_bindings = craneLib.buildPackage (
             commonArgs
@@ -110,6 +110,19 @@
               '';
             }
           );
+          babblerd-unwrapped = craneLib.buildPackage (
+            commonArgs // {
+              inherit cargoArtifacts;
+              pname = "babblerd-unwrapped";
+            }
+          );
+          babblerd = pkgs.writeShellApplication {
+            name = "babblerd";
+            runtimeInputs = [ self'.packages.babeld ];
+            text = ''
+              exec ${babblerd-unwrapped}/bin/babblerd "$@"
+            '';
+          };
         };
 
         checks = {
