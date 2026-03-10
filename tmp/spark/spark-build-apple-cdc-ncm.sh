@@ -14,11 +14,14 @@ DSC="${SRCNAME}_${SRCVER}.dsc"
 KBUILD="/lib/modules/${KVER}/build"
 
 msg() { printf '\n==> %s\n' "$*"; }
-die() { echo "ERROR: $*" >&2; exit 1; }
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "Missing command: $1"; }
 
 [[ $EUID -eq 0 ]] || die "Run with sudo"
-[[ -d "$KBUILD" ]] || die "Missing kernel headers/build dir: $KBUILD"
+[[ -d $KBUILD ]] || die "Missing kernel headers/build dir: $KBUILD"
 
 need_cmd curl
 need_cmd dpkg-source
@@ -52,13 +55,13 @@ cd "$WORKDIR"
 msg "Downloading exact source package for ${SRCNAME} ${SRCVER}"
 curl -fL "${BASE_URL}/${ORIG}" -o "${ORIG}"
 curl -fL "${BASE_URL}/${DIFF}" -o "${DIFF}"
-curl -fL "${BASE_URL}/${DSC}"  -o "${DSC}"
+curl -fL "${BASE_URL}/${DSC}" -o "${DSC}"
 
 msg "Extracting source"
 dpkg-source -x "${DSC}"
 
 SRCDIR="$(find . -maxdepth 1 -mindepth 1 -type d -name "${SRCNAME}-*" | head -n1)"
-[[ -n "${SRCDIR}" ]] || die "Could not find extracted source directory"
+[[ -n ${SRCDIR} ]] || die "Could not find extracted source directory"
 cd "${SRCDIR}"
 
 [[ -f drivers/net/usb/cdc_ncm.c ]] || die "cdc_ncm.c not found in source tree"
@@ -127,7 +130,7 @@ msg "Preparing out-of-tree build dir"
 mkdir -p buildmod
 cp drivers/net/usb/cdc_ncm.c buildmod/
 
-cat > buildmod/Makefile <<'EOF'
+cat >buildmod/Makefile <<'EOF'
 obj-m += cdc_ncm.o
 ccflags-y += -Wno-error
 
@@ -142,7 +145,7 @@ msg "Building patched module"
 cd buildmod
 make -C "$KBUILD" M="$PWD" modules
 PATCHED_KO="$PWD/cdc_ncm.ko"
-[[ -f "$PATCHED_KO" ]] || die "Patched cdc_ncm.ko was not built"
+[[ -f $PATCHED_KO ]] || die "Patched cdc_ncm.ko was not built"
 
 msg "Patched module info"
 modinfo "$PATCHED_KO" | sed -n '1,20p'
