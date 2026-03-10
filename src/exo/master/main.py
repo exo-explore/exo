@@ -101,7 +101,6 @@ class Master:
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
-        self._has_new_rejections = False
 
     async def run(self):
         logger.info("Starting Master")
@@ -400,39 +399,6 @@ class Master:
                         )
                         break
 
-            # kill instances whose downloads were rejected (storage limit exceeded)
-            if self._has_new_rejections:
-                self._has_new_rejections = False
-                rejected_instances: set[InstanceId] = set()
-                for instance_id, instance in self.state.instances.items():
-                    for node_id in instance.shard_assignments.node_to_runner:
-                        node_downloads = self.state.downloads.get(node_id, ())
-                        for dp in node_downloads:
-                            if (
-                                isinstance(dp, DownloadRejected)
-                                and dp.shard_metadata.model_card.model_id
-                                == instance.shard_assignments.model_id
-                            ):
-                                rejected_instances.add(instance_id)
-                                break
-
-                for instance_id in rejected_instances:
-                    logger.info(f"Deleting instance {instance_id} — download rejected")
-                    for task in self.state.tasks.values():
-                        if task.instance_id == instance_id and task.task_status in (
-                            TaskStatus.Pending,
-                            TaskStatus.Running,
-                        ):
-                            await self.event_sender.send(
-                                TaskStatusUpdated(
-                                    task_id=task.task_id,
-                                    task_status=TaskStatus.Failed,
-                                )
-                            )
-                    await self.event_sender.send(
-                        InstanceDeleted(instance_id=instance_id)
-                    )
-
             # time out dead nodes
             for node_id, time in self.state.last_seen.items():
                 now = datetime.now(tz=timezone.utc)
@@ -465,7 +431,7 @@ class Master:
                     if isinstance(event, NodeDownloadProgress) and isinstance(
                         event.download_progress, DownloadRejected
                     ):
-                        self._has_new_rejections = True
+                        await self._handle_download_rejected(event.download_progress)
 
                     event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
                     if isinstance(event, NodeGatheredInfo):
@@ -485,6 +451,29 @@ class Master:
                 event=event.event,
             )
         )
+
+    async def _handle_download_rejected(self, dp: DownloadRejected) -> None:
+        """Delete instances whose download was rejected on the given node."""
+        rejected_model_id = dp.shard_metadata.model_card.model_id
+        rejected_node_id = dp.node_id
+        for instance_id, instance in self.state.instances.items():
+            if (
+                instance.shard_assignments.model_id == rejected_model_id
+                and rejected_node_id in instance.shard_assignments.node_to_runner
+            ):
+                logger.info(f"Deleting instance {instance_id} — download rejected")
+                for task in self.state.tasks.values():
+                    if task.instance_id == instance_id and task.task_status in (
+                        TaskStatus.Pending,
+                        TaskStatus.Running,
+                    ):
+                        await self.event_sender.send(
+                            TaskStatusUpdated(
+                                task_id=task.task_id,
+                                task_status=TaskStatus.Failed,
+                            )
+                        )
+                await self.event_sender.send(InstanceDeleted(instance_id=instance_id))
 
     async def _handle_traces_collected(self, event: TracesCollected) -> None:
         task_id = event.task_id
