@@ -280,7 +280,7 @@
     let placementNodes: Array<{
       id: string;
       deviceName: string;
-      deviceType: "macbook" | "studio" | "mini" | "unknown";
+      deviceType: "macbook" | "studio" | "mini" | "dgx" | "linux" | "unknown";
       totalGB: number;
       currentUsedGB: number;
       modelUsageGB: number;
@@ -969,6 +969,101 @@
                       class="animate-pulse-slow"
                     />
                   {/if}
+                </g>
+              {:else if node.deviceType === "dgx"}
+                <!-- DGX Spark icon -->
+                {@const s = node.iconSize}
+                {@const dgxW = s * 1.4}
+                {@const dgxH = s * 0.52}
+                <g transform="translate({-dgxW / 2}, {-dgxH / 2})">
+                  <!-- Chassis -->
+                  <rect
+                    x="0"
+                    y="0"
+                    width={dgxW}
+                    height={dgxH}
+                    rx="2"
+                    fill="#6f6248"
+                    stroke={node.isUsed ? "#FFD700" : "#4B5563"}
+                    stroke-width="1.5"
+                  />
+                  <!-- Side accents -->
+                  <rect x="0" y="0" width={dgxW * 0.02} height={dgxH} fill="#8a7a56" />
+                  <rect x={dgxW - dgxW * 0.02} y="0" width={dgxW * 0.02} height={dgxH} fill="#8a7a56" />
+                  <!-- Left handle -->
+                  <rect
+                    x={dgxW * 0.04}
+                    y={dgxH * 0.08}
+                    width={dgxW * 0.22}
+                    height={dgxH * 0.84}
+                    rx="2"
+                    fill="#b3a170"
+                    stroke="#403723"
+                    stroke-width="0.5"
+                  />
+                  <!-- Right handle -->
+                  <rect
+                    x={dgxW - dgxW * 0.04 - dgxW * 0.22}
+                    y={dgxH * 0.08}
+                    width={dgxW * 0.22}
+                    height={dgxH * 0.84}
+                    rx="2"
+                    fill="#b3a170"
+                    stroke="#403723"
+                    stroke-width="0.5"
+                  />
+                  <!-- Memory fill -->
+                  <rect
+                    x="2"
+                    y={dgxH - dgxH * (node.currentPercent / 100)}
+                    width={dgxW - 4}
+                    height={dgxH * (node.currentPercent / 100)}
+                    fill="rgba(255,215,0,0.35)"
+                  />
+                  {#if node.modelUsageGB > 0 && node.isUsed}
+                    <rect
+                      x="2"
+                      y={dgxH - dgxH * (node.newPercent / 100)}
+                      width={dgxW - 4}
+                      height={dgxH * ((node.newPercent - node.currentPercent) / 100)}
+                      fill="#FFD700"
+                      filter="url(#memGlow-{filterId})"
+                      class="animate-pulse-slow"
+                    />
+                  {/if}
+                </g>
+              {:else if node.deviceType === "linux"}
+                <!-- Linux Tux penguin icon -->
+                {@const sz = node.iconSize}
+                {@const sc = sz / 100}
+                <g transform="translate({-sz / 2}, {-sz / 2})">
+                  <!-- Body -->
+                  <path
+                    d="M50 8c-8 0-14 6-14 13 0 4 2 8 5 10-8 4-16 14-16 28v12c0 4 2 7 5 9l-6 4c-2 1-3 3-3 5v3c0 2 2 4 4 4h10l4-4h22l4 4h10c2 0 4-2 4-4v-3c0-2-1-4-3-5l-6-4c3-2 5-5 5-9V59c0-14-8-24-16-28 3-2 5-6 5-10 0-7-6-13-14-13z"
+                    transform="scale({sc})"
+                    fill="#1a1a1a"
+                    stroke={node.isUsed ? "#FFD700" : "#4B5563"}
+                    stroke-width={1.5 / sc}
+                  />
+                  <!-- Belly -->
+                  <path
+                    d="M38 52c0-8 5-15 12-15s12 7 12 15v14c0 4-5 7-12 7s-12-3-12-7V52z"
+                    transform="scale({sc})"
+                    fill="rgba(220,220,220,0.85)"
+                  />
+                  <!-- Eyes -->
+                  <circle cx={44 * sc} cy={16 * sc} r={2.5 * sc} fill="white" />
+                  <circle cx={56 * sc} cy={16 * sc} r={2.5 * sc} fill="white" />
+                  <circle cx={44 * sc} cy={16 * sc} r={1.2 * sc} fill="#1a1a1a" />
+                  <circle cx={56 * sc} cy={16 * sc} r={1.2 * sc} fill="#1a1a1a" />
+                  <!-- Beak -->
+                  <path
+                    d="M{46 * sc} {22 * sc} L{50 * sc} {27 * sc} L{54 * sc} {22 * sc} Z"
+                    fill="#E8A317"
+                  />
+                  <!-- Feet -->
+                  <ellipse cx={42 * sc} cy={94 * sc} rx={6 * sc} ry={2.5 * sc} fill="#E8A317" />
+                  <ellipse cx={58 * sc} cy={94 * sc} rx={6 * sc} ry={2.5 * sc} fill="#E8A317" />
                 </g>
               {:else}
                 <!-- Unknown device - hexagon -->
