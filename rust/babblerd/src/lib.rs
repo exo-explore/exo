@@ -213,10 +213,11 @@ pub mod babel {
             }
         }
 
-        #[tracing::instrument(skip(read, write))]
+        #[tracing::instrument(skip(read, write, send))]
         async fn query(
             read: &mut Lines<BufReader<OwnedReadHalf>>,
             write: &mut OwnedWriteHalf,
+            send: &broadcast::Sender<String>,
             cmd: &str,
         ) -> io::Result<Option<bool>> {
             write.write_all(cmd.as_bytes()).await?;
@@ -226,16 +227,24 @@ pub mod babel {
                     return Ok(None);
                 };
                 tracing::info!("[babel] {:?}", line);
-                if line == "ok" {
-                    return Ok(Some(true));
+                let ret = if line == "ok" {
+                    Ok(Some(true))
                 } else if line == "bad" {
                     tracing::warn!("malformed message sent to babeld");
-                    return Ok(Some(false));
+                    Ok(Some(false))
+                } else {
+                    Ok(None)
+                };
+                let Ok(_) = send.send(line) else {
+                    return Ok(None);
+                };
+                if !matches!(ret, Ok(None)) {
+                    return ret;
                 }
             }
         }
 
-        #[tracing::instrument(skip(self, recv, send))]
+        #[tracing::instrument(skip_all)]
         async fn supervise(
             &self,
             mut recv: mpsc::Receiver<Babble>,
@@ -256,25 +265,26 @@ pub mod babel {
                 }
             }
             tracing::info!("babeld ok");
+            /* TODO(evan): push rather than pull
             if Self::query(&mut babel_lines, &mut writer, "monitor\n")
                 .await?
                 .is_none()
             {
                 return Ok(());
             };
+            */
 
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        if Self::query(&mut babel_lines, &mut writer, "dump\n")
+                        if Self::query(&mut babel_lines, &mut writer, &send, "dump\n")
                             .await?
                             .is_none()
                         {
                             return Ok(());
                         };
-
                     },
                     babble = recv.recv() => {
                         tracing::debug!("[babble] {:?}", babble);
@@ -283,10 +293,10 @@ pub mod babel {
                         };
                         match babble {
                             Babble::AddIface(iface) => {
-                                Self::query(&mut babel_lines, &mut writer, format!("interface {iface}\n").as_ref()).await?;
+                                Self::query(&mut babel_lines, &mut writer, &send, format!("interface {iface}\n").as_ref()).await?;
                             }
                             Babble::RemoveIface(iface) => {
-                                Self::query(&mut babel_lines, &mut writer, format!("flush interface {iface}\n").as_ref()).await?;
+                                Self::query(&mut babel_lines, &mut writer, &send, format!("flush interface {iface}\n").as_ref()).await?;
                             }
                         }
                     },
