@@ -1,6 +1,7 @@
 import platform
 import socket
 import sys
+from pathlib import Path
 from subprocess import CalledProcessError
 
 import psutil
@@ -117,12 +118,84 @@ async def get_network_interfaces() -> list[NetworkInterfaceInfo]:
     return interfaces_info
 
 
+def _read_dmi_field(name: str) -> str | None:
+    """Read a single DMI sysfs field, returning ``None`` on failure."""
+    try:
+        path = Path(f"/sys/class/dmi/id/{name}")
+        if path.exists():
+            return path.read_text().strip()
+    except (OSError, PermissionError):
+        pass
+    return None
+
+
+async def _get_linux_model_and_chip() -> tuple[str, str]:
+    """Get Linux system information using DMI and /proc/cpuinfo.
+
+    Detects NVIDIA DGX Spark (DMI product_name ``"DGX_Spark"``) and other
+    NVIDIA systems via the ``sys_vendor`` DMI field, falling back to generic
+    Linux identification.
+    """
+    model = "Linux"
+    chip = "Unknown Chip"
+
+    product_name = _read_dmi_field("product_name")
+    sys_vendor = _read_dmi_field("sys_vendor")
+
+    # DGX Spark: DMI product_name may be "DGX_Spark" or "gx10" variant
+    product_lower = (product_name or "").lower()
+    if product_name and ("dgx" in product_lower or "gx10" in product_lower):
+        model = "DGX Spark"
+        try:
+            process = await run_process(
+                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]
+            )
+            gpu_name = process.stdout.decode().strip().split("\n")[0]
+            chip = gpu_name if gpu_name and gpu_name != "[N/A]" else "NVIDIA GB10"
+        except (CalledProcessError, FileNotFoundError):
+            chip = "NVIDIA GB10"
+        return (model, chip)
+
+    # Other NVIDIA systems (sys_vendor contains "NVIDIA")
+    if sys_vendor and "NVIDIA" in sys_vendor:
+        model = product_name.replace("_", " ") if product_name else "NVIDIA System"
+        try:
+            process = await run_process(
+                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]
+            )
+            gpu_name = process.stdout.decode().strip().split("\n")[0]
+            if gpu_name and gpu_name != "[N/A]":
+                chip = gpu_name
+        except (CalledProcessError, FileNotFoundError):
+            pass
+        return (model, chip)
+
+    # Generic Linux — use /proc/cpuinfo for chip
+    cpuinfo_path = Path("/proc/cpuinfo")
+    if cpuinfo_path.exists():
+        try:
+            for line in cpuinfo_path.read_text().splitlines():
+                if line.startswith("model name"):
+                    chip = line.split(":", 1)[1].strip()
+                    break
+        except OSError:
+            pass
+
+    return (model, chip)
+
+
 async def get_model_and_chip() -> tuple[str, str]:
-    """Get Mac system information using system_profiler."""
+    """Get system model and chip information.
+
+    On macOS, uses ``system_profiler``.  On Linux, reads DMI data from
+    sysfs and CPU info from ``/proc/cpuinfo``.
+    """
     model = "Unknown Model"
     chip = "Unknown Chip"
 
-    # TODO: better non mac support
+    if sys.platform == "linux":
+        return await _get_linux_model_and_chip()
+
     if sys.platform != "darwin":
         return (model, chip)
 

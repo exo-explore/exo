@@ -169,8 +169,10 @@
 
   function getDeviceType(
     name: string,
-  ): "macbook" | "studio" | "mini" | "unknown" {
+  ): "macbook" | "studio" | "mini" | "dgx" | "linux" | "unknown" {
     const lower = name.toLowerCase();
+    if (lower.includes("dgx") || lower.includes("gx10")) return "dgx";
+    if (lower.includes("linux")) return "linux";
     if (lower.includes("macbook")) return "macbook";
     if (lower.includes("studio")) return "studio";
     if (lower.includes("mini")) return "mini";

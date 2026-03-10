@@ -9,7 +9,7 @@
    */
 
   interface Props {
-    /** "macbook pro" | "mac studio" | "mac mini" etc. */
+    /** "macbook pro" | "mac studio" | "mac mini" | "dgx spark" | "linux" etc. */
     deviceType: string;
     /** Center X coordinate in SVG space */
     cx: number;
@@ -38,10 +38,50 @@
   const LOGO_NATIVE_WIDTH = 814;
   const LOGO_NATIVE_HEIGHT = 1000;
 
+  // NVIDIA logo SVG path
+  const NVIDIA_LOGO_PATH =
+    "M0.81 0.429V0.299c0.013 -0.001 0.026 -0.002 0.038 -0.002 0.355 -0.011 0.588 0.306 0.588 0.306S1.186 0.952 0.916 0.952c-0.036 0 -0.071 -0.006 -0.105 -0.017V0.542c0.138 0.017 0.166 0.078 0.249 0.216l0.185 -0.155s-0.135 -0.177 -0.362 -0.177c-0.024 -0.001 -0.048 0.001 -0.072 0.003m0 -0.429v0.194l0.038 -0.002c0.494 -0.017 0.816 0.405 0.816 0.405s-0.37 0.45 -0.754 0.45c-0.034 0 -0.066 -0.003 -0.099 -0.009v0.12c0.027 0.003 0.055 0.006 0.082 0.006 0.358 0 0.618 -0.183 0.869 -0.399 0.042 0.034 0.212 0.114 0.247 0.15 -0.238 0.2 -0.794 0.361 -1.11 0.361 -0.03 0 -0.059 -0.002 -0.088 -0.005v0.169h1.362V0zm0 0.935v0.102c-0.331 -0.059 -0.423 -0.404 -0.423 -0.404s0.159 -0.176 0.423 -0.205v0.112h-0.001C0.671 0.524 0.562 0.654 0.562 0.654s0.062 0.218 0.248 0.282m-0.588 -0.316s0.196 -0.29 0.589 -0.32V0.194C0.376 0.229 0 0.597 0 0.597s0.213 0.616 0.81 0.672v-0.112c-0.438 -0.054 -0.588 -0.538 -0.588 -0.538";
+
+  // Tux penguin paths (viewBox 0 0 100 100)
+  const TUX_BODY_PATH =
+    "M50 8c-8 0-14 6-14 13 0 4 2 8 5 10-8 4-16 14-16 28v12c0 4 2 7 5 9l-6 4c-2 1-3 3-3 5v3c0 2 2 4 4 4h10l4-4h22l4 4h10c2 0 4-2 4-4v-3c0-2-1-4-3-5l-6-4c3-2 5-5 5-9V59c0-14-8-24-16-28 3-2 5-6 5-10 0-7-6-13-14-13z";
+  const TUX_BELLY_PATH =
+    "M38 52c0-8 5-15 12-15s12 7 12 15v14c0 4-5 7-12 7s-12-3-12-7V52z";
+
   const wireColor = "rgba(179,179,179,0.8)";
   const strokeWidth = 1.5;
 
   const modelLower = $derived(deviceType.toLowerCase());
+  const isSpark = $derived(
+    modelLower.includes("dgx") || modelLower.includes("gx10"),
+  );
+  const isLinux = $derived(!isSpark && modelLower.includes("linux"));
+
+  // ── DGX Spark dimensions ──
+  const dgxW = $derived(size * 1.55);
+  const dgxH = $derived(size * 0.58);
+  const dgxX = $derived(cx - dgxW / 2);
+  const dgxY = $derived(cy - dgxH / 2);
+  const dgxChassisX = $derived(dgxX - dgxW * 0.03);
+  const dgxChassisW = $derived(dgxW * 1.05);
+  const dgxHandleW = $derived(dgxW * 0.27);
+  const dgxHandleGap = $derived(dgxH * 0.05);
+  const dgxHandleH = $derived(dgxH - dgxHandleGap * 2);
+  const dgxHandleY = $derived(dgxY + dgxHandleGap);
+  const dgxInnerHandleW = $derived(dgxW * 0.12);
+  const dgxInnerHandleH = $derived(dgxHandleH - dgxH * 0.06);
+  const dgxLeftHandleX = $derived(dgxX + 4);
+  const dgxRightHandleX = $derived(dgxX + dgxW - dgxHandleW - 4);
+  const dgxClipId = $derived(`di-dgx-${uid}`);
+  const dgxTextureId = $derived(`di-dgx-tex-${uid}`);
+
+  // ── Linux Tux dimensions ──
+  const tuxSize = $derived(Math.min(size * 1.0, size * 1.1));
+  const tuxScale = $derived(tuxSize / 100);
+  const tuxTx = $derived(cx - (100 * tuxScale) / 2);
+  const tuxTy = $derived(cy - (100 * tuxScale) / 2);
+  const tuxEyeR = $derived(2.5 * tuxScale);
+  const tuxBellyClipId = $derived(`di-tux-belly-${uid}`);
 
   // ── Mac Studio dimensions (same ratios as TopologyGraph) ──
   const studioW = $derived(size * 1.25);
@@ -114,7 +154,230 @@
   const studioClipId = $derived(`di-studio-${uid}`);
 </script>
 
-{#if modelLower === "mac studio" || modelLower === "mac mini"}
+{#if isSpark}
+  <!-- DGX Spark -->
+  <defs>
+    <clipPath id={dgxClipId}>
+      <rect x={dgxX} y={dgxY} width={dgxW} height={dgxH} rx="3" />
+    </clipPath>
+    <pattern
+      id={dgxTextureId}
+      patternUnits="userSpaceOnUse"
+      width="8"
+      height="8"
+    >
+      <rect width="8" height="8" fill="#6f6248" />
+      <circle cx="2" cy="2" r="1" fill="#5a4f3b" opacity="0.5" />
+      <circle cx="6" cy="6" r="1" fill="#4a4232" opacity="0.45" />
+    </pattern>
+  </defs>
+
+  <!-- Main body -->
+  <rect
+    x={dgxChassisX}
+    y={dgxY}
+    width={dgxChassisW}
+    height={dgxH}
+    rx="3"
+    fill="url(#{dgxTextureId})"
+    stroke={wireColor}
+    stroke-width={strokeWidth}
+  />
+
+  <!-- Side border accents -->
+  <rect
+    x={dgxChassisX}
+    y={dgxY}
+    width={dgxW * 0.02}
+    height={dgxH}
+    fill="#8a7a56"
+  />
+  <rect
+    x={dgxChassisX + dgxChassisW - dgxW * 0.02}
+    y={dgxY}
+    width={dgxW * 0.02}
+    height={dgxH}
+    fill="#8a7a56"
+  />
+
+  <!-- Memory fill -->
+  {#if ramPercent > 0}
+    <rect
+      x={dgxX}
+      y={dgxY + dgxH - (ramPercent / 100) * dgxH}
+      width={dgxW}
+      height={(ramPercent / 100) * dgxH}
+      fill="rgba(255,215,0,0.45)"
+      clip-path="url(#{dgxClipId})"
+    />
+  {/if}
+
+  <!-- Left handle -->
+  <rect
+    x={dgxLeftHandleX}
+    y={dgxHandleY}
+    width={dgxHandleW}
+    height={dgxHandleH}
+    rx="2.4"
+    fill="#b3a170"
+    stroke="#403723"
+    stroke-width="0.7"
+  />
+  <rect
+    x={dgxLeftHandleX + dgxHandleW * 0.06}
+    y={dgxHandleY + dgxH * 0.03}
+    width={dgxInnerHandleW}
+    height={dgxInnerHandleH}
+    rx="1.6"
+    fill="#8a7a56"
+  />
+
+  <!-- Right handle -->
+  <rect
+    x={dgxRightHandleX}
+    y={dgxHandleY}
+    width={dgxHandleW}
+    height={dgxHandleH}
+    rx="2.4"
+    fill="#b3a170"
+    stroke="#403723"
+    stroke-width="0.7"
+  />
+  <rect
+    x={dgxRightHandleX + dgxHandleW - dgxInnerHandleW - dgxHandleW * 0.08}
+    y={dgxHandleY + dgxH * 0.03}
+    width={dgxInnerHandleW}
+    height={dgxInnerHandleH}
+    rx="1.6"
+    fill="#8a7a56"
+  />
+
+  <!-- NVIDIA logo (rotated 90deg on left handle) -->
+  {@const badgeW = dgxW * 0.09}
+  {@const badgeH = dgxHandleH * 0.5}
+  {@const badgeX = dgxLeftHandleX + dgxHandleW - badgeW - dgxHandleW * 0.06}
+  {@const badgeYPos = dgxHandleY + (dgxHandleH - badgeH) / 2}
+  {@const textSz = badgeW * 0.58}
+  {@const logoW = textSz * 1.2}
+  {@const logoH = logoW * (1.438 / 2.174)}
+  {@const ctrX = badgeX + badgeW / 2 - badgeW * 0.03}
+  {@const ctrY = badgeYPos + badgeH / 2}
+  {@const labelGap = badgeW * 0.15}
+  {@const totalW = logoW + labelGap + textSz * 3.6}
+  <g transform="rotate(90 {ctrX} {ctrY})">
+    <svg
+      x={ctrX - totalW / 2}
+      y={ctrY - logoH / 2}
+      width={logoW}
+      height={logoH}
+      viewBox="0 0 2.174 1.438"
+    >
+      <path d={NVIDIA_LOGO_PATH} fill="#76b900" />
+    </svg>
+    <text
+      x={ctrX - totalW / 2 + logoW + labelGap}
+      y={ctrY}
+      text-anchor="start"
+      dominant-baseline="middle"
+      fill="#8a7a56"
+      font-size={textSz}
+      font-family="monospace"
+      font-weight="700">NVIDIA</text
+    >
+  </g>
+{:else if isLinux}
+  <!-- Linux Tux Penguin -->
+  <defs>
+    <clipPath id={tuxBellyClipId}>
+      <path
+        d={TUX_BELLY_PATH}
+        transform="translate({tuxTx}, {tuxTy}) scale({tuxScale})"
+      />
+    </clipPath>
+  </defs>
+
+  <!-- Body -->
+  <path
+    d={TUX_BODY_PATH}
+    transform="translate({tuxTx}, {tuxTy}) scale({tuxScale})"
+    fill="#1a1a1a"
+    stroke={wireColor}
+    stroke-width={strokeWidth / tuxScale}
+  />
+
+  <!-- White belly -->
+  <path
+    d={TUX_BELLY_PATH}
+    transform="translate({tuxTx}, {tuxTy}) scale({tuxScale})"
+    fill="rgba(220,220,220,0.85)"
+  />
+
+  <!-- Memory fill on belly -->
+  {#if ramPercent > 0}
+    {@const bellyTop = tuxTy + 37 * tuxScale}
+    {@const bellyH = 36 * tuxScale}
+    {@const memH = (ramPercent / 100) * bellyH}
+    <rect
+      x={tuxTx + 38 * tuxScale}
+      y={bellyTop + bellyH - memH}
+      width={24 * tuxScale}
+      height={memH}
+      fill="rgba(255,215,0,0.75)"
+      clip-path="url(#{tuxBellyClipId})"
+    />
+  {/if}
+
+  <!-- Eyes -->
+  <circle
+    cx={tuxTx + 44 * tuxScale}
+    cy={tuxTy + 16 * tuxScale}
+    r={tuxEyeR}
+    fill="white"
+  />
+  <circle
+    cx={tuxTx + 56 * tuxScale}
+    cy={tuxTy + 16 * tuxScale}
+    r={tuxEyeR}
+    fill="white"
+  />
+  <!-- Pupils -->
+  <circle
+    cx={tuxTx + 44 * tuxScale}
+    cy={tuxTy + 16 * tuxScale}
+    r={tuxEyeR * 0.5}
+    fill="#1a1a1a"
+  />
+  <circle
+    cx={tuxTx + 56 * tuxScale}
+    cy={tuxTy + 16 * tuxScale}
+    r={tuxEyeR * 0.5}
+    fill="#1a1a1a"
+  />
+
+  <!-- Beak -->
+  <path
+    d="M{tuxTx + 46 * tuxScale} {tuxTy + 22 * tuxScale} L{tuxTx +
+      50 * tuxScale} {tuxTy + 27 * tuxScale} L{tuxTx + 54 * tuxScale} {tuxTy +
+      22 * tuxScale} Z"
+    fill="#E8A317"
+  />
+
+  <!-- Feet -->
+  <ellipse
+    cx={tuxTx + 42 * tuxScale}
+    cy={tuxTy + 94 * tuxScale}
+    rx={6 * tuxScale}
+    ry={2.5 * tuxScale}
+    fill="#E8A317"
+  />
+  <ellipse
+    cx={tuxTx + 58 * tuxScale}
+    cy={tuxTy + 94 * tuxScale}
+    rx={6 * tuxScale}
+    ry={2.5 * tuxScale}
+    fill="#E8A317"
+  />
+{:else if modelLower === "mac studio" || modelLower === "mac mini"}
   <!-- Mac Studio / Mac Mini -->
   <defs>
     <clipPath id={studioClipId}>
