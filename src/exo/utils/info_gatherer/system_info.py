@@ -170,7 +170,20 @@ async def _get_linux_model_and_chip() -> tuple[str, str]:
             pass
         return (model, chip)
 
-    # Generic Linux — use /proc/cpuinfo for chip
+    # Generic Linux — detect laptop vs desktop via chassis_type
+    # SMBIOS chassis types: 8,9,10,14,31,32 = portable/laptop
+    chassis_type = _read_dmi_field("chassis_type")
+    laptop_chassis_types = {"8", "9", "10", "14", "31", "32"}
+    if chassis_type in laptop_chassis_types:
+        model = "Linux Laptop"
+    elif chassis_type is not None:
+        model = "Linux Desktop"
+
+    # Also check for battery as a fallback laptop indicator
+    if model == "Linux" and Path("/sys/class/power_supply/BAT0").exists():
+        model = "Linux Laptop"
+
+    # Use /proc/cpuinfo for chip
     cpuinfo_path = Path("/proc/cpuinfo")
     if cpuinfo_path.exists():
         try:
