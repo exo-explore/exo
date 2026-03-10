@@ -543,6 +543,9 @@ async def _call_api(
     reasoning_effort: str | None = None,
     top_p: float | None = None,
     enable_thinking: bool | None = None,
+    top_k: int | None = None,
+    min_p: float | None = None,
+    repetition_penalty: float | None = None,
 ) -> ApiResult:
     messages = []
     if system_message:
@@ -561,6 +564,12 @@ async def _call_api(
         body["top_p"] = top_p
     if enable_thinking is not None:
         body["enable_thinking"] = enable_thinking
+    if top_k is not None:
+        body["top_k"] = top_k
+    if min_p is not None:
+        body["min_p"] = min_p
+    if repetition_penalty is not None:
+        body["repetition_penalty"] = repetition_penalty
 
     resp = await client.post(
         f"{base_url}/v1/chat/completions",
@@ -594,6 +603,9 @@ async def call_with_retries(
     reasoning_effort: str | None = None,
     top_p: float | None = None,
     enable_thinking: bool | None = None,
+    top_k: int | None = None,
+    min_p: float | None = None,
+    repetition_penalty: float | None = None,
 ) -> ApiResult | None:
     for attempt in range(MAX_RETRIES):
         try:
@@ -609,6 +621,9 @@ async def call_with_retries(
                 reasoning_effort,
                 top_p,
                 enable_thinking,
+                top_k,
+                min_p,
+                repetition_penalty,
             )
         except Exception as e:
             if attempt < MAX_RETRIES - 1:
@@ -643,6 +658,9 @@ async def evaluate_benchmark(
     end_index: int | None = None,
     lcb_compat: bool = False,
     enable_thinking: bool | None = None,
+    top_k: int | None = None,
+    min_p: float | None = None,
+    repetition_penalty: float | None = None,
 ) -> list[QuestionResult]:
     """Run a benchmark. Returns per-question results."""
     import datasets
@@ -739,6 +757,9 @@ async def evaluate_benchmark(
                 reasoning_effort=reasoning_effort,
                 top_p=top_p,
                 enable_thinking=enable_thinking,
+                top_k=top_k,
+                min_p=min_p,
+                repetition_penalty=repetition_penalty,
             )
             elapsed = time.monotonic() - t0
 
@@ -1210,6 +1231,11 @@ def main() -> int:
         default=False,
         help="Send enable_thinking=true in API request (for Qwen/DeepSeek thinking mode).",
     )
+    ap.add_argument("--top-k", type=int, default=None, help="Override top_k sampling.")
+    ap.add_argument("--min-p", type=float, default=None, help="Override min_p sampling.")
+    ap.add_argument(
+        "--repetition-penalty", type=float, default=None, help="Override repetition_penalty."
+    )
 
     args, _ = ap.parse_known_args()
 
@@ -1344,12 +1370,25 @@ def main() -> int:
 
     enable_thinking = True if args.enable_thinking else None
 
+    top_k: int | None = args.top_k
+    min_p: float | None = args.min_p
+    repetition_penalty: float | None = args.repetition_penalty
+
     base_url = f"http://{args.host}:{args.port}"
 
     logger.info(f"Model: {full_model_id}")
+    extra_params = ""
+    if top_p is not None:
+        extra_params += f"top_p={top_p}, "
+    if top_k is not None:
+        extra_params += f"top_k={top_k}, "
+    if min_p is not None:
+        extra_params += f"min_p={min_p}, "
+    if repetition_penalty is not None:
+        extra_params += f"repetition_penalty={repetition_penalty}, "
     logger.info(
         f"Settings: temperature={temperature}, max_tokens={max_tokens}, "
-        + (f"top_p={top_p}, " if top_p is not None else "")
+        + extra_params
         + f"reasoning={'yes' if is_reasoning else 'no'}"
         + (f", reasoning_effort={reasoning_effort}" if reasoning_effort else "")
     )
@@ -1379,6 +1418,9 @@ def main() -> int:
                             end_index=args.end_index,
                             lcb_compat=args.lcb_compat,
                             enable_thinking=enable_thinking,
+                            top_k=top_k,
+                            min_p=min_p,
+                            repetition_penalty=repetition_penalty,
                         )
                     )
                     if results:
@@ -1413,6 +1455,9 @@ def main() -> int:
                         end_index=args.end_index,
                         lcb_compat=args.lcb_compat,
                         enable_thinking=enable_thinking,
+                        top_k=top_k,
+                        min_p=min_p,
+                        repetition_penalty=repetition_penalty,
                     )
                 )
                 if results:
