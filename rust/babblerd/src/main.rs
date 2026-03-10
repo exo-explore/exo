@@ -16,7 +16,7 @@ enum State {
         recv: broadcast::Receiver<String>,
         babel: JoinHandle<babblerd::Result<()>>,
         watcher: JoinHandle<babblerd::Result<()>>,
-        listeners: JoinSet<io::Result<()>>,
+        listeners: JoinSet<()>,
     },
 }
 
@@ -79,15 +79,15 @@ async fn inner_main() -> color_eyre::Result<()> {
                         sig?;
                         drop(recv);
                         watcher.abort();
-                        babel.await??;
                         _ = watcher.await;
+                        babel.await??;
                         while let Some(res) = listeners.join_next().await {
-                            res??;
+                            res?;
                         }
                         break;
                     }
                     next_join_result = listeners.join_next(), if !listeners.is_empty() => {
-                        next_join_result.expect("checked")??;
+                        next_join_result.expect("checked")?;
                         tracing::info!("dropped a listener");
                         if listeners.is_empty() {
                             tracing::info!("stopping babeld");
@@ -111,7 +111,7 @@ async fn inner_main() -> color_eyre::Result<()> {
                         drop(recv);
                         babel.await??;
                         while let Some(res) = listeners.join_next().await {
-                            res??;
+                            res?;
                         }
                         State::Idle
                     }
@@ -121,7 +121,7 @@ async fn inner_main() -> color_eyre::Result<()> {
                         watcher.abort();
                         _ = watcher.await;
                         while let Some(res) = listeners.join_next().await {
-                            res??;
+                            res?;
                         }
                         State::Idle
                     }
