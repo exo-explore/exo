@@ -536,3 +536,28 @@ class TestClearRejections:
         assert isinstance(coordinator.download_status[MODEL_A], DownloadEvicted)
         # Rejected should be cleared to Pending
         assert isinstance(coordinator.download_status[MODEL_B], DownloadPending)
+
+    async def test_clear_rejections_on_policy_only_change(self) -> None:
+        """clear_rejections fires even when only the policy changes (no limit change)."""
+        config = StorageConfig(
+            max_storage=Memory.from_gb(10), storage_policy="manual"
+        )
+        rejected = DownloadRejected(
+            node_id=NODE_ID,
+            shard_metadata=_shard(MODEL_A, 4),
+            reason="Manual policy",
+            required=Memory.from_gb(4),
+            available=Memory.from_gb(1),
+            limit=Memory.from_gb(10),
+        )
+        coordinator, _ = _make_coordinator(
+            config,
+            {MODEL_A: rejected, MODEL_B: _completed(MODEL_B, 3)},
+        )
+
+        await coordinator.clear_rejections()
+
+        # Rejected should be cleared to Pending
+        assert isinstance(coordinator.download_status[MODEL_A], DownloadPending)
+        # Completed should be unchanged
+        assert isinstance(coordinator.download_status[MODEL_B], DownloadCompleted)
