@@ -121,12 +121,11 @@
   const NVIDIA_LOGO_PATH =
     "M0.81 0.429V0.299c0.013 -0.001 0.026 -0.002 0.038 -0.002 0.355 -0.011 0.588 0.306 0.588 0.306S1.186 0.952 0.916 0.952c-0.036 0 -0.071 -0.006 -0.105 -0.017V0.542c0.138 0.017 0.166 0.078 0.249 0.216l0.185 -0.155s-0.135 -0.177 -0.362 -0.177c-0.024 -0.001 -0.048 0.001 -0.072 0.003m0 -0.429v0.194l0.038 -0.002c0.494 -0.017 0.816 0.405 0.816 0.405s-0.37 0.45 -0.754 0.45c-0.034 0 -0.066 -0.003 -0.099 -0.009v0.12c0.027 0.003 0.055 0.006 0.082 0.006 0.358 0 0.618 -0.183 0.869 -0.399 0.042 0.034 0.212 0.114 0.247 0.15 -0.238 0.2 -0.794 0.361 -1.11 0.361 -0.03 0 -0.059 -0.002 -0.088 -0.005v0.169h1.362V0zm0 0.935v0.102c-0.331 -0.059 -0.423 -0.404 -0.423 -0.404s0.159 -0.176 0.423 -0.205v0.112h-0.001C0.671 0.524 0.562 0.654 0.562 0.654s0.062 0.218 0.248 0.282m-0.588 -0.316s0.196 -0.29 0.589 -0.32V0.194C0.376 0.229 0 0.597 0 0.597s0.213 0.616 0.81 0.672v-0.112c-0.438 -0.054 -0.588 -0.538 -0.588 -0.538";
 
-  // Tux penguin SVG path — simplified silhouette for topology view
-  // viewBox: 0 0 100 100
-  const TUX_BODY_PATH =
-    "M50 8c-8 0-14 6-14 13 0 4 2 8 5 10-8 4-16 14-16 28v12c0 4 2 7 5 9l-6 4c-2 1-3 3-3 5v3c0 2 2 4 4 4h10l4-4h22l4 4h10c2 0 4-2 4-4v-3c0-2-1-4-3-5l-6-4c3-2 5-5 5-9V59c0-14-8-24-16-28 3-2 5-6 5-10 0-7-6-13-14-13z";
-  const TUX_BELLY_PATH =
-    "M38 52c0-8 5-15 12-15s12 7 12 15v14c0 4-5 7-12 7s-12-3-12-7V52z";
+  // Tux penguin logo — simplified silhouette suitable as a logo overlay
+  // viewBox: 0 0 100 120
+  const TUX_LOGO_PATH =
+    "M50 5C42 5 36 11 36 18c0 4 2 8 5 10C33 32 25 42 25 56v12c0 4 2 7 5 9l-6 4c-2 1-3 3-3 5v3c0 2 2 4 4 4h10l4-4h22l4 4h10c2 0 4-2 4-4v-3c0-2-1-4-3-5l-6-4c3-2 5-5 5-9V56c0-14-8-24-16-28 3-2 5-6 5-10 0-7-6-13-14-13z";
+  const TUX_LOGO_VIEWBOX = "0 0 100 100";
 
   function formatBytes(bytes: number, decimals = 1): string {
     if (!bytes || bytes === 0) return "0B";
@@ -567,10 +566,11 @@
       const modelLower = modelId.toLowerCase();
       const identity = identitiesData[nodeInfo.id];
       const nameLower = (friendlyName || "").toLowerCase();
-      const isSpark =
-        modelLower.includes("dgx") || modelLower.includes("gx10");
+      const isSpark = modelLower.includes("dgx") || modelLower.includes("gx10");
       const isLinux =
-        !isSpark && (modelLower === "linux" || identity?.osVersion === "Linux");
+        !isSpark &&
+        (modelLower.startsWith("linux") || identity?.osVersion === "Linux");
+      const isLinuxLaptop = isLinux && modelLower.includes("laptop");
 
       // Check node states for styling
       const isHighlighted = highlightedNodes.has(nodeInfo.id);
@@ -826,107 +826,202 @@
           .attr("font-family", "monospace")
           .attr("font-weight", "700")
           .text("NVIDIA");
-      } else if (isLinux) {
-        // Linux — Tux penguin
-        iconBaseWidth = nodeRadius * 1.0;
-        iconBaseHeight = nodeRadius * 1.1;
-        const tuxSize = Math.min(iconBaseWidth, iconBaseHeight);
-        const scale = tuxSize / 100;
-        const tx = nodeInfo.x - (100 * scale) / 2;
-        const ty = nodeInfo.y - (100 * scale) / 2;
+      } else if (isLinuxLaptop) {
+        // Linux Laptop — same shape as MacBook but with Tux logo
+        iconBaseWidth = nodeRadius * 1.6;
+        iconBaseHeight = nodeRadius * 1.15;
+        const x = nodeInfo.x - iconBaseWidth / 2;
+        const y = nodeInfo.y - iconBaseHeight / 2;
 
-        // Body (dark outline)
+        const screenHeight = iconBaseHeight * 0.7;
+        const baseHeight = iconBaseHeight * 0.3;
+        const screenWidth = iconBaseWidth * 0.85;
+        const screenX = nodeInfo.x - screenWidth / 2;
+        const screenBezel = 3;
+
+        const linuxScreenClipId = `linux-screen-${nodeInfo.id.replace(/[^a-zA-Z0-9]/g, "-")}`;
+        defs
+          .append("clipPath")
+          .attr("id", linuxScreenClipId)
+          .append("rect")
+          .attr("x", screenX + screenBezel)
+          .attr("y", y + screenBezel)
+          .attr("width", screenWidth - screenBezel * 2)
+          .attr("height", screenHeight - screenBezel * 2)
+          .attr("rx", 2);
+
+        // Screen outer frame
         nodeG
-          .append("path")
+          .append("rect")
           .attr("class", "node-outline")
-          .attr("d", TUX_BODY_PATH)
-          .attr("transform", `translate(${tx}, ${ty}) scale(${scale})`)
+          .attr("x", screenX)
+          .attr("y", y)
+          .attr("width", screenWidth)
+          .attr("height", screenHeight)
+          .attr("rx", 3)
           .attr("fill", "#1a1a1a")
           .attr("stroke", wireColor)
-          .attr("stroke-width", strokeWidth / scale);
+          .attr("stroke-width", strokeWidth);
 
-        // White belly
+        // Screen inner
         nodeG
-          .append("path")
-          .attr("d", TUX_BELLY_PATH)
-          .attr("transform", `translate(${tx}, ${ty}) scale(${scale})`)
-          .attr("fill", "rgba(220,220,220,0.85)");
+          .append("rect")
+          .attr("x", screenX + screenBezel)
+          .attr("y", y + screenBezel)
+          .attr("width", screenWidth - screenBezel * 2)
+          .attr("height", screenHeight - screenBezel * 2)
+          .attr("rx", 2)
+          .attr("fill", "#0a0a12");
 
-        // Memory fill on belly (from bottom up)
+        // Memory fill on screen
         if (ramUsagePercent > 0) {
-          const bellyClipId = `tux-belly-${nodeInfo.id.replace(/[^a-zA-Z0-9]/g, "-")}`;
-          defs
-            .append("clipPath")
-            .attr("id", bellyClipId)
-            .append("path")
-            .attr("d", TUX_BELLY_PATH)
-            .attr("transform", `translate(${tx}, ${ty}) scale(${scale})`);
-
-          const bellyTop = ty + 37 * scale;
-          const bellyHeight = 36 * scale;
-          const memHeight = (ramUsagePercent / 100) * bellyHeight;
+          const memFillTotalHeight = screenHeight - screenBezel * 2;
+          const memFillActualHeight =
+            (ramUsagePercent / 100) * memFillTotalHeight;
           nodeG
             .append("rect")
-            .attr("x", tx + 38 * scale)
-            .attr("y", bellyTop + bellyHeight - memHeight)
-            .attr("width", 24 * scale)
-            .attr("height", memHeight)
-            .attr("fill", "rgba(255,215,0,0.75)")
-            .attr("clip-path", `url(#${bellyClipId})`);
+            .attr("x", screenX + screenBezel)
+            .attr(
+              "y",
+              y + screenBezel + (memFillTotalHeight - memFillActualHeight),
+            )
+            .attr("width", screenWidth - screenBezel * 2)
+            .attr("height", memFillActualHeight)
+            .attr("fill", "rgba(255,215,0,0.85)")
+            .attr("clip-path", `url(#${linuxScreenClipId})`);
         }
 
-        // Eyes
-        const eyeRadius = 2.5 * scale;
+        // Tux logo on screen
+        const tuxLogoH = screenHeight * 0.35;
+        const tuxLogoW = tuxLogoH;
+        const tuxLogoX = nodeInfo.x - tuxLogoW / 2;
+        const tuxLogoY = y + screenHeight / 2 - tuxLogoH / 2;
         nodeG
-          .append("circle")
-          .attr("cx", tx + 44 * scale)
-          .attr("cy", ty + 16 * scale)
-          .attr("r", eyeRadius)
-          .attr("fill", "white");
-        nodeG
-          .append("circle")
-          .attr("cx", tx + 56 * scale)
-          .attr("cy", ty + 16 * scale)
-          .attr("r", eyeRadius)
-          .attr("fill", "white");
-        // Pupils
-        nodeG
-          .append("circle")
-          .attr("cx", tx + 44 * scale)
-          .attr("cy", ty + 16 * scale)
-          .attr("r", eyeRadius * 0.5)
-          .attr("fill", "#1a1a1a");
-        nodeG
-          .append("circle")
-          .attr("cx", tx + 56 * scale)
-          .attr("cy", ty + 16 * scale)
-          .attr("r", eyeRadius * 0.5)
-          .attr("fill", "#1a1a1a");
+          .append("svg")
+          .attr("x", tuxLogoX)
+          .attr("y", tuxLogoY)
+          .attr("width", tuxLogoW)
+          .attr("height", tuxLogoH)
+          .attr("viewBox", TUX_LOGO_VIEWBOX)
+          .append("path")
+          .attr("d", TUX_LOGO_PATH)
+          .attr("fill", "#FFFFFF")
+          .attr("opacity", 0.9);
 
-        // Beak
+        // Keyboard base (trapezoidal)
+        const baseY = y + screenHeight;
+        const baseTopWidth = screenWidth;
+        const baseBottomWidth = iconBaseWidth;
+        const baseTopX = nodeInfo.x - baseTopWidth / 2;
+        const baseBottomX = nodeInfo.x - baseBottomWidth / 2;
+
         nodeG
           .append("path")
           .attr(
             "d",
-            `M${tx + 46 * scale} ${ty + 22 * scale} L${tx + 50 * scale} ${ty + 27 * scale} L${tx + 54 * scale} ${ty + 22 * scale} Z`,
+            `M ${baseTopX} ${baseY} L ${baseTopX + baseTopWidth} ${baseY} L ${baseBottomX + baseBottomWidth} ${baseY + baseHeight} L ${baseBottomX} ${baseY + baseHeight} Z`,
           )
-          .attr("fill", "#E8A317");
+          .attr("fill", "#2c2c2c")
+          .attr("stroke", wireColor)
+          .attr("stroke-width", 1);
 
-        // Feet
+        // Keyboard area
+        const keyboardX = baseTopX + 6;
+        const keyboardY = baseY + 3;
+        const keyboardWidth = baseTopWidth - 12;
+        const keyboardHeight = baseHeight * 0.55;
         nodeG
-          .append("ellipse")
-          .attr("cx", tx + 42 * scale)
-          .attr("cy", ty + 94 * scale)
-          .attr("rx", 6 * scale)
-          .attr("ry", 2.5 * scale)
-          .attr("fill", "#E8A317");
+          .append("rect")
+          .attr("x", keyboardX)
+          .attr("y", keyboardY)
+          .attr("width", keyboardWidth)
+          .attr("height", keyboardHeight)
+          .attr("fill", "rgba(0,0,0,0.2)")
+          .attr("rx", 2);
+
+        // Trackpad
+        const trackpadWidth = baseTopWidth * 0.4;
+        const trackpadX = nodeInfo.x - trackpadWidth / 2;
+        const trackpadY = baseY + keyboardHeight + 5;
+        const trackpadHeight = baseHeight * 0.3;
         nodeG
-          .append("ellipse")
-          .attr("cx", tx + 58 * scale)
-          .attr("cy", ty + 94 * scale)
-          .attr("rx", 6 * scale)
-          .attr("ry", 2.5 * scale)
-          .attr("fill", "#E8A317");
+          .append("rect")
+          .attr("x", trackpadX)
+          .attr("y", trackpadY)
+          .attr("width", trackpadWidth)
+          .attr("height", trackpadHeight)
+          .attr("fill", "rgba(255,255,255,0.08)")
+          .attr("rx", 2);
+      } else if (isLinux) {
+        // Linux Desktop — same shape as Mac Studio but with Tux logo
+        iconBaseWidth = nodeRadius * 1.25;
+        iconBaseHeight = nodeRadius * 0.85;
+        const x = nodeInfo.x - iconBaseWidth / 2;
+        const y = nodeInfo.y - iconBaseHeight / 2;
+        const cornerRadius = 4;
+        const topSurfaceHeight = iconBaseHeight * 0.15;
+
+        const linuxDesktopClipId = `linux-desktop-${nodeInfo.id.replace(/[^a-zA-Z0-9]/g, "-")}`;
+        defs
+          .append("clipPath")
+          .attr("id", linuxDesktopClipId)
+          .append("rect")
+          .attr("x", x)
+          .attr("y", y + topSurfaceHeight)
+          .attr("width", iconBaseWidth)
+          .attr("height", iconBaseHeight - topSurfaceHeight)
+          .attr("rx", cornerRadius - 1);
+
+        // Main body
+        nodeG
+          .append("rect")
+          .attr("class", "node-outline")
+          .attr("x", x)
+          .attr("y", y)
+          .attr("width", iconBaseWidth)
+          .attr("height", iconBaseHeight)
+          .attr("rx", cornerRadius)
+          .attr("fill", "#1a1a1a")
+          .attr("stroke", wireColor)
+          .attr("stroke-width", strokeWidth);
+
+        // Memory fill
+        if (ramUsagePercent > 0) {
+          const memFillTotalHeight = iconBaseHeight - topSurfaceHeight;
+          const memFillActualHeight =
+            (ramUsagePercent / 100) * memFillTotalHeight;
+          nodeG
+            .append("rect")
+            .attr("x", x)
+            .attr(
+              "y",
+              y + topSurfaceHeight + (memFillTotalHeight - memFillActualHeight),
+            )
+            .attr("width", iconBaseWidth)
+            .attr("height", memFillActualHeight)
+            .attr("fill", "rgba(255,215,0,0.75)")
+            .attr("clip-path", `url(#${linuxDesktopClipId})`);
+        }
+
+        // Tux logo centered on front face
+        const tuxLogoH = (iconBaseHeight - topSurfaceHeight) * 0.55;
+        const tuxLogoW = tuxLogoH;
+        const tuxLogoX = nodeInfo.x - tuxLogoW / 2;
+        const tuxLogoY =
+          y +
+          topSurfaceHeight +
+          (iconBaseHeight - topSurfaceHeight) / 2 -
+          tuxLogoH / 2;
+        nodeG
+          .append("svg")
+          .attr("x", tuxLogoX)
+          .attr("y", tuxLogoY)
+          .attr("width", tuxLogoW)
+          .attr("height", tuxLogoH)
+          .attr("viewBox", TUX_LOGO_VIEWBOX)
+          .append("path")
+          .attr("d", TUX_LOGO_PATH)
+          .attr("fill", "rgba(255,255,255,0.6)");
       } else if (modelLower === "mac studio") {
         // Mac Studio - classic cube with memory fill
         iconBaseWidth = nodeRadius * 1.25;

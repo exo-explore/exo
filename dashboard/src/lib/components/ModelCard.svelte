@@ -988,8 +988,20 @@
                     stroke-width="1.5"
                   />
                   <!-- Side accents -->
-                  <rect x="0" y="0" width={dgxW * 0.02} height={dgxH} fill="#8a7a56" />
-                  <rect x={dgxW - dgxW * 0.02} y="0" width={dgxW * 0.02} height={dgxH} fill="#8a7a56" />
+                  <rect
+                    x="0"
+                    y="0"
+                    width={dgxW * 0.02}
+                    height={dgxH}
+                    fill="#8a7a56"
+                  />
+                  <rect
+                    x={dgxW - dgxW * 0.02}
+                    y="0"
+                    width={dgxW * 0.02}
+                    height={dgxH}
+                    fill="#8a7a56"
+                  />
                   <!-- Left handle -->
                   <rect
                     x={dgxW * 0.04}
@@ -1025,7 +1037,8 @@
                       x="2"
                       y={dgxH - dgxH * (node.newPercent / 100)}
                       width={dgxW - 4}
-                      height={dgxH * ((node.newPercent - node.currentPercent) / 100)}
+                      height={dgxH *
+                        ((node.newPercent - node.currentPercent) / 100)}
                       fill="#FFD700"
                       filter="url(#memGlow-{filterId})"
                       class="animate-pulse-slow"
@@ -1054,16 +1067,39 @@
                   <!-- Eyes -->
                   <circle cx={44 * sc} cy={16 * sc} r={2.5 * sc} fill="white" />
                   <circle cx={56 * sc} cy={16 * sc} r={2.5 * sc} fill="white" />
-                  <circle cx={44 * sc} cy={16 * sc} r={1.2 * sc} fill="#1a1a1a" />
-                  <circle cx={56 * sc} cy={16 * sc} r={1.2 * sc} fill="#1a1a1a" />
+                  <circle
+                    cx={44 * sc}
+                    cy={16 * sc}
+                    r={1.2 * sc}
+                    fill="#1a1a1a"
+                  />
+                  <circle
+                    cx={56 * sc}
+                    cy={16 * sc}
+                    r={1.2 * sc}
+                    fill="#1a1a1a"
+                  />
                   <!-- Beak -->
                   <path
-                    d="M{46 * sc} {22 * sc} L{50 * sc} {27 * sc} L{54 * sc} {22 * sc} Z"
+                    d="M{46 * sc} {22 * sc} L{50 * sc} {27 * sc} L{54 *
+                      sc} {22 * sc} Z"
                     fill="#E8A317"
                   />
                   <!-- Feet -->
-                  <ellipse cx={42 * sc} cy={94 * sc} rx={6 * sc} ry={2.5 * sc} fill="#E8A317" />
-                  <ellipse cx={58 * sc} cy={94 * sc} rx={6 * sc} ry={2.5 * sc} fill="#E8A317" />
+                  <ellipse
+                    cx={42 * sc}
+                    cy={94 * sc}
+                    rx={6 * sc}
+                    ry={2.5 * sc}
+                    fill="#E8A317"
+                  />
+                  <ellipse
+                    cx={58 * sc}
+                    cy={94 * sc}
+                    rx={6 * sc}
+                    ry={2.5 * sc}
+                    fill="#E8A317"
+                  />
                 </g>
               {:else}
                 <!-- Unknown device - hexagon -->
