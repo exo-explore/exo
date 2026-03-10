@@ -232,10 +232,10 @@ class ExoBatchGenerator:
             if state.on_generation_token is not None:
                 state.on_generation_token()
             if response.finish_reason != "stop":
-                state.detokenizer.add_token(response.token)  # pyright: ignore[reportUnknownMemberType]
+                state.detokenizer.add_token(response.token)
             if response.finish_reason is not None:
-                state.detokenizer.finalize()  # pyright: ignore[reportUnknownMemberType]
-            text = cast(str, state.detokenizer.last_segment)
+                state.detokenizer.finalize()
+            text = state.detokenizer.last_segment
             state.completion_tokens += 1
             state.generated_text_parts.append(text)
             state.potential_stop_sequence_text += text
