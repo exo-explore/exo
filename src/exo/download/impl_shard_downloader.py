@@ -115,6 +115,19 @@ class ResumableShardDownloader(ShardDownloader):
             allow_patterns=allow_patterns,
             skip_internet=self.offline,
         )
+
+        if not config_only and target_dir.suffix == ".gguf":
+            output_dir = target_dir.parent
+            marker = output_dir / ".gguf_converted"
+            if not marker.exists():
+                from exo.download.gguf_conversion import convert_gguf_to_safetensors
+
+                logger.info(f"Converting GGUF to safetensors: {target_dir}")
+                await asyncio.to_thread(
+                    convert_gguf_to_safetensors, target_dir, output_dir
+                )
+            target_dir = output_dir
+
         return target_dir
 
     async def get_shard_download_status(

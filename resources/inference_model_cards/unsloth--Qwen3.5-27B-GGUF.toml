@@ -1,0 +1,12 @@
+model_id = "unsloth/Qwen3.5-27B-GGUF"
+n_layers = 64
+hidden_size = 5120
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "GGUF"
+base_model = "Qwen3.5 27B"
+capabilities = ["text", "thinking"]
+
+[storage_size]
+in_bytes = 27781427952

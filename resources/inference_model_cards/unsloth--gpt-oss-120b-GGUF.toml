@@ -1,0 +1,12 @@
+model_id = "unsloth/gpt-oss-120b-GGUF"
+n_layers = 36
+hidden_size = 2880
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "gpt-oss"
+quantization = "GGUF"
+base_model = "GPT-OSS 120B"
+capabilities = ["text", "thinking"]
+
+[storage_size]
+in_bytes = 65369017728

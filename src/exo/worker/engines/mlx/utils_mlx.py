@@ -568,14 +568,21 @@ def apply_chat_template(
                     "Patched lossy chat template (removed inner_type length guard)"
                 )
 
-    prompt: str = tokenizer.apply_chat_template(
-        formatted_messages,
-        tokenize=False,
-        add_generation_prompt=True,
-        tools=task_params.tools,
-        **({"chat_template": patched_template} if patched_template is not None else {}),
-        **extra_kwargs,
-    )
+    try:
+        prompt: str = tokenizer.apply_chat_template(
+            formatted_messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            tools=task_params.tools,
+            **({"chat_template": patched_template} if patched_template is not None else {}),
+            **extra_kwargs,
+        )
+    except ValueError:
+        logger.warning("No chat template found, falling back to raw message concatenation")
+        prompt = "\n".join(
+            f"{msg.get('role', 'user')}: {msg.get('content', '')}"
+            for msg in formatted_messages
+        )
 
     if task_params.tools and _schemas_lost_in_prompt(prompt, task_params.tools):
         logger.warning("Chat template lost nested tool schemas even after patching")

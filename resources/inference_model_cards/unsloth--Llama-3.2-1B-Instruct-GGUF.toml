@@ -1,0 +1,12 @@
+model_id = "unsloth/Llama-3.2-1B-Instruct-GGUF"
+n_layers = 16
+hidden_size = 2048
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "llama"
+quantization = "GGUF"
+base_model = "Llama 3.2 1B"
+capabilities = ["text"]
+
+[storage_size]
+in_bytes = 2479595264

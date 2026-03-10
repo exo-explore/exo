@@ -1,0 +1,12 @@
+model_id = "unsloth/gpt-oss-20b-GGUF"
+n_layers = 24
+hidden_size = 2880
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "gpt-oss"
+quantization = "GGUF"
+base_model = "GPT-OSS 20B"
+capabilities = ["text", "thinking"]
+
+[storage_size]
+in_bytes = 13792639168

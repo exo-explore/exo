@@ -126,10 +126,12 @@ class ModelCard(CamelCaseModel):
     @staticmethod
     async def fetch_from_hf(model_id: ModelId) -> "ModelCard":
         """Fetches storage size and number of layers for a Hugging Face model, returns Pydantic ModelMeta."""
-        # TODO: failure if files do not exist
-        config_data = await fetch_config_data(model_id)
+        try:
+            config_data = await fetch_config_data(model_id)
+        except FileNotFoundError:
+            config_data = await fetch_config_data_for_gguf(model_id)
         num_layers = config_data.layer_count
-        mem_size_bytes = await fetch_safetensors_size(model_id)
+        mem_size_bytes = await fetch_model_size(model_id)
 
         mc = ModelCard(
             model_id=ModelId(model_id),
@@ -244,8 +246,38 @@ async def fetch_config_data(model_id: ModelId) -> ConfigData:
         return ConfigData.model_validate_json(await f.read())
 
 
-async def fetch_safetensors_size(model_id: ModelId) -> Memory:
-    """Gets model size from safetensors index or falls back to HF API."""
+async def fetch_config_data_for_gguf(model_id: ModelId) -> ConfigData:
+    # Try to get the base model from HF API
+    info = model_info(model_id)
+    base_model_id: str | None = None
+
+    # card_data has base_model field
+    if info.card_data is not None:
+        base_model_raw: str | list[str] | None = getattr(info.card_data, "base_model", None)  # pyright: ignore[reportAttributeAccessIssue, reportAny]
+        if isinstance(base_model_raw, str):
+            base_model_id = base_model_raw
+        elif isinstance(base_model_raw, list) and base_model_raw:
+            # Pick the first non-quantized base model
+            for bm in base_model_raw:
+                if isinstance(bm, str) and "quantized:" not in bm:
+                    base_model_id = bm
+                    break
+
+    if base_model_id is not None:
+        logger.info(f"GGUF repo {model_id} references base_model={base_model_id}, fetching its config")
+        try:
+            return await fetch_config_data(ModelId(base_model_id))
+        except Exception as exc:
+            logger.warning(f"Failed to fetch config from base model {base_model_id}: {exc}")
+
+    raise ValueError(
+        f"Model {model_id} has no config.json and no base_model reference. "
+        f"Cannot determine model architecture."
+    )
+
+
+async def fetch_model_size(model_id: ModelId) -> Memory:
+    """Gets model size from safetensors index, HF API, or GGUF file sizes."""
     from exo.download.download_utils import (
         download_file_with_retry,
         ensure_models_dir,
@@ -254,23 +286,36 @@ async def fetch_safetensors_size(model_id: ModelId) -> Memory:
 
     target_dir = (await ensure_models_dir()) / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)
-    index_path = await download_file_with_retry(
-        model_id,
-        "main",
-        "model.safetensors.index.json",
-        target_dir,
-        lambda curr_bytes, total_bytes, is_renamed: logger.debug(
-            f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
-        ),
-    )
-    async with aiofiles.open(index_path, "r") as f:
-        index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
+    try:
+        index_path = await download_file_with_retry(
+            model_id,
+            "main",
+            "model.safetensors.index.json",
+            target_dir,
+            lambda curr_bytes, total_bytes, is_renamed: logger.debug(
+                f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
+            ),
+        )
+        async with aiofiles.open(index_path, "r") as f:
+            index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
 
-    metadata = index_data.metadata
-    if metadata is not None:
-        return Memory.from_bytes(metadata.total_size)
+        metadata = index_data.metadata
+        if metadata is not None:
+            return Memory.from_bytes(metadata.total_size)
+    except FileNotFoundError:
+        logger.debug(f"No safetensors index for {model_id}, falling back to HF API")
 
     info = model_info(model_id)
-    if info.safetensors is None:
-        raise ValueError(f"No safetensors info found for {model_id}")
-    return Memory.from_bytes(info.safetensors.total)
+    if info.safetensors is not None:
+        return Memory.from_bytes(info.safetensors.total)
+
+    # GGUF fallback: sum .gguf file sizes
+    gguf_size = sum(
+        s.size
+        for s in (info.siblings or [])
+        if s.rfilename.endswith(".gguf") and s.size is not None
+    )
+    if gguf_size > 0:
+        return Memory.from_bytes(gguf_size)
+
+    raise ValueError(f"No safetensors or GGUF files found for {model_id}")
