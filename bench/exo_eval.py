@@ -653,10 +653,12 @@ async def evaluate_benchmark(
     try:
         if benchmark_name == "livecodebench":
             ds = datasets.load_dataset(
-                "livecodebench/code_generation_lite",
-                split="test",
-                trust_remote_code=True,
+                "json",
+                data_files="hf://datasets/livecodebench/code_generation_lite/*.jsonl",
+                split="train",
             )
+            # Sort by question_id to match official LCB runner ordering
+            ds = ds.sort("question_id")
         else:
             ds = datasets.load_dataset(
                 config.dataset_name,
