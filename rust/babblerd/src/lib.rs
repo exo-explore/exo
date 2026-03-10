@@ -146,7 +146,8 @@ pub mod babel {
                 }
                 recv = receiver.recv() => {
                     let res = match recv {
-                        Err(_) => { tracing::debug!("receiver closed, dropping connection"); break; },
+                        Err(broadcast::error::RecvError::Lagged(_)) => { tracing::warn!("receiver lagged"); continue; },
+                        Err(broadcast::error::RecvError::Closed) => { tracing::debug!("receiver closed, dropping connection"); break; },
                         Ok(s) => write.write_all(format!("{s}\n").as_bytes()).await,
                     };
                     if let Err(e) = res { tracing::warn!(error=%e, "failed to write to socket"); break; };
@@ -163,7 +164,7 @@ pub mod babel {
     const PRIVATE_SOCK_PATH: &str = "/run/babeld.sock";
 
     use std::io;
-    use std::time::{Duration, Instant};
+    use tokio::time::Duration;
 
     use futures_lite::FutureExt;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
@@ -234,6 +235,7 @@ pub mod babel {
             }
         }
 
+        #[tracing::instrument(skip(self, recv, send))]
         async fn supervise(
             &self,
             mut recv: mpsc::Receiver<Babble>,
@@ -261,18 +263,19 @@ pub mod babel {
                 return Ok(());
             };
 
-            let mut time = Instant::now();
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
-                if Instant::now() - time > Duration::from_secs(5) {
-                    if Self::query(&mut babel_lines, &mut writer, "dump\n")
-                        .await?
-                        .is_none()
-                    {
-                        return Ok(());
-                    };
-                    time = Instant::now();
-                }
                 tokio::select! {
+                    _ = interval.tick() => {
+                        if Self::query(&mut babel_lines, &mut writer, "dump\n")
+                            .await?
+                            .is_none()
+                        {
+                            return Ok(());
+                        };
+
+                    },
                     babble = recv.recv() => {
                         tracing::debug!("[babble] {:?}", babble);
                         let Some(babble) = babble else {
