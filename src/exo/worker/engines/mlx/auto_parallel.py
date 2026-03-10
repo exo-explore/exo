@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from functools import partial
 from inspect import signature
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -32,6 +32,13 @@ from mlx_lm.models.llama import Model as LlamaModel
 from mlx_lm.models.minimax import MiniMaxAttention
 from mlx_lm.models.minimax import Model as MiniMaxModel
 from mlx_lm.models.ministral3 import Model as Ministral3Model
+from mlx_lm.models.nemotron_h import Model as NemotronHModel
+from mlx_lm.models.nemotron_h import (
+    NemotronHAttention,
+    NemotronHMamba2Mixer,
+    NemotronHMoE,
+)
+from mlx_lm.models.nemotron_h import NemotronHModel as NemotronHInnerModel
 from mlx_lm.models.qwen3_5 import DecoderLayer as Qwen3_5DecoderLayer
 from mlx_lm.models.qwen3_5 import Model as Qwen3_5TextModel
 from mlx_lm.models.qwen3_5 import Qwen3_5TextModel as Qwen3_5TextModelInner
@@ -45,6 +52,7 @@ from mlx_lm.models.qwen3_next import (
     Qwen3NextGatedDeltaNet,
     Qwen3NextSparseMoeBlock,
 )
+from mlx_lm.models.qwen3_next import Qwen3NextModel as Qwen3NextInnerModel
 from mlx_lm.models.step3p5 import Model as Step35Model
 from mlx_lm.models.step3p5 import Step3p5MLP as Step35MLP
 from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
@@ -243,7 +251,11 @@ def get_inner_model(model: nn.Module) -> nn.Module:
         if isinstance(inner_inner, nn.Module):
             return inner_inner
 
-    raise ValueError("Model must either have a 'model' or 'transformer' attribute")
+    inner = getattr(model, "backbone", None)
+    if isinstance(inner, nn.Module):
+        return inner
+
+    raise ValueError("Model must either have a 'model', 'transformer', or 'backbone' attribute")
 
 
 def get_layers(inner_model_instance: nn.Module) -> list[_LayerCallable]:
@@ -259,27 +271,34 @@ def get_layers(inner_model_instance: nn.Module) -> list[_LayerCallable]:
     return layers
 
 
-def _patch_qwen35_cache(
-    model: Qwen3_5TextModel,
+def _patch_hybrid_cache(
+    model: Qwen3_5TextModel | Qwen3NextModel | NemotronHModel,
     fa_idx: int,
     has_full_attn: bool,
     ssm_idx: int,
-    has_linear: bool,
+    has_ssm: bool,
 ) -> None:
-    # Hacks to make make_mask happy.
+    """Patch make_cache for pipeline shards missing one hybrid layer type.
+
+    When a shard lacks attention or SSM layers, the fallback cache index
+    points to the wrong cache type. This patches make_mask to handle the
+    mismatch between create_attention_mask / create_ssm_mask expectations.
+    """
     original = model.make_cache
 
     def patched() -> list[ArraysCache | KVCache]:
-        cache: list[ArraysCache | KVCache] = original()
+        cache = original()
         if not has_full_attn:
             entry = cache[fa_idx]
             orig_make_mask = entry.make_mask
-            entry.make_mask = lambda n, **_kw: orig_make_mask(n)  # type: ignore
-        if not has_linear:
+            entry.make_mask = lambda n, **_kw: orig_make_mask(n)  # type: ignore[assignment]
+        if not has_ssm:
             orig_ssm_make_mask = cache[ssm_idx].make_mask
-            cache[ssm_idx].make_mask = (  # type: ignore
-                lambda n, **kw: orig_ssm_make_mask(n, **kw) if kw else None  # type: ignore
-            )
+
+            def _ssm_mask(n: int, **kw: bool | int | None) -> mx.array | Literal["causal"] | None:
+                return orig_ssm_make_mask(n, **kw) if kw else None
+
+            cache[ssm_idx].make_mask = _ssm_mask  # type: ignore[assignment]
         return cache
 
     model.make_cache = patched
@@ -355,7 +374,7 @@ def pipeline_auto_parallel(
         inner_model_instance._swa_idx = 0 if not sliding_layers else sliding_layers[0]
         inner_model_instance._full_idx = 0 if not full_layers else full_layers[0]
 
-    if isinstance(inner_model_instance, Qwen3_5TextModelInner):
+    if isinstance(inner_model_instance, (Qwen3_5TextModelInner, Qwen3NextInnerModel)):
         full_attn_layers = [
             i for i, layer in enumerate(layers) if not getattr(layer, "is_linear", True)
         ]
@@ -365,12 +384,42 @@ def pipeline_auto_parallel(
         inner_model_instance.fa_idx = full_attn_layers[0] if full_attn_layers else 0
         inner_model_instance.ssm_idx = linear_layers[0] if linear_layers else 0
         if not full_attn_layers or not linear_layers:
-            _patch_qwen35_cache(
-                cast(Qwen3_5TextModel, model),
+            _patch_hybrid_cache(
+                cast(Qwen3_5TextModel | Qwen3NextModel, model),
                 fa_idx=inner_model_instance.fa_idx,
                 has_full_attn=bool(full_attn_layers),
                 ssm_idx=inner_model_instance.ssm_idx,
-                has_linear=bool(linear_layers),
+                has_ssm=bool(linear_layers),
+            )
+
+    if isinstance(inner_model_instance, NemotronHInnerModel):
+        # NemotronH uses block_type: "M" (Mamba/SSM), "*" (Attention), "E" (MoE), "-" (MLP)
+        # Only "M" and "*" blocks have cache entries.
+        # Recompute fa_idx and ssm_idx as cache-array indices for the shard's layers.
+        cache_idx = 0
+        fa_idx: int | None = None
+        ssm_idx: int | None = None
+        for layer in layers:
+            block_type = getattr(layer, "block_type", None)
+            if block_type == "*":
+                if fa_idx is None:
+                    fa_idx = cache_idx
+                cache_idx += 1
+            elif block_type == "M":
+                if ssm_idx is None:
+                    ssm_idx = cache_idx
+                cache_idx += 1
+        has_attn = fa_idx is not None
+        has_mamba = ssm_idx is not None
+        inner_model_instance.fa_idx = fa_idx if fa_idx is not None else 0
+        inner_model_instance.ssm_idx = ssm_idx if ssm_idx is not None else 0
+        if not has_attn or not has_mamba:
+            _patch_hybrid_cache(
+                cast(NemotronHModel, model),
+                fa_idx=inner_model_instance.fa_idx,
+                has_full_attn=has_attn,
+                ssm_idx=inner_model_instance.ssm_idx,
+                has_ssm=has_mamba,
             )
 
     _set_layers(model, layers)
@@ -431,7 +480,8 @@ def patch_tensor_model[T](model: T) -> T:
         if cache is not None and len(cache) > 0:  # pyright: ignore[reportAny]
             last = cache[-1]  # pyright: ignore[reportAny]
             dep_cache = last[0] if hasattr(last, "caches") else last  # pyright: ignore[reportAny]
-            dep_cache.keys = mx.depends(dep_cache.keys, logits)  # pyright: ignore[reportAny,reportUnknownMemberType]
+            if hasattr(dep_cache, "keys"):  # type: ignore
+                dep_cache.keys = mx.depends(dep_cache.keys, logits)  # pyright: ignore[reportAny,reportUnknownMemberType]
 
         return logits
 
@@ -546,6 +596,14 @@ def tensor_auto_parallel(
         )
     elif isinstance(model, Step35Model):
         tensor_parallel_sharding_strategy = Step35ShardingStrategy(
+            group,
+            all_to_sharded_linear,
+            sharded_to_all_linear,
+            all_to_sharded_linear_in_place,
+            sharded_to_all_linear_in_place,
+        )
+    elif isinstance(model, NemotronHModel):
+        tensor_parallel_sharding_strategy = NemotronHShardingStrategy(
             group,
             all_to_sharded_linear,
             sharded_to_all_linear,
@@ -1210,3 +1268,115 @@ class Step35ShardingStrategy(TensorParallelShardingStrategy):
             if on_layer_loaded is not None:
                 on_layer_loaded(i, total)
         return model
+
+
+class NemotronHShardingStrategy(TensorParallelShardingStrategy):
+    def shard_model(
+        self,
+        model: nn.Module,
+        timeout_seconds: float,
+        on_timeout: TimeoutCallback | None,
+        on_layer_loaded: LayerLoadedCallback | None,
+    ) -> nn.Module:
+        model = cast(NemotronHModel, model)
+        rank = self.group.rank()
+        total = len(model.layers)
+        for i, layer in enumerate(model.layers):
+            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
+
+            mixer = layer.mixer
+
+            if isinstance(mixer, NemotronHAttention):
+                mixer.q_proj = self.all_to_sharded_linear(mixer.q_proj)
+                mixer.k_proj = self.all_to_sharded_linear(mixer.k_proj)
+                mixer.v_proj = self.all_to_sharded_linear(mixer.v_proj)
+                mixer.o_proj = self.sharded_to_all_linear(mixer.o_proj)
+                mixer.num_heads //= self.N
+                mixer.num_key_value_heads //= self.N
+
+            elif isinstance(mixer, NemotronHMamba2Mixer):
+                self._shard_mamba2_mixer(mixer, rank)
+
+            elif isinstance(mixer, NemotronHMoE):
+                # Shard routed experts (SwitchMLP uses fc1/fc2)
+                self.all_to_sharded_linear_in_place(mixer.switch_mlp.fc1)
+                self.sharded_to_all_linear_in_place(mixer.switch_mlp.fc2)
+                # Shard shared expert in-place (no all-reduce — ShardedMoE handles that)
+                if hasattr(mixer, "shared_experts"):
+                    self.all_to_sharded_linear_in_place(mixer.shared_experts.up_proj)
+                    self.sharded_to_all_linear_in_place(mixer.shared_experts.down_proj)
+                mixer = ShardedMoE(mixer)  # pyright: ignore[reportArgumentType]
+                mixer.sharding_group = self.group
+                layer.mixer = mixer  # pyright: ignore[reportAttributeAccessIssue]
+
+            mx.eval(layer)
+            if on_layer_loaded is not None:
+                on_layer_loaded(i, total)
+        return model
+
+    def _shard_mamba2_mixer(self, mixer: NemotronHMamba2Mixer, rank: int) -> None:
+        """Shard the Mamba2 mixer along the head dimension."""
+        world_size = self.N
+        num_heads = mixer.num_heads
+        head_dim = mixer.head_dim
+        n_groups = mixer.n_groups
+        ssm_state_size = mixer.ssm_state_size
+        intermediate_size = mixer.intermediate_size  # = num_heads * head_dim
+
+        # Per-rank sizes
+        heads_per_rank = num_heads // world_size
+        groups_per_rank = n_groups // world_size
+        is_per_rank = heads_per_rank * head_dim
+        bc_per_rank = groups_per_rank * ssm_state_size
+
+        # === in_proj: output layout is [gate:IS | conv_ssm:IS | B:NG*SS | C:NG*SS | dt:NH] ===
+        gate_start = 0
+        conv_ssm_start = intermediate_size
+        b_start = 2 * intermediate_size
+        c_start = b_start + n_groups * ssm_state_size
+        dt_start = c_start + n_groups * ssm_state_size
+
+        # Build index tensor for this rank's slice of each section
+        gate_idx = mx.arange(gate_start + rank * is_per_rank, gate_start + (rank + 1) * is_per_rank)
+        conv_ssm_idx = mx.arange(conv_ssm_start + rank * is_per_rank, conv_ssm_start + (rank + 1) * is_per_rank)
+        b_idx = mx.arange(b_start + rank * bc_per_rank, b_start + (rank + 1) * bc_per_rank)
+        c_idx = mx.arange(c_start + rank * bc_per_rank, c_start + (rank + 1) * bc_per_rank)
+        dt_idx = mx.arange(dt_start + rank * heads_per_rank, dt_start + (rank + 1) * heads_per_rank)
+
+        indices = mx.concatenate([gate_idx, conv_ssm_idx, b_idx, c_idx, dt_idx])
+        mixer.in_proj.weight = mixer.in_proj.weight[indices]  # pyright: ignore[reportUnknownMemberType]
+
+        # === out_proj: input is intermediate_size (sharded) → hidden_size (reduce) ===
+        mixer.out_proj = self.sharded_to_all_linear(mixer.out_proj)
+
+        # === conv1d: depthwise conv on conv_dim channels ===
+        # conv_dim layout: [ssm_hidden:IS | B:NG*SS | C:NG*SS]
+        conv_ssm_idx_local = mx.arange(rank * is_per_rank, (rank + 1) * is_per_rank)
+        conv_b_idx = mx.arange(intermediate_size + rank * bc_per_rank, intermediate_size + (rank + 1) * bc_per_rank)
+        conv_c_idx = mx.arange(
+            intermediate_size + n_groups * ssm_state_size + rank * bc_per_rank,
+            intermediate_size + n_groups * ssm_state_size + (rank + 1) * bc_per_rank,
+        )
+        conv_indices = mx.concatenate([conv_ssm_idx_local, conv_b_idx, conv_c_idx])
+        mixer.conv1d.weight = mixer.conv1d.weight[conv_indices]
+        new_conv_dim = is_per_rank + 2 * bc_per_rank
+        mixer.conv1d.groups = new_conv_dim
+        if mixer.conv1d.bias is not None:
+            mixer.conv1d.bias = mixer.conv1d.bias[conv_indices]
+
+        # === Per-head parameters ===
+        h_start = rank * heads_per_rank
+        h_end = h_start + heads_per_rank
+        mixer.dt_bias = mixer.dt_bias[h_start:h_end]
+        mixer.A_log = mixer.A_log[h_start:h_end]
+        mixer.D = mixer.D[h_start:h_end]
+
+        # === Norm: weight is intermediate_size ===
+        mixer.norm.weight = mixer.norm.weight[rank * is_per_rank : (rank + 1) * is_per_rank]  # pyright: ignore[reportUnknownMemberType]
+
+        # === Update dimensions ===
+        mixer.num_heads = heads_per_rank
+        mixer.n_groups = groups_per_rank
+        mixer.intermediate_size = is_per_rank
+        mixer.conv_dim = new_conv_dim
+        mixer.heads_per_group = heads_per_rank // groups_per_rank

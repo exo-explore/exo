@@ -1,0 +1,12 @@
+model_id = "mlx-community/Llama-3.1-Nemotron-8B-UltraLong-1M-Instruct-bf16"
+n_layers = 32
+hidden_size = 4096
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "llama"
+quantization = "bf16"
+base_model = "NVIDIA Llama-3.1-Nemotron-8B-UltraLong-1M-Instruct"
+capabilities = ["text"]
+
+[storage_size]
+in_bytes = 16073105408

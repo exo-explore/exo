@@ -1,0 +1,12 @@
+model_id = "mlx-community/Llama-3.1-Nemotron-Nano-4B-v1.1-4bit"
+n_layers = 32
+hidden_size = 3072
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "llama"
+quantization = "4bit"
+base_model = "NVIDIA Llama-3.1-Nemotron-Nano-4B-v1.1"
+capabilities = ["text"]
+
+[storage_size]
+in_bytes = 2538706944
