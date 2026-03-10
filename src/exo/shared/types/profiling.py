@@ -5,6 +5,7 @@ from typing import Literal, Self
 
 import psutil
 
+from exo.shared.constants import EXO_MAX_CONCURRENT_REQUESTS
 from exo.shared.types.memory import Memory
 from exo.shared.types.thunderbolt import ThunderboltIdentifier
 from exo.utils.pydantic_ext import CamelCaseModel
@@ -83,6 +84,7 @@ class NodeIdentity(CamelCaseModel):
     friendly_name: str = "Unknown"
     os_version: str = "Unknown"
     os_build_version: str = "Unknown"
+    max_concurrent_requests: int = EXO_MAX_CONCURRENT_REQUESTS
 
 
 class NodeNetworkInfo(CamelCaseModel):

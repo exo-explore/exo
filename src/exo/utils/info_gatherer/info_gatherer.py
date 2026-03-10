@@ -14,7 +14,11 @@ from anyio.streams.text import TextReceiveStream
 from loguru import logger
 from pydantic import ValidationError
 
-from exo.shared.constants import EXO_CONFIG_FILE, EXO_MODELS_DIR
+from exo.shared.constants import (
+    EXO_CONFIG_FILE,
+    EXO_MAX_CONCURRENT_REQUESTS,
+    EXO_MODELS_DIR,
+)
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     DiskUsage,
@@ -186,6 +190,7 @@ class StaticNodeInformation(TaggedModel):
     chip: str
     os_version: str
     os_build_version: str
+    max_concurrent_requests: int
 
     @classmethod
     async def gather(cls) -> Self:
@@ -195,6 +200,7 @@ class StaticNodeInformation(TaggedModel):
             chip=chip,
             os_version=get_os_version(),
             os_build_version=await get_os_build_version(),
+            max_concurrent_requests=EXO_MAX_CONCURRENT_REQUESTS,
         )
 
 
