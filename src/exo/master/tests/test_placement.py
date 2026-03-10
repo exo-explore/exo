@@ -14,7 +14,11 @@ from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.commands import PlaceInstance
 from exo.shared.types.common import CommandId, NodeId
-from exo.shared.types.events import InstanceCreated, InstanceDeleted, TaskStatusUpdated
+from exo.shared.types.events import (
+    InstanceCreated,
+    InstanceDeleted,
+    TaskStatusUpdated,
+)
 from exo.shared.types.memory import Memory
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import NetworkInterfaceInfo, NodeNetworkInfo
