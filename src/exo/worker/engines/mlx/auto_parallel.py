@@ -276,14 +276,9 @@ def _patch_hybrid_cache(
     fa_idx: int,
     has_full_attn: bool,
     ssm_idx: int,
-    has_ssm: bool,
+    has_linear: bool,
 ) -> None:
-    """Patch make_cache for pipeline shards missing one hybrid layer type.
-
-    When a shard lacks attention or SSM layers, the fallback cache index
-    points to the wrong cache type. This patches make_mask to handle the
-    mismatch between create_attention_mask / create_ssm_mask expectations.
-    """
+    # Hacks to make make_mask happy.
     original = model.make_cache
 
     def patched() -> list[ArraysCache | KVCache]:
@@ -292,7 +287,7 @@ def _patch_hybrid_cache(
             entry = cache[fa_idx]
             orig_make_mask = entry.make_mask
             entry.make_mask = lambda n, **_kw: orig_make_mask(n)  # type: ignore[assignment]
-        if not has_ssm:
+        if not has_linear:
             orig_ssm_make_mask = cache[ssm_idx].make_mask
 
             def _ssm_mask(n: int, **kw: bool | int | None) -> mx.array | Literal["causal"] | None:
@@ -389,7 +384,7 @@ def pipeline_auto_parallel(
                 fa_idx=inner_model_instance.fa_idx,
                 has_full_attn=bool(full_attn_layers),
                 ssm_idx=inner_model_instance.ssm_idx,
-                has_ssm=bool(linear_layers),
+                has_linear=bool(linear_layers),
             )
 
     if isinstance(inner_model_instance, NemotronHInnerModel):
@@ -419,7 +414,7 @@ def pipeline_auto_parallel(
                 fa_idx=inner_model_instance.fa_idx,
                 has_full_attn=has_attn,
                 ssm_idx=inner_model_instance.ssm_idx,
-                has_ssm=has_mamba,
+                has_linear=has_mamba,
             )
 
     _set_layers(model, layers)
