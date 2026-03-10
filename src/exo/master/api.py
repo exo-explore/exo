@@ -174,6 +174,7 @@ from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup
 
 _API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
@@ -625,6 +626,7 @@ class API:
     async def _collect_text_generation_with_stats(
         self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
+        sampler = PowerSampler(get_node_system=lambda: self.state.node_system)
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         model: ModelId | None = None
@@ -632,41 +634,46 @@ class API:
 
         stats: GenerationStats | None = None
 
-        async for chunk in self._token_chunk_stream(command_id):
-            if isinstance(chunk, PrefillProgressChunk):
-                continue
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(sampler.run)
 
-            if chunk.finish_reason == "error":
-                raise HTTPException(
-                    status_code=500,
-                    detail=chunk.error_message or "Internal server error",
-                )
+            async for chunk in self._token_chunk_stream(command_id):
+                if isinstance(chunk, PrefillProgressChunk):
+                    continue
 
-            if model is None:
-                model = chunk.model
-
-            if isinstance(chunk, TokenChunk):
-                text_parts.append(chunk.text)
-
-            if isinstance(chunk, ToolCallChunk):
-                tool_calls.extend(
-                    ToolCall(
-                        id=str(uuid4()),
-                        index=i,
-                        function=tool,
+                if chunk.finish_reason == "error":
+                    raise HTTPException(
+                        status_code=500,
+                        detail=chunk.error_message or "Internal server error",
                     )
-                    for i, tool in enumerate(chunk.tool_calls)
-                )
 
-            stats = chunk.stats or stats
+                if model is None:
+                    model = chunk.model
 
-            if chunk.finish_reason is not None:
-                finish_reason = chunk.finish_reason
+                if isinstance(chunk, TokenChunk):
+                    text_parts.append(chunk.text)
+
+                if isinstance(chunk, ToolCallChunk):
+                    tool_calls.extend(
+                        ToolCall(
+                            id=str(uuid4()),
+                            index=i,
+                            function=tool,
+                        )
+                        for i, tool in enumerate(chunk.tool_calls)
+                    )
+
+                stats = chunk.stats or stats
+
+                if chunk.finish_reason is not None:
+                    finish_reason = chunk.finish_reason
+
+            tg.cancel_scope.cancel()
 
         combined_text = "".join(text_parts)
         assert model is not None
 
-        resp = BenchChatCompletionResponse(
+        return BenchChatCompletionResponse(
             id=command_id,
             created=int(time.time()),
             model=model,
@@ -682,8 +689,8 @@ class API:
                 )
             ],
             generation_stats=stats,
+            power_usage=sampler.result(),
         )
-        return resp
 
     async def _trigger_notify_user_to_download_model(self, model_id: ModelId) -> None:
         logger.warning(
@@ -1076,10 +1083,18 @@ class API:
         num_images: int,
         response_format: str,
     ) -> BenchImageGenerationResponse:
-        images, stats = await self._collect_image_chunks(
-            request, command_id, num_images, response_format, capture_stats=True
+        sampler = PowerSampler(get_node_system=lambda: self.state.node_system)
+        images: list[ImageData] = []
+        stats: ImageGenerationStats | None = None
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(sampler.run)
+            images, stats = await self._collect_image_chunks(
+                request, command_id, num_images, response_format, capture_stats=True
+            )
+            tg.cancel_scope.cancel()
+        return BenchImageGenerationResponse(
+            data=images, generation_stats=stats, power_usage=sampler.result()
         )
-        return BenchImageGenerationResponse(data=images, generation_stats=stats)
 
     async def bench_image_generations(
         self, request: Request, payload: BenchImageGenerationTaskParams
