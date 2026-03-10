@@ -42,11 +42,6 @@
   const NVIDIA_LOGO_PATH =
     "M0.81 0.429V0.299c0.013 -0.001 0.026 -0.002 0.038 -0.002 0.355 -0.011 0.588 0.306 0.588 0.306S1.186 0.952 0.916 0.952c-0.036 0 -0.071 -0.006 -0.105 -0.017V0.542c0.138 0.017 0.166 0.078 0.249 0.216l0.185 -0.155s-0.135 -0.177 -0.362 -0.177c-0.024 -0.001 -0.048 0.001 -0.072 0.003m0 -0.429v0.194l0.038 -0.002c0.494 -0.017 0.816 0.405 0.816 0.405s-0.37 0.45 -0.754 0.45c-0.034 0 -0.066 -0.003 -0.099 -0.009v0.12c0.027 0.003 0.055 0.006 0.082 0.006 0.358 0 0.618 -0.183 0.869 -0.399 0.042 0.034 0.212 0.114 0.247 0.15 -0.238 0.2 -0.794 0.361 -1.11 0.361 -0.03 0 -0.059 -0.002 -0.088 -0.005v0.169h1.362V0zm0 0.935v0.102c-0.331 -0.059 -0.423 -0.404 -0.423 -0.404s0.159 -0.176 0.423 -0.205v0.112h-0.001C0.671 0.524 0.562 0.654 0.562 0.654s0.062 0.218 0.248 0.282m-0.588 -0.316s0.196 -0.29 0.589 -0.32V0.194C0.376 0.229 0 0.597 0 0.597s0.213 0.616 0.81 0.672v-0.112c-0.438 -0.054 -0.588 -0.538 -0.588 -0.538";
 
-  // Tux penguin logo path (viewBox 0 0 100 100)
-  const TUX_LOGO_PATH =
-    "M50 5C42 5 36 11 36 18c0 4 2 8 5 10C33 32 25 42 25 56v12c0 4 2 7 5 9l-6 4c-2 1-3 3-3 5v3c0 2 2 4 4 4h10l4-4h22l4 4h10c2 0 4-2 4-4v-3c0-2-1-4-3-5l-6-4c3-2 5-5 5-9V56c0-14-8-24-16-28 3-2 5-6 5-10 0-7-6-13-14-13z";
-  const TUX_LOGO_VIEWBOX = "0 0 100 100";
-
   const wireColor = "rgba(179,179,179,0.8)";
   const strokeWidth = 1.5;
 
@@ -326,14 +321,18 @@
     />
   {/if}
 
-  <!-- Tux logo on screen -->
-  {@const tuxH = mbScreenH * 0.35}
-  {@const tuxW = tuxH}
-  {@const tuxX = cx - tuxW / 2}
-  {@const tuxY = mbY + mbScreenH / 2 - tuxH / 2}
-  <svg x={tuxX} y={tuxY} width={tuxW} height={tuxH} viewBox={TUX_LOGO_VIEWBOX}>
-    <path d={TUX_LOGO_PATH} fill="#FFFFFF" opacity="0.9" />
-  </svg>
+  <!-- Terminal prompt on screen -->
+  <text
+    x={cx}
+    y={mbY + mbScreenH / 2}
+    text-anchor="middle"
+    dominant-baseline="middle"
+    fill="#FFFFFF"
+    opacity="0.9"
+    font-size={mbScreenH * 0.25}
+    font-family="SF Mono, Monaco, monospace"
+    font-weight="700">{">_"}</text
+  >
 
   <path
     d="M {mbBaseTopX} {mbBaseY} L {mbBaseTopX +
@@ -394,14 +393,17 @@
     />
   {/if}
 
-  <!-- Tux logo centered -->
-  {@const dtH = (studioH - studioTopH) * 0.55}
-  {@const dtW = dtH}
-  {@const dtX = cx - dtW / 2}
-  {@const dtY = studioY + studioTopH + (studioH - studioTopH) / 2 - dtH / 2}
-  <svg x={dtX} y={dtY} width={dtW} height={dtH} viewBox={TUX_LOGO_VIEWBOX}>
-    <path d={TUX_LOGO_PATH} fill="rgba(255,255,255,0.6)" />
-  </svg>
+  <!-- Terminal prompt on front face -->
+  <text
+    x={cx}
+    y={studioY + studioTopH + (studioH - studioTopH) / 2}
+    text-anchor="middle"
+    dominant-baseline="middle"
+    fill="rgba(255,255,255,0.5)"
+    font-size={(studioH - studioTopH) * 0.4}
+    font-family="SF Mono, Monaco, monospace"
+    font-weight="700">{">_"}</text
+  >
 {:else if modelLower === "mac studio" || modelLower === "mac mini"}
   <!-- Mac Studio / Mac Mini -->
   <defs>
