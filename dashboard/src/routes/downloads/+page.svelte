@@ -221,7 +221,6 @@
   let nodeColumns = $state<NodeColumn[]>([]);
   let infoRow = $state<ModelRow | null>(null);
 
-  // Storage config modal state
   let storageConfigNode = $state<NodeColumn | null>(null);
   let configMaxGb = $state<number | null>(null);
   let configNoLimit = $state(true);
