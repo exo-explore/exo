@@ -3,6 +3,7 @@
   perSystem =
     { config, self', pkgs, lib, system, ... }:
     let
+      pkgsCuda = import ../nix/cuda-pkgs.nix { nixpkgs = inputs.nixpkgs; inherit system; };
       # Load workspace from uv.lock
       workspace = inputs.uv2nix.lib.workspace.loadWorkspace {
         workspaceRoot = inputs.self;
@@ -99,16 +100,18 @@
           }
         );
 
+      baseOverlays = [
+        inputs.pyproject-build-systems.overlays.default
+        overlay
+        exoOverlay
+        buildSystemsOverlay
+        linuxOverlay
+      ];
+
       pythonSet = (pkgs.callPackage inputs.pyproject-nix.build.packages {
         inherit python;
       }).overrideScope (
-        lib.composeManyExtensions [
-          inputs.pyproject-build-systems.overlays.default
-          overlay
-          exoOverlay
-          buildSystemsOverlay
-          linuxOverlay
-        ]
+        lib.composeManyExtensions baseOverlays
       );
       # mlx-cpu and mlx-cuda-13 both ship mlx/ site-packages files; keep first.
       # mlx-cpu/mlx-cuda-13 and nvidia-cudnn-cu12/cu13 ship overlapping files.
@@ -172,6 +175,35 @@
             --set EXO_RESOURCES_DIR ${inputs.self + /resources} \
             ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
         '';
+
+      vllmEnv = pkgsCuda.python313.withPackages (ps: [ ps.vllm ]);
+
+      vllmSite = pkgs.runCommand "vllm-site-filtered" { } ''
+        mkdir -p $out
+        for pkg in ${vllmEnv}/${python.sitePackages}/*; do
+          name=$(basename "$pkg")
+          case "$name" in
+            anyio*|pydantic*) ;;
+            *) ln -s "$pkg" "$out/$name" ;;
+          esac
+        done
+      '';
+
+      exoCudaVenv = (pythonSet.mkVirtualEnv "exo-cuda-env" exoDeps).overrideAttrs {
+        venvIgnoreCollisions = venvCollisionPaths;
+      };
+
+      exoCudaPackage = pkgs.runCommand "exo-cuda"
+        {
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+        }
+        ''
+          mkdir -p $out/bin
+          makeWrapper ${exoCudaVenv}/bin/exo $out/bin/exo-cuda \
+            --set EXO_DASHBOARD_DIR ${self'.packages.dashboard} \
+            --set EXO_RESOURCES_DIR ${inputs.self + /resources} \
+            --prefix PYTHONPATH : "${vllmSite}"
+        '';
     in
     {
       # Python package only available on macOS (requires MLX/Metal)
@@ -180,7 +212,9 @@
           exo = exoPackage;
           # Test environment for running pytest outside of Nix sandbox (needs GPU access)
           exo-test-env = testVenv;
-        } // {
+        } // lib.optionalAttrs (pkgsCuda != null) {
+        exo-cuda-unwrapped = exoCudaPackage;
+      } // {
         exo-bench = mkBenchScript "exo-bench" (inputs.self + /bench/exo_bench.py);
         exo-eval = mkBenchScript "exo-eval" (inputs.self + /bench/exo_eval.py);
         exo-eval-tool-calls = mkBenchScript "exo-eval-tool-calls" (inputs.self + /bench/eval_tool_calls.py);

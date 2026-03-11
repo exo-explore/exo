@@ -255,8 +255,83 @@ class Node:
                         self.api.unpause(result.won_clock)
 
 
+def _run_vllm_server(args: "Args") -> None:
+    from typing import TYPE_CHECKING
+
+    if not TYPE_CHECKING:
+        from vllm.entrypoints.openai.api_server import (
+            run_server,
+        )
+        from vllm.entrypoints.openai.cli_args import (
+            make_arg_parser,
+        )
+        from vllm.utils.argparse_utils import (
+            FlexibleArgumentParser,
+        )
+
+        vllm_argv = [
+            "--model",
+            args.model or "Qwen/Qwen2.5-0.5B-Instruct",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(args.api_port),
+        ]
+        if args.max_model_len is not None:
+            vllm_argv += ["--max-model-len", str(args.max_model_len)]
+
+        parser = make_arg_parser(FlexibleArgumentParser())
+        vllm_args = parser.parse_args(vllm_argv)
+        logger.info(
+            f"vLLM detected — starting OpenAI-compatible server on port {args.api_port}"
+        )
+        anyio.run(run_server, vllm_args)
+
+
+def _check_vllm(args: "Args") -> None:
+    import sys
+
+    logger.info("Checking PyTorch + CUDA...")
+    try:
+        import torch
+    except ImportError:
+        logger.critical("FAIL: PyTorch not installed")
+        sys.exit(1)
+
+    if not torch.cuda.is_available():
+        logger.critical("FAIL: CUDA not available")
+        sys.exit(1)
+
+    gpu_name: str = torch.cuda.get_device_name(0)
+    compute_cap: tuple[int, int] = torch.cuda.get_device_capability(0)
+    cuda_version = torch.version.cuda or "unknown"
+    logger.info(f"  PyTorch {torch.__version__}")
+    logger.info(f"  CUDA {cuda_version}")
+    logger.info(f"  GPU: {gpu_name} (compute {compute_cap[0]}.{compute_cap[1]})")
+
+    logger.info("Checking vLLM...")
+    try:
+        import vllm  # type: ignore
+    except ImportError:
+        logger.critical("FAIL: vLLM not installed")
+        sys.exit(1)
+
+    logger.warning(f"  vLLM {vllm.__version__}")  # type: ignore
+    logger.warning("All checks passed.")
+
+    try:
+        _run_vllm_server(args)
+        return
+    except ImportError:
+        pass
+
+
 def main():
     args = Args.parse()
+
+    if args.check_vllm:
+        _check_vllm(args)
+
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     target = min(max(soft, 65535), hard)
     resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
@@ -282,6 +357,15 @@ def main():
         os.environ["EXO_FAST_SYNCH"] = "off"
         logger.info("FAST_SYNCH forced OFF")
 
+    try:
+        import vllm  # pyright: ignore[reportMissingImports, reportUnusedImport] # noqa: F401
+    except ImportError:
+        vllm = None  # pyright: ignore[reportAssignmentType]
+
+    if vllm is not None:
+        _run_vllm_server(args)
+        return
+
     node = anyio.run(Node.create, args)
     try:
         anyio.run(node.run)
@@ -306,6 +390,9 @@ class Args(CamelCaseModel):
     offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     no_batch: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
+    check_vllm: bool = False
+    model: str | None = None  # vLLM model name/path
+    max_model_len: int | None = None  # vLLM max sequence length
 
     @classmethod
     def parse(cls) -> Self:
@@ -376,6 +463,25 @@ class Args(CamelCaseModel):
             action="store_false",
             dest="fast_synch",
             help="Force MLX FAST_SYNCH off",
+        )
+        parser.add_argument(
+            "--check-vllm",
+            action="store_true",
+            dest="check_vllm",
+            help="Check vLLM + CUDA GPU setup and exit",
+        )
+        parser.add_argument(
+            "--model",
+            type=str,
+            default=None,
+            help="Model name or path (used in vLLM mode)",
+        )
+        parser.add_argument(
+            "--max-model-len",
+            type=int,
+            default=None,
+            dest="max_model_len",
+            help="Maximum model context length (used in vLLM mode)",
         )
 
         args = parser.parse_args()
