@@ -14,12 +14,14 @@ pub mod error {
     }
     impl std::fmt::Display for BabbleError {
         // use the debug display for now
+        #[inline]
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(f, "{self:?}")
         }
     }
     impl std::error::Error for BabbleError {}
     impl From<io::Error> for BabbleError {
+        #[inline]
         fn from(value: io::Error) -> Self {
             Self::Io(value)
         }
@@ -125,8 +127,8 @@ pub mod if_watcher {
     #[tracing::instrument(skip(send))]
     pub async fn watch(send: mpsc::Sender<Babble>) -> Result<()> {
         let mut ready_ifaces = HashMap::new();
-        let ip_node_id: u128 = (rand::random::<u64>() as u128) << 16;
-        let my_range: Ipv6Net = Ipv6Net::new_assert(
+        let ip_node_id = u128::from(rand::random::<u64>()) << 16;
+        let my_range = Ipv6Net::new_assert(
             Ipv6Addr::from_bits(PREFIX.addr().to_bits() | ip_node_id),
             112,
         );
@@ -163,7 +165,7 @@ pub mod if_watcher {
                     continue;
                 }
                 if my_ip.is_none() {
-                    let addr = Ipv6Addr::from_bits(my_range.addr().to_bits() | (iface_num as u128));
+                    let addr = Ipv6Addr::from_bits(my_range.addr().to_bits() | u128::from(iface_num));
                     iface_num += 1;
                     assert!(iface_num < u16::MAX, "Really? u16::MAX interfaces?");
                     tracing::info!("adding new ip {addr} to {}", iface.name());
@@ -176,15 +178,15 @@ pub mod if_watcher {
                 };
                 ready_ifaces.insert(iface.name().to_owned(), iface.clone());
             }
-            for (name, iface) in not_seen.iter() {
+            for (name, iface) in not_seen {
                 tracing::info!("telling babeld to stop watching {name}");
                 if let Some(v6) = iface.get_v6_in(PREFIX) {
                     tracing::info!("removing stale ip {v6} from {name}");
                     // don't really care if this fails
-                    _ = remove_ip(v6, iface).await;
+                    _ = remove_ip(v6, &iface).await;
                 }
-                assert!(ready_ifaces.remove(name).is_some());
-                let Ok(()) = send.send(Babble::RemoveIface(name.to_owned())).await else {
+                assert!(ready_ifaces.remove(&name).is_some());
+                let Ok(()) = send.send(Babble::RemoveIface(name)).await else {
                     return Ok(());
                 };
             }
@@ -211,7 +213,7 @@ pub mod babel {
                         Err(broadcast::error::RecvError::Closed) => { tracing::debug!("receiver closed, dropping connection"); break; },
                         Ok(s) => write.write_all(format!("{s}\n").as_bytes()).await,
                     };
-                    if let Err(e) = res { tracing::warn!(error=%e, "failed to write to socket"); break; };
+                    if let Err(e) = res { tracing::warn!(error=%e, "failed to write to socket"); break; }
                 }
             };
         }
@@ -246,6 +248,7 @@ pub mod babel {
         proc: tokio::process::Child,
     }
     impl Drop for BabeldProcess {
+        #[inline]
         fn drop(&mut self) {
             // emergency sigkill babeld process to prevent leakage
             if self.proc.try_wait().is_err() {
@@ -345,7 +348,7 @@ pub mod babel {
                             .is_none()
                         {
                             return Ok(());
-                        };
+                        }
                     },
                     babble = recv.recv() => {
                         tracing::debug!("[babble] {:?}", babble);
@@ -376,13 +379,13 @@ pub mod babel {
         }
 
         async fn shutdown(mut self) -> Result<()> {
-            if let Some(pid) = self.proc.id() {
+            let kill_res = if let Some(pid) = self.proc.id() {
                 let pid: libc::pid_t = pid.try_into().expect("pid overflow");
                 // SAFETY: pid >= 0, freshly checked.
                 let rc = unsafe { libc::kill(pid, libc::SIGINT) };
-                if rc != 0 && rc != libc::ESRCH {
-                    return Err(io::Error::last_os_error().into());
-                }
+                let rc_err = if rc != 0 && rc != libc::ESRCH {
+                    Err(io::Error::last_os_error().into())
+                } else { Ok(()) };
                 let exit_code = async { Some(self.proc.wait().await) }
                     .or(async {
                         tokio::time::sleep(Duration::from_secs(5)).await;
@@ -392,20 +395,26 @@ pub mod babel {
                 match exit_code {
                     Some(Ok(code)) => {
                         if code.success() {
-                            Ok(())
+                            rc_err
                         } else {
-                            Err(BabbleError::BabeldCrashed(code.code()))
+                            rc_err.and_then(|()| Err(BabbleError::BabeldCrashed(code.code())))
                         }
                     }
                     Some(Err(e)) => Err(e.into()),
                     None => {
                         self.proc.kill().await?;
-                        Err(BabbleError::BabeldCrashed(None))
+                        rc_err.and(Err(BabbleError::BabeldCrashed(None)))
                     }
                 }
             } else {
                 Ok(())
-            }
+            };
+            let rem_res = match std::fs::remove_file(PRIVATE_SOCK_PATH) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(e.into()),
+            };
+            kill_res.and(rem_res)
         }
     }
 
@@ -427,14 +436,14 @@ pub mod babel {
         };
 
         let babel = BabeldProcess::spawn(first_iface)?;
-        let ret = babel.supervise(recv, send).await;
-        _ = babel.shutdown().await;
-        ret
+        let res1 = babel.supervise(recv, send).await;
+        let res2 = babel.shutdown().await;
+        res1.and(res2)
     }
 }
 pub(crate) mod ip_manager {
-    pub(crate) use sys::add_ip;
-    pub(crate) use sys::remove_ip;
+    pub use sys::add_ip;
+    pub use sys::remove_ip;
 
     #[cfg(target_os = "linux")]
     mod sys {
