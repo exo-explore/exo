@@ -136,6 +136,27 @@ done
 
 echo ""
 echo "========================================"
+
+# Remove EXO APFS Volume and Container
+if diskutil apfs list | grep -q "Volume Name:.*EXO"; then
+  echo_info "Locating EXO APFS volume..."
+  EXO_DISK=$(diskutil list | grep " EXO " | awk '{print $NF}')
+  if [[ -n "$EXO_DISK" ]]; then
+    EXO_CONTAINER=$(diskutil info "$EXO_DISK" | grep "Part of Whole:" | awk '{print $4}')
+    if [[ -n "$EXO_CONTAINER" ]]; then
+       echo_info "Deleting EXO APFS container $EXO_CONTAINER..."
+       diskutil apfs deleteContainer "$EXO_CONTAINER" 2>/dev/null || true
+    else
+       echo_info "Deleting EXO APFS volume $EXO_DISK..."
+       diskutil apfs deleteVolume "$EXO_DISK" 2>/dev/null || true
+    fi
+  fi
+else
+  echo_warn "No EXO APFS volume found. You may need to delete it manually."
+fi
+
+echo ""
+echo "========================================"
 echo_info "EXO uninstall complete!"
 echo "========================================"
 echo ""
