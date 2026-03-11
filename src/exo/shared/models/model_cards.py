@@ -83,6 +83,7 @@ class ModelCard(CamelCaseModel):
     n_layers: PositiveInt
     hidden_size: PositiveInt
     supports_tensor: bool
+    num_key_value_heads: PositiveInt | None = None
     tasks: list[ModelTask]
     components: list[ComponentInfo] | None = None
     family: str = ""
@@ -137,6 +138,7 @@ class ModelCard(CamelCaseModel):
             n_layers=num_layers,
             hidden_size=config_data.hidden_size or 0,
             supports_tensor=config_data.supports_tensor,
+            num_key_value_heads=config_data.num_key_value_heads,
             tasks=[ModelTask.TextGeneration],
             trust_remote_code=False,
         )
@@ -170,6 +172,7 @@ class ConfigData(BaseModel):
 
     architectures: list[str] | None = None
     hidden_size: Annotated[int, Field(ge=0)] | None = None
+    num_key_value_heads: PositiveInt | None = None
     layer_count: int = Field(
         validation_alias=AliasChoices(
             "num_hidden_layers",
@@ -209,6 +212,7 @@ class ConfigData(BaseModel):
         for field in [
             "architectures",
             "hidden_size",
+            "num_key_value_heads",
             "num_hidden_layers",
             "num_layers",
             "n_layer",
