@@ -1,6 +1,7 @@
-use std::io;
+use std::{fs::Permissions, io, os::unix::fs::PermissionsExt};
 
 use babblerd::babel::handle_listener;
+use color_eyre::eyre::WrapErr;
 use tokio::{
     net::UnixListener,
     signal,
@@ -8,7 +9,14 @@ use tokio::{
     task::{JoinHandle, JoinSet},
 };
 
-const PUBLIC_SOCK_PATH: &str = "/tmp/babblerd.sock";
+#[cfg(target_os = "macos")]
+const PUBLIC_DIR: &str = "/var/run/exo";
+#[cfg(target_os = "linux")]
+const PUBLIC_DIR: &str = "/run/exo";
+#[cfg(target_os = "macos")]
+const PUBLIC_SOCK_PATH: &str = "/var/run/babblerd.sock";
+#[cfg(target_os = "linux")]
+const PUBLIC_SOCK_PATH: &str = "/run/babblerd.sock";
 
 enum State {
     Idle,
@@ -30,17 +38,26 @@ async fn main() -> color_eyre::Result<()> {
         tracing::error!("babeld not found on path");
         return Err(babblerd::BabbleError::Other("babeld not found on path".to_owned()).into());
     }
+    // cleanup old data
+    match std::fs::remove_file(PUBLIC_SOCK_PATH) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => {
+            return Err(e.into());
+        }
+        Ok(()) => {
+            tracing::info!("cleaned up old file at {PUBLIC_SOCK_PATH}")
+        }
+        _ => {}
+    }
+    std::fs::create_dir_all(PUBLIC_DIR)?;
+    // make our directory world readable
+    std::fs::set_permissions(PUBLIC_DIR, Permissions::from_mode(0o0777))?;
     let res = inner_main().await;
     _ = std::fs::remove_file(PUBLIC_SOCK_PATH);
     res
 }
 
 async fn inner_main() -> color_eyre::Result<()> {
-    if let Err(e) = std::fs::remove_file(PUBLIC_SOCK_PATH)
-        && e.kind() != io::ErrorKind::NotFound
-    {
-        return Err(e.into());
-    }
+    tracing::info!("creating socket at {PUBLIC_SOCK_PATH}");
     let public_socket = UnixListener::bind(PUBLIC_SOCK_PATH)?;
     let mut babbler: State = State::Idle;
 
@@ -77,7 +94,9 @@ async fn inner_main() -> color_eyre::Result<()> {
                         sig?;
                         drop(recv);
                         watcher.abort();
-                        _ = watcher.await;
+                        if let Ok(e) = watcher.await {
+                            e.wrap_err("while ctrl-c")?
+                        }
                         babel.await??;
                         while let Some(res) = listeners.join_next().await {
                             res?;
@@ -92,8 +111,10 @@ async fn inner_main() -> color_eyre::Result<()> {
                             drop(recv);
 
                             watcher.abort();
-                            _ = watcher.await;
-                            babel.await??;
+                            if let Ok(e) = watcher.await {
+                                e.wrap_err("while closing listeners")?
+                            }
+                            babel.await?.wrap_err("while closing listeners")?;
 
                             State::Idle
                         } else {
@@ -107,9 +128,9 @@ async fn inner_main() -> color_eyre::Result<()> {
                     res = &mut watcher => {
                         res??;
                         drop(recv);
-                        babel.await??;
+                        babel.await?.wrap_err("while closing watcher")?;
                         while let Some(res2) = listeners.join_next().await {
-                            res2?;
+                            res2.wrap_err("while closing watcher")?;
                         }
                         State::Idle
                     }
@@ -117,9 +138,11 @@ async fn inner_main() -> color_eyre::Result<()> {
                         res??;
                         drop(recv);
                         watcher.abort();
-                        _ = watcher.await;
+                        if let Ok(e) = watcher.await {
+                            e.wrap_err("while closing babeld")?
+                        }
                         while let Some(res2) = listeners.join_next().await {
-                            res2?;
+                            res2.wrap_err("while closing babeld")?;
                         }
                         State::Idle
                     }
