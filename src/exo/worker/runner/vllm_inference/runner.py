@@ -1,17 +1,14 @@
-import atexit
-import json
-import os
-import signal
-import socket
-import subprocess
-import sys
+import gc
 import time
 from enum import Enum
 
-import httpx
 import torch
 import vllm
 from anyio import WouldBlock
+from vllm.engine.arg_utils import EngineArgs
+from vllm.outputs import RequestOutput
+from vllm.sampling_params import SamplingParams
+from vllm.v1.engine.llm_engine import LLMEngine
 
 from exo.shared.constants import EXO_MODELS_DIR
 from exo.shared.types.chunks import ErrorChunk, TokenChunk
@@ -32,6 +29,7 @@ from exo.shared.types.tasks import (
     TaskStatus,
     TextGeneration,
 )
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import (
     RunnerConnected,
@@ -67,13 +65,6 @@ def _check_vllm_available() -> None:
     )
 
 
-def _find_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
-        port: int = s.getsockname()[1]  # type: ignore
-        return port
-
-
 class Runner:
     def __init__(
         self,
@@ -95,9 +86,7 @@ class Runner:
         self.model_id = self.shard_metadata.model_card.model_id
         self.model_path = EXO_MODELS_DIR / self.model_id.normalize()
 
-        self.vllm_process: subprocess.Popen[bytes] | None = None
-        self.vllm_port: int = 0
-        self.vllm_base_url: str = ""
+        self.engine: LLMEngine | None = None
 
         self.seen: set[TaskId] = set()
         self.active_tasks: dict[TaskId, TextGeneration] = {}
@@ -153,8 +142,7 @@ class Runner:
                 logger.info("vllm runner loading model")
                 self.update_status(RunnerLoading(layers_loaded=0, total_layers=1))
                 self.acknowledge_task(task)
-                self._start_vllm_server()
-                self._wait_for_vllm_health()
+                self._load_model()
                 self.send_task_status(task.task_id, TaskStatus.Complete)
                 self.update_status(RunnerLoaded())
 
@@ -182,56 +170,42 @@ class Runner:
                     f"Received {task.__class__.__name__} outside of state machine in {self.current_status=}"
                 )
 
-    def _start_vllm_server(self):
-        self.vllm_port = _find_free_port()
-        self.vllm_base_url = f"http://127.0.0.1:{self.vllm_port}"
+    def _load_model(self):
+        from exo.vllm_patches.growable_cache import patch_vllm
 
-        env = os.environ.copy()
-        env["VLLM_SERVER_DEV_MODE"] = "1"
+        patch_vllm()
 
-        cmd = [
-            sys.executable,
-            "-m",
-            "exo.vllm_entry",
-            "--model",
-            str(self.model_path),
-            "--served-model-name",
-            str(self.model_id),
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(self.vllm_port),
-            "--enable-sleep-mode",
-            "--gpu-memory-utilization",
-            "0.05",
-            "--max-model-len",
-            "8192",
-        ]
-        logger.info(f"Starting vLLM server on :{self.vllm_port} for {self.model_id}")
-        self.vllm_process = subprocess.Popen(cmd, env=env, start_new_session=True)
+        engine_args = EngineArgs(
+            model=str(self.model_path),
+            served_model_name=str(self.model_id),
+            gpu_memory_utilization=0.05,
+            trust_remote_code=self.shard_metadata.model_card.trust_remote_code,
+        )
+        self.engine = LLMEngine.from_engine_args(engine_args)
+        logger.info(f"vLLM engine loaded for {self.model_id}")
 
-        def _kill_vllm():
-            if self.vllm_process and self.vllm_process.poll() is None:
-                os.killpg(self.vllm_process.pid, signal.SIGKILL)
+    def _format_prompt(self, messages: list[dict[str, str]]) -> str:
+        assert self.engine is not None
+        tokenizer = self.engine.get_tokenizer()
+        result = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        assert isinstance(result, str)
+        return result
 
-        atexit.register(_kill_vllm)
-        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))  # type: ignore
-        signal.signal(signal.SIGINT, lambda *_: sys.exit(0))  # type: ignore
-
-    def _wait_for_vllm_health(self):
-        while True:
-            if self.vllm_process and self.vllm_process.poll() is not None:
-                raise RuntimeError(
-                    f"vLLM process died with code {self.vllm_process.returncode}"
-                )
-            try:
-                resp = httpx.get(f"{self.vllm_base_url}/health", timeout=5)
-                if resp.status_code == 200:
-                    logger.info("vLLM server is healthy")
-                    return
-            except httpx.ConnectError:
-                pass
-            time.sleep(1)
+    def _make_sampling_params(self, params: TextGenerationTaskParams) -> SamplingParams:
+        kwargs: dict[str, object] = {}
+        if params.max_output_tokens is not None:
+            kwargs["max_tokens"] = params.max_output_tokens
+        if params.temperature is not None:
+            kwargs["temperature"] = params.temperature
+        if params.top_p is not None:
+            kwargs["top_p"] = params.top_p
+        if params.stop is not None:
+            kwargs["stop"] = params.stop
+        if params.seed is not None:
+            kwargs["seed"] = params.seed
+        return SamplingParams(**kwargs)
 
     def handle_generation_tasks(self, starting_task: TextGeneration):
         self.update_status(RunnerRunning())
@@ -267,52 +241,29 @@ class Runner:
         return ExitCode.AllTasksComplete
 
     def _stream_generation(self, task: TextGeneration):
+        assert self.engine is not None
         params = task.task_params
         messages = [{"role": m.role, "content": m.content} for m in params.input]
 
-        payload: dict[str, object] = {
-            "model": str(self.model_id),
-            "messages": messages,
-            "stream": True,
-        }
-        if params.max_output_tokens is not None:
-            payload["max_tokens"] = params.max_output_tokens
-        if params.temperature is not None:
-            payload["temperature"] = params.temperature
-        if params.top_p is not None:
-            payload["top_p"] = params.top_p
-        if params.stop is not None:
-            payload["stop"] = params.stop
-        if params.seed is not None:
-            payload["seed"] = params.seed
-
         try:
-            with httpx.stream(
-                "POST",
-                f"{self.vllm_base_url}/v1/chat/completions",
-                json=payload,
-                timeout=300,
-            ) as response:
-                for line in response.iter_lines():
-                    if not line.startswith("data: "):
+            prompt = self._format_prompt(messages)
+            sampling_params = self._make_sampling_params(params)
+            request_id = str(task.task_id)
+
+            self.engine.add_request(request_id, prompt, sampling_params)
+
+            prev_text = ""
+            while self.engine.has_unfinished_requests():
+                outputs: list[RequestOutput] = self.engine.step()
+                for output in outputs:
+                    if output.request_id != request_id:
                         continue
-                    data = line[6:]
-                    if data == "[DONE]":
-                        break
+                    completion = output.outputs[0]
+                    delta = completion.text[len(prev_text) :]
+                    prev_text = completion.text
+                    finish_reason = completion.finish_reason
 
-                    parsed: dict[str, object] = json.loads(data)  # type: ignore
-                    choices_list: list[object] = list(parsed.get("choices") or [])  # type: ignore
-                    choice: dict[str, object] = choices_list[0] if choices_list else {}  # type: ignore
-                    delta: dict[str, object] = choice.get("delta") or {}  # type: ignore
-                    text = str(delta.get("content", ""))
-                    finish_reason_val = choice.get("finish_reason")
-                    finish_reason = (
-                        str(finish_reason_val)
-                        if isinstance(finish_reason_val, str)
-                        else None
-                    )
-
-                    if text or finish_reason:
+                    if delta or finish_reason:
                         mapped_reason = (
                             finish_reason
                             if finish_reason in ("stop", "length", "content_filter")
@@ -323,7 +274,7 @@ class Runner:
                                 command_id=task.command_id,
                                 chunk=TokenChunk(
                                     model=self.model_id,
-                                    text=text or "",
+                                    text=delta or "",
                                     token_id=0,
                                     usage=None,
                                     finish_reason=mapped_reason,
@@ -349,11 +300,9 @@ class Runner:
         logger.info("vllm runner shutting down")
         self.update_status(RunnerShuttingDown())
         self.acknowledge_task(task)
-        if self.vllm_process:
-            os.killpg(self.vllm_process.pid, signal.SIGTERM)
-            try:
-                self.vllm_process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(self.vllm_process.pid, signal.SIGKILL)
+        del self.engine
+        self.engine = None
+        gc.collect()
+        torch.cuda.empty_cache()
         self.send_task_status(task.task_id, TaskStatus.Complete)
         self.update_status(RunnerShutdown())

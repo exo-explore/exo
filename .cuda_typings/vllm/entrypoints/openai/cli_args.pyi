@@ -1,3 +1,0 @@
-from vllm.utils.argparse_utils import FlexibleArgumentParser
-
-def make_arg_parser(parser: FlexibleArgumentParser) -> FlexibleArgumentParser: ...

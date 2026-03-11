@@ -101,7 +101,6 @@ exclude = [
   "**/rust",
   "**/.github",
   "**/vllm_patches",
-  "**/vllm_entry.py",
 ]
 stubPath = ".mlx_typings"
 extraPaths = [".cuda_typings"]
