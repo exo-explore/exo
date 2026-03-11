@@ -132,12 +132,23 @@ pub mod if_watcher {
             Ipv6Addr::from_bits(PREFIX.addr().to_bits() | ip_node_id),
             112,
         );
-        let mut iface_num: u16 = 0;
+        // 0 is reserved for the first loopback address
+        let mut iface_num: u16 = 1;
 
         tracing::info!("starting interface monitor");
         let mon = netwatch::netmon::Monitor::new()
             .await
             .map_err(|_| BabbleError::Unspecified)?;
+        {
+            let temp = mon.interface_state();
+            let initial = &temp.peek().interfaces;
+            for interface in ["lo", "lo0"] {
+                if let Some(iface) = initial.get(interface) {
+                    add_ip(my_range.addr(), iface).await?;
+                    break;
+                }
+            }
+        }
         let mut mon_stream = mon.interface_state().stream();
 
         while let Some(s) = mon_stream.next().await {
@@ -148,7 +159,6 @@ pub mod if_watcher {
                     continue;
                 }
 
-                let my_ip = iface.get_v6_in(my_range);
                 for addr in iface.addrs() {
                     if let IpNet::V6(v6) = addr
                         && PREFIX.contains(&v6)
@@ -159,12 +169,13 @@ pub mod if_watcher {
                         _ = remove_ip(v6.addr(), iface).await;
                     }
                 }
-                if my_ip.is_none() {
-                    let addr = Ipv6Addr::from_bits(my_range.addr().to_bits() | u128::from(iface_num));
+                if iface.get_v6_in(my_range).is_none() {
+                    let addr =
+                        Ipv6Addr::from_bits(my_range.addr().to_bits() | u128::from(iface_num));
                     iface_num += 1;
                     assert!(iface_num < u16::MAX, "Really? u16::MAX interfaces?");
                     tracing::info!("adding new ip {addr} to {}", iface.name());
-                    add_ip(addr, iface).await?;
+                    //add_ip(addr, iface).await?;
                 }
 
                 tracing::info!("telling babeld to watch {}", iface.name());
@@ -192,7 +203,7 @@ pub mod if_watcher {
     }
 }
 pub mod babel {
-    #[tracing::instrument(skip(sock, receiver))]
+    #[tracing::instrument(skip_all)]
     pub async fn handle_listener(sock: UnixStream, mut receiver: broadcast::Receiver<String>) {
         tracing::info!("new socket conn");
         let (reader, mut write) = sock.into_split();
@@ -237,7 +248,8 @@ pub mod babel {
     use tokio::process::Command;
     use tokio::sync::{broadcast, mpsc};
 
-    use crate::{BabbleError, Result, if_watcher::PREFIX};
+    use crate::if_watcher::PREFIX;
+    use crate::{BabbleError, Result};
 
     #[derive(Debug)]
     pub enum Babble {
@@ -259,20 +271,20 @@ pub mod babel {
     }
     impl BabeldProcess {
         #[tracing::instrument]
-        async fn spawn(first_iface: String) -> Result<Self> {
+        async fn spawn(iface: String) -> Result<Self> {
             tokio::fs::create_dir_all(PRIVATE_DIR).await?;
             tokio::fs::set_permissions(PRIVATE_DIR, Permissions::from_mode(0o0600)).await?;
             tracing::info!("spawning babeld socket in {PRIVATE_SOCK_PATH}");
-            match Command::new("babeld")
+            let res = match Command::new("babeld")
                 .arg("-G")
                 .arg(PRIVATE_SOCK_PATH)
                 .arg("-I")
                 .arg(format!("{PRIVATE_DIR}/babeld.pid"))
                 .arg("-C")
-                .arg(format!("redistribute ip {PREFIX} local allow\n"))
+                .arg(format!("redistribute local ip {PREFIX}"))
                 .arg("-C")
                 .arg("redistribute local deny\n")
-                .arg(first_iface)
+                .arg(iface)
                 .spawn()
             {
                 Ok(proc) => Ok(Self { proc }),
@@ -280,7 +292,13 @@ pub mod babel {
                     tracing::warn!(error=%e, "failed to spawn babeld");
                     Err(e.into())
                 }
+            };
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            while !matches!(tokio::fs::try_exists(PRIVATE_SOCK_PATH).await, Ok(true)) {
+                tracing::info!("where is the sock");
+                tokio::time::sleep(Duration::from_secs(1)).await;
             }
+            res
         }
 
         #[tracing::instrument(skip(read, write, send))]
@@ -320,11 +338,6 @@ pub mod babel {
             mut recv: mpsc::Receiver<Babble>,
             send: broadcast::Sender<String>,
         ) -> Result<()> {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            while !matches!(tokio::fs::try_exists(PRIVATE_SOCK_PATH).await, Ok(true)) {
-                tracing::info!("where is the sock");
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
             std::fs::set_permissions(PRIVATE_SOCK_PATH, Permissions::from_mode(0o0600))?;
             tracing::debug!("connecting to babeld.sock");
             let (reader, mut writer) = UnixStream::connect(PRIVATE_SOCK_PATH).await?.into_split();
@@ -392,7 +405,9 @@ pub mod babel {
                 let rc = unsafe { libc::kill(pid, libc::SIGINT) };
                 let rc_err = if rc != 0 && rc != libc::ESRCH {
                     Err(io::Error::last_os_error().into())
-                } else { Ok(()) };
+                } else {
+                    Ok(())
+                };
                 let exit_code = async { Some(self.proc.wait().await) }
                     .or(async {
                         tokio::time::sleep(Duration::from_secs(5)).await;
@@ -430,7 +445,7 @@ pub mod babel {
         mut recv: mpsc::Receiver<Babble>,
         send: broadcast::Sender<String>,
     ) -> Result<()> {
-        let first_iface = loop {
+        let iface = loop {
             match recv.recv().await {
                 Some(Babble::AddIface(iface)) => {
                     break iface;
@@ -442,7 +457,7 @@ pub mod babel {
             }
         };
 
-        let babel = BabeldProcess::spawn(first_iface).await?;
+        let babel = BabeldProcess::spawn(iface).await?;
         let res1 = babel.supervise(recv, send).await;
         let res2 = babel.shutdown().await;
         res1.and(res2)

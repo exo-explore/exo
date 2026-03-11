@@ -159,9 +159,6 @@
                 just
                 jq
               ]
-              ++ lib.optionals stdenv.isLinux [
-                unixtools.ifconfig
-              ]
               ++ lib.optionals stdenv.isDarwin [
                 macmon
               ];
