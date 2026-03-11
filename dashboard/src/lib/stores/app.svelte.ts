@@ -3343,6 +3343,7 @@ export const nodeThunderbolt = () => appStore.nodeThunderbolt;
 export const nodeRdmaCtl = () => appStore.nodeRdmaCtl;
 export const thunderboltBridgeCycles = () => appStore.thunderboltBridgeCycles;
 export const nodeThunderboltBridge = () => appStore.nodeThunderboltBridge;
+export const vllmAvailable = () => appStore.vllmAvailable;
 
 // Image generation params
 export const imageGenerationParams = () => appStore.getImageGenerationParams();

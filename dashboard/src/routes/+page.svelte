@@ -61,6 +61,7 @@
     nodeThunderboltBridge,
     nodeIdentities,
     isConnected,
+    vllmAvailable,
     type DownloadProgress,
     type PlacementPreview,
   } from "$lib/stores/app.svelte";
@@ -5732,7 +5733,7 @@
                         </span>
                         RDMA (Fast)
                       </button>
-                      {#if appStore.vllmAvailable}
+                      {#if vllmAvailable()}
                         <button
                           onclick={() => {
                             selectedInstanceType = "Vllm";

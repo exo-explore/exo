@@ -220,6 +220,14 @@ class API:
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
 
+        try:
+            import vllm
+
+            logger.info(f"Found vllm version {vllm.__version__}")
+            self._vllm_available = True
+        except ImportError:
+            self._vllm_available = False
+
         self.app = FastAPI()
 
         @self.app.middleware("http")
@@ -449,18 +457,14 @@ class API:
                 status_code=400, detail=f"Failed to load model card: {exc}"
             ) from exc
         instance_combinations: list[tuple[Sharding, InstanceMeta, int]] = []
+        node_count = len(list(self.state.topology.list_nodes()))
         for sharding in (Sharding.Pipeline, Sharding.Tensor):
             for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
                 instance_combinations.extend(
-                    [
-                        (sharding, instance_meta, i)
-                        for i in range(
-                            1, len(list(self.state.topology.list_nodes())) + 1
-                        )
-                    ]
+                    [(sharding, instance_meta, i) for i in range(1, node_count + 1)]
                 )
-        # TODO: PDD
-        # instance_combinations.append((Sharding.PrefillDecodeDisaggregation, InstanceMeta.MlxRing, 1))
+        if self._vllm_available:
+            instance_combinations.append((Sharding.Pipeline, InstanceMeta.Vllm, 1))
 
         for sharding, instance_meta, min_nodes in instance_combinations:
             try:
@@ -783,14 +787,7 @@ class API:
         return resolved_model
 
     def _get_capabilities(self) -> dict[str, bool]:
-        try:
-            import vllm
-
-            logger.info(f"Found vllm version {vllm.__version__}")
-            vllm_available = True
-        except ImportError:
-            vllm_available = False
-        return {"vllm_available": vllm_available}
+        return {"vllm_available": self._vllm_available}
 
     def stream_events(self) -> StreamingResponse:
         def _generate_json_array(events: Iterable[Event]) -> Iterable[str]:
