@@ -5,7 +5,7 @@ import loguru
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
 from exo.shared.types.tasks import Task, TaskId
-from exo.shared.types.worker.instances import BoundInstance
+from exo.shared.types.worker.instances import BoundInstance, VllmInstance
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 
@@ -35,7 +35,14 @@ def entrypoint(
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:
-        if bound_instance.is_image_model:
+        if isinstance(bound_instance.instance, VllmInstance):
+            from exo.worker.runner.vllm_inference.runner import Runner as VllmRunner
+
+            runner = VllmRunner(
+                bound_instance, event_sender, task_receiver, cancel_receiver
+            )
+            runner.main()
+        elif bound_instance.is_image_model:
             from exo.worker.runner.image_models.runner import Runner as ImageRunner
 
             runner = ImageRunner(

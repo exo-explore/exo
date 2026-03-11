@@ -1,0 +1,3 @@
+import argparse
+
+class FlexibleArgumentParser(argparse.ArgumentParser): ...

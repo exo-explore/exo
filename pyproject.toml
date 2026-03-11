@@ -104,6 +104,7 @@ exclude = [
   "**/vllm_entry.py",
 ]
 stubPath = ".mlx_typings"
+extraPaths = [".vllm_typings"]
 
 [[tool.basedpyright.executionEnvironments]]
 root = "src"

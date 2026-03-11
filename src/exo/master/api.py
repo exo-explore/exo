@@ -341,6 +341,7 @@ class API:
         self.app.get("/ollama/api/version")(self.ollama_version)
 
         self.app.get("/state")(lambda: self.state)
+        self.app.get("/capabilities")(self._get_capabilities)
         self.app.get("/events")(self.stream_events)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
@@ -780,6 +781,16 @@ class API:
                 status_code=404, detail=f"No instance found for model {resolved_model}"
             )
         return resolved_model
+
+    def _get_capabilities(self) -> dict[str, bool]:
+        try:
+            import vllm
+
+            logger.info(f"Found vllm version {vllm.__version__}")
+            vllm_available = True
+        except ImportError:
+            vllm_available = False
+        return {"vllm_available": vllm_available}
 
     def stream_events(self) -> StreamingResponse:
         def _generate_json_array(events: Iterable[Event]) -> Iterable[str]:
