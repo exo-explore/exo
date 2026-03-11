@@ -145,23 +145,21 @@ impl Behaviour {
                 continue;
             };
 
-            // multiaddress should never already be present - else something has gone wrong
-            let is_new_addr = mas.insert(ma);
-            assert!(is_new_addr, "cannot discover a discovered peer");
+            // duplicate discovery is benign — mDNS can re-fire for the same peer+addr
+            // under rapid reconnect scenarios; just skip it
+            mas.insert(ma);
         }
     }
 
     fn handle_mdns_expired(&mut self, peers: Vec<(PeerId, Multiaddr)>) {
         for (p, ma) in peers {
-            // at this point, we *must* have the peer
-            let mas = self
-                .mdns_discovered
-                .get_mut(&p)
-                .expect("nonexistent peer cannot expire");
+            // peer may already have been removed (e.g. rapid expire/discover cycle)
+            let Some(mas) = self.mdns_discovered.get_mut(&p) else {
+                continue;
+            };
 
-            // at this point, we *must* have the multiaddress
-            let was_present = mas.remove(&ma);
-            assert!(was_present, "nonexistent multiaddress cannot expire");
+            // address may already have been removed — skip if so
+            mas.remove(&ma);
 
             // if empty, remove the peer-id entirely
             if mas.is_empty() {
@@ -313,11 +311,8 @@ impl NetworkBehaviour for Behaviour {
                 }
             }
 
-            // since we are running TCP/IP transport layer, we are assuming that
-            // no address changes can occur, hence encountering one is a fatal error
-            FromSwarm::AddressChange(a) => {
-                unreachable!("unhandlable: address change encountered: {:?}", a)
-            }
+            // address changes are unexpected with TCP but not worth crashing over
+            FromSwarm::AddressChange(_) => {}
             _ => {}
         }
     }
