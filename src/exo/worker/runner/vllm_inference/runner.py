@@ -186,10 +186,6 @@ class Runner:
         self.vllm_port = _find_free_port()
         self.vllm_base_url = f"http://127.0.0.1:{self.vllm_port}"
 
-        total_gpu_bytes = torch.cuda.get_device_properties(0).total_memory
-        model_bytes = self.shard_metadata.model_card.storage_size.in_bytes
-        utilization = min(0.95, (model_bytes * 1.1) / total_gpu_bytes)
-
         env = os.environ.copy()
         env["VLLM_SERVER_DEV_MODE"] = "1"
 
@@ -207,7 +203,9 @@ class Runner:
             str(self.vllm_port),
             "--enable-sleep-mode",
             "--gpu-memory-utilization",
-            f"{utilization:.2f}",
+            "0.05",
+            "--max-model-len",
+            "8192",
         ]
         logger.info(f"Starting vLLM server on :{self.vllm_port} for {self.model_id}")
         self.vllm_process = subprocess.Popen(cmd, env=env, start_new_session=True)

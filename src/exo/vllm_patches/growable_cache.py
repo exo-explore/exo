@@ -18,6 +18,7 @@ def patch_vllm() -> None:
     _patched = True
 
     _patch_determine_available_memory()
+    _patch_check_enough_kv_cache_memory()
     _patch_initialize_kv_cache_tensors()
     _patch_initialize_from_config()
     _patch_kv_cache_manager_init()
@@ -32,16 +33,27 @@ def _patch_determine_available_memory() -> None:
 
     @torch.inference_mode()
     def patched(self: "Worker") -> int:
-        full_available = original(self)
-        initial = max(int(full_available * INITIAL_FRACTION), 1)
-        self._growable_max_kv_bytes = full_available
+        original(self)
+        torch.cuda.empty_cache()
+        free_bytes, _ = torch.cuda.mem_get_info()
+        initial = max(int(free_bytes * INITIAL_FRACTION), 1)
+        self._growable_max_kv_bytes = free_bytes
         logger.info(
             f"Growable KV cache: initial {initial / (1024**3):.2f} GiB "
-            f"(max {full_available / (1024**3):.2f} GiB)"
+            f"(max {free_bytes / (1024**3):.2f} GiB)"
         )
         return initial
 
     Worker.determine_available_memory = patched  # type: ignore
+
+
+def _patch_check_enough_kv_cache_memory() -> None:
+    from vllm.v1.core import kv_cache_utils
+
+    def noop(*_args: "object", **_kwargs: "object") -> None:
+        pass
+
+    kv_cache_utils.check_enough_kv_cache_memory = noop  # type: ignore
 
 
 def _patch_initialize_kv_cache_tensors() -> None:
