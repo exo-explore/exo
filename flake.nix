@@ -175,7 +175,7 @@
                     break
                   fi
                 done
-                export LD_LIBRARY_PATH="${pkgsCuda.cudaPackages.libnvjitlink}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+                export LD_LIBRARY_PATH="${pkgsCuda.stdenv.cc.cc.lib}/lib:${pkgsCuda.cudaPackages.libnvjitlink}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
                 exec exo-cuda "$@"
               '';
             };

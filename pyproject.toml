@@ -100,6 +100,8 @@ exclude = [
   "**/.direnv",
   "**/rust",
   "**/.github",
+  "**/vllm_patches",
+  "**/vllm_entry.py",
 ]
 stubPath = ".mlx_typings"
 
