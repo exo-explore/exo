@@ -1,7 +1,7 @@
 use std::{fs::Permissions, io, os::unix::fs::PermissionsExt};
 
 use babblerd::babel::handle_listener;
-use color_eyre::eyre::WrapErr;
+use color_eyre::eyre::{WrapErr, eyre};
 use tokio::{
     net::UnixListener,
     signal,
@@ -50,7 +50,13 @@ async fn main() -> color_eyre::Result<()> {
     }
     std::fs::create_dir_all(PUBLIC_DIR)?;
     // make our directory world readable
-    std::fs::set_permissions(PUBLIC_DIR, Permissions::from_mode(0o0755))?;
+    if let Err(e) = std::fs::set_permissions(PUBLIC_DIR, Permissions::from_mode(0o0755)) {
+        if e.kind() == io::ErrorKind::PermissionDenied {
+            return eyre!("Insufficient permissions to run daemon -- did you forget sudo?");
+        }
+        return Err(e);
+    }
+
     let res = inner_main().await;
     _ = std::fs::remove_file(PUBLIC_SOCK_PATH);
     res
@@ -75,7 +81,7 @@ async fn inner_main() -> color_eyre::Result<()> {
                     sock = public_socket.accept() => {
                         let sock = sock?.0;
                         tracing::info!("starting babeld");
-                        let (br_send, br_recv) = broadcast::channel(32);
+                        let (br_send, br_recv) = broadcast::channel(1024);
                         let (mp_send, mp_recv) = mpsc::channel(32);
                         let babel = tokio::spawn(babblerd::babel::babel(mp_recv, br_send));
                         let watcher = tokio::spawn(babblerd::if_watcher::watch(mp_send));
