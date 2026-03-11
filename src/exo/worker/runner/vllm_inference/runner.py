@@ -9,8 +9,11 @@ import time
 from enum import Enum
 
 import httpx
+import torch
+import vllm
 from anyio import WouldBlock
 
+from exo.shared.constants import EXO_MODELS_DIR
 from exo.shared.types.chunks import ErrorChunk, TokenChunk
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -45,7 +48,6 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import MpReceiver, MpSender
-from exo.shared.constants import EXO_MODELS_DIR
 from exo.worker.runner.bootstrap import logger
 
 
@@ -55,20 +57,11 @@ class ExitCode(str, Enum):
 
 
 def _check_vllm_available() -> None:
-    try:
-        import vllm
-
-        logger.info(f"vllm available: {vllm.__version__}")
-    except ImportError as e:
-        raise RuntimeError(f"vLLM is not installed: {e}") from e
-    try:
-        import torch
-    except ImportError as e:
-        raise RuntimeError(f"PyTorch is not installed: {e}") from e
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is not available — vLLM requires a CUDA GPU")
     logger.info(
-        f"vLLM pre-flight: torch {torch.__version__}, "
+        f"vLLM pre-flight: vllm {vllm.__version__}, "
+        f"torch {torch.__version__}, "
         f"CUDA {torch.version.cuda}, "
         f"GPU {torch.cuda.get_device_name(0)}"
     )
@@ -193,6 +186,10 @@ class Runner:
         self.vllm_port = _find_free_port()
         self.vllm_base_url = f"http://127.0.0.1:{self.vllm_port}"
 
+        total_gpu_bytes = torch.cuda.get_device_properties(0).total_memory
+        model_bytes = self.shard_metadata.model_card.storage_size.in_bytes
+        utilization = min(0.95, (model_bytes * 1.1) / total_gpu_bytes)
+
         env = os.environ.copy()
         env["VLLM_SERVER_DEV_MODE"] = "1"
 
@@ -202,11 +199,15 @@ class Runner:
             "exo.vllm_entry",
             "--model",
             str(self.model_path),
+            "--served-model-name",
+            str(self.model_id),
             "--host",
             "127.0.0.1",
             "--port",
             str(self.vllm_port),
             "--enable-sleep-mode",
+            "--gpu-memory-utilization",
+            f"{utilization:.2f}",
         ]
         logger.info(f"Starting vLLM server on :{self.vllm_port} for {self.model_id}")
         self.vllm_process = subprocess.Popen(cmd, env=env, start_new_session=True)
@@ -272,7 +273,7 @@ class Runner:
         messages = [{"role": m.role, "content": m.content} for m in params.input]
 
         payload: dict[str, object] = {
-            "model": str(params.model),
+            "model": str(self.model_id),
             "messages": messages,
             "stream": True,
         }

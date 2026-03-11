@@ -104,7 +104,7 @@ exclude = [
   "**/vllm_entry.py",
 ]
 stubPath = ".mlx_typings"
-extraPaths = [".vllm_typings"]
+extraPaths = [".cuda_typings"]
 
 [[tool.basedpyright.executionEnvironments]]
 root = "src"
@@ -127,6 +127,7 @@ environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 extend-exclude = [
   "shared/protobufs/**",
   "*mlx_typings/**",
+  "*cuda_typings/**",
   "rust/exo_pyo3_bindings/**",
   "bench/vendor/**",
 ]
