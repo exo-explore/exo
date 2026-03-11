@@ -1,5 +1,7 @@
+import atexit
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -43,6 +45,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import MpReceiver, MpSender
+from exo.shared.constants import EXO_MODELS_DIR
 from exo.worker.runner.bootstrap import logger
 
 
@@ -97,6 +100,7 @@ class Runner:
             self.bound_instance.bound_shard,
         )
         self.model_id = self.shard_metadata.model_card.model_id
+        self.model_path = EXO_MODELS_DIR / self.model_id.normalize()
 
         self.vllm_process: subprocess.Popen[bytes] | None = None
         self.vllm_port: int = 0
@@ -197,7 +201,7 @@ class Runner:
             "-m",
             "exo.vllm_entry",
             "--model",
-            str(self.model_id),
+            str(self.model_path),
             "--host",
             "127.0.0.1",
             "--port",
@@ -205,11 +209,22 @@ class Runner:
             "--enable-sleep-mode",
         ]
         logger.info(f"Starting vLLM server on :{self.vllm_port} for {self.model_id}")
-        self.vllm_process = subprocess.Popen(cmd, env=env)
+        self.vllm_process = subprocess.Popen(cmd, env=env, start_new_session=True)
 
-    def _wait_for_vllm_health(self, timeout: float = 300):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
+        def _kill_vllm():
+            if self.vllm_process and self.vllm_process.poll() is None:
+                os.killpg(self.vllm_process.pid, signal.SIGKILL)
+
+        atexit.register(_kill_vllm)
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))  # type: ignore
+        signal.signal(signal.SIGINT, lambda *_: sys.exit(0))  # type: ignore
+
+    def _wait_for_vllm_health(self):
+        while True:
+            if self.vllm_process and self.vllm_process.poll() is not None:
+                raise RuntimeError(
+                    f"vLLM process died with code {self.vllm_process.returncode}"
+                )
             try:
                 resp = httpx.get(f"{self.vllm_base_url}/health", timeout=5)
                 if resp.status_code == 200:
@@ -217,12 +232,7 @@ class Runner:
                     return
             except httpx.ConnectError:
                 pass
-            if self.vllm_process and self.vllm_process.poll() is not None:
-                raise RuntimeError(
-                    f"vLLM process died with code {self.vllm_process.returncode}"
-                )
             time.sleep(1)
-        raise RuntimeError("vLLM server failed to become healthy within timeout")
 
     def handle_generation_tasks(self, starting_task: TextGeneration):
         self.update_status(RunnerRunning())
@@ -341,10 +351,10 @@ class Runner:
         self.update_status(RunnerShuttingDown())
         self.acknowledge_task(task)
         if self.vllm_process:
-            self.vllm_process.terminate()
+            os.killpg(self.vllm_process.pid, signal.SIGTERM)
             try:
                 self.vllm_process.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                self.vllm_process.kill()
+                os.killpg(self.vllm_process.pid, signal.SIGKILL)
         self.send_task_status(task.task_id, TaskStatus.Complete)
         self.update_status(RunnerShutdown())
