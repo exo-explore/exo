@@ -1,6 +1,7 @@
 import pytest
 
 from exo.master.placement import (
+    add_instance_to_placements,
     get_transition_events,
     place_instance,
 )
@@ -12,7 +13,7 @@ from exo.master.tests.conftest import (
 )
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
-from exo.shared.types.commands import PlaceInstance
+from exo.shared.types.commands import CreateInstance, PlaceInstance
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import (
     InstanceCreated,
@@ -32,8 +33,8 @@ from exo.shared.types.worker.instances import (
     MlxJacclInstance,
     MlxRingInstance,
 )
-from exo.shared.types.worker.runners import ShardAssignments
-from exo.shared.types.worker.shards import Sharding
+from exo.shared.types.worker.runners import RunnerId, ShardAssignments
+from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 
 
 @pytest.fixture
@@ -576,3 +577,158 @@ def test_get_transition_events_delete_instance_cancels_only_matching_tasks(
     assert cancel_events[0].task_status == TaskStatus.Cancelled
     assert len(delete_events) == 1
     assert delete_events[0].instance_id == instance_id_a
+
+
+def test_place_instance_rejects_duplicate_placement() -> None:
+    topology = Topology()
+    node_id = NodeId()
+    topology.add_node(node_id)
+    node_memory = {node_id: create_node_memory(1000 * 1024)}
+    node_network = {node_id: create_node_network()}
+    model_card = ModelCard(
+        model_id=ModelId("test-model"),
+        storage_size=Memory.from_kb(1000),
+        n_layers=10,
+        hidden_size=1000,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+    )
+    command = place_instance_command(model_card)
+
+    first_placements = place_instance(command, topology, {}, node_memory, node_network)
+
+    with pytest.raises(ValueError, match="Duplicate placement"):
+        place_instance(command, topology, first_placements, node_memory, node_network)
+
+
+def test_add_instance_rejects_duplicate_placement() -> None:
+    topology = Topology()
+    node_id = NodeId()
+    topology.add_node(node_id)
+
+    model_card = ModelCard(
+        model_id=ModelId("test-model"),
+        storage_size=Memory.from_kb(1000),
+        n_layers=10,
+        hidden_size=1000,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+    )
+    runner_id = RunnerId()
+    shard = PipelineShardMetadata(
+        model_card=model_card,
+        device_rank=0,
+        world_size=1,
+        start_layer=0,
+        end_layer=10,
+        n_layers=10,
+    )
+    assignments = ShardAssignments(
+        model_id=model_card.model_id,
+        runner_to_shard={runner_id: shard},
+        node_to_runner={node_id: runner_id},
+    )
+    instance_a = MlxRingInstance(
+        instance_id=InstanceId(),
+        shard_assignments=assignments,
+        hosts_by_node={},
+        ephemeral_port=50000,
+    )
+    instance_b = MlxRingInstance(
+        instance_id=InstanceId(),
+        shard_assignments=assignments,
+        hosts_by_node={},
+        ephemeral_port=50001,
+    )
+    cmd_a = CreateInstance(command_id=CommandId(), instance=instance_a)
+    cmd_b = CreateInstance(command_id=CommandId(), instance=instance_b)
+
+    result = add_instance_to_placements(cmd_a, topology, {})
+    with pytest.raises(ValueError, match="Duplicate placement"):
+        add_instance_to_placements(cmd_b, topology, result)
+
+
+def test_place_instance_allows_different_model_same_nodes() -> None:
+    topology = Topology()
+    node_id = NodeId()
+    topology.add_node(node_id)
+    node_memory = {node_id: create_node_memory(1000 * 1024)}
+    node_network = {node_id: create_node_network()}
+    model_a = ModelCard(
+        model_id=ModelId("model-a"),
+        storage_size=Memory.from_kb(500),
+        n_layers=10,
+        hidden_size=1000,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+    )
+    model_b = ModelCard(
+        model_id=ModelId("model-b"),
+        storage_size=Memory.from_kb(500),
+        n_layers=10,
+        hidden_size=1000,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+    )
+
+    first = place_instance(place_instance_command(model_a), topology, {}, node_memory, node_network)
+    second = place_instance(place_instance_command(model_b), topology, first, node_memory, node_network)
+    assert len(second) == 2
+
+
+def test_place_instance_allows_same_model_different_sharding() -> None:
+    topology = Topology()
+    node_a = NodeId()
+    node_b = NodeId()
+    node_c = NodeId()
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    topology.add_node(node_c)
+
+    for src, snk in [(node_a, node_b), (node_b, node_a), (node_b, node_c),
+                     (node_c, node_b), (node_a, node_c), (node_c, node_a)]:
+        topology.add_connection(
+            Connection(source=src, sink=snk, edge=create_rdma_connection(3))
+        )
+        topology.add_connection(
+            Connection(source=src, sink=snk, edge=create_socket_connection(1))
+        )
+
+    node_memory = {
+        node_a: create_node_memory(500),
+        node_b: create_node_memory(500),
+        node_c: create_node_memory(500),
+    }
+    node_network = {
+        node_a: create_node_network(),
+        node_b: create_node_network(),
+        node_c: create_node_network(),
+    }
+
+    model_card = ModelCard(
+        model_id=ModelId("test-model"),
+        storage_size=Memory.from_bytes(1500),
+        n_layers=12,
+        hidden_size=30,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+    )
+
+    pipeline_cmd = PlaceInstance(
+        command_id=CommandId(),
+        model_card=model_card,
+        sharding=Sharding.Pipeline,
+        instance_meta=InstanceMeta.MlxRing,
+        min_nodes=1,
+    )
+    tensor_cmd = PlaceInstance(
+        command_id=CommandId(),
+        model_card=model_card,
+        sharding=Sharding.Tensor,
+        instance_meta=InstanceMeta.MlxJaccl,
+        min_nodes=1,
+    )
+
+    first = place_instance(pipeline_cmd, topology, {}, node_memory, node_network)
+    second = place_instance(tensor_cmd, topology, first, node_memory, node_network)
+    assert len(second) == 2

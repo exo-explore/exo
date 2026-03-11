@@ -1,7 +1,7 @@
 import random
 from collections.abc import Mapping
 from copy import deepcopy
-from typing import Sequence
+from typing import Sequence, TypeAlias
 
 from exo.master.placement_utils import (
     Cycle,
@@ -42,7 +42,31 @@ from exo.shared.types.worker.instances import (
     MlxJacclInstance,
     MlxRingInstance,
 )
-from exo.shared.types.worker.shards import Sharding
+from exo.shared.types.worker.shards import Sharding, TensorShardMetadata
+
+PlacementSignature: TypeAlias = tuple[ModelId, frozenset[NodeId], Sharding, InstanceMeta]
+
+
+def get_placement_signature(instance: Instance) -> PlacementSignature:
+    model_id = instance.shard_assignments.model_id
+    node_ids = frozenset(instance.shard_assignments.node_to_runner.keys())
+    first_shard = next(iter(instance.shard_assignments.runner_to_shard.values()))
+    sharding = Sharding.Tensor if isinstance(first_shard, TensorShardMetadata) else Sharding.Pipeline
+    instance_meta = InstanceMeta.MlxJaccl if isinstance(instance, MlxJacclInstance) else InstanceMeta.MlxRing
+    return (model_id, node_ids, sharding, instance_meta)
+
+
+def check_no_duplicate_placement(
+    signature: PlacementSignature,
+    current_instances: Mapping[InstanceId, Instance],
+) -> None:
+    for existing in current_instances.values():
+        if get_placement_signature(existing) == signature:
+            model_id, _, sharding, instance_meta = signature
+            raise ValueError(
+                f"Duplicate placement: an instance of {model_id} with {sharding.value}/{instance_meta.value} "
+                f"sharding already exists on the same nodes"
+            )
 
 
 def random_ephemeral_port() -> int:
@@ -55,7 +79,7 @@ def add_instance_to_placements(
     topology: Topology,
     current_instances: Mapping[InstanceId, Instance],
 ) -> Mapping[InstanceId, Instance]:
-    # TODO: validate against topology
+    check_no_duplicate_placement(get_placement_signature(command.instance), current_instances)
 
     return {**current_instances, command.instance.instance_id: command.instance}
 
@@ -140,6 +164,12 @@ def place_instance(
 
     shard_assignments = get_shard_assignments(
         command.model_card, selected_cycle, command.sharding, node_memory
+    )
+
+    check_no_duplicate_placement(
+        (command.model_card.model_id, frozenset(shard_assignments.node_to_runner.keys()),
+         command.sharding, command.instance_meta),
+        current_instances,
     )
 
     cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle.node_ids)
