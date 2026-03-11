@@ -1,6 +1,7 @@
 model_id = "mlx-community/Qwen3.5-397B-A17B-6bit"
 n_layers = 60
 hidden_size = 4096
+num_key_value_heads = 2
 supports_tensor = true
 tasks = ["TextGeneration"]
 family = "qwen"

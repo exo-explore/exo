@@ -8,7 +8,7 @@ from mlx_lm.generate import (
 )
 from mlx_lm.models.cache import RotatingKVCache
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
-from mlx_lm.tokenizer_utils import TokenizerWrapper
+from mlx_lm.tokenizer_utils import StreamingDetokenizer, TokenizerWrapper
 
 from exo.shared.types.api import (
     CompletionTokensDetails,
@@ -57,6 +57,7 @@ class _EngineTask:
     prefix_hit_length: int
     matched_index: int | None
     cache_snapshots: list[CacheSnapshot] | None
+    detokenizer: StreamingDetokenizer
     on_generation_token: Callable[[], None] | None = None
     generated_text_parts: list[str] = field(default_factory=list)
     potential_stop_sequence_text: str = ""
@@ -205,6 +206,7 @@ class ExoBatchGenerator:
             prefix_hit_length=prefix_hit_length,
             matched_index=matched_index,
             cache_snapshots=cache_snapshots or None,
+            detokenizer=self.tokenizer.detokenizer,
             on_generation_token=on_generation_token,
             generation_start_time=time.perf_counter(),
         )
@@ -229,11 +231,11 @@ class ExoBatchGenerator:
             state = self._active_tasks[response.uid]
             if state.on_generation_token is not None:
                 state.on_generation_token()
-            text = (
-                ""
-                if response.finish_reason == "stop"
-                else self.tokenizer.decode([response.token])
-            )
+            if response.finish_reason != "stop":
+                state.detokenizer.add_token(response.token)
+            if response.finish_reason is not None:
+                state.detokenizer.finalize()
+            text = state.detokenizer.last_segment
             state.completion_tokens += 1
             state.generated_text_parts.append(text)
             state.potential_stop_sequence_text += text
