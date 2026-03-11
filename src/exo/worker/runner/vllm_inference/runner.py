@@ -1,12 +1,14 @@
 import gc
+import os
 import time
 from enum import Enum
+
+os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
 
 import torch
 import vllm
 from anyio import WouldBlock
 from vllm.engine.arg_utils import EngineArgs
-from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
 from vllm.v1.engine.llm_engine import LLMEngine
 
@@ -46,6 +48,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import MpReceiver, MpSender
+from exo.vllm_patches.growable_cache import patch_vllm
 from exo.worker.runner.bootstrap import logger
 
 
@@ -171,8 +174,6 @@ class Runner:
                 )
 
     def _load_model(self):
-        from exo.vllm_patches.growable_cache import patch_vllm
-
         patch_vllm()
 
         engine_args = EngineArgs(
@@ -181,7 +182,9 @@ class Runner:
             gpu_memory_utilization=0.05,
             trust_remote_code=self.shard_metadata.model_card.trust_remote_code,
         )
+
         self.engine = LLMEngine.from_engine_args(engine_args)
+
         logger.info(f"vLLM engine loaded for {self.model_id}")
 
     def _format_prompt(self, messages: list[dict[str, str]]) -> str:
@@ -254,7 +257,7 @@ class Runner:
 
             prev_text = ""
             while self.engine.has_unfinished_requests():
-                outputs: list[RequestOutput] = self.engine.step()
+                outputs = self.engine.step()
                 for output in outputs:
                     if output.request_id != request_id:
                         continue
