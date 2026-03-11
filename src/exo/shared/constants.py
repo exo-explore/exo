@@ -99,3 +99,6 @@ EXO_TRACING_ENABLED = os.getenv("EXO_TRACING_ENABLED", "false").lower() == "true
 EXO_MAX_CONCURRENT_REQUESTS = int(os.getenv("EXO_MAX_CONCURRENT_REQUESTS", "8"))
 
 EXO_MAX_INSTANCE_RETRIES = 5
+
+# Peer-to-peer model download server port (one above default API port)
+EXO_PEER_DOWNLOAD_PORT = int(os.getenv("EXO_PEER_DOWNLOAD_PORT", "52416"))

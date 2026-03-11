@@ -10,6 +10,8 @@ from exo.download.download_utils import (
     RepoDownloadProgress,
     download_shard,
 )
+from exo.download.peer_shard_downloader import PeerAwareShardDownloader
+from exo.download.peer_state import PeerStateProvider
 from exo.download.shard_downloader import ShardDownloader
 from exo.shared.models.model_cards import (
     ModelCard,
@@ -25,11 +27,16 @@ from exo.shared.types.worker.shards import (
 
 
 def exo_shard_downloader(
-    max_parallel_downloads: int = 8, offline: bool = False
+    max_parallel_downloads: int = 8,
+    offline: bool = False,
+    peer_state_provider: PeerStateProvider | None = None,
 ) -> ShardDownloader:
-    return SingletonShardDownloader(
-        ResumableShardDownloader(max_parallel_downloads, offline=offline)
+    inner: ShardDownloader = ResumableShardDownloader(
+        max_parallel_downloads, offline=offline
     )
+    if peer_state_provider is not None:
+        inner = PeerAwareShardDownloader(inner, peer_state_provider)
+    return SingletonShardDownloader(inner)
 
 
 async def build_base_shard(model_id: ModelId) -> ShardMetadata:
