@@ -20,7 +20,9 @@ from pathlib import Path
 
 import tomlkit
 
-CARDS_DIR = Path(__file__).resolve().parent.parent / "resources" / "inference_model_cards"
+CARDS_DIR = (
+    Path(__file__).resolve().parent.parent / "resources" / "inference_model_cards"
+)
 MAX_WORKERS = 5
 
 
@@ -81,10 +83,20 @@ def process_card(path: Path) -> tuple[str, str]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fetch num_key_value_heads from HuggingFace and update TOML cards.")
+    parser = argparse.ArgumentParser(
+        description="Fetch num_key_value_heads from HuggingFace and update TOML cards."
+    )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--all", action="store_true", help="Update all model cards (overwrite existing values)")
-    group.add_argument("--missing", action="store_true", help="Only update cards missing num_key_value_heads")
+    group.add_argument(
+        "--all",
+        action="store_true",
+        help="Update all model cards (overwrite existing values)",
+    )
+    group.add_argument(
+        "--missing",
+        action="store_true",
+        help="Only update cards missing num_key_value_heads",
+    )
     args = parser.parse_args()
 
     toml_files = sorted(CARDS_DIR.glob("*.toml"))
