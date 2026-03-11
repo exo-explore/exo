@@ -149,7 +149,6 @@ pub mod if_watcher {
                 }
 
                 let my_ip = iface.get_v6_in(my_range);
-                let mut has_removed = false;
                 for addr in iface.addrs() {
                     if let IpNet::V6(v6) = addr
                         && PREFIX.contains(&v6)
@@ -158,11 +157,7 @@ pub mod if_watcher {
                         tracing::info!("removing stale ip {v6} from {}", iface.name());
                         // don't really care if this fails
                         _ = remove_ip(v6.addr(), iface).await;
-                        has_removed = true;
                     }
-                }
-                if has_removed {
-                    continue;
                 }
                 if my_ip.is_none() {
                     let addr = Ipv6Addr::from_bits(my_range.addr().to_bits() | u128::from(iface_num));
@@ -222,11 +217,17 @@ pub mod babel {
     }
 
     #[cfg(target_os = "macos")]
-    const PRIVATE_SOCK_PATH: &str = "/var/run/babeld.sock";
+    const PRIVATE_SOCK_PATH: &str = "/var/run/babbler/private/babeld.sock";
     #[cfg(target_os = "linux")]
-    const PRIVATE_SOCK_PATH: &str = "/run/babeld.sock";
+    const PRIVATE_SOCK_PATH: &str = "/run/babbler/private/babeld.sock";
+    #[cfg(target_os = "macos")]
+    const PRIVATE_DIR: &str = "/var/run/babbler/private";
+    #[cfg(target_os = "linux")]
+    const PRIVATE_DIR: &str = "/run/babbler/private";
 
+    use std::fs::Permissions;
     use std::io;
+    use std::os::unix::fs::PermissionsExt;
     use tokio::time::Duration;
 
     use futures_lite::FutureExt;
@@ -258,10 +259,15 @@ pub mod babel {
     }
     impl BabeldProcess {
         #[tracing::instrument]
-        fn spawn(first_iface: String) -> Result<Self> {
+        async fn spawn(first_iface: String) -> Result<Self> {
+            tokio::fs::create_dir_all(PRIVATE_DIR).await?;
+            tokio::fs::set_permissions(PRIVATE_DIR, Permissions::from_mode(0o0600)).await?;
+            tracing::info!("spawning babeld socket in {PRIVATE_SOCK_PATH}");
             match Command::new("babeld")
                 .arg("-G")
                 .arg(PRIVATE_SOCK_PATH)
+                .arg("-I")
+                .arg(format!("{PRIVATE_DIR}/babeld.pid"))
                 .arg("-C")
                 .arg(format!("redistribute ip {PREFIX} local allow\n"))
                 .arg("-C")
@@ -319,6 +325,7 @@ pub mod babel {
                 tracing::info!("where is the sock");
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
+            std::fs::set_permissions(PRIVATE_SOCK_PATH, Permissions::from_mode(0o0600))?;
             tracing::debug!("connecting to babeld.sock");
             let (reader, mut writer) = UnixStream::connect(PRIVATE_SOCK_PATH).await?.into_split();
             let mut babel_lines = BufReader::new(reader).lines();
@@ -435,7 +442,7 @@ pub mod babel {
             }
         };
 
-        let babel = BabeldProcess::spawn(first_iface)?;
+        let babel = BabeldProcess::spawn(first_iface).await?;
         let res1 = babel.supervise(recv, send).await;
         let res2 = babel.shutdown().await;
         res1.and(res2)
