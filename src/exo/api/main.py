@@ -202,6 +202,7 @@ from exo.utils.task_group import TaskGroup
 
 
 class SetStorageConfigRequest(CamelCaseModel):
+    node_ids: list[NodeId] | None = None
     max_storage_gb: Annotated[float, Field(ge=0)] | None = None
     storage_policy: StoragePolicy = "manual"
 
@@ -382,7 +383,7 @@ class API:
         self.app.post("/download/cancel")(self.cancel_download)
         self.app.get("/storage")(self.get_storage)
         self.app.get("/storage/{node_id}")(self.get_storage_node)
-        self.app.put("/storage/{node_id}")(self.set_storage_config)
+        self.app.put("/storage")(self.set_storage_config)
         self.app.get("/v1/traces")(self.list_traces)
         self.app.post("/v1/traces/delete")(self.delete_traces)
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
@@ -1953,23 +1954,32 @@ class API:
         return NodeStorageInfo(config=config, used=used)
 
     async def set_storage_config(
-        self, node_id: NodeId, request: SetStorageConfigRequest
-    ) -> dict[str, str]:
+        self, request: SetStorageConfigRequest
+    ) -> dict[str, str | list[str]]:
         max_storage = (
             Memory.from_gb(request.max_storage_gb)
             if request.max_storage_gb is not None
             else None
         )
 
-        command = SetStorageConfig(
-            target_node_id=node_id,
-            max_storage=max_storage,
-            storage_policy=request.storage_policy,
+        target_node_ids = (
+            request.node_ids
+            if request.node_ids is not None
+            else list(self.state.node_storage_config.keys())
         )
-        await self.command_sender.send(
-            ForwarderCommand(origin=self._system_id, command=command)
-        )
-        return {"status": "ok", "commandId": str(command.command_id)}
+
+        command_ids: list[str] = []
+        for node_id in target_node_ids:
+            command = SetStorageConfig(
+                target_node_id=node_id,
+                max_storage=max_storage,
+                storage_policy=request.storage_policy,
+            )
+            await self.command_sender.send(
+                ForwarderCommand(origin=self._system_id, command=command)
+            )
+            command_ids.append(str(command.command_id))
+        return {"status": "ok", "commandIds": command_ids}
 
     @staticmethod
     def _get_trace_path(task_id: str) -> Path:
