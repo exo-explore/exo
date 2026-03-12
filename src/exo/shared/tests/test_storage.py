@@ -1,4 +1,6 @@
 from datetime import UTC, datetime
+from pathlib import Path
+from unittest.mock import patch
 
 from exo.shared.models.model_cards import ModelId
 from exo.shared.storage import (
@@ -8,6 +10,8 @@ from exo.shared.storage import (
     decide_storage_action,
     get_download_rejected_events,
     get_lru_eviction_candidates,
+    load_storage_config,
+    persist_storage_config,
 )
 from exo.shared.tests.conftest import get_pipeline_shard_metadata
 from exo.shared.types.common import NodeId
@@ -516,3 +520,115 @@ class TestGetDownloadRejectedEvents:
         # Only InstanceDeleted, no TaskStatusUpdated for completed task
         assert len(events) == 1
         assert isinstance(events[0], InstanceDeleted)
+
+
+class TestPersistStorageConfig:
+    """Tests for persist_storage_config I/O."""
+
+    async def test_round_trip(self, tmp_path: Path) -> None:
+        cfg_file = tmp_path / "config.toml"
+        config = StorageConfig(
+            max_storage=Memory.from_gb(50), storage_policy="auto-evict"
+        )
+        with patch("exo.shared.storage.EXO_CONFIG_FILE", cfg_file):
+            await persist_storage_config(config)
+            loaded = await load_storage_config()
+
+        assert loaded.storage_policy == "auto-evict"
+        assert loaded.max_storage is not None
+        assert abs(loaded.max_storage.in_gb - 50.0) < 0.1
+
+    async def test_preserves_other_keys(self, tmp_path: Path) -> None:
+        cfg_file = tmp_path / "config.toml"
+        cfg_file.write_text('some_other_key = "hello"\n')
+        config = StorageConfig(max_storage=Memory.from_gb(10))
+        with patch("exo.shared.storage.EXO_CONFIG_FILE", cfg_file):
+            await persist_storage_config(config)
+
+        contents = cfg_file.read_text()
+        assert "some_other_key" in contents
+        assert "hello" in contents
+        assert "max_storage_gb" in contents
+
+    async def test_clears_max_storage_gb_when_unlimited(self, tmp_path: Path) -> None:
+        cfg_file = tmp_path / "config.toml"
+        cfg_file.write_text('max_storage_gb = 50\nstorage_policy = "auto-evict"\n')
+        config = StorageConfig(max_storage=None, storage_policy="manual")
+        with patch("exo.shared.storage.EXO_CONFIG_FILE", cfg_file):
+            await persist_storage_config(config)
+
+        contents = cfg_file.read_text()
+        assert "max_storage_gb" not in contents
+        assert "manual" in contents
+
+    async def test_creates_file_if_missing(self, tmp_path: Path) -> None:
+        cfg_file = tmp_path / "subdir" / "config.toml"
+        config = StorageConfig(max_storage=Memory.from_gb(25))
+        with patch("exo.shared.storage.EXO_CONFIG_FILE", cfg_file):
+            await persist_storage_config(config)
+
+        assert cfg_file.exists()
+        assert "max_storage_gb" in cfg_file.read_text()
+
+
+class TestLoadStorageConfig:
+    """Tests for load_storage_config I/O."""
+
+    async def test_defaults_when_empty_file(self, tmp_path: Path) -> None:
+        cfg_file = tmp_path / "config.toml"
+        cfg_file.write_text("")
+        with patch("exo.shared.storage.EXO_CONFIG_FILE", cfg_file):
+            config = await load_storage_config()
+
+        assert config.max_storage is None
+        assert config.storage_policy == "manual"
+
+    async def test_reads_from_file(self, tmp_path: Path) -> None:
+        cfg_file = tmp_path / "config.toml"
+        cfg_file.write_text('max_storage_gb = 30.0\nstorage_policy = "auto-evict"\n')
+        with patch("exo.shared.storage.EXO_CONFIG_FILE", cfg_file):
+            config = await load_storage_config()
+
+        assert config.storage_policy == "auto-evict"
+        assert config.max_storage is not None
+        assert abs(config.max_storage.in_gb - 30.0) < 0.1
+
+    async def test_cli_overrides_file(self, tmp_path: Path) -> None:
+        cfg_file = tmp_path / "config.toml"
+        cfg_file.write_text('max_storage_gb = 30.0\nstorage_policy = "manual"\n')
+        with patch("exo.shared.storage.EXO_CONFIG_FILE", cfg_file):
+            config = await load_storage_config(
+                max_storage_gb=100.0, storage_policy="auto-evict"
+            )
+
+        assert config.storage_policy == "auto-evict"
+        assert config.max_storage is not None
+        assert abs(config.max_storage.in_gb - 100.0) < 0.1
+
+    async def test_partial_cli_override(self, tmp_path: Path) -> None:
+        """CLI overrides only the fields provided, file values used for the rest."""
+        cfg_file = tmp_path / "config.toml"
+        cfg_file.write_text('max_storage_gb = 30.0\nstorage_policy = "auto-evict"\n')
+        with patch("exo.shared.storage.EXO_CONFIG_FILE", cfg_file):
+            config = await load_storage_config(max_storage_gb=50.0)
+
+        assert config.storage_policy == "auto-evict"  # from file
+        assert config.max_storage is not None
+        assert abs(config.max_storage.in_gb - 50.0) < 0.1  # from CLI
+
+    async def test_defaults_on_corrupt_file(self, tmp_path: Path) -> None:
+        cfg_file = tmp_path / "config.toml"
+        cfg_file.write_text("not valid toml {{{")
+        with patch("exo.shared.storage.EXO_CONFIG_FILE", cfg_file):
+            config = await load_storage_config()
+
+        assert config.max_storage is None
+        assert config.storage_policy == "manual"
+
+    async def test_creates_file_if_missing(self, tmp_path: Path) -> None:
+        cfg_file = tmp_path / "subdir" / "config.toml"
+        with patch("exo.shared.storage.EXO_CONFIG_FILE", cfg_file):
+            config = await load_storage_config()
+
+        assert config.max_storage is None
+        assert cfg_file.exists()
