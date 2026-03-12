@@ -6,10 +6,8 @@ from datetime import UTC, datetime
 import aiofiles
 import aiofiles.os as aios
 import anyio
-import tomlkit
 from anyio import current_time
 from loguru import logger
-from tomlkit.exceptions import TOMLKitError
 
 from exo.download.download_utils import (
     RepoDownloadProgress,
@@ -19,7 +17,6 @@ from exo.download.download_utils import (
 )
 from exo.download.shard_downloader import ShardDownloader
 from exo.shared.constants import (
-    EXO_CONFIG_FILE,
     EXO_MODEL_USAGE_FILE,
     EXO_MODELS_DIR,
     EXO_MODELS_PATH,
@@ -27,9 +24,8 @@ from exo.shared.constants import (
 from exo.shared.models.model_cards import ModelId, get_model_cards
 from exo.shared.storage import (
     calculate_used_storage,
-    check_storage_quota,
-    compute_evictions_needed,
-    get_lru_eviction_candidates,
+    decide_storage_action,
+    persist_storage_config,
 )
 from exo.shared.types.commands import (
     CancelDownload,
@@ -47,7 +43,12 @@ from exo.shared.types.events import (
     StorageConfigUpdated,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.storage import StorageConfig
+from exo.shared.types.storage import (
+    StorageAllow,
+    StorageConfig,
+    StorageEvict,
+    StorageReject,
+)
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadEvicted,
@@ -153,9 +154,7 @@ class DownloadCoordinator:
                     ):
                         self.storage_config = indexed_event.event.storage_config
                         await self.clear_rejections()
-                        await self._persist_storage_config(
-                            indexed_event.event.storage_config
-                        )
+                        await persist_storage_config(indexed_event.event.storage_config)
                     case InstanceCreated(instance=instance):
                         active_instances[instance.instance_id] = (
                             instance.shard_assignments.model_id
@@ -169,26 +168,6 @@ class DownloadCoordinator:
                             )
                     case _:
                         pass
-
-    @staticmethod
-    async def _persist_storage_config(config: StorageConfig) -> None:
-        cfg_path = anyio.Path(EXO_CONFIG_FILE)
-        await cfg_path.parent.mkdir(parents=True, exist_ok=True)
-
-        doc = tomlkit.document()
-        try:
-            raw = (await cfg_path.read_bytes()).decode("utf-8")
-            if raw.strip():
-                doc = tomlkit.parse(raw)
-        except (FileNotFoundError, TOMLKitError, UnicodeDecodeError):
-            pass
-
-        # Clear max_storage_gb so it doesn't linger when max_storage is None
-        doc.pop("max_storage_gb", None)  # pyright: ignore[reportUnknownMemberType]
-        doc.update(config.to_disk())  # pyright: ignore[reportUnknownMemberType]
-
-        await cfg_path.write_text(tomlkit.dumps(doc))  # pyright: ignore[reportUnknownMemberType]
-        logger.debug(f"Persisted storage config to {cfg_path}")
 
     def shutdown(self) -> None:
         self._tg.cancel_tasks()
@@ -256,23 +235,22 @@ class DownloadCoordinator:
             )
             return
 
-        if self.storage_config.max_storage is not None:
-            model_size = shard.model_card.storage_size
-            downloads = list(self.download_status.values())
-            allowed, reason = check_storage_quota(
-                model_size, self.storage_config, downloads
-            )
-
-            if not allowed:
-                if self.storage_config.storage_policy == "auto-evict":
-                    evicted = await self._auto_evict_for_space(shard)
-                    if not evicted:
-                        return
-                else:
-                    used = calculate_used_storage(downloads)
-                    available_mem = self.storage_config.max_storage - used
-                    await self._reject_download(shard, reason, available_mem)
+        action = decide_storage_action(
+            shard.model_card.storage_size,
+            self.storage_config,
+            list(self.download_status.values()),
+            self._model_last_used,
+            frozenset(self._active_model_ids),
+        )
+        match action:
+            case StorageReject(reason=reason, available=available):
+                await self._reject_download(shard, reason, available)
+                return
+            case StorageEvict(model_ids=model_ids):
+                if not await self._execute_evictions(model_ids, shard):
                     return
+            case StorageAllow():
+                pass
 
         # Emit pending status
         progress = DownloadPending(
@@ -526,34 +504,15 @@ class DownloadCoordinator:
         self.download_status[model_id] = rejected
         await self.event_sender.send(NodeDownloadProgress(download_progress=rejected))
 
-    async def _auto_evict_for_space(self, shard: ShardMetadata) -> bool:
-        model_id = shard.model_card.model_id
-        model_size = shard.model_card.storage_size
-        assert self.storage_config.max_storage is not None
+    async def _execute_evictions(
+        self, model_ids: list[ModelId], shard: ShardMetadata
+    ) -> bool:
+        """Execute disk deletions for the given model IDs. Returns False on failure."""
+        target_model_id = shard.model_card.model_id
 
-        downloads = list(self.download_status.values())
-        used = calculate_used_storage(downloads)
-        raw_available = self.storage_config.max_storage - used
-        available = raw_available if raw_available.in_bytes >= 0 else Memory()
-
-        candidates = get_lru_eviction_candidates(
-            downloads,
-            self._model_last_used,
-            frozenset(self._active_model_ids),
-        )
-        to_evict = compute_evictions_needed(model_size, available, candidates)
-
-        if to_evict is None:
-            await self._reject_download(
-                shard,
-                "Cannot free enough space even after evicting all eligible models",
-                available,
-            )
-            return False
-
-        for evict_model_id in to_evict:
+        for evict_model_id in model_ids:
             logger.info(
-                f"Auto-evicting model {evict_model_id} to free space for {model_id}"
+                f"Auto-evicting model {evict_model_id} to free space for {target_model_id}"
             )
             evicted_status = self.download_status.get(evict_model_id)
             success = await self._remove_model_from_disk(evict_model_id)
@@ -561,6 +520,7 @@ class DownloadCoordinator:
                 current_used = calculate_used_storage(
                     list(self.download_status.values())
                 )
+                assert self.storage_config.max_storage is not None
                 current_available = self.storage_config.max_storage - current_used
                 await self._reject_download(
                     shard,
@@ -574,7 +534,7 @@ class DownloadCoordinator:
                     shard_metadata=evicted_status.shard_metadata,
                     node_id=self.node_id,
                     model_directory=self._model_dir(evict_model_id),
-                    evicted_for=model_id,
+                    evicted_for=target_model_id,
                 )
                 self.download_status[evict_model_id] = evicted
                 await self.event_sender.send(

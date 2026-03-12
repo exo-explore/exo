@@ -13,6 +13,7 @@ from exo.master.placement import (
 )
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
+from exo.shared.storage import get_download_rejected_events
 from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
@@ -417,7 +418,16 @@ class Master:
                     if isinstance(event, NodeDownloadProgress) and isinstance(
                         event.download_progress, DownloadRejected
                     ):
-                        await self._handle_download_rejected(event.download_progress)
+                        dp = event.download_progress
+                        rejection_events = get_download_rejected_events(
+                            dp.shard_metadata.model_card.model_id,
+                            dp.node_id,
+                            self.state.instances,
+                            self.state.tasks,
+                        )
+                        for rejection_event in rejection_events:
+                            logger.info(f"Download rejected cleanup: {rejection_event}")
+                            await self.event_sender.send(rejection_event)
 
                     event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
                     if isinstance(event, NodeGatheredInfo):
@@ -437,29 +447,6 @@ class Master:
                 event=event.event,
             )
         )
-
-    async def _handle_download_rejected(self, dp: DownloadRejected) -> None:
-        """Delete instances whose download was rejected on the given node."""
-        rejected_model_id = dp.shard_metadata.model_card.model_id
-        rejected_node_id = dp.node_id
-        for instance_id, instance in self.state.instances.items():
-            if (
-                instance.shard_assignments.model_id == rejected_model_id
-                and rejected_node_id in instance.shard_assignments.node_to_runner
-            ):
-                logger.info(f"Deleting instance {instance_id} — download rejected")
-                for task in self.state.tasks.values():
-                    if task.instance_id == instance_id and task.task_status in (
-                        TaskStatus.Pending,
-                        TaskStatus.Running,
-                    ):
-                        await self.event_sender.send(
-                            TaskStatusUpdated(
-                                task_id=task.task_id,
-                                task_status=TaskStatus.Failed,
-                            )
-                        )
-                await self.event_sender.send(InstanceDeleted(instance_id=instance_id))
 
     async def _handle_traces_collected(self, event: TracesCollected) -> None:
         task_id = event.task_id

@@ -66,6 +66,7 @@ from exo.shared.models.model_cards import (
     get_model_cards,
     is_custom_card,
 )
+from exo.shared.storage import calculate_used_storage
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.api import (
     AddCustomModelParams,
@@ -1781,8 +1782,6 @@ class API:
         return DeleteDownloadResponse(command_id=command.command_id)
 
     async def get_storage(self) -> dict[str, NodeStorageInfo]:
-        from exo.shared.storage import calculate_used_storage
-
         result: dict[str, NodeStorageInfo] = {}
         for node_id, config in self.state.node_storage_config.items():
             downloads = list(self.state.downloads.get(node_id, ()))
@@ -1791,8 +1790,6 @@ class API:
         return result
 
     async def get_storage_node(self, node_id: NodeId) -> NodeStorageInfo:
-        from exo.shared.storage import calculate_used_storage
-
         config = self.state.node_storage_config.get(node_id, StorageConfig())
         downloads = list(self.state.downloads.get(node_id, ()))
         used = calculate_used_storage(downloads)
