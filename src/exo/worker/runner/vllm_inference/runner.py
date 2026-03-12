@@ -452,8 +452,11 @@ class Runner:
 
     def _make_sampling_params(self, params: TextGenerationTaskParams) -> SamplingParams:
         kwargs: dict[str, object] = {}
+        assert self.engine is not None
         if params.max_output_tokens is not None:
             kwargs["max_tokens"] = params.max_output_tokens
+        else:
+            kwargs["max_tokens"] = self.engine.model_config.max_model_len
         if params.temperature is not None:
             kwargs["temperature"] = params.temperature
         if params.top_p is not None:
