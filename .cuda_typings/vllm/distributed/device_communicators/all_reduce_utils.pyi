@@ -1,0 +1,3 @@
+__all__ = ["gpu_p2p_access_check"]
+
+def gpu_p2p_access_check(src: int, tgt: int) -> bool: ...

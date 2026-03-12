@@ -1,0 +1,3 @@
+import torch.nn as nn
+
+def format_model_inspection(model: nn.Module) -> str: ...

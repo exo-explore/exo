@@ -1,0 +1,6 @@
+from _typeshed import Incomplete
+
+SUPPORTED_SPECULATORS_TYPES: Incomplete
+
+def register_speculator(name): ...
+def update_eagle3(config_dict: dict, pre_trained_config: dict) -> None: ...

@@ -1,0 +1,6 @@
+import torch
+
+def update_tensor_inplace(dst: torch.Tensor, src: torch.Tensor): ...
+def replace_parameter(
+    mod: torch.nn.Module, name: str, new: torch.Tensor | torch.nn.Parameter
+) -> None: ...

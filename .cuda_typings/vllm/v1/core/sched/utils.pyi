@@ -1,0 +1,9 @@
+from collections.abc import Sequence
+from vllm.sampling_params import RepetitionDetectionParams as RepetitionDetectionParams
+from vllm.v1.request import Request as Request, RequestStatus as RequestStatus
+
+def check_sequence_repetition(
+    token_ids: Sequence[int], params: RepetitionDetectionParams
+) -> bool: ...
+def remove_all(lst: list, items_to_remove: set) -> list: ...
+def check_stop(request: Request, max_model_len: int) -> bool: ...

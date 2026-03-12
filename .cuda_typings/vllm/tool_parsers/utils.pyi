@@ -1,0 +1,39 @@
+import ast
+from _typeshed import Incomplete
+from openai.types.responses import FunctionTool, ToolChoiceFunction
+from openai.types.responses.tool import Tool as Tool
+from partial_json_parser.core.options import Allow as Allow
+from typing import Any
+from vllm.entrypoints.openai.chat_completion.protocol import (
+    ChatCompletionNamedToolChoiceParam as ChatCompletionNamedToolChoiceParam,
+    ChatCompletionToolsParam as ChatCompletionToolsParam,
+)
+from vllm.entrypoints.openai.engine.protocol import (
+    DeltaFunctionCall as DeltaFunctionCall,
+    DeltaToolCall as DeltaToolCall,
+    FunctionCall as FunctionCall,
+    ToolCall as ToolCall,
+)
+from vllm.logger import init_logger as init_logger
+
+logger: Incomplete
+
+def find_common_prefix(s1: str, s2: str) -> str: ...
+def find_common_suffix(s1: str, s2: str) -> str: ...
+def extract_intermediate_diff(curr: str, old: str) -> str: ...
+def partial_json_loads(input_str: str, flags: Allow) -> tuple[Any, int]: ...
+def is_complete_json(input_str: str) -> bool: ...
+def consume_space(i: int, s: str) -> int: ...
+def get_json_schema_from_tools(
+    tool_choice: str | ToolChoiceFunction | ChatCompletionNamedToolChoiceParam,
+    tools: list[FunctionTool | ChatCompletionToolsParam] | None,
+) -> str | dict | None: ...
+
+class UnexpectedAstError(Exception): ...
+
+def get_parameter_value(val: ast.expr) -> Any: ...
+def handle_single_tool(call: ast.Call) -> ToolCall: ...
+def make_valid_python(text: str) -> tuple[str, str] | None: ...
+def compute_tool_delta(
+    previously_sent_args: str, new_call: ToolCall, index: int, withheld_suffix: str
+) -> DeltaToolCall | None: ...

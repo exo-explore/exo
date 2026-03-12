@@ -1,0 +1,76 @@
+from .prefix_prefill import context_attention_fwd as context_attention_fwd
+from _typeshed import Incomplete
+from vllm.platforms import current_platform as current_platform
+from vllm.triton_utils import tl as tl, triton as triton
+
+float8_info: Incomplete
+
+@triton.jit
+def cdiv_fn(x, y): ...
+@triton.jit
+def kernel_paged_attention_2d(
+    output_ptr,
+    query_ptr,
+    key_cache_ptr,
+    value_cache_ptr,
+    sink_ptr,
+    block_tables_ptr,
+    seq_lens_ptr,
+    alibi_slopes_ptr,
+    scale,
+    k_scale,
+    v_scale,
+    out_scale_inv,
+    num_query_heads: tl.constexpr,
+    num_queries_per_kv: tl.constexpr,
+    num_queries_per_kv_padded: tl.constexpr,
+    block_table_stride: tl.int64,
+    query_stride_0: tl.int64,
+    query_stride_1: tl.int64,
+    output_stride_0: tl.int64,
+    output_stride_1: tl.int64,
+    BLOCK_SIZE: tl.constexpr,
+    PHYSICAL_BLOCK_SIZE: tl.constexpr,
+    HEAD_SIZE: tl.constexpr,
+    HEAD_SIZE_PADDED: tl.constexpr,
+    USE_ALIBI_SLOPES: tl.constexpr,
+    SLIDING_WINDOW: tl.constexpr,
+    x: tl.constexpr,
+    stride_k_cache_0: tl.int64,
+    stride_k_cache_1: tl.int64,
+    stride_k_cache_2: tl.int64,
+    stride_k_cache_3: tl.int64,
+    stride_k_cache_4: tl.int64,
+    stride_v_cache_0: tl.int64,
+    stride_v_cache_1: tl.int64,
+    stride_v_cache_2: tl.int64,
+    stride_v_cache_3: tl.int64,
+    filter_by_query_len: tl.constexpr,
+    query_start_len_ptr,
+    USE_SINKS: tl.constexpr,
+    USE_FP8: tl.constexpr,
+    FP8_MIN: tl.constexpr = ...,
+    FP8_MAX: tl.constexpr = ...,
+): ...
+def chunked_prefill_paged_decode(
+    query,
+    key,
+    value,
+    output,
+    kv_cache_dtype,
+    key_cache,
+    value_cache,
+    block_table,
+    query_start_loc,
+    seq_lens,
+    max_seq_len,
+    max_query_len,
+    k_scale,
+    v_scale,
+    alibi_slopes=None,
+    sliding_window=None,
+    sm_scale=None,
+    output_scale=None,
+    sinks=None,
+    is_block_table_ptr: bool = False,
+): ...

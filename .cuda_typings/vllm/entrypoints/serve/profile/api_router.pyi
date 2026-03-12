@@ -1,0 +1,13 @@
+from _typeshed import Incomplete
+from fastapi import FastAPI as FastAPI, Request as Request
+from vllm.config import ProfilerConfig as ProfilerConfig
+from vllm.engine.protocol import EngineClient as EngineClient
+from vllm.logger import init_logger as init_logger
+
+logger: Incomplete
+router: Incomplete
+
+def engine_client(request: Request) -> EngineClient: ...
+async def start_profile(raw_request: Request): ...
+async def stop_profile(raw_request: Request): ...
+def attach_router(app: FastAPI): ...

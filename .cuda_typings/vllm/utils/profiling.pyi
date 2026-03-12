@@ -1,0 +1,6 @@
+import contextlib
+from collections.abc import Callable as Callable
+
+@contextlib.contextmanager
+def cprofile_context(save_file: str | None = None): ...
+def cprofile(save_file: str | None = None, enabled: bool = True): ...
