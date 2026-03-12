@@ -14,7 +14,6 @@ import exo.routing.topics as topics
 from exo.download.coordinator import DownloadCoordinator
 from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.download.peer_file_server import PeerFileServer
-from exo.download.peer_state import PeerStateProvider
 from exo.master.api import API  # TODO: should API be in master?
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
@@ -43,7 +42,6 @@ class Node:
     node_id: NodeId
     offline: bool
     peer_file_server: PeerFileServer | None = None
-    peer_state_provider: PeerStateProvider | None = None
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     @classmethod
@@ -67,12 +65,8 @@ class Node:
 
         logger.info(f"Starting node {node_id}")
 
-        # Peer download components are created below, after Worker (needs state access)
         peer_file_server: PeerFileServer | None = None
-        peer_state_provider: PeerStateProvider | None = None
-
-        # DownloadCoordinator is also created below, after Worker
-        download_coordinator: DownloadCoordinator | None = None
+        peer_download_enabled = not args.no_peer_download and not args.no_downloads
 
         if args.spawn_api:
             api = API(
@@ -97,30 +91,27 @@ class Node:
         else:
             worker = None
 
-        # Create peer download components and DownloadCoordinator
-        # (after Worker, since PeerStateProvider needs access to worker state)
+        # Create peer file server and download coordinator
+        if peer_download_enabled:
+            peer_file_server = PeerFileServer(
+                host="0.0.0.0",
+                port=EXO_PEER_DOWNLOAD_PORT,
+                models_dir=EXO_MODELS_DIR,
+            )
+
         if not args.no_downloads:
-            if not args.no_peer_download and worker is not None:
-                peer_file_server = PeerFileServer(
-                    host="0.0.0.0",
-                    port=EXO_PEER_DOWNLOAD_PORT,
-                    models_dir=EXO_MODELS_DIR,
-                )
-                peer_state_provider = PeerStateProvider(
-                    node_id=node_id,
-                    state_accessor=lambda: worker.state,
-                    peer_download_port=EXO_PEER_DOWNLOAD_PORT,
-                )
-            download_coordinator = DownloadCoordinator(
+            download_coordinator: DownloadCoordinator | None = DownloadCoordinator(
                 node_id,
                 exo_shard_downloader(
                     offline=args.offline,
-                    peer_state_provider=peer_state_provider,
+                    peer_download_enabled=peer_download_enabled,
                 ),
                 event_sender=event_router.sender(),
                 download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
                 offline=args.offline,
             )
+        else:
+            download_coordinator = None
 
         # We start every node with a master
         master = Master(
@@ -159,7 +150,6 @@ class Node:
             node_id,
             args.offline,
             peer_file_server,
-            peer_state_provider,
         )
 
     async def run(self):
@@ -257,7 +247,7 @@ class Node:
                             self.node_id,
                             exo_shard_downloader(
                                 offline=self.offline,
-                                peer_state_provider=self.peer_state_provider,
+                                peer_download_enabled=self.peer_file_server is not None,
                             ),
                             event_sender=self.event_router.sender(),
                             download_command_receiver=self.router.receiver(
@@ -278,12 +268,6 @@ class Node:
                                 topics.DOWNLOAD_COMMANDS
                             ),
                         )
-                        # Update peer state provider to reference the new worker
-                        if self.peer_state_provider is not None:
-                            new_worker = self.worker
-                            self.peer_state_provider._state_accessor = (
-                                lambda: new_worker.state
-                            )
                         self._tg.start_soon(self.worker.run)
                     if self.api:
                         self.api.reset(result.won_clock, self.event_router.receiver())
