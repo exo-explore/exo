@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/exo_thunderbolt_common.sh
+source "$SCRIPT_DIR/exo_thunderbolt_common.sh"
+
+need_cmd curl
+need_cmd ifconfig
+need_cmd lsof
+need_cmd route
+need_cmd scselect
+need_cmd ssh
+
+if ! acquire_recovery_lock; then
+  die "another recovery is already running"
+fi
+
+restart_peer=0
+restart_local=1
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --restart-peer)
+      restart_peer=1
+      ;;
+    --no-restart-local)
+      restart_local=0
+      ;;
+    *)
+      die "unknown argument: $1"
+      ;;
+  esac
+  shift
+done
+
+log "ensuring network location is $EXO_EXPECTED_LOCATION"
+if [[ "$(get_current_location || true)" != "$EXO_EXPECTED_LOCATION" ]]; then
+  sudo scselect "$EXO_EXPECTED_LOCATION" >/dev/null
+fi
+
+service_name="$(find_bridge_service_name || true)"
+if [[ -n "$service_name" ]]; then
+  log "enabling bridge service: $service_name"
+  sudo networksetup -setnetworkserviceenabled "$service_name" on >/dev/null 2>&1 || true
+fi
+
+if ! bridge_exists; then
+  log "creating $EXO_BRIDGE_DEVICE"
+  sudo ifconfig "$EXO_BRIDGE_DEVICE" create
+fi
+
+for member in $EXO_THUNDERBOLT_MEMBERS; do
+  if ifconfig "$member" >/dev/null 2>&1; then
+    log "adding $member to $EXO_BRIDGE_DEVICE"
+    sudo ifconfig "$EXO_BRIDGE_DEVICE" addm "$member" >/dev/null 2>&1 || true
+  fi
+done
+
+log "assigning $EXO_LOCAL_BRIDGE_IP to $EXO_BRIDGE_DEVICE"
+sudo ifconfig "$EXO_BRIDGE_DEVICE" inet "$EXO_LOCAL_BRIDGE_IP" netmask 255.255.255.0 up
+
+sleep 1
+
+route_iface="$(route_interface_to_peer || true)"
+if [[ "$route_iface" != "$EXO_BRIDGE_DEVICE" ]]; then
+  warn "peer route still not using $EXO_BRIDGE_DEVICE (got ${route_iface:-unknown})"
+fi
+
+if [[ "$restart_local" -eq 1 ]]; then
+  log "restarting local EXO"
+  restart_local_exo || die "local EXO did not return on :$EXO_API_PORT"
+fi
+
+if [[ "$restart_peer" -eq 1 ]]; then
+  log "restarting remote EXO on $EXO_REMOTE_HOST"
+  restart_remote_exo || warn "failed to restart remote EXO on $EXO_REMOTE_HOST"
+fi
+
+log "post-recovery health check"
+"$SCRIPT_DIR/exo-thunderbolt-check" || die "post-recovery health check failed"
+
+if [[ "$restart_peer" -eq 1 ]]; then
+  if wait_for_cluster 20 1; then
+    log "cluster is visible locally"
+  else
+    warn "cluster is still single-node after remote restart; retrying remote EXO once"
+    restart_remote_exo || warn "second remote EXO restart failed on $EXO_REMOTE_HOST"
+    if wait_for_cluster 20 1; then
+      log "cluster is visible locally after remote retry"
+    else
+      warn "local cluster topology is still single-node"
+    fi
+  fi
+fi
