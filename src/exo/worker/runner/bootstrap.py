@@ -1,5 +1,4 @@
 import ctypes
-import ctypes.util
 import os
 import resource
 import sys
@@ -104,9 +103,6 @@ def entrypoint(
         )
     finally:
         try:
-            torch_mod = sys.modules.get("torch")
-            if torch_mod is not None and torch_mod.distributed.is_initialized():
-                torch_mod.distributed.destroy_process_group()
             event_sender.close()
             task_receiver.close()
         finally:
