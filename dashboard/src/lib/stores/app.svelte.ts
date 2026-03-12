@@ -3224,15 +3224,15 @@ class AppStore {
   }
 
   async setStorageConfig(
-    nodeId: string,
+    nodeIds: string[] | null,
     maxStorageGb: number | null,
     storagePolicy: "manual" | "auto-evict",
   ): Promise<void> {
     try {
-      const response = await fetch(`/storage/${encodeURIComponent(nodeId)}`, {
+      const response = await fetch("/storage", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ maxStorageGb, storagePolicy }),
+        body: JSON.stringify({ nodeIds, maxStorageGb, storagePolicy }),
       });
       if (!response.ok) {
         const errorText = await response.text();
@@ -3447,10 +3447,10 @@ export const startDownload = (nodeId: string, shardMetadata: object) =>
 export const deleteDownload = (nodeId: string, modelId: string) =>
   appStore.deleteDownload(nodeId, modelId);
 export const setStorageConfig = (
-  nodeId: string,
+  nodeIds: string[] | null,
   maxStorageGb: number | null,
   storagePolicy: "manual" | "auto-evict",
-) => appStore.setStorageConfig(nodeId, maxStorageGb, storagePolicy);
+) => appStore.setStorageConfig(nodeIds, maxStorageGb, storagePolicy);
 
 // Trace actions
 export const listTraces = () => appStore.listTraces();
