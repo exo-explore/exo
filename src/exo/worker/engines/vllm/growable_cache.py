@@ -33,7 +33,13 @@ def _patch_determine_available_memory() -> None:
 
     @torch.inference_mode()
     def patched(self: "Worker") -> int:
-        original(self)
+        try:
+            original(self)
+        except AssertionError:
+            logger.warning(
+                "vLLM memory profiling assertion failed (free memory changed during init, "
+                "likely another process released GPU memory). Continuing with growable cache."
+            )
         torch.cuda.empty_cache()
         free_bytes, _ = torch.cuda.mem_get_info()
         initial = max(int(free_bytes * INITIAL_FRACTION), 1)
