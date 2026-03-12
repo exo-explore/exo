@@ -510,7 +510,7 @@ def load_tokenizer_for_model_id(
     return tokenizer
 
 
-def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
+def normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
     """Normalize tool_calls in a message dict.
 
     OpenAI format has tool_calls[].function.arguments as a JSON string,
@@ -532,7 +532,7 @@ def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
                 func["arguments"] = json.loads(args)
 
 
-def _collect_nested_property_names(schema: dict[str, Any]) -> set[str]:
+def collect_nested_property_names(schema: dict[str, Any]) -> set[str]:
     names: set[str] = set()
     properties: dict[str, Any] = schema.get("properties", {})  # type: ignore[reportAny]
     for prop_spec in properties.values():  # pyright: ignore[reportAny]
@@ -544,16 +544,16 @@ def _collect_nested_property_names(schema: dict[str, Any]) -> set[str]:
                 inner_props: dict[str, Any] = items.get("properties", {})  # type: ignore[reportAny]
                 for k in inner_props:  # pyright: ignore[reportUnknownVariableType]
                     names.add(str(k))  # pyright: ignore[reportUnknownArgumentType]
-                names.update(_collect_nested_property_names(items))  # pyright: ignore[reportUnknownArgumentType]
+                names.update(collect_nested_property_names(items))  # pyright: ignore[reportUnknownArgumentType]
     return names
 
 
-def _schemas_lost_in_prompt(prompt: str, tools: list[dict[str, Any]]) -> bool:
+def schemas_lost_in_prompt(prompt: str, tools: list[dict[str, Any]]) -> bool:
     """Return True if nested property names from any tool schema are absent."""
     for tool in tools:
         fn: dict[str, Any] = tool.get("function", {})  # type: ignore
         params: dict[str, Any] = fn.get("parameters", {})  # type: ignore
-        nested = _collect_nested_property_names(params)
+        nested = collect_nested_property_names(params)
         if nested and not all(name in prompt for name in nested):
             return True
     return False
@@ -564,7 +564,7 @@ _LOSSY_TEMPLATE_PATTERN = re.compile(
 )
 
 
-def _patch_lossy_chat_template(template: str) -> str | None:
+def patch_lossy_chat_template(template: str) -> str | None:
     """Patch chat templates that collapse nested object schemas to ``any[]``.
 
     Some templates (e.g., GPT-OSS) have a guard like::
@@ -612,7 +612,7 @@ def apply_chat_template(
         # Use pre-formatted messages that preserve tool_calls, thinking, etc.
         formatted_messages = list(task_params.chat_template_messages)
         for msg in formatted_messages:
-            _normalize_tool_calls(msg)
+            normalize_tool_calls(msg)
     else:
         # Add system message (instructions) if present
         if task_params.instructions:
@@ -659,7 +659,7 @@ def apply_chat_template(
     if task_params.tools:
         original_template: str | None = getattr(tokenizer, "chat_template", None)
         if isinstance(original_template, str):
-            patched_template = _patch_lossy_chat_template(original_template)
+            patched_template = patch_lossy_chat_template(original_template)
             if patched_template is not None:
                 logger.info(
                     "Patched lossy chat template (removed inner_type length guard)"
@@ -674,7 +674,7 @@ def apply_chat_template(
         **extra_kwargs,
     )
 
-    if task_params.tools and _schemas_lost_in_prompt(prompt, task_params.tools):
+    if task_params.tools and schemas_lost_in_prompt(prompt, task_params.tools):
         logger.warning("Chat template lost nested tool schemas even after patching")
 
     if partial_assistant_content:

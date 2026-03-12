@@ -68,10 +68,18 @@ def entrypoint(
     try:
         if isinstance(bound_instance.instance, VllmInstance):
             _ensure_cuda_libs()
-            from exo.worker.runner.vllm_inference.runner import Runner as VllmRunner
+            from exo.shared.constants import EXO_MODELS_DIR
+            from exo.worker.runner.llm_inference.runner import Runner, VllmBuilder
 
-            runner = VllmRunner(
-                bound_instance, event_sender, task_receiver, cancel_receiver
+            model_id = bound_instance.bound_shard.model_card.model_id
+            builder = VllmBuilder(
+                model_id=model_id,
+                model_path=str(EXO_MODELS_DIR / model_id.normalize()),
+                trust_remote_code=bound_instance.bound_shard.model_card.trust_remote_code,
+                cancel_receiver=cancel_receiver,
+            )
+            runner = Runner(
+                bound_instance, event_sender, task_receiver, cancel_receiver, builder
             )
             runner.main()
         elif bound_instance.is_image_model:
@@ -82,10 +90,15 @@ def entrypoint(
             )
             runner.main()
         else:
-            from exo.worker.runner.llm_inference.runner import Runner
+            from exo.worker.runner.llm_inference.runner import MlxBuilder, Runner
 
+            builder = MlxBuilder(
+                model_id=bound_instance.bound_shard.model_card.model_id,
+                event_sender=event_sender,
+                cancel_receiver=cancel_receiver,
+            )
             runner = Runner(
-                bound_instance, event_sender, task_receiver, cancel_receiver
+                bound_instance, event_sender, task_receiver, cancel_receiver, builder
             )
             runner.main()
 
