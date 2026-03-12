@@ -5,9 +5,9 @@ from typing import Any
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
-from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
+from openai_harmony import (
     HarmonyEncodingName,
-    HarmonyError,  # pyright: ignore[reportUnknownVariableType]
+    HarmonyError,
     Role,
     StreamableParser,
     load_harmony_encoding,
@@ -89,7 +89,7 @@ def parse_gpt_oss(
         logger.debug(
             f"parse_gpt_oss token={response.token} text={response.text!r} "
             f"recipient={recipient!r} ch={ch!r} delta={delta!r} "
-            f"state={stream.state} current_tool={current_tool_name!r}"
+            f"state={stream.state} current_tool={current_tool_name!r}"  # type: ignore
         )
 
         if recipient != current_tool_name:
