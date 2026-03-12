@@ -291,10 +291,13 @@ class ExoBatchGenerator:
                     if generation_elapsed > 0
                     else 0.0
                 )
-                mlx_stats = self._exo_gen.stats()
+                try:
+                    mlx_stats = self._exo_gen.stats()
+                except ZeroDivisionError:
+                    mlx_stats = None
                 stats = GenerationStats(
                     prompt_tps=float(mlx_stats.prompt_tps)
-                    if mlx_stats.prompt_time > 0
+                    if mlx_stats is not None and mlx_stats.prompt_time > 0
                     else 0.0,
                     generation_tps=float(generation_tps),
                     prompt_tokens=len(state.all_prompt_tokens),
