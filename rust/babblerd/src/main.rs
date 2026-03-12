@@ -52,9 +52,11 @@ async fn main() -> color_eyre::Result<()> {
     // make our directory world readable
     if let Err(e) = std::fs::set_permissions(PUBLIC_DIR, Permissions::from_mode(0o0755)) {
         if e.kind() == io::ErrorKind::PermissionDenied {
-            return eyre!("Insufficient permissions to run daemon -- did you forget sudo?");
+            return Err(eyre!(
+                "Insufficient permissions to run daemon -- did you forget sudo?"
+            ));
         }
-        return Err(e);
+        return Err(e.into());
     }
 
     let res = inner_main().await;
