@@ -1567,7 +1567,8 @@
             downloadedBytes: pendingDownloaded,
             speed: 0,
             etaMs: 0,
-            percentage: pendingTotal > 0 ? (pendingDownloaded / pendingTotal) * 100 : 0,
+            percentage:
+              pendingTotal > 0 ? (pendingDownloaded / pendingTotal) * 100 : 0,
             completedFiles: 0,
             totalFiles: 0,
             files: [],
@@ -1762,7 +1763,8 @@
               downloadedBytes: pendingDownloaded,
               speed: 0,
               etaMs: 0,
-              percentage: pendingTotal > 0 ? (pendingDownloaded / pendingTotal) * 100 : 0,
+              percentage:
+                pendingTotal > 0 ? (pendingDownloaded / pendingTotal) * 100 : 0,
               completedFiles: 0,
               totalFiles: 0,
               files: [],
