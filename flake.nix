@@ -129,8 +129,8 @@
                 };
                 default = self'.packages.exo;
               }
-            ) // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-            # CUDA-compiled PyTorch and vLLM (built from source by nixpkgs)
+            ) // lib.optionalAttrs (pkgsCuda != null) {
+            # CUDA-compiled PyTorch and vLLM (built from source by nixpkgs, aarch64-linux only)
             torch-cuda = pkgsCuda.python313Packages.torch;
             vllm-cuda = pkgsCuda.python313Packages.vllm;
 
@@ -181,8 +181,8 @@
             };
           };
 
-          # CUDA development shell with torch + vLLM (Linux only)
-          devShells = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux
+          # CUDA development shell with torch + vLLM (aarch64-linux only)
+          devShells = lib.optionalAttrs (pkgsCuda != null)
             {
               cuda = pkgs.mkShell {
                 packages = [

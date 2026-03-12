@@ -15,6 +15,18 @@ check:
 sync:
     uv sync --all-packages
 
+sync-cuda:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v nvidia-smi &>/dev/null; then
+        arch=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d ' ')
+        export TORCH_CUDA_ARCH_LIST="$arch"
+        export VLLM_TARGET_DEVICE=cuda
+    fi
+    uv pip install "cmake>=3.26.1" ninja "packaging>=24.2" "setuptools>=77.0.3,<81.0.0" "setuptools-scm>=8.0" wheel jinja2
+    find ~/.cache/uv/git-v0 -name CMakeCache.txt -delete 2>/dev/null || true
+    uv sync --extra cuda
+
 sync-clean:
     uv sync --all-packages --force-reinstall --no-cache
 

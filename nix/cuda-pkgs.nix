@@ -2,7 +2,7 @@
 let
   pkgs = import nixpkgs { inherit system; };
 in
-if pkgs.stdenv.hostPlatform.isLinux then
+if system == "aarch64-linux" then
   import nixpkgs
   {
     inherit system;

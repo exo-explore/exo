@@ -232,6 +232,11 @@ def _make_usage(prompt_tokens: int, completion_tokens: int) -> Usage:
 
 def _check_vllm_available() -> None:
     if not torch.cuda.is_available():
+        logger.warning(
+            f"torch.cuda.is_available()=False, "
+            f"torch.version.cuda={torch.version.cuda}, "
+            f"torch.backends.cuda.is_built()={torch.backends.cuda.is_built()}"
+        )
         raise RuntimeError("CUDA is not available \u2014 vLLM requires a CUDA GPU")
     logger.info(
         f"vLLM pre-flight: vllm {vllm.__version__}, "
@@ -871,5 +876,7 @@ class Runner:
         self.engine = None
         gc.collect()
         torch.cuda.empty_cache()
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
         self.send_task_status(task.task_id, TaskStatus.Complete)
         self.update_status(RunnerShutdown())

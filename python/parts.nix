@@ -189,7 +189,11 @@
         done
       '';
 
-      exoCudaVenv = (pythonSet.mkVirtualEnv "exo-cuda-env" exoDeps).overrideAttrs {
+      exoCudaDeps = exoDeps // {
+        mlx-cuda-13 = [ ];
+      };
+
+      exoCudaVenv = (pythonSet.mkVirtualEnv "exo-cuda-env" exoCudaDeps).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;
       };
 
