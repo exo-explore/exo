@@ -68,6 +68,8 @@ def apply_vllm_parsers(
     prompt: str,
     tool_parser: ToolParser | None,
     tools: list[dict[str, Any]] | None,
+    think_start: str | None = None,
+    think_end: str | None = None,
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
     gen = receiver
     lower = model_id.normalize().lower()
@@ -77,13 +79,20 @@ def apply_vllm_parsers(
 
     if "deepseek" in lower:
         gen = parse_thinking_models(
-            gen, "<think>", "</think>", starts_in_thinking=prompt.rstrip().endswith("<think>")
+            gen,
+            think_start or "<think>",
+            think_end or "</think>",
+            starts_in_thinking=prompt.rstrip().endswith(think_start or "<think>"),
         )
         return parse_deepseek_v32(gen)
 
-    gen = parse_thinking_models(
-        gen, "<think>", "</think>", starts_in_thinking=prompt.rstrip().endswith("<think>")
-    )
+    if think_start is not None:
+        gen = parse_thinking_models(
+            gen,
+            think_start,
+            think_end,
+            starts_in_thinking=prompt.rstrip().endswith(think_start),
+        )
     if tool_parser:
         gen = parse_tool_calls(gen, tool_parser, tools)
     return gen
@@ -103,17 +112,10 @@ def parse_gpt_oss(
             yield None
             continue
         try:
+            logger.info(f"Processing GPT OSS {response.token}")
             stream.process(response.token)
-        except HarmonyError:
-            logger.warning(
-                f"HarmonyError on token={response.token}, falling back to raw text passthrough"
-            )
-            yield response
-            for remaining in responses:
-                if remaining is None:
-                    yield None
-                else:
-                    yield remaining
+        except HarmonyError as e:
+            logger.error(f"HarmonyError on token_id={response.token} text={response.text!r}: {e}")
             return
 
         delta = stream.last_content_delta
@@ -124,7 +126,7 @@ def parse_gpt_oss(
         logger.debug(
             f"parse_gpt_oss token={response.token} text={response.text!r} "
             f"recipient={recipient!r} ch={ch!r} delta={delta!r} "
-            f"state={stream.state} current_tool={current_tool_name!r}"  # type: ignore
+            f"state={stream.state} current_tool={current_tool_name!r}"
         )
 
         if recipient != current_tool_name:
@@ -166,7 +168,7 @@ def parse_gpt_oss(
             yield response.model_copy(update={"text": delta, "is_thinking": thinking})
 
         if response.finish_reason is not None:
-            yield response
+            yield response.model_copy(update={"text": ""})
 
 
 def parse_deepseek_v32(

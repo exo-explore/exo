@@ -67,7 +67,7 @@ def format_vllm_prompt(
     if partial_assistant_content:
         prompt_text += partial_assistant_content
 
-    token_ids: list[int] = tokenizer.apply_chat_template(
+    token_ids_raw: object = tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=True,
         add_generation_prompt=True,
@@ -75,8 +75,15 @@ def format_vllm_prompt(
         **({"chat_template": patched_template} if patched_template is not None else {}),
         **extra_kwargs,
     )
+    token_ids: list[int] = (
+        token_ids_raw  # type: ignore
+        if isinstance(token_ids_raw, list)
+        else list(token_ids_raw["input_ids"])  # type: ignore
+    )
     if partial_assistant_content:
-        token_ids += tokenizer.encode(partial_assistant_content, add_special_tokens=False)
+        token_ids += tokenizer.encode(
+            partial_assistant_content, add_special_tokens=False
+        )
 
     return token_ids, prompt_text, len(token_ids)
 
@@ -85,10 +92,11 @@ def make_vllm_sampling_params(
     engine: LLMEngine, params: TextGenerationTaskParams
 ) -> SamplingParams:
     kwargs: dict[str, object] = {}
+
     if params.max_output_tokens is not None:
         kwargs["max_tokens"] = params.max_output_tokens
     else:
-        kwargs["max_tokens"] = engine.model_config.max_model_len
+        kwargs["max_tokens"] = min(engine.model_config.max_model_len, 32168)
     if params.temperature is not None:
         kwargs["temperature"] = params.temperature
     if params.top_p is not None:

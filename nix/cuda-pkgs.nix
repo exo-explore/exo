@@ -27,7 +27,34 @@ if system == "aarch64-linux" then
           };
 
           pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
-            (_pyFinal: pyPrev: {
+            (pyFinal: pyPrev: {
+              fastsafetensors = pyFinal.buildPythonPackage {
+                pname = "fastsafetensors";
+                version = "0.2.2";
+                src = prev.fetchFromGitHub {
+                  owner = "foundation-model-stack";
+                  repo = "fastsafetensors";
+                  rev = "v0.2.2";
+                  hash = "";
+                };
+                pyproject = true;
+                build-system = [
+                  pyFinal.setuptools
+                  pyFinal.pybind11
+                ];
+                buildInputs = [
+                  final.cudaPackages.cuda_cudart
+                  final.cudaPackages.cuda_nvml_dev
+                ];
+                nativeBuildInputs = [
+                  final.cudaPackages.cuda_nvcc
+                ];
+                dependencies = [
+                  pyFinal.typer
+                ];
+                env.CUDA_HOME = "${final.cudaPackages.cuda_nvcc}";
+                pythonImportsCheck = [ "fastsafetensors" ];
+              };
               cupy = pyPrev.cupy.override {
                 cudaPackages = final.cudaPackages;
               };

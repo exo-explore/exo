@@ -176,7 +176,7 @@
             ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
         '';
 
-      vllmEnv = pkgsCuda.python313.withPackages (ps: [ ps.vllm ]);
+      vllmEnv = pkgsCuda.python313.withPackages (ps: [ ps.vllm ps.fastsafetensors ]);
 
       vllmSite = pkgs.runCommand "vllm-site-filtered" { } ''
         mkdir -p $out
