@@ -18,6 +18,8 @@ while true; do
     continue
   fi
 
+  rotate_all_logs
+
   if "$SCRIPT_DIR/exo-thunderbolt-check" --require-cluster --quiet; then
     attempted_local_restart=0
     sleep "$interval"

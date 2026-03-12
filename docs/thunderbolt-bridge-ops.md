@@ -93,6 +93,14 @@ Template plist:
 
 - `tmp/config_examples/io.exo.thunderbolt-watchdog.plist`
 
+## Logs + rotation
+
+- Watchdog logs: `$HOME/Library/Logs/exo-thunderbolt/watchdog.log`
+- EXO run logs: `$HOME/Library/Logs/exo-thunderbolt/exo-run.log`
+- Script wrapper logs: `/tmp/exo-thunderbolt-*.log`
+- The watchdog auto-rotates these logs when they exceed ~5MB, keeping the last ~4000 lines.
+- Tunables: `EXO_LOG_MAX_BYTES`, `EXO_LOG_TAIL_LINES`
+
 ## Non-interactive recovery
 
 Automatic bridge repair requires non-interactive `sudo`.

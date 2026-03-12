@@ -16,6 +16,8 @@ EXO_LOG_DIR="${EXO_LOG_DIR:-$HOME/Library/Logs/exo-thunderbolt}"
 EXO_RUN_LOG="${EXO_RUN_LOG:-$EXO_LOG_DIR/exo-run.log}"
 EXO_WATCHDOG_LOG="${EXO_WATCHDOG_LOG:-$EXO_LOG_DIR/watchdog.log}"
 EXO_LOCK_DIR="${EXO_LOCK_DIR:-$EXO_LOG_DIR/recovery.lock}"
+EXO_LOG_MAX_BYTES="${EXO_LOG_MAX_BYTES:-5242880}"
+EXO_LOG_TAIL_LINES="${EXO_LOG_TAIL_LINES:-4000}"
 
 mkdir -p "$EXO_LOG_DIR"
 
@@ -34,6 +36,30 @@ die() {
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+rotate_log() {
+  local file="$1"
+  local max_bytes="${2:-$EXO_LOG_MAX_BYTES}"
+  local tail_lines="${3:-$EXO_LOG_TAIL_LINES}"
+  [[ -f "$file" ]] || return 0
+  local size
+  size=$(stat -f%z "$file" 2>/dev/null || echo 0)
+  if [[ "$size" -le "$max_bytes" ]]; then
+    return 0
+  fi
+  local tmp
+  tmp=$(mktemp "${file}.XXXX")
+  tail -n "$tail_lines" "$file" >"$tmp" 2>/dev/null || true
+  mv "$tmp" "$file"
+}
+
+rotate_all_logs() {
+  rotate_log "$EXO_RUN_LOG"
+  rotate_log "$EXO_WATCHDOG_LOG"
+  rotate_log "/tmp/exo-thunderbolt-local-script.log"
+  rotate_log "/tmp/exo-thunderbolt-script.log"
+  rotate_log "/tmp/exo-thunderbolt-run.log"
 }
 
 acquire_recovery_lock() {
