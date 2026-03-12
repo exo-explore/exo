@@ -17,6 +17,7 @@ from exo.shared.types.profiling import (
     SystemPerformanceProfile,
     ThunderboltBridgeStatus,
 )
+from exo.shared.types.storage import StorageConfig
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
@@ -57,6 +58,7 @@ class State(CamelCaseModel):
     node_thunderbolt: Mapping[NodeId, NodeThunderboltInfo] = {}
     node_thunderbolt_bridge: Mapping[NodeId, ThunderboltBridgeStatus] = {}
     node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] = {}
+    node_storage_config: Mapping[NodeId, StorageConfig] = {}
 
     # Detected cycles where all nodes have Thunderbolt bridge enabled (>2 nodes)
     thunderbolt_bridge_cycles: Sequence[Sequence[NodeId]] = []

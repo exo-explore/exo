@@ -20,7 +20,9 @@ from exo.routing.router import Router, get_node_id_keypair
 from exo.shared.constants import EXO_LOG
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
+from exo.shared.storage import load_storage_config
 from exo.shared.types.common import NodeId, SessionId
+from exo.shared.types.storage import StoragePolicy
 from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import CamelCaseModel
 from exo.utils.task_group import TaskGroup
@@ -63,14 +65,21 @@ class Node:
 
         logger.info(f"Starting node {node_id}")
 
+        storage_config = await load_storage_config(
+            max_storage_gb=args.max_storage_gb,
+            storage_policy=args.storage_policy,
+        )
+
         # Create DownloadCoordinator (unless --no-downloads)
         if not args.no_downloads:
             download_coordinator = DownloadCoordinator(
                 node_id,
                 exo_shard_downloader(offline=args.offline),
-                event_sender=event_router.sender(),
                 download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
+                event_receiver=event_router.receiver(),
+                event_sender=event_router.sender(),
                 offline=args.offline,
+                storage_config=storage_config,
             )
         else:
             download_coordinator = None
@@ -225,15 +234,20 @@ class Node:
                 if result.is_new_master:
                     if self.download_coordinator:
                         self.download_coordinator.shutdown()
+                        storage_config = self.download_coordinator.storage_config
+                        active_model_ids = self.download_coordinator._active_model_ids  # pyright: ignore[reportPrivateUsage]
                         self.download_coordinator = DownloadCoordinator(
                             self.node_id,
                             exo_shard_downloader(offline=self.offline),
-                            event_sender=self.event_router.sender(),
                             download_command_receiver=self.router.receiver(
                                 topics.DOWNLOAD_COMMANDS
                             ),
+                            event_receiver=self.event_router.receiver(),
+                            event_sender=self.event_router.sender(),
                             offline=self.offline,
+                            storage_config=storage_config,
                         )
+                        self.download_coordinator._active_model_ids = active_model_ids  # pyright: ignore[reportPrivateUsage]
                         self._tg.start_soon(self.download_coordinator.run)
                     if self.worker:
                         self.worker.shutdown()
@@ -306,6 +320,8 @@ class Args(CamelCaseModel):
     offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     no_batch: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
+    max_storage_gb: float | None = None
+    storage_policy: StoragePolicy | None = None
 
     @classmethod
     def parse(cls) -> Self:
@@ -376,6 +392,20 @@ class Args(CamelCaseModel):
             action="store_false",
             dest="fast_synch",
             help="Force MLX FAST_SYNCH off",
+        )
+        parser.add_argument(
+            "--max-storage-gb",
+            type=float,
+            dest="max_storage_gb",
+            default=None,
+            help="Maximum storage for downloaded models in GB (default: unlimited)",
+        )
+        parser.add_argument(
+            "--storage-policy",
+            choices=["manual", "auto-evict"],
+            dest="storage_policy",
+            default=None,
+            help="Storage policy: 'manual' rejects on exceed, 'auto-evict' removes LRU models (default: manual)",
         )
 
         args = parser.parse_args()

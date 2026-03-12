@@ -1729,6 +1729,43 @@
           }
         }
 
+        if (downloadKind === "DownloadRejected") {
+          const downloadModelId = extractModelIdFromDownload(downloadPayload);
+          if (
+            instanceModelId &&
+            downloadModelId &&
+            downloadModelId === instanceModelId
+          ) {
+            return {
+              isDownloading: false,
+              isFailed: true,
+              errorMessage:
+                (downloadPayload.reason as string) || "Storage limit exceeded",
+              progress: null,
+              statusText: "REJECTED",
+              perNode: [],
+            };
+          }
+        }
+
+        if (downloadKind === "DownloadEvicted") {
+          const downloadModelId = extractModelIdFromDownload(downloadPayload);
+          if (
+            instanceModelId &&
+            downloadModelId &&
+            downloadModelId === instanceModelId
+          ) {
+            return {
+              isDownloading: false,
+              isFailed: false,
+              errorMessage: null,
+              progress: null,
+              statusText: "EVICTED",
+              perNode: [],
+            };
+          }
+        }
+
         if (
           downloadKind !== "DownloadOngoing" &&
           downloadKind !== "DownloadPending"
@@ -2454,7 +2491,13 @@
     if (Object.keys(prev).length > 0) {
       for (const [id, currentStatus] of Object.entries(currentStatuses)) {
         const prevStatus = prev[id];
-        if (!prevStatus || prevStatus === currentStatus) continue;
+        if (prevStatus === currentStatus) continue;
+        if (
+          !prevStatus &&
+          currentStatus !== "REJECTED" &&
+          currentStatus !== "FAILED"
+        )
+          continue;
 
         const modelId = getInstanceModelId(instanceData[id]);
         const shortName = modelId
@@ -2488,9 +2531,26 @@
           addToast({ type: "error", message: `Model failed: ${shortName}` });
         }
 
+        if (prevStatus !== "REJECTED" && currentStatus === "REJECTED") {
+          addToast({
+            type: "warning",
+            message: `Storage limit exceeded: ${shortName}`,
+            duration: 8000,
+          });
+        }
+
         // Any -> Shutdown
         if (prevStatus !== "SHUTDOWN" && currentStatus === "SHUTDOWN") {
           addToast({ type: "info", message: `Model shut down: ${shortName}` });
+        }
+
+        // Any -> Evicted
+        if (prevStatus !== "EVICTED" && currentStatus === "EVICTED") {
+          addToast({
+            type: "info",
+            message: `Model evicted: ${shortName}`,
+            duration: 6000,
+          });
         }
       }
     }

@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import ModelId, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
@@ -47,8 +47,24 @@ class DownloadOngoing(BaseDownloadProgress):
     download_progress: DownloadProgressData
 
 
+class DownloadRejected(BaseDownloadProgress):
+    reason: str
+    required: Memory
+    available: Memory
+    limit: Memory
+
+
+class DownloadEvicted(BaseDownloadProgress):
+    evicted_for: ModelId
+
+
 DownloadProgress = (
-    DownloadPending | DownloadCompleted | DownloadFailed | DownloadOngoing
+    DownloadPending
+    | DownloadCompleted
+    | DownloadFailed
+    | DownloadOngoing
+    | DownloadRejected
+    | DownloadEvicted
 )
 
 

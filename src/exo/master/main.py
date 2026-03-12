@@ -13,6 +13,7 @@ from exo.master.placement import (
 )
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
+from exo.shared.storage import get_download_rejected_events
 from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
@@ -23,6 +24,7 @@ from exo.shared.types.commands import (
     PlaceInstance,
     RequestEventLog,
     SendInputChunk,
+    SetStorageConfig,
     TaskCancelled,
     TaskFinished,
     TestCommand,
@@ -36,8 +38,10 @@ from exo.shared.types.events import (
     InputChunkReceived,
     InstanceDeleted,
     LocalForwarderEvent,
+    NodeDownloadProgress,
     NodeGatheredInfo,
     NodeTimedOut,
+    StorageConfigUpdated,
     TaskCreated,
     TaskDeleted,
     TaskStatusUpdated,
@@ -46,6 +50,7 @@ from exo.shared.types.events import (
     TracesMerged,
 )
 from exo.shared.types.state import State
+from exo.shared.types.storage import StorageConfig
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
 )
@@ -59,6 +64,7 @@ from exo.shared.types.tasks import (
 from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
+from exo.shared.types.worker.downloads import DownloadRejected
 from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, Sender
 from exo.utils.event_buffer import MultiSourceBuffer
@@ -343,7 +349,16 @@ class Master:
                                 logger.warning(
                                     f"Finished command {command.finished_command_id} finished"
                                 )
-
+                        case SetStorageConfig():
+                            generated_events.append(
+                                StorageConfigUpdated(
+                                    node_id=command.target_node_id,
+                                    storage_config=StorageConfig(
+                                        max_storage=command.max_storage,
+                                        storage_policy=command.storage_policy,
+                                    ),
+                                )
+                            )
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages
                             # rate limit to 1000 at a time
@@ -399,6 +414,20 @@ class Master:
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
                     indexed = IndexedEvent(event=event, idx=len(self._event_log))
                     self.state = apply(self.state, indexed)
+
+                    if isinstance(event, NodeDownloadProgress) and isinstance(
+                        event.download_progress, DownloadRejected
+                    ):
+                        dp = event.download_progress
+                        rejection_events = get_download_rejected_events(
+                            dp.shard_metadata.model_card.model_id,
+                            dp.node_id,
+                            self.state.instances,
+                            self.state.tasks,
+                        )
+                        for rejection_event in rejection_events:
+                            logger.info(f"Download rejected cleanup: {rejection_event}")
+                            await self.event_sender.send(rejection_event)
 
                     event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
                     if isinstance(event, NodeGatheredInfo):
