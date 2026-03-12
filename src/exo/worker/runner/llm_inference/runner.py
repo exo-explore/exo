@@ -504,6 +504,7 @@ class VllmBuilder(Builder):
             model_path=self.model_path,
             model_id=self.model_id,
             trust_remote_code=self.trust_remote_code,
+            on_layer_loaded=on_layer_loaded,
         )
 
     def build(self) -> InferenceGenerator:

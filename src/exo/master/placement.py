@@ -79,8 +79,11 @@ def place_instance(
             for cycle in candidate_cycles
             if required_nodes.issubset(cycle.node_ids)
         ]
+    required_memory = command.model_card.storage_size
+    if command.instance_meta == InstanceMeta.Vllm:
+        required_memory = Memory.from_bytes(int(required_memory.in_bytes * 1.3))
     cycles_with_sufficient_memory = filter_cycles_by_memory(
-        candidate_cycles, node_memory, command.model_card.storage_size
+        candidate_cycles, node_memory, required_memory
     )
     if len(cycles_with_sufficient_memory) == 0:
         raise ValueError("No cycles found with sufficient memory")

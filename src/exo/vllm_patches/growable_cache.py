@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from exo.shared.logging import logger
+from exo.worker.runner.bootstrap import logger
 
 INITIAL_FRACTION = 0.05
 GROWTH_HEADROOM_BYTES = 512 * 1024 * 1024

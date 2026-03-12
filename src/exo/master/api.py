@@ -476,10 +476,7 @@ class API:
             for sharding in (Sharding.Pipeline, Sharding.Tensor):
                 for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
                     instance_combinations.extend(
-                        [
-                            (sharding, instance_meta, i)
-                            for i in range(1, node_count + 1)
-                        ]
+                        [(sharding, instance_meta, i) for i in range(1, node_count + 1)]
                     )
         if self._vllm_available and not skip_vllm:
             instance_combinations.append((Sharding.Pipeline, InstanceMeta.Vllm, 1))
