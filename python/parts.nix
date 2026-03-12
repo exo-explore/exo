@@ -118,9 +118,9 @@
       ];
 
       exoVenv = (pythonSet.mkVirtualEnv "exo-env" {
-          exo_pyo3_bindings = [ ];
-          exo = [ ];
-        }).overrideAttrs {
+        exo-pyo3-bindings = [ ];
+        exo = [ ];
+      }).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;
       };
 
@@ -134,8 +134,8 @@
       };
 
       exoCudaVenv = (pythonSet.mkVirtualEnv "exo-cuda-env" {
-          exo_pyo3_bindings = [ ];
-          exo = [ "cuda" ];
+        exo-pyo3-bindings = [ ];
+        exo = [ "cuda" ];
       }).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;
       };
@@ -196,8 +196,8 @@
           exo = exoPackage;
           # Test environment for running pytest outside of Nix sandbox (needs GPU access)
           exo-test-env = testVenv;
-      } // {
-        exo-cuda-unwrapped = exoCudaPackage;
+        } // {
+        exo-cuda = exoCudaPackage;
         exo-bench = mkBenchScript "exo-bench" (inputs.self + /bench/exo_bench.py);
         exo-eval = mkBenchScript "exo-eval" (inputs.self + /bench/exo_eval.py);
         exo-eval-tool-calls = mkBenchScript "exo-eval-tool-calls" (inputs.self + /bench/eval_tool_calls.py);

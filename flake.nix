@@ -72,7 +72,7 @@
       ];
 
       perSystem =
-        { config, self', inputs', pkgs, lib, system, ... }:
+        { config, self', pkgs, lib, system, ... }:
         let
           # Use pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
           pkgsSwift = import inputs.nixpkgs-swift { inherit system; };
@@ -81,7 +81,10 @@
           # Allow unfree for metal-toolchain (needed for Darwin Metal packages)
           _module.args.pkgs = import inputs.nixpkgs {
             inherit system;
-            config.allowUnfreePredicate = pkg: (pkg.pname or "") == "metal-toolchain";
+            config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [
+              "metal-toolchain"
+              "libnvjitlink"
+            ];
             overlays = [
               (import ./nix/apple-sdk-overlay.nix)
             ];
@@ -127,29 +130,9 @@
                 };
                 default = self'.packages.exo;
               }
-            ) // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+            );
 
-          # CUDA development shell with torch + vLLM (aarch64-linux only)
-          devShells = lib.optionalAttrs (pkgsCuda != null)
-            {
-              cuda = pkgs.mkShell {
-                packages = [
-                  (pkgs.python313.withPackages (ps: [
-                    ps.torch
-                    ps.vllm
-                  ]))
-                  pkgs.uv
-                  pkgs.just
-                ];
-
-                shellHook = ''
-                  echo "CUDA dev shell with torch + vLLM"
-                  python -c "import torch; print(f'PyTorch {torch.__version__}, CUDA: {torch.cuda.is_available()}')" 2>/dev/null || true
-                '';
-              };
-            } // {
-
-            default = with pkgs; pkgs.mkShell {
+          devShells.default = with pkgs; mkShell {
               inputsFrom = [ self'.checks.cargo-build ];
 
               packages =
@@ -193,7 +176,6 @@
                 ''}
               '';
             };
-          };
         };
     };
 }

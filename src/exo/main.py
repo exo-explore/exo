@@ -256,6 +256,9 @@ class Node:
 
 
 def main():
+    import vllm
+    print(vllm.__version__)
+    quit()
     args = Args.parse()
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     target = min(max(soft, 65535), hard)
