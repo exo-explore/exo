@@ -458,12 +458,25 @@ class API:
             ) from exc
         instance_combinations: list[tuple[Sharding, InstanceMeta, int]] = []
         node_count = len(list(self.state.topology.list_nodes()))
-        for sharding in (Sharding.Pipeline, Sharding.Tensor):
-            for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
-                instance_combinations.extend(
-                    [(sharding, instance_meta, i) for i in range(1, node_count + 1)]
-                )
-        if self._vllm_available:
+
+        # QMM is not available on MLX CUDA. Also, VLLM does not support MLX community models
+        is_mlx_community = str(model_card.model_id).startswith("mlx-community/")
+        is_quantized_mlx = is_mlx_community and model_card.quantization in (
+            "4bit",
+            "8bit",
+        )
+        skip_mlx = self._vllm_available and is_quantized_mlx
+        skip_vllm = is_mlx_community
+        if not skip_mlx:
+            for sharding in (Sharding.Pipeline, Sharding.Tensor):
+                for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
+                    instance_combinations.extend(
+                        [
+                            (sharding, instance_meta, i)
+                            for i in range(1, node_count + 1)
+                        ]
+                    )
+        if self._vllm_available and not skip_vllm:
             instance_combinations.append((Sharding.Pipeline, InstanceMeta.Vllm, 1))
 
         for sharding, instance_meta, min_nodes in instance_combinations:
