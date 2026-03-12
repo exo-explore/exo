@@ -142,19 +142,30 @@ fn filter_swarm_event(event: SwarmEvent<BehaviourEvent>) -> Option<FromSwarm> {
     }
 }
 
-/// Create and configure a swarm which listens to all ports on OS
+/// Create and configure a swarm.
+///
+/// - `listen_port`: TCP port to listen on. `None` lets the OS assign one (tcp/0).
+/// - `bootstrap_peers`: multiaddrs to dial for environments without mDNS.
 pub fn create_swarm(
     keypair: identity::Keypair,
     from_client: mpsc::Receiver<ToSwarm>,
+    bootstrap_peers: Vec<String>,
+    listen_port: Option<u16>,
 ) -> alias::AnyResult<Swarm> {
+    let parsed_bootstrap_peers: Vec<libp2p::Multiaddr> = bootstrap_peers
+        .iter()
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse().ok())
+        .collect();
+
     let mut swarm = SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
         .with_other_transport(tcp_transport)?
-        .with_behaviour(Behaviour::new)?
+        .with_behaviour(|keypair| Behaviour::new(keypair, parsed_bootstrap_peers))?
         .build();
 
-    // Listen on all interfaces and whatever port the OS assigns
-    swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+    let port = listen_port.unwrap_or(0);
+    swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{port}").parse()?)?;
     Ok(Swarm { swarm, from_client })
 }
 
@@ -246,9 +257,12 @@ mod behaviour {
     }
 
     impl Behaviour {
-        pub fn new(keypair: &identity::Keypair) -> alias::AnyResult<Self> {
+        pub fn new(
+            keypair: &identity::Keypair,
+            bootstrap_peers: Vec<libp2p::Multiaddr>,
+        ) -> alias::AnyResult<Self> {
             Ok(Self {
-                discovery: discovery::Behaviour::new(keypair)?,
+                discovery: discovery::Behaviour::new(keypair, bootstrap_peers)?,
                 gossipsub: gossipsub_behaviour(keypair),
             })
         }
