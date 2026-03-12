@@ -66,38 +66,43 @@ class DownloadCoordinator:
         model_id = callback_shard.model_card.model_id
         throttle_interval_secs = 1.0
 
-        if progress.status == "complete":
-            completed = DownloadCompleted(
-                shard_metadata=callback_shard,
-                node_id=self.node_id,
-                total=progress.total,
-                model_directory=self._model_dir(model_id),
+        try:
+            if progress.status == "complete":
+                completed = DownloadCompleted(
+                    shard_metadata=callback_shard,
+                    node_id=self.node_id,
+                    total=progress.total,
+                    model_directory=self._model_dir(model_id),
+                )
+                self.download_status[model_id] = completed
+                await self.event_sender.send(
+                    NodeDownloadProgress(download_progress=completed)
+                )
+                if model_id in self.active_downloads:
+                    del self.active_downloads[model_id]
+                self._last_progress_time.pop(model_id, None)
+            elif (
+                progress.status == "in_progress"
+                and current_time() - self._last_progress_time.get(model_id, 0.0)
+                > throttle_interval_secs
+            ):
+                ongoing = DownloadOngoing(
+                    node_id=self.node_id,
+                    shard_metadata=callback_shard,
+                    download_progress=map_repo_download_progress_to_download_progress_data(
+                        progress
+                    ),
+                    model_directory=self._model_dir(model_id),
+                )
+                self.download_status[model_id] = ongoing
+                await self.event_sender.send(
+                    NodeDownloadProgress(download_progress=ongoing)
+                )
+                self._last_progress_time[model_id] = current_time()
+        except anyio.BrokenResourceError:
+            logger.debug(
+                f"Event channel closed during download progress for {model_id}, coordinator is shutting down"
             )
-            self.download_status[model_id] = completed
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=completed)
-            )
-            if model_id in self.active_downloads:
-                del self.active_downloads[model_id]
-            self._last_progress_time.pop(model_id, None)
-        elif (
-            progress.status == "in_progress"
-            and current_time() - self._last_progress_time.get(model_id, 0.0)
-            > throttle_interval_secs
-        ):
-            ongoing = DownloadOngoing(
-                node_id=self.node_id,
-                shard_metadata=callback_shard,
-                download_progress=map_repo_download_progress_to_download_progress_data(
-                    progress
-                ),
-                model_directory=self._model_dir(model_id),
-            )
-            self.download_status[model_id] = ongoing
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=ongoing)
-            )
-            self._last_progress_time[model_id] = current_time()
 
     async def run(self) -> None:
         logger.info(
@@ -112,6 +117,9 @@ class DownloadCoordinator:
                 task.cancel()
 
     def shutdown(self) -> None:
+        for task in self.active_downloads.values():
+            task.cancel()
+        self.active_downloads.clear()
         self._tg.cancel_tasks()
 
     async def _command_processor(self) -> None:
@@ -234,7 +242,15 @@ class DownloadCoordinator:
             model_directory=self._model_dir(model_id),
         )
         self.download_status[model_id] = status
-        self.event_sender.send_nowait(NodeDownloadProgress(download_progress=status))
+        try:
+            self.event_sender.send_nowait(
+                NodeDownloadProgress(download_progress=status)
+            )
+        except anyio.BrokenResourceError:
+            logger.debug(
+                f"Event channel closed while starting download task for {model_id}, coordinator is shutting down"
+            )
+            return
 
         async def download_wrapper() -> None:
             try:
@@ -248,9 +264,14 @@ class DownloadCoordinator:
                     model_directory=self._model_dir(model_id),
                 )
                 self.download_status[model_id] = failed
-                await self.event_sender.send(
-                    NodeDownloadProgress(download_progress=failed)
-                )
+                try:
+                    await self.event_sender.send(
+                        NodeDownloadProgress(download_progress=failed)
+                    )
+                except anyio.BrokenResourceError:
+                    logger.debug(
+                        f"Event channel closed during download failure for {model_id}, coordinator is shutting down"
+                    )
             finally:
                 if model_id in self.active_downloads:
                     del self.active_downloads[model_id]
@@ -386,6 +407,11 @@ class DownloadCoordinator:
                 logger.debug(
                     "DownloadCoordinator: Done emitting existing download progress."
                 )
+            except anyio.BrokenResourceError:
+                logger.debug(
+                    "Event channel closed during existing download progress emission, coordinator is shutting down"
+                )
+                return
             except Exception as e:
                 logger.error(
                     f"DownloadCoordinator: Error emitting existing download progress: {e}"
