@@ -20,11 +20,10 @@ from exo.routing.router import Router, get_node_id_keypair
 from exo.shared.constants import EXO_LOG
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
+from exo.shared.storage import load_storage_config
 from exo.shared.types.common import NodeId, SessionId
-from exo.shared.types.memory import Memory
-from exo.shared.types.storage import StorageConfig, StoragePolicy
+from exo.shared.types.storage import StoragePolicy
 from exo.utils.channels import Receiver, channel
-from exo.utils.info_gatherer.info_gatherer import NodeConfig
 from exo.utils.pydantic_ext import CamelCaseModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
@@ -71,7 +70,10 @@ class Node:
 
         logger.info(f"Starting node {node_id}")
 
-        storage_config = await cls._load_storage_config(args)
+        storage_config = await load_storage_config(
+            max_storage_gb=args.max_storage_gb,
+            storage_policy=args.storage_policy,
+        )
 
         # Create DownloadCoordinator (unless --no-downloads)
         if not args.no_downloads:
@@ -174,28 +176,6 @@ class Node:
 
             sys.exit(1)
         self._tg.cancel_tasks()
-
-    @staticmethod
-    async def _load_storage_config(args: "Args") -> StorageConfig:
-        """Load storage config: start from config.toml, overlay CLI args."""
-        node_config = await NodeConfig.gather()
-        base = (
-            node_config.storage_config if node_config is not None else StorageConfig()
-        )
-
-        # CLI args override individual fields (non-default values only)
-        max_storage = (
-            Memory.from_gb(args.max_storage_gb)
-            if args.max_storage_gb is not None
-            else base.max_storage
-        )
-        storage_policy = (
-            args.storage_policy
-            if args.storage_policy is not None
-            else base.storage_policy
-        )
-
-        return StorageConfig(max_storage=max_storage, storage_policy=storage_policy)
 
     async def _elect_loop(self):
         with self.election_result_receiver as results:

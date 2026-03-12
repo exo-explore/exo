@@ -1,5 +1,6 @@
 from typing import Any, Literal, Self, final
 
+from exo.shared.models.model_cards import ModelId
 from exo.shared.types.memory import Memory
 from exo.utils.pydantic_ext import FrozenModel
 
@@ -27,3 +28,22 @@ class StorageConfig(FrozenModel):
             result["max_storage_gb"] = round(self.max_storage.in_gb, 2)
         result["storage_policy"] = self.storage_policy
         return result
+
+
+@final
+class StorageAllow(FrozenModel):
+    pass
+
+
+@final
+class StorageEvict(FrozenModel):
+    model_ids: list[ModelId]
+
+
+@final
+class StorageReject(FrozenModel):
+    reason: str
+    available: Memory
+
+
+StorageDecision = StorageAllow | StorageEvict | StorageReject
