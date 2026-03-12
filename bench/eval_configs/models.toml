@@ -1,0 +1,292 @@
+# Model evaluation configurations for exo_eval.
+#
+# Each [[model]] entry uses `patterns` — a list of substrings matched
+# against the model_id. First matching entry wins.
+#
+# Required fields:
+#   name, patterns, reasoning
+#
+# Optional per-model overrides (CLI flags take priority over these):
+#   temperature, top_p, max_tokens, reasoning_effort
+#
+# Fallback defaults (when no per-model config):
+#   reasoning:     temperature=1.0, max_tokens=131072, reasoning_effort="high"
+#   non-reasoning: temperature=0.0, max_tokens=16384
+#
+# All per-model values below are sourced from official model cards,
+# generation_config.json files, and vendor documentation.
+
+# ─── Qwen3.5 (Feb 2026) ─────────────────────────────────────────────
+# Source: HuggingFace model cards (Qwen/Qwen3.5-*)
+# 35B-A3B thinking general: temp=1.0, top_p=0.95, top_k=20
+# 397B thinking: temp=0.6, top_p=0.95, top_k=20
+# Non-thinking: temp=0.7, top_p=0.8, top_k=20
+# max_tokens: 32768 general, 81920 for complex math/code
+
+[[model]]
+name = "Qwen3.5 2B"
+patterns = ["Qwen3.5-2B"]
+reasoning = true
+temperature = 0.6
+top_p = 0.95
+max_tokens = 81920
+
+[[model]]
+name = "Qwen3.5 9B"
+patterns = ["Qwen3.5-9B"]
+reasoning = true
+temperature = 0.6
+top_p = 0.95
+max_tokens = 81920
+
+[[model]]
+name = "Qwen3.5 27B"
+patterns = ["Qwen3.5-27B"]
+reasoning = true
+temperature = 0.6
+top_p = 0.95
+max_tokens = 81920
+
+[[model]]
+name = "Qwen3.5 35B A3B"
+patterns = ["Qwen3.5-35B-A3B"]
+reasoning = true
+temperature = 1.0
+top_p = 0.95
+max_tokens = 81920
+
+[[model]]
+name = "Qwen3.5 122B A10B"
+patterns = ["Qwen3.5-122B-A10B"]
+reasoning = true
+temperature = 0.6
+top_p = 0.95
+max_tokens = 81920
+
+[[model]]
+name = "Qwen3.5 397B A17B"
+patterns = ["Qwen3.5-397B-A17B"]
+reasoning = true
+temperature = 0.6
+top_p = 0.95
+max_tokens = 81920
+
+# ─── Qwen3 (Apr 2025) ───────────────────────────────────────────────
+# Source: HuggingFace model cards (Qwen/Qwen3-*)
+# Thinking: temp=0.6, top_p=0.95, top_k=20
+# Non-thinking: temp=0.7, top_p=0.8, top_k=20
+# max_tokens: 32768 general, 38912 for complex math/code
+
+[[model]]
+name = "Qwen3 0.6B"
+patterns = ["Qwen3-0.6B"]
+reasoning = true
+temperature = 0.6
+top_p = 0.95
+max_tokens = 38912
+
+[[model]]
+name = "Qwen3 30B A3B"
+patterns = ["Qwen3-30B-A3B"]
+reasoning = true
+temperature = 0.6
+top_p = 0.95
+max_tokens = 38912
+
+[[model]]
+name = "Qwen3 235B A22B"
+patterns = ["Qwen3-235B-A22B"]
+reasoning = true
+temperature = 0.6
+top_p = 0.95
+max_tokens = 38912
+
+[[model]]
+name = "Qwen3 Next 80B Thinking"
+patterns = ["Qwen3-Next-80B-A3B-Thinking"]
+reasoning = true
+temperature = 0.6
+top_p = 0.95
+max_tokens = 38912
+
+[[model]]
+name = "Qwen3 Next 80B Instruct"
+patterns = ["Qwen3-Next-80B-A3B-Instruct"]
+reasoning = false
+temperature = 0.7
+top_p = 0.8
+max_tokens = 16384
+
+[[model]]
+name = "Qwen3 Coder 480B"
+patterns = ["Qwen3-Coder-480B"]
+reasoning = false
+temperature = 0.7
+top_p = 0.8
+max_tokens = 16384
+
+[[model]]
+name = "Qwen3 Coder Next"
+patterns = ["Qwen3-Coder-Next"]
+reasoning = false
+temperature = 0.7
+top_p = 0.8
+max_tokens = 16384
+
+# ─── GPT-OSS (OpenAI) ───────────────────────────────────────────────
+# Source: OpenAI GitHub README + HuggingFace discussion #21
+# temp=1.0, top_p=1.0, NO top_k, NO repetition_penalty
+# reasoning_effort supported: low/medium/high
+
+[[model]]
+name = "GPT-OSS 20B"
+patterns = ["gpt-oss-20b"]
+reasoning = true
+temperature = 1.0
+top_p = 1.0
+
+[[model]]
+name = "GPT-OSS 120B"
+patterns = ["gpt-oss-120b"]
+reasoning = true
+temperature = 1.0
+top_p = 1.0
+
+# ─── DeepSeek ────────────────────────────────────────────────────────
+# Source: https://api-docs.deepseek.com/quick_start/parameter_settings
+# Coding/Math: temp=0.0, General: temp=1.3, Creative: temp=1.5
+# NOTE: DeepSeek API applies nonlinear temp mapping. These are API values.
+# When running model directly: API temp 1.0 = model temp 0.3
+# We use temp=0.0 for eval (coding/math focus).
+
+[[model]]
+name = "DeepSeek V3.1"
+patterns = ["DeepSeek-V3.1"]
+reasoning = true
+temperature = 0.0
+
+# ─── GLM (ZhipuAI / THUDM) ──────────────────────────────────────────
+# Source: HuggingFace model cards + generation_config.json + docs.z.ai
+# GLM 4.5+: temp=1.0, top_p=0.95
+# Reasoning tasks: 131072 max_tokens; coding/SWE tasks: temp=0.7
+
+[[model]]
+name = "GLM-5"
+patterns = ["GLM-5"]
+reasoning = true
+temperature = 1.0
+top_p = 0.95
+max_tokens = 131072
+
+[[model]]
+name = "GLM 4.5 Air"
+patterns = ["GLM-4.5-Air"]
+reasoning = true
+temperature = 1.0
+top_p = 0.95
+
+[[model]]
+name = "GLM 4.7"
+patterns = ["GLM-4.7-"]
+reasoning = true
+temperature = 1.0
+top_p = 0.95
+max_tokens = 131072
+# Note: matches both GLM-4.7 and GLM-4.7-Flash
+
+# ─── Kimi (Moonshot AI) ─────────────────────────────────────────────
+# Source: HuggingFace model cards (moonshotai/Kimi-K2-*)
+# K2-Instruct: temp=0.6
+# K2-Thinking: temp=1.0, max_length=262144
+# K2.5: thinking temp=1.0, top_p=0.95; instant temp=0.6, top_p=0.95
+
+[[model]]
+name = "Kimi K2 Thinking"
+patterns = ["Kimi-K2-Thinking"]
+reasoning = true
+temperature = 1.0
+max_tokens = 131072
+
+[[model]]
+name = "Kimi K2.5"
+patterns = ["Kimi-K2.5"]
+reasoning = true
+temperature = 1.0
+top_p = 0.95
+max_tokens = 131072
+
+[[model]]
+name = "Kimi K2 Instruct"
+patterns = ["Kimi-K2-Instruct"]
+reasoning = false
+temperature = 0.6
+
+# ─── MiniMax ─────────────────────────────────────────────────────────
+# Source: HuggingFace model cards + generation_config.json
+# All models: temp=1.0, top_p=0.95, top_k=40
+
+[[model]]
+name = "MiniMax M2.5"
+patterns = ["MiniMax-M2.5"]
+reasoning = true
+temperature = 1.0
+top_p = 0.95
+
+[[model]]
+name = "MiniMax M2.1"
+patterns = ["MiniMax-M2.1"]
+reasoning = true
+temperature = 1.0
+top_p = 0.95
+
+# ─── Step (StepFun) ─────────────────────────────────────────────────
+# Source: HuggingFace model card (stepfun-ai/Step-3.5-Flash)
+# Reasoning: temp=1.0, top_p=0.95
+# General chat: temp=0.6, top_p=0.95
+# We use reasoning settings for eval.
+
+[[model]]
+name = "Step 3.5 Flash"
+patterns = ["Step-3.5-Flash"]
+reasoning = true
+temperature = 1.0
+top_p = 0.95
+
+# ─── Llama (Meta) ───────────────────────────────────────────────────
+# Source: generation_config.json + meta-llama/llama-models generation.py
+# All variants: temp=0.6, top_p=0.9
+
+[[model]]
+name = "Llama 3.2 1B"
+patterns = ["Llama-3.2-1B"]
+reasoning = false
+temperature = 0.6
+top_p = 0.9
+
+[[model]]
+name = "Llama 3.2 3B"
+patterns = ["Llama-3.2-3B"]
+reasoning = false
+temperature = 0.6
+top_p = 0.9
+
+[[model]]
+name = "Llama 3.1 8B"
+patterns = ["Llama-3.1-8B", "Meta-Llama-3.1-8B"]
+reasoning = false
+temperature = 0.6
+top_p = 0.9
+
+[[model]]
+name = "Llama 3.1 70B"
+patterns = ["Llama-3.1-70B", "Meta-Llama-3.1-70B"]
+reasoning = false
+temperature = 0.6
+top_p = 0.9
+
+[[model]]
+name = "Llama 3.3 70B"
+patterns = ["Llama-3.3-70B", "llama-3.3-70b"]
+reasoning = false
+temperature = 0.6
+top_p = 0.9

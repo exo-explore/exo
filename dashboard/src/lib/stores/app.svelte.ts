@@ -580,6 +580,8 @@ class AppStore {
   debugMode = $state(false);
   topologyOnlyMode = $state(false);
   chatSidebarVisible = $state(true); // Shown by default
+  mobileChatSidebarOpen = $state(false); // Mobile drawer state
+  mobileRightSidebarOpen = $state(false); // Mobile right drawer state
 
   // Image generation params
   imageGenerationParams = $state<ImageGenerationParams>({
@@ -1243,6 +1245,30 @@ class AppStore {
   toggleChatSidebarVisible() {
     this.chatSidebarVisible = !this.chatSidebarVisible;
     this.saveChatSidebarVisibleToStorage();
+  }
+
+  getMobileChatSidebarOpen(): boolean {
+    return this.mobileChatSidebarOpen;
+  }
+
+  setMobileChatSidebarOpen(open: boolean) {
+    this.mobileChatSidebarOpen = open;
+  }
+
+  toggleMobileChatSidebar() {
+    this.mobileChatSidebarOpen = !this.mobileChatSidebarOpen;
+  }
+
+  getMobileRightSidebarOpen(): boolean {
+    return this.mobileRightSidebarOpen;
+  }
+
+  setMobileRightSidebarOpen(open: boolean) {
+    this.mobileRightSidebarOpen = open;
+  }
+
+  toggleMobileRightSidebar() {
+    this.mobileRightSidebarOpen = !this.mobileRightSidebarOpen;
   }
 
   startPolling() {
@@ -3282,6 +3308,18 @@ export const toggleChatSidebarVisible = () =>
   appStore.toggleChatSidebarVisible();
 export const setChatSidebarVisible = (visible: boolean) =>
   appStore.setChatSidebarVisible(visible);
+
+// Mobile sidebar state
+export const mobileChatSidebarOpen = () => appStore.mobileChatSidebarOpen;
+export const toggleMobileChatSidebar = () => appStore.toggleMobileChatSidebar();
+export const setMobileChatSidebarOpen = (open: boolean) =>
+  appStore.setMobileChatSidebarOpen(open);
+export const mobileRightSidebarOpen = () => appStore.mobileRightSidebarOpen;
+export const toggleMobileRightSidebar = () =>
+  appStore.toggleMobileRightSidebar();
+export const setMobileRightSidebarOpen = (open: boolean) =>
+  appStore.setMobileRightSidebarOpen(open);
+
 export const refreshState = () => appStore.fetchState();
 
 // Connection status

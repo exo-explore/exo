@@ -88,6 +88,9 @@ class RMSNorm(Module):
         dims (int): The feature dimension of the input to normalize over
         eps (float): A small additive constant for numerical stability
     """
+
+    weight: mx.array
+
     def __init__(self, dims: int, eps: float = ...) -> None: ...
     def __call__(self, x) -> mx.array: ...
 

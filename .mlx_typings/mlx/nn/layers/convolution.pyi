@@ -32,6 +32,7 @@ class Conv1d(Module):
     """
 
     weight: mx.array
+    bias: mx.array | None
     groups: int
     def __init__(
         self,

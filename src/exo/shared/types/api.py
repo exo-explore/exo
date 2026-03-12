@@ -172,8 +172,22 @@ class ImageGenerationStats(BaseModel):
     peak_memory_usage: Memory
 
 
+class NodePowerStats(BaseModel, frozen=True):
+    node_id: NodeId
+    samples: int
+    avg_sys_power: float
+
+
+class PowerUsage(BaseModel, frozen=True):
+    elapsed_seconds: float
+    nodes: list[NodePowerStats]
+    total_avg_sys_power_watts: float
+    total_energy_joules: float
+
+
 class BenchChatCompletionResponse(ChatCompletionResponse):
     generation_stats: GenerationStats | None = None
+    power_usage: PowerUsage | None = None
 
 
 class StreamOptions(BaseModel):
@@ -201,6 +215,7 @@ class ChatCompletionRequest(BaseModel):
     tools: list[dict[str, Any]] | None = None
     reasoning_effort: ReasoningEffort | None = None
     enable_thinking: bool | None = None
+    min_p: float | None = None
     repetition_penalty: float | None = None
     repetition_context_size: int | None = None
     tool_choice: str | dict[str, Any] | None = None
@@ -380,6 +395,7 @@ class ImageGenerationResponse(BaseModel):
 
 class BenchImageGenerationResponse(ImageGenerationResponse):
     generation_stats: ImageGenerationStats | None = None
+    power_usage: PowerUsage | None = None
 
 
 class ImageListItem(BaseModel, frozen=True):

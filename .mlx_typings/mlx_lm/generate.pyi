@@ -254,7 +254,14 @@ class BatchResponse:
 
     texts: List[str]
     stats: BatchStats
+    caches: Optional[List[List[Any]]]
 
+def _left_pad_prompts(prompts: Any, max_length: Optional[int] = ...) -> mx.array: ...
+def _right_pad_prompts(prompts: Any, max_length: Optional[int] = ...) -> mx.array: ...
+def _make_cache(
+    model: Any, left_padding: Any, max_kv_size: Optional[int]
+) -> List[Any]: ...
+def _merge_caches(caches: Any) -> List[Any]: ...
 @dataclass
 class Batch:
     uids: List[int]
@@ -263,39 +270,71 @@ class Batch:
     max_tokens: List[int]
     num_tokens: List[int]
     cache: List[Any]
-    def __len__(self):  # -> int:
-        ...
-    def filter(self, keep_idx: List[int]):  # -> None:
-        ...
-    def extend(self, other):  # -> None:
-        ...
+    samplers: List[Any]
+    logits_processors: List[Any]
+    tokens: List[mx.array]
+    def __len__(self) -> int: ...
+    def filter(self, keep_idx: List[int]) -> None: ...
+    def extend(self, other: "Batch") -> None: ...
+    def extract_cache(self, idx: int) -> List[Any]: ...
 
 class BatchGenerator:
+    model: Any
+    max_kv_size: Optional[int]
+    prefill_step_size: int
+    unprocessed_prompts: List[Any]
+    active_batch: Optional[Batch]
+    prompt_progress_callback: Callable[[List[Tuple[int, int, int]]], None]
+    _stats: BatchStats
+
     @dataclass
     class Response:
         uid: int
         token: int
         logprobs: mx.array
         finish_reason: Optional[str]
+        prompt_cache: Any
 
     def __init__(
         self,
-        model,
+        model: Any,
         max_tokens: int = ...,
-        stop_tokens: Optional[set] = ...,
+        stop_tokens: Optional[set[int]] = ...,
         sampler: Optional[Callable[[mx.array], mx.array]] = ...,
+        logits_processors: Optional[
+            List[Callable[[mx.array, mx.array], mx.array]]
+        ] = ...,
         completion_batch_size: int = ...,
         prefill_batch_size: int = ...,
         prefill_step_size: int = ...,
+        prompt_progress_callback: Optional[
+            Callable[[List[Tuple[int, int, int]]], None]
+        ] = ...,
+        max_kv_size: Optional[int] = ...,
     ) -> None: ...
+    def close(self) -> None: ...
     def insert(
-        self, prompts, max_tokens: Union[List[int], int, None] = ...
-    ):  # -> list[Any]:
-        ...
-    def stats(self):  # -> BatchStats:
-        ...
-    def next(self):  # -> list[Any]:
-        ...
+        self,
+        prompts: Any,
+        max_tokens: Union[List[int], int, None] = ...,
+        caches: Any = ...,
+        samplers: Optional[List[Any]] = ...,
+        logits_processors: Optional[List[Any]] = ...,
+    ) -> List[int]: ...
+    def remove(
+        self, uids: List[int], return_prompt_caches: bool = ...
+    ) -> Optional[dict[int, List[Any]]]: ...
+    def stats(self) -> BatchStats: ...
+    def next(self) -> List[Response]: ...
+    def _process_prompts(self, prompts: List[Any]) -> Batch: ...
+    def _step(
+        self,
+        input_tokens: mx.array,
+        prompt_cache: List[Any],
+        samplers: Optional[List[Any]],
+        logits_processors: Optional[List[Any]],
+        tokens: List[mx.array],
+    ) -> Tuple[mx.array, List[mx.array]]: ...
 
 def batch_generate(
     model,

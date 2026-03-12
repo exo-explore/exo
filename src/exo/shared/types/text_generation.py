@@ -67,5 +67,6 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     enable_thinking: bool | None = None
     logprobs: bool = False
     top_logprobs: int | None = None
+    min_p: float | None = None
     repetition_penalty: float | None = None
     repetition_context_size: int | None = None
