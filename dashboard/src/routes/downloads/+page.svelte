@@ -226,6 +226,7 @@
   let configNoLimit = $state(true);
   let configPolicy = $state<"manual" | "auto-evict">("manual");
   let configSaving = $state(false);
+  let configApplyAll = $state(false);
 
   function openStorageConfig(col: NodeColumn) {
     storageConfigNode = col;
@@ -237,6 +238,7 @@
       configMaxGb = null;
     }
     configPolicy = col.storagePolicy ?? "manual";
+    configApplyAll = false;
   }
 
   async function saveStorageConfig() {
@@ -244,7 +246,8 @@
     configSaving = true;
     try {
       const maxGb = configNoLimit ? null : configMaxGb;
-      await setStorageConfig(storageConfigNode.nodeId, maxGb, configPolicy);
+      const nodeIds = configApplyAll ? null : [storageConfigNode.nodeId];
+      await setStorageConfig(nodeIds, maxGb, configPolicy);
       storageConfigNode = null;
       refreshState();
     } catch (error) {
@@ -1088,7 +1091,7 @@
   >
     <div class="flex items-start justify-between mb-4">
       <h3 class="font-mono text-sm text-white">
-        Storage — {storageConfigNode.label}
+        Storage — {configApplyAll ? "All nodes" : storageConfigNode.label}
       </h3>
       <button
         type="button"
@@ -1105,6 +1108,19 @@
     </div>
 
     <div class="space-y-4">
+      <!-- Apply to all nodes -->
+      {#if nodeColumns.length > 1}
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            bind:checked={configApplyAll}
+            class="accent-exo-yellow w-4 h-4"
+          />
+          <span class="text-xs font-mono text-white/80">Apply to all nodes</span
+          >
+        </label>
+      {/if}
+
       <!-- No limit checkbox -->
       <label class="flex items-center gap-2 cursor-pointer">
         <input
