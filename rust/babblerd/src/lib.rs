@@ -145,6 +145,9 @@ pub mod if_watcher {
             for interface in ["lo", "lo0"] {
                 if let Some(iface) = initial.get(interface) {
                     add_ip(my_range.addr(), iface).await?;
+                    let Ok(()) = send.send(Babble::AddIface(iface.name().to_string())).await else {
+                        return Ok(());
+                    };
                     break;
                 }
             }
@@ -175,7 +178,7 @@ pub mod if_watcher {
                     iface_num += 1;
                     assert!(iface_num < u16::MAX, "Really? u16::MAX interfaces?");
                     tracing::info!("adding new ip {addr} to {}", iface.name());
-                    //add_ip(addr, iface).await?;
+                    add_ip(addr, iface).await?;
                 }
 
                 tracing::info!("telling babeld to watch {}", iface.name());
