@@ -1527,7 +1527,11 @@
           downloadKind
         ] as Record<string, unknown>;
 
-        if (downloadKind !== "DownloadOngoing") continue;
+        if (
+          downloadKind !== "DownloadOngoing" &&
+          downloadKind !== "DownloadPending"
+        )
+          continue;
         if (!downloadPayload) continue;
 
         const downloadModelId = extractModelIdFromDownload(downloadPayload);
@@ -1542,9 +1546,38 @@
           if (downloadModelId !== modelId) continue;
         }
 
-        isDownloading = true;
+        // For DownloadPending with partial bytes (paused/resumed downloads),
+        // synthesize a progress object from the top-level downloaded/total fields
+        let progress: DownloadProgress | null;
+        if (downloadKind === "DownloadPending") {
+          const pendingDownloaded = getBytes(
+            downloadPayload.downloaded ??
+              downloadPayload.downloaded_bytes ??
+              downloadPayload.downloadedBytes,
+          );
+          const pendingTotal = getBytes(
+            downloadPayload.total ??
+              downloadPayload.total_bytes ??
+              downloadPayload.totalBytes,
+          );
+          if (pendingDownloaded <= 0 && pendingTotal <= 0) continue;
+          isDownloading = true;
+          progress = {
+            totalBytes: pendingTotal,
+            downloadedBytes: pendingDownloaded,
+            speed: 0,
+            etaMs: 0,
+            percentage:
+              pendingTotal > 0 ? (pendingDownloaded / pendingTotal) * 100 : 0,
+            completedFiles: 0,
+            totalFiles: 0,
+            files: [],
+          };
+        } else {
+          isDownloading = true;
+          progress = parseDownloadProgress(downloadPayload);
+        }
 
-        const progress = parseDownloadProgress(downloadPayload);
         if (progress) {
           // Sum all values across nodes - each node downloads independently
           totalBytes += progress.totalBytes;
@@ -1696,7 +1729,11 @@
           }
         }
 
-        if (downloadKind !== "DownloadOngoing") continue;
+        if (
+          downloadKind !== "DownloadOngoing" &&
+          downloadKind !== "DownloadPending"
+        )
+          continue;
         if (!downloadPayload) continue;
 
         // Check if this download is for this instance's model
@@ -1706,9 +1743,37 @@
           downloadModelId &&
           downloadModelId === instanceModelId
         ) {
-          isDownloading = true;
+          // For DownloadPending with partial bytes, synthesize progress
+          let progress: DownloadProgress | null;
+          if (downloadKind === "DownloadPending") {
+            const pendingDownloaded = getBytes(
+              downloadPayload.downloaded ??
+                downloadPayload.downloaded_bytes ??
+                downloadPayload.downloadedBytes,
+            );
+            const pendingTotal = getBytes(
+              downloadPayload.total ??
+                downloadPayload.total_bytes ??
+                downloadPayload.totalBytes,
+            );
+            if (pendingDownloaded <= 0 && pendingTotal <= 0) continue;
+            isDownloading = true;
+            progress = {
+              totalBytes: pendingTotal,
+              downloadedBytes: pendingDownloaded,
+              speed: 0,
+              etaMs: 0,
+              percentage:
+                pendingTotal > 0 ? (pendingDownloaded / pendingTotal) * 100 : 0,
+              completedFiles: 0,
+              totalFiles: 0,
+              files: [],
+            };
+          } else {
+            isDownloading = true;
+            progress = parseDownloadProgress(downloadPayload);
+          }
 
-          const progress = parseDownloadProgress(downloadPayload);
           if (progress) {
             // Sum all values across nodes - each node downloads independently
             totalBytes += progress.totalBytes;
