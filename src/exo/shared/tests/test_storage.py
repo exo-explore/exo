@@ -5,17 +5,29 @@ from exo.shared.storage import (
     calculate_used_storage,
     check_storage_quota,
     compute_evictions_needed,
+    decide_storage_action,
+    get_download_rejected_events,
     get_lru_eviction_candidates,
 )
 from exo.shared.tests.conftest import get_pipeline_shard_metadata
+from exo.shared.types.common import NodeId
+from exo.shared.types.events import InstanceDeleted, TaskStatusUpdated
 from exo.shared.types.memory import Memory
-from exo.shared.types.storage import StorageConfig
+from exo.shared.types.storage import (
+    StorageAllow,
+    StorageConfig,
+    StorageEvict,
+    StorageReject,
+)
+from exo.shared.types.tasks import LoadModel, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadOngoing,
     DownloadPending,
     DownloadProgressData,
 )
+from exo.shared.types.worker.instances import InstanceId, MlxRingInstance
+from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 
 MODEL_A = ModelId("org/model-a")
 MODEL_B = ModelId("org/model-b")
@@ -334,3 +346,173 @@ class TestEndToEndEvictionScenario:
         available = config.max_storage - used
         to_evict = compute_evictions_needed(new_model_size, available, candidates)
         assert to_evict is None
+
+
+class TestDecideStorageAction:
+    """Tests for the decide_storage_action pure function."""
+
+    def test_unlimited_allows(self) -> None:
+        config = StorageConfig(max_storage=None)
+        action = decide_storage_action(Memory.from_gb(10), config, [], {}, frozenset())
+        assert isinstance(action, StorageAllow)
+
+    def test_under_limit_allows(self) -> None:
+        config = StorageConfig(max_storage=Memory.from_gb(20))
+        downloads = [_completed(MODEL_A, 5)]
+        action = decide_storage_action(
+            Memory.from_gb(10), config, downloads, {}, frozenset()
+        )
+        assert isinstance(action, StorageAllow)
+
+    def test_manual_policy_rejects(self) -> None:
+        config = StorageConfig(max_storage=Memory.from_gb(10), storage_policy="manual")
+        downloads = [_completed(MODEL_A, 5)]
+        action = decide_storage_action(
+            Memory.from_gb(8), config, downloads, {}, frozenset()
+        )
+        assert isinstance(action, StorageReject)
+        assert "Need" in action.reason
+
+    def test_auto_evict_returns_evict(self) -> None:
+        config = StorageConfig(
+            max_storage=Memory.from_gb(10), storage_policy="auto-evict"
+        )
+        downloads = [_completed(MODEL_A, 4), _completed(MODEL_B, 4)]
+        last_used = {
+            MODEL_A: datetime(2024, 1, 1, tzinfo=UTC),
+            MODEL_B: datetime(2024, 6, 1, tzinfo=UTC),
+        }
+        action = decide_storage_action(
+            Memory.from_gb(5), config, downloads, last_used, frozenset()
+        )
+        assert isinstance(action, StorageEvict)
+        assert MODEL_A in action.model_ids
+
+    def test_auto_evict_rejects_when_impossible(self) -> None:
+        config = StorageConfig(
+            max_storage=Memory.from_gb(10), storage_policy="auto-evict"
+        )
+        downloads = [_completed(MODEL_A, 2)]
+        action = decide_storage_action(
+            Memory.from_gb(20), config, downloads, {}, frozenset()
+        )
+        assert isinstance(action, StorageReject)
+        assert "Cannot free enough" in action.reason
+
+    def test_auto_evict_protects_active_models(self) -> None:
+        config = StorageConfig(
+            max_storage=Memory.from_gb(10), storage_policy="auto-evict"
+        )
+        downloads = [_completed(MODEL_A, 4), _completed(MODEL_B, 4)]
+        last_used = {
+            MODEL_A: datetime(2024, 1, 1, tzinfo=UTC),
+            MODEL_B: datetime(2024, 6, 1, tzinfo=UTC),
+        }
+        # MODEL_A is oldest but active — should evict MODEL_B instead
+        action = decide_storage_action(
+            Memory.from_gb(5), config, downloads, last_used, frozenset({MODEL_A})
+        )
+        assert isinstance(action, StorageEvict)
+        assert action.model_ids == [MODEL_B]
+
+    def test_auto_evict_all_active_rejects(self) -> None:
+        config = StorageConfig(
+            max_storage=Memory.from_gb(10), storage_policy="auto-evict"
+        )
+        downloads = [_completed(MODEL_A, 4), _completed(MODEL_B, 4)]
+        action = decide_storage_action(
+            Memory.from_gb(5),
+            config,
+            downloads,
+            {},
+            frozenset({MODEL_A, MODEL_B}),
+        )
+        assert isinstance(action, StorageReject)
+
+
+def _make_instance(
+    instance_id: InstanceId,
+    model_id: ModelId,
+    node_id: NodeId,
+) -> MlxRingInstance:
+    shard = get_pipeline_shard_metadata(model_id, device_rank=0)
+    runner_id = RunnerId()
+    return MlxRingInstance(
+        instance_id=instance_id,
+        shard_assignments=ShardAssignments(
+            model_id=model_id,
+            runner_to_shard={runner_id: shard},
+            node_to_runner={node_id: runner_id},
+        ),
+        hosts_by_node={node_id: []},
+        ephemeral_port=0,
+    )
+
+
+class TestGetDownloadRejectedEvents:
+    """Tests for the get_download_rejected_events pure function."""
+
+    def test_deletes_instance_for_rejected_model(self) -> None:
+        node_id = NodeId("node-1")
+        instance_id = InstanceId()
+        instance = _make_instance(instance_id, MODEL_A, node_id)
+        events = get_download_rejected_events(
+            MODEL_A, node_id, {instance_id: instance}, {}
+        )
+        assert len(events) == 1
+        assert isinstance(events[0], InstanceDeleted)
+        assert events[0].instance_id == instance_id
+
+    def test_fails_pending_tasks_before_deleting_instance(self) -> None:
+        node_id = NodeId("node-1")
+        instance_id = InstanceId()
+        instance = _make_instance(instance_id, MODEL_A, node_id)
+        task_id = TaskId()
+        task = LoadModel(
+            task_id=task_id,
+            instance_id=instance_id,
+            task_status=TaskStatus.Pending,
+        )
+        events = get_download_rejected_events(
+            MODEL_A, node_id, {instance_id: instance}, {task_id: task}
+        )
+        assert len(events) == 2
+        assert isinstance(events[0], TaskStatusUpdated)
+        assert events[0].task_status == TaskStatus.Failed
+        assert isinstance(events[1], InstanceDeleted)
+
+    def test_ignores_different_model(self) -> None:
+        node_id = NodeId("node-1")
+        instance_id = InstanceId()
+        instance = _make_instance(instance_id, MODEL_B, node_id)
+        events = get_download_rejected_events(
+            MODEL_A, node_id, {instance_id: instance}, {}
+        )
+        assert events == []
+
+    def test_ignores_different_node(self) -> None:
+        node_id = NodeId("node-1")
+        other_node = NodeId("node-2")
+        instance_id = InstanceId()
+        instance = _make_instance(instance_id, MODEL_A, other_node)
+        events = get_download_rejected_events(
+            MODEL_A, node_id, {instance_id: instance}, {}
+        )
+        assert events == []
+
+    def test_skips_completed_tasks(self) -> None:
+        node_id = NodeId("node-1")
+        instance_id = InstanceId()
+        instance = _make_instance(instance_id, MODEL_A, node_id)
+        task_id = TaskId()
+        task = LoadModel(
+            task_id=task_id,
+            instance_id=instance_id,
+            task_status=TaskStatus.Complete,
+        )
+        events = get_download_rejected_events(
+            MODEL_A, node_id, {instance_id: instance}, {task_id: task}
+        )
+        # Only InstanceDeleted, no TaskStatusUpdated for completed task
+        assert len(events) == 1
+        assert isinstance(events[0], InstanceDeleted)
