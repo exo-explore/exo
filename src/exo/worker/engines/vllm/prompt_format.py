@@ -14,7 +14,7 @@ from exo.worker.runner.bootstrap import logger
 
 def format_vllm_prompt(
     engine: LLMEngine, params: TextGenerationTaskParams
-) -> tuple[str, int]:
+) -> tuple[list[int], str, int]:
     tokenizer = engine.get_tokenizer()
 
     if params.chat_template_messages is not None:
@@ -51,7 +51,7 @@ def format_vllm_prompt(
         if patched_template is not None:
             logger.info("Patched lossy chat template (removed inner_type length guard)")
 
-    result = tokenizer.apply_chat_template(
+    prompt_text: str = tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
@@ -59,17 +59,26 @@ def format_vllm_prompt(
         **({"chat_template": patched_template} if patched_template is not None else {}),
         **extra_kwargs,
     )
-    assert isinstance(result, str)
+    assert isinstance(prompt_text, str)
 
-    if params.tools and schemas_lost_in_prompt(result, params.tools):
+    if params.tools and schemas_lost_in_prompt(prompt_text, params.tools):
         logger.warning("Chat template lost nested tool schemas even after patching")
 
     if partial_assistant_content:
-        result += partial_assistant_content
+        prompt_text += partial_assistant_content
 
-    prompt_token_count = len(tokenizer.encode(result))
+    token_ids: list[int] = tokenizer.apply_chat_template(
+        formatted_messages,
+        tokenize=True,
+        add_generation_prompt=True,
+        tools=params.tools,
+        **({"chat_template": patched_template} if patched_template is not None else {}),
+        **extra_kwargs,
+    )
+    if partial_assistant_content:
+        token_ids += tokenizer.encode(partial_assistant_content, add_special_tokens=False)
 
-    return result, prompt_token_count
+    return token_ids, prompt_text, len(token_ids)
 
 
 def make_vllm_sampling_params(

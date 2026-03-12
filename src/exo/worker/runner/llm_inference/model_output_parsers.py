@@ -105,7 +105,15 @@ def parse_gpt_oss(
         try:
             stream.process(response.token)
         except HarmonyError:
-            logger.error("Encountered critical Harmony Error, returning early")
+            logger.warning(
+                f"HarmonyError on token={response.token}, falling back to raw text passthrough"
+            )
+            yield response
+            for remaining in responses:
+                if remaining is None:
+                    yield None
+                else:
+                    yield remaining
             return
 
         delta = stream.last_content_delta

@@ -101,18 +101,22 @@ class VllmGenerator(InferenceGenerator):
             if self.should_cancel(task.task_id):
                 self._cancelled_tasks.discard(task.task_id)
                 return [(task.task_id, Cancelled())]
-            prompt, prompt_token_count = format_vllm_prompt(
+            token_ids, prompt_text, prompt_token_count = format_vllm_prompt(
                 self.engine, task.task_params
             )
             request_id = str(task.task_id)
             sampling_params = make_vllm_sampling_params(self.engine, task.task_params)
-            self.engine.add_request(request_id, prompt, sampling_params)
+            self.engine.add_request(
+                request_id,
+                {"prompt_token_ids": token_ids},
+                sampling_params,
+            )
 
             queue: GeneratorQueue[GenerationResponse] = GeneratorQueue()
             parsed_gen = apply_vllm_parsers(
                 queue.gen(),
                 self.model_id,
-                prompt,
+                prompt_text,
                 self.tool_parser,
                 task.task_params.tools,
             )

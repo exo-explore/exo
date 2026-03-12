@@ -164,10 +164,11 @@ class Runner:
                     if isinstance(self.current_status, RunnerShutdown):
                         break
         finally:
-            if isinstance(self.generator, Builder):
-                self.generator.shutdown_cleanup()
-            else:
-                self.generator.close()
+            if not isinstance(self.current_status, RunnerShutdown):
+                if isinstance(self.generator, Builder):
+                    self.generator.shutdown_cleanup()
+                else:
+                    self.generator.close()
 
     def handle_first_task(self, task: Task):
         self.send_task_status(task.task_id, TaskStatus.Running)
