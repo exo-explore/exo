@@ -76,8 +76,6 @@
         let
           # Use pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
           pkgsSwift = import inputs.nixpkgs-swift { inherit system; };
-
-          pkgsCuda = import ./nix/cuda-pkgs.nix { nixpkgs = inputs.nixpkgs; inherit system; };
         in
         {
           # Allow unfree for metal-toolchain (needed for Darwin Metal packages)
@@ -129,64 +127,14 @@
                 };
                 default = self'.packages.exo;
               }
-            ) // lib.optionalAttrs (pkgsCuda != null) {
-            # CUDA-compiled PyTorch and vLLM (built from source by nixpkgs, aarch64-linux only)
-            torch-cuda = pkgsCuda.python313Packages.torch;
-            vllm-cuda = pkgsCuda.python313Packages.vllm;
-
-            # Smoke test script for verifying vLLM + CUDA GPU setup
-            vllm-check = pkgs.writeShellApplication {
-              name = "vllm-check";
-              runtimeInputs = [
-                (pkgsCuda.python313.withPackages (ps: [ ps.torch ps.vllm ]))
-              ];
-              # On non-NixOS hosts, NVIDIA driver libraries live in /usr/lib and must be
-              # LD_PRELOAD'd individually (adding the whole dir causes SIGILL from conflicts).
-              # These are: CUDA driver, NVML, and the PTX JIT compiler (for flash attention).
-              # libnvJitLink comes from the nix CUDA toolkit via LD_LIBRARY_PATH.
-              text = ''
-                for dir in /usr/lib/aarch64-linux-gnu /usr/lib/x86_64-linux-gnu /usr/lib; do
-                  if [ -e "$dir/libcuda.so.1" ]; then
-                    NVIDIA_LIBS="$dir/libcuda.so.1"
-                    for lib in libnvidia-ml.so.1 libnvidia-ptxjitcompiler.so.1; do
-                      [ -e "$dir/$lib" ] && NVIDIA_LIBS="$NVIDIA_LIBS:$dir/$lib"
-                    done
-                    export LD_PRELOAD="$NVIDIA_LIBS''${LD_PRELOAD:+:$LD_PRELOAD}"
-                    break
-                  fi
-                done
-                export LD_LIBRARY_PATH="${pkgsCuda.cudaPackages.libnvjitlink}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-                exec python ${inputs.self + /tests/test_vllm_smoke.py}
-              '';
-            };
-
-            # exo with CUDA torch + vLLM — wraps the uv2nix-built package with host driver libs
-            exo-cuda = pkgs.writeShellApplication {
-              name = "exo-cuda";
-              runtimeInputs = [ self'.packages.exo-cuda-unwrapped ];
-              text = ''
-                for dir in /usr/lib/aarch64-linux-gnu /usr/lib/x86_64-linux-gnu /usr/lib; do
-                  if [ -e "$dir/libcuda.so.1" ]; then
-                    NVIDIA_LIBS="$dir/libcuda.so.1"
-                    for lib in libnvidia-ml.so.1 libnvidia-ptxjitcompiler.so.1; do
-                      [ -e "$dir/$lib" ] && NVIDIA_LIBS="$NVIDIA_LIBS:$dir/$lib"
-                    done
-                    export LD_PRELOAD="$NVIDIA_LIBS''${LD_PRELOAD:+:$LD_PRELOAD}"
-                    break
-                  fi
-                done
-                export LD_LIBRARY_PATH="${pkgsCuda.stdenv.cc.cc.lib}/lib:${pkgsCuda.cudaPackages.libnvjitlink}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-                exec exo-cuda "$@"
-              '';
-            };
-          };
+            ) // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
 
           # CUDA development shell with torch + vLLM (aarch64-linux only)
           devShells = lib.optionalAttrs (pkgsCuda != null)
             {
               cuda = pkgs.mkShell {
                 packages = [
-                  (pkgsCuda.python313.withPackages (ps: [
+                  (pkgs.python313.withPackages (ps: [
                     ps.torch
                     ps.vllm
                   ]))

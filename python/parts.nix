@@ -3,7 +3,6 @@
   perSystem =
     { config, self', pkgs, lib, system, ... }:
     let
-      pkgsCuda = import ../nix/cuda-pkgs.nix { nixpkgs = inputs.nixpkgs; inherit system; };
       # Load workspace from uv.lock
       workspace = inputs.uv2nix.lib.workspace.loadWorkspace {
         workspaceRoot = inputs.self;
@@ -100,19 +99,17 @@
           }
         );
 
-      baseOverlays = [
-        inputs.pyproject-build-systems.overlays.default
-        overlay
-        exoOverlay
-        buildSystemsOverlay
-        linuxOverlay
-      ];
-
       pythonSet = (pkgs.callPackage inputs.pyproject-nix.build.packages {
         inherit python;
       }).overrideScope (
-        lib.composeManyExtensions baseOverlays
-      );
+        lib.composeManyExtensions [
+          inputs.pyproject-build-systems.overlays.default
+          overlay
+          exoOverlay
+          buildSystemsOverlay
+          linuxOverlay
+        ]);
+
       # mlx-cpu and mlx-cuda-13 both ship mlx/ site-packages files; keep first.
       # mlx-cpu/mlx-cuda-13 and nvidia-cudnn-cu12/cu13 ship overlapping files.
       venvCollisionPaths = lib.optionals pkgs.stdenv.hostPlatform.isLinux [
@@ -120,34 +117,27 @@
         "lib/python3.13/site-packages/nvidia*"
       ];
 
-      # Exclude bench deps from main env (bench has its own benchVenv)
-      exoDeps = removeAttrs workspace.deps.default [ "exo-bench" ];
-
-      exoVenv = (pythonSet.mkVirtualEnv "exo-env" exoDeps).overrideAttrs {
+      exoVenv = (pythonSet.mkVirtualEnv "exo-env" {
+          exo_pyo3_bindings = [ ];
+          exo = [ ];
+        }).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;
       };
 
       # Virtual environment with dev dependencies for testing
-      testVenv = (pythonSet.mkVirtualEnv "exo-test-env" (
-        exoDeps // {
-          exo = [ "dev" ]; # Include pytest, pytest-asyncio, pytest-env
-        }
-      )).overrideAttrs {
+      testVenv = (pythonSet.mkVirtualEnv "exo-test-env" workspace.deps.default).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;
-      };
-
-      mkPythonScript = name: path: pkgs.writeShellApplication {
-        inherit name;
-        runtimeInputs = [ exoVenv ];
-        runtimeEnv = {
-          EXO_DASHBOARD_DIR = self'.packages.dashboard;
-          EXO_RESOURCES_DIR = inputs.self + /resources;
-        };
-        text = ''exec python ${path} "$@"'';
       };
 
       benchVenv = pythonSet.mkVirtualEnv "exo-bench-env" {
         exo-bench = [ ];
+      };
+
+      exoCudaVenv = (pythonSet.mkVirtualEnv "exo-cuda-env" {
+          exo_pyo3_bindings = [ ];
+          exo = [ "cuda" ];
+      }).overrideAttrs {
+        venvIgnoreCollisions = venvCollisionPaths;
       };
 
       mkBenchScript = name: path: pkgs.writeShellApplication {
@@ -176,37 +166,27 @@
             ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
         '';
 
-      vllmEnv = pkgsCuda.python313.withPackages (ps: [ ps.vllm ]);
-
-      vllmSite = pkgs.runCommand "vllm-site-filtered" { } ''
-        mkdir -p $out
-        for pkg in ${vllmEnv}/${python.sitePackages}/*; do
-          name=$(basename "$pkg")
-          case "$name" in
-            anyio*|pydantic*) ;;
-            *) ln -s "$pkg" "$out/$name" ;;
-          esac
-        done
-      '';
-
-      exoCudaDeps = exoDeps // {
-        mlx-cuda-13 = [ ];
-      };
-
-      exoCudaVenv = (pythonSet.mkVirtualEnv "exo-cuda-env" exoCudaDeps).overrideAttrs {
-        venvIgnoreCollisions = venvCollisionPaths;
-      };
 
       exoCudaPackage = pkgs.runCommand "exo-cuda"
         {
           nativeBuildInputs = [ pkgs.makeWrapper ];
         }
         ''
+          for dir in /usr/lib/aarch64-linux-gnu /usr/lib/x86_64-linux-gnu /usr/lib; do
+            if [ -e "$dir/libcuda.so.1" ]; then
+              NVIDIA_LIBS="$dir/libcuda.so.1"
+              for lib in libnvidia-ml.so.1 libnvidia-ptxjitcompiler.so.1; do
+                [ -e "$dir/$lib" ] && NVIDIA_LIBS="$NVIDIA_LIBS:$dir/$lib"
+              done
+              export LD_PRELOAD="$NVIDIA_LIBS''${LD_PRELOAD:+:$LD_PRELOAD}"
+              break
+            fi
+          done
+          export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.cudaPackages.libnvjitlink}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           mkdir -p $out/bin
           makeWrapper ${exoCudaVenv}/bin/exo $out/bin/exo-cuda \
             --set EXO_DASHBOARD_DIR ${self'.packages.dashboard} \
             --set EXO_RESOURCES_DIR ${inputs.self + /resources} \
-            --prefix PYTHONPATH : "${vllmSite}"
         '';
     in
     {
@@ -216,9 +196,8 @@
           exo = exoPackage;
           # Test environment for running pytest outside of Nix sandbox (needs GPU access)
           exo-test-env = testVenv;
-        } // lib.optionalAttrs (pkgsCuda != null) {
-        exo-cuda-unwrapped = exoCudaPackage;
       } // {
+        exo-cuda-unwrapped = exoCudaPackage;
         exo-bench = mkBenchScript "exo-bench" (inputs.self + /bench/exo_bench.py);
         exo-eval = mkBenchScript "exo-eval" (inputs.self + /bench/exo_eval.py);
         exo-eval-tool-calls = mkBenchScript "exo-eval-tool-calls" (inputs.self + /bench/eval_tool_calls.py);
