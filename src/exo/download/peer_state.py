@@ -1,93 +1,126 @@
-"""Peer state provider for discovering which peers have which models.
+"""Pure functions for discovering which peers have which models.
 
-Reads from the shared State object (populated via gossipsub events) to
-determine which peer nodes have completed or are in the process of
-downloading a given model. Resolves peer IP addresses from the topology.
+These functions are called by the Worker (which owns the State) to compute
+peer availability at command-emit time. The results are embedded in the
+StartDownload command so the download coordinator stays decoupled from
+Worker state.
 """
-
-from dataclasses import dataclass
-from typing import Callable, Literal
 
 from loguru import logger
 
+from exo.shared.types.commands import PeerEndpoint
 from exo.shared.types.common import NodeId
 from exo.shared.types.state import State
-from exo.shared.types.topology import SocketConnection
+from exo.shared.types.topology import RDMAConnection, SocketConnection
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadOngoing,
 )
 
 
-@dataclass(frozen=True)
-class PeerInfo:
-    """A peer that has (or is downloading) a model."""
+def discover_peers_for_model(
+    node_id: NodeId,
+    state: State,
+    model_id_normalized: str,
+    peer_download_port: int,
+) -> list[PeerEndpoint]:
+    """Find peers that have a specific model (complete or in-progress).
 
-    node_id: NodeId
-    ip: str
-    status: Literal["complete", "ongoing"]
+    Called by the Worker when emitting a StartDownload command. Returns
+    peers sorted by priority: RDMA/Thunderbolt connections first, then
+    completed downloads before ongoing ones.
 
+    Args:
+        node_id: This node's ID (excluded from results).
+        state: The global State object (owned by Worker).
+        model_id_normalized: Normalized model ID (e.g. "org--model").
+        peer_download_port: Port where peers run their PeerFileServer.
 
-class PeerStateProvider:
-    """Provides information about which peers have which models.
-
-    Reads from the Worker's shared State to find peers and resolve their
-    network addresses from the topology graph.
+    Returns:
+        List of PeerEndpoint sorted by connection quality and completeness.
     """
+    peers: list[PeerEndpoint] = []
 
-    def __init__(
-        self,
-        node_id: NodeId,
-        state_accessor: Callable[[], State],
-        peer_download_port: int,
-    ) -> None:
-        self.node_id = node_id
-        self._state_accessor = state_accessor
-        self.peer_download_port = peer_download_port
+    for peer_node_id, download_list in state.downloads.items():
+        if peer_node_id == node_id:
+            continue
 
-    def get_peers_for_model(self, model_id: str) -> list[PeerInfo]:
-        """Find peers that have a specific model (complete or in-progress).
-
-        Returns peers sorted by completeness (completed first, then ongoing).
-        Excludes self.
-        """
-        state = self._state_accessor()
-        peers: list[PeerInfo] = []
-
-        # Check download status across all nodes
-        for peer_node_id, download_list in state.downloads.items():
-            if peer_node_id == self.node_id:
+        for dl in download_list:
+            dl_model_id = dl.shard_metadata.model_card.model_id
+            if dl_model_id.normalize() != model_id_normalized:
                 continue
 
-            for dl in download_list:
-                dl_model_id = dl.shard_metadata.model_card.model_id
-                if dl_model_id.normalize() != model_id:
-                    continue
+            if isinstance(dl, DownloadCompleted):
+                status = "complete"
+            elif isinstance(dl, DownloadOngoing):
+                status = "ongoing"
+            else:
+                continue
 
-                if isinstance(dl, DownloadCompleted):
-                    status: Literal["complete", "ongoing"] = "complete"
-                elif isinstance(dl, DownloadOngoing):
-                    status = "ongoing"
-                else:
-                    continue
+            # Resolve IP and connection type from topology
+            endpoint = _resolve_peer_endpoint(
+                node_id, peer_node_id, state, peer_download_port, status
+            )
+            if endpoint:
+                peers.append(endpoint)
 
-                # Resolve IP from topology
-                ip = self._resolve_peer_ip(peer_node_id, state)
+    # Sort by priority:
+    # 1. RDMA/Thunderbolt connections first (lower latency, higher bandwidth)
+    # 2. Completed downloads before ongoing ones
+    peers.sort(
+        key=lambda p: (
+            0 if p.connection_type == "rdma" else 1,
+            0 if p.status == "complete" else 1,
+        )
+    )
+    return peers
+
+
+def _resolve_peer_endpoint(
+    node_id: NodeId,
+    peer_node_id: NodeId,
+    state: State,
+    peer_download_port: int,
+    status: str,
+) -> PeerEndpoint | None:
+    """Resolve a peer's IP address and connection type from the topology."""
+    try:
+        # Check for RDMA connections first (highest priority)
+        for conn in state.topology.out_edges(node_id):
+            if conn.sink != peer_node_id:
+                continue
+            if isinstance(conn.edge, RDMAConnection):
+                # RDMA peer — still need IP from a socket connection
+                ip = _find_socket_ip(node_id, peer_node_id, state)
                 if ip:
-                    peers.append(PeerInfo(node_id=peer_node_id, ip=ip, status=status))
+                    return PeerEndpoint(
+                        node_id=peer_node_id,
+                        ip=ip,
+                        port=peer_download_port,
+                        status=status,
+                        connection_type="rdma",
+                    )
+            elif isinstance(conn.edge, SocketConnection):
+                return PeerEndpoint(
+                    node_id=peer_node_id,
+                    ip=conn.edge.sink_multiaddr.ip_address,
+                    port=peer_download_port,
+                    status=status,
+                    connection_type="socket",
+                )
+    except Exception as e:
+        logger.debug(f"Could not resolve endpoint for peer {peer_node_id}: {e}")
+    return None
 
-        # Sort: completed peers first
-        peers.sort(key=lambda p: 0 if p.status == "complete" else 1)
-        return peers
 
-    def _resolve_peer_ip(self, peer_node_id: NodeId, state: State) -> str | None:
-        """Resolve a peer's IP address from the topology graph."""
-        try:
-            for conn in state.topology.out_edges(self.node_id):
-                if conn.sink == peer_node_id and isinstance(
-                    conn.edge, SocketConnection
-                ):
-                    return conn.edge.sink_multiaddr.ip_address
-        except Exception as e:
-            logger.debug(f"Could not resolve IP for peer {peer_node_id}: {e}")
-        return None
+def _find_socket_ip(
+    node_id: NodeId, peer_node_id: NodeId, state: State
+) -> str | None:
+    """Find a socket connection IP for a peer (used as fallback for RDMA peers)."""
+    try:
+        for conn in state.topology.out_edges(node_id):
+            if conn.sink == peer_node_id and isinstance(conn.edge, SocketConnection):
+                return conn.edge.sink_multiaddr.ip_address
+    except Exception:
+        pass
+    return None

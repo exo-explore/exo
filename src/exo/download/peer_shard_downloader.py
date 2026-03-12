@@ -1,9 +1,12 @@
 """Peer-aware shard downloader that tries LAN peers before HuggingFace.
 
 Wraps an existing ShardDownloader and adds a peer-download step: before
-hitting HuggingFace, check if any peer on the LAN already has the model
-(or is downloading it) and fetch from them instead. Falls back to the
-inner downloader (HF) if peer download fails.
+hitting HuggingFace, try peers provided in the available_peers list.
+Falls back to the inner downloader (HF) if peer download fails.
+
+The peer list is computed by the Worker at command-emit time and passed
+through the StartDownload command, keeping the download coordinator
+decoupled from Worker state.
 """
 
 import asyncio
@@ -28,8 +31,8 @@ from exo.download.peer_download import (
     download_file_from_peer,
     get_peer_file_status,
 )
-from exo.download.peer_state import PeerStateProvider
 from exo.download.shard_downloader import ShardDownloader
+from exo.shared.types.commands import PeerEndpoint
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import RepoFileDownloadProgress
 from exo.shared.types.worker.shards import ShardMetadata
@@ -39,21 +42,26 @@ class PeerAwareShardDownloader(ShardDownloader):
     """ShardDownloader that tries peer download before HuggingFace.
 
     Decorates an inner ShardDownloader (typically ResumableShardDownloader).
-    On ensure_shard(), checks if any cluster peer already has the model
-    and downloads from them over the LAN. Falls back to the inner
-    downloader if no peer has it or the peer transfer fails.
+    On ensure_shard(), if available_peers were provided, tries downloading
+    from them over the LAN first. Falls back to the inner downloader if
+    no peer has it or the transfer fails.
     """
 
-    def __init__(
-        self,
-        inner: ShardDownloader,
-        peer_state_provider: PeerStateProvider,
-    ) -> None:
+    def __init__(self, inner: ShardDownloader) -> None:
         self._inner = inner
-        self._peer_state = peer_state_provider
         self._progress_callbacks: list[
             Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]]
         ] = []
+        # Peers are set per-download by the coordinator before calling ensure_shard
+        self._current_peers: list[PeerEndpoint] = []
+
+    def set_available_peers(self, peers: list[PeerEndpoint]) -> None:
+        """Set the peers to try for the next ensure_shard call.
+
+        Called by DownloadCoordinator before triggering a download, based
+        on the peers embedded in the StartDownload command.
+        """
+        self._current_peers = peers
 
     def on_progress(
         self,
@@ -70,21 +78,21 @@ class PeerAwareShardDownloader(ShardDownloader):
 
         model_id = shard.model_card.model_id
         normalized = model_id.normalize()
+        peers = self._current_peers
+        self._current_peers = []  # Reset after consumption
 
-        # Check if any peer has this model
-        peers = self._peer_state.get_peers_for_model(normalized)
         if not peers:
-            logger.debug(f"No peers have {model_id}, downloading from HuggingFace")
+            logger.debug(f"No peers available for {model_id}, downloading from HuggingFace")
             return await self._inner.ensure_shard(shard, config_only=False)
 
-        # Try each peer (completed peers first)
+        # Try each peer (already sorted by priority: RDMA first, completed first)
         for peer in peers:
             logger.info(
                 f"Attempting peer download of {model_id} from "
-                f"{peer.ip} (status: {peer.status})"
+                f"{peer.ip}:{peer.port} (status: {peer.status}, link: {peer.connection_type})"
             )
             result = await self._try_peer_download(
-                shard, peer.ip, self._peer_state.peer_download_port, normalized
+                shard, peer.ip, peer.port, normalized
             )
             if result is not None:
                 logger.info(
@@ -131,7 +139,6 @@ class PeerAwareShardDownloader(ShardDownloader):
                 skip_internet=False,
             )
         except Exception:
-            # Can't get file list - fall back
             return None
 
         allow_patterns = await resolve_allow_patterns(shard)
@@ -149,11 +156,7 @@ class PeerAwareShardDownloader(ShardDownloader):
             ]
 
         # Check the peer has all (or most) files we need
-        files_on_peer = 0
-        for f in filtered_file_list:
-            if f.path in peer_file_map:
-                files_on_peer += 1
-
+        files_on_peer = sum(1 for f in filtered_file_list if f.path in peer_file_map)
         if files_on_peer == 0:
             logger.debug(f"Peer has no files we need for {model_id_normalized}")
             return None
@@ -165,8 +168,6 @@ class PeerAwareShardDownloader(ShardDownloader):
         failed = False
 
         async def download_one(file_path: str, expected_size: int) -> bool:
-            """Download a single file from peer. Returns True on success."""
-
             def on_file_progress(
                 curr_bytes: int, total_bytes: int, is_renamed: bool
             ) -> None:
@@ -188,7 +189,6 @@ class PeerAwareShardDownloader(ShardDownloader):
                     status="complete" if is_renamed else "in_progress",
                     start_time=all_start_time,
                 )
-                # Fire progress callbacks
                 progress = calculate_repo_progress(
                     shard,
                     shard.model_card.model_id,
@@ -235,9 +235,6 @@ class PeerAwareShardDownloader(ShardDownloader):
             if peer_info and peer_info.safe_bytes > 0:
                 tasks.append(download_one(f.path, f.size))
             else:
-                # Peer doesn't have this file yet - this means incomplete peer
-                # We could still try for the files it has, but for simplicity
-                # fail the whole peer download if any file is missing
                 failed = True
                 break
 
@@ -259,7 +256,6 @@ class PeerAwareShardDownloader(ShardDownloader):
         for cb in self._progress_callbacks:
             await cb(shard, final_progress)
 
-        # Return path (same as download_shard does)
         gguf = next(
             (f for f in filtered_file_list if f.path.endswith(".gguf")), None
         )

@@ -11,7 +11,6 @@ from exo.download.download_utils import (
     download_shard,
 )
 from exo.download.peer_shard_downloader import PeerAwareShardDownloader
-from exo.download.peer_state import PeerStateProvider
 from exo.download.shard_downloader import ShardDownloader
 from exo.shared.models.model_cards import (
     ModelCard,
@@ -29,13 +28,13 @@ from exo.shared.types.worker.shards import (
 def exo_shard_downloader(
     max_parallel_downloads: int = 8,
     offline: bool = False,
-    peer_state_provider: PeerStateProvider | None = None,
+    peer_download_enabled: bool = False,
 ) -> ShardDownloader:
     inner: ShardDownloader = ResumableShardDownloader(
         max_parallel_downloads, offline=offline
     )
-    if peer_state_provider is not None:
-        inner = PeerAwareShardDownloader(inner, peer_state_provider)
+    if peer_download_enabled:
+        inner = PeerAwareShardDownloader(inner)
     return SingletonShardDownloader(inner)
 
 
