@@ -59,7 +59,7 @@ def _patch_check_enough_kv_cache_memory() -> None:
     def noop(*_args: "object", **_kwargs: "object") -> None:
         pass
 
-    kv_cache_utils.check_enough_kv_cache_memory = noop  # type: ignore
+    kv_cache_utils._check_enough_kv_cache_memory = noop  # type: ignore
 
 
 def _patch_initialize_kv_cache_tensors() -> None:

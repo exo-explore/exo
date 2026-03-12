@@ -153,15 +153,21 @@ class Runner:
         self.event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
     def main(self):
-        with self.task_receiver:
-            for task in self.task_receiver:
-                if task.task_id in self.seen:
-                    logger.warning("repeat task - potential error")
-                    continue
-                self.seen.add(task.task_id)
-                self.handle_first_task(task)
-                if isinstance(self.current_status, RunnerShutdown):
-                    break
+        try:
+            with self.task_receiver:
+                for task in self.task_receiver:
+                    if task.task_id in self.seen:
+                        logger.warning("repeat task - potential error")
+                        continue
+                    self.seen.add(task.task_id)
+                    self.handle_first_task(task)
+                    if isinstance(self.current_status, RunnerShutdown):
+                        break
+        finally:
+            if isinstance(self.generator, Builder):
+                self.generator.shutdown_cleanup()
+            else:
+                self.generator.close()
 
     def handle_first_task(self, task: Task):
         self.send_task_status(task.task_id, TaskStatus.Running)

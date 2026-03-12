@@ -466,7 +466,12 @@ class API:
             "8bit",
         )
         skip_mlx = self._vllm_available and is_quantized_mlx
-        skip_vllm = is_mlx_community
+        is_vllm_compatible_mlx = is_mlx_community and model_card.quantization in (
+            "",
+            "bf16",
+            "fp16",
+        )
+        skip_vllm = is_mlx_community and not is_vllm_compatible_mlx
         if not skip_mlx:
             for sharding in (Sharding.Pipeline, Sharding.Tensor):
                 for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):

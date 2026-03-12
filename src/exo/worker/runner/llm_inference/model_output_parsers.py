@@ -62,6 +62,33 @@ def apply_all_parsers(
     return mlx_generator
 
 
+def apply_vllm_parsers(
+    receiver: Generator[GenerationResponse | None],
+    model_id: ModelId,
+    prompt: str,
+    tool_parser: ToolParser | None,
+    tools: list[dict[str, Any]] | None,
+) -> Generator[GenerationResponse | ToolCallResponse | None]:
+    gen = receiver
+    lower = model_id.normalize().lower()
+
+    if "gpt-oss" in lower or "gpt_oss" in lower:
+        return parse_gpt_oss(gen)
+
+    if "deepseek" in lower:
+        gen = parse_thinking_models(
+            gen, "<think>", "</think>", starts_in_thinking=prompt.rstrip().endswith("<think>")
+        )
+        return parse_deepseek_v32(gen)
+
+    gen = parse_thinking_models(
+        gen, "<think>", "</think>", starts_in_thinking=prompt.rstrip().endswith("<think>")
+    )
+    if tool_parser:
+        gen = parse_tool_calls(gen, tool_parser, tools)
+    return gen
+
+
 def parse_gpt_oss(
     responses: Generator[GenerationResponse | None],
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
