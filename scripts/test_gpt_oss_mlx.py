@@ -8,15 +8,11 @@ Replicates exo's exact flow:
   mlx_lm.stream_generate -> GenerationResponse -> parse_gpt_oss -> output
 """
 import json
-import sys
-from pathlib import Path
 
 import mlx.core as mx
 from mlx_lm import load
 from mlx_lm.generate import stream_generate
 from mlx_lm.sample_utils import make_sampler
-
-from exo.shared.constants import EXO_MODELS_DIR
 from openai_harmony import (
     HarmonyEncodingName,
     HarmonyError,
@@ -24,6 +20,8 @@ from openai_harmony import (
     StreamableParser,
     load_harmony_encoding,
 )
+
+from exo.shared.constants import EXO_MODELS_DIR
 
 MODEL_PATH = str(EXO_MODELS_DIR / "mlx-community--gpt-oss-20b-MXFP4-Q8")
 
@@ -158,7 +156,7 @@ def run_generation(model, tokenizer, messages: list[dict], label: str):
 
     print(f"\n--- RAW TOKEN IDS ({len(all_tokens)}) ---")
     print(all_tokens)
-    print(f"\n--- FINAL TEXT ---")
+    print("\n--- FINAL TEXT ---")
     text_parts = [y for y in all_yielded if y and not y.startswith("TOOL_") and not y.endswith("]") or "[THINK]" in y]
     final_text = ""
     for y in all_yielded:
@@ -167,9 +165,7 @@ def run_generation(model, tokenizer, messages: list[dict], label: str):
         if y.startswith("TOOL_"):
             continue
         clean = y.replace(" [FINISH=stop]", "").replace(" [FINISH=length]", "")
-        if clean.startswith("'") and clean.endswith("'"):
-            final_text += clean[1:-1]
-        elif clean.startswith('"') and clean.endswith('"'):
+        if clean.startswith("'") and clean.endswith("'") or clean.startswith('"') and clean.endswith('"'):
             final_text += clean[1:-1]
     print(repr(final_text))
 

@@ -9,6 +9,7 @@ GROWTH_HEADROOM_BYTES = 512 * 1024 * 1024
 MIN_GROWTH_BLOCKS = 16
 
 _patched = False
+_exo_prefix_cache_ref: list["object | None"] = [None]
 
 
 def patch_vllm() -> None:
@@ -23,6 +24,9 @@ def patch_vllm() -> None:
     _patch_initialize_from_config()
     _patch_kv_cache_manager_init()
     _patch_allocate_slots()
+    _patch_get_computed_blocks()
+    _patch_moe_sum()
+    _patch_marlin_w2_thread_config()
     logger.info("vLLM growable KV cache patch applied")
 
 
@@ -132,14 +136,12 @@ def _patch_allocate_slots() -> None:
         **kwargs: "object",
     ) -> "object":
         result = original(self, request, num_new_tokens, *args, **kwargs)
-        if result is not None:
-            return result
-
-        if _try_grow_cache(self):
-            return original(self, request, num_new_tokens, *args, **kwargs)
-        return None
+        if result is None and _try_grow_cache(self):
+            result = original(self, request, num_new_tokens, *args, **kwargs)
+        return result
 
     KVCacheManager.allocate_slots = patched  # type: ignore
+
 
 
 def _try_grow_cache(kv_cache_manager: "object") -> bool:
@@ -262,3 +264,118 @@ def _grow_block_pool(
 
     block_pool.free_block_queue.append_n(new_blocks)  # type: ignore
     block_pool.num_gpu_blocks = new_num_blocks  # type: ignore
+
+
+def _patch_moe_sum() -> None:
+    import vllm._custom_ops as ops  # type: ignore[reportMissingImports]
+
+    def moe_sum_f32(x: "torch.Tensor", output: "torch.Tensor") -> None:
+        output[:] = x.to(torch.float32).sum(dim=1).to(output.dtype)  # type: ignore
+
+    ops.moe_sum = moe_sum_f32  # type: ignore
+
+
+def _patch_marlin_w2_thread_config() -> None:
+    try:
+        import vllm._custom_ops as ops  # type: ignore[reportMissingImports]
+    except ImportError:
+        return
+
+    original_gemm = ops.moe_wna16_marlin_gemm
+
+    def patched_gemm(*args: "object", **kwargs: "object") -> "object":
+        kwargs["thread_k"] = 64
+        kwargs["thread_n"] = 128
+        return original_gemm(*args, **kwargs)
+
+    ops.moe_wna16_marlin_gemm = patched_gemm  # type: ignore
+
+
+def _patch_get_computed_blocks() -> None:
+    from vllm.v1.core.kv_cache_manager import KVCacheBlocks, KVCacheManager
+    from vllm.v1.core.kv_cache_utils import KVCacheBlock
+    from vllm.v1.request import Request
+
+    original = KVCacheManager.get_computed_blocks
+
+    def patched(
+        self: KVCacheManager, request: Request,
+    ) -> tuple[KVCacheBlocks, int]:
+        prefix_cache = _exo_prefix_cache_ref[0]
+        if prefix_cache is None or request.prompt_token_ids is None:
+            return original(self, request)
+
+        from exo.worker.engines.kv_cache import (
+            TorchKVCache as _TorchKVCache,  # noqa: F811
+        )
+
+        try:
+            torch_cache, num_matched, _ = prefix_cache.lookup(list(request.prompt_token_ids))  # type: ignore[reportUnknownMemberType]
+        except Exception:
+            return original(self, request)
+
+        if torch_cache is None or not isinstance(torch_cache, _TorchKVCache) or num_matched == 0:
+            return original(self, request)
+
+        from vllm.utils.math_utils import cdiv  # type: ignore[reportMissingImports]
+
+        from exo.worker.engines.vllm.vllm_generator import _build_layer_groups
+
+        num_groups = len(self.kv_cache_config.kv_cache_groups)
+        null_block = self.block_pool.null_block
+        save_offsets = torch_cache.token_offset_per_group or [0] * num_groups
+
+        for gi in range(num_groups):
+            save_off = save_offsets[gi] if gi < len(save_offsets) else 0
+            if save_off > 0:
+                spec = self.kv_cache_config.kv_cache_groups[gi].kv_cache_spec  # type: ignore
+                window = getattr(spec, "sliding_window", 0) or 0
+                if window > 0 and num_matched < save_off + window:
+                    return original(self, request)
+
+        real_block_counts: list[int] = []
+        skipped_block_counts: list[int] = []
+        total_needed = 0
+        for gi in range(num_groups):
+            mgr = self.coordinator.single_type_managers[gi]  # type: ignore
+            block_size: int = self.kv_cache_config.kv_cache_groups[gi].kv_cache_spec.block_size  # type: ignore
+            num_skipped: int = mgr.get_num_skipped_tokens(num_matched)  # type: ignore
+            num_skipped_blocks = num_skipped // block_size
+            num_real = cdiv(num_matched, block_size) - num_skipped_blocks
+            real_block_counts.append(num_real)
+            skipped_block_counts.append(num_skipped_blocks)
+            total_needed += num_real
+
+        if self.block_pool.get_num_free_blocks() < total_needed:
+            return original(self, request)
+
+        blocks_per_group: list[list[KVCacheBlock]] = []
+        token_offset_per_group: list[int] = []
+        for gi in range(num_groups):
+            mgr = self.coordinator.single_type_managers[gi]  # type: ignore
+            block_size = self.kv_cache_config.kv_cache_groups[gi].kv_cache_spec.block_size  # type: ignore
+            real_blocks: list[KVCacheBlock] = self.block_pool.get_new_blocks(real_block_counts[gi])  # type: ignore
+            blocks_per_group.append(real_blocks)
+
+            full_block_list = [null_block] * skipped_block_counts[gi] + list(real_blocks)
+            req_blocks = mgr.req_to_blocks[request.request_id]  # type: ignore
+            req_blocks.extend(full_block_list)  # type: ignore
+
+            token_offset_per_group.append(skipped_block_counts[gi] * block_size)
+
+        block_ids_per_group = [[b.block_id for b in grp] for grp in blocks_per_group]
+        layer_to_group = _build_layer_groups(self.kv_cache_config)
+        model_runner = self._growable_model_runner  # type: ignore[reportAttributeAccessIssue]
+        if model_runner is not None:
+            torch_cache.write_to_vllm_blocks(  # type: ignore
+                model_runner.kv_caches, block_ids_per_group, layer_to_group,  # type: ignore
+                token_offset_per_group,
+            )
+
+        total_blocks = sum(len(g) for g in blocks_per_group)
+        logger.info(f"Prefix cache hit: {num_matched} tokens, {total_blocks} blocks ({num_groups} groups)")
+        return self.empty_kv_cache_blocks, num_matched
+
+    KVCacheManager.get_computed_blocks = patched  # type: ignore[reportAttributeAccessIssue]
+
+

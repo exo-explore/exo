@@ -500,7 +500,7 @@ class VllmBuilder(Builder):
     ) -> None:
         from exo.worker.engines.vllm.vllm_generator import load_vllm_engine
 
-        self._engine, self._tool_parser = load_vllm_engine(
+        self._engine, self._tool_parser, self._prefix_cache = load_vllm_engine(
             model_path=self.model_path,
             model_id=self.model_id,
             trust_remote_code=self.trust_remote_code,
@@ -515,6 +515,7 @@ class VllmBuilder(Builder):
             model_id=self.model_id,
             tool_parser=self._tool_parser,
             cancel_receiver=self.cancel_receiver,
+            prefix_cache=self._prefix_cache,
         )
 
     def shutdown_cleanup(self) -> None:

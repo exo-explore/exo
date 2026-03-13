@@ -12,11 +12,6 @@ import sys
 
 os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
 
-from vllm.engine.arg_utils import EngineArgs
-from vllm.sampling_params import SamplingParams
-from vllm.v1.engine.llm_engine import LLMEngine
-
-from exo.shared.constants import EXO_MODELS_DIR
 from openai_harmony import (
     HarmonyEncodingName,
     HarmonyError,
@@ -24,6 +19,11 @@ from openai_harmony import (
     StreamableParser,
     load_harmony_encoding,
 )
+from vllm.engine.arg_utils import EngineArgs
+from vllm.sampling_params import SamplingParams
+from vllm.v1.engine.llm_engine import LLMEngine
+
+from exo.shared.constants import EXO_MODELS_DIR
 
 MODEL_ID = str(EXO_MODELS_DIR / "openai--gpt-oss-20b")
 
@@ -81,14 +81,14 @@ def run_generation(engine, messages: list[dict], label: str, request_id: str):
     print(f"TOKENS FROM encode() ({len(tokens_from_encode)}): {tokens_from_encode}")
     print(f"TOKENS FROM template  ({len(tokens_from_template)}): {tokens_from_template}")
     if tokens_from_encode != tokens_from_template:
-        print(f"  !! MISMATCH! Diffs:")
+        print("  !! MISMATCH! Diffs:")
         for i, (a, b) in enumerate(zip(tokens_from_encode, tokens_from_template)):
             if a != b:
                 print(f"    pos {i}: encode={a} ({tokenizer.decode([a])!r}) vs template={b} ({tokenizer.decode([b])!r})")
         if len(tokens_from_encode) != len(tokens_from_template):
             print(f"    length diff: encode={len(tokens_from_encode)} vs template={len(tokens_from_template)}")
     else:
-        print(f"  (tokens match)")
+        print("  (tokens match)")
 
     prompt_tokens = tokens_from_template
 
@@ -192,7 +192,7 @@ def run_generation(engine, messages: list[dict], label: str, request_id: str):
 
     print(f"\n--- RAW TOKEN IDS ({len(all_tokens)}) ---")
     print(all_tokens)
-    print(f"\n--- FINAL TEXT ---")
+    print("\n--- FINAL TEXT ---")
     final_text = ""
     for y in all_yielded:
         if y.startswith("[THINK] "):
@@ -200,9 +200,7 @@ def run_generation(engine, messages: list[dict], label: str, request_id: str):
         if y.startswith("TOOL_"):
             continue
         clean = y.replace(" [FINISH=stop]", "").replace(" [FINISH=length]", "")
-        if clean.startswith("'") and clean.endswith("'"):
-            final_text += clean[1:-1]
-        elif clean.startswith('"') and clean.endswith('"'):
+        if clean.startswith("'") and clean.endswith("'") or clean.startswith('"') and clean.endswith('"'):
             final_text += clean[1:-1]
     print(repr(final_text))
 

@@ -111,26 +111,12 @@ def parse_gpt_oss(
     current_tool_name: str | None = None
     tool_arg_parts: list[str] = []
 
-    _IDLE, _EXPECT_NAME, _EXPECT_MSG = 0, 1, 2
-    header_state = _IDLE
-
     for response in responses:
         if response is None:
             yield None
             continue
 
         token_id = response.token
-
-        if header_state == _EXPECT_MSG and token_id != _GPT_OSS_MESSAGE_TOKEN:
-            stream.process(_GPT_OSS_MESSAGE_TOKEN)
-            header_state = _IDLE
-        elif header_state == _EXPECT_MSG:
-            header_state = _IDLE
-        elif header_state == _EXPECT_NAME:
-            header_state = _EXPECT_MSG
-
-        if token_id == _GPT_OSS_CHANNEL_TOKEN:
-            header_state = _EXPECT_NAME
 
         try:
             stream.process(token_id)
