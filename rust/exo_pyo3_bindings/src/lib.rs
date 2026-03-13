@@ -14,11 +14,21 @@ use pyo3::prelude::PyModule;
 use pyo3::types::PyModuleMethods;
 use pyo3::{Bound, PyResult, pyclass, pymodule};
 use pyo3_stub_gen::define_stub_info_gatherer;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tracing::field::{Field, Visit};
+use tracing::{Event, Level, Subscriber};
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::layer::Context;
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{Layer, registry};
 
 /// Namespace for all the constants used by this crate.
 pub(crate) mod r#const {
     pub const MPSC_CHANNEL_SIZE: usize = 1024;
 }
+
+static MDNS_FAILURE_HINT_LOGGED: AtomicBool = AtomicBool::new(false);
 
 /// Namespace for crate-wide extension traits/methods
 pub(crate) mod ext {
@@ -151,10 +161,85 @@ pub(crate) mod ext {
 /// A Python module implemented in Rust. The name of this function must match
 /// the `lib.name` setting in the `Cargo.toml`, else Python will not be able to
 /// import the module.
+#[derive(Default)]
+struct MdnsEventVisitor {
+    address: Option<String>,
+    message: Option<String>,
+}
+
+impl Visit for MdnsEventVisitor {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        match field.name() {
+            "address" => self.address = Some(value.to_string()),
+            "message" => self.message = Some(value.to_string()),
+            _ => {}
+        }
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        match field.name() {
+            "address" => self.address = Some(format!("{value:?}")),
+            "message" => self.message = Some(format!("{value:?}")),
+            _ => {}
+        }
+    }
+}
+
+struct MdnsFailureHintLayer;
+
+impl<S> Layer<S> for MdnsFailureHintLayer
+where
+    S: Subscriber,
+{
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        let metadata = event.metadata();
+        if metadata.level() != &Level::ERROR
+            || metadata.target() != "libp2p_mdns::behaviour::iface"
+        {
+            return;
+        }
+
+        let mut visitor = MdnsEventVisitor::default();
+        event.record(&mut visitor);
+
+        let Some(message) = visitor.message else {
+            return;
+        };
+        let message = message.trim_matches('"');
+        if !message.starts_with("error sending packet on iface address")
+            || MDNS_FAILURE_HINT_LOGGED.swap(true, Ordering::Relaxed)
+        {
+            return;
+        }
+
+        let address_detail = visitor
+            .address
+            .map(|address| format!(" address={}.", address.trim_matches('"')))
+            .unwrap_or_default();
+        log::warn!(
+            "libp2p mDNS multicast send failed.{address_detail} Peer auto-discovery may not work in this process context. If peers do not form a cluster, relaunch exo from a fresh shell/session (for example outside an existing tmux server)."
+        );
+    }
+}
+fn install_tracing_subscriber() {
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::default().add_directive(LevelFilter::INFO.into()));
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .compact()
+        .with_target(true)
+        .with_ansi(false)
+        .with_writer(std::io::stderr)
+        .with_filter(env_filter);
+    let _ = registry()
+        .with(fmt_layer)
+        .with(MdnsFailureHintLayer.with_filter(LevelFilter::ERROR))
+        .try_init();
+}
 #[pymodule(name = "exo_pyo3_bindings")]
 fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // install logger
     pyo3_log::init();
+    install_tracing_subscriber();
     let mut builder = tokio::runtime::Builder::new_multi_thread();
     builder.enable_all();
     pyo3_async_runtimes::tokio::init(builder);
