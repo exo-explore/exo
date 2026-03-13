@@ -1,5 +1,6 @@
+pub use babel::{babel, handle_listener};
 pub use error::{BabbleError, Result};
-pub use if_watcher::watch;
+pub use if_watcher::{PREFIX, watch};
 pub mod error {
     use std::io;
 
@@ -125,13 +126,9 @@ pub mod if_watcher {
     }
 
     #[tracing::instrument(skip(send))]
-    pub async fn watch(send: mpsc::Sender<Babble>) -> Result<()> {
+    pub async fn watch(my_range: Ipv6Net, send: mpsc::Sender<Babble>) -> Result<()> {
+        assert!(PREFIX.contains(&my_range));
         let mut ready_ifaces = HashMap::new();
-        let ip_node_id = u128::from(rand::random::<u64>()) << 16;
-        let my_range = Ipv6Net::new_assert(
-            Ipv6Addr::from_bits(PREFIX.addr().to_bits() | ip_node_id),
-            112,
-        );
         // 0 is reserved for the first loopback address
         let mut iface_num: u16 = 1;
 
@@ -139,7 +136,7 @@ pub mod if_watcher {
         let mon = netwatch::netmon::Monitor::new()
             .await
             .map_err(|_| BabbleError::Unspecified)?;
-        {
+        if false {
             let temp = mon.interface_state();
             let initial = &temp.peek().interfaces;
             for interface in ["lo", "lo0"] {
@@ -239,6 +236,7 @@ pub mod babel {
     #[cfg(target_os = "linux")]
     const PRIVATE_DIR: &str = "/run/babbler/private";
 
+    use ipnet::Ipv6Net;
     use std::fs::Permissions;
     use std::io;
     use std::os::unix::fs::PermissionsExt;
@@ -251,7 +249,6 @@ pub mod babel {
     use tokio::process::Command;
     use tokio::sync::{broadcast, mpsc};
 
-    use crate::if_watcher::PREFIX;
     use crate::{BabbleError, Result};
 
     #[derive(Debug)]
@@ -274,7 +271,7 @@ pub mod babel {
     }
     impl BabeldProcess {
         #[tracing::instrument]
-        async fn spawn(iface: String) -> Result<Self> {
+        async fn spawn(my_range: Ipv6Net, iface: String) -> Result<Self> {
             tokio::fs::create_dir_all(PRIVATE_DIR).await?;
             tokio::fs::set_permissions(PRIVATE_DIR, Permissions::from_mode(0o0600)).await?;
             tracing::info!("spawning babeld socket in {PRIVATE_SOCK_PATH}");
@@ -284,7 +281,7 @@ pub mod babel {
                 .arg("-I")
                 .arg(format!("{PRIVATE_DIR}/babeld.pid"))
                 .arg("-C")
-                .arg(format!("redistribute local ip {PREFIX}"))
+                .arg(format!("redistribute local ip {my_range}"))
                 .arg("-C")
                 .arg("redistribute local deny\n")
                 .arg(iface)
@@ -445,6 +442,7 @@ pub mod babel {
 
     #[tracing::instrument(skip(send, recv))]
     pub async fn babel(
+        my_range: Ipv6Net,
         mut recv: mpsc::Receiver<Babble>,
         send: broadcast::Sender<String>,
     ) -> Result<()> {
@@ -460,7 +458,7 @@ pub mod babel {
             }
         };
 
-        let babel = BabeldProcess::spawn(iface).await?;
+        let babel = BabeldProcess::spawn(my_range, iface).await?;
         let res1 = babel.supervise(recv, send).await;
         let res2 = babel.shutdown().await;
         res1.and(res2)

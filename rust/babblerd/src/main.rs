@@ -1,7 +1,8 @@
-use std::{fs::Permissions, io, os::unix::fs::PermissionsExt};
+use std::{fs::Permissions, io, net::Ipv6Addr, os::unix::fs::PermissionsExt};
 
 use babblerd::babel::handle_listener;
 use color_eyre::eyre::{WrapErr, eyre};
+use ipnet::Ipv6Net;
 use tokio::{
     net::UnixListener,
     signal,
@@ -85,8 +86,13 @@ async fn inner_main() -> color_eyre::Result<()> {
                         tracing::info!("starting babeld");
                         let (br_send, br_recv) = broadcast::channel(1024);
                         let (mp_send, mp_recv) = mpsc::channel(32);
-                        let babel = tokio::spawn(babblerd::babel::babel(mp_recv, br_send));
-                        let watcher = tokio::spawn(babblerd::if_watcher::watch(mp_send));
+                        let ip_node_id = u128::from(rand::random::<u64>()) << 16;
+                        let my_range = Ipv6Net::new_assert(
+                            Ipv6Addr::from_bits(babblerd::PREFIX.addr().to_bits() | ip_node_id),
+                            112,
+                        );
+                        let babel = tokio::spawn(babblerd::babel(my_range, mp_recv, br_send));
+                        let watcher = tokio::spawn(babblerd::watch(my_range, mp_send));
                         let mut listeners = JoinSet::new();
                         listeners.spawn(handle_listener(sock, br_recv.resubscribe()));
                         State::Active { recv: br_recv, babel, watcher, listeners }
