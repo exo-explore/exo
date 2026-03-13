@@ -1,10 +1,16 @@
 class KVCacheBlock:
+    block_id: int
+    ref_cnt: int
     def __init__(self, block_id: int) -> None: ...
 
 class FreeKVCacheBlockQueue:
     def append_n(self, blocks: list[KVCacheBlock]) -> None: ...
+    def popleft_n(self, n: int) -> list[KVCacheBlock]: ...
 
 class BlockPool:
     blocks: list[KVCacheBlock]
     free_block_queue: FreeKVCacheBlockQueue
     num_gpu_blocks: int
+    enable_caching: bool
+    def get_num_free_blocks(self) -> int: ...
+    def get_new_blocks(self, num_blocks: int) -> list[KVCacheBlock]: ...

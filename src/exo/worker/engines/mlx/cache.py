@@ -208,6 +208,48 @@ class KVPrefixCache:
 
         return prompt_cache, remaining, best_index
 
+    def lookup(self, prompt_token_ids: list[int]) -> tuple["TorchKVCache | None", int, int | None]:
+        """Prefix cache lookup returning TorchKVCache directly. For vLLM restore path."""
+        from exo.worker.engines.kv_cache import TorchKVCache as _TKV
+
+        prompt_mx = mx.array(prompt_token_ids)
+        max_length = len(prompt_token_ids)
+        best_index: int | None = None
+        best_length = 0
+
+        for i, cached_prompt in enumerate(self.prompts):
+            length = get_prefix_length(prompt_mx, cached_prompt)
+            if length >= max_length - 1:
+                best_index, best_length = i, length
+                break
+            if length > best_length:
+                best_index, best_length = i, length
+
+        if best_index is None or best_length == 0:
+            return None, 0, None
+
+        best_length = min(best_length, max_length - 1)
+
+        self._access_counter += 1
+        self._last_used[best_index] = self._access_counter
+
+        cached = self.caches[best_index]
+        if isinstance(cached, _TKV):
+            return cached.trim_to(best_length), best_length, best_index
+
+        torch_cache = _TKV.from_mlx_cache(cached)
+        return torch_cache.trim_to(best_length), best_length, best_index
+
+    def add_from_torch(self, prompt_token_ids: list[int], cache: "TorchKVCache") -> None:
+        """Store a TorchKVCache directly. For vLLM save path — no MLX conversion."""
+        self._evict_if_needed()
+        self.prompts.append(mx.array(prompt_token_ids))
+        self.caches.append(cache.detach_cpu())  # type: ignore[reportArgumentType]
+        self._snapshots.append(None)
+        self._access_counter += 1
+        self._last_used.append(self._access_counter)
+        logger.info(f"KV cache added (torch): {len(prompt_token_ids)} tokens")
+
     def _evict_if_needed(self):
         """Evict least recently used entries while memory usage is high."""
         if len(self.caches) == 0:

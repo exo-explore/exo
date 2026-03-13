@@ -12,10 +12,13 @@ from mlx_lm.models.cache import (
     RotatingKVCache,
 )
 
+from exo.worker.engines.kv_cache import TorchKVCache
+
 # This list contains one cache entry per transformer layer
-KVCacheType = Sequence[
-    KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList
-]
+KVCacheType = (
+    Sequence[KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList]
+    | TorchKVCache
+)
 
 
 # Model is a wrapper function to fix the fact that mlx is not strongly typed in the same way that EXO is.

@@ -1,6 +1,5 @@
 import gc
 import json
-import os
 import re
 import sys
 import time
@@ -9,7 +8,6 @@ from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
 
 import torch
 from vllm.engine.arg_utils import EngineArgs
@@ -27,7 +25,13 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import CANCEL_ALL_TASKS, TaskId, TextGeneration
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.utils.channels import MpReceiver
-from exo.worker.engines.vllm.growable_cache import patch_vllm
+from exo.worker.engines.kv_cache import TorchKVCache
+from exo.worker.engines.mlx.cache import KVPrefixCache
+from exo.worker.engines.vllm.growable_cache import (
+    _exo_prefix_cache_ref,
+    _growable_model_runner_ref,
+    patch_vllm,
+)
 from exo.worker.engines.vllm.prompt_format import (
     format_vllm_prompt,
     make_vllm_sampling_params,
@@ -47,8 +51,10 @@ class _ActiveRequest:
     task: TextGeneration
     request_id: str
     prompt_token_count: int
+    prompt_token_ids: list[int]
     queue: GeneratorQueue[GenerationResponse]
     parsed_gen: Generator[GenerationResponse | ToolCallResponse | None]
+    prefill_done: bool = False
     prev_text: str = ""
     prev_token_count: int = 0
     start_time: float = field(default_factory=time.perf_counter)
@@ -61,6 +67,7 @@ class VllmGenerator(InferenceGenerator):
     model_id: ModelId
     tool_parser: ToolParser | None
     cancel_receiver: MpReceiver[TaskId]
+    prefix_cache: KVPrefixCache
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _pending: deque[TextGeneration] = field(default_factory=deque, init=False)
@@ -136,6 +143,7 @@ class VllmGenerator(InferenceGenerator):
                 task=task,
                 request_id=request_id,
                 prompt_token_count=prompt_token_count,
+                prompt_token_ids=token_ids,
                 queue=queue,
                 parsed_gen=parsed_gen,
             )
@@ -151,6 +159,27 @@ class VllmGenerator(InferenceGenerator):
             self._active = None
             return [(active.task.task_id, Finished())]
 
+        # --- Prefill phase: step engine until first token arrives ---
+        if not active.prefill_done:
+            while self.engine.has_unfinished_requests():
+                outputs = self.engine.step()
+                for output in outputs:
+                    if output.request_id != active.request_id:
+                        continue
+                    completion = output.outputs[0]
+                    if len(completion.token_ids) > 0:
+                        active.first_token_time = time.perf_counter()
+                        active.prefill_done = True
+                        self._save_prefix_cache(active)
+                        break
+                if active.prefill_done:
+                    break
+            if not active.prefill_done:
+                self._active = None
+                return [(active.task.task_id, Finished())]
+            return []
+
+        # --- Decode phase: one step at a time, yield tokens ---
         outputs = self.engine.step()
         finished = False
         results: list[
@@ -172,8 +201,6 @@ class VllmGenerator(InferenceGenerator):
 
             active.prev_text = completion.text
             active.prev_token_count = new_token_count
-            if active.first_token_time is None and new_text:
-                active.first_token_time = time.perf_counter()
 
             finish_usage: Usage | None = None
             finish_stats: GenerationStats | None = None
@@ -238,6 +265,49 @@ class VllmGenerator(InferenceGenerator):
             self._active = None
 
         return results
+
+    def _get_coordinator(self) -> object | None:
+        if not hasattr(self, "_coordinator_cached"):
+            try:
+                engine_core = self.engine.engine_core.engine_core  # type: ignore
+                self._coordinator_cached: object | None = engine_core.scheduler.kv_cache_manager.coordinator  # type: ignore
+            except Exception:
+                self._coordinator_cached = None
+        return self._coordinator_cached
+
+    def _save_prefix_cache(self, active: _ActiveRequest) -> None:
+        try:
+            coordinator = self._get_coordinator()
+            model_runner = _growable_model_runner_ref[0]
+            if coordinator is None or model_runner is None:
+                return
+
+            internal_id: str | None = None
+            for mgr in coordinator.single_type_managers:  # type: ignore
+                for key in mgr.req_to_blocks:  # type: ignore
+                    if str(key).startswith(active.request_id):  # type: ignore
+                        internal_id = str(key)  # type: ignore
+                        break
+                if internal_id:
+                    break
+            if internal_id is None:
+                return
+
+            block_ids: list[int] = []
+            for mgr in coordinator.single_type_managers:  # type: ignore
+                blocks = mgr.req_to_blocks.get(internal_id)  # type: ignore
+                if blocks:
+                    block_ids = [b.block_id for b in blocks]  # type: ignore
+                    break
+            if not block_ids:
+                return
+
+            torch_cache = TorchKVCache.from_vllm_cache(
+                model_runner.kv_caches, block_ids, active.prompt_token_count,  # type: ignore
+            )
+            self.prefix_cache.add_from_torch(active.prompt_token_ids, torch_cache)
+        except Exception:
+            logger.opt(exception=True).warning("Failed to save prefix cache")
 
     def close(self) -> None:
         del self.engine
@@ -329,10 +399,13 @@ def load_vllm_engine(
     model_id: ModelId,
     trust_remote_code: bool,
     on_layer_loaded: Callable[[int, int], None] | None = None,
-) -> tuple[LLMEngine, ToolParser | None]:
+) -> tuple[LLMEngine, ToolParser | None, KVPrefixCache]:
     global _weight_loading_callback
     patch_vllm()
     _patch_weight_loading_progress()
+
+    prefix_cache = KVPrefixCache(group=None)
+    _exo_prefix_cache_ref[0] = prefix_cache
 
     engine_args = EngineArgs(
         model=model_path,
@@ -341,6 +414,7 @@ def load_vllm_engine(
         trust_remote_code=trust_remote_code,
         load_format="fastsafetensors",
         enable_prefix_caching=False,
+        disable_hybrid_kv_cache_manager=True,
         disable_log_stats=True,
     )
 
@@ -362,4 +436,4 @@ def load_vllm_engine(
 
     logger.info(f"vLLM engine loaded for {model_id}")
 
-    return engine, tool_parser
+    return engine, tool_parser, prefix_cache

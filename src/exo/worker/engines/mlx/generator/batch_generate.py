@@ -58,6 +58,8 @@ class _EngineTask:
     matched_index: int | None
     cache_snapshots: list[CacheSnapshot] | None
     detokenizer: StreamingDetokenizer
+    prefill_tps: float = 0.0
+    prompt_token_count: int = 0
     on_generation_token: Callable[[], None] | None = None
     generated_text_parts: list[str] = field(default_factory=list)
     potential_stop_sequence_text: str = ""
@@ -139,7 +141,7 @@ class ExoBatchGenerator:
             top_k=task_params.top_k if task_params.top_k is not None else 0,
         )
 
-        _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
+        prefill_tps, prefill_tokens, cache_snapshots = prefill(
             self.model,
             self.tokenizer,
             sampler,
@@ -206,6 +208,8 @@ class ExoBatchGenerator:
             prefix_hit_length=prefix_hit_length,
             matched_index=matched_index,
             cache_snapshots=cache_snapshots or None,
+            prefill_tps=prefill_tps,
+            prompt_token_count=prefill_tokens,
             detokenizer=self.tokenizer.detokenizer,
             on_generation_token=on_generation_token,
             generation_start_time=time.perf_counter(),
@@ -291,14 +295,8 @@ class ExoBatchGenerator:
                     if generation_elapsed > 0
                     else 0.0
                 )
-                try:
-                    mlx_stats = self._exo_gen.stats()
-                except ZeroDivisionError:
-                    mlx_stats = None
                 stats = GenerationStats(
-                    prompt_tps=float(mlx_stats.prompt_tps)
-                    if mlx_stats is not None and mlx_stats.prompt_time > 0
-                    else 0.0,
+                    prompt_tps=state.prefill_tps,
                     generation_tps=float(generation_tps),
                     prompt_tokens=len(state.all_prompt_tokens),
                     generation_tokens=state.completion_tokens,

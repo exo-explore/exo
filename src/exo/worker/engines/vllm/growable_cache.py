@@ -9,6 +9,7 @@ GROWTH_HEADROOM_BYTES = 512 * 1024 * 1024
 MIN_GROWTH_BLOCKS = 16
 
 _patched = False
+_exo_prefix_cache_ref: list["object | None"] = [None]
 
 
 def patch_vllm() -> None:
@@ -23,6 +24,8 @@ def patch_vllm() -> None:
     _patch_initialize_from_config()
     _patch_kv_cache_manager_init()
     _patch_allocate_slots()
+    _patch_get_computed_blocks()
+    _patch_allocate_new_computed_blocks()
     logger.info("vLLM growable KV cache patch applied")
 
 
@@ -132,14 +135,35 @@ def _patch_allocate_slots() -> None:
         **kwargs: "object",
     ) -> "object":
         result = original(self, request, num_new_tokens, *args, **kwargs)
-        if result is not None:
-            return result
+        if result is None and _try_grow_cache(self):
+            result = original(self, request, num_new_tokens, *args, **kwargs)
 
-        if _try_grow_cache(self):
-            return original(self, request, num_new_tokens, *args, **kwargs)
-        return None
+        request_id = request.request_id  # type: ignore
+        pending = _pending_kv_writes.pop(request_id, None)
+        if pending is not None and result is not None:
+            _write_cached_kv(self, request_id, pending)
+
+        return result
 
     KVCacheManager.allocate_slots = patched  # type: ignore
+
+
+def _write_cached_kv(kv_cache_manager: "object", request_id: str, torch_cache: "object") -> None:
+    model_runner = _growable_model_runner_ref[0]
+    if model_runner is None:
+        return
+    try:
+        block_ids: list[int] = []
+        for mgr in kv_cache_manager.coordinator.single_type_managers:  # type: ignore
+            blocks = mgr.req_to_blocks.get(request_id)  # type: ignore
+            if blocks:
+                block_ids = [b.block_id for b in blocks if not b.is_null]  # type: ignore
+                break
+        if block_ids:
+            torch_cache.write_to_vllm_blocks(model_runner.kv_caches, block_ids)  # type: ignore
+            logger.info(f"Prefix cache KV written for {request_id}")
+    except Exception:
+        logger.opt(exception=True).warning("Failed to write cached KV to blocks")
 
 
 def _try_grow_cache(kv_cache_manager: "object") -> bool:
@@ -262,3 +286,66 @@ def _grow_block_pool(
 
     block_pool.free_block_queue.append_n(new_blocks)  # type: ignore
     block_pool.num_gpu_blocks = new_num_blocks  # type: ignore
+
+
+_pending_kv_writes: dict[str, "TorchKVCache"] = {}
+
+
+def _patch_get_computed_blocks() -> None:
+    from vllm.v1.core.kv_cache_manager import KVCacheBlocks, KVCacheManager
+    from vllm.v1.core.kv_cache_utils import KVCacheBlock
+    from vllm.v1.request import Request
+
+    original = KVCacheManager.get_computed_blocks
+
+    def patched(
+        self: KVCacheManager, request: Request,
+    ) -> tuple[KVCacheBlocks, int]:
+        prefix_cache = _exo_prefix_cache_ref[0]
+        if prefix_cache is None or request.prompt_token_ids is None:
+            return original(self, request)
+
+        from exo.worker.engines.kv_cache import TorchKVCache as _TKV  # noqa: F811
+
+        try:
+            torch_cache, num_matched, _ = prefix_cache.lookup(list(request.prompt_token_ids))  # type: ignore[reportUnknownMemberType]
+        except Exception:
+            return original(self, request)
+
+        if torch_cache is None or not isinstance(torch_cache, _TKV) or num_matched == 0:
+            return original(self, request)
+
+        block_size = self.kv_cache_config.kv_cache_groups[0].kv_cache_spec.block_size
+        num_blocks = (num_matched + block_size - 1) // block_size
+        if self.block_pool.get_num_free_blocks() < num_blocks:
+            return original(self, request)
+
+        blocks: list[KVCacheBlock] = self.block_pool.get_new_blocks(num_blocks)
+        _pending_kv_writes[request.request_id] = torch_cache
+
+        kv_cache_blocks = self.create_kv_cache_blocks(tuple([blocks]))
+        logger.info(f"Prefix cache hit: {num_matched} tokens, {num_blocks} blocks")
+        return kv_cache_blocks, num_matched
+
+    KVCacheManager.get_computed_blocks = patched  # type: ignore[reportAttributeAccessIssue]
+
+
+def _patch_allocate_new_computed_blocks() -> None:
+    from vllm.v1.core.single_type_kv_cache_manager import SingleTypeKVCacheManager  # type: ignore[reportMissingImports]
+
+    original = SingleTypeKVCacheManager.allocate_new_computed_blocks
+
+    def patched(
+        self: "SingleTypeKVCacheManager", *args: "object", **kwargs: "object",
+    ) -> None:
+        was_caching = self.enable_caching
+        if _exo_prefix_cache_ref[0] is not None:
+            self.enable_caching = True
+        try:
+            original(self, *args, **kwargs)
+        finally:
+            self.enable_caching = was_caching
+
+    SingleTypeKVCacheManager.allocate_new_computed_blocks = patched  # type: ignore
+
+
