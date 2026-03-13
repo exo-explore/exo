@@ -136,7 +136,7 @@ pub mod if_watcher {
         let mon = netwatch::netmon::Monitor::new()
             .await
             .map_err(|_| BabbleError::Unspecified)?;
-        if false {
+        if true {
             let temp = mon.interface_state();
             let initial = &temp.peek().interfaces;
             for interface in ["lo", "lo0"] {
@@ -175,7 +175,7 @@ pub mod if_watcher {
                     iface_num += 1;
                     assert!(iface_num < u16::MAX, "Really? u16::MAX interfaces?");
                     tracing::info!("adding new ip {addr} to {}", iface.name());
-                    add_ip(addr, iface).await?;
+                    // add_ip(addr, iface).await?;
                 }
 
                 tracing::info!("telling babeld to watch {}", iface.name());
@@ -249,7 +249,7 @@ pub mod babel {
     use tokio::process::Command;
     use tokio::sync::{broadcast, mpsc};
 
-    use crate::{BabbleError, Result};
+    use crate::{BabbleError, PREFIX, Result};
 
     #[derive(Debug)]
     pub enum Babble {
@@ -281,9 +281,9 @@ pub mod babel {
                 .arg("-I")
                 .arg(format!("{PRIVATE_DIR}/babeld.pid"))
                 .arg("-C")
-                .arg(format!("redistribute local ip {my_range}"))
+                .arg(format!("redistribute local ip {}/128", my_range.addr()))
                 .arg("-C")
-                .arg("redistribute local deny\n")
+                .arg("redistribute local deny")
                 .arg(iface)
                 .spawn()
             {
