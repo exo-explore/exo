@@ -1,4 +1,3 @@
-import asyncio
 from dataclasses import dataclass, field
 
 import anyio
@@ -47,7 +46,7 @@ class DownloadCoordinator:
 
     # Local state
     download_status: dict[ModelId, DownloadProgress] = field(default_factory=dict)
-    active_downloads: dict[ModelId, asyncio.Task[None]] = field(default_factory=dict)
+    active_downloads: dict[ModelId, anyio.CancelScope] = field(default_factory=dict)
 
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
@@ -77,8 +76,6 @@ class DownloadCoordinator:
             await self.event_sender.send(
                 NodeDownloadProgress(download_progress=completed)
             )
-            if model_id in self.active_downloads:
-                del self.active_downloads[model_id]
             self._last_progress_time.pop(model_id, None)
         elif (
             progress.status == "in_progress"
@@ -103,13 +100,9 @@ class DownloadCoordinator:
         logger.info(
             f"Starting DownloadCoordinator{' (offline mode)' if self.offline else ''}"
         )
-        try:
-            async with self._tg as tg:
-                tg.start_soon(self._command_processor)
-                tg.start_soon(self._emit_existing_download_progress)
-        finally:
-            for task in self.active_downloads.values():
-                task.cancel()
+        async with self._tg as tg:
+            tg.start_soon(self._command_processor)
+            tg.start_soon(self._emit_existing_download_progress)
 
     def shutdown(self) -> None:
         self._tg.cancel_tasks()
@@ -132,7 +125,7 @@ class DownloadCoordinator:
     async def _cancel_download(self, model_id: ModelId) -> None:
         if model_id in self.active_downloads and model_id in self.download_status:
             logger.info(f"Cancelling download for {model_id}")
-            self.active_downloads.pop(model_id).cancel()
+            self.active_downloads[model_id].cancel()
             current_status = self.download_status[model_id]
             pending = DownloadPending(
                 shard_metadata=current_status.shard_metadata,
@@ -236,9 +229,10 @@ class DownloadCoordinator:
         self.download_status[model_id] = status
         self.event_sender.send_nowait(NodeDownloadProgress(download_progress=status))
 
-        async def download_wrapper() -> None:
+        async def download_wrapper(cancel_scope: anyio.CancelScope) -> None:
             try:
-                await self.shard_downloader.ensure_shard(shard)
+                with cancel_scope:
+                    await self.shard_downloader.ensure_shard(shard)
             except Exception as e:
                 logger.error(f"Download failed for {model_id}: {e}")
                 failed = DownloadFailed(
@@ -251,12 +245,15 @@ class DownloadCoordinator:
                 await self.event_sender.send(
                     NodeDownloadProgress(download_progress=failed)
                 )
+            except anyio.get_cancelled_exc_class():
+                # ignore cancellation - let cleanup do its thing
+                pass
             finally:
-                if model_id in self.active_downloads:
-                    del self.active_downloads[model_id]
+                self.active_downloads.pop(model_id, None)
 
-        task = asyncio.create_task(download_wrapper())
-        self.active_downloads[model_id] = task
+        scope = anyio.CancelScope()
+        self._tg.start_soon(download_wrapper, scope)
+        self.active_downloads[model_id] = scope
 
     async def _delete_download(self, model_id: ModelId) -> None:
         # Protect read-only models (from EXO_MODELS_PATH) from deletion
@@ -272,7 +269,6 @@ class DownloadCoordinator:
         if model_id in self.active_downloads:
             logger.info(f"Cancelling active download for {model_id} before deletion")
             self.active_downloads[model_id].cancel()
-            del self.active_downloads[model_id]
 
         # Delete from disk
         logger.info(f"Deleting model files for {model_id}")
