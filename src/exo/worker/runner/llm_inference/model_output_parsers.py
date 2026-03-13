@@ -98,6 +98,10 @@ def apply_vllm_parsers(
     return gen
 
 
+_GPT_OSS_CHANNEL_TOKEN = 200005
+_GPT_OSS_MESSAGE_TOKEN = 200008
+
+
 def parse_gpt_oss(
     responses: Generator[GenerationResponse | None],
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
@@ -107,13 +111,29 @@ def parse_gpt_oss(
     current_tool_name: str | None = None
     tool_arg_parts: list[str] = []
 
+    _IDLE, _EXPECT_NAME, _EXPECT_MSG = 0, 1, 2
+    header_state = _IDLE
+
     for response in responses:
         if response is None:
             yield None
             continue
+
+        token_id = response.token
+
+        if header_state == _EXPECT_MSG and token_id != _GPT_OSS_MESSAGE_TOKEN:
+            stream.process(_GPT_OSS_MESSAGE_TOKEN)
+            header_state = _IDLE
+        elif header_state == _EXPECT_MSG:
+            header_state = _IDLE
+        elif header_state == _EXPECT_NAME:
+            header_state = _EXPECT_MSG
+
+        if token_id == _GPT_OSS_CHANNEL_TOKEN:
+            header_state = _EXPECT_NAME
+
         try:
-            logger.info(f"Processing GPT OSS {response.token}")
-            stream.process(response.token)
+            stream.process(token_id)
         except HarmonyError as e:
             logger.error(f"HarmonyError on token_id={response.token} text={response.text!r}: {e}")
             return
@@ -122,34 +142,25 @@ def parse_gpt_oss(
         ch = stream.current_channel
         recipient = stream.current_recipient
 
-        # Debug: log every token with state
-        logger.debug(
-            f"parse_gpt_oss token={response.token} text={response.text!r} "
-            f"recipient={recipient!r} ch={ch!r} delta={delta!r} "
-            f"state={stream.state} current_tool={current_tool_name!r}"
-        )
-
-        if recipient != current_tool_name:
+        effective_recipient = recipient if (recipient is not None and recipient.startswith("functions.")) else None
+        if effective_recipient != current_tool_name:
             if current_tool_name is not None:
-                prefix = "functions."
-                if current_tool_name.startswith(prefix):
-                    current_tool_name = current_tool_name[len(prefix) :]
+                tool_name = current_tool_name.removeprefix("functions.")
                 logger.info(
-                    f"parse_gpt_oss yielding tool call: name={current_tool_name!r}"
+                    f"parse_gpt_oss yielding tool call: name={tool_name!r}"
                 )
                 yield ToolCallResponse(
                     tool_calls=[
                         ToolCallItem(
-                            name=current_tool_name,
+                            name=tool_name,
                             arguments="".join(tool_arg_parts).strip(),
                         )
                     ],
                     usage=response.usage,
                 )
                 tool_arg_parts = []
-            current_tool_name = recipient
+            current_tool_name = effective_recipient
 
-        # If inside a tool call, accumulate arguments
         if current_tool_name is not None:
             if delta:
                 tool_arg_parts.append(delta)
@@ -158,10 +169,12 @@ def parse_gpt_oss(
                 tool_arg_parts = []
             continue
 
-        if ch == "analysis" and not thinking:
+        is_suppressed = ch == "analysis" or (recipient is not None and recipient.startswith("!"))
+
+        if is_suppressed and not thinking:
             thinking = True
 
-        if ch != "analysis" and thinking:
+        if not is_suppressed and thinking:
             thinking = False
 
         if delta:

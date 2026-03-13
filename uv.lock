@@ -838,6 +838,7 @@ dependencies = [
 
 [package.optional-dependencies]
 cuda = [
+    { name = "fastsafetensors", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "mlx-cuda-13", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "torch", version = "2.10.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "vllm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
@@ -860,6 +861,7 @@ requires-dist = [
     { name = "anyio", specifier = "==4.11.0" },
     { name = "exo-pyo3-bindings", editable = "rust/exo_pyo3_bindings" },
     { name = "fastapi", specifier = ">=0.116.1" },
+    { name = "fastsafetensors", marker = "sys_platform == 'linux' and extra == 'cuda'", specifier = ">=0.1.10" },
     { name = "filelock", specifier = ">=3.18.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "huggingface-hub", specifier = ">=0.33.4" },
@@ -1070,6 +1072,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c9/e2/dfa19a4b260b8ab3581b7484dcb80c09b25324f4daa6b6ae1c7640d1607a/fastar-0.8.0-cp314-cp314t-win32.whl", hash = "sha256:187f61dc739afe45ac8e47ed7fd1adc45d52eac110cf27d579155720507d6fbe", size = 455767, upload-time = "2025-11-26T02:36:34.758Z" },
     { url = "https://files.pythonhosted.org/packages/51/47/df65c72afc1297797b255f90c4778b5d6f1f0f80282a134d5ab610310ed9/fastar-0.8.0-cp314-cp314t-win_amd64.whl", hash = "sha256:40e9d763cf8bf85ce2fa256e010aa795c0fe3d3bd1326d5c3084e6ce7857127e", size = 489971, upload-time = "2025-11-26T02:36:22.081Z" },
     { url = "https://files.pythonhosted.org/packages/85/11/0aa8455af26f0ae89e42be67f3a874255ee5d7f0f026fc86e8d56f76b428/fastar-0.8.0-cp314-cp314t-win_arm64.whl", hash = "sha256:e59673307b6a08210987059a2bdea2614fe26e3335d0e5d1a3d95f49a05b1418", size = 460467, upload-time = "2025-11-26T02:36:07.978Z" },
+]
+
+[[package]]
+name = "fastsafetensors"
+version = "0.2.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typer", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f2/c2/1504b51a4ce61cd0f6b8c6a88c0dbed22df011a2aeb99ade35e528b0e091/fastsafetensors-0.2.2.tar.gz", hash = "sha256:67c06bdbb9855070ebb036e1ce7a61a71d2ce722bbd5457534af602dd4734249", size = 52029, upload-time = "2026-02-10T14:12:34.706Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f1/c0/13dec18b8a9ec0e5f84c140add9b43261fcc495fbd96c868ac7d647824b0/fastsafetensors-0.2.2-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:9596a91155df28064a9214ba3e2dcb6546dd97a1df494640f86ae1e5d2206b71", size = 1721315, upload-time = "2026-02-10T14:12:31.311Z" },
 ]
 
 [[package]]

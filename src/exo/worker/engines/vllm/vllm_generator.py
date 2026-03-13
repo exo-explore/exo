@@ -114,7 +114,7 @@ class VllmGenerator(InferenceGenerator):
             )
             logger.info(prompt_text)
             request_id = str(task.task_id)
-            sampling_params = make_vllm_sampling_params(self.engine, task.task_params)
+            sampling_params = make_vllm_sampling_params(self.engine, task.task_params, self.model_id)
             self.engine.add_request(
                 request_id,
                 {"prompt_token_ids": token_ids},
@@ -153,6 +153,12 @@ class VllmGenerator(InferenceGenerator):
 
         outputs = self.engine.step()
         finished = False
+        results: list[
+            tuple[
+                TaskId,
+                GenerationResponse | ToolCallResponse | Cancelled | Finished,
+            ]
+        ] = []
 
         for output in outputs:
             if output.request_id != active.request_id:
@@ -203,38 +209,31 @@ class VllmGenerator(InferenceGenerator):
                 )
                 finished = True
 
+            tokenizer = self.engine.get_tokenizer()
             for i, token_id in enumerate(new_tokens):
                 is_last = i == len(new_tokens) - 1
+                token_text: str = tokenizer.decode([token_id])  # type: ignore[reportUnknownMemberType]
                 active.queue.push(
                     GenerationResponse(
-                        text=new_text if is_last else "",
+                        text=token_text,
                         token=token_id,
                         finish_reason=mapped_finish_reason if is_last and finished else None,
                         usage=finish_usage if is_last and finished else None,
                         stats=finish_stats if is_last and finished else None,
                     )
                 )
-
-        results: list[
-            tuple[
-                TaskId,
-                GenerationResponse | ToolCallResponse | Cancelled | Finished,
-            ]
-        ] = []
-        parser_alive = False
-        for parsed in active.parsed_gen:
-            parser_alive = True
-            if parsed is None:
-                break
-            results.append((active.task.task_id, parsed))
-
-        if not parser_alive:
-            self.engine.abort_request([active.request_id])
-            results.append((active.task.task_id, Finished()))
-            self._active = None
-            return results
+                try:
+                    parsed = next(active.parsed_gen)
+                except StopIteration:
+                    self.engine.abort_request([active.request_id])
+                    results.append((active.task.task_id, Finished()))
+                    self._active = None
+                    return results
+                if parsed is not None:
+                    results.append((active.task.task_id, parsed))
 
         if finished:
+            logger.info(f"vLLM generation done for request {active.request_id}")
             results.append((active.task.task_id, Finished()))
             self._active = None
 
@@ -313,6 +312,17 @@ def _patch_weight_loading_progress() -> None:
     _monkey_patch_iterator(weight_utils, "safetensors_weights_iterator")
     _monkey_patch_iterator(weight_utils, "fastsafetensors_weights_iterator")
 
+    import huggingface_hub  # pyright: ignore[reportMissingImports]
+    _noop_metadata = lambda *_a, **_kw: None  # pyright: ignore[reportUnknownLambdaType]
+    original_metadata = huggingface_hub.get_safetensors_metadata  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    huggingface_hub.get_safetensors_metadata = _noop_metadata  # pyright: ignore[reportAttributeAccessIssue]
+    for mod in list(sys.modules.values()):
+        if mod is None or mod is huggingface_hub:
+            continue
+        for attr in list(vars(mod)):
+            if vars(mod)[attr] is original_metadata:
+                setattr(mod, attr, _noop_metadata)
+
 
 def load_vllm_engine(
     model_path: str,
@@ -330,6 +340,8 @@ def load_vllm_engine(
         gpu_memory_utilization=0.05,
         trust_remote_code=trust_remote_code,
         load_format="fastsafetensors",
+        enable_prefix_caching=False,
+        disable_log_stats=True,
     )
 
     _weight_loading_callback = on_layer_loaded

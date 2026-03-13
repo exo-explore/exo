@@ -3,6 +3,7 @@ from typing import Any, cast
 from vllm.sampling_params import SamplingParams
 from vllm.v1.engine.llm_engine import LLMEngine
 
+from exo.shared.types.common import ModelId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.worker.engines.mlx.utils_mlx import (
     normalize_tool_calls,
@@ -67,29 +68,27 @@ def format_vllm_prompt(
     if partial_assistant_content:
         prompt_text += partial_assistant_content
 
-    token_ids_raw: object = tokenizer.apply_chat_template(
-        formatted_messages,
-        tokenize=True,
-        add_generation_prompt=True,
-        tools=params.tools,
-        **({"chat_template": patched_template} if patched_template is not None else {}),
-        **extra_kwargs,
-    )
-    token_ids: list[int] = (
-        token_ids_raw  # type: ignore
-        if isinstance(token_ids_raw, list)
-        else list(token_ids_raw["input_ids"])  # type: ignore
-    )
-    if partial_assistant_content:
-        token_ids += tokenizer.encode(
-            partial_assistant_content, add_special_tokens=False
-        )
+    token_ids: list[int] = tokenizer.encode(prompt_text, add_special_tokens=False)  # type: ignore[reportUnknownMemberType]
+    special = {200002, 200005, 200006, 200007, 200008}
+    annotated = [f"*{t}*" if t in special else str(t) for t in token_ids]
+    logger.info(f"prompt tokens ({len(token_ids)}): [{', '.join(annotated)}]")
 
     return token_ids, prompt_text, len(token_ids)
 
 
+_VLLM_EXTRA_STOP_TOKEN_IDS: dict[str, list[int]] = {
+    "gpt-oss": [200012],
+    "gpt_oss": [200012],
+    "kimi-k2": [163586],
+    "glm-5": [154820, 154827, 154829],
+    "glm-4.7": [154820, 154827, 154829],
+    "qwen3.5": [248046, 248044],
+    "qwen-3.5": [248046, 248044],
+}
+
+
 def make_vllm_sampling_params(
-    engine: LLMEngine, params: TextGenerationTaskParams
+    engine: LLMEngine, params: TextGenerationTaskParams, model_id: ModelId | None = None
 ) -> SamplingParams:
     kwargs: dict[str, object] = {}
 
@@ -113,4 +112,15 @@ def make_vllm_sampling_params(
         kwargs["repetition_penalty"] = params.repetition_penalty
     if params.logprobs:
         kwargs["logprobs"] = params.top_logprobs or 1
+
+    if model_id is not None:
+        lower = model_id.lower()
+        extra_stop: list[int] = []
+        for key, ids in _VLLM_EXTRA_STOP_TOKEN_IDS.items():
+            if key in lower:
+                extra_stop = ids
+                break
+        if extra_stop:
+            kwargs["stop_token_ids"] = extra_stop
+
     return SamplingParams(**kwargs)
