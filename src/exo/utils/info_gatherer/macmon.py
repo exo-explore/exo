@@ -50,7 +50,7 @@ class MacmonMetrics(TaggedModel):
 
     @classmethod
     def from_raw(cls, raw: RawMacmonMetrics) -> Self:
-        memory_fraction = float(os.getenv("EXO_MEMORY_FRACTION", "1.0"))
+        memory_fraction = min(1.0, max(0.1, float(os.getenv("EXO_MEMORY_FRACTION", "1.0"))))
         ram_available = round((raw.memory.ram_total - raw.memory.ram_usage) * memory_fraction)
         return cls(
             system_profile=SystemPerformanceProfile(

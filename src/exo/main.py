@@ -282,8 +282,8 @@ def main():
         os.environ["EXO_FAST_SYNCH"] = "off"
         logger.info("FAST_SYNCH forced OFF")
 
+    os.environ["EXO_MEMORY_FRACTION"] = str(args.memory_fraction)
     if args.memory_fraction < 1.0:
-        os.environ["EXO_MEMORY_FRACTION"] = str(args.memory_fraction)
         logger.info(f"Memory fraction set to {args.memory_fraction}")
 
     node = anyio.run(Node.create, args)
