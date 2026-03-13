@@ -5,9 +5,9 @@ from typing import Any
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
-from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
+from openai_harmony import (
     HarmonyEncodingName,
-    HarmonyError,  # pyright: ignore[reportUnknownVariableType]
+    HarmonyError,
     Role,
     StreamableParser,
     load_harmony_encoding,
@@ -62,6 +62,42 @@ def apply_all_parsers(
     return mlx_generator
 
 
+def apply_vllm_parsers(
+    receiver: Generator[GenerationResponse | None],
+    model_id: ModelId,
+    prompt: str,
+    tool_parser: ToolParser | None,
+    tools: list[dict[str, Any]] | None,
+    think_start: str | None = None,
+    think_end: str | None = None,
+) -> Generator[GenerationResponse | ToolCallResponse | None]:
+    gen = receiver
+    lower = model_id.normalize().lower()
+
+    if "gpt-oss" in lower or "gpt_oss" in lower:
+        return parse_gpt_oss(gen)
+
+    if "deepseek" in lower:
+        gen = parse_thinking_models(
+            gen,
+            think_start or "<think>",
+            think_end or "</think>",
+            starts_in_thinking=prompt.rstrip().endswith(think_start or "<think>"),
+        )
+        return parse_deepseek_v32(gen)
+
+    if think_start is not None:
+        gen = parse_thinking_models(
+            gen,
+            think_start,
+            think_end,
+            starts_in_thinking=prompt.rstrip().endswith(think_start),
+        )
+    if tool_parser:
+        gen = parse_tool_calls(gen, tool_parser, tools)
+    return gen
+
+
 def parse_gpt_oss(
     responses: Generator[GenerationResponse | None],
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
@@ -77,8 +113,8 @@ def parse_gpt_oss(
             continue
         try:
             stream.process(response.token)
-        except HarmonyError:
-            logger.error("Encountered critical Harmony Error, returning early")
+        except HarmonyError as e:
+            logger.error(f"HarmonyError on token_id={response.token} text={response.text!r}: {e}")
             return
 
         delta = stream.last_content_delta

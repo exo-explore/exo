@@ -117,6 +117,10 @@
   const LOGO_NATIVE_WIDTH = 814;
   const LOGO_NATIVE_HEIGHT = 1000;
 
+  // NVIDIA logo SVG path (from exo-nvidia)
+  const NVIDIA_LOGO_PATH =
+    "M0.81 0.429V0.299c0.013 -0.001 0.026 -0.002 0.038 -0.002 0.355 -0.011 0.588 0.306 0.588 0.306S1.186 0.952 0.916 0.952c-0.036 0 -0.071 -0.006 -0.105 -0.017V0.542c0.138 0.017 0.166 0.078 0.249 0.216l0.185 -0.155s-0.135 -0.177 -0.362 -0.177c-0.024 -0.001 -0.048 0.001 -0.072 0.003m0 -0.429v0.194l0.038 -0.002c0.494 -0.017 0.816 0.405 0.816 0.405s-0.37 0.45 -0.754 0.45c-0.034 0 -0.066 -0.003 -0.099 -0.009v0.12c0.027 0.003 0.055 0.006 0.082 0.006 0.358 0 0.618 -0.183 0.869 -0.399 0.042 0.034 0.212 0.114 0.247 0.15 -0.238 0.2 -0.794 0.361 -1.11 0.361 -0.03 0 -0.059 -0.002 -0.088 -0.005v0.169h1.362V0zm0 0.935v0.102c-0.331 -0.059 -0.423 -0.404 -0.423 -0.404s0.159 -0.176 0.423 -0.205v0.112h-0.001C0.671 0.524 0.562 0.654 0.562 0.654s0.062 0.218 0.248 0.282m-0.588 -0.316s0.196 -0.29 0.589 -0.32V0.194C0.376 0.229 0 0.597 0 0.597s0.213 0.616 0.81 0.672v-0.112c-0.438 -0.054 -0.588 -0.538 -0.588 -0.538";
+
   function formatBytes(bytes: number, decimals = 1): string {
     if (!bytes || bytes === 0) return "0B";
     const k = 1024;
@@ -554,6 +558,13 @@
       const clipPathId = `clip-${nodeInfo.id.replace(/[^a-zA-Z0-9]/g, "-")}`;
 
       const modelLower = modelId.toLowerCase();
+      const identity = identitiesData[nodeInfo.id];
+      const nameLower = (friendlyName || "").toLowerCase();
+      const isSpark = modelLower.includes("dgx") || modelLower.includes("gx10");
+      const isLinux =
+        !isSpark &&
+        (modelLower.startsWith("linux") || identity?.osVersion === "Linux");
+      const isLinuxLaptop = isLinux && modelLower.includes("laptop");
 
       // Check node states for styling
       const isHighlighted = highlightedNodes.has(nodeInfo.id);
@@ -623,7 +634,382 @@
           `${friendlyName}\nID: ${nodeInfo.id.slice(-8)}\nMemory: ${formatBytes(ramUsed)}/${formatBytes(ramTotal)}`,
         );
 
-      if (modelLower === "mac studio") {
+      if (isSpark) {
+        // NVIDIA DGX Spark — gold chassis with textured front, side handles, and NVIDIA badge
+        iconBaseWidth = nodeRadius * 1.55;
+        iconBaseHeight = nodeRadius * 0.58;
+        const x = nodeInfo.x - iconBaseWidth / 2;
+        const y = nodeInfo.y - iconBaseHeight / 2;
+        const chassisX = x - iconBaseWidth * 0.03;
+        const chassisWidth = iconBaseWidth * 1.05;
+        const cornerRadius = 3;
+
+        const dgxClipId = `dgx-clip-${nodeInfo.id.replace(/[^a-zA-Z0-9]/g, "-")}`;
+        defs
+          .append("clipPath")
+          .attr("id", dgxClipId)
+          .append("rect")
+          .attr("x", x)
+          .attr("y", y)
+          .attr("width", iconBaseWidth)
+          .attr("height", iconBaseHeight)
+          .attr("rx", cornerRadius);
+
+        // Chassis texture pattern
+        const textureId = `chassis-texture-${nodeInfo.id.replace(/[^a-zA-Z0-9]/g, "-")}`;
+        defs
+          .append("pattern")
+          .attr("id", textureId)
+          .attr("patternUnits", "userSpaceOnUse")
+          .attr("width", 8)
+          .attr("height", 8);
+        const texturePattern = defs.select(`#${textureId}`);
+        texturePattern
+          .append("rect")
+          .attr("width", 8)
+          .attr("height", 8)
+          .attr("fill", "#6f6248");
+        texturePattern
+          .append("circle")
+          .attr("cx", 2)
+          .attr("cy", 2)
+          .attr("r", 1)
+          .attr("fill", "#5a4f3b")
+          .attr("opacity", 0.5);
+        texturePattern
+          .append("circle")
+          .attr("cx", 6)
+          .attr("cy", 6)
+          .attr("r", 1)
+          .attr("fill", "#4a4232")
+          .attr("opacity", 0.45);
+
+        // Main body
+        nodeG
+          .append("rect")
+          .attr("class", "node-outline")
+          .attr("x", chassisX)
+          .attr("y", y)
+          .attr("width", chassisWidth)
+          .attr("height", iconBaseHeight)
+          .attr("rx", cornerRadius)
+          .attr("fill", `url(#${textureId})`)
+          .attr("stroke", wireColor)
+          .attr("stroke-width", strokeWidth);
+
+        // Side border accents
+        const sideThickness = iconBaseWidth * 0.02;
+        nodeG
+          .append("rect")
+          .attr("x", chassisX)
+          .attr("y", y)
+          .attr("width", sideThickness)
+          .attr("height", iconBaseHeight)
+          .attr("fill", "#8a7a56");
+        nodeG
+          .append("rect")
+          .attr("x", chassisX + chassisWidth - sideThickness)
+          .attr("y", y)
+          .attr("width", sideThickness)
+          .attr("height", iconBaseHeight)
+          .attr("fill", "#8a7a56");
+
+        // Memory fill (bottom up)
+        if (ramUsagePercent > 0) {
+          const memFillHeight = (ramUsagePercent / 100) * iconBaseHeight;
+          nodeG
+            .append("rect")
+            .attr("x", x)
+            .attr("y", y + iconBaseHeight - memFillHeight)
+            .attr("width", iconBaseWidth)
+            .attr("height", memFillHeight)
+            .attr("fill", "rgba(255,215,0,0.45)")
+            .attr("clip-path", `url(#${dgxClipId})`);
+        }
+
+        // Side handles with inner recess
+        const handleWidth = iconBaseWidth * 0.27;
+        const handleGap = iconBaseHeight * 0.05;
+        const handleHeight = iconBaseHeight - handleGap * 2;
+        const handleY = y + handleGap;
+        const innerHandleWidth = iconBaseWidth * 0.12;
+        const innerHandleHeight = handleHeight - iconBaseHeight * 0.06;
+        const leftHandleX = x + 4;
+        const rightHandleX = x + iconBaseWidth - handleWidth - 4;
+
+        // Left handle
+        nodeG
+          .append("rect")
+          .attr("x", leftHandleX)
+          .attr("y", handleY)
+          .attr("width", handleWidth)
+          .attr("height", handleHeight)
+          .attr("rx", 2.4)
+          .attr("fill", "#b3a170")
+          .attr("stroke", "#403723")
+          .attr("stroke-width", 0.7);
+        nodeG
+          .append("rect")
+          .attr("x", leftHandleX + handleWidth * 0.06)
+          .attr("y", handleY + iconBaseHeight * 0.03)
+          .attr("width", innerHandleWidth)
+          .attr("height", innerHandleHeight)
+          .attr("rx", 1.6)
+          .attr("fill", "#8a7a56");
+
+        // Right handle
+        nodeG
+          .append("rect")
+          .attr("x", rightHandleX)
+          .attr("y", handleY)
+          .attr("width", handleWidth)
+          .attr("height", handleHeight)
+          .attr("rx", 2.4)
+          .attr("fill", "#b3a170")
+          .attr("stroke", "#403723")
+          .attr("stroke-width", 0.7);
+        nodeG
+          .append("rect")
+          .attr(
+            "x",
+            rightHandleX + handleWidth - innerHandleWidth - handleWidth * 0.08,
+          )
+          .attr("y", handleY + iconBaseHeight * 0.03)
+          .attr("width", innerHandleWidth)
+          .attr("height", innerHandleHeight)
+          .attr("rx", 1.6)
+          .attr("fill", "#8a7a56");
+
+        // NVIDIA logo + text label (rotated 90 deg on left handle)
+        const badgeWidth = iconBaseWidth * 0.09;
+        const badgeHeight = handleHeight * 0.5;
+        const badgeX =
+          leftHandleX + handleWidth - badgeWidth - handleWidth * 0.06;
+        const badgeY = handleY + (handleHeight - badgeHeight) / 2;
+        const textSize = badgeWidth * 0.58;
+        const logoWidth = textSize * 1.2;
+        const logoHeight = logoWidth * (1.438 / 2.174);
+        const centerX = badgeX + badgeWidth / 2 - badgeWidth * 0.03;
+        const centerY = badgeY + badgeHeight / 2;
+        const gap = badgeWidth * 0.15;
+        const totalWidth = logoWidth + gap + textSize * 3.6;
+
+        const labelGroup = nodeG
+          .append("g")
+          .attr("transform", `rotate(90 ${centerX} ${centerY})`);
+
+        labelGroup
+          .append("svg")
+          .attr("x", centerX - totalWidth / 2)
+          .attr("y", centerY - logoHeight / 2)
+          .attr("width", logoWidth)
+          .attr("height", logoHeight)
+          .attr("viewBox", "0 0 2.174 1.438")
+          .append("path")
+          .attr("d", NVIDIA_LOGO_PATH)
+          .attr("fill", "#76b900");
+
+        labelGroup
+          .append("text")
+          .attr("x", centerX - totalWidth / 2 + logoWidth + gap)
+          .attr("y", centerY)
+          .attr("text-anchor", "start")
+          .attr("dominant-baseline", "middle")
+          .attr("fill", "#8a7a56")
+          .attr("font-size", textSize)
+          .attr("font-family", "monospace")
+          .attr("font-weight", "700")
+          .text("NVIDIA");
+      } else if (isLinuxLaptop) {
+        // Linux Laptop — same shape as MacBook but with Tux logo
+        iconBaseWidth = nodeRadius * 1.6;
+        iconBaseHeight = nodeRadius * 1.15;
+        const x = nodeInfo.x - iconBaseWidth / 2;
+        const y = nodeInfo.y - iconBaseHeight / 2;
+
+        const screenHeight = iconBaseHeight * 0.7;
+        const baseHeight = iconBaseHeight * 0.3;
+        const screenWidth = iconBaseWidth * 0.85;
+        const screenX = nodeInfo.x - screenWidth / 2;
+        const screenBezel = 3;
+
+        const linuxScreenClipId = `linux-screen-${nodeInfo.id.replace(/[^a-zA-Z0-9]/g, "-")}`;
+        defs
+          .append("clipPath")
+          .attr("id", linuxScreenClipId)
+          .append("rect")
+          .attr("x", screenX + screenBezel)
+          .attr("y", y + screenBezel)
+          .attr("width", screenWidth - screenBezel * 2)
+          .attr("height", screenHeight - screenBezel * 2)
+          .attr("rx", 2);
+
+        // Screen outer frame
+        nodeG
+          .append("rect")
+          .attr("class", "node-outline")
+          .attr("x", screenX)
+          .attr("y", y)
+          .attr("width", screenWidth)
+          .attr("height", screenHeight)
+          .attr("rx", 3)
+          .attr("fill", "#1a1a1a")
+          .attr("stroke", wireColor)
+          .attr("stroke-width", strokeWidth);
+
+        // Screen inner
+        nodeG
+          .append("rect")
+          .attr("x", screenX + screenBezel)
+          .attr("y", y + screenBezel)
+          .attr("width", screenWidth - screenBezel * 2)
+          .attr("height", screenHeight - screenBezel * 2)
+          .attr("rx", 2)
+          .attr("fill", "#0a0a12");
+
+        // Memory fill on screen
+        if (ramUsagePercent > 0) {
+          const memFillTotalHeight = screenHeight - screenBezel * 2;
+          const memFillActualHeight =
+            (ramUsagePercent / 100) * memFillTotalHeight;
+          nodeG
+            .append("rect")
+            .attr("x", screenX + screenBezel)
+            .attr(
+              "y",
+              y + screenBezel + (memFillTotalHeight - memFillActualHeight),
+            )
+            .attr("width", screenWidth - screenBezel * 2)
+            .attr("height", memFillActualHeight)
+            .attr("fill", "rgba(255,215,0,0.85)")
+            .attr("clip-path", `url(#${linuxScreenClipId})`);
+        }
+
+        // Terminal prompt on screen
+        nodeG
+          .append("text")
+          .attr("x", nodeInfo.x)
+          .attr("y", y + screenHeight / 2)
+          .attr("text-anchor", "middle")
+          .attr("dominant-baseline", "middle")
+          .attr("fill", "#FFFFFF")
+          .attr("opacity", 0.9)
+          .attr("font-size", screenHeight * 0.25)
+          .attr("font-family", "SF Mono, Monaco, monospace")
+          .attr("font-weight", "700")
+          .text(">_");
+
+        // Keyboard base (trapezoidal)
+        const baseY = y + screenHeight;
+        const baseTopWidth = screenWidth;
+        const baseBottomWidth = iconBaseWidth;
+        const baseTopX = nodeInfo.x - baseTopWidth / 2;
+        const baseBottomX = nodeInfo.x - baseBottomWidth / 2;
+
+        nodeG
+          .append("path")
+          .attr(
+            "d",
+            `M ${baseTopX} ${baseY} L ${baseTopX + baseTopWidth} ${baseY} L ${baseBottomX + baseBottomWidth} ${baseY + baseHeight} L ${baseBottomX} ${baseY + baseHeight} Z`,
+          )
+          .attr("fill", "#2c2c2c")
+          .attr("stroke", wireColor)
+          .attr("stroke-width", 1);
+
+        // Keyboard area
+        const keyboardX = baseTopX + 6;
+        const keyboardY = baseY + 3;
+        const keyboardWidth = baseTopWidth - 12;
+        const keyboardHeight = baseHeight * 0.55;
+        nodeG
+          .append("rect")
+          .attr("x", keyboardX)
+          .attr("y", keyboardY)
+          .attr("width", keyboardWidth)
+          .attr("height", keyboardHeight)
+          .attr("fill", "rgba(0,0,0,0.2)")
+          .attr("rx", 2);
+
+        // Trackpad
+        const trackpadWidth = baseTopWidth * 0.4;
+        const trackpadX = nodeInfo.x - trackpadWidth / 2;
+        const trackpadY = baseY + keyboardHeight + 5;
+        const trackpadHeight = baseHeight * 0.3;
+        nodeG
+          .append("rect")
+          .attr("x", trackpadX)
+          .attr("y", trackpadY)
+          .attr("width", trackpadWidth)
+          .attr("height", trackpadHeight)
+          .attr("fill", "rgba(255,255,255,0.08)")
+          .attr("rx", 2);
+      } else if (isLinux) {
+        // Linux Desktop — same shape as Mac Studio but with Tux logo
+        iconBaseWidth = nodeRadius * 1.25;
+        iconBaseHeight = nodeRadius * 0.85;
+        const x = nodeInfo.x - iconBaseWidth / 2;
+        const y = nodeInfo.y - iconBaseHeight / 2;
+        const cornerRadius = 4;
+        const topSurfaceHeight = iconBaseHeight * 0.15;
+
+        const linuxDesktopClipId = `linux-desktop-${nodeInfo.id.replace(/[^a-zA-Z0-9]/g, "-")}`;
+        defs
+          .append("clipPath")
+          .attr("id", linuxDesktopClipId)
+          .append("rect")
+          .attr("x", x)
+          .attr("y", y + topSurfaceHeight)
+          .attr("width", iconBaseWidth)
+          .attr("height", iconBaseHeight - topSurfaceHeight)
+          .attr("rx", cornerRadius - 1);
+
+        // Main body
+        nodeG
+          .append("rect")
+          .attr("class", "node-outline")
+          .attr("x", x)
+          .attr("y", y)
+          .attr("width", iconBaseWidth)
+          .attr("height", iconBaseHeight)
+          .attr("rx", cornerRadius)
+          .attr("fill", "#1a1a1a")
+          .attr("stroke", wireColor)
+          .attr("stroke-width", strokeWidth);
+
+        // Memory fill
+        if (ramUsagePercent > 0) {
+          const memFillTotalHeight = iconBaseHeight - topSurfaceHeight;
+          const memFillActualHeight =
+            (ramUsagePercent / 100) * memFillTotalHeight;
+          nodeG
+            .append("rect")
+            .attr("x", x)
+            .attr(
+              "y",
+              y + topSurfaceHeight + (memFillTotalHeight - memFillActualHeight),
+            )
+            .attr("width", iconBaseWidth)
+            .attr("height", memFillActualHeight)
+            .attr("fill", "rgba(255,215,0,0.75)")
+            .attr("clip-path", `url(#${linuxDesktopClipId})`);
+        }
+
+        // Terminal prompt on front face
+        nodeG
+          .append("text")
+          .attr("x", nodeInfo.x)
+          .attr(
+            "y",
+            y + topSurfaceHeight + (iconBaseHeight - topSurfaceHeight) / 2,
+          )
+          .attr("text-anchor", "middle")
+          .attr("dominant-baseline", "middle")
+          .attr("fill", "rgba(255,255,255,0.5)")
+          .attr("font-size", (iconBaseHeight - topSurfaceHeight) * 0.4)
+          .attr("font-family", "SF Mono, Monaco, monospace")
+          .attr("font-weight", "700")
+          .text(">_");
+      } else if (modelLower === "mac studio") {
         // Mac Studio - classic cube with memory fill
         iconBaseWidth = nodeRadius * 1.25;
         iconBaseHeight = nodeRadius * 0.85;
@@ -1182,8 +1568,12 @@
           debugLabelY += debugLineHeight;
         }
 
-        const identity = identitiesData[nodeInfo.id];
-        if (identity?.osVersion) {
+        const dbgIdentity = identitiesData[nodeInfo.id];
+        if (dbgIdentity?.osVersion) {
+          const osLabel =
+            dbgIdentity.osVersion === "Linux"
+              ? "Linux"
+              : `macOS ${dbgIdentity.osVersion}${dbgIdentity.osBuildVersion ? ` (${dbgIdentity.osBuildVersion})` : ""}`;
           nodeG
             .append("text")
             .attr("x", nodeInfo.x)
@@ -1192,9 +1582,7 @@
             .attr("fill", "rgba(179,179,179,0.7)")
             .attr("font-size", debugFontSize)
             .attr("font-family", "SF Mono, Monaco, monospace")
-            .text(
-              `macOS ${identity.osVersion}${identity.osBuildVersion ? ` (${identity.osBuildVersion})` : ""}`,
-            );
+            .text(osLabel);
         }
       }
     });

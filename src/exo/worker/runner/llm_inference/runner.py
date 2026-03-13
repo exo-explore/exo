@@ -1,5 +1,8 @@
+import gc
 import os
 import time
+from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -73,6 +76,25 @@ class ExitCode(str, Enum):
     Shutdown = "Shutdown"
 
 
+class Builder(ABC):
+    @abstractmethod
+    def connect(self, bound_instance: BoundInstance) -> None: ...
+
+    @abstractmethod
+    def load(
+        self,
+        bound_instance: BoundInstance,
+        on_timeout: Callable[[], None],
+        on_layer_loaded: Callable[[int, int], None],
+    ) -> None: ...
+
+    @abstractmethod
+    def build(self) -> InferenceGenerator: ...
+
+    @abstractmethod
+    def shutdown_cleanup(self) -> None: ...
+
+
 class Runner:
     def __init__(
         self,
@@ -80,6 +102,7 @@ class Runner:
         event_sender: MpSender[Event],
         task_receiver: MpReceiver[Task],
         cancel_receiver: MpReceiver[TaskId],
+        builder: Builder,
     ):
         self.event_sender = event_sender
         self.task_receiver = task_receiver
@@ -102,9 +125,7 @@ class Runner:
 
         self.setup_start_time = time.time()
 
-        self.generator: Builder | InferenceGenerator = Builder(
-            self.model_id, self.event_sender, self.cancel_receiver
-        )
+        self.generator: Builder | InferenceGenerator = builder
 
         self.seen: set[TaskId] = set()
         self.active_tasks: dict[
@@ -132,15 +153,22 @@ class Runner:
         self.event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
     def main(self):
-        with self.task_receiver:
-            for task in self.task_receiver:
-                if task.task_id in self.seen:
-                    logger.warning("repeat task - potential error")
-                    continue
-                self.seen.add(task.task_id)
-                self.handle_first_task(task)
-                if isinstance(self.current_status, RunnerShutdown):
-                    break
+        try:
+            with self.task_receiver:
+                for task in self.task_receiver:
+                    if task.task_id in self.seen:
+                        logger.warning("repeat task - potential error")
+                        continue
+                    self.seen.add(task.task_id)
+                    self.handle_first_task(task)
+                    if isinstance(self.current_status, RunnerShutdown):
+                        break
+        finally:
+            if not isinstance(self.current_status, RunnerShutdown):
+                if isinstance(self.generator, Builder):
+                    self.generator.shutdown_cleanup()
+                else:
+                    self.generator.close()
 
     def handle_first_task(self, task: Task):
         self.send_task_status(task.task_id, TaskStatus.Running)
@@ -154,21 +182,27 @@ class Runner:
                 self.update_status(RunnerConnecting())
                 self.acknowledge_task(task)
 
-                self.generator.group = initialize_mlx(self.bound_instance)
+                self.generator.connect(self.bound_instance)
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
                 self.update_status(RunnerConnected())
                 logger.info("runner connected")
 
             # we load the model if it's connected with a group, or idle without a group. we should never tell a model to connect if it doesn't need to
-            case LoadModel() if isinstance(self.generator, Builder) and (
+            case LoadModel() if (
                 (
-                    isinstance(self.current_status, RunnerConnected)
+                    isinstance(self.generator, MlxBuilder)
+                    and isinstance(self.current_status, RunnerConnected)
                     and self.generator.group is not None
                 )
                 or (
-                    isinstance(self.current_status, RunnerIdle)
+                    isinstance(self.generator, MlxBuilder)
+                    and isinstance(self.current_status, RunnerIdle)
                     and self.generator.group is None
+                )
+                or (
+                    isinstance(self.generator, VllmBuilder)
+                    and isinstance(self.current_status, RunnerIdle)
                 )
             ):
                 total_layers = (
@@ -195,15 +229,12 @@ class Runner:
                 assert (
                     ModelTask.TextGeneration in self.shard_metadata.model_card.tasks
                 ), f"Incorrect model task(s): {self.shard_metadata.model_card.tasks}"
-                self.generator.inference_model, self.generator.tokenizer = (
-                    load_mlx_items(
-                        self.bound_instance,
-                        self.generator.group,
-                        on_timeout=on_model_load_timeout,
-                        on_layer_loaded=on_layer_loaded,
-                    )
-                )
 
+                self.generator.load(
+                    self.bound_instance,
+                    on_timeout=on_model_load_timeout,
+                    on_layer_loaded=on_layer_loaded,
+                )
                 self.generator = self.generator.build()
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
@@ -247,9 +278,8 @@ class Runner:
         self.acknowledge_task(task)
         if isinstance(self.generator, InferenceGenerator):
             self.generator.close()
-        mx.clear_cache()
-        import gc
-
+        else:
+            self.generator.shutdown_cleanup()
         gc.collect()
         self.send_task_status(task.task_id, TaskStatus.Complete)
         self.update_status(RunnerShutdown())
@@ -372,7 +402,7 @@ class Runner:
 
 
 @dataclass
-class Builder:
+class MlxBuilder(Builder):
     model_id: ModelId
     event_sender: MpSender[Event]
     cancel_receiver: MpReceiver[TaskId]
@@ -380,9 +410,23 @@ class Builder:
     tokenizer: TokenizerWrapper | None = None
     group: mx.distributed.Group | None = None
 
-    def build(
+    def connect(self, bound_instance: BoundInstance) -> None:
+        self.group = initialize_mlx(bound_instance)
+
+    def load(
         self,
-    ) -> InferenceGenerator:
+        bound_instance: BoundInstance,
+        on_timeout: Callable[[], None],
+        on_layer_loaded: Callable[[int, int], None],
+    ) -> None:
+        self.inference_model, self.tokenizer = load_mlx_items(
+            bound_instance,
+            self.group,
+            on_timeout=on_timeout,
+            on_layer_loaded=on_layer_loaded,
+        )
+
+    def build(self) -> InferenceGenerator:
         assert self.model_id
         assert self.inference_model
         assert self.tokenizer
@@ -430,3 +474,52 @@ class Builder:
             cancel_receiver=self.cancel_receiver,
             event_sender=self.event_sender,
         )
+
+    def shutdown_cleanup(self) -> None:
+        mx.clear_cache()
+
+
+@dataclass
+class VllmBuilder(Builder):
+    model_id: ModelId
+    model_path: str
+    trust_remote_code: bool
+    cancel_receiver: MpReceiver[TaskId]
+    group: mx.distributed.Group | None = None
+
+    def connect(self, bound_instance: BoundInstance) -> None:
+        raise NotImplementedError(
+            "Multiple node VLLM instances are not supported at the moment!"
+        )
+
+    def load(
+        self,
+        bound_instance: BoundInstance,
+        on_timeout: Callable[[], None],
+        on_layer_loaded: Callable[[int, int], None],
+    ) -> None:
+        from exo.worker.engines.vllm.vllm_generator import load_vllm_engine
+
+        self._engine, self._tool_parser = load_vllm_engine(
+            model_path=self.model_path,
+            model_id=self.model_id,
+            trust_remote_code=self.trust_remote_code,
+            on_layer_loaded=on_layer_loaded,
+        )
+
+    def build(self) -> InferenceGenerator:
+        from exo.worker.engines.vllm.vllm_generator import VllmGenerator
+
+        return VllmGenerator(
+            engine=self._engine,
+            model_id=self.model_id,
+            tool_parser=self._tool_parser,
+            cancel_receiver=self.cancel_receiver,
+        )
+
+    def shutdown_cleanup(self) -> None:
+        import torch
+
+        torch.cuda.empty_cache()
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()

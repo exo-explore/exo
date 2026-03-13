@@ -262,11 +262,17 @@ def _run(tasks: Iterable[Task], send_after_ready: list[Task] | None = None):
             "exo.worker.runner.llm_inference.runner.mx.distributed.all_gather",
             make_nothin(mx.array([1])),
         ):
+            builder = mlx_runner.MlxBuilder(
+                model_id=MODEL_A_ID,
+                event_sender=event_sender,  # pyright: ignore[reportArgumentType]
+                cancel_receiver=cancel_receiver,
+            )
             runner = mlx_runner.Runner(
                 bound_instance,
                 event_sender,  # pyright: ignore[reportArgumentType]
                 task_receiver,
                 cancel_receiver,
+                builder,
             )
             runner.main()
 

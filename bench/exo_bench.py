@@ -33,11 +33,13 @@ from harness import (
     ExoClient,
     ExoHttpError,
     add_common_instance_args,
+    ensure_cuda_available,
     instance_id_from_instance,
     nodes_used_in_instance,
     resolve_model_short_id,
     run_planning_phase,
     settle_and_fetch_placements,
+    validate_vllm_args,
     wait_for_instance_gone,
     wait_for_instance_ready,
 )
@@ -280,6 +282,7 @@ def main() -> int:
         help="Force all pp×tg combinations (cartesian product) even when lists have equal length.",
     )
     args = ap.parse_args()
+    validate_vllm_args(args)
 
     pp_list = parse_int_list(args.pp)
     tg_list = parse_int_list(args.tg)
@@ -304,6 +307,8 @@ def main() -> int:
         logger.info(f"pp/tg mode: tandem (zip) - {len(pp_list)} pairs")
 
     client = ExoClient(args.host, args.port, timeout_s=args.timeout)
+    if args.ensure_cuda:
+        ensure_cuda_available(client)
     short_id, full_model_id = resolve_model_short_id(
         client, args.model, force_download=args.force_download
     )

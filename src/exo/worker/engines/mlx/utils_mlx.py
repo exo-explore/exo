@@ -145,6 +145,11 @@ def mlx_distributed_init(
                 os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
                 group = mx.distributed.init(backend="jaccl", strict=True)
 
+            case _:
+                raise ValueError(
+                    f"Unsupported instance type for MLX init: {type(bound_instance.instance)}"
+                )
+
         logger.info(f"Rank {rank} mlx distributed initialization complete")
 
         return group
@@ -163,6 +168,94 @@ def initialize_mlx(
     return mlx_distributed_init(bound_instance)
 
 
+# Quant methods that mlx_lm can handle natively (no conversion needed)
+_MLX_NATIVE_QUANT_METHODS = frozenset(
+    {"awq", "gptq", "bitnet", "mxfp4", "compressed-tensors"}
+)
+
+
+def _needs_mlx_conversion(model_path: Path) -> bool:
+    """Check if a model uses a quantization format that mlx_lm cannot load natively.
+
+    Returns True for formats like fp8 that need dequantization via mlx_lm.convert.
+    Returns False for native MLX models, AWQ/GPTQ (without g_idx), etc.
+    """
+    config_file = model_path / "config.json"
+    if not config_file.exists():
+        return False
+    try:
+        with open(config_file) as f:
+            config = json.load(f)  # pyright: ignore[reportAny]
+    except (json.JSONDecodeError, OSError):
+        return False
+
+    quant_config: dict[str, object] | None = config.get("quantization_config")  # pyright: ignore[reportAny]
+    if not quant_config:
+        text_config: dict[str, object] = config.get("text_config", {})  # pyright: ignore[reportAny]
+        quant_config = text_config.get("quantization_config")  # pyright: ignore[reportAssignmentType]
+    if not quant_config:
+        return False
+
+    quant_method = str(quant_config.get("quant_method", ""))
+
+    # GPTQ with g_idx is explicitly unsupported by mlx_lm
+    if quant_method == "gptq" and quant_config.get("desc_act", False):
+        return True
+
+    # Check for any weight files containing g_idx (GPTQ models that mlx_lm will reject)
+    if quant_method == "gptq":
+        try:
+            from safetensors import safe_open
+
+            for st_file in model_path.glob("*.safetensors"):
+                with safe_open(str(st_file), framework="numpy") as st:  # pyright: ignore[reportUnknownVariableType]
+                    keys: list[str] = st.keys()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                    if any("g_idx" in str(k) for k in keys):  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
+                        return True
+                break  # Only need to check one file for key names
+        except Exception:
+            pass
+
+    # FP8 and other non-native methods need conversion
+    return bool(quant_method and quant_method not in _MLX_NATIVE_QUANT_METHODS)
+
+
+def _convert_to_mlx(model_path: Path) -> Path:
+    """Convert a non-MLX model to MLX format using mlx_lm.convert --dequantize.
+
+    The converted model is saved alongside the original with a '-mlx' suffix.
+    Returns the path to the converted model directory.
+    """
+    converted_path = model_path.parent / (model_path.name + "-mlx")
+    if (
+        converted_path.exists()
+        and (converted_path / "config.json").exists()
+        and list(converted_path.glob("*.safetensors"))
+    ):
+        logger.info(f"Using previously converted MLX model at {converted_path}")
+        return converted_path
+
+    logger.info(f"Converting model at {model_path} to MLX format (dequantizing)...")
+    from mlx_lm.convert import convert  # pyright: ignore[reportUnknownVariableType]
+
+    convert(
+        hf_path=str(model_path),
+        mlx_path=str(converted_path),
+        dequantize=True,
+    )
+    logger.info(f"Conversion complete: {converted_path}")
+    return converted_path
+
+
+def _maybe_convert_model(model_path: Path) -> Path:
+    """If the model needs conversion to MLX format, convert it and return the new path.
+    Otherwise return the original path unchanged.
+    """
+    if _needs_mlx_conversion(model_path):
+        return _convert_to_mlx(model_path)
+    return model_path
+
+
 def load_mlx_items(
     bound_instance: BoundInstance,
     group: Group | None,
@@ -171,7 +264,9 @@ def load_mlx_items(
 ) -> tuple[Model, TokenizerWrapper]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
-        model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
+        model_path = _maybe_convert_model(
+            build_model_path(bound_instance.bound_shard.model_card.model_id)
+        )
         start_time = time.perf_counter()
         model, _ = load_model(model_path, lazy=True, strict=False)
         # Eval layers one by one for progress reporting
@@ -219,7 +314,9 @@ def shard_and_load(
     on_timeout: TimeoutCallback | None,
     on_layer_loaded: LayerLoadedCallback | None,
 ) -> tuple[nn.Module, TokenizerWrapper]:
-    model_path = build_model_path(shard_metadata.model_card.model_id)
+    model_path = _maybe_convert_model(
+        build_model_path(shard_metadata.model_card.model_id)
+    )
 
     model, _ = load_model(model_path, lazy=True, strict=False)
     logger.debug(model)
@@ -413,7 +510,7 @@ def load_tokenizer_for_model_id(
     return tokenizer
 
 
-def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
+def normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
     """Normalize tool_calls in a message dict.
 
     OpenAI format has tool_calls[].function.arguments as a JSON string,
@@ -435,7 +532,7 @@ def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
                 func["arguments"] = json.loads(args)
 
 
-def _collect_nested_property_names(schema: dict[str, Any]) -> set[str]:
+def collect_nested_property_names(schema: dict[str, Any]) -> set[str]:
     names: set[str] = set()
     properties: dict[str, Any] = schema.get("properties", {})  # type: ignore[reportAny]
     for prop_spec in properties.values():  # pyright: ignore[reportAny]
@@ -447,16 +544,16 @@ def _collect_nested_property_names(schema: dict[str, Any]) -> set[str]:
                 inner_props: dict[str, Any] = items.get("properties", {})  # type: ignore[reportAny]
                 for k in inner_props:  # pyright: ignore[reportUnknownVariableType]
                     names.add(str(k))  # pyright: ignore[reportUnknownArgumentType]
-                names.update(_collect_nested_property_names(items))  # pyright: ignore[reportUnknownArgumentType]
+                names.update(collect_nested_property_names(items))  # pyright: ignore[reportUnknownArgumentType]
     return names
 
 
-def _schemas_lost_in_prompt(prompt: str, tools: list[dict[str, Any]]) -> bool:
+def schemas_lost_in_prompt(prompt: str, tools: list[dict[str, Any]]) -> bool:
     """Return True if nested property names from any tool schema are absent."""
     for tool in tools:
         fn: dict[str, Any] = tool.get("function", {})  # type: ignore
         params: dict[str, Any] = fn.get("parameters", {})  # type: ignore
-        nested = _collect_nested_property_names(params)
+        nested = collect_nested_property_names(params)
         if nested and not all(name in prompt for name in nested):
             return True
     return False
@@ -467,7 +564,7 @@ _LOSSY_TEMPLATE_PATTERN = re.compile(
 )
 
 
-def _patch_lossy_chat_template(template: str) -> str | None:
+def patch_lossy_chat_template(template: str) -> str | None:
     """Patch chat templates that collapse nested object schemas to ``any[]``.
 
     Some templates (e.g., GPT-OSS) have a guard like::
@@ -515,7 +612,7 @@ def apply_chat_template(
         # Use pre-formatted messages that preserve tool_calls, thinking, etc.
         formatted_messages = list(task_params.chat_template_messages)
         for msg in formatted_messages:
-            _normalize_tool_calls(msg)
+            normalize_tool_calls(msg)
     else:
         # Add system message (instructions) if present
         if task_params.instructions:
@@ -562,7 +659,7 @@ def apply_chat_template(
     if task_params.tools:
         original_template: str | None = getattr(tokenizer, "chat_template", None)
         if isinstance(original_template, str):
-            patched_template = _patch_lossy_chat_template(original_template)
+            patched_template = patch_lossy_chat_template(original_template)
             if patched_template is not None:
                 logger.info(
                     "Patched lossy chat template (removed inner_type length guard)"
@@ -577,7 +674,7 @@ def apply_chat_template(
         **extra_kwargs,
     )
 
-    if task_params.tools and _schemas_lost_in_prompt(prompt, task_params.tools):
+    if task_params.tools and schemas_lost_in_prompt(prompt, task_params.tools):
         logger.warning("Chat template lost nested tool schemas even after patching")
 
     if partial_assistant_content:

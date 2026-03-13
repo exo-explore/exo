@@ -1,0 +1,6 @@
+from vllm.v1.worker.gpu_model_runner import GPUModelRunner
+
+class Worker:
+    model_runner: GPUModelRunner
+    def determine_available_memory(self) -> int: ...
+    def initialize_from_config(self, kv_cache_config: object) -> None: ...

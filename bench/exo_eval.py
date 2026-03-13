@@ -46,11 +46,13 @@ from harness import (
     ExoClient,
     ExoHttpError,
     add_common_instance_args,
+    ensure_cuda_available,
     instance_id_from_instance,
     nodes_used_in_instance,
     resolve_model_short_id,
     run_planning_phase,
     settle_and_fetch_placements,
+    validate_vllm_args,
     wait_for_instance_gone,
     wait_for_instance_ready,
 )
@@ -1157,6 +1159,7 @@ def main() -> int:
     )
 
     args, _ = ap.parse_known_args()
+    validate_vllm_args(args)
 
     # Resolve tasks
     if args.tasks:
@@ -1173,6 +1176,8 @@ def main() -> int:
 
     # Instance management
     client = ExoClient(args.host, args.port, timeout_s=args.timeout)
+    if args.ensure_cuda:
+        ensure_cuda_available(client)
     instance_id: str | None = None
 
     if not args.skip_instance_setup:

@@ -753,7 +753,10 @@ async def download_shard(
     )
     filtered_file_list = list(
         filter_repo_objects(
-            file_list, allow_patterns=allow_patterns, key=lambda x: x.path
+            file_list,
+            allow_patterns=allow_patterns,
+            ignore_patterns=["original/*", "metal/*"],
+            key=lambda x: x.path,
         )
     )
 
