@@ -1,3 +1,4 @@
+import os
 from typing import Self
 
 from pydantic import BaseModel
@@ -49,6 +50,8 @@ class MacmonMetrics(TaggedModel):
 
     @classmethod
     def from_raw(cls, raw: RawMacmonMetrics) -> Self:
+        memory_fraction = float(os.getenv("EXO_MEMORY_FRACTION", "1.0"))
+        ram_available = round((raw.memory.ram_total - raw.memory.ram_usage) * memory_fraction)
         return cls(
             system_profile=SystemPerformanceProfile(
                 gpu_usage=raw.gpu_usage[1],
@@ -59,7 +62,7 @@ class MacmonMetrics(TaggedModel):
             ),
             memory=MemoryUsage.from_bytes(
                 ram_total=raw.memory.ram_total,
-                ram_available=(raw.memory.ram_total - raw.memory.ram_usage),
+                ram_available=ram_available,
                 swap_total=raw.memory.swap_total,
                 swap_available=(raw.memory.swap_total - raw.memory.swap_usage),
             ),

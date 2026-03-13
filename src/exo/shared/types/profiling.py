@@ -28,13 +28,14 @@ class MemoryUsage(CamelCaseModel):
         )
 
     @classmethod
-    def from_psutil(cls, *, override_memory: int | None) -> Self:
+    def from_psutil(cls, *, override_memory: int | None, memory_fraction: float = 1.0) -> Self:
         vm = psutil.virtual_memory()
         sm = psutil.swap_memory()
+        available = vm.available if override_memory is None else override_memory
 
         return cls.from_bytes(
             ram_total=vm.total,
-            ram_available=vm.available if override_memory is None else override_memory,
+            ram_available=round(available * memory_fraction),
             swap_total=sm.total,
             swap_available=sm.free,
         )

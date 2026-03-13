@@ -466,12 +466,13 @@ class InfoGatherer:
             if override_memory_env
             else None
         )
+        memory_fraction = float(os.getenv("EXO_MEMORY_FRACTION", "1.0"))
         if self.memory_poll_rate is None:
             return
         while True:
             try:
                 await self.info_sender.send(
-                    MemoryUsage.from_psutil(override_memory=override_memory)
+                    MemoryUsage.from_psutil(override_memory=override_memory, memory_fraction=memory_fraction)
                 )
             except Exception as e:
                 logger.warning(f"Error gathering memory usage: {e}")

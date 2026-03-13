@@ -8,7 +8,7 @@ from typing import Self
 
 import anyio
 from loguru import logger
-from pydantic import PositiveInt
+from pydantic import PositiveInt, field_validator
 
 import exo.routing.topics as topics
 from exo.download.coordinator import DownloadCoordinator
@@ -282,6 +282,10 @@ def main():
         os.environ["EXO_FAST_SYNCH"] = "off"
         logger.info("FAST_SYNCH forced OFF")
 
+    if args.memory_fraction < 1.0:
+        os.environ["EXO_MEMORY_FRACTION"] = str(args.memory_fraction)
+        logger.info(f"Memory fraction set to {args.memory_fraction}")
+
     node = anyio.run(Node.create, args)
     try:
         anyio.run(node.run)
@@ -306,6 +310,14 @@ class Args(CamelCaseModel):
     offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     no_batch: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
+    memory_fraction: float = float(os.getenv("EXO_MEMORY_FRACTION", "1.0"))
+
+    @field_validator("memory_fraction")
+    @classmethod
+    def validate_memory_fraction(cls, v: float) -> float:
+        if not 0.1 <= v <= 1.0:
+            raise ValueError("memory_fraction must be between 0.1 and 1.0")
+        return v
 
     @classmethod
     def parse(cls) -> Self:
@@ -376,6 +388,12 @@ class Args(CamelCaseModel):
             action="store_false",
             dest="fast_synch",
             help="Force MLX FAST_SYNCH off",
+        )
+        parser.add_argument(
+            "--memory-fraction",
+            type=float,
+            default=float(os.getenv("EXO_MEMORY_FRACTION", "1.0")),
+            help="Fraction of available memory usable for inference (0.1-1.0, default: 1.0)",
         )
 
         args = parser.parse_args()
