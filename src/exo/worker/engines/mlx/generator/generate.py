@@ -386,6 +386,24 @@ def ban_token_ids(token_ids: list[int]) -> Callable[[mx.array, mx.array], mx.arr
     return proc
 
 
+class ToolCallEosSuppressor:
+    """Suppresses EOS tokens while inside a tool call section.
+
+    State is toggled externally by the generation loop when it detects
+    tool_call_start / tool_call_end tokens in the decoded output.
+    """
+
+    def __init__(self, eos_ids: list[int]) -> None:
+        self.eos_ids = [int(t) for t in eos_ids]
+        self.in_tool_call = False
+
+    def __call__(self, _history: mx.array, logits: mx.array) -> mx.array:
+        if self.in_tool_call:
+            for tid in self.eos_ids:
+                logits[..., tid] = -1e9
+        return logits
+
+
 def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
     eos: list[int] | None = getattr(tokenizer, "eos_token_ids", None)
     if eos is None:
@@ -498,9 +516,13 @@ def mlx_generate(
             repetition_context_size=task.repetition_context_size,
         )
     )
+    eos_ids = eos_ids_from_tokenizer(tokenizer)
+    eos_suppressor: ToolCallEosSuppressor | None = None
+    if tokenizer.tool_call_start is not None:
+        eos_suppressor = ToolCallEosSuppressor(eos_ids)
+        logits_processors = [eos_suppressor] + logits_processors
     if is_bench:
         # Only sample length eos tokens
-        eos_ids = eos_ids_from_tokenizer(tokenizer)
         logits_processors = [ban_token_ids(eos_ids)] + logits_processors
 
     sampler = make_sampler(
@@ -571,6 +593,12 @@ def mlx_generate(
             in_thinking = False
         if in_thinking:
             reasoning_tokens += 1
+
+        if eos_suppressor is not None:
+            if tokenizer.tool_call_start is not None and out.text == tokenizer.tool_call_start:
+                eos_suppressor.in_tool_call = True
+            elif tokenizer.tool_call_end is not None and out.text == tokenizer.tool_call_end:
+                eos_suppressor.in_tool_call = False
 
         # Check for stop sequences
         text = out.text
