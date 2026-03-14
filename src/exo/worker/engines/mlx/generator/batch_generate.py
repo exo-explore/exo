@@ -30,6 +30,7 @@ from exo.worker.engines.mlx.cache import (
 )
 from exo.worker.engines.mlx.constants import DEFAULT_TOP_LOGPROBS, MAX_TOKENS
 from exo.worker.engines.mlx.generator.generate import (
+    ToolCallEosSuppressor,
     ban_token_ids,
     eos_ids_from_tokenizer,
     extract_top_logprobs,
@@ -59,6 +60,7 @@ class _EngineTask:
     cache_snapshots: list[CacheSnapshot] | None
     detokenizer: StreamingDetokenizer
     on_generation_token: Callable[[], None] | None = None
+    eos_suppressor: ToolCallEosSuppressor | None = None
     generated_text_parts: list[str] = field(default_factory=list)
     potential_stop_sequence_text: str = ""
     completion_tokens: int = 0
@@ -180,9 +182,13 @@ class ExoBatchGenerator:
                 repetition_context_size=task_params.repetition_context_size,
             )
         )
+        eos_ids = eos_ids_from_tokenizer(self.tokenizer)
+        eos_suppressor: ToolCallEosSuppressor | None = None
+        if self.tokenizer.tool_call_start is not None:
+            eos_suppressor = ToolCallEosSuppressor(eos_ids)
+            logits_processors = [eos_suppressor] + logits_processors
         if is_bench:
             # Only sample length eos tokens
-            eos_ids = eos_ids_from_tokenizer(self.tokenizer)
             logits_processors = [ban_token_ids(eos_ids)] + logits_processors
 
         max_tokens = task_params.max_output_tokens or MAX_TOKENS
@@ -208,6 +214,7 @@ class ExoBatchGenerator:
             cache_snapshots=cache_snapshots or None,
             detokenizer=self.tokenizer.detokenizer,
             on_generation_token=on_generation_token,
+            eos_suppressor=eos_suppressor,
             generation_start_time=time.perf_counter(),
         )
 
@@ -248,6 +255,12 @@ class ExoBatchGenerator:
                 state.in_thinking = False
             if state.in_thinking:
                 state.reasoning_tokens += 1
+
+            if state.eos_suppressor is not None:
+                if self.tokenizer.tool_call_start is not None and text == self.tokenizer.tool_call_start:
+                    state.eos_suppressor.in_tool_call = True
+                elif self.tokenizer.tool_call_end is not None and text == self.tokenizer.tool_call_end:
+                    state.eos_suppressor.in_tool_call = False
 
             finish_reason: FinishReason | None = cast(
                 FinishReason | None, response.finish_reason
