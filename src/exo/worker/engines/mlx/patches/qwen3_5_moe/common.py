@@ -1,4 +1,8 @@
-"""Weight preparation and patch orchestration for Qwen3.5 oproj fusion.
+"""Weight preparation and patch orchestration for Qwen3.5 kernel fusion.
+
+Supports:
+  apply_oproj_fused_patches    — oproj mode (4-dispatch MoE only)
+  apply_fused_gqa_gdn_patches  — full fusion (fused GDN + GQA attention + oproj MoE)
 
 Adapted from mlx_bench/model_patches/qwen/common.py.
 """
@@ -185,3 +189,158 @@ def apply_oproj_fused_patches(layers, gate_bm=8, free_originals=False):
     Qwen3NextSparseMoeBlock.__call__ = _oproj_moe_call
     DecoderLayer.__call__ = _oproj_decoder_call
     logger.info(f"  Patched {n_patched} MoE blocks (oproj mode, 4 dispatches)")
+
+
+def _patch_gdn_proj_weights(attn):
+    """Merge all 4 GDN projection weights into contiguous buffers."""
+    W_merged = mx.concatenate([
+        attn.in_proj_qkv.weight,
+        attn.in_proj_z.weight,
+        attn.in_proj_b.weight,
+        attn.in_proj_a.weight,
+    ], axis=0)
+    S_merged = mx.concatenate([
+        attn.in_proj_qkv.scales,
+        attn.in_proj_z.scales,
+        attn.in_proj_b.scales,
+        attn.in_proj_a.scales,
+    ], axis=0)
+    B_merged = mx.concatenate([
+        attn.in_proj_qkv.biases,
+        attn.in_proj_z.biases,
+        attn.in_proj_b.biases,
+        attn.in_proj_a.biases,
+    ], axis=0)
+    attn._merged_proj_w = W_merged
+    attn._merged_proj_s = S_merged
+    attn._merged_proj_b = B_merged
+    attn._merged_proj_dims = (
+        attn.in_proj_qkv.weight.shape[0],
+        attn.in_proj_z.weight.shape[0],
+        attn.in_proj_b.weight.shape[0],
+        attn.in_proj_a.weight.shape[0],
+    )
+    mx.eval(W_merged, S_merged, B_merged)
+
+
+def _patch_gqa_proj_weights(attn):
+    """Merge GQA q_proj, k_proj, v_proj weights with q_proj row permutation.
+
+    q_proj rows are interleaved [head0_q, head0_gate, head1_q, ...].
+    Permute so queries come first, then gate, then k, then v.
+    Pre-cache constant scalar arrays for kernel dispatch.
+    """
+    q = attn.q_proj
+    k = attn.k_proj
+    v = attn.v_proj
+
+    H_q = attn.num_attention_heads
+    D = attn.head_dim
+
+    W_q = q.weight.reshape(H_q, 2 * D, -1)
+    S_q = q.scales.reshape(H_q, 2 * D, -1)
+    B_q = q.biases.reshape(H_q, 2 * D, -1)
+
+    W_queries = W_q[:, :D, :].reshape(H_q * D, -1)
+    W_gate = W_q[:, D:, :].reshape(H_q * D, -1)
+    S_queries = S_q[:, :D, :].reshape(H_q * D, -1)
+    S_gate = S_q[:, D:, :].reshape(H_q * D, -1)
+    B_queries = B_q[:, :D, :].reshape(H_q * D, -1)
+    B_gate = B_q[:, D:, :].reshape(H_q * D, -1)
+
+    W_merged = mx.contiguous(mx.concatenate([W_queries, W_gate, k.weight, v.weight], axis=0))
+    S_merged = mx.contiguous(mx.concatenate([S_queries, S_gate, k.scales, v.scales], axis=0))
+    B_merged = mx.contiguous(mx.concatenate([B_queries, B_gate, k.biases, v.biases], axis=0))
+
+    attn._merged_proj_w = W_merged
+    attn._merged_proj_s = S_merged
+    attn._merged_proj_b = B_merged
+    N_Q = H_q * D
+    N_GATE = H_q * D
+    N_K = k.weight.shape[0]
+    N_V = v.weight.shape[0]
+    attn._merged_proj_dims = (N_Q, N_GATE, N_K, N_V)
+    mx.eval(W_merged, S_merged, B_merged)
+
+    # Pre-cache constant scalar arrays for kernel dispatch
+    N_TOTAL = N_Q + N_GATE + N_K + N_V
+    K_dim = q.weight.shape[1] * 4  # 8-bit: pack_factor=4
+    attn._kernel_scalars = {
+        'K': mx.array(K_dim, dtype=mx.int32),
+        'N_Q': mx.array(N_Q, dtype=mx.int32),
+        'N_GATE': mx.array(N_GATE, dtype=mx.int32),
+        'N_K': mx.array(N_K, dtype=mx.int32),
+        'N_TOTAL': mx.array(N_TOTAL, dtype=mx.int32),
+        'N_Q_TG': mx.array(ceil_div(N_Q, 8), dtype=mx.int32),
+        'N_GATE_TG': mx.array(ceil_div(N_GATE, 8), dtype=mx.int32),
+        'N_K_TG': mx.array(ceil_div(N_K, 8), dtype=mx.int32),
+        'scale': mx.array(attn.head_dim ** -0.5, dtype=mx.float32),
+        'H_Q': mx.array(attn.num_attention_heads, dtype=mx.int32),
+        'H_KV': mx.array(attn.num_key_value_heads, dtype=mx.int32),
+        'N_blocks': mx.array(128, dtype=mx.int32),
+    }
+    mx.eval(*attn._kernel_scalars.values())
+
+    N_V_TG = ceil_div(N_V, 8)
+    attn._d1_total_tg = ceil_div(N_Q, 8) + ceil_div(N_GATE, 8) + ceil_div(N_K, 8) + N_V_TG
+
+    # Precompute RoPE inv_freq
+    rope_dims = attn.rope.dims
+    half_dims = rope_dims // 2
+    theta = attn.rope.base
+    d_indices = mx.arange(half_dims, dtype=mx.float32)
+    attn._rope_inv_freq = theta ** (-d_indices / half_dims)
+    mx.eval(attn._rope_inv_freq)
+
+
+def apply_fused_gqa_gdn_patches(layers, gate_bm=8, free_originals=False):
+    """Apply all fusions: fused GDN + fused GQA + oproj MoE.
+
+    Combines:
+      - Fused GDN attention (3/4 layers: GatedDeltaNet)
+      - Fused GQA attention (1/4 layers: Qwen3NextAttention)
+      - Oproj MoE (all layers: oproj_gate_gemv + fused MoE dispatches)
+    """
+    from .moe import _oproj_moe_call
+    from .decoder import _fused_gdn_decoder_call
+    from .fused_gdn_attention import _fused_gdn_call
+    from .fused_gqa_attention import _fused_gqa_call
+    from mlx_lm.models.qwen3_next import Qwen3NextAttention
+    from mlx_lm.models.qwen3_5 import GatedDeltaNet
+
+    n_patched = 0
+    n_gdn = 0
+    n_gqa = 0
+    for li, layer in enumerate(layers):
+        moe = layer.mlp
+        if isinstance(moe, Qwen3NextSparseMoeBlock):
+            _patch_swiglu_weights(moe)
+            _patch_shared_expert(moe)
+            _patch_down_proj(moe)
+            _patch_oproj_gate_rms(layer, gate_bm=gate_bm)
+
+            if layer.is_linear:
+                _patch_gdn_proj_weights(layer.linear_attn)
+                n_gdn += 1
+            else:
+                _patch_gqa_proj_weights(layer.self_attn)
+                n_gqa += 1
+
+            if free_originals:
+                for attr in ('weight', 'scales', 'biases'):
+                    for proj in (moe.switch_mlp.gate_proj,
+                                 moe.switch_mlp.up_proj):
+                        try:
+                            delattr(proj, attr)
+                        except AttributeError:
+                            pass
+
+            n_patched += 1
+            if (li + 1) % 10 == 0 or li == 0:
+                logger.info(f"  Patched layer {li+1}/{len(layers)} (fused GQA+GDN mode)")
+
+    GatedDeltaNet.__call__ = _fused_gdn_call
+    Qwen3NextAttention.__call__ = _fused_gqa_call
+    Qwen3NextSparseMoeBlock.__call__ = _oproj_moe_call
+    DecoderLayer.__call__ = _fused_gdn_decoder_call
+    logger.info(f"  Patched {n_patched} MoE blocks ({n_gdn} GDN + {n_gqa} GQA, fused GQA+GDN mode)")

@@ -1,8 +1,9 @@
 """Decoder layer __call__ variants for Qwen3.5.
 
-Two modes:
+Three modes:
   _fused_decoder_call: passes residual to fused MoE epilogue (~15 dispatches)
   _oproj_decoder_call: fuses o_proj + RMSNorm + gate GEMV (4 dispatches)
+  _fused_gdn_decoder_call: fused GDN/GQA attention + oproj MoE (6 dispatches)
 
 Attention patches for oproj mode:
   _pre_oproj_attention_call: Qwen3NextAttention.__call__ that skips o_proj
@@ -56,6 +57,23 @@ def _oproj_decoder_call(self, x, mask=None, cache=None):
     Flow:
       pre_oproj = attn(input_layernorm(x))   # returns BEFORE o_proj
       MoE receives (pre_oproj, residual=x) and handles o_proj + RMSNorm + gate internally
+    """
+    if self.is_linear:
+        pre_oproj = self.linear_attn(self.input_layernorm(x), mask, cache)
+    else:
+        pre_oproj = self.self_attn(self.input_layernorm(x), mask, cache)
+    _parent_layer_map[id(self.mlp)] = self
+    return self.mlp(pre_oproj, _residual=x)
+
+
+def _fused_gdn_decoder_call(self, x, mask=None, cache=None):
+    """Decoder with fused GDN/GQA attention + oproj MoE (6-dispatch mode).
+
+    GDN layers use fused kernels, GQA layers use fused or vanilla attention.
+    Both return pre-out_proj output. MoE handles oproj_gate_gemv + MoE dispatches.
+
+    Flow is identical to oproj mode — the difference is that GatedDeltaNet.__call__
+    and/or Qwen3NextAttention.__call__ are patched with fused kernel implementations.
     """
     if self.is_linear:
         pre_oproj = self.linear_attn(self.input_layernorm(x), mask, cache)
