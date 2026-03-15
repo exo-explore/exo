@@ -101,13 +101,11 @@ def _gen_fused_qk_norm_rope_source(H_q=16, H_kv=2, D=256, rope_dims=64):
         ushort partner = (ushort)(slid ^ {PARTNER_XOR}u);
         int cos_base = (int)(slid & {FIRST_HALF - 1}u) * N_READS;
 
-        // Compute cos/sin on-device from precomputed inv_freq
-        // angle = position * inv_freq[d], where inv_freq[d] = theta^(-d/{ROPE_HALF})
+        // Load precomputed cos/sin values (computed in Python from position * inv_freq)
         float cos_arr[{N_READS}], sin_arr[{N_READS}];
         for (int i = 0; i < N_READS; i++) {{
-            float angle = (float)position * inv_freq[cos_base + i];
-            cos_arr[i] = metal::fast::cos(angle);
-            sin_arr[i] = metal::fast::sin(angle);
+            cos_arr[i] = rope_cos[cos_base + i];
+            sin_arr[i] = rope_sin[cos_base + i];
         }}
 
         // Exchange normalized values with partner thread via simd_shuffle
@@ -150,7 +148,7 @@ def _get_kernel(H_q, H_kv, D, rope_dims):
         _kernel_cache[key] = mx.fast.metal_kernel(
             name="fused_qk_norm_rope",
             input_names=["queries", "keys", "q_norm_w", "k_norm_w",
-                         "inv_freq", "position"],
+                         "rope_cos", "rope_sin"],
             output_names=["q_out", "k_out"],
             source=_gen_fused_qk_norm_rope_source(H_q, H_kv, D, rope_dims),
         )
@@ -168,7 +166,7 @@ def fused_qk_norm_rope(queries, keys, q_norm_weight, k_norm_weight,
         q_norm_weight: [D] bf16 — RMSNorm learned weight for queries.
         k_norm_weight: [D] bf16 — RMSNorm learned weight for keys.
         inv_freq: [rope_dims/2] f32 — precomputed theta^(-d/half_dims).
-        cache_offset: int — sequence position for RoPE angles.
+        cache_offset: int|float — sequence position for RoPE angles.
         H_q: int — number of query heads.
         H_kv: int — number of key/value heads.
         D: int — head dimension.
@@ -185,11 +183,15 @@ def fused_qk_norm_rope(queries, keys, q_norm_weight, k_norm_weight,
 
     q_flat = queries.reshape(B, H_q * D)
     k_flat = keys.reshape(B, H_kv * D)
-    pos = mx.array(cache_offset, dtype=mx.int32)
+
+    # Precompute cos/sin in Python (avoids passing scalar to Metal kernel)
+    angles = float(cache_offset) * inv_freq  # (rope_dims/2,) f32
+    rope_cos = mx.cos(angles)
+    rope_sin = mx.sin(angles)
 
     n_heads = H_q + H_kv
     results = kern(
-        inputs=[q_flat, k_flat, q_norm_weight, k_norm_weight, inv_freq, pos],
+        inputs=[q_flat, k_flat, q_norm_weight, k_norm_weight, rope_cos, rope_sin],
         output_shapes=[(B * H_q * D,), (B * H_kv * D,)],
         output_dtypes=[mx.bfloat16, mx.bfloat16],
         grid=(n_heads * 32, 1, B),
