@@ -185,7 +185,7 @@ def fused_qk_norm_rope(queries, keys, q_norm_weight, k_norm_weight,
 
     q_flat = queries.reshape(B, H_q * D)
     k_flat = keys.reshape(B, H_kv * D)
-    pos = mx.array(cache_offset, dtype=mx.int32)
+    pos = mx.array(int(cache_offset), dtype=mx.int32)
 
     n_heads = H_q + H_kv
     results = kern(
