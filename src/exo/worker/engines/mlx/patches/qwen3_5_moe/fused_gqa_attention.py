@@ -82,13 +82,12 @@ def _fused_gqa_call(
     D = self.head_dim
 
     # ── Dispatch 1: fused projections (merged GEMV + sigmoid(gate)) ──
-    sc = getattr(self, '_kernel_scalars', None)
     queries, gate_sigmoid, keys, values = fused_gqa_projections(
         x,
         self._merged_proj_w, self._merged_proj_s, self._merged_proj_b,
         self._merged_proj_dims,
         batch_size=B,
-        scalars=sc, total_tg=getattr(self, '_d1_total_tg', None),
+        total_tg=getattr(self, '_d1_total_tg', None),
     )
 
     # ── Dispatch 2: fused Q/K RMSNorm + RoPE ──
@@ -99,20 +98,16 @@ def _fused_gqa_call(
         H_q, H_kv, D, batch_size=B,
     )
     # queries: [B, H_q, 1, D], keys: [B, H_kv, 1, D]
-    # Reshape directly to (B, H_kv, 1, D) — no transpose needed since S=1.
-    # Avoids a 4 MiB copy dispatch that transpose would trigger.
     values = values.reshape(B, H_kv, 1, D)
 
     # ── Dispatch 3: KV cache update ──
     cache.update_and_fetch(keys, values)
-    N = cache.offset  # actual sequence length after update
-    alloc_len = cache.keys.shape[2]  # allocated buffer length
+    N = cache.offset
+    alloc_len = cache.keys.shape[2]
 
-    # ── Dispatch 4: SDPA Pass 1 (online softmax + partial V accumulation) ──
-    blocks = 128  # M3 Ultra default for N >= 1024
+    # ── Dispatch 4: SDPA Pass 1 ──
+    blocks = 128
     if N < 1024:
-        # Short sequence: fall back to vanilla SDPA + gate multiply
-        # Use sliced views for built-in SDPA (handles strides natively)
         k_sliced = cache.keys[:, :, :N, :]
         v_sliced = cache.values[:, :, :N, :]
         from mlx_lm.models.qwen3_next import scaled_dot_product_attention
@@ -122,16 +117,14 @@ def _fused_gqa_call(
         output = output.transpose(0, 2, 1, 3).reshape(B, S, -1)
         return output * gate_sigmoid.astype(output.dtype)
 
-    # Pass full (contiguous) cache buffers + alloc_len to avoid copy dispatch
     o_partials, sums, maxs = custom_sdpa_pass1(
         queries, cache.keys, cache.values, self.scale,
         H_q, H_kv, D, blocks=blocks, batch_size=B,
-        N=N, alloc_len=alloc_len, scalars=sc,
+        N=N, alloc_len=alloc_len,
     )
 
     # ── Dispatch 5: SDPA Pass 2 + gate multiply ──
     return custom_sdpa_pass2_gate(
         o_partials, sums, maxs, gate_sigmoid,
         H_q, D, blocks=blocks, V_SPLIT=4, batch_size=B,
-        scalars=sc,
     )
