@@ -28,44 +28,35 @@ def ceil_div(a, b):
     return (a + b - 1) // b
 
 
-def _gen_fused_gdn_projections_source(group_size=64):
+def _gen_fused_gdn_projections_source(K, N_QKV, N_Z, N_B, N_A, group_size=64):
     """Generate Metal source for fused GDN projections with merged weights.
 
-    8-bit dequantization (group_size=64):
-        result = scale * Σ(x[i]*w[i]) + bias * Σ(x[i])
-
-    Single merged weight buffer indexed by absolute out_row.
-    TG routing via tgid.y determines region (epilogue):
-        [0, N_QKV_TG):              QKV GEMV + conv1d + SiLU + cache
-        [N_QKV_TG, +N_Z_TG):       Z GEMV + SiLU
-        [+N_Z_TG, +N_B_TG):        B GEMV → sigmoid → beta (f32)
-        [+N_B_TG, +N_A_TG):        A GEMV → g=exp(-exp(A_log)*softplus(a+dt_bias)) (f32)
+    All constants baked into Metal source (no scalar kernel inputs).
     """
     gs = int(group_size)
-    sc_stride = 256 // gs   # groups consumed per K-block = 4
-    slid_div = gs // 8      # threads per group = 8
+    sc_stride = 256 // gs
+    slid_div = gs // 8
+    N_TOTAL = N_QKV + N_Z + N_B + N_A
+    K_groups = K // gs
+    N_QKV_TG = ceil_div(N_QKV, 8)
+    N_Z_TG = ceil_div(N_Z, 8)
 
     return f"""
     const int RESULTS_PER_SG = 4;
     const int VALUES_PER_THREAD = 8;
-    const int BLOCK_SIZE = 256;   // 32 * 8
+    const int BLOCK_SIZE = 256;
     const int GROUP_SIZE = {gs};
     const int SC_STRIDE = {sc_stride};
     const int SLID_DIV = {slid_div};
-
-    int K = K_val;
-    int K_groups = K / GROUP_SIZE;
-
-    // Dimension boundaries
-    int N_QKV = N_QKV_val;
-    int N_Z = N_Z_val;
-    int N_B = N_B_val;
-    int N_TOTAL = N_TOTAL_val;
-
-    // TG boundaries
-    int N_QKV_TG = N_QKV_TG_val;
-    int N_Z_TG = N_Z_TG_val;
-    int N_B_TG = N_B_TG_val;
+    const int K = {K};
+    const int K_groups = {K_groups};
+    const int N_QKV = {N_QKV};
+    const int N_Z = {N_Z};
+    const int N_B = {N_B};
+    const int N_TOTAL = {N_TOTAL};
+    const int N_QKV_TG = {N_QKV_TG};
+    const int N_Z_TG = {N_Z_TG};
+    const int N_B_TG = {ceil_div(N_B, 8)};
 
     uint3 tgid = threadgroup_position_in_grid;
     uint sgid = simdgroup_index_in_threadgroup;  // 0 or 1
@@ -199,28 +190,24 @@ def _gen_fused_gdn_projections_source(group_size=64):
 """
 
 
-_fused_gdn_proj_kernel = None
+_fused_gdn_proj_cache = {}
 
 
-def _get_fused_gdn_proj_kernel():
-    """Get or compile the fused GDN projections kernel."""
-    global _fused_gdn_proj_kernel
-    if _fused_gdn_proj_kernel is None:
-        _fused_gdn_proj_kernel = mx.fast.metal_kernel(
-            name="fused_gdn_projections_8bit_merged",
+def _get_fused_gdn_proj_kernel(K, N_QKV, N_Z, N_B, N_A, group_size=64):
+    key = (K, N_QKV, N_Z, N_B, N_A, group_size)
+    if key not in _fused_gdn_proj_cache:
+        _fused_gdn_proj_cache[key] = mx.fast.metal_kernel(
+            name=f"fused_gdn_proj_K{K}_NQKV{N_QKV}_NZ{N_Z}_NB{N_B}_NA{N_A}",
             input_names=[
                 "x",
                 "W_merged", "S_merged", "B_merged",
                 "conv_state", "conv_w",
                 "A_log_arr", "dt_bias_arr",
-                "K_val",
-                "N_QKV_val", "N_Z_val", "N_B_val", "N_TOTAL_val",
-                "N_QKV_TG_val", "N_Z_TG_val", "N_B_TG_val",
             ],
             output_names=["qkv_out", "z_silu_out", "b_out", "a_out", "conv_state_out"],
-            source=_gen_fused_gdn_projections_source(),
+            source=_gen_fused_gdn_projections_source(K, N_QKV, N_Z, N_B, N_A, group_size),
         )
-    return _fused_gdn_proj_kernel
+    return _fused_gdn_proj_cache[key]
 
 
 def fused_gdn_projections(
@@ -258,23 +245,19 @@ def fused_gdn_projections(
         conv_state_out: [B, 3, N_QKV] bf16
     """
     B = batch_size
-    kern = _get_fused_gdn_proj_kernel()
 
     N_QKV, N_Z, N_B, N_A = proj_dims
-    N_TOTAL = N_QKV + N_Z + N_B + N_A
     K = x.shape[-1]
 
-    # TG counts (8 rows per TG)
+    kern = _get_fused_gdn_proj_kernel(K, N_QKV, N_Z, N_B, N_A)
+
     N_QKV_TG = ceil_div(N_QKV, 8)
     N_Z_TG = ceil_div(N_Z, 8)
     N_B_TG = ceil_div(N_B, 8)
     N_A_TG = ceil_div(N_A, 8)
     total_tg = N_QKV_TG + N_Z_TG + N_B_TG + N_A_TG
 
-    # Flatten conv weights to [conv_dim, 4] if needed
     conv_w_flat = conv_weights.reshape(-1, 4) if conv_weights.ndim == 3 else conv_weights
-
-    # Flatten x to [B, K]
     x_flat = x.reshape(B, K)
 
     results = kern(
@@ -283,14 +266,6 @@ def fused_gdn_projections(
             W_merged, S_merged, B_merged,
             conv_state, conv_w_flat,
             A_log, dt_bias,
-            mx.array(K, dtype=mx.int32),
-            mx.array(N_QKV, dtype=mx.int32),
-            mx.array(N_Z, dtype=mx.int32),
-            mx.array(N_B, dtype=mx.int32),
-            mx.array(N_TOTAL, dtype=mx.int32),
-            mx.array(N_QKV_TG, dtype=mx.int32),
-            mx.array(N_Z_TG, dtype=mx.int32),
-            mx.array(N_B_TG, dtype=mx.int32),
         ],
         output_shapes=[
             (B * N_QKV,),              # qkv_out
