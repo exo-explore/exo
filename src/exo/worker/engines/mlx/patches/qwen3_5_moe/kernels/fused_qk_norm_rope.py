@@ -105,7 +105,7 @@ def _gen_fused_qk_norm_rope_source(H_q=16, H_kv=2, D=256, rope_dims=64):
         // angle = position * inv_freq[d], where inv_freq[d] = theta^(-d/{ROPE_HALF})
         float cos_arr[{N_READS}], sin_arr[{N_READS}];
         for (int i = 0; i < N_READS; i++) {{
-            float angle = position[0] * inv_freq[cos_base + i];
+            float angle = (float)position * inv_freq[cos_base + i];
             cos_arr[i] = metal::fast::cos(angle);
             sin_arr[i] = metal::fast::sin(angle);
         }}
@@ -185,7 +185,7 @@ def fused_qk_norm_rope(queries, keys, q_norm_weight, k_norm_weight,
 
     q_flat = queries.reshape(B, H_q * D)
     k_flat = keys.reshape(B, H_kv * D)
-    pos = mx.array(cache_offset, dtype=mx.float32)
+    pos = mx.array(cache_offset, dtype=mx.int32)
 
     n_heads = H_q + H_kv
     results = kern(
