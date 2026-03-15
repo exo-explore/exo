@@ -11,6 +11,7 @@ import mlx.core as mx
 def _gen_sdpa_pass1_source(D=256, H_q=16, H_kv=2, blocks=128):
     EPT = D // 32
     gqa_factor = H_q // H_kv
+    scale = D ** -0.5
 
     return f"""
     const int D_DIM = {D};
@@ -19,6 +20,7 @@ def _gen_sdpa_pass1_source(D=256, H_q=16, H_kv=2, blocks=128):
     const int H_KV = {H_kv};
     const int N_BLOCKS = {blocks};
     const int GQA_FACTOR = {gqa_factor};
+    const float SCALE = {scale}f;
 
     uint simd_lid = thread_index_in_simdgroup;
     uint kv_head_idx = threadgroup_position_in_grid.x;
@@ -43,7 +45,7 @@ def _gen_sdpa_pass1_source(D=256, H_q=16, H_kv=2, blocks=128):
 
     float q[{EPT}];
     for (int i = 0; i < EPT; i++) {{
-        q[i] = (float)scale * (float)queries[q_offset + (int)simd_lid * EPT + i];
+        q[i] = SCALE * (float)queries[q_offset + (int)simd_lid * EPT + i];
     }}
 
     float max_score = -__FLT_MAX__;
@@ -93,7 +95,7 @@ def _get_pass1_kernel(D, H_q, H_kv, blocks, gqa_factor):
     if key not in _pass1_cache:
         _pass1_cache[key] = mx.fast.metal_kernel(
             name=f"sdpa_pass1_D{D}_Hq{H_q}_Hkv{H_kv}_b{blocks}",
-            input_names=["queries", "keys", "values", "scale", "params"],
+            input_names=["queries", "keys", "values", "params"],
             output_names=["o_partials", "sums", "maxs"],
             source=_gen_sdpa_pass1_source(D, H_q, H_kv, blocks),
         )
@@ -116,11 +118,8 @@ def custom_sdpa_pass1(queries, keys, values, scale, H_q, H_kv, D,
     # Pack per-call varying values into a params array (always a pointer)
     params = mx.array([int(N), int(alloc_len)], dtype=mx.int32)
 
-    # Scale as 1-element array (always a pointer)
-    scale_arr = mx.array([scale], dtype=mx.float32)
-
     results = kern(
-        inputs=[queries, keys, values, scale_arr, params],
+        inputs=[queries, keys, values, params],
         output_shapes=[
             (B * H_q * blocks * D,),
             (B * H_q * blocks,),
