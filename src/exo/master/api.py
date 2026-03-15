@@ -169,8 +169,35 @@ from exo.shared.types.openai_responses import (
     ResponsesResponse,
 )
 from exo.shared.types.state import State
-from exo.shared.types.worker.downloads import DownloadCompleted
+from exo.shared.types.cluster import (
+    ClusterDownloadSummary,
+    ClusterHealthResponse,
+    ClusterModelSummary,
+    ClusterModelsResponse,
+    ClusterNodeSummary,
+    ClusterNodesResponse,
+    ClusterOverviewResponse,
+    ClusterTaskSummary,
+    LoadModelRequest,
+    LoadModelResponse,
+    ModelStatusResponse,
+    SwapModelRequest,
+    SwapModelResponse,
+    UnloadModelResponse,
+)
+from exo.shared.types.worker.downloads import (
+    DownloadCompleted,
+    DownloadFailed,
+    DownloadOngoing,
+    DownloadPending,
+)
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
+from exo.shared.types.worker.runners import (
+    RunnerFailed,
+    RunnerLoading,
+    RunnerReady,
+    RunnerRunning,
+)
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
@@ -351,6 +378,21 @@ class API:
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
+
+        # Cluster management API — agent-friendly endpoints
+        self.app.get("/v1/cluster")(self.cluster_overview)
+        self.app.get("/v1/cluster/health")(self.cluster_health)
+        self.app.get("/v1/cluster/nodes")(self.cluster_nodes)
+        self.app.get("/v1/cluster/nodes/{node_id}")(self.cluster_node_detail)
+        self.app.get("/v1/cluster/models")(self.cluster_models)
+        self.app.post("/v1/cluster/models/load")(self.cluster_load_model)
+        self.app.delete("/v1/cluster/models/{model_id:path}")(
+            self.cluster_unload_model
+        )
+        self.app.post("/v1/cluster/models/swap")(self.cluster_swap_model)
+        self.app.get("/v1/cluster/models/{model_id:path}/status")(
+            self.cluster_model_status
+        )
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -1525,6 +1567,592 @@ class API:
     async def ollama_version(self) -> dict[str, str]:
         """Returns version information for Ollama API compatibility."""
         return {"version": "exo v1.0"}
+
+    # ------------------------------------------------------------------
+    # Cluster management API — agent-friendly endpoints
+    # ------------------------------------------------------------------
+
+    def _build_node_summary(self, node_id: NodeId) -> ClusterNodeSummary:
+        """Build a flat, agent-friendly summary for a single node."""
+        identity = self.state.node_identities.get(node_id)
+        memory = self.state.node_memory.get(node_id)
+        disk = self.state.node_disk.get(node_id)
+        system = self.state.node_system.get(node_id)
+        network = self.state.node_network.get(node_id)
+        tb = self.state.node_thunderbolt.get(node_id)
+        rdma = self.state.node_rdma_ctl.get(node_id)
+        last_seen = self.state.last_seen.get(node_id)
+
+        # Determine status from last_seen
+        status: str = "unknown"
+        seconds_since: float | None = None
+        if last_seen is not None:
+            from datetime import datetime, timezone
+
+            now = datetime.now(timezone.utc)
+            delta = (now - last_seen).total_seconds()
+            seconds_since = round(delta, 1)
+            status = "online" if delta < 30 else "stale"
+
+        # Collect loaded models for this node
+        loaded_models: list[str] = []
+        for instance in self.state.instances.values():
+            if node_id in instance.shard_assignments.node_to_runner:
+                model_name = instance.shard_assignments.model_id.short()
+                if model_name not in loaded_models:
+                    loaded_models.append(model_name)
+
+        # IP addresses and connection types
+        ip_addresses: list[str] = []
+        connection_types: list[str] = []
+        if network:
+            for iface in network.interfaces:
+                ip_addresses.append(iface.ip_address)
+                if iface.interface_type not in connection_types:
+                    connection_types.append(iface.interface_type)
+
+        ram_total = round(memory.ram_total.in_gb, 1) if memory else 0.0
+        ram_avail = round(memory.ram_available.in_gb, 1) if memory else 0.0
+        ram_used = round(ram_total - ram_avail, 1)
+        ram_pct = round((ram_used / ram_total) * 100, 1) if ram_total > 0 else 0.0
+
+        return ClusterNodeSummary(
+            node_id=str(node_id),
+            friendly_name=identity.friendly_name if identity else "Unknown",
+            chip=identity.chip_id if identity else "Unknown",
+            os_version=identity.os_version if identity else "Unknown",
+            ram_total_gb=ram_total,
+            ram_available_gb=ram_avail,
+            ram_used_gb=ram_used,
+            ram_used_percent=ram_pct,
+            disk_total_gb=round(disk.total.in_gb, 1) if disk else 0.0,
+            disk_available_gb=round(disk.available.in_gb, 1) if disk else 0.0,
+            gpu_usage_percent=round(system.gpu_usage, 1) if system else 0.0,
+            cpu_p_usage_percent=round(system.pcpu_usage, 1) if system else 0.0,
+            cpu_e_usage_percent=round(system.ecpu_usage, 1) if system else 0.0,
+            temperature_c=round(system.temp, 1) if system else 0.0,
+            power_watts=round(system.sys_power, 1) if system else 0.0,
+            ip_addresses=ip_addresses,
+            connection_types=connection_types,
+            has_thunderbolt=bool(tb and len(tb.interfaces) > 0),
+            rdma_enabled=bool(rdma and rdma.enabled),
+            loaded_models=loaded_models,
+            status=status,
+            seconds_since_seen=seconds_since,
+        )
+
+    def _build_model_summary(
+        self, instance_id: InstanceId, instance: Instance
+    ) -> ClusterModelSummary:
+        """Build a flat summary for a loaded model instance."""
+        assignments = instance.shard_assignments
+        model_id = str(assignments.model_id)
+        model_name = assignments.model_id.short()
+        nodes = list(str(n) for n in assignments.node_to_runner.keys())
+
+        # Friendly names for nodes
+        node_names = []
+        for nid in assignments.node_to_runner.keys():
+            identity = self.state.node_identities.get(nid)
+            node_names.append(identity.friendly_name if identity else str(nid)[:8])
+
+        # Determine instance type and sharding from the instance class
+        from exo.shared.types.worker.instances import MlxJacclInstance, MlxRingInstance
+
+        if isinstance(instance, MlxRingInstance):
+            instance_type = "MlxRing"
+        elif isinstance(instance, MlxJacclInstance):
+            instance_type = "MlxJaccl"
+        else:
+            instance_type = "unknown"
+
+        # Determine sharding from shard metadata
+        sharding = "unknown"
+        for shard_meta in assignments.runner_to_shard.values():
+            sharding = type(shard_meta).__name__.replace("ShardMetadata", "").lower()
+            break
+
+        # Runner statuses for each node
+        runner_statuses: dict[str, str] = {}
+        ready = True
+        overall_status = "unknown"
+        for nid, runner_id in assignments.node_to_runner.items():
+            runner_status = self.state.runners.get(runner_id)
+            if runner_status is None:
+                runner_statuses[str(nid)] = "unknown"
+                ready = False
+            else:
+                status_name = type(runner_status).__name__.replace("Runner", "").lower()
+                runner_statuses[str(nid)] = status_name
+                if isinstance(runner_status, RunnerFailed):
+                    ready = False
+                    overall_status = "failed"
+                elif isinstance(runner_status, RunnerLoading):
+                    ready = False
+                    overall_status = "loading"
+                elif isinstance(runner_status, RunnerRunning):
+                    overall_status = "running"
+                elif isinstance(runner_status, RunnerReady) and overall_status not in (
+                    "running",
+                    "failed",
+                    "loading",
+                ):
+                    overall_status = "ready"
+
+        if overall_status == "unknown" and ready:
+            overall_status = "ready"
+
+        # Get storage size from any shard's model card
+        storage_gb = 0.0
+        for shard_meta in assignments.runner_to_shard.values():
+            storage_gb = round(shard_meta.model_card.storage_size.in_gb, 1)
+            break
+
+        return ClusterModelSummary(
+            instance_id=str(instance_id),
+            model_id=model_id,
+            model_name=model_name,
+            sharding=sharding,
+            instance_type=instance_type,
+            nodes=nodes,
+            node_names=node_names,
+            storage_size_gb=storage_gb,
+            runner_statuses=runner_statuses,
+            ready=ready,
+            status=overall_status,
+        )
+
+    def _build_download_summaries(self) -> list[ClusterDownloadSummary]:
+        """Build flat download summaries from state."""
+        summaries: list[ClusterDownloadSummary] = []
+        for node_id, downloads in self.state.downloads.items():
+            identity = self.state.node_identities.get(node_id)
+            node_name = identity.friendly_name if identity else str(node_id)[:8]
+            for dl in downloads:
+                model_id = str(dl.shard_metadata.model_card.model_id)
+                if isinstance(dl, DownloadCompleted):
+                    summaries.append(
+                        ClusterDownloadSummary(
+                            node_id=str(node_id),
+                            node_name=node_name,
+                            model_id=model_id,
+                            status="completed",
+                            downloaded_gb=round(dl.total.in_gb, 1),
+                            total_gb=round(dl.total.in_gb, 1),
+                            progress_percent=100.0,
+                        )
+                    )
+                elif isinstance(dl, DownloadOngoing):
+                    prog = dl.download_progress
+                    total_gb = prog.total.in_gb
+                    dl_gb = prog.downloaded.in_gb
+                    pct = round((dl_gb / total_gb) * 100, 1) if total_gb > 0 else 0.0
+                    summaries.append(
+                        ClusterDownloadSummary(
+                            node_id=str(node_id),
+                            node_name=node_name,
+                            model_id=model_id,
+                            status="downloading",
+                            downloaded_gb=round(dl_gb, 1),
+                            total_gb=round(total_gb, 1),
+                            progress_percent=pct,
+                            speed_mb_s=round(prog.speed / (1024 * 1024), 1),
+                            eta_seconds=round(prog.eta_ms / 1000, 1)
+                            if prog.eta_ms > 0
+                            else None,
+                        )
+                    )
+                elif isinstance(dl, DownloadPending):
+                    summaries.append(
+                        ClusterDownloadSummary(
+                            node_id=str(node_id),
+                            node_name=node_name,
+                            model_id=model_id,
+                            status="pending",
+                            total_gb=round(dl.total.in_gb, 1),
+                        )
+                    )
+                elif isinstance(dl, DownloadFailed):
+                    summaries.append(
+                        ClusterDownloadSummary(
+                            node_id=str(node_id),
+                            node_name=node_name,
+                            model_id=model_id,
+                            status="failed",
+                            error=dl.error_message,
+                        )
+                    )
+        return summaries
+
+    def _build_task_summaries(self) -> list[ClusterTaskSummary]:
+        """Build flat task summaries from state."""
+        from exo.shared.types.tasks import (
+            ImageEdits as ImageEditsTask,
+            ImageGeneration as ImageGenTask,
+            TextGeneration as TextGenTask,
+        )
+
+        summaries: list[ClusterTaskSummary] = []
+        for task_id, task in self.state.tasks.items():
+            task_type = type(task).__name__
+            # Map to friendly names
+            if isinstance(task, TextGenTask):
+                task_type = "text_generation"
+            elif isinstance(task, ImageGenTask):
+                task_type = "image_generation"
+            elif isinstance(task, ImageEditsTask):
+                task_type = "image_edit"
+
+            model_id = ""
+            for inst in self.state.instances.values():
+                if inst.shard_assignments.model_id and task.instance_id == getattr(
+                    inst, "instance_id", None
+                ):
+                    model_id = str(inst.shard_assignments.model_id)
+                    break
+
+            summaries.append(
+                ClusterTaskSummary(
+                    task_id=str(task_id),
+                    task_type=task_type,
+                    status=task.task_status.value.lower(),
+                    model_id=model_id,
+                    instance_id=str(task.instance_id),
+                )
+            )
+        return summaries
+
+    async def cluster_health(self) -> ClusterHealthResponse:
+        """Quick health check — is the cluster alive and how many nodes?"""
+        nodes = list(self.state.topology.list_nodes())
+        return ClusterHealthResponse(
+            healthy=len(nodes) > 0,
+            node_count=len(nodes),
+            master_node_id=str(self.node_id),
+        )
+
+    async def cluster_overview(self) -> ClusterOverviewResponse:
+        """One call to understand the entire cluster.
+
+        Returns nodes, loaded models, active tasks, and downloads in a flat,
+        agent-friendly format.  Designed so a single GET gives full situational
+        awareness.
+        """
+        nodes = [
+            self._build_node_summary(nid)
+            for nid in self.state.topology.list_nodes()
+        ]
+        models = [
+            self._build_model_summary(iid, inst)
+            for iid, inst in self.state.instances.items()
+        ]
+        tasks = self._build_task_summaries()
+        downloads = self._build_download_summaries()
+
+        total_ram = sum(n.ram_total_gb for n in nodes)
+        avail_ram = sum(n.ram_available_gb for n in nodes)
+        used_ram = round(total_ram - avail_ram, 1)
+        pct = round((used_ram / total_ram) * 100, 1) if total_ram > 0 else 0.0
+
+        active_downloads = [d for d in downloads if d.status in ("pending", "downloading")]
+
+        return ClusterOverviewResponse(
+            node_count=len(nodes),
+            total_ram_gb=round(total_ram, 1),
+            available_ram_gb=round(avail_ram, 1),
+            used_ram_gb=used_ram,
+            ram_used_percent=pct,
+            loaded_model_count=len(models),
+            active_task_count=len([t for t in tasks if t.status in ("pending", "running")]),
+            active_download_count=len(active_downloads),
+            nodes=nodes,
+            models=models,
+            tasks=tasks,
+            downloads=downloads,
+            master_node_id=str(self.node_id),
+        )
+
+    async def cluster_nodes(self) -> ClusterNodesResponse:
+        """List all nodes with agent-friendly summaries."""
+        nodes = [
+            self._build_node_summary(nid)
+            for nid in self.state.topology.list_nodes()
+        ]
+        return ClusterNodesResponse(node_count=len(nodes), nodes=nodes)
+
+    async def cluster_node_detail(self, node_id: str) -> ClusterNodeSummary:
+        """Get detailed info for a single node."""
+        nid = NodeId(node_id)
+        all_nodes = list(self.state.topology.list_nodes())
+        if nid not in all_nodes:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Node '{node_id}' not found. "
+                f"Available nodes: {[str(n) for n in all_nodes]}",
+            )
+        return self._build_node_summary(nid)
+
+    async def cluster_models(self) -> ClusterModelsResponse:
+        """All loaded models and active downloads."""
+        loaded = [
+            self._build_model_summary(iid, inst)
+            for iid, inst in self.state.instances.items()
+        ]
+        downloading = [
+            d
+            for d in self._build_download_summaries()
+            if d.status in ("pending", "downloading")
+        ]
+        return ClusterModelsResponse(loaded=loaded, downloading=downloading)
+
+    async def cluster_load_model(self, payload: LoadModelRequest) -> LoadModelResponse:
+        """Load a model by name — the cluster auto-places it.
+
+        This is the agent-friendly wrapper around ``place_instance``.  Just
+        provide a model ID (e.g. ``mlx-community/Qwen3-30B-A3B-4bit``) and
+        optional preferences; the cluster handles sharding and placement.
+        """
+        model_card = await ModelCard.load(ModelId(payload.model_id))
+        required_memory = model_card.storage_size
+        available_memory = self._calculate_total_available_memory()
+
+        if required_memory > available_memory:
+            # Build a helpful error that suggests what to unload
+            loaded_models = []
+            for inst in self.state.instances.values():
+                for shard in inst.shard_assignments.runner_to_shard.values():
+                    loaded_models.append(
+                        f"{shard.model_card.model_id.short()} "
+                        f"({shard.model_card.storage_size.in_gb:.1f}GB)"
+                    )
+                    break
+
+            hint = ""
+            if loaded_models:
+                hint = (
+                    f" Currently loaded: {', '.join(loaded_models)}. "
+                    "Unload a model to free memory."
+                )
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Insufficient memory to load {model_card.model_id.short()}. "
+                    f"Need {required_memory.in_gb:.1f}GB, "
+                    f"have {available_memory.in_gb:.1f}GB available.{hint}"
+                ),
+            )
+
+        # Map user-friendly sharding preference to enum
+        if payload.preferred_sharding == "tensor":
+            sharding = Sharding.Tensor
+        elif payload.preferred_sharding == "pipeline":
+            sharding = Sharding.Pipeline
+        else:
+            # "auto" — prefer tensor if supported, fall back to pipeline
+            sharding = (
+                Sharding.Tensor if model_card.supports_tensor else Sharding.Pipeline
+            )
+
+        command = PlaceInstance(
+            model_card=model_card,
+            sharding=sharding,
+            instance_meta=InstanceMeta.MlxRing,
+            min_nodes=payload.min_nodes,
+        )
+        await self._send(command)
+
+        return LoadModelResponse(
+            message=f"Loading {model_card.model_id.short()} across the cluster.",
+            command_id=str(command.command_id),
+            model_id=str(model_card.model_id),
+            estimated_memory_gb=round(model_card.storage_size.in_gb, 1),
+        )
+
+    async def cluster_unload_model(self, model_id: str) -> UnloadModelResponse:
+        """Unload a model by model ID (not instance ID).
+
+        Finds the instance matching the given model ID and deletes it.
+        If multiple instances of the same model exist, unloads the first one.
+        """
+        target_instance_id: InstanceId | None = None
+        target_model_id: str = ""
+        freed_gb: float = 0.0
+
+        for iid, instance in self.state.instances.items():
+            inst_model = str(instance.shard_assignments.model_id)
+            # Match on full ID or short name
+            if inst_model == model_id or instance.shard_assignments.model_id.short() == model_id:
+                target_instance_id = iid
+                target_model_id = inst_model
+                for shard in instance.shard_assignments.runner_to_shard.values():
+                    freed_gb = round(shard.model_card.storage_size.in_gb, 1)
+                    break
+                break
+
+        if target_instance_id is None:
+            # Build helpful error with what IS loaded
+            loaded = [
+                f"{inst.shard_assignments.model_id.short()} (id: {inst.shard_assignments.model_id})"
+                for inst in self.state.instances.values()
+            ]
+            hint = f" Loaded models: {', '.join(loaded)}" if loaded else " No models are currently loaded."
+            raise HTTPException(
+                status_code=404,
+                detail=f"No loaded model matching '{model_id}'.{hint}",
+            )
+
+        command = DeleteInstance(instance_id=target_instance_id)
+        await self._send(command)
+
+        return UnloadModelResponse(
+            message=f"Unloading {ModelId(target_model_id).short()}.",
+            command_id=str(command.command_id),
+            model_id=target_model_id,
+            instance_id=str(target_instance_id),
+            freed_memory_gb=freed_gb,
+        )
+
+    async def cluster_model_status(self, model_id: str) -> ModelStatusResponse:
+        """Poll the status of a model by name.
+
+        Returns whether it's loaded, loading, downloading, or not present.
+        Designed for polling loops: call this after ``load`` or ``swap`` until
+        ``ready`` is ``true``.
+        """
+        # Check loaded instances
+        for iid, instance in self.state.instances.items():
+            inst_model = str(instance.shard_assignments.model_id)
+            if inst_model == model_id or instance.shard_assignments.model_id.short() == model_id:
+                summary = self._build_model_summary(iid, instance)
+                progress = None
+                if summary.status == "loading":
+                    # Try to get layer loading progress
+                    for runner_id in instance.shard_assignments.node_to_runner.values():
+                        rs = self.state.runners.get(runner_id)
+                        if isinstance(rs, RunnerLoading) and rs.total_layers > 0:
+                            pct = round((rs.layers_loaded / rs.total_layers) * 100)
+                            progress = f"Loading layers: {rs.layers_loaded}/{rs.total_layers} ({pct}%)"
+                            break
+
+                return ModelStatusResponse(
+                    model_id=inst_model,
+                    found=True,
+                    status=summary.status,
+                    ready=summary.ready,
+                    progress=progress,
+                    nodes=summary.node_names,
+                    instance_id=str(iid),
+                )
+
+        # Check downloads
+        for node_id, downloads in self.state.downloads.items():
+            for dl in downloads:
+                dl_model = str(dl.shard_metadata.model_card.model_id)
+                if dl_model == model_id or dl.shard_metadata.model_card.model_id.short() == model_id:
+                    if isinstance(dl, DownloadOngoing):
+                        prog = dl.download_progress
+                        pct = round((prog.downloaded.in_gb / prog.total.in_gb) * 100) if prog.total.in_gb > 0 else 0
+                        return ModelStatusResponse(
+                            model_id=dl_model,
+                            found=True,
+                            status="downloading",
+                            progress=f"Downloading: {prog.downloaded.in_gb:.1f}/{prog.total.in_gb:.1f}GB ({pct}%)",
+                        )
+                    elif isinstance(dl, DownloadPending):
+                        return ModelStatusResponse(
+                            model_id=dl_model,
+                            found=True,
+                            status="downloading",
+                            progress="Download pending...",
+                        )
+
+        return ModelStatusResponse(model_id=model_id, found=False, status="not_loaded")
+
+    async def cluster_swap_model(self, payload: SwapModelRequest) -> SwapModelResponse:
+        """Swap one model for another in a single call.
+
+        Unloads the old model then loads the new one.  Ideal for scheduled
+        model rotation (e.g. large model overnight, small model during the day).
+        """
+        # Step 1: Find and unload the old model
+        target_instance_id: InstanceId | None = None
+        freed_gb: float = 0.0
+        unloaded_model_name = payload.unload_model_id
+
+        for iid, instance in self.state.instances.items():
+            inst_model = str(instance.shard_assignments.model_id)
+            if inst_model == payload.unload_model_id or instance.shard_assignments.model_id.short() == payload.unload_model_id:
+                target_instance_id = iid
+                unloaded_model_name = inst_model
+                for shard in instance.shard_assignments.runner_to_shard.values():
+                    freed_gb = round(shard.model_card.storage_size.in_gb, 1)
+                    break
+                break
+
+        if target_instance_id is None:
+            loaded = [
+                inst.shard_assignments.model_id.short()
+                for inst in self.state.instances.values()
+            ]
+            hint = f" Loaded: {', '.join(loaded)}" if loaded else " No models loaded."
+            raise HTTPException(
+                status_code=404,
+                detail=f"Cannot swap: model '{payload.unload_model_id}' not found.{hint}",
+            )
+
+        # Step 2: Validate the new model can be loaded (with memory freed by unload)
+        model_card = await ModelCard.load(ModelId(payload.load_model_id))
+        available_after_unload = self._calculate_total_available_memory() + Memory.from_gb(freed_gb)
+
+        if model_card.storage_size > available_after_unload:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Even after unloading {ModelId(unloaded_model_name).short()} "
+                    f"(freeing {freed_gb:.1f}GB), not enough memory for "
+                    f"{model_card.model_id.short()} "
+                    f"(needs {model_card.storage_size.in_gb:.1f}GB, "
+                    f"would have {available_after_unload.in_gb:.1f}GB)."
+                ),
+            )
+
+        # Step 3: Send unload command
+        unload_cmd = DeleteInstance(instance_id=target_instance_id)
+        await self._send(unload_cmd)
+
+        # Step 4: Send load command
+        if payload.preferred_sharding == "tensor":
+            sharding = Sharding.Tensor
+        elif payload.preferred_sharding == "pipeline":
+            sharding = Sharding.Pipeline
+        else:
+            sharding = (
+                Sharding.Tensor if model_card.supports_tensor else Sharding.Pipeline
+            )
+
+        load_cmd = PlaceInstance(
+            model_card=model_card,
+            sharding=sharding,
+            instance_meta=InstanceMeta.MlxRing,
+            min_nodes=payload.min_nodes,
+        )
+        await self._send(load_cmd)
+
+        return SwapModelResponse(
+            message=(
+                f"Swapping {ModelId(unloaded_model_name).short()} → "
+                f"{model_card.model_id.short()}. "
+                f"Poll GET /v1/cluster/models/{model_card.model_id}/status "
+                f"until ready=true."
+            ),
+            unload_command_id=str(unload_cmd.command_id),
+            load_command_id=str(load_cmd.command_id),
+            unloaded_model=unloaded_model_name,
+            loaded_model=str(model_card.model_id),
+            freed_memory_gb=freed_gb,
+            estimated_load_memory_gb=round(model_card.storage_size.in_gb, 1),
+        )
 
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
