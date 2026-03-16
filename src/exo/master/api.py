@@ -3,7 +3,7 @@ import contextlib
 import json
 import random
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping
 from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
@@ -171,6 +171,20 @@ from exo.shared.types.openai_responses import (
 from exo.shared.types.state import State
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
+from exo.shared.types.worker.runners import (
+    RunnerConnected,
+    RunnerConnecting,
+    RunnerFailed,
+    RunnerId,
+    RunnerLoaded,
+    RunnerLoading,
+    RunnerReady,
+    RunnerRunning,
+    RunnerShutdown,
+    RunnerShuttingDown,
+    RunnerStatus,
+    RunnerWarmingUp,
+)
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
@@ -192,6 +206,115 @@ def _ensure_seed(params: AdvancedImageParams | None) -> AdvancedImageParams:
     if params.seed is None:
         return params.model_copy(update={"seed": random.randint(0, 2**32 - 1)})
     return params
+
+
+def _runner_status_name(runner_status: RunnerStatus | None) -> str:
+    return type(runner_status).__name__ if runner_status is not None else "Unknown"
+
+
+def _runner_status_detail(runner_status: RunnerStatus | None) -> dict[str, object]:
+    if runner_status is None:
+        return {"status": "Unknown"}
+
+    detail: dict[str, object] = {"status": _runner_status_name(runner_status)}
+    if isinstance(runner_status, RunnerLoading):
+        detail["layers_loaded"] = runner_status.layers_loaded
+        detail["total_layers"] = runner_status.total_layers
+    if isinstance(runner_status, RunnerFailed) and runner_status.error_message:
+        detail["error_message"] = runner_status.error_message
+    return detail
+
+
+def _summarize_model_readiness(
+    instances: Mapping[InstanceId, Instance],
+    runners: Mapping[RunnerId, RunnerStatus],
+    target_model: ModelId,
+) -> dict[str, object]:
+    instance_runner_ids: set[RunnerId] = set()
+    for inst in instances.values():
+        if inst.shard_assignments.model_id == target_model:
+            for rid in inst.shard_assignments.runner_to_shard:
+                instance_runner_ids.add(rid)
+
+    if not instance_runner_ids:
+        return {
+            "ready": False,
+            "terminal": False,
+            "status": "waiting",
+            "runners": {},
+            "runner_details": {},
+            "status_counts": {},
+            "message": "No runners assigned yet",
+        }
+
+    runner_details: dict[str, dict[str, object]] = {}
+    status_counts: dict[str, int] = {}
+    runner_states: list[RunnerStatus | None] = []
+    for rid in instance_runner_ids:
+        runner_status = runners.get(rid)
+        runner_states.append(runner_status)
+        status_name = _runner_status_name(runner_status)
+        short_id = str(rid)[:8]
+        runner_details[short_id] = _runner_status_detail(runner_status)
+        status_counts[status_name] = status_counts.get(status_name, 0) + 1
+
+    any_failed = any(isinstance(status, RunnerFailed) for status in runner_states)
+    all_ready = all(
+        isinstance(status, (RunnerReady, RunnerRunning)) for status in runner_states
+    )
+    any_loading = any(isinstance(status, RunnerLoading) for status in runner_states)
+    any_warming = any(
+        isinstance(status, (RunnerLoaded, RunnerWarmingUp)) for status in runner_states
+    )
+    any_connecting = any(
+        isinstance(status, (RunnerConnecting, RunnerConnected))
+        for status in runner_states
+    )
+    any_shutdown = any(
+        isinstance(status, (RunnerShuttingDown, RunnerShutdown))
+        for status in runner_states
+    )
+
+    if any_failed:
+        status = "failed"
+        message = f"{target_model} has failed runners"
+        terminal = True
+    elif all_ready:
+        status = "ready"
+        message = f"{target_model} ready for inference"
+        terminal = False
+    elif any_loading:
+        status = "loading"
+        message = f"{target_model} runners are loading model weights"
+        terminal = False
+    elif any_warming:
+        status = "warming"
+        message = f"{target_model} runners are warming up"
+        terminal = False
+    elif any_connecting:
+        status = "connecting"
+        message = f"{target_model} runners are connecting to the group"
+        terminal = False
+    elif any_shutdown:
+        status = "shutting_down"
+        message = f"{target_model} runners are shutting down"
+        terminal = False
+    else:
+        status = "unknown"
+        message = f"{target_model} runner state is unknown"
+        terminal = False
+
+    return {
+        "ready": all_ready,
+        "terminal": terminal,
+        "status": status,
+        "runners": {
+            short_id: detail["status"] for short_id, detail in runner_details.items()
+        },
+        "runner_details": runner_details,
+        "status_counts": status_counts,
+        "message": message,
+    }
 
 
 class API:
@@ -341,6 +464,8 @@ class API:
         self.app.get("/ollama/api/version")(self.ollama_version)
 
         self.app.get("/state")(lambda: self.state)
+        self.app.get("/v1/models/{model_id:path}/readiness")(self.model_readiness)
+        self.app.get("/v1/models/{model_id:path}/readiness/poll")(self.model_readiness_poll)
         self.app.get("/events")(self.stream_events)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
@@ -1877,6 +2002,59 @@ class API:
             else:
                 not_found.append(task_id)
         return DeleteTracesResponse(deleted=deleted, not_found=not_found)
+
+    def model_readiness(self, model_id: str) -> StreamingResponse:
+        target_model = ModelId(model_id)
+
+        async def _readiness_stream() -> AsyncGenerator[str, None]:
+            max_polls = 120
+            for _ in range(max_polls):
+                readiness = _summarize_model_readiness(
+                    self.state.instances,
+                    self.state.runners,
+                    target_model,
+                )
+                yield f"data: {json.dumps(readiness)}\n\n"
+
+                if readiness["ready"] or readiness["terminal"]:
+                    return
+
+                await anyio.sleep(2)
+
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "ready": False,
+                        "terminal": True,
+                        "status": "timeout",
+                        "runners": {},
+                        "runner_details": {},
+                        "status_counts": {},
+                        "message": "Model did not become ready within 4 minutes",
+                    }
+                )
+                + "\n\n"
+            )
+
+        return StreamingResponse(
+            _readiness_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "close",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    def model_readiness_poll(self, model_id: str) -> JSONResponse:
+        target_model = ModelId(model_id)
+        readiness = _summarize_model_readiness(
+            self.state.instances,
+            self.state.runners,
+            target_model,
+        )
+        return JSONResponse(readiness)
 
     async def get_onboarding(self) -> JSONResponse:
         return JSONResponse({"completed": ONBOARDING_COMPLETE_FILE.exists()})
