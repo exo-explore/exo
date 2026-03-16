@@ -4,14 +4,14 @@ from exo.shared.types.common import NodeId
 from exo.shared.types.events import NodeDownloadProgress
 from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
-from exo.shared.types.worker.downloads import DownloadCompleted
+from exo.shared.types.worker.downloads import ModelReady
 from exo.worker.tests.constants import MODEL_A_ID, MODEL_B_ID
 
 
 def test_apply_node_download_progress():
     state = State()
     shard1 = get_pipeline_shard_metadata(MODEL_A_ID, device_rank=0, world_size=2)
-    event = DownloadCompleted(
+    event = ModelReady(
         node_id=NodeId("node-1"),
         shard_metadata=shard1,
         total=Memory(),
@@ -27,12 +27,12 @@ def test_apply_node_download_progress():
 def test_apply_two_node_download_progress():
     shard1 = get_pipeline_shard_metadata(MODEL_A_ID, device_rank=0, world_size=2)
     shard2 = get_pipeline_shard_metadata(MODEL_B_ID, device_rank=0, world_size=2)
-    event1 = DownloadCompleted(
+    event1 = ModelReady(
         node_id=NodeId("node-1"),
         shard_metadata=shard1,
         total=Memory(),
     )
-    event2 = DownloadCompleted(
+    event2 = ModelReady(
         node_id=NodeId("node-1"),
         shard_metadata=shard2,
         total=Memory(),

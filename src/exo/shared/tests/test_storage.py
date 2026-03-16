@@ -25,9 +25,9 @@ from exo.shared.types.storage import (
 )
 from exo.shared.types.tasks import LoadModel, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
-    DownloadCompleted,
-    DownloadOngoing,
-    DownloadPending,
+    ModelReady,
+    ModelDownloading,
+    ModelNotDownloading,
     DownloadProgressData,
 )
 from exo.shared.types.worker.instances import InstanceId, MlxRingInstance
@@ -42,9 +42,9 @@ NODE_ID = "node-1"
 
 def _completed(
     model_id: ModelId, size_gb: float, read_only: bool = False
-) -> DownloadCompleted:
+) -> ModelReady:
     shard = get_pipeline_shard_metadata(model_id, device_rank=0)
-    return DownloadCompleted(
+    return ModelReady(
         node_id=NODE_ID,  # type: ignore[arg-type]
         shard_metadata=shard,
         total=Memory.from_gb(size_gb),
@@ -189,11 +189,11 @@ class TestCalculateUsedStorage:
         shard_b = get_pipeline_shard_metadata(MODEL_B, device_rank=0)
         downloads = [
             _completed(MODEL_A, 5),
-            DownloadPending(
+            ModelNotDownloading(
                 node_id=NODE_ID,  # type: ignore[arg-type]
                 shard_metadata=shard_a,
             ),
-            DownloadOngoing(
+            ModelDownloading(
                 node_id=NODE_ID,  # type: ignore[arg-type]
                 shard_metadata=shard_b,
                 download_progress=DownloadProgressData(
@@ -222,7 +222,7 @@ class TestGetLruEvictionCandidatesExtended:
         shard_a = get_pipeline_shard_metadata(MODEL_A, device_rank=0)
         downloads = [
             _completed(MODEL_B, 3),
-            DownloadPending(
+            ModelNotDownloading(
                 node_id=NODE_ID,  # type: ignore[arg-type]
                 shard_metadata=shard_a,
             ),

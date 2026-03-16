@@ -21,10 +21,10 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.text_generation import Base64Image, Base64ImageHash
 from exo.shared.types.worker.downloads import (
-    DownloadCompleted,
-    DownloadFailed,
-    DownloadOngoing,
-    DownloadProgress,
+    ModelReady,
+    ModelDownloadFailed,
+    ModelDownloading,
+    ModelStatus,
 )
 from exo.shared.types.worker.instances import BoundInstance, Instance, InstanceId
 from exo.shared.types.worker.runners import (
@@ -48,7 +48,7 @@ def plan(
     node_id: NodeId,
     # Runners is expected to be FRESH and so should not come from state
     runners: Mapping[RunnerId, RunnerSupervisor],
-    global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+    global_download_status: Mapping[NodeId, Sequence[ModelStatus]],
     instances: Mapping[InstanceId, Instance],
     all_runners: Mapping[RunnerId, RunnerStatus],  # all global
     tasks: Mapping[TaskId, Task],
@@ -139,7 +139,7 @@ def _create_runner(
 def _model_needs_download(
     node_id: NodeId,
     runners: Mapping[RunnerId, RunnerSupervisor],
-    global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+    global_download_status: Mapping[NodeId, Sequence[ModelStatus]],
     download_backoff: KeyedBackoff[ModelId],
 ) -> DownloadModel | None:
     local_downloads = global_download_status.get(node_id, [])
@@ -155,7 +155,7 @@ def _model_needs_download(
                 model_id not in download_status
                 or not isinstance(
                     download_status[model_id],
-                    (DownloadOngoing, DownloadCompleted, DownloadFailed),
+                    (ModelDownloading, ModelReady, ModelDownloadFailed),
                 )
             )
             and download_backoff.should_proceed(model_id)
@@ -220,7 +220,7 @@ def _init_distributed_backend(
 def _load_model(
     runners: Mapping[RunnerId, RunnerSupervisor],
     all_runners: Mapping[RunnerId, RunnerStatus],
-    global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+    global_download_status: Mapping[NodeId, Sequence[ModelStatus]],
 ) -> LoadModel | None:
     for runner in runners.values():
         instance = runner.bound_instance.instance
@@ -229,7 +229,7 @@ def _load_model(
         all_local_downloads_complete = all(
             nid in global_download_status
             and any(
-                isinstance(dp, DownloadCompleted)
+                isinstance(dp, ModelReady)
                 and dp.shard_metadata.model_card.model_id == shard_assignments.model_id
                 for dp in global_download_status[nid]
             )

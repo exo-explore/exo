@@ -22,19 +22,19 @@ from exo.shared.types.storage import (
 )
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
-    DownloadCompleted,
-    DownloadOngoing,
-    DownloadProgress,
+    ModelReady,
+    ModelDownloading,
+    ModelStatus,
 )
 from exo.shared.types.worker.instances import Instance, InstanceId
 
 
-def calculate_used_storage(downloads: Sequence[DownloadProgress]) -> Memory:
+def calculate_used_storage(downloads: Sequence[ModelStatus]) -> Memory:
     total = Memory()
     for dp in downloads:
-        if isinstance(dp, DownloadCompleted):
+        if isinstance(dp, ModelReady):
             total = total + dp.total
-        elif isinstance(dp, DownloadOngoing):
+        elif isinstance(dp, ModelDownloading):
             total = total + dp.download_progress.total
     return total
 
@@ -42,7 +42,7 @@ def calculate_used_storage(downloads: Sequence[DownloadProgress]) -> Memory:
 def check_storage_quota(
     model_size: Memory,
     config: StorageConfig,
-    downloads: Sequence[DownloadProgress],
+    downloads: Sequence[ModelStatus],
 ) -> tuple[bool, str]:
     if config.max_storage is None:
         return True, ""
@@ -60,13 +60,13 @@ def check_storage_quota(
 
 
 def get_lru_eviction_candidates(
-    downloads: Sequence[DownloadProgress],
+    downloads: Sequence[ModelStatus],
     model_last_used: Mapping[ModelId, datetime],
     active_model_ids: frozenset[ModelId],
-) -> list[tuple[ModelId, DownloadCompleted]]:
-    candidates: list[tuple[ModelId, DownloadCompleted]] = []
+) -> list[tuple[ModelId, ModelReady]]:
+    candidates: list[tuple[ModelId, ModelReady]] = []
     for dp in downloads:
-        if not isinstance(dp, DownloadCompleted):
+        if not isinstance(dp, ModelReady):
             continue
         if dp.read_only:
             continue
@@ -84,7 +84,7 @@ def get_lru_eviction_candidates(
 def compute_evictions_needed(
     model_size: Memory,
     available: Memory,
-    candidates: list[tuple[ModelId, DownloadCompleted]],
+    candidates: list[tuple[ModelId, ModelReady]],
 ) -> list[ModelId] | None:
     if model_size <= available:
         return []
@@ -105,7 +105,7 @@ def compute_evictions_needed(
 def decide_storage_action(
     model_size: Memory,
     config: StorageConfig,
-    downloads: Sequence[DownloadProgress],
+    downloads: Sequence[ModelStatus],
     model_last_used: Mapping[ModelId, datetime],
     active_model_ids: frozenset[ModelId],
 ) -> StorageDecision:
