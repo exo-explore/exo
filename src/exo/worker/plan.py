@@ -19,9 +19,9 @@ from exo.shared.types.tasks import (
     TextGeneration,
 )
 from exo.shared.types.worker.downloads import (
-    ModelReady,
     ModelDownloadFailed,
     ModelDownloading,
+    ModelReady,
     ModelStatus,
 )
 from exo.shared.types.worker.instances import BoundInstance, Instance, InstanceId
