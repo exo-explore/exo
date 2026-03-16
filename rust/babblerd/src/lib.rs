@@ -32,7 +32,7 @@ pub mod if_watcher {
     #[cfg(target_os = "linux")]
     use std::path::PathBuf;
     use std::{
-        collections::HashMap,
+        collections::HashSet,
         net::{IpAddr, Ipv6Addr},
     };
 
@@ -130,7 +130,7 @@ pub mod if_watcher {
     #[tracing::instrument(skip(send))]
     pub async fn watch(my_range: Ipv6Net, send: mpsc::Sender<Babble>) -> Result<()> {
         assert!(PREFIX.contains(&my_range));
-        let mut ready_ifaces = HashMap::new();
+        let mut ready_ifaces = HashSet::new();
         // 0 is reserved for the first loopback address
         let mut iface_num: u16 = 1;
 
@@ -141,13 +141,7 @@ pub mod if_watcher {
         let mut mon_stream = mon.interface_state().stream();
 
         while let Some(s) = mon_stream.next().await {
-            let mut not_seen = ready_ifaces.clone();
             for iface in s.interfaces.values().filter(|iface| iface.will_babel()) {
-                if not_seen.contains_key(iface.name()) {
-                    assert!(not_seen.remove(iface.name()).is_some());
-                    continue;
-                }
-
                 for addr in iface.addrs() {
                     if let IpNet::V6(v6) = addr
                         && PREFIX.contains(&v6.addr())
@@ -172,25 +166,12 @@ pub mod if_watcher {
                     add_ip(addr, iface).await?;
                 }
 
-                tracing::info!("telling babeld to watch {}", iface.name());
-                let Ok(()) = send.send(Babble::AddIface(iface.name().to_owned())).await else {
-                    return Ok(());
-                };
-                ready_ifaces.insert(iface.name().to_owned(), iface.clone());
-            }
-            for (name, iface) in not_seen {
-                tracing::info!("telling babeld to stop watching {name}");
-                if let Some(v6) = iface.get_v6_in(PREFIX) {
-                    tracing::info!("removing stale ip {v6} from {name}");
-                    // don't really care if this fails
-                    if let Err(e) = remove_ip(v6, &iface).await {
-                        tracing::warn!(%e, "failed to remove ip");
-                    }
+                if ready_ifaces.insert(iface.name().to_owned()) {
+                    tracing::info!("telling babeld to watch {}", iface.name());
+                    let Ok(()) = send.send(Babble::AddIface(iface.name().to_owned())).await else {
+                        return Ok(());
+                    };
                 }
-                assert!(ready_ifaces.remove(&name).is_some());
-                let Ok(()) = send.send(Babble::RemoveIface(name)).await else {
-                    return Ok(());
-                };
             }
         }
         tracing::info!("stopping interface monitor");
@@ -250,7 +231,6 @@ pub mod babel {
     #[derive(Debug)]
     pub enum Babble {
         AddIface(String),
-        RemoveIface(String),
     }
 
     pub struct BabeldProcess {
@@ -387,9 +367,6 @@ pub mod babel {
                             Babble::AddIface(iface) => {
                                 Self::query(&mut babel_lines, &mut writer, &send, format!("interface {iface}\n").as_ref()).await?;
                             }
-                            Babble::RemoveIface(iface) => {
-                                Self::query(&mut babel_lines, &mut writer, &send, format!("flush interface {iface}\n").as_ref()).await?;
-                            }
                         }
                     },
                     line = babel_lines.next_line() => {
@@ -458,9 +435,6 @@ pub mod babel {
             match recv.recv().await {
                 Some(Babble::AddIface(iface)) => {
                     break iface;
-                }
-                Some(Babble::RemoveIface(iface)) => {
-                    tracing::warn!("ignored erroneous Babble::RemoveIface for {iface}");
                 }
                 None => return Ok(()),
             }
