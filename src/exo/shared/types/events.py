@@ -9,7 +9,7 @@ from exo.shared.types.chunks import GenerationChunk, InputImageChunk
 from exo.shared.types.common import CommandId, Id, ModelId, NodeId, SessionId, SystemId
 from exo.shared.types.storage import StorageConfig
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
-from exo.shared.types.worker.downloads import DownloadProgress
+from exo.shared.types.worker.downloads import ModelStatus
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo
@@ -87,7 +87,7 @@ class NodeGatheredInfo(BaseEvent):
 
 
 class NodeDownloadProgress(BaseEvent):
-    download_progress: DownloadProgress
+    download_progress: ModelStatus
 
 
 class ChunkGenerated(BaseEvent):
