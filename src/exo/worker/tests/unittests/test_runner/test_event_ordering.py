@@ -341,10 +341,9 @@ def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
                 runner_id=RUNNER_1_ID, runner_status=RunnerShuttingDown()
             ),
             TaskAcknowledged(task_id=SHUTDOWN_TASK_ID),
+            RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerShutdown()),
             TaskStatusUpdated(
                 task_id=SHUTDOWN_TASK_ID, task_status=TaskStatus.Complete
             ),
-            # SPECIAL EXCEPTION FOR RUNNER SHUTDOWN
-            RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerShutdown()),
         ],
     )

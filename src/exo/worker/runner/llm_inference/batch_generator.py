@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import itertools
 import time
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Generator, Iterable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import mlx.core as mx
 from mlx_lm.tokenizer_utils import TokenizerWrapper
@@ -19,6 +22,9 @@ from exo.shared.types.worker.runner_response import GenerationResponse, ToolCall
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.batch_generate import ExoBatchGenerator
+
+if TYPE_CHECKING:
+    from exo.worker.engines.vllm.vllm_generator import VllmBatchEngine
 from exo.worker.engines.mlx.generator.generate import (
     PrefillCancelled,
     mlx_generate,
@@ -141,13 +147,12 @@ class SequentialGenerator(InferenceGenerator):
     ) = field(default=None, init=False)
 
     def warmup(self) -> None:
-        if self.model is not None:
-            self.check_for_cancel_every = warmup_inference(
-                model=self.model,
-                tokenizer=self.tokenizer,
-                group=self.group,
-                model_id=self.model_id,
-            )
+        self.check_for_cancel_every = warmup_inference(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            group=self.group,
+            model_id=self.model_id,
+        )
 
     def submit(
         self,
@@ -314,7 +319,7 @@ class BatchGenerator(InferenceGenerator):
     device_rank: int
     cancel_receiver: MpReceiver[TaskId]
     event_sender: MpSender[Event]
-    _gen: ExoBatchGenerator  # ExoBatchGenerator or VllmBatchEngine
+    _gen: ExoBatchGenerator | VllmBatchEngine
     max_concurrent_requests: int = EXO_MAX_CONCURRENT_REQUESTS
     check_for_cancel_every: int = 50
 

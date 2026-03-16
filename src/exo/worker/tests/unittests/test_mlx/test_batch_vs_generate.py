@@ -11,7 +11,7 @@ import pytest
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.common import ModelId
-from exo.shared.types.mlx import KVCacheType, Model
+from exo.shared.types.mlx import MLXCacheType, Model
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.worker.engines.mlx.cache import CacheSnapshot, KVPrefixCache, cache_length
 from exo.worker.engines.mlx.generator.batch_generate import ExoBatchGenerator
@@ -128,8 +128,8 @@ def _assert_state_equal(sa: object, sb: object, label: str) -> None:
 
 
 def _compare_cache_arrays(
-    cache_a: KVCacheType,
-    cache_b: KVCacheType,
+    cache_a: MLXCacheType,
+    cache_b: MLXCacheType,
     label: str = "",
 ) -> None:
     """Assert two KV caches have identical array values."""
@@ -282,15 +282,18 @@ class TestBatchVsGenerate:
                 "BatchGenerator didn't save to prefix cache"
             )
 
+            mlx_cache = kv_mlx._get_mlx_cache(0)  # pyright: ignore[reportPrivateUsage]
+            batch_cache = kv_batch._get_mlx_cache(0)  # pyright: ignore[reportPrivateUsage]
+
             _compare_cache_arrays(
-                kv_mlx.caches[0],
-                kv_batch.caches[0],
+                mlx_cache,
+                batch_cache,
                 label=f"[{spec.name}] ",
             )
 
             # ── Compare cache lengths ──
-            mlx_len = cache_length(kv_mlx.caches[0])
-            batch_len = cache_length(kv_batch.caches[0])
+            mlx_len = cache_length(mlx_cache)
+            batch_len = cache_length(batch_cache)
             assert mlx_len == batch_len, (
                 f"[{spec.name}] Cache length: mlx={mlx_len} vs batch={batch_len}"
             )

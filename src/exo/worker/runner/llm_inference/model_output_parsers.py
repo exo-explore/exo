@@ -35,7 +35,7 @@ def apply_all_parsers(
     prompt: str,
     tool_parser: ToolParser | None,
     tokenizer: TokenizerWrapper,
-    model_type: type[Model],
+    model_type: type[Model] | type[None],
     model_id: ModelId,
     tools: list[dict[str, Any]] | None,
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
@@ -83,20 +83,24 @@ def parse_gpt_oss(
         try:
             stream.process(token_id)
         except HarmonyError as e:
-            logger.error(f"HarmonyError on token_id={response.token} text={response.text!r}: {e}")
+            logger.error(
+                f"HarmonyError on token_id={response.token} text={response.text!r}: {e}"
+            )
             return
 
         delta = stream.last_content_delta
         ch = stream.current_channel
         recipient = stream.current_recipient
 
-        effective_recipient = recipient if (recipient is not None and recipient.startswith("functions.")) else None
+        effective_recipient = (
+            recipient
+            if (recipient is not None and recipient.startswith("functions."))
+            else None
+        )
         if effective_recipient != current_tool_name:
             if current_tool_name is not None:
                 tool_name = current_tool_name.removeprefix("functions.")
-                logger.info(
-                    f"parse_gpt_oss yielding tool call: name={tool_name!r}"
-                )
+                logger.info(f"parse_gpt_oss yielding tool call: name={tool_name!r}")
                 yield ToolCallResponse(
                     tool_calls=[
                         ToolCallItem(
@@ -117,7 +121,9 @@ def parse_gpt_oss(
                 tool_arg_parts = []
             continue
 
-        is_suppressed = ch == "analysis" or (recipient is not None and recipient.startswith("!"))
+        is_suppressed = ch == "analysis" or (
+            recipient is not None and recipient.startswith("!")
+        )
 
         if is_suppressed and not thinking:
             thinking = True

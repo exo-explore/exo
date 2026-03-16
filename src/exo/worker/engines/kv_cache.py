@@ -3,13 +3,20 @@
 # pyright: reportUnknownArgumentType=false
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 
 import mlx.core as mx
 import numpy as np
 import torch
-from mlx_lm.models.cache import ArraysCache, KVCache, RotatingKVCache
+from mlx_lm.models.cache import (
+    ArraysCache,
+    CacheList,
+    KVCache,
+    QuantizedKVCache,
+    RotatingKVCache,
+)
 
 
 @dataclass
@@ -50,12 +57,11 @@ def _torch_to_mx(t: torch.Tensor) -> mx.array:
     return mx.array(t.numpy())
 
 
-def _split_kv(kv: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """Split a vLLM paged KV tensor into K and V views, each [num_blocks, block_size, H, D].
-
-    flash_attn backend: (2, num_blocks, block_size, H, D) — K/V at dim 0
-    triton_attn backend: (num_blocks, 2, block_size, H, D) — K/V at dim 1
-    """
+def _split_kv(
+    kv: torch.Tensor | list[torch.Tensor],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if isinstance(kv, list):
+        return kv[0], kv[1]
     if kv.shape[0] == 2 and kv.shape[1] != 2:
         return kv[0], kv[1]
     return kv[:, 0], kv[:, 1]
@@ -76,7 +82,9 @@ def _nhd_to_bhsd(kt: torch.Tensor, vt: torch.Tensor) -> tuple[mx.array, mx.array
 
 
 class TorchKVCache:
-    def __init__(self, layers: list[LayerState], token_offset_per_group: list[int] | None = None):
+    def __init__(
+        self, layers: list[LayerState], token_offset_per_group: list[int] | None = None
+    ):
         self.layers = layers
         self.token_offset_per_group = token_offset_per_group or []
 
@@ -101,55 +109,77 @@ class TorchKVCache:
                 if not layer.keys.is_cuda:
                     layers.append(layer)
                 else:
-                    layers.append(KVLayerState(
+                    layers.append(
+                        KVLayerState(
+                            keys=layer.keys.detach().to("cpu", non_blocking=True),
+                            values=layer.values.detach().to("cpu", non_blocking=True),
+                        )
+                    )
+            elif isinstance(layer, RotatingKVLayerState):
+                layers.append(
+                    RotatingKVLayerState(
                         keys=layer.keys.detach().to("cpu", non_blocking=True),
                         values=layer.values.detach().to("cpu", non_blocking=True),
-                    ))
-            elif isinstance(layer, RotatingKVLayerState):
-                layers.append(RotatingKVLayerState(
-                    keys=layer.keys.detach().to("cpu", non_blocking=True),
-                    values=layer.values.detach().to("cpu", non_blocking=True),
-                    keep=layer.keep, max_size=layer.max_size,
-                    offset=layer.offset, idx=layer.idx,
-                ))
+                        keep=layer.keep,
+                        max_size=layer.max_size,
+                        offset=layer.offset,
+                        idx=layer.idx,
+                    )
+                )
             else:
                 layers.append(deepcopy(layer))
-        if any(layer.keys.is_cuda for layer in self.layers if isinstance(layer, (KVLayerState, RotatingKVLayerState))):
+        if any(
+            layer.keys.is_cuda
+            for layer in self.layers
+            if isinstance(layer, (KVLayerState, RotatingKVLayerState))
+        ):
             torch.cuda.synchronize()
         return TorchKVCache(layers, list(self.token_offset_per_group))
 
     def trim_to(self, num_tokens: int) -> TorchKVCache:
-        layers: list[LayerState] = []
-        for layer in self.layers:
-            if isinstance(layer, KVLayerState):
-                layers.append(KVLayerState(
-                    keys=layer.keys[:num_tokens],
-                    values=layer.values[:num_tokens],
-                ))
-            else:
-                layers.append(deepcopy(layer))
-        return TorchKVCache(layers, list(self.token_offset_per_group))
+        trimmed = TorchKVCache(list(self.layers), list(self.token_offset_per_group))
+        trimmed._num_tokens = num_tokens
+        return trimmed
+
+    @property
+    def num_tokens(self) -> int | None:
+        return getattr(self, "_num_tokens", None)
 
     @classmethod
     def from_mlx_cache(
-        cls, cache: list[KVCache | RotatingKVCache | ArraysCache],
+        cls,
+        cache: Sequence[
+            KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList
+        ],
     ) -> TorchKVCache:
         layers: list[LayerState] = []
         for c in cache:
             if isinstance(c, RotatingKVCache):
                 if c.keys is None:
-                    layers.append(RotatingKVLayerState(
-                        keys=torch.empty(0), values=torch.empty(0),
-                        keep=c.keep, max_size=c.max_size, offset=c.offset, idx=c._idx,
-                    ))
+                    layers.append(
+                        RotatingKVLayerState(
+                            keys=torch.empty(0),
+                            values=torch.empty(0),
+                            keep=c.keep,
+                            max_size=c.max_size,
+                            offset=c.offset,
+                            idx=c._idx,
+                        )
+                    )
                 else:
                     k, v = c.state
                     kt, vt = _kv_to_nhd(k, v)  # pyright: ignore[reportArgumentType]
                     keep, max_size, offset, idx = (int(x) for x in c.meta_state)
-                    layers.append(RotatingKVLayerState(
-                        keys=kt, values=vt,
-                        keep=keep, max_size=max_size, offset=offset, idx=idx,
-                    ))
+                    layers.append(
+                        RotatingKVLayerState(
+                            keys=kt,
+                            values=vt,
+                            keep=keep,
+                            max_size=max_size,
+                            offset=offset,
+                            idx=idx,
+                        )
+                    )
             elif isinstance(c, ArraysCache):
                 arrays: list[torch.Tensor | None] = []
                 for arr in c.state:
@@ -157,7 +187,9 @@ class TorchKVCache:
                 layers.append(ArraysLayerState(arrays=arrays))
             else:
                 if c.keys is None:  # pyright: ignore[reportUnnecessaryComparison]
-                    layers.append(KVLayerState(keys=torch.empty(0), values=torch.empty(0)))
+                    layers.append(
+                        KVLayerState(keys=torch.empty(0), values=torch.empty(0))
+                    )
                 else:
                     k, v = c.state
                     kt, vt = _kv_to_nhd(k, v)  # pyright: ignore[reportArgumentType]
@@ -173,7 +205,8 @@ class TorchKVCache:
                     k_mx, v_mx = _nhd_to_bhsd(layer.keys, layer.values)
                     c.state = (k_mx, v_mx)
                     c.meta_state = tuple(
-                        str(x) for x in (layer.keep, layer.max_size, layer.offset, layer.idx)
+                        str(x)
+                        for x in (layer.keep, layer.max_size, layer.offset, layer.idx)
                     )
                 result.append(c)
             elif isinstance(layer, ArraysLayerState):
@@ -194,7 +227,7 @@ class TorchKVCache:
     @classmethod
     def from_vllm_cache(
         cls,
-        kv_caches: list[torch.Tensor],
+        kv_caches: list[torch.Tensor | list[torch.Tensor]],
         block_ids_per_group: list[list[int]],
         layer_to_group: list[int],
         num_tokens: int,
@@ -210,33 +243,21 @@ class TorchKVCache:
         for layer_idx, kv in enumerate(kv_caches):
             gi = layer_to_group[layer_idx]
             bt = block_tables[gi]
-            offset = token_offset_per_group[gi]
             k_all, v_all = _split_kv(kv)
 
             if len(bt) == 0:
                 layers.append(KVLayerState(keys=torch.empty(0), values=torch.empty(0)))
                 continue
 
-            valid_tokens = num_tokens - offset
-            keys_valid = k_all[bt].flatten(0, 1)[:valid_tokens].to("cpu", non_blocking=True)
-            values_valid = v_all[bt].flatten(0, 1)[:valid_tokens].to("cpu", non_blocking=True)
+            keys = k_all[bt].to("cpu", non_blocking=True)
+            values = v_all[bt].to("cpu", non_blocking=True)
             torch.cuda.synchronize()
-
-            if offset > 0:
-                keys = torch.zeros(num_tokens, *keys_valid.shape[1:], dtype=keys_valid.dtype)
-                values = torch.zeros(num_tokens, *values_valid.shape[1:], dtype=values_valid.dtype)
-                keys[offset:] = keys_valid
-                values[offset:] = values_valid
-            else:
-                keys = keys_valid[:num_tokens]
-                values = values_valid[:num_tokens]
-
             layers.append(KVLayerState(keys=keys, values=values))
         return cls(layers, list(token_offset_per_group))
 
     def write_to_vllm_blocks(
         self,
-        kv_caches: list[torch.Tensor],
+        kv_caches: list[torch.Tensor | list[torch.Tensor]],
         block_ids_per_group: list[list[int]],
         layer_to_group: list[int],
         token_offset_per_group: list[int] | None = None,
@@ -244,40 +265,46 @@ class TorchKVCache:
         block_tables = [
             torch.tensor(ids, dtype=torch.long) for ids in block_ids_per_group
         ]
-        if token_offset_per_group is None:
-            token_offset_per_group = [0] * len(block_ids_per_group)
 
-        device = kv_caches[0].device
+        first = kv_caches[0]
+        device = first[0].device if isinstance(first, list) else first.device
         for layer_idx, layer in enumerate(self.layers):
             if not isinstance(layer, KVLayerState):
                 continue
             gi = layer_to_group[layer_idx]
             bt = block_tables[gi]
-            offset = token_offset_per_group[gi]
             kv = kv_caches[layer_idx]
             k_all, v_all = _split_kv(kv)
-            block_size = k_all.shape[1]
-            valid_keys = layer.keys[offset:]
-            valid_values = layer.values[offset:]
-            num_valid = valid_keys.shape[0]
-            n_full = num_valid // block_size
-            remainder = num_valid % block_size
-            if n_full > 0:
-                k_all[bt[:n_full]] = valid_keys[:n_full * block_size].view(n_full, block_size, *valid_keys.shape[1:]).to(device, non_blocking=True)
-                v_all[bt[:n_full]] = valid_values[:n_full * block_size].view(n_full, block_size, *valid_values.shape[1:]).to(device, non_blocking=True)
-            if remainder > 0:
-                k_all[bt[n_full], :remainder] = valid_keys[n_full * block_size:].to(device, non_blocking=True)
-                v_all[bt[n_full], :remainder] = valid_values[n_full * block_size:].to(device, non_blocking=True)
+            n_blocks = min(len(bt), layer.keys.shape[0])
+            if n_blocks > 0:
+                k_all[bt[:n_blocks]] = layer.keys[:n_blocks].to(
+                    device, non_blocking=True
+                )
+                v_all[bt[:n_blocks]] = layer.values[:n_blocks].to(
+                    device, non_blocking=True
+                )
         torch.cuda.synchronize()
+
+    def __iter__(self) -> Iterator[LayerState]:
+        return iter(self.layers)
+
+    def __len__(self) -> int:
+        return len(self.layers)
 
     def __repr__(self) -> str:
         parts: list[str] = [f"TorchKVCache({self.num_layers} layers)"]
         for i, layer in enumerate(self.layers):
             if isinstance(layer, KVLayerState):
-                parts.append(f"  [{i}] KV: keys={list(layer.keys.shape)} values={list(layer.values.shape)} {layer.keys.dtype}")
+                parts.append(
+                    f"  [{i}] KV: keys={list(layer.keys.shape)} values={list(layer.values.shape)} {layer.keys.dtype}"
+                )
             elif isinstance(layer, RotatingKVLayerState):
-                parts.append(f"  [{i}] RotatingKV: keys={list(layer.keys.shape)} keep={layer.keep} max_size={layer.max_size} offset={layer.offset} idx={layer.idx}")
+                parts.append(
+                    f"  [{i}] RotatingKV: keys={list(layer.keys.shape)} keep={layer.keep} max_size={layer.max_size} offset={layer.offset} idx={layer.idx}"
+                )
             else:
-                shapes = [list(a.shape) if a is not None else None for a in layer.arrays]
+                shapes = [
+                    list(a.shape) if a is not None else None for a in layer.arrays
+                ]
                 parts.append(f"  [{i}] Arrays: {shapes}")
         return "\n".join(parts)

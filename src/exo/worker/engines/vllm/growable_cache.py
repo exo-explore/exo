@@ -143,7 +143,6 @@ def _patch_allocate_slots() -> None:
     KVCacheManager.allocate_slots = patched  # type: ignore
 
 
-
 def _try_grow_cache(kv_cache_manager: "object") -> bool:
     block_pool = kv_cache_manager.block_pool  # type: ignore
     model_runner = kv_cache_manager._growable_model_runner  # type: ignore
@@ -299,7 +298,8 @@ def _patch_get_computed_blocks() -> None:
     original = KVCacheManager.get_computed_blocks
 
     def patched(
-        self: KVCacheManager, request: Request,
+        self: KVCacheManager,
+        request: Request,
     ) -> tuple[KVCacheBlocks, int]:
         prefix_cache = _exo_prefix_cache_ref[0]
         if prefix_cache is None or request.prompt_token_ids is None:
@@ -310,11 +310,17 @@ def _patch_get_computed_blocks() -> None:
         )
 
         try:
-            torch_cache, num_matched, _ = prefix_cache.lookup(list(request.prompt_token_ids))  # type: ignore[reportUnknownMemberType]
+            torch_cache, num_matched, _ = prefix_cache.lookup(
+                list(request.prompt_token_ids)
+            )  # type: ignore[reportUnknownMemberType]
         except Exception:
             return original(self, request)
 
-        if torch_cache is None or not isinstance(torch_cache, _TorchKVCache) or num_matched == 0:
+        if (
+            torch_cache is None
+            or not isinstance(torch_cache, _TorchKVCache)
+            or num_matched == 0
+        ):
             return original(self, request)
 
         from vllm.utils.math_utils import cdiv  # type: ignore[reportMissingImports]
@@ -338,7 +344,9 @@ def _patch_get_computed_blocks() -> None:
         total_needed = 0
         for gi in range(num_groups):
             mgr = self.coordinator.single_type_managers[gi]  # type: ignore
-            block_size: int = self.kv_cache_config.kv_cache_groups[gi].kv_cache_spec.block_size  # type: ignore
+            block_size: int = self.kv_cache_config.kv_cache_groups[
+                gi
+            ].kv_cache_spec.block_size  # type: ignore
             num_skipped: int = mgr.get_num_skipped_tokens(num_matched)  # type: ignore
             num_skipped_blocks = num_skipped // block_size
             num_real = cdiv(num_matched, block_size) - num_skipped_blocks
@@ -353,11 +361,17 @@ def _patch_get_computed_blocks() -> None:
         token_offset_per_group: list[int] = []
         for gi in range(num_groups):
             mgr = self.coordinator.single_type_managers[gi]  # type: ignore
-            block_size = self.kv_cache_config.kv_cache_groups[gi].kv_cache_spec.block_size  # type: ignore
-            real_blocks: list[KVCacheBlock] = self.block_pool.get_new_blocks(real_block_counts[gi])  # type: ignore
+            block_size = self.kv_cache_config.kv_cache_groups[
+                gi
+            ].kv_cache_spec.block_size  # type: ignore
+            real_blocks: list[KVCacheBlock] = self.block_pool.get_new_blocks(
+                real_block_counts[gi]
+            )  # type: ignore
             blocks_per_group.append(real_blocks)
 
-            full_block_list = [null_block] * skipped_block_counts[gi] + list(real_blocks)
+            full_block_list = [null_block] * skipped_block_counts[gi] + list(
+                real_blocks
+            )
             req_blocks = mgr.req_to_blocks[request.request_id]  # type: ignore
             req_blocks.extend(full_block_list)  # type: ignore
 
@@ -368,14 +382,16 @@ def _patch_get_computed_blocks() -> None:
         model_runner = self._growable_model_runner  # type: ignore[reportAttributeAccessIssue]
         if model_runner is not None:
             torch_cache.write_to_vllm_blocks(  # type: ignore
-                model_runner.kv_caches, block_ids_per_group, layer_to_group,  # type: ignore
+                model_runner.kv_caches,
+                block_ids_per_group,
+                layer_to_group,  # type: ignore
                 token_offset_per_group,
             )
 
         total_blocks = sum(len(g) for g in blocks_per_group)
-        logger.info(f"Prefix cache hit: {num_matched} tokens, {total_blocks} blocks ({num_groups} groups)")
+        logger.info(
+            f"Prefix cache hit: {num_matched} tokens, {total_blocks} blocks ({num_groups} groups)"
+        )
         return self.empty_kv_cache_blocks, num_matched
 
     KVCacheManager.get_computed_blocks = patched  # type: ignore[reportAttributeAccessIssue]
-
-

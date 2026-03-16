@@ -1,5 +1,6 @@
 import gc
 import json
+import os
 import re
 import sys
 import time
@@ -24,6 +25,7 @@ from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.worker.engines.kv_cache import TorchKVCache
 from exo.worker.engines.mlx.cache import KVPrefixCache
+from exo.worker.engines.mlx.utils_mlx import get_eos_token_ids_for_model
 from exo.worker.engines.vllm.growable_cache import (
     _exo_prefix_cache_ref,
     _growable_model_runner_ref,
@@ -130,6 +132,17 @@ def _save_prefix_cache(
         logger.opt(exception=True).warning("Failed to save prefix cache")
 
 
+def _stop_token_ids(tokenizer: object, model_id: ModelId) -> set[int]:
+    ids: set[int] = set()
+    eos_id = getattr(tokenizer, "eos_token_id", None)
+    if eos_id is not None:
+        ids.add(eos_id)
+    extra = get_eos_token_ids_for_model(model_id)
+    if extra:
+        ids.update(extra)
+    return ids
+
+
 def _build_generation_response(
     tokenizer: object,
     token_id: int,
@@ -138,8 +151,9 @@ def _build_generation_response(
     completion_tokens: int,
     start_time: float,
     first_token_time: float | None,
+    suppress_text: bool = False,
 ) -> GenerationResponse:
-    token_text: str = tokenizer.decode([token_id])  # type: ignore[reportUnknownMemberType]
+    token_text: str = "" if suppress_text else tokenizer.decode([token_id])  # type: ignore[reportUnknownMemberType]
     finish_usage: Usage | None = None
     finish_stats: GenerationStats | None = None
     mapped_finish_reason: str | None = None
@@ -155,15 +169,23 @@ def _build_generation_response(
             completion_tokens_details=CompletionTokensDetails(),
         )
         finish_stats = GenerationStats(
-            prompt_tps=prompt_token_count / prefill_elapsed if prefill_elapsed > 0 else 0.0,
-            generation_tps=completion_tokens / decode_elapsed if decode_elapsed > 0 else 0.0,
+            prompt_tps=prompt_token_count / prefill_elapsed
+            if prefill_elapsed > 0
+            else 0.0,
+            generation_tps=completion_tokens / decode_elapsed
+            if decode_elapsed > 0
+            else 0.0,
             prompt_tokens=prompt_token_count,
             generation_tokens=completion_tokens,
             peak_memory_usage=Memory.from_bytes(
                 torch.cuda.max_memory_allocated()  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportAttributeAccessIssue]
             ),
         )
-        mapped_finish_reason = finish_reason if finish_reason in ("stop", "length", "content_filter") else "stop"
+        mapped_finish_reason = (
+            finish_reason
+            if finish_reason in ("stop", "length", "content_filter")
+            else "stop"
+        )
     return GenerationResponse(
         text=token_text,
         token=token_id,
@@ -190,7 +212,10 @@ def vllm_generate(
     engine.add_request(request_id, {"prompt_token_ids": token_ids}, sampling_params)
 
     tokenizer = engine.get_tokenizer()
-    max_batch_tokens: int = getattr(engine.model_config, "max_num_batched_tokens", 2048) or 2048  # type: ignore[reportUnknownMemberType]
+    stop_ids = _stop_token_ids(tokenizer, model_id)
+    max_batch_tokens: int = (
+        getattr(engine.model_config, "max_num_batched_tokens", 2048) or 2048
+    )  # type: ignore[reportUnknownMemberType]
     start_time = time.perf_counter()
     first_token_time: float | None = None
     prev_token_count = 0
@@ -223,24 +248,49 @@ def vllm_generate(
             if not prefill_done and new_tokens:
                 first_token_time = time.perf_counter()
                 prefill_done = True
-                _save_prefix_cache(engine, prefix_cache, request_id, token_ids, prompt_token_count)
+                _save_prefix_cache(
+                    engine, prefix_cache, request_id, token_ids, prompt_token_count
+                )
 
             for i, token_id in enumerate(new_tokens):
                 is_last = i == len(new_tokens) - 1
+                is_final_stop = is_last and finish_reason and token_id in stop_ids
                 if on_generation_token:
                     on_generation_token()
-                yield _build_generation_response(
-                    tokenizer, token_id,
-                    finish_reason if is_last and finish_reason else None,
-                    prompt_token_count, new_token_count,
-                    start_time, first_token_time,
-                )
+                if is_final_stop:
+                    yield _build_generation_response(
+                        tokenizer,
+                        token_id,
+                        finish_reason,
+                        prompt_token_count,
+                        new_token_count,
+                        start_time,
+                        first_token_time,
+                        suppress_text=True,
+                    )
+                else:
+                    yield _build_generation_response(
+                        tokenizer,
+                        token_id,
+                        finish_reason if is_last and finish_reason else None,
+                        prompt_token_count,
+                        new_token_count,
+                        start_time,
+                        first_token_time,
+                    )
 
 
 def warmup_vllm_engine(engine: LLMEngine) -> None:
     tokenizer = engine.get_tokenizer()
-    messages = [{"role": "user", "content": "Prompt to warm up the inference engine. Repeat this."}]
-    prompt_text: str = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)  # type: ignore
+    messages = [
+        {
+            "role": "user",
+            "content": "Prompt to warm up the inference engine. Repeat this.",
+        }
+    ]
+    prompt_text: str = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )  # type: ignore
     token_ids: list[int] = tokenizer.encode(prompt_text, add_special_tokens=False)  # type: ignore
     params = SamplingParams(max_tokens=50, detokenize=False)
     engine.add_request("warmup", {"prompt_token_ids": token_ids}, params)
@@ -270,13 +320,19 @@ class VllmBatchEngine:
         distributed_prompt_progress_callback: Callable[[], None] | None = None,
         on_generation_token: Callable[[], None] | None = None,
     ) -> int:
-        token_ids, prompt_text, prompt_token_count = format_vllm_prompt(self.engine, task_params)
+        token_ids, prompt_text, prompt_token_count = format_vllm_prompt(
+            self.engine, task_params
+        )
         logger.info(prompt_text)
         uid = self._next_uid
         self._next_uid += 1
         request_id = f"vllm-batch-{uid}"
-        sampling_params = make_vllm_sampling_params(self.engine, task_params, self.model_id)
-        self.engine.add_request(request_id, {"prompt_token_ids": token_ids}, sampling_params)
+        sampling_params = make_vllm_sampling_params(
+            self.engine, task_params, self.model_id
+        )
+        self.engine.add_request(
+            request_id, {"prompt_token_ids": token_ids}, sampling_params
+        )
         self._active[uid] = _EngineRequest(
             uid=uid,
             request_id=request_id,
@@ -293,7 +349,10 @@ class VllmBatchEngine:
 
         outputs = self.engine.step()
         tokenizer = self.engine.get_tokenizer()
-        max_batch_tokens: int = getattr(self.engine.model_config, "max_num_batched_tokens", 2048) or 2048  # type: ignore[reportUnknownMemberType]
+        stop_ids = _stop_token_ids(tokenizer, self.model_id)
+        max_batch_tokens: int = (
+            getattr(self.engine.model_config, "max_num_batched_tokens", 2048) or 2048
+        )  # type: ignore[reportUnknownMemberType]
         results: list[tuple[int, GenerationResponse]] = []
 
         rid_to_uid = {req.request_id: uid for uid, req in self._active.items()}
@@ -305,7 +364,7 @@ class VllmBatchEngine:
             req = self._active[uid]
             completion = output.outputs[0]
             new_token_count = len(completion.token_ids)
-            new_tokens = completion.token_ids[req.prev_token_count:]
+            new_tokens = completion.token_ids[req.prev_token_count :]
             finish_reason = completion.finish_reason
             req.prev_token_count = new_token_count
 
@@ -313,7 +372,9 @@ class VllmBatchEngine:
                 req.prefill_steps += 1
                 if req.on_prefill_progress:
                     req.on_prefill_progress(
-                        min(req.prefill_steps * max_batch_tokens, req.prompt_token_count),
+                        min(
+                            req.prefill_steps * max_batch_tokens, req.prompt_token_count
+                        ),
                         req.prompt_token_count,
                     )
                 continue
@@ -322,20 +383,33 @@ class VllmBatchEngine:
                 req.first_token_time = time.perf_counter()
                 req.prefill_done = True
                 _save_prefix_cache(
-                    self.engine, self.prefix_cache,
-                    req.request_id, req.prompt_token_ids, req.prompt_token_count,
+                    self.engine,
+                    self.prefix_cache,
+                    req.request_id,
+                    req.prompt_token_ids,
+                    req.prompt_token_count,
                 )
 
             for i, token_id in enumerate(new_tokens):
                 is_last = i == len(new_tokens) - 1
+                is_final_stop = is_last and finish_reason and token_id in stop_ids
                 if req.on_generation_token:
                     req.on_generation_token()
-                results.append((uid, _build_generation_response(
-                    tokenizer, token_id,
-                    finish_reason if is_last and finish_reason else None,
-                    req.prompt_token_count, new_token_count,
-                    req.start_time, req.first_token_time,
-                )))
+                results.append(
+                    (
+                        uid,
+                        _build_generation_response(
+                            tokenizer,
+                            token_id,
+                            finish_reason if is_last and finish_reason else None,
+                            req.prompt_token_count,
+                            new_token_count,
+                            req.start_time,
+                            req.first_token_time,
+                            suppress_text=bool(is_final_stop),
+                        ),
+                    )
+                )
 
             if finish_reason:
                 del self._active[uid]
@@ -345,7 +419,9 @@ class VllmBatchEngine:
                 req.prefill_steps += 1
                 if req.on_prefill_progress:
                     req.on_prefill_progress(
-                        min(req.prefill_steps * max_batch_tokens, req.prompt_token_count),
+                        min(
+                            req.prefill_steps * max_batch_tokens, req.prompt_token_count
+                        ),
                         req.prompt_token_count,
                     )
 
@@ -359,6 +435,8 @@ class VllmBatchEngine:
             self._active.pop(uid, None)
 
     def close(self) -> None:
+        if not hasattr(self, "engine"):
+            return
         rids = [req.request_id for req in self._active.values()]
         if rids:
             self.engine.abort_request(rids)
@@ -387,8 +465,12 @@ def _get_total_layers(model_dir: Path) -> int:
     return 1
 
 
-def _wrap_weights_iterator(original: Callable[..., Generator[tuple[str, "torch.Tensor"], None, None]]) -> Callable[..., Generator[tuple[str, "torch.Tensor"], None, None]]:  # pyright: ignore[reportUnknownParameterType]
-    def patched(hf_weights_files: list[str], *args: object, **kwargs: object) -> Generator[tuple[str, "torch.Tensor"], None, None]:  # pyright: ignore[reportUnknownParameterType]
+def _wrap_weights_iterator(
+    original: Callable[..., Generator[tuple[str, "torch.Tensor"], None, None]],
+) -> Callable[..., Generator[tuple[str, "torch.Tensor"], None, None]]:  # pyright: ignore[reportUnknownParameterType]
+    def patched(
+        hf_weights_files: list[str], *args: object, **kwargs: object
+    ) -> Generator[tuple[str, "torch.Tensor"], None, None]:  # pyright: ignore[reportUnknownParameterType]
         callback = _weight_loading_callback
         if callback is not None and hf_weights_files:
             model_dir = Path(hf_weights_files[0]).parent
@@ -407,6 +489,7 @@ def _wrap_weights_iterator(original: Callable[..., Generator[tuple[str, "torch.T
             callback(total_layers, total_layers)
         else:
             yield from original(hf_weights_files, *args, **kwargs)  # pyright: ignore[reportUnknownMemberType]
+
     return patched
 
 
@@ -438,7 +521,10 @@ def _patch_weight_loading_progress() -> None:
     _monkey_patch_iterator(weight_utils, "fastsafetensors_weights_iterator")
 
     import huggingface_hub  # pyright: ignore[reportMissingImports]
-    def _noop_metadata(*_a: object, **_kw: object) -> None: pass  # pyright: ignore[reportUnknownParameterType]
+
+    def _noop_metadata(*_a: object, **_kw: object) -> None:
+        pass  # pyright: ignore[reportUnknownParameterType]
+
     original_metadata = huggingface_hub.get_safetensors_metadata  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     huggingface_hub.get_safetensors_metadata = _noop_metadata  # pyright: ignore[reportAttributeAccessIssue]
     for mod in list(sys.modules.values()):
@@ -458,6 +544,8 @@ def load_vllm_engine(
     global _weight_loading_callback
     patch_vllm()
     _patch_weight_loading_progress()
+
+    os.environ.setdefault("FASTSAFETENSORS_NOGDS", "1")
 
     prefix_cache = KVPrefixCache(group=None)
     _exo_prefix_cache_ref[0] = prefix_cache

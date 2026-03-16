@@ -19,7 +19,7 @@ from exo.shared.types.api import (
     Usage,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.mlx import KVCacheType, Model
+from exo.shared.types.mlx import MLXCacheType, Model
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.worker.engines.mlx.cache import (
@@ -353,7 +353,7 @@ class ExoBatchGenerator:
     def _save_prefix_cache(
         self,
         all_prompt_tokens: mx.array,
-        cache: KVCacheType,
+        cache: MLXCacheType,
         cache_snapshots: list[CacheSnapshot] | None,
         prefix_hit_length: int,
         matched_index: int | None,
