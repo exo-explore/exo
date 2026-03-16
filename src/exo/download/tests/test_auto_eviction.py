@@ -19,10 +19,10 @@ from exo.shared.types.events import Event, IndexedEvent, NodeDownloadProgress
 from exo.shared.types.memory import Memory
 from exo.shared.types.storage import StorageConfig
 from exo.shared.types.worker.downloads import (
-    DownloadCompleted,
-    DownloadEvicted,
-    DownloadPending,
-    DownloadRejected,
+    ModelReady,
+    ModelEvicted,
+    ModelNotDownloading,
+    ModelRejected,
 )
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 from exo.utils.channels import Receiver, Sender
@@ -52,8 +52,8 @@ def _shard(model_id: ModelId, size_gb: float) -> ShardMetadata:
     )
 
 
-def _completed(model_id: ModelId, size_gb: float) -> DownloadCompleted:
-    return DownloadCompleted(
+def _completed(model_id: ModelId, size_gb: float) -> ModelReady:
+    return ModelReady(
         node_id=NODE_ID,
         shard_metadata=_shard(model_id, size_gb),
         total=Memory.from_gb(size_gb),
@@ -62,9 +62,7 @@ def _completed(model_id: ModelId, size_gb: float) -> DownloadCompleted:
 
 def _make_coordinator(
     storage_config: StorageConfig,
-    download_status: dict[
-        ModelId, DownloadCompleted | DownloadEvicted | DownloadRejected
-    ],
+    download_status: dict[ModelId, ModelReady | ModelEvicted | ModelRejected],
     model_last_used: dict[ModelId, datetime] | None = None,
 ) -> tuple[DownloadCoordinator, Receiver[Event]]:
     state = MemoryObjectStreamState[Event](max_buffer_size=100)
@@ -132,7 +130,7 @@ class TestStartDownloadAutoEviction:
         # MODEL_A (oldest) should have been evicted
         mock_delete.assert_called_once_with(MODEL_A)
         evicted_status = coordinator.download_status[MODEL_A]
-        assert isinstance(evicted_status, DownloadEvicted)
+        assert isinstance(evicted_status, ModelEvicted)
         assert evicted_status.evicted_for == MODEL_NEW
 
     @patch(
@@ -189,7 +187,7 @@ class TestStartDownloadAutoEviction:
         await _start_download(coordinator, _shard(MODEL_NEW, 20))
 
         mock_delete.assert_not_called()
-        assert isinstance(coordinator.download_status[MODEL_NEW], DownloadRejected)
+        assert isinstance(coordinator.download_status[MODEL_NEW], ModelRejected)
 
     @patch(
         "exo.download.coordinator.delete_model",
@@ -214,7 +212,7 @@ class TestStartDownloadAutoEviction:
         mock_delete.assert_not_called()
         # Download should have started (not rejected)
         assert MODEL_NEW in coordinator.download_status
-        assert not isinstance(coordinator.download_status[MODEL_NEW], DownloadRejected)
+        assert not isinstance(coordinator.download_status[MODEL_NEW], ModelRejected)
 
     @patch(
         "exo.download.coordinator.delete_model",
@@ -235,7 +233,7 @@ class TestStartDownloadAutoEviction:
         await _start_download(coordinator, _shard(MODEL_NEW, 5))
 
         mock_delete.assert_not_called()
-        assert isinstance(coordinator.download_status[MODEL_NEW], DownloadRejected)
+        assert isinstance(coordinator.download_status[MODEL_NEW], ModelRejected)
 
     @patch(
         "exo.download.coordinator.delete_model",
@@ -266,12 +264,12 @@ class TestStartDownloadAutoEviction:
             e
             for e in events
             if isinstance(e, NodeDownloadProgress)
-            and isinstance(e.download_progress, DownloadEvicted)
+            and isinstance(e.download_progress, ModelEvicted)
             and e.download_progress.shard_metadata.model_card.model_id == MODEL_A
         ]
         assert len(evicted_events) == 1
         evicted_dp = evicted_events[0].download_progress
-        assert isinstance(evicted_dp, DownloadEvicted)
+        assert isinstance(evicted_dp, ModelEvicted)
         assert evicted_dp.evicted_for == MODEL_NEW
 
 
@@ -336,7 +334,7 @@ class TestActiveModelProtection:
         await _start_download(coordinator, _shard(MODEL_NEW, 5))
 
         mock_delete.assert_not_called()
-        assert isinstance(coordinator.download_status[MODEL_NEW], DownloadRejected)
+        assert isinstance(coordinator.download_status[MODEL_NEW], ModelRejected)
 
 
 class TestDiskDeleteFailure:
@@ -369,7 +367,7 @@ class TestDiskDeleteFailure:
         # Should have tried to delete oldest model and failed
         mock_delete.assert_called_once_with(MODEL_A)
         # New model should be rejected
-        assert isinstance(coordinator.download_status[MODEL_NEW], DownloadRejected)
+        assert isinstance(coordinator.download_status[MODEL_NEW], ModelRejected)
         # Eviction target should still be in download_status (not removed)
         assert MODEL_A in coordinator.download_status
 
@@ -449,11 +447,11 @@ class TestEvictionEvents:
             e
             for e in events
             if isinstance(e, NodeDownloadProgress)
-            and isinstance(e.download_progress, DownloadEvicted)
+            and isinstance(e.download_progress, ModelEvicted)
         ]
         assert len(evicted_events) == 1
         evicted_dp = evicted_events[0].download_progress
-        assert isinstance(evicted_dp, DownloadEvicted)
+        assert isinstance(evicted_dp, ModelEvicted)
         assert evicted_dp.evicted_for == MODEL_NEW
         assert evicted_dp.shard_metadata.model_card.model_id == MODEL_A
 
@@ -491,7 +489,7 @@ class TestEvictionEvents:
             e
             for e in events
             if isinstance(e, NodeDownloadProgress)
-            and isinstance(e.download_progress, DownloadEvicted)
+            and isinstance(e.download_progress, ModelEvicted)
         ]
         evicted_model_ids = [
             e.download_progress.shard_metadata.model_card.model_id
@@ -500,7 +498,7 @@ class TestEvictionEvents:
         assert evicted_model_ids == [MODEL_A, MODEL_B, MODEL_C]
         for e in evicted_events:
             dp = e.download_progress
-            assert isinstance(dp, DownloadEvicted)
+            assert isinstance(dp, ModelEvicted)
             assert dp.evicted_for == MODEL_NEW
 
 
@@ -512,12 +510,12 @@ class TestClearRejections:
         config = StorageConfig(
             max_storage=Memory.from_gb(10), storage_policy="auto-evict"
         )
-        evicted = DownloadEvicted(
+        evicted = ModelEvicted(
             node_id=NODE_ID,
             shard_metadata=_shard(MODEL_A, 4),
             evicted_for=MODEL_NEW,
         )
-        rejected = DownloadRejected(
+        rejected = ModelRejected(
             node_id=NODE_ID,
             shard_metadata=_shard(MODEL_B, 4),
             reason="Not enough space",
@@ -533,14 +531,14 @@ class TestClearRejections:
         await coordinator.clear_rejections()
 
         # Evicted should remain unchanged
-        assert isinstance(coordinator.download_status[MODEL_A], DownloadEvicted)
+        assert isinstance(coordinator.download_status[MODEL_A], ModelEvicted)
         # Rejected should be cleared to Pending
-        assert isinstance(coordinator.download_status[MODEL_B], DownloadPending)
+        assert isinstance(coordinator.download_status[MODEL_B], ModelNotDownloading)
 
     async def test_clear_rejections_on_policy_only_change(self) -> None:
         """clear_rejections fires even when only the policy changes (no limit change)."""
         config = StorageConfig(max_storage=Memory.from_gb(10), storage_policy="manual")
-        rejected = DownloadRejected(
+        rejected = ModelRejected(
             node_id=NODE_ID,
             shard_metadata=_shard(MODEL_A, 4),
             reason="Manual policy",
@@ -556,6 +554,6 @@ class TestClearRejections:
         await coordinator.clear_rejections()
 
         # Rejected should be cleared to Pending
-        assert isinstance(coordinator.download_status[MODEL_A], DownloadPending)
+        assert isinstance(coordinator.download_status[MODEL_A], ModelNotDownloading)
         # Completed should be unchanged
-        assert isinstance(coordinator.download_status[MODEL_B], DownloadCompleted)
+        assert isinstance(coordinator.download_status[MODEL_B], ModelReady)

@@ -190,7 +190,7 @@ from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
 from exo.shared.types.text_generation import Base64Image, TextGenerationTaskParams
-from exo.shared.types.worker.downloads import DownloadCompleted
+from exo.shared.types.worker.downloads import ModelReady
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
@@ -1587,7 +1587,7 @@ class API:
         downloaded_model_ids: set[str] = set()
         for node_downloads in self.state.downloads.values():
             for dl in node_downloads:
-                if isinstance(dl, DownloadCompleted):
+                if isinstance(dl, ModelReady):
                     downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
 
         cards = [
@@ -1674,7 +1674,7 @@ class API:
             downloaded_model_ids: set[str] = set()
             for node_downloads in self.state.downloads.values():
                 for dl in node_downloads:
-                    if isinstance(dl, DownloadCompleted):
+                    if isinstance(dl, ModelReady):
                         downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
             cards = [c for c in cards if c.model_id in downloaded_model_ids]
 
