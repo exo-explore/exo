@@ -54,13 +54,13 @@ from exo.shared.types.storage import (
     StorageReject,
 )
 from exo.shared.types.worker.downloads import (
-    DownloadCompleted,
-    DownloadEvicted,
-    DownloadFailed,
-    DownloadOngoing,
-    DownloadPending,
-    DownloadProgress,
-    DownloadRejected,
+    ModelDownloadFailed,
+    ModelDownloading,
+    ModelEvicted,
+    ModelNotDownloading,
+    ModelReady,
+    ModelRejected,
+    ModelStatus,
 )
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 from exo.utils.channels import Receiver, Sender
@@ -78,7 +78,7 @@ class DownloadCoordinator:
     storage_config: StorageConfig = field(default_factory=StorageConfig)
 
     # Local state
-    download_status: dict[ModelId, DownloadProgress] = field(default_factory=dict)
+    download_status: dict[ModelId, ModelStatus] = field(default_factory=dict)
     active_downloads: dict[ModelId, anyio.CancelScope] = field(default_factory=dict)
 
     _model_last_used: dict[ModelId, datetime] = field(default_factory=dict)
@@ -125,7 +125,7 @@ class DownloadCoordinator:
                         callback_shard, found, progress.total
                     )
                 else:
-                    completed = DownloadCompleted(
+                    completed = ModelReady(
                         shard_metadata=callback_shard,
                         node_id=self.node_id,
                         total=progress.total,
@@ -141,7 +141,7 @@ class DownloadCoordinator:
                 and current_time() - self._last_progress_time.get(model_id, 0.0)
                 > throttle_interval_secs
             ):
-                ongoing = DownloadOngoing(
+                ongoing = ModelDownloading(
                     node_id=self.node_id,
                     shard_metadata=callback_shard,
                     download_progress=map_repo_download_progress_to_download_progress_data(
@@ -223,10 +223,10 @@ class DownloadCoordinator:
             current_status = self.download_status[model_id]
             downloaded = Memory()
             total = Memory()
-            if isinstance(current_status, DownloadOngoing):
+            if isinstance(current_status, ModelDownloading):
                 downloaded = current_status.download_progress.downloaded
                 total = current_status.download_progress.total
-            pending = DownloadPending(
+            pending = ModelNotDownloading(
                 shard_metadata=current_status.shard_metadata,
                 node_id=self.node_id,
                 model_directory=self._default_model_dir(model_id),
@@ -244,12 +244,12 @@ class DownloadCoordinator:
         # Check if already downloading, complete, or recently failed
         if model_id in self.download_status:
             status = self.download_status[model_id]
-            if isinstance(status, (DownloadOngoing, DownloadCompleted, DownloadFailed)):
+            if isinstance(status, (ModelDownloading, ModelReady, ModelDownloadFailed)):
                 logger.debug(
                     f"Download for {model_id} already in progress, complete, or failed, skipping"
                 )
                 return
-            if isinstance(status, DownloadRejected):
+            if isinstance(status, ModelRejected):
                 del self.download_status[model_id]
 
         # Check all model directories for pre-existing complete models
@@ -283,7 +283,7 @@ class DownloadCoordinator:
                 pass
 
         # Emit pending status
-        progress = DownloadPending(
+        progress = ModelNotDownloading(
             shard_metadata=shard,
             node_id=self.node_id,
             model_directory=self._default_model_dir(model_id),
@@ -319,7 +319,7 @@ class DownloadCoordinator:
             logger.warning(
                 f"Offline mode: model {model_id} is not fully available locally, cannot download"
             )
-            failed = DownloadFailed(
+            failed = ModelDownloadFailed(
                 shard_metadata=shard,
                 node_id=self.node_id,
                 error_message=f"Model files not found locally in offline mode: {model_id}",
@@ -338,7 +338,7 @@ class DownloadCoordinator:
         model_id = shard.model_card.model_id
 
         # Emit ongoing status
-        status = DownloadOngoing(
+        status = ModelDownloading(
             node_id=self.node_id,
             shard_metadata=shard,
             download_progress=map_repo_download_progress_to_download_progress_data(
@@ -355,7 +355,7 @@ class DownloadCoordinator:
                     await self.shard_downloader.ensure_shard(shard)
             except Exception as e:
                 logger.error(f"Download failed for {model_id}: {e}")
-                failed = DownloadFailed(
+                failed = ModelDownloadFailed(
                     shard_metadata=shard,
                     node_id=self.node_id,
                     error_message=str(e),
@@ -379,7 +379,7 @@ class DownloadCoordinator:
         # Protect read-only models from deletion
         if model_id in self.download_status:
             current = self.download_status[model_id]
-            if isinstance(current, DownloadCompleted) and current.read_only:
+            if isinstance(current, ModelReady) and current.read_only:
                 logger.warning(
                     f"Refusing to delete read-only model {model_id} (from EXO_MODELS_READ_ONLY_DIRS)"
                 )
@@ -409,7 +409,7 @@ class DownloadCoordinator:
         # Emit pending status to reset UI state, then remove from local tracking
         if model_id in self.download_status:
             current_status = self.download_status[model_id]
-            pending = DownloadPending(
+            pending = ModelNotDownloading(
                 shard_metadata=current_status.shard_metadata,
                 node_id=self.node_id,
                 model_directory=self._default_model_dir(model_id),
@@ -436,14 +436,14 @@ class DownloadCoordinator:
 
                     # Don't overwrite DownloadEvicted — the model may still be on disk
                     # while deletion is finishing
-                    if isinstance(self.download_status.get(model_id), DownloadEvicted):
+                    if isinstance(self.download_status.get(model_id), ModelEvicted):
                         continue
 
                     # Active downloads emit progress via the callback — don't overwrite
                     if model_id in self.active_downloads:
                         continue
 
-                    if isinstance(self.download_status.get(model_id), DownloadRejected):
+                    if isinstance(self.download_status.get(model_id), ModelRejected):
                         continue
 
                     if progress.status == "complete":
@@ -463,7 +463,7 @@ class DownloadCoordinator:
                             )
                     elif progress.status in ["in_progress", "not_started"]:
                         if progress.downloaded_this_session.in_bytes == 0:
-                            status = DownloadPending(
+                            status = ModelNotDownloading(
                                 node_id=self.node_id,
                                 shard_metadata=progress.shard,
                                 model_directory=self._default_model_dir(model_id),
@@ -471,7 +471,7 @@ class DownloadCoordinator:
                                 total=progress.total,
                             )
                         else:
-                            status = DownloadOngoing(
+                            status = ModelDownloading(
                                 node_id=self.node_id,
                                 shard_metadata=progress.shard,
                                 download_progress=map_repo_download_progress_to_download_progress_data(
@@ -494,7 +494,7 @@ class DownloadCoordinator:
                             continue
                         if isinstance(
                             self.download_status.get(mid),
-                            (DownloadCompleted, DownloadOngoing, DownloadFailed),
+                            (ModelReady, ModelDownloading, ModelDownloadFailed),
                         ):
                             continue
                         found = await to_thread.run_sync(resolve_existing_model, mid)
@@ -531,7 +531,7 @@ class DownloadCoordinator:
     ) -> None:
         assert self.storage_config.max_storage is not None
         model_id = shard.model_card.model_id
-        rejected = DownloadRejected(
+        rejected = ModelRejected(
             shard_metadata=shard,
             node_id=self.node_id,
             model_directory=self._default_model_dir(model_id),
@@ -569,7 +569,7 @@ class DownloadCoordinator:
                 return False
 
             if evicted_status is not None:
-                evicted = DownloadEvicted(
+                evicted = ModelEvicted(
                     shard_metadata=evicted_status.shard_metadata,
                     node_id=self.node_id,
                     model_directory=self._default_model_dir(evict_model_id),
@@ -586,13 +586,13 @@ class DownloadCoordinator:
         rejected = [
             (model_id, status)
             for model_id, status in self.download_status.items()
-            if isinstance(status, DownloadRejected)
+            if isinstance(status, ModelRejected)
         ]
         for model_id, status in rejected:
             logger.info(
                 f"Clearing DownloadRejected for {model_id} after storage config change"
             )
-            pending = DownloadPending(
+            pending = ModelNotDownloading(
                 shard_metadata=status.shard_metadata,
                 node_id=self.node_id,
                 model_directory=self._default_model_dir(model_id),
