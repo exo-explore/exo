@@ -49,53 +49,15 @@ def apply_all_parsers(
             starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
         )
 
-    if issubclass(model_type, GptOssModel):
+    lower = model_id.normalize().lower()
+    if issubclass(model_type, GptOssModel) or "gpt-oss" in lower or "gpt_oss" in lower:
         mlx_generator = parse_gpt_oss(mlx_generator)
-    elif (
-        issubclass(model_type, DeepseekV32Model)
-        and "deepseek" in model_id.normalize().lower()
-    ):
+    elif issubclass(model_type, DeepseekV32Model) or "deepseek" in lower:
         mlx_generator = parse_deepseek_v32(mlx_generator)
     elif tool_parser:
         mlx_generator = parse_tool_calls(mlx_generator, tool_parser, tools)
 
     return mlx_generator
-
-
-def apply_vllm_parsers(
-    receiver: Generator[GenerationResponse | None],
-    model_id: ModelId,
-    prompt: str,
-    tool_parser: ToolParser | None,
-    tools: list[dict[str, Any]] | None,
-    think_start: str | None = None,
-    think_end: str | None = None,
-) -> Generator[GenerationResponse | ToolCallResponse | None]:
-    gen = receiver
-    lower = model_id.normalize().lower()
-
-    if "gpt-oss" in lower or "gpt_oss" in lower:
-        return parse_gpt_oss(gen)
-
-    if "deepseek" in lower:
-        gen = parse_thinking_models(
-            gen,
-            think_start or "<think>",
-            think_end or "</think>",
-            starts_in_thinking=prompt.rstrip().endswith(think_start or "<think>"),
-        )
-        return parse_deepseek_v32(gen)
-
-    if think_start is not None:
-        gen = parse_thinking_models(
-            gen,
-            think_start,
-            think_end,
-            starts_in_thinking=prompt.rstrip().endswith(think_start),
-        )
-    if tool_parser:
-        gen = parse_tool_calls(gen, tool_parser, tools)
-    return gen
 
 
 _GPT_OSS_CHANNEL_TOKEN = 200005

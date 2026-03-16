@@ -462,7 +462,15 @@ class MlxBuilder(Builder):
                 cancel_receiver=self.cancel_receiver,
                 event_sender=self.event_sender,
             )
+        from exo.worker.runner.llm_inference.batch_generator import ExoBatchGenerator
+
         logger.info("using BatchGenerator")
+        gen = ExoBatchGenerator(
+            model=self.inference_model,
+            tokenizer=self.tokenizer,
+            group=self.group,
+            kv_prefix_cache=kv_prefix_cache,
+        )
         return BatchGenerator(
             model=self.inference_model,
             tokenizer=self.tokenizer,
@@ -473,6 +481,7 @@ class MlxBuilder(Builder):
             device_rank=device_rank,
             cancel_receiver=self.cancel_receiver,
             event_sender=self.event_sender,
+            _gen=gen,
         )
 
     def shutdown_cleanup(self) -> None:
@@ -509,28 +518,35 @@ class VllmBuilder(Builder):
         )
 
     def build(self) -> InferenceGenerator:
-        if os.environ.get("EXO_NO_BATCH"):
-            from exo.worker.engines.vllm.vllm_generator import VllmSequentialGenerator
+        from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-            logger.info("using VllmSequentialGenerator (batching disabled)")
-            return VllmSequentialGenerator(
-                engine=self._engine,
-                model_id=self.model_id,
-                tool_parser=self._tool_parser,
-                cancel_receiver=self.cancel_receiver,
-                event_sender=self.event_sender,
-                prefix_cache=self._prefix_cache,
-            )
-        from exo.worker.engines.vllm.vllm_generator import VllmBatchGenerator
+        from exo.worker.engines.vllm.vllm_generator import (
+            VllmBatchEngine,
+            warmup_vllm_engine,
+        )
 
-        logger.info("using VllmBatchGenerator")
-        return VllmBatchGenerator(
+        warmup_vllm_engine(self._engine)
+        gen = VllmBatchEngine(
             engine=self._engine,
             model_id=self.model_id,
+            prefix_cache=self._prefix_cache,
+        )
+        tokenizer = TokenizerWrapper(self._engine.get_tokenizer())
+        max_concurrent = 1 if os.environ.get("EXO_NO_BATCH") else 8
+
+        logger.info(f"using BatchGenerator (vLLM, max_concurrent={max_concurrent})")
+        return BatchGenerator(
+            model=None,
+            tokenizer=tokenizer,
+            group=None,
             tool_parser=self._tool_parser,
+            kv_prefix_cache=None,
+            model_id=self.model_id,
+            device_rank=0,
             cancel_receiver=self.cancel_receiver,
             event_sender=self.event_sender,
-            prefix_cache=self._prefix_cache,
+            _gen=gen,
+            max_concurrent_requests=max_concurrent,
         )
 
     def shutdown_cleanup(self) -> None:

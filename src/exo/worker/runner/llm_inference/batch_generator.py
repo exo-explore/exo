@@ -140,13 +140,14 @@ class SequentialGenerator(InferenceGenerator):
         | None
     ) = field(default=None, init=False)
 
-    def warmup(self):
-        self.check_for_cancel_every = warmup_inference(
-            model=self.model,
-            tokenizer=self.tokenizer,
-            group=self.group,
-            model_id=self.model_id,
-        )
+    def warmup(self) -> None:
+        if self.model is not None:
+            self.check_for_cancel_every = warmup_inference(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                group=self.group,
+                model_id=self.model_id,
+            )
 
     def submit(
         self,
@@ -304,7 +305,7 @@ class SequentialGenerator(InferenceGenerator):
 
 @dataclass(eq=False)
 class BatchGenerator(InferenceGenerator):
-    model: Model
+    model: Model | None
     tokenizer: TokenizerWrapper
     group: mx.distributed.Group | None
     kv_prefix_cache: KVPrefixCache | None
@@ -313,6 +314,8 @@ class BatchGenerator(InferenceGenerator):
     device_rank: int
     cancel_receiver: MpReceiver[TaskId]
     event_sender: MpSender[Event]
+    _gen: ExoBatchGenerator  # ExoBatchGenerator or VllmBatchEngine
+    max_concurrent_requests: int = EXO_MAX_CONCURRENT_REQUESTS
     check_for_cancel_every: int = 50
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
@@ -320,7 +323,6 @@ class BatchGenerator(InferenceGenerator):
     _maybe_cancel: list[TextGeneration] = field(default_factory=list, init=False)
     _all_tasks: dict[TaskId, TextGeneration] = field(default_factory=dict, init=False)
     _queue: deque[TextGeneration] = field(default_factory=deque, init=False)
-    _mlx_gen: ExoBatchGenerator = field(init=False)
     _active_tasks: dict[
         int,
         tuple[
@@ -330,21 +332,14 @@ class BatchGenerator(InferenceGenerator):
         ],
     ] = field(default_factory=dict, init=False)
 
-    def __post_init__(self) -> None:
-        self._mlx_gen = ExoBatchGenerator(
-            model=self.model,
-            tokenizer=self.tokenizer,
-            group=self.group,
-            kv_prefix_cache=self.kv_prefix_cache,
-        )
-
-    def warmup(self):
-        self.check_for_cancel_every = warmup_inference(
-            model=self.model,
-            tokenizer=self.tokenizer,
-            group=self.group,
-            model_id=self.model_id,
-        )
+    def warmup(self) -> None:
+        if self.model is not None:
+            self.check_for_cancel_every = warmup_inference(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                group=self.group,
+                model_id=self.model_id,
+            )
 
     def submit(
         self,
@@ -386,7 +381,7 @@ class BatchGenerator(InferenceGenerator):
             self.agree_on_tasks()
 
         # Submit any queued tasks to the engine
-        while self._queue and len(self._active_tasks) < EXO_MAX_CONCURRENT_REQUESTS:
+        while self._queue and len(self._active_tasks) < self.max_concurrent_requests:
             task = self._queue.popleft()
             try:
                 uid = self._start_task(task)
@@ -411,10 +406,10 @@ class BatchGenerator(InferenceGenerator):
                 )
             self._active_tasks[uid] = (task, queue, output_generator)
 
-        if not self._mlx_gen.has_work:
+        if not self._gen.has_work:
             return self._apply_cancellations()
 
-        results = self._mlx_gen.step()
+        results = self._gen.step()
 
         output: list[
             tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
@@ -456,7 +451,7 @@ class BatchGenerator(InferenceGenerator):
                 del self._active_tasks[uid]
 
         if uids_to_cancel:
-            self._mlx_gen.cancel(uids_to_cancel)
+            self._gen.cancel(uids_to_cancel)
 
         already_cancelled = {tid for tid, _ in results}
         for tid in self._cancelled_tasks:
@@ -516,7 +511,7 @@ class BatchGenerator(InferenceGenerator):
 
                 self.agree_on_tasks()
 
-        return self._mlx_gen.submit(
+        return self._gen.submit(
             task_params=task.task_params,
             prompt=prompt,
             on_prefill_progress=on_prefill_progress,
@@ -525,5 +520,7 @@ class BatchGenerator(InferenceGenerator):
         )
 
     def close(self) -> None:
-        self._mlx_gen.close()
-        del self.model, self.tokenizer, self.group
+        self._gen.close()
+        if self.model is not None:
+            del self.model
+        del self.tokenizer, self.group
