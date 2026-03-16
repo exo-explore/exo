@@ -13,6 +13,7 @@ from exo.shared.types.text_generation import InputMessage, TextGenerationTaskPar
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerFailed, RunnerId
 from exo.utils.channels import channel, mp_channel
+from exo.worker.runner import failure_store
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 from exo.worker.tests.unittests.conftest import get_bound_mlx_ring_instance
 
@@ -91,3 +92,43 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
     event_sender.close()
     with anyio.move_on_after(0.1):
         await event_receiver.aclose()
+
+
+@pytest.mark.asyncio
+async def test_check_runner_persists_failure_when_event_sender_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr(failure_store, "EXO_LOG_DIR", tmp_path)
+
+    event_sender, _ = channel[Event]()
+    task_sender, _ = mp_channel[Task]()
+    cancel_sender, _ = mp_channel[TaskId]()
+    _, ev_recv = mp_channel[Event]()
+
+    bound_instance: BoundInstance = get_bound_mlx_ring_instance(
+        instance_id=InstanceId("instance-e"),
+        model_id=ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit"),
+        runner_id=RunnerId("runner-e"),
+        node_id=NodeId("node-e"),
+    )
+
+    supervisor = RunnerSupervisor(
+        shard_metadata=bound_instance.bound_shard,
+        bound_instance=bound_instance,
+        runner_process=cast("mp.Process", cast(object, _DeadProcess())),
+        initialize_timeout=400,
+        _ev_recv=ev_recv,
+        _task_sender=task_sender,
+        _event_sender=event_sender,
+        _cancel_sender=cancel_sender,
+    )
+    supervisor.shutdown = lambda: None
+    event_sender.close()
+
+    await supervisor._check_runner(RuntimeError("boom"))  # pyright: ignore[reportPrivateUsage]
+
+    pending_files = list((tmp_path / "pending_runner_failures").glob("*.json"))
+    assert len(pending_files) == 1
+    payload = pending_files[0].read_text()
+    assert "runner-e" in payload
+    assert "runner_supervisor" in payload

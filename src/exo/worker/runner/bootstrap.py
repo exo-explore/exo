@@ -8,6 +8,7 @@ from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
+from exo.worker.runner.failure_store import persist_runner_failure
 
 logger: "loguru.Logger" = loguru.logger
 
@@ -56,12 +57,19 @@ def entrypoint(
         logger.opt(exception=e).warning(
             f"Runner {bound_instance.bound_runner_id} crashed with critical exception {e}"
         )
-        event_sender.send(
-            RunnerStatusUpdated(
-                runner_id=bound_instance.bound_runner_id,
-                runner_status=RunnerFailed(error_message=str(e)),
+        try:
+            event_sender.send(
+                RunnerStatusUpdated(
+                    runner_id=bound_instance.bound_runner_id,
+                    runner_status=RunnerFailed(error_message=str(e)),
+                )
             )
-        )
+        except (BrokenPipeError, OSError, ClosedResourceError):
+            persist_runner_failure(
+                bound_instance,
+                error_message=str(e),
+                source="runner_bootstrap_exception",
+            )
     finally:
         try:
             event_sender.close()

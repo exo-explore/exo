@@ -46,6 +46,7 @@ from exo.utils.info_gatherer.net_profile import check_reachable
 from exo.utils.keyed_backoff import KeyedBackoff
 from exo.utils.task_group import TaskGroup
 from exo.worker.plan import plan
+from exo.worker.runner.failure_store import replay_persisted_runner_failures
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
 
@@ -92,6 +93,7 @@ class Worker:
                 tg.start_soon(self.plan_step)
                 tg.start_soon(self._event_applier)
                 tg.start_soon(self._poll_connection_updates)
+                tg.start_soon(self._replay_runner_failures)
         finally:
             # Actual shutdown code - waits for all tasks to complete before executing.
             logger.info("Stopping Worker")
@@ -333,3 +335,13 @@ class Worker:
                     await self.event_sender.send(TopologyEdgeDeleted(conn=conn))
 
             await anyio.sleep(10)
+
+    async def _replay_runner_failures(self) -> None:
+        while True:
+            replayed = await replay_persisted_runner_failures(self.event_sender)
+            if replayed:
+                logger.warning(
+                    "Replayed {} persisted runner failure event(s) into worker event stream",
+                    replayed,
+                )
+            await anyio.sleep(1)

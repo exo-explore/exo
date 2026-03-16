@@ -44,6 +44,7 @@ from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.channels import MpReceiver, MpSender, Sender, mp_channel
 from exo.utils.task_group import TaskGroup
 from exo.worker.runner.bootstrap import entrypoint
+from exo.worker.runner.failure_store import persist_runner_failure
 
 PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5
@@ -282,6 +283,11 @@ class RunnerSupervisor:
                     )
                 )
         except (ClosedResourceError, BrokenResourceError):
+            persist_runner_failure(
+                self.bound_instance,
+                error_message=self.status.error_message or f"Terminated ({cause})",
+                source="runner_supervisor",
+            )
             logger.warning(
                 "Event sender already closed, unable to report runner failure"
             )
