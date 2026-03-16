@@ -114,23 +114,22 @@
             };
           };
 
-          packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin
-            (
-              let
-                uvLock = builtins.fromTOML (builtins.readFile ./uv.lock);
-                mlxPackage = builtins.head (builtins.filter (p: p.name == "mlx" && p.source ? git) uvLock.package);
-                uvLockMlxVersion = mlxPackage.version;
-              in
-              {
-                metal-toolchain = pkgs.callPackage ./nix/metal-toolchain.nix { };
-                mlx = pkgs.callPackage ./nix/mlx.nix {
-                  inherit (self'.packages) metal-toolchain;
-                  inherit uvLockMlxVersion;
-                };
-                default = self'.packages.exo;
-              }
-            ) // lib.optionalAttrs (pkgsCuda != null) {
-            # CUDA-compiled PyTorch and vLLM (built from source by nixpkgs, aarch64-linux only)
+          packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin (
+            let
+              uvLock = builtins.fromTOML (builtins.readFile ./uv.lock);
+              mlxPackage = builtins.head (builtins.filter (p: p.name == "mlx" && p.source ? git) uvLock.package);
+              uvLockMlxVersion = mlxPackage.version;
+              uvLockMlxRev = builtins.elemAt (builtins.split "#" mlxPackage.source.git) 2;
+            in
+            {
+              metal-toolchain = pkgs.callPackage ./nix/metal-toolchain.nix { };
+              mlx = pkgs.callPackage ./nix/mlx.nix {
+                inherit (self'.packages) metal-toolchain;
+                inherit uvLockMlxVersion uvLockMlxRev;
+              };
+              default = self'.packages.exo;
+            }
+          ) // lib.optionalAttrs (pkgsCuda != null) {
             torch-cuda = pkgsCuda.python313Packages.torch;
             vllm-cuda = pkgsCuda.python313Packages.vllm;
 

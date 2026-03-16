@@ -529,6 +529,9 @@ class InfoGatherer:
         if self.macmon_interval is None:
             return
         # macmon pipe --interval [interval in ms]
+        # Timeout: if macmon produces no output for this many seconds, restart it.
+        # macmon writes every macmon_interval seconds, so 10x that is generous.
+        read_timeout = max(self.macmon_interval * 10, 30)
         while True:
             try:
                 async with await open_process(
@@ -542,10 +545,15 @@ class InfoGatherer:
                     if not p.stdout:
                         logger.critical("MacMon closed stdout")
                         return
-                    async for text in TextReceiveStream(
-                        BufferedByteReceiveStream(p.stdout)
-                    ):
+                    stream = TextReceiveStream(BufferedByteReceiveStream(p.stdout))
+                    while True:
+                        with fail_after(read_timeout):
+                            text = await stream.receive()
                         await self.info_sender.send(MacmonMetrics.from_raw_json(text))
+            except TimeoutError:
+                logger.warning(
+                    f"MacMon produced no output for {read_timeout}s, restarting"
+                )
             except CalledProcessError as e:
                 stderr_msg = "no stderr"
                 stderr_output = cast(bytes | str | None, e.stderr)

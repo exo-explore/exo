@@ -11,6 +11,7 @@
 , fmt
 , python313Packages
 , uvLockMlxVersion
+, uvLockMlxRev
 }:
 
 assert stdenv.isDarwin;
@@ -41,15 +42,13 @@ let
 
   mlx = stdenv.mkDerivation rec {
     pname = "mlx";
-    version = let v = "0.30.7.dev20260225+257d5692"; in
-      assert v == uvLockMlxVersion || throw "MLX version mismatch: nix/mlx.nix has ${v} but uv.lock has ${uvLockMlxVersion}. Update both the version and hash in nix/mlx.nix.";
-      v;
+    version = uvLockMlxVersion;
     pyproject = true;
 
     src = fetchFromGitHub {
       owner = "rltakashige";
       repo = "mlx-jaccl-fix-small-recv";
-      rev = "257d5692fc7af6bba3b8afaeb63c549b7d1e43d5";
+      rev = uvLockMlxRev;
       hash = "sha256-GosFIWxIB48Egb1MqJrR3xhsUsQeWdRk5rV93USY6wQ=";
     };
 
