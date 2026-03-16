@@ -25,6 +25,7 @@ from exo.master.adapters.chat_completions import (
     chat_request_to_text_generation,
     collect_chat_response,
     generate_chat_stream,
+    sse_with_keepalive,
 )
 from exo.master.adapters.claude import (
     claude_request_to_text_generation,
@@ -712,9 +713,11 @@ class API:
 
         if payload.stream:
             return StreamingResponse(
-                generate_chat_stream(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                sse_with_keepalive(
+                    generate_chat_stream(
+                        command.command_id,
+                        self._token_chunk_stream(command.command_id),
+                    ),
                 ),
                 media_type="text/event-stream",
                 headers={
