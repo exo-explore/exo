@@ -389,8 +389,8 @@ def run_planning_phase(
         node_downloads = client.get_node_downloads(node_id) or []
 
         already_downloaded = any(
-            "DownloadCompleted" in p
-            and unwrap_instance(p["DownloadCompleted"]["shardMetadata"])["modelCard"][
+            "ModelReady" in p
+            and unwrap_instance(p["ModelReady"]["shardMetadata"])["modelCard"][
                 "modelId"
             ]
             == full_model_id
@@ -428,14 +428,13 @@ def run_planning_phase(
 
         completed = [
             (
-                unwrap_instance(p["DownloadCompleted"]["shardMetadata"])["modelCard"][
+                unwrap_instance(p["ModelReady"]["shardMetadata"])["modelCard"][
                     "modelId"
                 ],
-                p["DownloadCompleted"]["total"]["inBytes"],
+                p["ModelReady"]["total"]["inBytes"],
             )
             for p in node_downloads
-            if "DownloadCompleted" in p
-            and not p["DownloadCompleted"].get("readOnly", False)
+            if "ModelReady" in p and not p["ModelReady"].get("readOnly", False)
         ]
         for del_model, size in sorted(completed, key=lambda x: x[1]):
             logger.info(f"Deleting {del_model} from {node_id} ({size // (1024**2)}MB)")
@@ -469,20 +468,20 @@ def run_planning_phase(
         for node_id in node_ids:
             node_downloads = client.get_node_downloads(node_id) or []
             done = any(
-                "DownloadCompleted" in p
-                and unwrap_instance(p["DownloadCompleted"]["shardMetadata"])[
-                    "modelCard"
-                ]["modelId"]
+                "ModelReady" in p
+                and unwrap_instance(p["ModelReady"]["shardMetadata"])["modelCard"][
+                    "modelId"
+                ]
                 == full_model_id
                 for p in node_downloads
             )
             failed = [
-                p["DownloadFailed"]["errorMessage"]
+                p["ModelDownloadFailed"]["errorMessage"]
                 for p in node_downloads
-                if "DownloadFailed" in p
-                and unwrap_instance(p["DownloadFailed"]["shardMetadata"])["modelCard"][
-                    "modelId"
-                ]
+                if "ModelDownloadFailed" in p
+                and unwrap_instance(p["ModelDownloadFailed"]["shardMetadata"])[
+                    "modelCard"
+                ]["modelId"]
                 == full_model_id
             ]
             if failed:

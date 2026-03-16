@@ -25,10 +25,10 @@ from exo.shared.types.storage import (
 )
 from exo.shared.types.tasks import LoadModel, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
-    ModelReady,
+    DownloadProgressData,
     ModelDownloading,
     ModelNotDownloading,
-    DownloadProgressData,
+    ModelReady,
 )
 from exo.shared.types.worker.instances import InstanceId, MlxRingInstance
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments
