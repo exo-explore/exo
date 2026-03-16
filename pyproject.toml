@@ -66,7 +66,7 @@ exo_pyo3_bindings = { workspace = true }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/eval-left-padding-in-batched-rotation" }
 torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux'" }]
-vllm = { git = "https://github.com/hmellor/vllm.git", branch = "transformers-v5" }
+vllm = { git = "https://github.com/rltakashige/vllm-transformers-sm121.git" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }
 # mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }

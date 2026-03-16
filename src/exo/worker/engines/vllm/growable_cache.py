@@ -26,7 +26,6 @@ def patch_vllm() -> None:
     _patch_allocate_slots()
     _patch_get_computed_blocks()
     _patch_moe_sum()
-    _patch_marlin_w2_thread_config()
     logger.info("vLLM growable KV cache patch applied")
 
 
@@ -273,22 +272,6 @@ def _patch_moe_sum() -> None:
         output[:] = x.to(torch.float32).sum(dim=1).to(output.dtype)  # type: ignore
 
     ops.moe_sum = moe_sum_f32  # type: ignore
-
-
-def _patch_marlin_w2_thread_config() -> None:
-    try:
-        import vllm._custom_ops as ops  # type: ignore[reportMissingImports]
-    except ImportError:
-        return
-
-    original_gemm = ops.moe_wna16_marlin_gemm
-
-    def patched_gemm(*args: "object", **kwargs: "object") -> "object":
-        kwargs["thread_k"] = 64
-        kwargs["thread_n"] = 128
-        return original_gemm(*args, **kwargs)
-
-    ops.moe_wna16_marlin_gemm = patched_gemm  # type: ignore
 
 
 def _patch_get_computed_blocks() -> None:
