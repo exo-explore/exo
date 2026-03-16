@@ -53,3 +53,12 @@ def test_instance_delete_sequence_removes_bound_runners_from_state() -> None:
 
     assert instance.instance_id not in state.instances
     assert runner_id not in state.runners
+
+
+def test_runner_deleted_is_idempotent_when_runner_is_already_gone() -> None:
+    runner_id = RunnerId("runner-gone")
+    state = State()
+
+    updated = event_apply(RunnerDeleted(runner_id=runner_id), state)
+
+    assert updated.runners == {}

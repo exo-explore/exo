@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
 import anyio
@@ -23,6 +23,7 @@ from exo.shared.types.events import (
     InstanceCreated,
     LocalForwarderEvent,
     NodeGatheredInfo,
+    RunnerDeleted,
     TaskCreated,
 )
 from exo.shared.types.memory import Memory
@@ -32,11 +33,15 @@ from exo.shared.types.profiling import (
 from exo.shared.types.tasks import TaskStatus
 from exo.shared.types.tasks import TextGeneration as TextGenerationTask
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo.shared.types.state import State
 from exo.shared.types.worker.instances import (
+    Instance,
+    InstanceId,
     InstanceMeta,
     MlxRingInstance,
     ShardAssignments,
 )
+from exo.shared.types.worker.runners import RunnerId, RunnerReady
 from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 from exo.utils.channels import channel
 
@@ -218,3 +223,114 @@ async def test_master():
 
         ev_send.close()
         await master.shutdown()
+
+
+def _make_instance(*, instance_id: str, runner_id: str, model_id: str = "test-model") -> Instance:
+    model_card = ModelCard(
+        model_id=ModelId(model_id),
+        n_layers=16,
+        storage_size=Memory.from_bytes(678948),
+        hidden_size=7168,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+    )
+    rid = RunnerId(runner_id)
+    node_id = NodeId(f"node-{runner_id}")
+    return MlxRingInstance(
+        instance_id=InstanceId(instance_id),
+        shard_assignments=ShardAssignments(
+            model_id=model_card.model_id,
+            runner_to_shard={
+                rid: PipelineShardMetadata(
+                    start_layer=0,
+                    end_layer=16,
+                    n_layers=16,
+                    model_card=model_card,
+                    device_rank=0,
+                    world_size=1,
+                )
+            },
+            node_to_runner={node_id: rid},
+        ),
+        hosts_by_node={},
+        ephemeral_port=50000,
+    )
+
+
+def test_master_reconcile_orphan_runners_emits_delete_after_ttl() -> None:
+    ge_sender, _global_event_receiver = channel[GlobalForwarderEvent]()
+    command_sender, co_receiver = channel[ForwarderCommand]()
+    local_event_sender, le_receiver = channel[LocalForwarderEvent]()
+    fcds, _fcdr = channel[ForwarderDownloadCommand]()
+    ev_send, _ev_recv = channel[Event]()
+
+    node_id = NodeId("node0")
+    session_id = SessionId(master_node_id=node_id, election_clock=0)
+    master = Master(
+        node_id,
+        session_id,
+        event_sender=ev_send,
+        global_event_sender=ge_sender,
+        local_event_receiver=le_receiver,
+        command_receiver=co_receiver,
+        download_command_sender=fcds,
+    )
+
+    orphan_runner_id = RunnerId("runner-orphan")
+    master.state = State(
+        instances={},
+        runners={orphan_runner_id: RunnerReady()},
+    )
+
+    first_seen = datetime.now(timezone.utc)
+    initial_events = master._reconcile_orphan_runners(now=first_seen)  # pyright: ignore[reportPrivateUsage]
+    later_events = master._reconcile_orphan_runners(  # pyright: ignore[reportPrivateUsage]
+        now=first_seen + timedelta(seconds=16)
+    )
+
+    assert initial_events == []
+    assert len(later_events) == 1
+    assert isinstance(later_events[0], RunnerDeleted)
+    assert later_events[0].runner_id == orphan_runner_id
+
+
+def test_master_reconcile_orphan_runners_clears_tracking_when_runner_referenced() -> None:
+    ge_sender, _global_event_receiver = channel[GlobalForwarderEvent]()
+    command_sender, co_receiver = channel[ForwarderCommand]()
+    local_event_sender, le_receiver = channel[LocalForwarderEvent]()
+    fcds, _fcdr = channel[ForwarderDownloadCommand]()
+    ev_send, _ev_recv = channel[Event]()
+
+    node_id = NodeId("node0")
+    session_id = SessionId(master_node_id=node_id, election_clock=0)
+    master = Master(
+        node_id,
+        session_id,
+        event_sender=ev_send,
+        global_event_sender=ge_sender,
+        local_event_receiver=le_receiver,
+        command_receiver=co_receiver,
+        download_command_sender=fcds,
+    )
+
+    runner_id = RunnerId("runner-referenced")
+    first_seen = datetime.now(timezone.utc)
+    master.state = State(instances={}, runners={runner_id: RunnerReady()})
+
+    _ = master._reconcile_orphan_runners(now=first_seen)  # pyright: ignore[reportPrivateUsage]
+
+    master.state = State(
+        instances={
+            InstanceId("instance-live"): _make_instance(
+                instance_id="instance-live",
+                runner_id=str(runner_id),
+            )
+        },
+        runners={runner_id: RunnerReady()},
+    )
+
+    later_events = master._reconcile_orphan_runners(  # pyright: ignore[reportPrivateUsage]
+        now=first_seen + timedelta(seconds=16)
+    )
+
+    assert later_events == []

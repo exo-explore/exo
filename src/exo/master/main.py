@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta, timezone
 
 import anyio
@@ -38,6 +39,7 @@ from exo.shared.types.events import (
     LocalForwarderEvent,
     NodeGatheredInfo,
     NodeTimedOut,
+    RunnerDeleted,
     TaskCreated,
     TaskDeleted,
     TaskStatusUpdated,
@@ -60,9 +62,14 @@ from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
 from exo.shared.types.worker.instances import InstanceId
+from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import Receiver, Sender
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
+
+ORPHAN_RUNNER_TTL_SECONDS = float(
+    os.environ.get("EXO_ORPHAN_RUNNER_TTL", "15")
+)
 
 
 class Master:
@@ -92,6 +99,8 @@ class Master:
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
+        self._orphaned_runner_first_seen_at: dict[RunnerId, datetime] = {}
+        self._orphan_runner_deletes_inflight: set[RunnerId] = set()
 
     async def run(self):
         logger.info("Starting Master")
@@ -361,6 +370,9 @@ class Master:
     # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
     async def _plan(self) -> None:
         while True:
+            for event in self._reconcile_orphan_runners():
+                await self.event_sender.send(event)
+
             # kill broken instances
             connected_node_ids = set(self.state.topology.list_nodes())
             for instance_id, instance in self.state.instances.items():
@@ -399,6 +411,7 @@ class Master:
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
                     indexed = IndexedEvent(event=event, idx=len(self._event_log))
                     self.state = apply(self.state, indexed)
+                    self._record_runner_reconciliation_event(event)
 
                     event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
                     if isinstance(event, NodeGatheredInfo):
@@ -444,3 +457,45 @@ class Master:
         del self._pending_traces[task_id]
         if task_id in self._expected_ranks:
             del self._expected_ranks[task_id]
+
+    def _reconcile_orphan_runners(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> list[RunnerDeleted]:
+        now = now or datetime.now(tz=timezone.utc)
+        referenced_runner_ids = {
+            runner_id
+            for instance in self.state.instances.values()
+            for runner_id in instance.shard_assignments.runner_to_shard
+        }
+        orphan_runner_ids = set(self.state.runners) - referenced_runner_ids
+
+        self._orphaned_runner_first_seen_at = {
+            runner_id: first_seen
+            for runner_id, first_seen in self._orphaned_runner_first_seen_at.items()
+            if runner_id in orphan_runner_ids
+        }
+        self._orphan_runner_deletes_inflight.intersection_update(orphan_runner_ids)
+
+        events: list[RunnerDeleted] = []
+        ttl = timedelta(seconds=ORPHAN_RUNNER_TTL_SECONDS)
+        for runner_id in orphan_runner_ids:
+            if runner_id in self._orphan_runner_deletes_inflight:
+                continue
+            first_seen = self._orphaned_runner_first_seen_at.setdefault(runner_id, now)
+            if now - first_seen >= ttl:
+                events.append(RunnerDeleted(runner_id=runner_id))
+                self._orphan_runner_deletes_inflight.add(runner_id)
+                self._orphaned_runner_first_seen_at.pop(runner_id, None)
+
+        for runner_id in referenced_runner_ids:
+            self._orphaned_runner_first_seen_at.pop(runner_id, None)
+            self._orphan_runner_deletes_inflight.discard(runner_id)
+
+        return events
+
+    def _record_runner_reconciliation_event(self, event: Event) -> None:
+        if isinstance(event, RunnerDeleted):
+            self._orphaned_runner_first_seen_at.pop(event.runner_id, None)
+            self._orphan_runner_deletes_inflight.discard(event.runner_id)
