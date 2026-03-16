@@ -57,7 +57,7 @@ pub mod if_watcher {
         fn has_link_local_v6(&self) -> bool;
         fn is_real_interface(&self) -> bool;
         fn will_babel(&self) -> bool;
-        fn get_v6_in(&self, prefix: Ipv6Net) -> Option<Ipv6Addr>;
+        fn get_v6_in(&self, prefix: Ipv6Net) -> Option<Ipv6Net>;
     }
     impl IfaceExt for Interface {
         fn will_babel(&self) -> bool {
@@ -115,12 +115,12 @@ pub mod if_watcher {
             }
             true
         }
-        fn get_v6_in(&self, prefix: Ipv6Net) -> Option<Ipv6Addr> {
+        fn get_v6_in(&self, prefix: Ipv6Net) -> Option<Ipv6Net> {
             for addr in self.addrs() {
                 if let IpNet::V6(v6) = addr
                     && prefix.contains(&v6.addr())
                 {
-                    return Some(v6.addr());
+                    return Some(v6);
                 }
             }
             None
@@ -150,12 +150,14 @@ pub mod if_watcher {
 
                 for addr in iface.addrs() {
                     if let IpNet::V6(v6) = addr
-                        && PREFIX.contains(&v6)
-                        && !my_range.contains(&v6)
+                        && PREFIX.contains(&v6.addr())
+                        && !my_range.contains(&v6.addr())
                     {
                         tracing::info!("removing stale ip {v6} from {}", iface.name());
                         // don't really care if this fails
-                        _ = remove_ip(v6.addr(), iface).await;
+                        if let Err(e) = remove_ip(v6, iface).await {
+                            tracing::warn!(%e, "failed to remove ip");
+                        }
                     }
                 }
                 if iface.get_v6_in(my_range).is_none() {
@@ -181,7 +183,9 @@ pub mod if_watcher {
                 if let Some(v6) = iface.get_v6_in(PREFIX) {
                     tracing::info!("removing stale ip {v6} from {name}");
                     // don't really care if this fails
-                    _ = remove_ip(v6, &iface).await;
+                    if let Err(e) = remove_ip(v6, &iface).await {
+                        tracing::warn!(%e, "failed to remove ip");
+                    }
                 }
                 assert!(ready_ifaces.remove(&name).is_some());
                 let Ok(()) = send.send(Babble::RemoveIface(name)).await else {
@@ -256,8 +260,16 @@ pub mod babel {
         #[inline]
         fn drop(&mut self) {
             // emergency sigkill babeld process to prevent leakage
-            if self.proc.try_wait().is_err() {
-                _ = self.proc.start_kill();
+            match self.proc.try_wait() {
+                Ok(None) => {}
+                Ok(Some(sc)) => {
+                    if !sc.success() {
+                        _ = self.proc.start_kill();
+                    }
+                }
+                _ => {
+                    _ = self.proc.start_kill();
+                }
             }
         }
     }
@@ -265,7 +277,7 @@ pub mod babel {
         #[tracing::instrument]
         async fn spawn(my_range: Ipv6Net, iface: String) -> Result<Self> {
             tokio::fs::create_dir_all(PRIVATE_DIR).await?;
-            tokio::fs::set_permissions(PRIVATE_DIR, Permissions::from_mode(0o0600)).await?;
+            tokio::fs::set_permissions(PRIVATE_DIR, Permissions::from_mode(0o0700)).await?;
             tracing::info!("spawning babeld socket in {PRIVATE_SOCK_PATH}");
             let res = match Command::new("babeld")
                 .arg("-G")
@@ -307,13 +319,17 @@ pub mod babel {
                     return Ok(None);
                 };
                 tracing::info!("[babel] {:?}", line);
-                let ret = if line == "ok" {
-                    Ok(Some(true))
-                } else if line == "bad" {
-                    tracing::warn!("malformed message sent to babeld");
-                    Ok(Some(false))
-                } else {
-                    Ok(None)
+                let ret = match line.as_str() {
+                    "ok" => Ok(Some(true)),
+                    "bad" => {
+                        tracing::warn!("malformed message sent to babeld");
+                        Ok(Some(false))
+                    }
+                    _ if line.starts_with("no") => {
+                        tracing::warn!("message rejected");
+                        Ok(Some(false))
+                    }
+                    _ => Ok(None),
                 };
                 let Ok(_) = send.send(line) else {
                     return Ok(None);
@@ -466,7 +482,6 @@ pub(crate) mod ip_manager {
         use netwatch::interfaces::Interface;
 
         use crate::{BabbleError, Result};
-        use std::net::Ipv6Addr;
         use tokio::process::Command;
 
         #[tracing::instrument]
@@ -487,7 +502,7 @@ pub(crate) mod ip_manager {
         }
 
         #[tracing::instrument]
-        pub async fn remove_ip(v6: Ipv6Addr, iface: &Interface) -> Result<()> {
+        pub async fn remove_ip(v6: Ipv6Net, iface: &Interface) -> Result<()> {
             let out = Command::new("ip")
                 .arg("addr")
                 .arg("del")
@@ -499,6 +514,8 @@ pub(crate) mod ip_manager {
             if out.status.success() {
                 Ok(())
             } else {
+                let std_err = String::from_utf8_lossy(&out.stdout);
+                tracing::debug!(%std_err);
                 Err(BabbleError::FailedToSetIp)
             }
         }
@@ -531,7 +548,7 @@ pub(crate) mod ip_manager {
         }
 
         #[tracing::instrument]
-        pub async fn remove_ip(v6: Ipv6Addr, iface: &Interface) -> Result<()> {
+        pub async fn remove_ip(v6: Ipv6Net, iface: &Interface) -> Result<()> {
             let out = Command::new("ifconfig")
                 .arg(iface.name())
                 .arg("inet6")
@@ -542,6 +559,8 @@ pub(crate) mod ip_manager {
             if out.status.success() {
                 Ok(())
             } else {
+                let std_err = String::from_utf8_lossy(&out.stdout);
+                tracing::debug!(%std_err);
                 Err(BabbleError::FailedToSetIp)
             }
         }

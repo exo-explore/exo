@@ -35,17 +35,13 @@ async fn main() -> color_eyre::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
-    if !std::env::var("PATH").unwrap().contains("babeld") {
-        tracing::error!("babeld not found on path");
-        return Err(babblerd::BabbleError::Other("babeld not found on path".to_owned()).into());
-    }
     // cleanup old data
     match std::fs::remove_file(PUBLIC_SOCK_PATH) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => {
             return Err(e.into());
         }
         Ok(()) => {
-            tracing::info!("cleaned up old file at {PUBLIC_SOCK_PATH}")
+            tracing::info!("cleaned up old file at {PUBLIC_SOCK_PATH}");
         }
         _ => {}
     }
@@ -112,7 +108,7 @@ async fn inner_main() -> color_eyre::Result<()> {
                         drop(recv);
                         watcher.abort();
                         if let Ok(e) = watcher.await {
-                            e.wrap_err("while ctrl-c")?
+                            e.wrap_err("while ctrl-c")?;
                         }
                         babel.await?.wrap_err("while ctrl-c")?;
                         while let Some(res) = listeners.join_next().await {
@@ -129,7 +125,7 @@ async fn inner_main() -> color_eyre::Result<()> {
 
                             watcher.abort();
                             if let Ok(e) = watcher.await {
-                                e.wrap_err("while closing listeners")?
+                                e.wrap_err("while closing listeners")?;
                             }
                             babel.await?.wrap_err("while closing listeners")?;
 
@@ -156,7 +152,7 @@ async fn inner_main() -> color_eyre::Result<()> {
                         drop(recv);
                         watcher.abort();
                         if let Ok(e) = watcher.await {
-                            e.wrap_err("while closing babeld")?
+                            e.wrap_err("while closing babeld")?;
                         }
                         while let Some(res2) = listeners.join_next().await {
                             res2.wrap_err("while closing babeld")?;
