@@ -48,8 +48,10 @@ pub mod if_watcher {
         ip_manager::{add_ip, remove_ip},
     };
 
-    pub const PREFIX: Ipv6Net =
-        Ipv6Net::new_assert(Ipv6Addr::new(0xfde0, 0x20c6, 0x1fa7, 0, 0, 0, 0, 0), 48);
+    pub const PREFIX: Ipv6Net = Ipv6Net::new_assert(
+        Ipv6Addr::new(0xfde0, 0x20c6, 0x1fa7, 0xffff, 0, 0, 0, 0),
+        48,
+    );
 
     trait IfaceExt {
         fn has_link_local_v6(&self) -> bool;
@@ -136,19 +138,6 @@ pub mod if_watcher {
         let mon = netwatch::netmon::Monitor::new()
             .await
             .map_err(|_| BabbleError::Unspecified)?;
-        if true {
-            let temp = mon.interface_state();
-            let initial = &temp.peek().interfaces;
-            for interface in ["lo", "lo0"] {
-                if let Some(iface) = initial.get(interface) {
-                    add_ip(my_range.addr(), iface).await?;
-                    let Ok(()) = send.send(Babble::AddIface(iface.name().to_string())).await else {
-                        return Ok(());
-                    };
-                    break;
-                }
-            }
-        }
         let mut mon_stream = mon.interface_state().stream();
 
         while let Some(s) = mon_stream.next().await {
@@ -170,12 +159,15 @@ pub mod if_watcher {
                     }
                 }
                 if iface.get_v6_in(my_range).is_none() {
-                    let addr =
-                        Ipv6Addr::from_bits(my_range.addr().to_bits() | u128::from(iface_num));
+                    // currently a /64
+                    let addr = Ipv6Net::new_assert(
+                        Ipv6Addr::from_bits(my_range.addr().to_bits() | u128::from(iface_num)),
+                        64,
+                    );
                     iface_num += 1;
                     assert!(iface_num < u16::MAX, "Really? u16::MAX interfaces?");
                     tracing::info!("adding new ip {addr} to {}", iface.name());
-                    // add_ip(addr, iface).await?;
+                    add_ip(addr, iface).await?;
                 }
 
                 tracing::info!("telling babeld to watch {}", iface.name());
@@ -249,7 +241,7 @@ pub mod babel {
     use tokio::process::Command;
     use tokio::sync::{broadcast, mpsc};
 
-    use crate::{BabbleError, PREFIX, Result};
+    use crate::{BabbleError, Result};
 
     #[derive(Debug)]
     pub enum Babble {
@@ -281,7 +273,7 @@ pub mod babel {
                 .arg("-I")
                 .arg(format!("{PRIVATE_DIR}/babeld.pid"))
                 .arg("-C")
-                .arg(format!("redistribute local ip {}/128", my_range.addr()))
+                .arg(format!("redistribute local ip {my_range}"))
                 .arg("-C")
                 .arg("redistribute local deny")
                 .arg(iface)
@@ -470,6 +462,7 @@ pub(crate) mod ip_manager {
 
     #[cfg(target_os = "linux")]
     mod sys {
+        use ipnet::Ipv6Net;
         use netwatch::interfaces::Interface;
 
         use crate::{BabbleError, Result};
@@ -477,11 +470,11 @@ pub(crate) mod ip_manager {
         use tokio::process::Command;
 
         #[tracing::instrument]
-        pub async fn add_ip(v6: Ipv6Addr, iface: &Interface) -> Result<()> {
+        pub async fn add_ip(subnet: Ipv6Net, iface: &Interface) -> Result<()> {
             let out = Command::new("ip")
                 .arg("addr")
                 .arg("add")
-                .arg(format!("{v6}/128"))
+                .arg(format!("{subnet}"))
                 .arg("dev")
                 .arg(iface.name())
                 .output()
@@ -498,7 +491,7 @@ pub(crate) mod ip_manager {
             let out = Command::new("ip")
                 .arg("addr")
                 .arg("del")
-                .arg(format!("{v6}/128"))
+                .arg(format!("{v6}"))
                 .arg("dev")
                 .arg(iface.name())
                 .output()
@@ -513,6 +506,7 @@ pub(crate) mod ip_manager {
 
     #[cfg(target_os = "macos")]
     mod sys {
+        use ipnet::Ipv6Net;
         use netwatch::interfaces::Interface;
 
         use crate::BabbleError;
@@ -521,11 +515,11 @@ pub(crate) mod ip_manager {
         use tokio::process::Command;
 
         #[tracing::instrument]
-        pub async fn add_ip(v6: Ipv6Addr, iface: &Interface) -> Result<()> {
+        pub async fn add_ip(subnet: Ipv6Net, iface: &Interface) -> Result<()> {
             let out = Command::new("ifconfig")
                 .arg(iface.name())
                 .arg("inet6")
-                .arg(format!("{v6}/128"))
+                .arg(format!("{subnet}"))
                 .arg("add")
                 .output()
                 .await?;
@@ -541,7 +535,7 @@ pub(crate) mod ip_manager {
             let out = Command::new("ifconfig")
                 .arg(iface.name())
                 .arg("inet6")
-                .arg(format!("{v6}/128"))
+                .arg(format!("{v6}"))
                 .arg("delete")
                 .output()
                 .await?;
