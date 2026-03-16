@@ -1,4 +1,5 @@
 import gc
+import itertools
 import json
 import re
 import sys
@@ -19,11 +20,16 @@ from exo.shared.types.api import (
     PromptTokensDetails,
     Usage,
 )
+from exo.shared.types.chunks import PrefillProgressChunk
 from exo.shared.types.common import ModelId
+from exo.shared.types.events import ChunkGenerated, Event
 from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import CANCEL_ALL_TASKS, TaskId, TextGeneration
-from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
-from exo.utils.channels import MpReceiver
+from exo.shared.types.worker.runner_response import (
+    GenerationResponse,
+    ToolCallResponse,
+)
+from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.kv_cache import TorchKVCache
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.vllm.growable_cache import (
@@ -68,6 +74,7 @@ class _ActiveRequest:
     queue: GeneratorQueue[GenerationResponse]
     parsed_gen: Generator[GenerationResponse | ToolCallResponse | None]
     prefill_done: bool = False
+    prefill_steps: int = 0
     prev_text: str = ""
     prev_token_count: int = 0
     start_time: float = field(default_factory=time.perf_counter)
@@ -80,10 +87,14 @@ class VllmSequentialGenerator(InferenceGenerator):
     model_id: ModelId
     tool_parser: ToolParser | None
     cancel_receiver: MpReceiver[TaskId]
+    event_sender: MpSender[Event]
     prefix_cache: KVPrefixCache
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
-    _pending: deque[TextGeneration] = field(default_factory=deque, init=False)
+    _all_tasks: dict[TaskId, TextGeneration] = field(default_factory=dict, init=False)
+    _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
+    _queue: deque[TextGeneration] = field(default_factory=deque, init=False)
+    _maybe_cancel: list[TextGeneration] = field(default_factory=list, init=False)
     _active: _ActiveRequest | None = field(default=None, init=False)
 
     def warmup(self) -> None:
@@ -101,23 +112,34 @@ class VllmSequentialGenerator(InferenceGenerator):
 
     def submit(self, task: TextGeneration) -> None:
         self._cancelled_tasks.discard(CANCEL_ALL_TASKS)
-        self._pending.append(task)
+        self._all_tasks[task.task_id] = task
+        self._maybe_queue.append(task)
 
-    def _check_cancellations(self) -> None:
+    def agree_on_tasks(self) -> None:
+        self._queue.extend(self._maybe_queue)
+        self._maybe_queue.clear()
+
+    def agree_on_cancellations(self) -> None:
         for task_id in self.cancel_receiver.collect():
             if task_id == CANCEL_ALL_TASKS:
                 self._cancelled_tasks.add(CANCEL_ALL_TASKS)
             else:
-                self._cancelled_tasks.add(task_id)
+                if task_id in self._all_tasks:
+                    self._maybe_cancel.append(self._all_tasks[task_id])
+        self._cancelled_tasks.update(task.task_id for task in self._maybe_cancel)
+        self._maybe_cancel.clear()
 
     def step(
         self,
     ) -> Iterable[
         tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
     ]:
-        self._check_cancellations()
+        self.agree_on_cancellations()
 
-        if self._active is None and not self._pending:
+        if self._active is None and not self._queue:
+            self.agree_on_tasks()
+
+        if self._active is None and not self._queue:
             return []
 
         tokenizer = self.engine.get_tokenizer()
@@ -125,7 +147,7 @@ class VllmSequentialGenerator(InferenceGenerator):
         think_end: str | None = getattr(tokenizer, "think_end", None)
 
         if self._active is None:
-            task = self._pending.popleft()
+            task = self._queue.popleft()
             if self.should_cancel(task.task_id):
                 self._cancelled_tasks.discard(task.task_id)
                 return [(task.task_id, Cancelled())]
@@ -172,10 +194,18 @@ class VllmSequentialGenerator(InferenceGenerator):
             self._active = None
             return [(active.task.task_id, Finished())]
 
-        # --- Prefill phase: step engine until first token arrives ---
         if not active.prefill_done:
+            max_batch_tokens: int = getattr(self.engine.model_config, "max_num_batched_tokens", 2048) or 2048  # type: ignore[reportUnknownMemberType]
+            prefill_steps = 0
             while self.engine.has_unfinished_requests():
+                self.agree_on_cancellations()
+                if self.should_cancel(active.task.task_id):
+                    self.engine.abort_request([active.request_id])
+                    self._active = None
+                    self._cancelled_tasks.discard(active.task.task_id)
+                    return [(active.task.task_id, Cancelled())]
                 outputs = self.engine.step()
+                prefill_steps += 1
                 for output in outputs:
                     if output.request_id != active.request_id:
                         continue
@@ -184,6 +214,15 @@ class VllmSequentialGenerator(InferenceGenerator):
                         active.prefill_done = True
                         self._save_prefix_cache(active)
                         break
+                if not active.prefill_done:
+                    self.event_sender.send(ChunkGenerated(
+                        command_id=active.task.command_id,
+                        chunk=PrefillProgressChunk(
+                            model=self.model_id,
+                            processed_tokens=min(prefill_steps * max_batch_tokens, active.prompt_token_count),
+                            total_tokens=active.prompt_token_count,
+                        ),
+                    ))
                 if active.prefill_done:
                     break
             if not active.prefill_done:
@@ -366,10 +405,14 @@ class VllmBatchGenerator(InferenceGenerator):
     model_id: ModelId
     tool_parser: ToolParser | None
     cancel_receiver: MpReceiver[TaskId]
+    event_sender: MpSender[Event]
     prefix_cache: KVPrefixCache
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
-    _pending: deque[TextGeneration] = field(default_factory=deque, init=False)
+    _all_tasks: dict[TaskId, TextGeneration] = field(default_factory=dict, init=False)
+    _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
+    _queue: deque[TextGeneration] = field(default_factory=deque, init=False)
+    _maybe_cancel: list[TextGeneration] = field(default_factory=list, init=False)
     _active: dict[str, _ActiveRequest] = field(default_factory=dict, init=False)
 
     def warmup(self) -> None:
@@ -385,14 +428,22 @@ class VllmBatchGenerator(InferenceGenerator):
 
     def submit(self, task: TextGeneration) -> None:
         self._cancelled_tasks.discard(CANCEL_ALL_TASKS)
-        self._pending.append(task)
+        self._all_tasks[task.task_id] = task
+        self._maybe_queue.append(task)
 
-    def _check_cancellations(self) -> None:
+    def agree_on_tasks(self) -> None:
+        self._queue.extend(self._maybe_queue)
+        self._maybe_queue.clear()
+
+    def agree_on_cancellations(self) -> None:
         for task_id in self.cancel_receiver.collect():
             if task_id == CANCEL_ALL_TASKS:
                 self._cancelled_tasks.add(CANCEL_ALL_TASKS)
             else:
-                self._cancelled_tasks.add(task_id)
+                if task_id in self._all_tasks:
+                    self._maybe_cancel.append(self._all_tasks[task_id])
+        self._cancelled_tasks.update(task.task_id for task in self._maybe_cancel)
+        self._maybe_cancel.clear()
 
     def _start_request(self, task: TextGeneration) -> _ActiveRequest:
         token_ids, prompt_text, prompt_token_count = format_vllm_prompt(
@@ -428,34 +479,44 @@ class VllmBatchGenerator(InferenceGenerator):
             parsed_gen=parsed_gen,
         )
 
+    def _apply_cancellations(
+        self,
+    ) -> list[tuple[TaskId, Cancelled]]:
+        if not self._cancelled_tasks:
+            return []
+        cancel_all = CANCEL_ALL_TASKS in self._cancelled_tasks
+        rids_to_abort: list[str] = []
+        results: list[tuple[TaskId, Cancelled]] = []
+        for rid, active in list(self._active.items()):
+            if active.task.task_id in self._cancelled_tasks or cancel_all:
+                rids_to_abort.append(rid)
+                results.append((active.task.task_id, Cancelled()))
+                del self._active[rid]
+        if rids_to_abort:
+            self.engine.abort_request(rids_to_abort)
+        already_cancelled = {tid for tid, _ in results}
+        for tid in self._cancelled_tasks:
+            if tid != CANCEL_ALL_TASKS and tid not in already_cancelled:
+                results.append((tid, Cancelled()))
+        self._cancelled_tasks.clear()
+        return results
+
     def step(
         self,
     ) -> Iterable[
         tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
     ]:
-        self._check_cancellations()
+        self.agree_on_cancellations()
+
+        if not self._queue:
+            self.agree_on_tasks()
 
         results: list[
             tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
         ] = []
 
-        for task_id in list(self._cancelled_tasks):
-            rid = str(task_id)
-            if rid in self._active:
-                self.engine.abort_request([rid])
-                del self._active[rid]
-                self._cancelled_tasks.discard(task_id)
-                results.append((task_id, Cancelled()))
-            elif CANCEL_ALL_TASKS in self._cancelled_tasks:
-                for rid, active in list(self._active.items()):
-                    self.engine.abort_request([rid])
-                    results.append((active.task.task_id, Cancelled()))
-                self._active.clear()
-                self._cancelled_tasks.discard(CANCEL_ALL_TASKS)
-                break
-
-        while self._pending and len(self._active) < _EXO_MAX_CONCURRENT_VLLM_REQUESTS:
-            task = self._pending.popleft()
+        while self._queue and len(self._active) < _EXO_MAX_CONCURRENT_VLLM_REQUESTS:
+            task = self._queue.popleft()
             if self.should_cancel(task.task_id):
                 self._cancelled_tasks.discard(task.task_id)
                 results.append((task.task_id, Cancelled()))
@@ -464,7 +525,7 @@ class VllmBatchGenerator(InferenceGenerator):
             self._active[active.request_id] = active
 
         if not self._active:
-            return results
+            return itertools.chain(results, self._apply_cancellations())
 
         outputs = self.engine.step()
         tokenizer = self.engine.get_tokenizer()
@@ -543,7 +604,20 @@ class VllmBatchGenerator(InferenceGenerator):
                     results.append((active.task.task_id, Finished()))
                     del self._active[rid]
 
-        return results
+        max_batch_tokens: int = getattr(self.engine.model_config, "max_num_batched_tokens", 2048) or 2048  # type: ignore[reportUnknownMemberType]
+        for active in self._active.values():
+            if not active.prefill_done:
+                active.prefill_steps += 1
+                self.event_sender.send(ChunkGenerated(
+                    command_id=active.task.command_id,
+                    chunk=PrefillProgressChunk(
+                        model=self.model_id,
+                        processed_tokens=min(active.prefill_steps * max_batch_tokens, active.prompt_token_count),
+                        total_tokens=active.prompt_token_count,
+                    ),
+                ))
+
+        return itertools.chain(results, self._apply_cancellations())
 
     def _get_coordinator(self) -> object | None:
         if not hasattr(self, "_coordinator_cached"):
@@ -690,7 +764,7 @@ def _patch_weight_loading_progress() -> None:
     _monkey_patch_iterator(weight_utils, "fastsafetensors_weights_iterator")
 
     import huggingface_hub  # pyright: ignore[reportMissingImports]
-    _noop_metadata = lambda *_a, **_kw: None  # pyright: ignore[reportUnknownLambdaType]
+    def _noop_metadata(*_a: object, **_kw: object) -> None: pass  # pyright: ignore[reportUnknownParameterType]
     original_metadata = huggingface_hub.get_safetensors_metadata  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     huggingface_hub.get_safetensors_metadata = _noop_metadata  # pyright: ignore[reportAttributeAccessIssue]
     for mod in list(sys.modules.values()):

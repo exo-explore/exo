@@ -208,9 +208,8 @@ class KVPrefixCache:
 
         return prompt_cache, remaining, best_index
 
-    def lookup(self, prompt_token_ids: list[int]) -> tuple["TorchKVCache | None", int, int | None]:
-        """Prefix cache lookup returning TorchKVCache directly. For vLLM restore path."""
-        from exo.worker.engines.kv_cache import TorchKVCache as _TKV
+    def lookup(self, prompt_token_ids: list[int]) -> tuple["object | None", int, int | None]:
+        from exo.worker.engines.kv_cache import TorchKVCache
 
         prompt_mx = mx.array(prompt_token_ids)
         max_length = len(prompt_token_ids)
@@ -234,13 +233,13 @@ class KVPrefixCache:
         self._last_used[best_index] = self._access_counter
 
         cached = self.caches[best_index]
-        if isinstance(cached, _TKV):
+        if isinstance(cached, TorchKVCache):
             return cached.trim_to(best_length), best_length, best_index
 
-        torch_cache = _TKV.from_mlx_cache(cached)
+        torch_cache = TorchKVCache.from_mlx_cache(cached)
         return torch_cache.trim_to(best_length), best_length, best_index
 
-    def add_from_torch(self, prompt_token_ids: list[int], cache: "TorchKVCache") -> None:
+    def add_from_torch(self, prompt_token_ids: list[int], cache: "object") -> None:
         """Store a TorchKVCache directly. For vLLM save path — no MLX conversion."""
         self._evict_if_needed()
         self.prompts.append(mx.array(prompt_token_ids))

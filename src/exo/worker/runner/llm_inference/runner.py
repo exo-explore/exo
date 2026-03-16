@@ -485,6 +485,7 @@ class VllmBuilder(Builder):
     model_path: str
     trust_remote_code: bool
     cancel_receiver: MpReceiver[TaskId]
+    event_sender: MpSender[Event]
     group: mx.distributed.Group | None = None
 
     def connect(self, bound_instance: BoundInstance) -> None:
@@ -517,6 +518,7 @@ class VllmBuilder(Builder):
                 model_id=self.model_id,
                 tool_parser=self._tool_parser,
                 cancel_receiver=self.cancel_receiver,
+                event_sender=self.event_sender,
                 prefix_cache=self._prefix_cache,
             )
         from exo.worker.engines.vllm.vllm_generator import VllmBatchGenerator
@@ -527,6 +529,7 @@ class VllmBuilder(Builder):
             model_id=self.model_id,
             tool_parser=self._tool_parser,
             cancel_receiver=self.cancel_receiver,
+            event_sender=self.event_sender,
             prefix_cache=self._prefix_cache,
         )
 

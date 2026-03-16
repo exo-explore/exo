@@ -80,6 +80,7 @@ def entrypoint(
                 model_path=str(EXO_MODELS_DIR / model_id.normalize()),
                 trust_remote_code=bound_instance.bound_shard.model_card.trust_remote_code,
                 cancel_receiver=cancel_receiver,
+                event_sender=event_sender,
             )
             runner = Runner(
                 bound_instance, event_sender, task_receiver, cancel_receiver, builder
