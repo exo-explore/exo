@@ -1555,7 +1555,6 @@
     perNode: NodeDownloadStatus[];
     failedError: string | null;
     rejectedError: string | null;
-    evicted: boolean;
   } {
     const empty = {
       isDownloading: false,
@@ -1563,7 +1562,6 @@
       perNode: [] as NodeDownloadStatus[],
       failedError: null,
       rejectedError: null,
-      evicted: false,
     };
 
     if (!downloadsData || Object.keys(downloadsData).length === 0) {
@@ -1595,8 +1593,8 @@
         const downloadModelId = extractModelIdFromDownload(downloadPayload);
         if (!downloadModelId || downloadModelId !== modelId) continue;
 
-        // DownloadFailed — return with any data collected so far
-        if (downloadKind === "DownloadFailed") {
+        // ModelDownloadFailed — return with any data collected so far
+        if (downloadKind === "ModelDownloadFailed") {
           return {
             isDownloading: false,
             progress: null,
@@ -1606,12 +1604,11 @@
               (downloadPayload.error_message as string) ||
               "Download failed",
             rejectedError: null,
-            evicted: false,
           };
         }
 
-        // DownloadRejected — storage limit exceeded
-        if (downloadKind === "DownloadRejected") {
+        // ModelRejected — storage limit exceeded
+        if (downloadKind === "ModelRejected") {
           return {
             isDownloading: false,
             progress: null,
@@ -1619,25 +1616,12 @@
             failedError: null,
             rejectedError:
               (downloadPayload.reason as string) || "Storage limit exceeded",
-            evicted: false,
-          };
-        }
-
-        // DownloadEvicted — model was evicted from storage
-        if (downloadKind === "DownloadEvicted") {
-          return {
-            isDownloading: false,
-            progress: null,
-            perNode: Array.from(perNodeMap.values()),
-            failedError: null,
-            rejectedError: null,
-            evicted: true,
           };
         }
 
         if (
-          downloadKind !== "DownloadOngoing" &&
-          downloadKind !== "DownloadPending" &&
+          downloadKind !== "ModelDownloading" &&
+          downloadKind !== "ModelNotDownloading" &&
           downloadKind !== "DownloadCompleted"
         )
           continue;
@@ -1656,7 +1640,7 @@
           continue;
         }
 
-        if (downloadKind === "DownloadPending") {
+        if (downloadKind === "ModelNotDownloading") {
           const pendingDownloaded = getBytes(
             downloadPayload.downloaded ??
               downloadPayload.downloaded_bytes ??
@@ -1680,7 +1664,7 @@
           continue;
         }
 
-        // DownloadOngoing
+        // ModelDownloading
         const progress = parseDownloadProgress(downloadPayload);
         if (
           !progress ||
@@ -1727,7 +1711,6 @@
         perNode,
         failedError: null,
         rejectedError: null,
-        evicted: false,
       };
     }
 
@@ -1749,7 +1732,6 @@
       perNode,
       failedError: null,
       rejectedError: null,
-      evicted: false,
     };
   }
 
@@ -1841,17 +1823,6 @@
         errorMessage: result.rejectedError,
         progress: null,
         statusText: "REJECTED",
-        perNode: [],
-      };
-    }
-
-    if (result.evicted) {
-      return {
-        isDownloading: false,
-        isFailed: false,
-        errorMessage: null,
-        progress: null,
-        statusText: "EVICTED",
         perNode: [],
       };
     }
@@ -2556,15 +2527,6 @@
         // Any -> Shutdown
         if (prevStatus !== "SHUTDOWN" && currentStatus === "SHUTDOWN") {
           addToast({ type: "info", message: `Model shut down: ${shortName}` });
-        }
-
-        // Any -> Evicted
-        if (prevStatus !== "EVICTED" && currentStatus === "EVICTED") {
-          addToast({
-            type: "info",
-            message: `Model evicted: ${shortName}`,
-            duration: 6000,
-          });
         }
       }
     }

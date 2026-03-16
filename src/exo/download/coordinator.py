@@ -51,7 +51,6 @@ from exo.shared.types.storage import (
 from exo.shared.types.worker.downloads import (
     ModelDownloadFailed,
     ModelDownloading,
-    ModelEvicted,
     ModelNotDownloading,
     ModelReady,
     ModelRejected,
@@ -75,6 +74,7 @@ class DownloadCoordinator:
     # Local state
     download_status: dict[ModelId, ModelStatus] = field(default_factory=dict)
     active_downloads: dict[ModelId, anyio.CancelScope] = field(default_factory=dict)
+    _deleting: set[ModelId] = field(default_factory=set)
 
     _model_last_used: dict[ModelId, datetime] = field(default_factory=dict)
     _active_model_ids: set[ModelId] = field(default_factory=set)
@@ -391,9 +391,8 @@ class DownloadCoordinator:
                 ) in self.shard_downloader.get_shard_download_status():
                     model_id = progress.shard.model_card.model_id
 
-                    # Don't overwrite DownloadEvicted — the model may still be on disk
-                    # while deletion is finishing
-                    if isinstance(self.download_status.get(model_id), ModelEvicted):
+                    # Don't overwrite status while deletion is in progress
+                    if model_id in self._deleting:
                         continue
 
                     # Active downloads emit progress via the callback — don't overwrite
@@ -511,7 +510,12 @@ class DownloadCoordinator:
                 f"Auto-evicting model {evict_model_id} to free space for {target_model_id}"
             )
             evicted_status = self.download_status.get(evict_model_id)
-            success = await self._remove_model_from_disk(evict_model_id)
+            self._deleting.add(evict_model_id)
+            try:
+                success = await self._remove_model_from_disk(evict_model_id)
+            finally:
+                self._deleting.discard(evict_model_id)
+
             if not success:
                 current_used = calculate_used_storage(
                     list(self.download_status.values())
@@ -526,16 +530,15 @@ class DownloadCoordinator:
                 return False
 
             if evicted_status is not None:
-                evicted = ModelEvicted(
+                not_downloading = ModelNotDownloading(
                     shard_metadata=evicted_status.shard_metadata,
                     node_id=self.node_id,
                     model_directory=self._model_dir(evict_model_id),
-                    evicted_for=target_model_id,
                 )
-                self.download_status[evict_model_id] = evicted
                 await self.event_sender.send(
-                    NodeDownloadProgress(download_progress=evicted)
+                    NodeDownloadProgress(download_progress=not_downloading)
                 )
+                del self.download_status[evict_model_id]
 
         return True
 
@@ -547,7 +550,7 @@ class DownloadCoordinator:
         ]
         for model_id, status in rejected:
             logger.info(
-                f"Clearing DownloadRejected for {model_id} after storage config change"
+                f"Clearing ModelRejected for {model_id} after storage config change"
             )
             pending = ModelNotDownloading(
                 shard_metadata=status.shard_metadata,

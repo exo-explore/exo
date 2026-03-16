@@ -264,7 +264,7 @@ struct NodeDownloadStatus {
     init?(statusKey: String, payload: NodeDownloadPayload) {
         guard let nodeId = payload.nodeId else { return nil }
         self.nodeId = nodeId
-        self.progress = statusKey == "DownloadOngoing" ? payload.downloadProgress : nil
+        self.progress = statusKey == "ModelDownloading" ? payload.downloadProgress : nil
     }
 }
 

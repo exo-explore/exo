@@ -19,7 +19,7 @@ with urlopen(f"http://{ip}:52415/state", timeout=5) as r:
 
 def mid(x: dict[str, Any]) -> str | None:
     for k in (
-        "DownloadCompleted",
+        "ModelReady",
         "shardMetadata",
         "PipelineShardMetadata",
         "modelCard",

@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 
-from exo.shared.types.common import ModelId, NodeId
+from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
@@ -54,17 +54,12 @@ class ModelRejected(BaseModelStatus):
     limit: Memory
 
 
-class ModelEvicted(BaseModelStatus):
-    evicted_for: ModelId
-
-
 ModelStatus = (
     ModelNotDownloading
     | ModelReady
     | ModelDownloadFailed
     | ModelDownloading
     | ModelRejected
-    | ModelEvicted
 )
 
 
