@@ -17,6 +17,7 @@ from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import (
     InstanceCreated,
     InstanceDeleted,
+    RunnerDeleted,
     TaskStatusUpdated,
 )
 from exo.shared.types.memory import Memory
@@ -32,16 +33,36 @@ from exo.shared.types.worker.instances import (
     MlxJacclInstance,
     MlxRingInstance,
 )
-from exo.shared.types.worker.runners import ShardAssignments
-from exo.shared.types.worker.shards import Sharding
+from exo.shared.types.worker.runners import RunnerId, ShardAssignments
+from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 
 
 @pytest.fixture
 def instance() -> Instance:
+    model_card = ModelCard(
+        model_id=ModelId("test-model"),
+        storage_size=Memory.from_kb(1000),
+        n_layers=10,
+        hidden_size=30,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+    )
+    runner_id = RunnerId()
     return MlxRingInstance(
         instance_id=InstanceId(),
         shard_assignments=ShardAssignments(
-            model_id=ModelId("test-model"), runner_to_shard={}, node_to_runner={}
+            model_id=model_card.model_id,
+            runner_to_shard={
+                runner_id: PipelineShardMetadata(
+                    model_card=model_card,
+                    device_rank=0,
+                    world_size=1,
+                    start_layer=0,
+                    end_layer=10,
+                    n_layers=10,
+                )
+            },
+            node_to_runner={NodeId(): runner_id},
         ),
         hosts_by_node={},
         ephemeral_port=50000,
@@ -275,9 +296,10 @@ def test_get_transition_events_delete_instance(instance: Instance):
     events = get_transition_events(current_instances, target_instances, {})
 
     # assert
-    assert len(events) == 1
-    assert isinstance(events[0], InstanceDeleted)
-    assert events[0].instance_id == instance_id
+    assert len(events) == 2
+    assert isinstance(events[0], RunnerDeleted)
+    assert isinstance(events[1], InstanceDeleted)
+    assert events[1].instance_id == instance_id
 
 
 def test_placement_selects_leaf_nodes(
@@ -493,13 +515,14 @@ def test_get_transition_events_delete_instance_cancels_running_tasks(
     # act
     events = get_transition_events(current_instances, target_instances, tasks)
 
-    # assert – cancellation event should come before the deletion event
-    assert len(events) == 2
+    # assert – cancellation event should come before runner and instance deletion
+    assert len(events) == 3
     assert isinstance(events[0], TaskStatusUpdated)
     assert events[0].task_id == task.task_id
     assert events[0].task_status == TaskStatus.Cancelled
-    assert isinstance(events[1], InstanceDeleted)
-    assert events[1].instance_id == instance_id
+    assert isinstance(events[1], RunnerDeleted)
+    assert isinstance(events[2], InstanceDeleted)
+    assert events[2].instance_id == instance_id
 
 
 def test_get_transition_events_delete_instance_cancels_pending_tasks(
@@ -516,11 +539,12 @@ def test_get_transition_events_delete_instance_cancels_pending_tasks(
     events = get_transition_events(current_instances, target_instances, tasks)
 
     # assert
-    assert len(events) == 2
+    assert len(events) == 3
     assert isinstance(events[0], TaskStatusUpdated)
     assert events[0].task_id == task.task_id
     assert events[0].task_status == TaskStatus.Cancelled
-    assert isinstance(events[1], InstanceDeleted)
+    assert isinstance(events[1], RunnerDeleted)
+    assert isinstance(events[2], InstanceDeleted)
 
 
 def test_get_transition_events_delete_instance_ignores_completed_tasks(
@@ -543,9 +567,10 @@ def test_get_transition_events_delete_instance_ignores_completed_tasks(
     # act
     events = get_transition_events(current_instances, target_instances, tasks)
 
-    # assert – only the InstanceDeleted event, no cancellations
-    assert len(events) == 1
-    assert isinstance(events[0], InstanceDeleted)
+    # assert – only runner and instance deletion events, no cancellations
+    assert len(events) == 2
+    assert isinstance(events[0], RunnerDeleted)
+    assert isinstance(events[1], InstanceDeleted)
 
 
 def test_get_transition_events_delete_instance_cancels_only_matching_tasks(

@@ -15,6 +15,7 @@ from exo.shared.types.events import (
     NodeDownloadProgress,
     NodeGatheredInfo,
     NodeTimedOut,
+    RunnerDeleted,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskCreated,
@@ -77,6 +78,8 @@ def event_apply(event: Event, state: State) -> State:
             return apply_node_download_progress(event, state)
         case NodeGatheredInfo():
             return apply_node_gathered_info(event, state)
+        case RunnerDeleted():
+            return apply_runner_deleted(event, state)
         case RunnerStatusUpdated():
             return apply_runner_status_updated(event, state)
         case TaskCreated():
@@ -196,6 +199,13 @@ def apply_runner_status_updated(event: RunnerStatusUpdated, state: State) -> Sta
     new_runners = {
         **state.runners,
         event.runner_id: event.runner_status,
+    }
+    return state.model_copy(update={"runners": new_runners})
+
+
+def apply_runner_deleted(event: RunnerDeleted, state: State) -> State:
+    new_runners: Mapping[RunnerId, RunnerStatus] = {
+        rid: rs for rid, rs in state.runners.items() if rid != event.runner_id
     }
     return state.model_copy(update={"runners": new_runners})
 

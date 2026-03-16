@@ -26,6 +26,7 @@ from exo.shared.types.events import (
     Event,
     InstanceCreated,
     InstanceDeleted,
+    RunnerDeleted,
     TaskStatusUpdated,
 )
 from exo.shared.types.memory import Memory
@@ -233,6 +234,7 @@ def get_transition_events(
     # find instances to delete
     for instance_id in current_instances:
         if instance_id not in target_instances:
+            instance = current_instances[instance_id]
             for task in tasks.values():
                 if task.instance_id == instance_id and task.task_status in [
                     TaskStatus.Pending,
@@ -244,6 +246,13 @@ def get_transition_events(
                             task_id=task.task_id,
                         )
                     )
+
+            for runner_id in instance.shard_assignments.runner_to_shard:
+                events.append(
+                    RunnerDeleted(
+                        runner_id=runner_id,
+                    )
+                )
 
             events.append(
                 InstanceDeleted(
