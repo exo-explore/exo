@@ -863,7 +863,12 @@
       editImage(content, currentEditImage.imageDataUrl);
       return;
     }
-    if (modelSupportsImageEditing(model) && files?.length && files[0].preview && content) {
+    if (
+      modelSupportsImageEditing(model) &&
+      files?.length &&
+      files[0].preview &&
+      content
+    ) {
       editImage(content, files[0].preview);
       return;
     }
