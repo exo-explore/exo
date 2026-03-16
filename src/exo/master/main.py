@@ -10,6 +10,7 @@ from exo.master.placement import (
     delete_instance,
     get_transition_events,
     place_instance,
+    rollback_failed_instances,
 )
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
@@ -361,6 +362,27 @@ class Master:
     # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
     async def _plan(self) -> None:
         while True:
+            placement, transition_events = rollback_failed_instances(
+                self.state.instances,
+                self.state.runners,
+                self.state.tasks,
+            )
+            if transition_events:
+                logger.warning(
+                    "Rolling back {} failed instance(s) after runner failure",
+                    len(self.state.instances) - len(placement),
+                )
+                for cmd in cancel_unnecessary_downloads(
+                    placement, self.state.downloads
+                ):
+                    await self.download_command_sender.send(
+                        ForwarderDownloadCommand(
+                            origin=self._system_id, command=cmd
+                        )
+                    )
+                for event in transition_events:
+                    await self.event_sender.send(event)
+
             # kill broken instances
             connected_node_ids = set(self.state.topology.list_nodes())
             for instance_id, instance in self.state.instances.items():

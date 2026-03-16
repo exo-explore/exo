@@ -20,23 +20,29 @@ from exo.shared.types.events import (
     Event,
     GlobalForwarderEvent,
     IndexedEvent,
+    InstanceDeleted,
     InstanceCreated,
     LocalForwarderEvent,
     NodeGatheredInfo,
     TaskCreated,
+    TaskStatusUpdated,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     MemoryUsage,
 )
-from exo.shared.types.tasks import TaskStatus
+from exo.shared.types.tasks import TaskId, TaskStatus
 from exo.shared.types.tasks import TextGeneration as TextGenerationTask
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo.shared.types.state import State
 from exo.shared.types.worker.instances import (
+    Instance,
+    InstanceId,
     InstanceMeta,
     MlxRingInstance,
     ShardAssignments,
 )
+from exo.shared.types.worker.runners import RunnerFailed, RunnerId
 from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 from exo.utils.channels import channel
 
@@ -218,3 +224,88 @@ async def test_master():
 
         ev_send.close()
         await master.shutdown()
+
+
+def _make_instance(*, instance_id: str, runner_id: str, model_id: str = "test-model") -> Instance:
+    model_card = ModelCard(
+        model_id=ModelId(model_id),
+        n_layers=16,
+        storage_size=Memory.from_bytes(678948),
+        hidden_size=7168,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+    )
+    rid = RunnerId(runner_id)
+    node_id = NodeId(f"node-{runner_id}")
+    return MlxRingInstance(
+        instance_id=InstanceId(instance_id),
+        shard_assignments=ShardAssignments(
+            model_id=model_card.model_id,
+            runner_to_shard={
+                rid: PipelineShardMetadata(
+                    start_layer=0,
+                    end_layer=16,
+                    n_layers=16,
+                    model_card=model_card,
+                    device_rank=0,
+                    world_size=1,
+                )
+            },
+            node_to_runner={node_id: rid},
+        ),
+        hosts_by_node={},
+        ephemeral_port=50000,
+    )
+
+
+@pytest.mark.asyncio
+async def test_master_rolls_back_failed_instance() -> None:
+    ge_sender, _global_event_receiver = channel[GlobalForwarderEvent]()
+    command_sender, co_receiver = channel[ForwarderCommand]()
+    local_event_sender, le_receiver = channel[LocalForwarderEvent]()
+    fcds, _fcdr = channel[ForwarderDownloadCommand]()
+    ev_send, ev_recv = channel[Event]()
+
+    node_id = NodeId("node0")
+    session_id = SessionId(master_node_id=node_id, election_clock=0)
+    instance = _make_instance(instance_id="instance-failed", runner_id="runner-failed")
+    runner_id = next(iter(instance.shard_assignments.runner_to_shard))
+
+    master = Master(
+        node_id,
+        session_id,
+        event_sender=ev_send,
+        global_event_sender=ge_sender,
+        local_event_receiver=le_receiver,
+        command_receiver=co_receiver,
+        download_command_sender=fcds,
+    )
+    master.state = State(
+        instances={instance.instance_id: instance},
+        runners={runner_id: RunnerFailed(error_message="boom")},
+        tasks={
+            TaskId("task-failed"): TextGenerationTask(
+                task_id=TaskId("task-failed"),
+                command_id=CommandId("cmd-failed"),
+                instance_id=instance.instance_id,
+                task_status=TaskStatus.Running,
+                task_params=TextGenerationTaskParams(
+                    model=instance.shard_assignments.model_id,
+                    input=[InputMessage(role="user", content="hi")],
+                ),
+            )
+        },
+    )
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(master._plan)
+
+        task_status_event = await ev_recv.receive()
+        instance_deleted_event = await ev_recv.receive()
+
+        tg.cancel_scope.cancel()
+
+    assert isinstance(task_status_event, TaskStatusUpdated)
+    assert task_status_event.task_status == TaskStatus.Cancelled
+    assert isinstance(instance_deleted_event, InstanceDeleted)
+    assert instance_deleted_event.instance_id == instance.instance_id

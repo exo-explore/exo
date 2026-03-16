@@ -42,6 +42,7 @@ from exo.shared.types.worker.instances import (
     MlxJacclInstance,
     MlxRingInstance,
 )
+from exo.shared.types.worker.runners import RunnerFailed, RunnerId, RunnerStatus
 from exo.shared.types.worker.shards import Sharding
 
 
@@ -252,6 +253,35 @@ def get_transition_events(
             )
 
     return events
+
+
+def rollback_failed_instances(
+    current_instances: Mapping[InstanceId, Instance],
+    runners: Mapping[RunnerId, RunnerStatus],
+    tasks: Mapping[TaskId, Task],
+) -> tuple[Mapping[InstanceId, Instance], Sequence[Event]]:
+    failed_instance_ids = {
+        instance_id
+        for instance_id, instance in current_instances.items()
+        if any(
+            isinstance(runners.get(runner_id), RunnerFailed)
+            for runner_id in instance.shard_assignments.runner_to_shard
+        )
+    }
+
+    if not failed_instance_ids:
+        return current_instances, ()
+
+    target_instances = {
+        instance_id: instance
+        for instance_id, instance in current_instances.items()
+        if instance_id not in failed_instance_ids
+    }
+    return target_instances, get_transition_events(
+        current_instances,
+        target_instances,
+        tasks,
+    )
 
 
 def cancel_unnecessary_downloads(

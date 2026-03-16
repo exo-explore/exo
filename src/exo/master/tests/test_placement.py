@@ -3,6 +3,7 @@ import pytest
 from exo.master.placement import (
     get_transition_events,
     place_instance,
+    rollback_failed_instances,
 )
 from exo.master.tests.conftest import (
     create_node_memory,
@@ -32,20 +33,55 @@ from exo.shared.types.worker.instances import (
     MlxJacclInstance,
     MlxRingInstance,
 )
-from exo.shared.types.worker.runners import ShardAssignments
-from exo.shared.types.worker.shards import Sharding
+from exo.shared.types.worker.runners import (
+    RunnerFailed,
+    RunnerId,
+    RunnerLoaded,
+    ShardAssignments,
+)
+from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 
 
-@pytest.fixture
-def instance() -> Instance:
+def _make_instance(*, runner_count: int = 1) -> Instance:
+    model_id = ModelId("test-model")
+    model_card = ModelCard(
+        model_id=model_id,
+        storage_size=Memory.from_kb(1000),
+        n_layers=10,
+        hidden_size=30,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+    )
+    runner_to_shard = {}
+    node_to_runner = {}
+    for device_rank in range(runner_count):
+        runner_id = RunnerId()
+        node_id = NodeId()
+        runner_to_shard[runner_id] = PipelineShardMetadata(
+            model_card=model_card,
+            device_rank=device_rank,
+            world_size=runner_count,
+            start_layer=device_rank,
+            end_layer=device_rank + 1,
+            n_layers=runner_count,
+        )
+        node_to_runner[node_id] = runner_id
+
     return MlxRingInstance(
         instance_id=InstanceId(),
         shard_assignments=ShardAssignments(
-            model_id=ModelId("test-model"), runner_to_shard={}, node_to_runner={}
+            model_id=model_id,
+            runner_to_shard=runner_to_shard,
+            node_to_runner=node_to_runner,
         ),
         hosts_by_node={},
         ephemeral_port=50000,
     )
+
+
+@pytest.fixture
+def instance() -> Instance:
+    return _make_instance()
 
 
 @pytest.fixture
@@ -576,3 +612,48 @@ def test_get_transition_events_delete_instance_cancels_only_matching_tasks(
     assert cancel_events[0].task_status == TaskStatus.Cancelled
     assert len(delete_events) == 1
     assert delete_events[0].instance_id == instance_id_a
+
+
+def test_rollback_failed_instances_deletes_only_failed_instances() -> None:
+    failed_instance_id = InstanceId()
+    healthy_instance_id = InstanceId()
+    failed_instance = _make_instance(runner_count=2)
+    healthy_instance = _make_instance(runner_count=2)
+
+    failed_runner_ids = list(failed_instance.shard_assignments.runner_to_shard)
+    healthy_runner_ids = list(healthy_instance.shard_assignments.runner_to_shard)
+
+    current_instances: dict[InstanceId, Instance] = {
+        failed_instance_id: failed_instance,
+        healthy_instance_id: healthy_instance,
+    }
+    failed_task = _make_task(failed_instance_id, TaskStatus.Running)
+    healthy_task = _make_task(healthy_instance_id, TaskStatus.Running)
+    tasks = {
+        failed_task.task_id: failed_task,
+        healthy_task.task_id: healthy_task,
+    }
+    runners = {
+        failed_runner_ids[0]: RunnerFailed(error_message="boom"),
+        failed_runner_ids[1]: RunnerLoaded(),
+        healthy_runner_ids[0]: RunnerLoaded(),
+        healthy_runner_ids[1]: RunnerLoaded(),
+    }
+
+    target_instances, events = rollback_failed_instances(
+        current_instances,
+        runners,
+        tasks,
+    )
+
+    assert set(target_instances) == {healthy_instance_id}
+    cancel_events = [event for event in events if isinstance(event, TaskStatusUpdated)]
+    instance_delete_events = [
+        event for event in events if isinstance(event, InstanceDeleted)
+    ]
+
+    assert len(cancel_events) == 1
+    assert cancel_events[0].task_id == failed_task.task_id
+    assert cancel_events[0].task_status == TaskStatus.Cancelled
+    assert len(instance_delete_events) == 1
+    assert instance_delete_events[0].instance_id == failed_instance_id
