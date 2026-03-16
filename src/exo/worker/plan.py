@@ -21,9 +21,9 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.text_generation import Base64Image, Base64ImageHash
 from exo.shared.types.worker.downloads import (
-    ModelReady,
     ModelDownloadFailed,
     ModelDownloading,
+    ModelReady,
     ModelStatus,
 )
 from exo.shared.types.worker.instances import BoundInstance, Instance, InstanceId

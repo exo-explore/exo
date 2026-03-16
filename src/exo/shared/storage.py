@@ -22,8 +22,8 @@ from exo.shared.types.storage import (
 )
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
-    ModelReady,
     ModelDownloading,
+    ModelReady,
     ModelStatus,
 )
 from exo.shared.types.worker.instances import Instance, InstanceId
