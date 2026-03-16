@@ -270,7 +270,7 @@ def run_humaneval_test(
 
 @dataclass
 class QuestionResult:
-    question_id: int
+    question_id: int | str
     prompt: str
     response: str
     extracted_answer: str | None
@@ -280,7 +280,11 @@ class QuestionResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     reasoning_tokens: int = 0
+    reasoning_content: str = ""
+    finish_reason: str = ""
     elapsed_s: float = 0.0
+    power_watts: float = 0.0
+    energy_joules: float = 0.0
 
 
 @dataclass
@@ -516,6 +520,10 @@ class ApiResult:
     prompt_tokens: int
     completion_tokens: int
     reasoning_tokens: int
+    reasoning_content: str = ""
+    finish_reason: str = ""
+    power_watts: float = 0.0
+    energy_joules: float = 0.0
 
 
 async def _call_api(
@@ -529,6 +537,9 @@ async def _call_api(
     system_message: str | None = None,
     reasoning_effort: str | None = None,
     top_p: float | None = None,
+    top_k: int | None = None,
+    min_p: float | None = None,
+    enable_thinking: bool | None = None,
 ) -> ApiResult:
     messages = []
     if system_message:
@@ -545,6 +556,12 @@ async def _call_api(
         body["reasoning_effort"] = reasoning_effort
     if top_p is not None:
         body["top_p"] = top_p
+    if top_k is not None:
+        body["top_k"] = top_k
+    if min_p is not None:
+        body["min_p"] = min_p
+    if enable_thinking is not None:
+        body["enable_thinking"] = enable_thinking
 
     resp = await client.post(
         f"{base_url}/v1/chat/completions",
@@ -553,16 +570,27 @@ async def _call_api(
     )
     resp.raise_for_status()
     data = resp.json()
-    content = data["choices"][0]["message"]["content"]
-    if not content or not content.strip():
+    choice = data["choices"][0]
+    message = choice["message"]
+    content = message.get("content") or ""
+    reasoning_content = message.get("reasoning_content") or ""
+    finish_reason = choice.get("finish_reason") or ""
+
+    # For thinking models, empty content is expected when finish_reason is "length"
+    if not content.strip() and finish_reason != "length" and not reasoning_content:
         raise ValueError("Empty response from model")
     usage = data.get("usage", {})
     details = usage.get("completion_tokens_details", {})
+    power = data.get("power_usage") or {}
     return ApiResult(
         content=content,
         prompt_tokens=usage.get("prompt_tokens", 0),
         completion_tokens=usage.get("completion_tokens", 0),
         reasoning_tokens=details.get("reasoning_tokens", 0) if details else 0,
+        reasoning_content=reasoning_content,
+        finish_reason=finish_reason,
+        power_watts=power.get("total_avg_sys_power_watts", 0.0),
+        energy_joules=power.get("total_energy_joules", 0.0),
     )
 
 
@@ -577,6 +605,9 @@ async def call_with_retries(
     system_message: str | None = None,
     reasoning_effort: str | None = None,
     top_p: float | None = None,
+    top_k: int | None = None,
+    min_p: float | None = None,
+    enable_thinking: bool | None = None,
 ) -> ApiResult | None:
     for attempt in range(MAX_RETRIES):
         try:
@@ -591,6 +622,9 @@ async def call_with_retries(
                 system_message,
                 reasoning_effort,
                 top_p,
+                top_k,
+                min_p,
+                enable_thinking,
             )
         except Exception as e:
             if attempt < MAX_RETRIES - 1:
@@ -617,10 +651,16 @@ async def evaluate_benchmark(
     max_tokens: int,
     concurrency: int = 1,
     limit: int | None = None,
+    offset: int = 0,
     timeout: float | None = None,
     reasoning_effort: str | None = None,
     top_p: float | None = None,
+    top_k: int | None = None,
+    min_p: float | None = None,
+    enable_thinking: bool | None = None,
     difficulty: str | None = None,
+    checkpoint_path: Path | None = None,
+    release_version: str | None = None,
 ) -> list[QuestionResult]:
     """Run a benchmark. Returns per-question results."""
     import datasets
@@ -651,7 +691,19 @@ async def evaluate_benchmark(
         ds = ds.filter(lambda x: x["difficulty"] == difficulty)
         logger.info(f"Filtered to {len(ds)} {difficulty} problems")
 
+    if release_version and "release_version" in ds.column_names:
+        ds = ds.filter(lambda x: x["release_version"] == release_version)
+        logger.info(f"Filtered to {len(ds)} problems with release_version={release_version}")
+
+    # Sort by question_id to match LCB runner ordering (scenario_router.py:60).
+    # This ensures [offset:offset+limit] slices select the same problems as vllm.
+    if "question_id" in ds.column_names:
+        ds = ds.sort("question_id")
+
     total = len(ds)
+    if offset > 0:
+        ds = ds.select(range(min(offset, total), total))
+        total = len(ds)
     if limit and limit < total:
         ds = ds.select(range(limit))
         total = limit
@@ -659,6 +711,9 @@ async def evaluate_benchmark(
     logger.info(
         f"Evaluating {benchmark_name}: {total} questions, concurrency={concurrency}, "
         f"temperature={temperature}, max_tokens={max_tokens}"
+        + (f", top_k={top_k}" if top_k is not None else "")
+        + (f", min_p={min_p}" if min_p is not None else "")
+        + (f", enable_thinking={enable_thinking}" if enable_thinking is not None else "")
     )
 
     if config.kind == "code":
@@ -666,16 +721,59 @@ async def evaluate_benchmark(
             "Code benchmarks execute model-generated code. Use a sandboxed environment."
         )
 
+    # Load checkpoint for resume
+    checkpoint_data: dict[str | int, dict[str, Any]] = {}
+    if checkpoint_path and checkpoint_path.exists():
+        with open(checkpoint_path) as f:
+            for line in f:
+                entry = json.loads(line)
+                checkpoint_data[entry["question_id"]] = entry
+        logger.info(f"Loaded {len(checkpoint_data)} checkpointed results")
+
     semaphore = asyncio.Semaphore(concurrency)
     results: list[QuestionResult | None] = [None] * total
     completed = 0
     lock = asyncio.Lock()
+
+    def _get_question_id(idx: int, doc: dict) -> str | int:
+        """Get a stable question ID for checkpointing."""
+        if benchmark_name == "livecodebench":
+            return doc.get("question_id", idx)
+        elif benchmark_name == "humaneval":
+            return doc.get("task_id", idx)
+        return idx
 
     async def process_question(
         idx: int, doc: dict, http_client: httpx.AsyncClient
     ) -> None:
         nonlocal completed
         system_msg = None
+        question_id = _get_question_id(idx, doc)
+
+        # Check checkpoint
+        if question_id in checkpoint_data:
+            cached = checkpoint_data[question_id]
+            results[idx] = QuestionResult(
+                question_id=question_id,
+                prompt=cached.get("prompt", ""),
+                response=cached.get("response", ""),
+                extracted_answer=cached.get("extracted_answer"),
+                gold_answer=cached.get("gold_answer", ""),
+                correct=cached.get("correct", False),
+                error=cached.get("error"),
+                prompt_tokens=cached.get("prompt_tokens", 0),
+                completion_tokens=cached.get("completion_tokens", 0),
+                reasoning_tokens=cached.get("reasoning_tokens", 0),
+                reasoning_content=cached.get("reasoning_content", ""),
+                finish_reason=cached.get("finish_reason", ""),
+                elapsed_s=cached.get("elapsed_s", 0.0),
+                power_watts=cached.get("power_watts", 0.0),
+                energy_joules=cached.get("energy_joules", 0.0),
+            )
+            async with lock:
+                completed += 1
+            logger.info(f"  [{completed}/{total}] {question_id} (cached)")
+            return
 
         if benchmark_name == "gpqa_diamond":
             prompt, gold = format_gpqa_question(doc, idx)
@@ -708,12 +806,15 @@ async def evaluate_benchmark(
                 system_message=system_msg,
                 reasoning_effort=reasoning_effort,
                 top_p=top_p,
+                top_k=top_k,
+                min_p=min_p,
+                enable_thinking=enable_thinking,
             )
             elapsed = time.monotonic() - t0
 
         if api_result is None:
             result = QuestionResult(
-                question_id=idx,
+                question_id=question_id,
                 prompt=prompt,
                 response="",
                 extracted_answer=None,
@@ -728,13 +829,17 @@ async def evaluate_benchmark(
                 "prompt_tokens": api_result.prompt_tokens,
                 "completion_tokens": api_result.completion_tokens,
                 "reasoning_tokens": api_result.reasoning_tokens,
+                "reasoning_content": api_result.reasoning_content,
+                "finish_reason": api_result.finish_reason,
                 "elapsed_s": elapsed,
+                "power_watts": api_result.power_watts,
+                "energy_joules": api_result.energy_joules,
             }
 
             if config.kind == "mc":
                 extracted = extract_mc_answer(response, valid_letters)
                 result = QuestionResult(
-                    question_id=idx,
+                    question_id=question_id,
                     prompt=prompt,
                     response=response,
                     extracted_answer=extracted,
@@ -748,7 +853,7 @@ async def evaluate_benchmark(
                     check_aime_answer(extracted, int(gold)) if extracted else False
                 )
                 result = QuestionResult(
-                    question_id=idx,
+                    question_id=question_id,
                     prompt=prompt,
                     response=response,
                     extracted_answer=extracted,
@@ -762,7 +867,7 @@ async def evaluate_benchmark(
                 code = extract_code_block(response, preserve_indent=keep_indent)
                 if code is None:
                     result = QuestionResult(
-                        question_id=idx,
+                        question_id=question_id,
                         prompt=prompt,
                         response=response,
                         extracted_answer=None,
@@ -777,7 +882,7 @@ async def evaluate_benchmark(
                         code,
                     )
                     result = QuestionResult(
-                        question_id=idx,
+                        question_id=question_id,
                         prompt=prompt,
                         response=response,
                         extracted_answer="pass" if passed else "fail",
@@ -792,7 +897,7 @@ async def evaluate_benchmark(
                         exec_meta["sample"],
                     )
                     result = QuestionResult(
-                        question_id=idx,
+                        question_id=question_id,
                         prompt=prompt,
                         response=response,
                         extracted_answer="pass" if passed else "fail",
@@ -803,7 +908,7 @@ async def evaluate_benchmark(
                     )
                 else:
                     result = QuestionResult(
-                        question_id=idx,
+                        question_id=question_id,
                         prompt=prompt,
                         response=response,
                         extracted_answer=None,
@@ -814,7 +919,7 @@ async def evaluate_benchmark(
                     )
             else:
                 result = QuestionResult(
-                    question_id=idx,
+                    question_id=question_id,
                     prompt=prompt,
                     response=response,
                     extracted_answer=None,
@@ -826,22 +931,52 @@ async def evaluate_benchmark(
 
         results[idx] = result
 
+        # Write checkpoint
+        if checkpoint_path is not None:
+            _write_checkpoint(checkpoint_path, result)
+
         async with lock:
             completed += 1
             n = completed
-        if n % max(1, total // 20) == 0 or n == total:
-            correct_so_far = sum(1 for r in results if r is not None and r.correct)
-            answered = sum(1 for r in results if r is not None)
-            logger.info(
-                f"  [{n}/{total}] {correct_so_far}/{answered} correct "
-                f"({correct_so_far / max(answered, 1):.1%})"
-            )
+
+        # Log progress
+        thinking_info = ""
+        if result.reasoning_content:
+            thinking_info = f", {len(result.reasoning_content)} chars thinking"
+        logger.info(
+            f"  [{n}/{total}] {question_id}: {len(result.response)} chars{thinking_info}, "
+            f"tokens: {result.prompt_tokens}+{result.completion_tokens} "
+            f"[{result.finish_reason}]"
+            + (f" {result.extracted_answer}" if result.extracted_answer else "")
+        )
 
     async with httpx.AsyncClient() as http_client:
         tasks = [process_question(i, doc, http_client) for i, doc in enumerate(ds)]
         await asyncio.gather(*tasks)
 
     return [r for r in results if r is not None]
+
+
+def _write_checkpoint(path: Path, result: QuestionResult) -> None:
+    """Append a single result to the JSONL checkpoint file."""
+    entry = {
+        "question_id": result.question_id,
+        "response": result.response,
+        "extracted_answer": result.extracted_answer,
+        "gold_answer": result.gold_answer,
+        "correct": result.correct,
+        "error": result.error,
+        "prompt_tokens": result.prompt_tokens,
+        "completion_tokens": result.completion_tokens,
+        "reasoning_tokens": result.reasoning_tokens,
+        "reasoning_content": result.reasoning_content,
+        "finish_reason": result.finish_reason,
+        "elapsed_s": round(result.elapsed_s, 2),
+        "power_watts": round(result.power_watts, 2),
+        "energy_joules": round(result.energy_joules, 2),
+    }
+    with open(path, "a") as f:
+        f.write(json.dumps(entry) + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -866,6 +1001,8 @@ def print_results(
     total_elapsed = sum(r.elapsed_s for r in results)
     wall_clock = max(r.elapsed_s for r in results) if results else 0.0
     avg_gen_tps = total_completion_tokens / total_elapsed if total_elapsed > 0 else 0.0
+    total_energy = sum(r.energy_joules for r in results)
+    avg_power = sum(r.power_watts for r in results) / max(total, 1)
 
     label = f"[c={concurrency}] " if concurrency is not None else ""
     print(f"\n{label}{benchmark_name}: {correct}/{total} ({accuracy:.1%})")
@@ -877,6 +1014,8 @@ def print_results(
         f"  |  total time: {total_elapsed:.1f}s  wall clock: {wall_clock:.1f}s"
     )
     print(tok_line)
+    if total_energy > 0:
+        print(f"  power: avg {avg_power:.1f}W  |  total energy: {total_energy:.1f}J ({total_energy / 3600:.2f}Wh)")
     if errors:
         print(f"  API errors: {errors}")
     if no_extract:
@@ -895,6 +1034,8 @@ def print_results(
         "total_elapsed_s": total_elapsed,
         "wall_clock_s": wall_clock,
         "avg_gen_tps": avg_gen_tps,
+        "avg_power_watts": avg_power,
+        "total_energy_joules": total_energy,
     }
 
 
@@ -1050,7 +1191,11 @@ def save_results(
                 "prompt_tokens": r.prompt_tokens,
                 "completion_tokens": r.completion_tokens,
                 "reasoning_tokens": r.reasoning_tokens,
+                "reasoning_content": r.reasoning_content,
+                "finish_reason": r.finish_reason,
                 "elapsed_s": round(r.elapsed_s, 2),
+                "power_watts": round(r.power_watts, 2),
+                "energy_joules": round(r.energy_joules, 2),
             }
             for r in results
         ],
@@ -1064,6 +1209,30 @@ def save_results(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+
+def _find_existing_instance(client: ExoClient, model_id: str) -> str | None:
+    """Find an existing instance for the given model."""
+    try:
+        state = client.request_json("GET", "/state")
+    except Exception:
+        return None
+    for inst_id, inst in state.get("instances", {}).items():
+        # Instance structure is nested: {"MlxJacclInstance": {"shardAssignments": {"modelId": ...}}}
+        for _inst_type, inner in inst.items():
+            if not isinstance(inner, dict):
+                continue
+            sa = inner.get("shardAssignments", {})
+            if sa.get("modelId") == model_id:
+                return inst_id
+    return None
+
+
+def _checkpoint_path(results_dir: str, benchmark: str, model: str, concurrency: int) -> Path:
+    """Return the JSONL checkpoint path for a benchmark run."""
+    out_dir = Path(results_dir) / model.replace("/", "_") / benchmark
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir / f"c{concurrency}.checkpoint.jsonl"
 
 
 def parse_int_list(values: list[str]) -> list[int]:
@@ -1093,6 +1262,12 @@ def main() -> int:
         default=None,
         help="Max questions per benchmark (for fast iteration).",
     )
+    ap.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="Skip first N questions (0-based).",
+    )
 
     reasoning_group = ap.add_mutually_exclusive_group()
     reasoning_group.add_argument(
@@ -1112,6 +1287,8 @@ def main() -> int:
         "--temperature", type=float, default=None, help="Override temperature."
     )
     ap.add_argument("--top-p", type=float, default=None, help="Override top_p.")
+    ap.add_argument("--top-k", type=int, default=None, help="Override top_k.")
+    ap.add_argument("--min-p", type=float, default=None, help="Override min_p.")
     ap.add_argument(
         "--max-tokens", type=int, default=None, help="Override max output tokens."
     )
@@ -1146,14 +1323,40 @@ def main() -> int:
         help="Filter by difficulty (livecodebench only). E.g. --difficulty hard",
     )
     ap.add_argument(
+        "--release-version",
+        default=None,
+        help="LCB dataset release version (livecodebench only). E.g. release_v5",
+    )
+    ap.add_argument(
         "--results-dir",
         default="eval_results",
         help="Directory for result JSON files (default: eval_results).",
     )
     ap.add_argument(
+        "--enable-thinking",
+        type=lambda v: v.lower() in ("true", "1", "yes"),
+        default=None,
+        help="Enable thinking mode for models that support it.",
+    )
+    ap.add_argument(
         "--skip-instance-setup",
         action="store_true",
         help="Skip exo instance management (assumes model is already running).",
+    )
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="Discard any existing checkpoint and run from scratch.",
+    )
+    ap.add_argument(
+        "--keep-instance",
+        action="store_true",
+        help="Skip deleting the instance after eval (for chaining runs).",
+    )
+    ap.add_argument(
+        "--reuse-instance",
+        action="store_true",
+        help="Reuse an existing ready instance instead of creating a new one.",
     )
 
     args, _ = ap.parse_known_args()
@@ -1176,61 +1379,70 @@ def main() -> int:
     instance_id: str | None = None
 
     if not args.skip_instance_setup:
-        short_id, full_model_id = resolve_model_short_id(
+        _short_id, full_model_id = resolve_model_short_id(
             client,
             args.model,
             force_download=args.force_download,
         )
-        selected = settle_and_fetch_placements(
-            client,
-            full_model_id,
-            args,
-            settle_timeout=args.settle_timeout,
-        )
-        if not selected:
-            logger.error("No valid placements matched your filters.")
-            return 1
 
-        selected.sort(
-            key=lambda p: (
-                str(p.get("instance_meta", "")),
-                str(p.get("sharding", "")),
-                -nodes_used_in_instance(p["instance"]),
-            ),
-            reverse=True,
-        )
-        preview = selected[0]
-        instance = preview["instance"]
-        instance_id = instance_id_from_instance(instance)
+        # Try to reuse an existing instance if --reuse-instance is set
+        if args.reuse_instance:
+            existing = _find_existing_instance(client, full_model_id)
+            if existing:
+                instance_id = existing
+                logger.info(f"Reusing existing instance {instance_id}")
 
-        logger.info(
-            f"PLACEMENT: {preview['sharding']} / {preview['instance_meta']} / "
-            f"nodes={nodes_used_in_instance(instance)}"
-        )
+        if instance_id is None:
+            selected = settle_and_fetch_placements(
+                client,
+                full_model_id,
+                args,
+                settle_timeout=args.settle_timeout,
+            )
+            if not selected:
+                logger.error("No valid placements matched your filters.")
+                return 1
 
-        settle_deadline = (
-            time.monotonic() + args.settle_timeout if args.settle_timeout > 0 else None
-        )
-        download_duration = run_planning_phase(
-            client,
-            full_model_id,
-            preview,
-            args.danger_delete_downloads,
-            args.timeout,
-            settle_deadline,
-        )
-        if download_duration is not None:
-            logger.info(f"Download: {download_duration:.1f}s")
+            selected.sort(
+                key=lambda p: (
+                    str(p.get("instance_meta", "")),
+                    str(p.get("sharding", "")),
+                    nodes_used_in_instance(p["instance"]),
+                ),
+                reverse=True,
+            )
+            preview = selected[0]
+            instance = preview["instance"]
+            instance_id = instance_id_from_instance(instance)
 
-        client.request_json("POST", "/instance", body={"instance": instance})
-        try:
-            wait_for_instance_ready(client, instance_id)
-        except (RuntimeError, TimeoutError) as e:
-            logger.error(f"Failed to initialize: {e}")
-            with contextlib.suppress(ExoHttpError):
-                client.request_json("DELETE", f"/instance/{instance_id}")
-            return 1
-        time.sleep(1)
+            logger.info(
+                f"PLACEMENT: {preview['sharding']} / {preview['instance_meta']} / "
+                f"nodes={nodes_used_in_instance(instance)}"
+            )
+
+            settle_deadline = (
+                time.monotonic() + args.settle_timeout if args.settle_timeout > 0 else None
+            )
+            download_duration = run_planning_phase(
+                client,
+                full_model_id,
+                preview,
+                args.danger_delete_downloads,
+                args.timeout,
+                settle_deadline,
+            )
+            if download_duration is not None:
+                logger.info(f"Download: {download_duration:.1f}s")
+
+            client.request_json("POST", "/instance", body={"instance": instance})
+            try:
+                wait_for_instance_ready(client, instance_id)
+            except (RuntimeError, TimeoutError) as e:
+                logger.error(f"Failed to initialize: {e}")
+                with contextlib.suppress(ExoHttpError):
+                    client.request_json("DELETE", f"/instance/{instance_id}")
+                return 1
+            time.sleep(1)
     else:
         full_model_id = args.model
 
@@ -1286,15 +1498,52 @@ def main() -> int:
         reasoning_effort = str(cfg["reasoning_effort"])
     else:
         reasoning_effort = "high" if is_reasoning else None
+
+    if args.top_k is not None:
+        top_k: int | None = args.top_k
+    elif "top_k" in cfg:
+        top_k = int(cfg["top_k"])
+    else:
+        top_k = None
+
+    if args.min_p is not None:
+        min_p: float | None = args.min_p
+    elif "min_p" in cfg:
+        min_p = float(cfg["min_p"])
+    else:
+        min_p = None
+
+    if args.enable_thinking is not None:
+        enable_thinking: bool | None = args.enable_thinking
+    elif "enable_thinking" in cfg:
+        enable_thinking = bool(cfg["enable_thinking"])
+    else:
+        enable_thinking = None
+
     base_url = f"http://{args.host}:{args.port}"
 
     logger.info(f"Model: {full_model_id}")
     logger.info(
         f"Settings: temperature={temperature}, max_tokens={max_tokens}, "
         + (f"top_p={top_p}, " if top_p is not None else "")
+        + (f"top_k={top_k}, " if top_k is not None else "")
+        + (f"min_p={min_p}, " if min_p is not None else "")
         + f"reasoning={'yes' if is_reasoning else 'no'}"
         + (f", reasoning_effort={reasoning_effort}" if reasoning_effort else "")
+        + (f", enable_thinking={enable_thinking}" if enable_thinking is not None else "")
     )
+
+    # Common kwargs for evaluate_benchmark
+    eval_kwargs: dict[str, Any] = {
+        "reasoning_effort": reasoning_effort,
+        "top_p": top_p,
+        "top_k": top_k,
+        "min_p": min_p,
+        "enable_thinking": enable_thinking,
+        "difficulty": args.difficulty,
+        "offset": args.offset,
+        "release_version": args.release_version,
+    }
 
     try:
         if args.compare_concurrency:
@@ -1304,6 +1553,9 @@ def main() -> int:
                 for c in concurrency_levels:
                     logger.info(f"\n{'=' * 50}")
                     logger.info(f"Running {task_name} at concurrency={c}")
+                    checkpoint_path = _checkpoint_path(args.results_dir, task_name, full_model_id, c)
+                    if args.force and checkpoint_path.exists():
+                        checkpoint_path.unlink()
                     results = asyncio.run(
                         evaluate_benchmark(
                             task_name,
@@ -1314,9 +1566,8 @@ def main() -> int:
                             concurrency=c,
                             limit=args.limit,
                             timeout=args.request_timeout,
-                            reasoning_effort=reasoning_effort,
-                            top_p=top_p,
-                            difficulty=args.difficulty,
+                            checkpoint_path=checkpoint_path,
+                            **eval_kwargs,
                         )
                     )
                     if results:
@@ -1328,12 +1579,18 @@ def main() -> int:
                             c,
                             results,
                             scores,
-                        )
+                            )
                         results_by_c[c] = results
+                    # Clean up checkpoint on success
+                    if checkpoint_path.exists():
+                        checkpoint_path.unlink()
                 if len(results_by_c) >= 2:
                     print_comparison(task_name, results_by_c)
         else:
             for task_name in task_names:
+                checkpoint_path = _checkpoint_path(args.results_dir, task_name, full_model_id, args.num_concurrent)
+                if args.force and checkpoint_path.exists():
+                    checkpoint_path.unlink()
                 results = asyncio.run(
                     evaluate_benchmark(
                         task_name,
@@ -1344,9 +1601,8 @@ def main() -> int:
                         concurrency=args.num_concurrent,
                         limit=args.limit,
                         timeout=args.request_timeout,
-                        reasoning_effort=reasoning_effort,
-                        top_p=top_p,
-                        difficulty=args.difficulty,
+                        checkpoint_path=checkpoint_path,
+                        **eval_kwargs,
                     )
                 )
                 if results:
@@ -1359,14 +1615,23 @@ def main() -> int:
                         results,
                         scores,
                     )
+                # Clean up checkpoint on success
+                if checkpoint_path.exists():
+                    checkpoint_path.unlink()
     finally:
         if instance_id is not None:
-            try:
-                client.request_json("DELETE", f"/instance/{instance_id}")
-            except ExoHttpError as e:
-                if e.status != 404:
-                    raise
-            wait_for_instance_gone(client, instance_id)
+            if args.keep_instance:
+                logger.info(f"Keeping instance {instance_id} (--keep-instance)")
+            else:
+                try:
+                    client.request_json("DELETE", f"/instance/{instance_id}")
+                except ExoHttpError as e:
+                    if e.status != 404:
+                        raise
+                try:
+                    wait_for_instance_gone(client, instance_id)
+                except TimeoutError:
+                    logger.warning(f"Timed out waiting for instance {instance_id} to be deleted")
 
     return 0
 
