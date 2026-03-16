@@ -75,7 +75,7 @@ class _ActiveRequest:
 
 
 @dataclass(eq=False)
-class VllmGenerator(InferenceGenerator):
+class VllmSequentialGenerator(InferenceGenerator):
     engine: LLMEngine
     model_id: ModelId
     tool_parser: ToolParser | None
@@ -350,6 +350,271 @@ class VllmGenerator(InferenceGenerator):
             logger.opt(exception=True).warning("Failed to save prefix cache")
 
     def close(self) -> None:
+        del self.engine
+        gc.collect()
+        torch.cuda.empty_cache()
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
+
+
+_EXO_MAX_CONCURRENT_VLLM_REQUESTS = 8
+
+
+@dataclass(eq=False)
+class VllmBatchGenerator(InferenceGenerator):
+    engine: LLMEngine
+    model_id: ModelId
+    tool_parser: ToolParser | None
+    cancel_receiver: MpReceiver[TaskId]
+    prefix_cache: KVPrefixCache
+
+    _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
+    _pending: deque[TextGeneration] = field(default_factory=deque, init=False)
+    _active: dict[str, _ActiveRequest] = field(default_factory=dict, init=False)
+
+    def warmup(self) -> None:
+        tokenizer = self.engine.get_tokenizer()
+        messages = [{"role": "user", "content": "Prompt to warm up the inference engine. Repeat this."}]
+        prompt_text: str = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)  # type: ignore
+        token_ids: list[int] = tokenizer.encode(prompt_text, add_special_tokens=False)  # type: ignore
+        params = SamplingParams(max_tokens=50, detokenize=False)
+        self.engine.add_request("warmup", {"prompt_token_ids": token_ids}, params)
+        while self.engine.has_unfinished_requests():
+            self.engine.step()
+        logger.info("vLLM batch warmup complete")
+
+    def submit(self, task: TextGeneration) -> None:
+        self._cancelled_tasks.discard(CANCEL_ALL_TASKS)
+        self._pending.append(task)
+
+    def _check_cancellations(self) -> None:
+        for task_id in self.cancel_receiver.collect():
+            if task_id == CANCEL_ALL_TASKS:
+                self._cancelled_tasks.add(CANCEL_ALL_TASKS)
+            else:
+                self._cancelled_tasks.add(task_id)
+
+    def _start_request(self, task: TextGeneration) -> _ActiveRequest:
+        token_ids, prompt_text, prompt_token_count = format_vllm_prompt(
+            self.engine, task.task_params
+        )
+        logger.info(prompt_text)
+        request_id = str(task.task_id)
+        sampling_params = make_vllm_sampling_params(self.engine, task.task_params, self.model_id)
+        self.engine.add_request(
+            request_id,
+            {"prompt_token_ids": token_ids},
+            sampling_params,
+        )
+        tokenizer = self.engine.get_tokenizer()
+        think_start: str | None = getattr(tokenizer, "think_start", None)
+        think_end: str | None = getattr(tokenizer, "think_end", None)
+        queue: GeneratorQueue[GenerationResponse] = GeneratorQueue()
+        parsed_gen = apply_vllm_parsers(
+            queue.gen(),
+            self.model_id,
+            prompt_text,
+            self.tool_parser,
+            task.task_params.tools,
+            think_start=think_start,
+            think_end=think_end,
+        )
+        return _ActiveRequest(
+            task=task,
+            request_id=request_id,
+            prompt_token_count=prompt_token_count,
+            prompt_token_ids=token_ids,
+            queue=queue,
+            parsed_gen=parsed_gen,
+        )
+
+    def step(
+        self,
+    ) -> Iterable[
+        tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
+    ]:
+        self._check_cancellations()
+
+        results: list[
+            tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
+        ] = []
+
+        for task_id in list(self._cancelled_tasks):
+            rid = str(task_id)
+            if rid in self._active:
+                self.engine.abort_request([rid])
+                del self._active[rid]
+                self._cancelled_tasks.discard(task_id)
+                results.append((task_id, Cancelled()))
+            elif CANCEL_ALL_TASKS in self._cancelled_tasks:
+                for rid, active in list(self._active.items()):
+                    self.engine.abort_request([rid])
+                    results.append((active.task.task_id, Cancelled()))
+                self._active.clear()
+                self._cancelled_tasks.discard(CANCEL_ALL_TASKS)
+                break
+
+        while self._pending and len(self._active) < _EXO_MAX_CONCURRENT_VLLM_REQUESTS:
+            task = self._pending.popleft()
+            if self.should_cancel(task.task_id):
+                self._cancelled_tasks.discard(task.task_id)
+                results.append((task.task_id, Cancelled()))
+                continue
+            active = self._start_request(task)
+            self._active[active.request_id] = active
+
+        if not self._active:
+            return results
+
+        outputs = self.engine.step()
+        tokenizer = self.engine.get_tokenizer()
+
+        for output in outputs:
+            rid = output.request_id
+            if rid not in self._active:
+                continue
+            active = self._active[rid]
+            completion = output.outputs[0]
+            new_token_count = len(completion.token_ids)
+            new_tokens = completion.token_ids[active.prev_token_count:]
+            finish_reason = completion.finish_reason
+
+            active.prev_text = completion.text
+            active.prev_token_count = new_token_count
+            if active.first_token_time is None and new_tokens:
+                active.first_token_time = time.perf_counter()
+                if not active.prefill_done:
+                    active.prefill_done = True
+                    self._save_prefix_cache(active)
+
+            finish_usage: Usage | None = None
+            finish_stats: GenerationStats | None = None
+            mapped_finish_reason: str | None = None
+            finished = False
+            if finish_reason:
+                now = time.perf_counter()
+                prefill_elapsed = (active.first_token_time or now) - active.start_time
+                decode_elapsed = now - (active.first_token_time or now)
+                finish_usage = Usage(
+                    prompt_tokens=active.prompt_token_count,
+                    completion_tokens=new_token_count,
+                    total_tokens=active.prompt_token_count + new_token_count,
+                    prompt_tokens_details=PromptTokensDetails(),
+                    completion_tokens_details=CompletionTokensDetails(),
+                )
+                finish_stats = GenerationStats(
+                    prompt_tps=active.prompt_token_count / prefill_elapsed if prefill_elapsed > 0 else 0.0,
+                    generation_tps=new_token_count / decode_elapsed if decode_elapsed > 0 else 0.0,
+                    prompt_tokens=active.prompt_token_count,
+                    generation_tokens=new_token_count,
+                    peak_memory_usage=Memory.from_bytes(
+                        torch.cuda.max_memory_allocated()  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportAttributeAccessIssue]
+                    ),
+                )
+                mapped_finish_reason = (
+                    finish_reason if finish_reason in ("stop", "length", "content_filter") else "stop"
+                )
+                finished = True
+
+            for i, token_id in enumerate(new_tokens):
+                is_last = i == len(new_tokens) - 1
+                token_text: str = tokenizer.decode([token_id])  # type: ignore[reportUnknownMemberType]
+                active.queue.push(
+                    GenerationResponse(
+                        text=token_text,
+                        token=token_id,
+                        finish_reason=mapped_finish_reason if is_last and finished else None,
+                        usage=finish_usage if is_last and finished else None,
+                        stats=finish_stats if is_last and finished else None,
+                    )
+                )
+                try:
+                    parsed = next(active.parsed_gen)
+                except StopIteration:
+                    self.engine.abort_request([rid])
+                    results.append((active.task.task_id, Finished()))
+                    del self._active[rid]
+                    break
+                if parsed is not None:
+                    results.append((active.task.task_id, parsed))
+            else:
+                if finished:
+                    logger.info(f"vLLM generation done for request {rid}")
+                    results.append((active.task.task_id, Finished()))
+                    del self._active[rid]
+
+        return results
+
+    def _get_coordinator(self) -> object | None:
+        if not hasattr(self, "_coordinator_cached"):
+            try:
+                engine_core = self.engine.engine_core.engine_core  # type: ignore
+                self._coordinator_cached: object | None = engine_core.scheduler.kv_cache_manager.coordinator  # type: ignore
+            except Exception:
+                self._coordinator_cached = None
+        return self._coordinator_cached
+
+    def _get_kv_cache_config(self) -> object | None:
+        if not hasattr(self, "_kv_cache_config_cached"):
+            try:
+                engine_core = self.engine.engine_core.engine_core  # type: ignore
+                self._kv_cache_config_cached: object | None = engine_core.scheduler.kv_cache_manager.kv_cache_config  # type: ignore
+            except Exception:
+                self._kv_cache_config_cached = None
+        return self._kv_cache_config_cached
+
+    def _save_prefix_cache(self, active: _ActiveRequest) -> None:
+        try:
+            coordinator = self._get_coordinator()
+            model_runner = _growable_model_runner_ref[0]
+            kv_cache_config = self._get_kv_cache_config()
+            if coordinator is None or model_runner is None or kv_cache_config is None:
+                return
+            internal_id: str | None = None
+            for mgr in coordinator.single_type_managers:  # type: ignore
+                for key in mgr.req_to_blocks:  # type: ignore
+                    if str(key).startswith(active.request_id):  # type: ignore
+                        internal_id = str(key)  # type: ignore
+                        break
+                if internal_id:
+                    break
+            if internal_id is None:
+                return
+            null_block = coordinator.block_pool.null_block  # type: ignore
+            block_ids_per_group: list[list[int]] = []
+            token_offset_per_group: list[int] = []
+            for mgr in coordinator.single_type_managers:  # type: ignore
+                blocks = mgr.req_to_blocks.get(internal_id)  # type: ignore
+                if not blocks:
+                    block_ids_per_group.append([])
+                    token_offset_per_group.append(0)
+                    continue
+                block_size: int = mgr.block_size  # type: ignore
+                num_leading_nulls = 0
+                for b in blocks:  # type: ignore
+                    if b is null_block or b.is_null:  # type: ignore
+                        num_leading_nulls += 1
+                    else:
+                        break
+                real_blocks = [b for b in blocks if b is not null_block and not b.is_null]  # type: ignore
+                block_ids_per_group.append([b.block_id for b in real_blocks])  # type: ignore
+                token_offset_per_group.append(num_leading_nulls * block_size)
+            layer_to_group = _build_layer_groups(kv_cache_config)
+            torch_cache = TorchKVCache.from_vllm_cache(
+                model_runner.kv_caches,  # type: ignore
+                block_ids_per_group,
+                layer_to_group,
+                active.prompt_token_count,
+                token_offset_per_group,
+            )
+            self.prefix_cache.add_from_torch(active.prompt_token_ids, torch_cache)
+        except Exception:
+            logger.opt(exception=True).warning("Failed to save prefix cache")
+
+    def close(self) -> None:
+        for rid in list(self._active):
+            self.engine.abort_request([rid])
+        self._active.clear()
         del self.engine
         gc.collect()
         torch.cuda.empty_cache()

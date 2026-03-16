@@ -508,9 +508,21 @@ class VllmBuilder(Builder):
         )
 
     def build(self) -> InferenceGenerator:
-        from exo.worker.engines.vllm.vllm_generator import VllmGenerator
+        if os.environ.get("EXO_NO_BATCH"):
+            from exo.worker.engines.vllm.vllm_generator import VllmSequentialGenerator
 
-        return VllmGenerator(
+            logger.info("using VllmSequentialGenerator (batching disabled)")
+            return VllmSequentialGenerator(
+                engine=self._engine,
+                model_id=self.model_id,
+                tool_parser=self._tool_parser,
+                cancel_receiver=self.cancel_receiver,
+                prefix_cache=self._prefix_cache,
+            )
+        from exo.worker.engines.vllm.vllm_generator import VllmBatchGenerator
+
+        logger.info("using VllmBatchGenerator")
+        return VllmBatchGenerator(
             engine=self._engine,
             model_id=self.model_id,
             tool_parser=self._tool_parser,
