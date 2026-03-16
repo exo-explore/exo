@@ -361,6 +361,16 @@ def parse_tool_calls(
                 yield response.model_copy(update={"text": combined})
                 continue
 
+            if tools is not None:
+                known_names = {t["function"]["name"] for t in tools if "function" in t}
+                valid = [tc for tc in parsed if tc.name in known_names]
+                invalid = [tc for tc in parsed if tc.name not in known_names]
+                if invalid:
+                    logger.warning(f"filtered {len(invalid)} hallucinated tool calls: {[tc.name for tc in invalid]}")
+                if not valid:
+                    continue
+                parsed = valid
+
             yield ToolCallResponse(
                 tool_calls=parsed, usage=response.usage, stats=response.stats
             )
