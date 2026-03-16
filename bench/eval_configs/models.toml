@@ -7,7 +7,7 @@
 #   name, patterns, reasoning
 #
 # Optional per-model overrides (CLI flags take priority over these):
-#   temperature, top_p, max_tokens, reasoning_effort
+#   temperature, top_p, max_tokens, reasoning_effort, enable_thinking
 #
 # Fallback defaults (when no per-model config):
 #   reasoning:     temperature=1.0, max_tokens=131072, reasoning_effort="high"
@@ -18,10 +18,9 @@
 
 # ─── Qwen3.5 (Feb 2026) ─────────────────────────────────────────────
 # Source: HuggingFace model cards (Qwen/Qwen3.5-*)
-# 35B-A3B thinking general: temp=1.0, top_p=0.95, top_k=20
-# 397B thinking: temp=0.6, top_p=0.95, top_k=20
-# Non-thinking: temp=0.7, top_p=0.8, top_k=20
-# max_tokens: 32768 general, 81920 for complex math/code
+# Model card recommends: temp=0.6, top_p=0.95, top_k=20
+# We omit top_k to match vllm eval (which doesn't set it).
+# max_tokens=121072 to match vllm eval (131072 context - 10000 safety margin).
 
 [[model]]
 name = "Qwen3.5 2B"
@@ -29,7 +28,8 @@ patterns = ["Qwen3.5-2B"]
 reasoning = true
 temperature = 0.6
 top_p = 0.95
-max_tokens = 81920
+enable_thinking = true
+max_tokens = 121072
 
 [[model]]
 name = "Qwen3.5 9B"
@@ -37,7 +37,8 @@ patterns = ["Qwen3.5-9B"]
 reasoning = true
 temperature = 0.6
 top_p = 0.95
-max_tokens = 81920
+enable_thinking = true
+max_tokens = 121072
 
 [[model]]
 name = "Qwen3.5 27B"
@@ -45,15 +46,17 @@ patterns = ["Qwen3.5-27B"]
 reasoning = true
 temperature = 0.6
 top_p = 0.95
-max_tokens = 81920
+enable_thinking = true
+max_tokens = 121072
 
 [[model]]
 name = "Qwen3.5 35B A3B"
 patterns = ["Qwen3.5-35B-A3B"]
 reasoning = true
-temperature = 1.0
+temperature = 0.6
 top_p = 0.95
-max_tokens = 81920
+enable_thinking = true
+max_tokens = 121072
 
 [[model]]
 name = "Qwen3.5 122B A10B"
@@ -61,7 +64,8 @@ patterns = ["Qwen3.5-122B-A10B"]
 reasoning = true
 temperature = 0.6
 top_p = 0.95
-max_tokens = 81920
+enable_thinking = true
+max_tokens = 121072
 
 [[model]]
 name = "Qwen3.5 397B A17B"
@@ -69,12 +73,14 @@ patterns = ["Qwen3.5-397B-A17B"]
 reasoning = true
 temperature = 0.6
 top_p = 0.95
-max_tokens = 81920
+enable_thinking = true
+max_tokens = 121072
 
 # ─── Qwen3 (Apr 2025) ───────────────────────────────────────────────
 # Source: HuggingFace model cards (Qwen/Qwen3-*)
-# Thinking: temp=0.6, top_p=0.95, top_k=20
-# Non-thinking: temp=0.7, top_p=0.8, top_k=20
+# Model card recommends: temp=0.6, top_p=0.95, top_k=20
+# We omit top_k to match vllm eval (which doesn't set it).
+# Non-thinking: temp=0.7, top_p=0.8
 # max_tokens: 32768 general, 38912 for complex math/code
 
 [[model]]
@@ -83,6 +89,7 @@ patterns = ["Qwen3-0.6B"]
 reasoning = true
 temperature = 0.6
 top_p = 0.95
+enable_thinking = true
 max_tokens = 38912
 
 [[model]]
@@ -91,6 +98,7 @@ patterns = ["Qwen3-30B-A3B"]
 reasoning = true
 temperature = 0.6
 top_p = 0.95
+enable_thinking = true
 max_tokens = 38912
 
 [[model]]
@@ -99,6 +107,7 @@ patterns = ["Qwen3-235B-A22B"]
 reasoning = true
 temperature = 0.6
 top_p = 0.95
+enable_thinking = true
 max_tokens = 38912
 
 [[model]]
@@ -107,6 +116,7 @@ patterns = ["Qwen3-Next-80B-A3B-Thinking"]
 reasoning = true
 temperature = 0.6
 top_p = 0.95
+enable_thinking = true
 max_tokens = 38912
 
 [[model]]
@@ -129,9 +139,9 @@ max_tokens = 16384
 name = "Qwen3 Coder Next"
 patterns = ["Qwen3-Coder-Next"]
 reasoning = false
-temperature = 0.7
-top_p = 0.8
-max_tokens = 16384
+temperature = 1.0
+top_p = 0.95
+max_tokens = 121072
 
 # ─── GPT-OSS (OpenAI) ───────────────────────────────────────────────
 # Source: OpenAI GitHub README + HuggingFace discussion #21
@@ -168,7 +178,7 @@ temperature = 0.0
 # ─── GLM (ZhipuAI / THUDM) ──────────────────────────────────────────
 # Source: HuggingFace model cards + generation_config.json + docs.z.ai
 # GLM 4.5+: temp=1.0, top_p=0.95
-# Reasoning tasks: 131072 max_tokens; coding/SWE tasks: temp=0.7
+# max_tokens=121072 to match vllm eval (131072 context - 10000 safety margin)
 
 [[model]]
 name = "GLM-5"
@@ -176,7 +186,8 @@ patterns = ["GLM-5"]
 reasoning = true
 temperature = 1.0
 top_p = 0.95
-max_tokens = 131072
+enable_thinking = true
+max_tokens = 121072
 
 [[model]]
 name = "GLM 4.5 Air"
@@ -191,7 +202,8 @@ patterns = ["GLM-4.7-"]
 reasoning = true
 temperature = 1.0
 top_p = 0.95
-max_tokens = 131072
+enable_thinking = true
+max_tokens = 121072
 # Note: matches both GLM-4.7 and GLM-4.7-Flash
 
 # ─── Kimi (Moonshot AI) ─────────────────────────────────────────────
@@ -213,7 +225,8 @@ patterns = ["Kimi-K2.5"]
 reasoning = true
 temperature = 1.0
 top_p = 0.95
-max_tokens = 131072
+enable_thinking = true
+max_tokens = 121072
 
 [[model]]
 name = "Kimi K2 Instruct"
@@ -223,7 +236,8 @@ temperature = 0.6
 
 # ─── MiniMax ─────────────────────────────────────────────────────────
 # Source: HuggingFace model cards + generation_config.json
-# All models: temp=1.0, top_p=0.95, top_k=40
+# All models: temp=1.0, top_p=0.95
+# max_tokens=90000 to match vllm eval (100000 context - 10000 safety margin)
 
 [[model]]
 name = "MiniMax M2.5"
@@ -231,6 +245,8 @@ patterns = ["MiniMax-M2.5"]
 reasoning = true
 temperature = 1.0
 top_p = 0.95
+enable_thinking = true
+max_tokens = 90000
 
 [[model]]
 name = "MiniMax M2.1"
@@ -251,6 +267,8 @@ patterns = ["Step-3.5-Flash"]
 reasoning = true
 temperature = 1.0
 top_p = 0.95
+enable_thinking = true
+max_tokens = 121072
 
 # ─── Llama (Meta) ───────────────────────────────────────────────────
 # Source: generation_config.json + meta-llama/llama-models generation.py
