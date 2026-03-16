@@ -86,7 +86,8 @@ async fn inner_main() -> color_eyre::Result<()> {
                         tracing::info!("starting babeld");
                         let (br_send, br_recv) = broadcast::channel(1024);
                         let (mp_send, mp_recv) = mpsc::channel(32);
-                        let ip_node_id = u128::from(rand::random::<u64>()) << 16;
+                        // node id is a PREFIX/64, NODE_ID/48 and an INTERFACE_ID/16
+                        let ip_node_id = u128::from(rand::random::<u64>() & (u64::MAX>>16)) << 16;
                         let my_range = Ipv6Net::new_assert(
                             Ipv6Addr::from_bits(babblerd::PREFIX.addr().to_bits() | ip_node_id),
                             112,
