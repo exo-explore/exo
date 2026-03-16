@@ -78,10 +78,14 @@ pub mod if_watcher {
             has
         }
         fn is_real_interface(&self) -> bool {
+            // macos is weird. it seems en0-en7 are *valid* interfaces. en0 & en1 are ethernet & wifi (varies which is which by device)
+            // en2-7 is **reserved** and corresponds to thunderbolt ports.
             #[cfg(target_os = "macos")]
-            if !self.name().starts_with("en") {
-                tracing::debug!("skipping non 'en' interface {}", self.name());
-                return false;
+            if self.name().starts_with("en")
+                && let Ok(n) = self.name()[2..].parse::<u8>()
+                && n < 8
+            {
+                return true;
             }
             #[cfg(target_os = "linux")]
             {
@@ -155,10 +159,9 @@ pub mod if_watcher {
                     }
                 }
                 if iface.get_v6_in(my_range).is_none() {
-                    // currently a /64
                     let addr = Ipv6Net::new_assert(
                         Ipv6Addr::from_bits(my_range.addr().to_bits() | u128::from(iface_num)),
-                        64,
+                        128,
                     );
                     iface_num += 1;
                     assert!(iface_num < u16::MAX, "Really? u16::MAX interfaces?");
@@ -502,7 +505,6 @@ pub(crate) mod ip_manager {
 
         use crate::BabbleError;
         use crate::Result;
-        use std::net::Ipv6Addr;
         use tokio::process::Command;
 
         #[tracing::instrument]
