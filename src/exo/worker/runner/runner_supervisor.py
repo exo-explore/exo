@@ -1,6 +1,8 @@
 import contextlib
 import multiprocessing as mp
+import os
 import signal
+import time
 from dataclasses import dataclass, field
 from typing import Self
 
@@ -34,7 +36,9 @@ from exo.shared.types.worker.runners import (
     RunnerConnecting,
     RunnerFailed,
     RunnerIdle,
+    RunnerLoaded,
     RunnerLoading,
+    RunnerReady,
     RunnerRunning,
     RunnerShuttingDown,
     RunnerStatus,
@@ -47,6 +51,9 @@ from exo.worker.runner.bootstrap import entrypoint
 
 PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5
+STARTUP_STALL_TIMEOUT_SECONDS = float(
+    os.environ.get("EXO_STARTUP_STALL_TIMEOUT", str(PREFILL_TIMEOUT_SECONDS))
+)
 
 
 @dataclass(eq=False)
@@ -68,6 +75,10 @@ class RunnerSupervisor:
     _cancel_watch_runner: anyio.CancelScope = field(
         default_factory=anyio.CancelScope, init=False
     )
+    _last_event_time: float = field(default_factory=time.time, init=False)
+    _last_status_change_time: float = field(default_factory=time.time, init=False)
+    _last_loading_progress_time: float = field(default_factory=time.time, init=False)
+    _last_loading_layers: int = field(default=-1, init=False)
 
     @classmethod
     def create(
@@ -189,8 +200,13 @@ class RunnerSupervisor:
         try:
             with self._ev_recv as events:
                 async for event in events:
+                    self._last_event_time = time.time()
                     if isinstance(event, RunnerStatusUpdated):
+                        previous_status = self.status
                         self.status = event.runner_status
+                        self._record_status_progress(
+                            previous_status, event.runner_status
+                        )
                     if isinstance(event, TaskAcknowledged):
                         self.pending.pop(event.task_id).set()
                         continue
@@ -230,14 +246,80 @@ class RunnerSupervisor:
                 await anyio.sleep(5)
                 if not self.runner_process.is_alive():
                     await self._check_runner(RuntimeError("Runner found to be dead"))
+                    continue
 
-    async def _check_runner(self, e: Exception) -> None:
+                if stall_reason := self._startup_stall_reason():
+                    logger.error(
+                        "ROOT_CAUSE=runner_startup_stalled %s",
+                        stall_reason,
+                    )
+                    await self._check_runner(
+                        TimeoutError(stall_reason),
+                        failure_message=stall_reason,
+                    )
+                    continue
+
+    def _record_status_progress(
+        self, previous_status: RunnerStatus, runner_status: RunnerStatus
+    ) -> None:
+        now = time.time()
+        if not isinstance(previous_status, type(runner_status)):
+            self._last_status_change_time = now
+
+        if isinstance(runner_status, RunnerLoading):
+            if runner_status.layers_loaded > self._last_loading_layers:
+                self._last_loading_layers = runner_status.layers_loaded
+                self._last_loading_progress_time = now
+        else:
+            self._last_loading_layers = -1
+            self._last_loading_progress_time = now
+
+    def _startup_stall_reason(self) -> str | None:
+        now = time.time()
+
+        if isinstance(self.status, RunnerLoading):
+            stalled_for = now - self._last_loading_progress_time
+            if stalled_for > STARTUP_STALL_TIMEOUT_SECONDS:
+                return (
+                    "Runner startup stalled in RunnerLoading for "
+                    f"{stalled_for:.1f}s without layer progress"
+                )
+
+        if isinstance(self.status, (RunnerConnecting, RunnerLoaded, RunnerWarmingUp)):
+            stalled_for = now - self._last_status_change_time
+            if stalled_for > STARTUP_STALL_TIMEOUT_SECONDS:
+                return (
+                    f"Runner startup stalled in {type(self.status).__name__} "
+                    f"for {stalled_for:.1f}s"
+                )
+
+        if isinstance(
+            self.status,
+            (RunnerReady, RunnerRunning, RunnerIdle, RunnerFailed, RunnerShuttingDown),
+        ):
+            return None
+
+        return None
+
+    async def _check_runner(
+        self, e: Exception, *, failure_message: str | None = None
+    ) -> None:
         if not self._cancel_watch_runner.cancel_called:
             self._cancel_watch_runner.cancel()
         logger.info("Checking runner's status")
         if self.runner_process.is_alive():
             logger.info("Runner was found to be alive, attempting to join process")
             await to_thread.run_sync(self.runner_process.join, 5)
+        if self.runner_process.is_alive() and failure_message is not None:
+            logger.warning(
+                "Runner remained alive after watchdog join; terminating unhealthy startup process"
+            )
+            self.runner_process.terminate()
+            await to_thread.run_sync(self.runner_process.join, 3)
+            if self.runner_process.is_alive():
+                logger.critical("Runner ignored SIGTERM after startup stall; killing")
+                self.runner_process.kill()
+                await to_thread.run_sync(self.runner_process.join, 1)
         rc = self.runner_process.exitcode
         logger.info(f"Runner exited with exit code {rc}")
         if rc == 0:
@@ -251,6 +333,9 @@ class RunnerSupervisor:
                 cause = f"signal={sig}"
         else:
             cause = f"exitcode={rc}"
+
+        if failure_message is not None:
+            cause = f"{failure_message} ({cause})"
 
         logger.opt(exception=e).error(f"Runner terminated with {cause}")
 
