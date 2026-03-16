@@ -63,7 +63,7 @@ from exo.shared.types.tasks import (
 from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
-from exo.shared.types.worker.downloads import DownloadRejected
+from exo.shared.types.worker.downloads import ModelRejected
 from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, Sender
 from exo.utils.disk_event_log import DiskEventLog
@@ -416,7 +416,7 @@ class Master:
                     self.state = apply(self.state, indexed)
 
                     if isinstance(event, NodeDownloadProgress) and isinstance(
-                        event.download_progress, DownloadRejected
+                        event.download_progress, ModelRejected
                     ):
                         dp = event.download_progress
                         rejection_events = get_download_rejected_events(

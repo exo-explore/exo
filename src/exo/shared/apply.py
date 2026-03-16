@@ -38,7 +38,7 @@ from exo.shared.types.profiling import (
 from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.topology import Connection, RDMAConnection
-from exo.shared.types.worker.downloads import DownloadProgress
+from exo.shared.types.worker.downloads import ModelStatus
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerShutdown, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import (
@@ -127,7 +127,7 @@ def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> S
     if not replaced:
         current.append(dp)
 
-    new_downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {
+    new_downloads: Mapping[NodeId, Sequence[ModelStatus]] = {
         **state.downloads,
         node_id: current,
     }

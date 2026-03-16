@@ -32,8 +32,8 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
-    DownloadOngoing,
-    DownloadProgress,
+    ModelDownloading,
+    ModelStatus,
 )
 from exo.shared.types.worker.instances import (
     Instance,
@@ -256,14 +256,14 @@ def get_transition_events(
 
 def cancel_unnecessary_downloads(
     instances: Mapping[InstanceId, Instance],
-    download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+    download_status: Mapping[NodeId, Sequence[ModelStatus]],
 ) -> Sequence[DownloadCommand]:
     commands: list[DownloadCommand] = []
     currently_downloading = [
         (k, v.shard_metadata.model_card.model_id)
         for k, vs in download_status.items()
         for v in vs
-        if isinstance(v, (DownloadOngoing))
+        if isinstance(v, (ModelDownloading))
     ]
     active_models = set(
         (
