@@ -1,3 +1,4 @@
+import contextlib
 import gc
 import os
 import time
@@ -60,6 +61,7 @@ from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
     load_mlx_items,
 )
+from exo.worker.engines.vllm.vllm_generator import VllmBatchEngine
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.batch_generator import (
     BatchGenerator,
@@ -92,7 +94,7 @@ class Builder(ABC):
     def build(self) -> InferenceGenerator: ...
 
     @abstractmethod
-    def shutdown_cleanup(self) -> None: ...
+    def close(self) -> None: ...
 
 
 class Runner:
@@ -165,10 +167,7 @@ class Runner:
                         break
         finally:
             if not isinstance(self.current_status, RunnerShutdown):
-                if isinstance(self.generator, Builder):
-                    self.generator.shutdown_cleanup()
-                else:
-                    self.generator.close()
+                self.generator.close()
 
     def handle_first_task(self, task: Task):
         self.send_task_status(task.task_id, TaskStatus.Running)
@@ -276,10 +275,7 @@ class Runner:
         logger.info("runner shutting down")
         self.update_status(RunnerShuttingDown())
         self.acknowledge_task(task)
-        if isinstance(self.generator, InferenceGenerator):
-            self.generator.close()
-        else:
-            self.generator.shutdown_cleanup()
+        self.generator.close()
         gc.collect()
         self.send_task_status(task.task_id, TaskStatus.Complete)
         self.update_status(RunnerShutdown())
@@ -484,8 +480,9 @@ class MlxBuilder(Builder):
             _gen=gen,
         )
 
-    def shutdown_cleanup(self) -> None:
-        mx.clear_cache()
+    def close(self):
+        with contextlib.suppress(NameError):
+            del self.inference_model, self.tokenizer
 
 
 @dataclass
@@ -521,7 +518,6 @@ class VllmBuilder(Builder):
         from mlx_lm.tokenizer_utils import TokenizerWrapper
 
         from exo.worker.engines.vllm.vllm_generator import (
-            VllmBatchEngine,
             warmup_vllm_engine,
         )
 
@@ -549,9 +545,6 @@ class VllmBuilder(Builder):
             max_concurrent_requests=max_concurrent,
         )
 
-    def shutdown_cleanup(self) -> None:
-        import torch
-
-        torch.cuda.empty_cache()
-        if torch.distributed.is_initialized():
-            torch.distributed.destroy_process_group()
+    def close(self) -> None:
+        with contextlib.suppress(NameError):
+            del self._engine, self._prefix_cache, self._tool_parser

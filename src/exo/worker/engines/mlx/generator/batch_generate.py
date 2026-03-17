@@ -76,12 +76,12 @@ class ExoBatchGenerator:
     group: mx.distributed.Group | None
     kv_prefix_cache: KVPrefixCache | None
 
-    _exo_gen: MlxBatchGenerator = field(init=False)
+    _mlx_gen: MlxBatchGenerator = field(init=False)
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
     _uid_to_task_id: dict[int, TaskId] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
-        self._exo_gen = MlxBatchGenerator(
+        self._mlx_gen = MlxBatchGenerator(
             model=self.model,
             stop_tokens=set(eos_ids_from_tokenizer(self.tokenizer)),
             prefill_step_size=4096,
@@ -91,8 +91,8 @@ class ExoBatchGenerator:
     def has_work(self) -> bool:
         return (
             bool(self._active_tasks)
-            or bool(self._exo_gen.unprocessed_prompts)
-            or self._exo_gen.active_batch is not None
+            or bool(self._mlx_gen.unprocessed_prompts)
+            or self._mlx_gen.active_batch is not None
         )
 
     def submit(
@@ -191,7 +191,7 @@ class ExoBatchGenerator:
 
         max_tokens = task_params.max_output_tokens or MAX_TOKENS
 
-        uids = self._exo_gen.insert(
+        uids = self._mlx_gen.insert(
             prompts=[last_tokens.tolist()],
             max_tokens=[max_tokens],
             caches=[list(cache)],
@@ -223,7 +223,7 @@ class ExoBatchGenerator:
         if not self.has_work:
             return []
 
-        responses = self._exo_gen.next()
+        responses = self._mlx_gen.next()
 
         results: list[tuple[TaskId, GenerationResponse]] = []
 
@@ -292,7 +292,7 @@ class ExoBatchGenerator:
             usage: Usage | None = None
             if is_done:
                 try:
-                    mlx_stats = self._exo_gen.stats()
+                    mlx_stats = self._mlx_gen.stats()
                     generation_tps = mlx_stats.generation_tps
                 except ZeroDivisionError:
                     generation_elapsed = (
@@ -356,13 +356,14 @@ class ExoBatchGenerator:
         task_id_set = set(task_ids)
         uids = [uid for uid, tid in self._uid_to_task_id.items() if tid in task_id_set]
         if uids:
-            self._exo_gen.remove(uids)
+            self._mlx_gen.remove(uids)
         for uid in uids:
             self._active_tasks.pop(uid, None)
             self._uid_to_task_id.pop(uid, None)
 
     def close(self) -> None:
-        self._exo_gen.close()
+        self._mlx_gen.close()
+        mx.clear_cache()
 
     def _save_prefix_cache(
         self,
