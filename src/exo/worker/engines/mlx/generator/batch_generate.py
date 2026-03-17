@@ -65,6 +65,7 @@ class _EngineTask:
     generation_start_time: float = 0.0
     in_thinking: bool = False
     reasoning_tokens: int = 0
+    prefill_tps: float = 0.0
 
 
 @dataclass(eq=False)
@@ -209,6 +210,7 @@ class ExoBatchGenerator:
             detokenizer=self.tokenizer.detokenizer,
             on_generation_token=on_generation_token,
             generation_start_time=time.perf_counter(),
+            prefill_tps=_prefill_tps,
         )
 
         return uid
@@ -285,21 +287,22 @@ class ExoBatchGenerator:
             stats: GenerationStats | None = None
             usage: Usage | None = None
             if is_done:
-                generation_elapsed = time.perf_counter() - state.generation_start_time
-                generation_tps = (
-                    state.completion_tokens / generation_elapsed
-                    if generation_elapsed > 0
-                    else 0.0
-                )
                 try:
                     mlx_stats = self._exo_gen.stats()
+                    generation_tps = mlx_stats.generation_tps
                 except ZeroDivisionError:
-                    mlx_stats = None
+                    generation_elapsed = (
+                        time.perf_counter() - state.generation_start_time
+                    )
+                    generation_tps = (
+                        state.completion_tokens / generation_elapsed
+                        if generation_elapsed > 0
+                        else 0.0
+                    )
+
                 stats = GenerationStats(
-                    prompt_tps=float(mlx_stats.prompt_tps)
-                    if mlx_stats is not None and mlx_stats.prompt_time > 0
-                    else 0.0,
-                    generation_tps=float(generation_tps),
+                    prompt_tps=state.prefill_tps,
+                    generation_tps=generation_tps,
                     prompt_tokens=len(state.all_prompt_tokens),
                     generation_tokens=state.completion_tokens,
                     peak_memory_usage=Memory.from_gb(mx.get_peak_memory() / 1e9),
