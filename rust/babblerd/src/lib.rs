@@ -78,14 +78,12 @@ pub mod if_watcher {
             has
         }
         fn is_real_interface(&self) -> bool {
-            // macos is weird. it seems en0-en7 are *valid* interfaces. en0 & en1 are ethernet & wifi (varies which is which by device)
-            // en2-7 is **reserved** and corresponds to thunderbolt ports.
-            #[cfg(target_os = "macos")]
-            if self.name().starts_with("en")
-                && let Ok(n) = self.name()[2..].parse::<u8>()
-                && n < 8
+            // macos is weird. en0 & en1 are ethernet & wifi (varies which is which by device). en3+ is thunderbolt, but at some point becomes usb ethernet.
+            if self.name().strip_prefix("en").is_none()
+            //.and_then(|s| s.parse::<u8>().ok())
+            //.is_none_or(|_n| false)
             {
-                return true;
+                return false;
             }
             #[cfg(target_os = "linux")]
             {
@@ -145,7 +143,10 @@ pub mod if_watcher {
         let mut mon_stream = mon.interface_state().stream();
 
         while let Some(s) = mon_stream.next().await {
-            for iface in s.interfaces.values().filter(|iface| iface.will_babel()) {
+            for iface in s.interfaces.values() {
+                if !iface.is_real_interface() {
+                    continue;
+                }
                 for addr in iface.addrs() {
                     if let IpNet::V6(v6) = addr
                         && PREFIX.contains(&v6.addr())
@@ -157,6 +158,9 @@ pub mod if_watcher {
                             tracing::warn!(%e, "failed to remove ip");
                         }
                     }
+                }
+                if !iface.will_babel() {
+                    continue;
                 }
                 if iface.get_v6_in(my_range).is_none() {
                     let addr = Ipv6Net::new_assert(
