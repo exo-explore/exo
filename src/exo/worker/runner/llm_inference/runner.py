@@ -281,8 +281,8 @@ class Runner:
         else:
             self.generator.shutdown_cleanup()
         gc.collect()
-        self.update_status(RunnerShutdown())
         self.send_task_status(task.task_id, TaskStatus.Complete)
+        self.update_status(RunnerShutdown())
 
     def submit_text_generation(self, task: TextGeneration):
         assert isinstance(self.generator, InferenceGenerator)

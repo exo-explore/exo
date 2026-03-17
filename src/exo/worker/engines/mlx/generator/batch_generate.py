@@ -20,6 +20,7 @@ from exo.shared.types.api import (
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import MLXCacheType, Model
+from exo.shared.types.tasks import TaskId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.worker.engines.mlx.cache import (
@@ -77,6 +78,7 @@ class ExoBatchGenerator:
 
     _exo_gen: MlxBatchGenerator = field(init=False)
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
+    _uid_to_task_id: dict[int, TaskId] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         self._exo_gen = MlxBatchGenerator(
@@ -95,12 +97,13 @@ class ExoBatchGenerator:
 
     def submit(
         self,
+        task_id: TaskId,
         task_params: TextGenerationTaskParams,
         prompt: str,
         on_prefill_progress: Callable[[int, int], None] | None = None,
         distributed_prompt_progress_callback: Callable[[], None] | None = None,
         on_generation_token: Callable[[], None] | None = None,
-    ) -> int:
+    ) -> TaskId:
         all_prompt_tokens = encode_prompt(self.tokenizer, prompt)
         all_prompt_tokens = fix_unmatched_think_end_tokens(
             all_prompt_tokens, self.tokenizer
@@ -199,6 +202,7 @@ class ExoBatchGenerator:
         assert len(uids) == 1
 
         uid = uids[0]
+        self._uid_to_task_id[uid] = task_id
 
         self._active_tasks[uid] = _EngineTask(
             uid=uid,
@@ -213,15 +217,15 @@ class ExoBatchGenerator:
             prefill_tps=_prefill_tps,
         )
 
-        return uid
+        return task_id
 
-    def step(self) -> list[tuple[int, GenerationResponse]]:
+    def step(self) -> list[tuple[TaskId, GenerationResponse]]:
         if not self.has_work:
             return []
 
         responses = self._exo_gen.next()
 
-        results: list[tuple[int, GenerationResponse]] = []
+        results: list[tuple[TaskId, GenerationResponse]] = []
 
         for response in responses:
             if response.uid not in self._active_tasks:
@@ -322,7 +326,7 @@ class ExoBatchGenerator:
 
             results.append(
                 (
-                    response.uid,
+                    self._uid_to_task_id.get(response.uid, TaskId(str(response.uid))),
                     GenerationResponse(
                         text=text,
                         token=response.token,
@@ -337,6 +341,7 @@ class ExoBatchGenerator:
 
             if is_done:
                 del self._active_tasks[response.uid]
+                self._uid_to_task_id.pop(response.uid, None)
             elif (
                 max_stop_len > 0
                 and len(state.potential_stop_sequence_text) > max_stop_len
@@ -347,10 +352,14 @@ class ExoBatchGenerator:
 
         return results
 
-    def cancel(self, uids: list[int]) -> None:
-        self._exo_gen.remove(uids)
+    def cancel(self, task_ids: list[TaskId]) -> None:
+        task_id_set = set(task_ids)
+        uids = [uid for uid, tid in self._uid_to_task_id.items() if tid in task_id_set]
+        if uids:
+            self._exo_gen.remove(uids)
         for uid in uids:
             self._active_tasks.pop(uid, None)
+            self._uid_to_task_id.pop(uid, None)
 
     def close(self) -> None:
         self._exo_gen.close()

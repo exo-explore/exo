@@ -377,5 +377,6 @@ class Args(CamelCaseModel):
             dest="fast_synch",
             help="Force MLX FAST_SYNCH off",
         )
+
         args = parser.parse_args()
         return cls(**vars(args))  # pyright: ignore[reportAny] - We are intentionally validating here, we can't do it statically

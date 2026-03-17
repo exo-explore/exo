@@ -12,6 +12,7 @@ import torch
 from vllm.engine.arg_utils import EngineArgs
 from vllm.sampling_params import SamplingParams
 from vllm.v1.engine.llm_engine import LLMEngine
+from vllm.v1.kv_cache_interface import KVCacheConfig
 
 from exo.shared.types.api import (
     CompletionTokensDetails,
@@ -21,15 +22,16 @@ from exo.shared.types.api import (
 )
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
+from exo.shared.types.tasks import TaskId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.worker.engines.kv_cache import TorchKVCache
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.utils_mlx import get_eos_token_ids_for_model
 from exo.worker.engines.vllm.growable_cache import (
-    _exo_prefix_cache_ref,
-    _growable_model_runner_ref,
+    get_model_runner,
     patch_vllm,
+    set_prefix_cache,
 )
 from exo.worker.engines.vllm.prompt_format import (
     format_vllm_prompt,
@@ -39,22 +41,21 @@ from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.tool_parsers import ToolParser, infer_tool_parser
 
 
-def _build_layer_groups(kv_cache_config: object) -> list[int]:
+def _build_layer_groups(kv_cache_config: KVCacheConfig) -> list[int]:
     group_lookup: dict[str, int] = {}
-    for group_idx, group_spec in enumerate(kv_cache_config.kv_cache_groups):  # type: ignore
-        for layer_name in group_spec.layer_names:  # type: ignore
-            group_lookup[layer_name] = group_idx  # type: ignore
+    for group_idx, group_spec in enumerate(kv_cache_config.kv_cache_groups):
+        for layer_name in group_spec.layer_names:
+            group_lookup[layer_name] = group_idx
 
     layer_to_group: list[int] = []
-    for tensor_spec in kv_cache_config.kv_cache_tensors:  # type: ignore
-        for name in tensor_spec.shared_by:  # type: ignore
-            layer_to_group.append(group_lookup[name])  # type: ignore
+    for tensor_spec in kv_cache_config.kv_cache_tensors:
+        for name in tensor_spec.shared_by:
+            layer_to_group.append(group_lookup[name])
     return layer_to_group
 
 
 @dataclass
 class _EngineRequest:
-    uid: int
     request_id: str
     prompt_token_count: int
     prompt_token_ids: list[int]
@@ -77,7 +78,7 @@ def _save_prefix_cache(
 ) -> None:
     try:
         coordinator = None
-        model_runner = _growable_model_runner_ref[0]
+        model_runner = get_model_runner()
         kv_cache_config = None
         try:
             engine_core = engine.engine_core.engine_core  # type: ignore
@@ -305,8 +306,7 @@ class VllmBatchEngine:
     model_id: ModelId
     prefix_cache: KVPrefixCache
 
-    _active: dict[int, _EngineRequest] = field(default_factory=dict, init=False)
-    _next_uid: int = field(default=0, init=False)
+    _active: dict[TaskId, _EngineRequest] = field(default_factory=dict, init=False)
 
     @property
     def has_work(self) -> bool:
@@ -314,36 +314,33 @@ class VllmBatchEngine:
 
     def submit(
         self,
+        task_id: TaskId,
         task_params: TextGenerationTaskParams,
         prompt: str,
         on_prefill_progress: Callable[[int, int], None] | None = None,
         distributed_prompt_progress_callback: Callable[[], None] | None = None,
         on_generation_token: Callable[[], None] | None = None,
-    ) -> int:
+    ) -> TaskId:
         token_ids, prompt_text, prompt_token_count = format_vllm_prompt(
             self.engine, task_params
         )
         logger.info(prompt_text)
-        uid = self._next_uid
-        self._next_uid += 1
-        request_id = f"vllm-batch-{uid}"
         sampling_params = make_vllm_sampling_params(
             self.engine, task_params, self.model_id
         )
         self.engine.add_request(
-            request_id, {"prompt_token_ids": token_ids}, sampling_params
+            task_id, {"prompt_token_ids": token_ids}, sampling_params
         )
-        self._active[uid] = _EngineRequest(
-            uid=uid,
-            request_id=request_id,
+        self._active[task_id] = _EngineRequest(
+            request_id=task_id,
             prompt_token_count=prompt_token_count,
             prompt_token_ids=token_ids,
             on_generation_token=on_generation_token,
             on_prefill_progress=on_prefill_progress,
         )
-        return uid
+        return task_id
 
-    def step(self) -> list[tuple[int, GenerationResponse]]:
+    def step(self) -> list[tuple[TaskId, GenerationResponse]]:
         if not self.has_work:
             return []
 
@@ -353,15 +350,13 @@ class VllmBatchEngine:
         max_batch_tokens: int = (
             getattr(self.engine.model_config, "max_num_batched_tokens", 2048) or 2048
         )  # type: ignore[reportUnknownMemberType]
-        results: list[tuple[int, GenerationResponse]] = []
-
-        rid_to_uid = {req.request_id: uid for uid, req in self._active.items()}
+        results: list[tuple[TaskId, GenerationResponse]] = []
 
         for output in outputs:
-            uid = rid_to_uid.get(output.request_id)
-            if uid is None:
+            task_id = TaskId(output.request_id)
+            if task_id not in self._active:
                 continue
-            req = self._active[uid]
+            req = self._active[task_id]
             completion = output.outputs[0]
             new_token_count = len(completion.token_ids)
             new_tokens = completion.token_ids[req.prev_token_count :]
@@ -397,7 +392,7 @@ class VllmBatchEngine:
                     req.on_generation_token()
                 results.append(
                     (
-                        uid,
+                        task_id,
                         _build_generation_response(
                             tokenizer,
                             token_id,
@@ -412,7 +407,7 @@ class VllmBatchEngine:
                 )
 
             if finish_reason:
-                del self._active[uid]
+                del self._active[task_id]
 
         for req in self._active.values():
             if not req.prefill_done:
@@ -427,12 +422,12 @@ class VllmBatchEngine:
 
         return results
 
-    def cancel(self, uids: list[int]) -> None:
-        rids = [self._active[uid].request_id for uid in uids if uid in self._active]
-        if rids:
-            self.engine.abort_request(rids)
-        for uid in uids:
-            self._active.pop(uid, None)
+    def cancel(self, task_ids: list[TaskId]) -> None:
+        to_abort = [tid for tid in task_ids if tid in self._active]
+        if to_abort:
+            self.engine.abort_request(to_abort)
+        for tid in task_ids:
+            self._active.pop(tid, None)
 
     def close(self) -> None:
         if not hasattr(self, "engine"):
@@ -450,6 +445,15 @@ class VllmBatchEngine:
 
 _weight_loading_callback: Callable[[int, int], None] | None = None
 _weight_loading_patched = False
+
+
+def get_weight_loading_callback() -> Callable[[int, int], None] | None:
+    return _weight_loading_callback
+
+
+def set_weight_loading_callback(cb: Callable[[int, int], None] | None) -> None:
+    global _weight_loading_callback
+    _weight_loading_callback = cb
 
 _LAYER_INDEX_PATTERN = re.compile(r"\.layers\.(\d+)\.")
 
@@ -471,7 +475,7 @@ def _wrap_weights_iterator(
     def patched(
         hf_weights_files: list[str], *args: object, **kwargs: object
     ) -> Generator[tuple[str, "torch.Tensor"], None, None]:  # pyright: ignore[reportUnknownParameterType]
-        callback = _weight_loading_callback
+        callback = get_weight_loading_callback()
         if callback is not None and hf_weights_files:
             model_dir = Path(hf_weights_files[0]).parent
             total_layers = _get_total_layers(model_dir)
@@ -541,14 +545,13 @@ def load_vllm_engine(
     trust_remote_code: bool,
     on_layer_loaded: Callable[[int, int], None] | None = None,
 ) -> tuple[LLMEngine, ToolParser | None, KVPrefixCache]:
-    global _weight_loading_callback
     patch_vllm()
     _patch_weight_loading_progress()
 
     os.environ.setdefault("FASTSAFETENSORS_NOGDS", "1")
 
     prefix_cache = KVPrefixCache(group=None)
-    _exo_prefix_cache_ref[0] = prefix_cache
+    set_prefix_cache(prefix_cache)
 
     engine_args = EngineArgs(
         model=model_path,
@@ -562,11 +565,8 @@ def load_vllm_engine(
         disable_log_stats=True,
     )
 
-    _weight_loading_callback = on_layer_loaded
-    try:
-        engine = LLMEngine.from_engine_args(engine_args)
-    finally:
-        _weight_loading_callback = None
+    set_weight_loading_callback(on_layer_loaded)
+    engine = LLMEngine.from_engine_args(engine_args)
 
     tool_parser: ToolParser | None = None
     tokenizer = engine.get_tokenizer()

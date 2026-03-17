@@ -1,15 +1,41 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch
 
 from exo.shared.logging import logger
+
+if TYPE_CHECKING:
+    from vllm.v1.worker.gpu_model_runner import GPUModelRunner
+
+    from exo.worker.engines.mlx.cache import KVPrefixCache
 
 INITIAL_FRACTION = 0.05
 GROWTH_HEADROOM_BYTES = 512 * 1024 * 1024
 MIN_GROWTH_BLOCKS = 16
 
 _patched = False
-_exo_prefix_cache_ref: list["object | None"] = [None]
+_prefix_cache: KVPrefixCache | None = None
+_model_runner: GPUModelRunner | None = None
+
+
+def get_prefix_cache() -> KVPrefixCache | None:
+    return _prefix_cache
+
+
+def set_prefix_cache(cache: KVPrefixCache | None) -> None:
+    global _prefix_cache
+    _prefix_cache = cache
+
+
+def get_model_runner() -> GPUModelRunner | None:
+    return _model_runner
+
+
+def set_model_runner(runner: GPUModelRunner | None) -> None:
+    global _model_runner
+    _model_runner = runner
 
 
 def patch_vllm() -> None:
@@ -101,13 +127,9 @@ def _patch_initialize_from_config() -> None:
 
     def patched(self: "Worker", kv_cache_config: "object") -> None:
         original(self, kv_cache_config)
-        _growable_model_runner_ref[0] = self.model_runner
+        set_model_runner(self.model_runner)
 
     Worker.initialize_from_config = patched  # type: ignore
-
-
-_growable_model_runner_ref: list["object | None"] = [None]
-
 
 def _patch_kv_cache_manager_init() -> None:
     from vllm.v1.core.kv_cache_manager import KVCacheManager
@@ -118,7 +140,7 @@ def _patch_kv_cache_manager_init() -> None:
         self: "KVCacheManager", *args: "object", **kwargs: "object"
     ) -> None:
         original_init(self, *args, **kwargs)
-        self._growable_model_runner = _growable_model_runner_ref[0]
+        self._growable_model_runner = get_model_runner()
 
     KVCacheManager.__init__ = patched_init  # type: ignore
 
@@ -301,7 +323,7 @@ def _patch_get_computed_blocks() -> None:
         self: KVCacheManager,
         request: Request,
     ) -> tuple[KVCacheBlocks, int]:
-        prefix_cache = _exo_prefix_cache_ref[0]
+        prefix_cache = get_prefix_cache()
         if prefix_cache is None or request.prompt_token_ids is None:
             return original(self, request)
 

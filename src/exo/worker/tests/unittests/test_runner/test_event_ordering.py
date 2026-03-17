@@ -139,8 +139,7 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
 
 class FakeExoBatchGenerator:
     def __init__(self, *_args: object, **_kwargs: object) -> None:
-        self._uid_counter = 0
-        self._pending: dict[int, GenerationResponse] = {}
+        self._pending: dict[str, GenerationResponse] = {}
 
     @property
     def has_work(self) -> bool:
@@ -148,23 +147,22 @@ class FakeExoBatchGenerator:
 
     def submit(
         self,
+        task_id: str = "",
         task_params: object = None,
         prompt: object = None,
         on_prefill_progress: object = None,
         distributed_prompt_progress_callback: object = None,
         on_generation_token: object = None,
-    ) -> int:
-        uid = self._uid_counter
-        self._uid_counter += 1
-        self._pending[uid] = GenerationResponse(
+    ) -> str:
+        self._pending[task_id] = GenerationResponse(
             text="hi",
             token=0,
             finish_reason="stop",
             usage=None,
         )
-        return uid
+        return task_id
 
-    def step(self) -> list[tuple[int, GenerationResponse]]:
+    def step(self) -> list[tuple[str, GenerationResponse]]:
         results = list(self._pending.items())
         self._pending.clear()
         return results
@@ -341,9 +339,10 @@ def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
                 runner_id=RUNNER_1_ID, runner_status=RunnerShuttingDown()
             ),
             TaskAcknowledged(task_id=SHUTDOWN_TASK_ID),
-            RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerShutdown()),
             TaskStatusUpdated(
                 task_id=SHUTDOWN_TASK_ID, task_status=TaskStatus.Complete
             ),
+            # SPECIAL EXCEPTION FOR RUNNER SHUTDOWN
+            RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerShutdown()),
         ],
     )

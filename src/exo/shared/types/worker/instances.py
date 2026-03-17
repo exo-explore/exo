@@ -40,6 +40,7 @@ class VllmInstance(BaseInstance):
     pass
 
 
+# TODO: Single node instance
 Instance = MlxRingInstance | MlxJacclInstance | VllmInstance
 
 

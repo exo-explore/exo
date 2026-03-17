@@ -329,7 +329,7 @@ class BatchGenerator(InferenceGenerator):
     _all_tasks: dict[TaskId, TextGeneration] = field(default_factory=dict, init=False)
     _queue: deque[TextGeneration] = field(default_factory=deque, init=False)
     _active_tasks: dict[
-        int,
+        TaskId,
         tuple[
             TextGeneration,
             GeneratorQueue[GenerationResponse],
@@ -389,7 +389,7 @@ class BatchGenerator(InferenceGenerator):
         while self._queue and len(self._active_tasks) < self.max_concurrent_requests:
             task = self._queue.popleft()
             try:
-                uid = self._start_task(task)
+                task_id = self._start_task(task)
             except PrefillCancelled:
                 continue
             except Exception as e:
@@ -409,7 +409,7 @@ class BatchGenerator(InferenceGenerator):
                     self.model_id,
                     task.task_params.tools,
                 )
-            self._active_tasks[uid] = (task, queue, output_generator)
+            self._active_tasks[task_id] = (task, queue, output_generator)
 
         if not self._gen.has_work:
             return self._apply_cancellations()
@@ -446,17 +446,17 @@ class BatchGenerator(InferenceGenerator):
 
         cancel_all = CANCEL_ALL_TASKS in self._cancelled_tasks
 
-        uids_to_cancel: list[int] = []
+        ids_to_cancel: list[TaskId] = []
         results: list[tuple[TaskId, Cancelled]] = []
 
-        for uid, (task, _, _) in list(self._active_tasks.items()):
+        for tid, (task, _, _) in list(self._active_tasks.items()):
             if task.task_id in self._cancelled_tasks or cancel_all:
-                uids_to_cancel.append(uid)
+                ids_to_cancel.append(tid)
                 results.append((task.task_id, Cancelled()))
-                del self._active_tasks[uid]
+                del self._active_tasks[tid]
 
-        if uids_to_cancel:
-            self._gen.cancel(uids_to_cancel)
+        if ids_to_cancel:
+            self._gen.cancel(ids_to_cancel)
 
         already_cancelled = {tid for tid, _ in results}
         for tid in self._cancelled_tasks:
@@ -479,7 +479,7 @@ class BatchGenerator(InferenceGenerator):
                 )
             )
 
-    def _start_task(self, task: TextGeneration) -> int:
+    def _start_task(self, task: TextGeneration) -> TaskId:
         _check_for_debug_prompts(task.task_params)
         prompt = apply_chat_template(self.tokenizer, task.task_params)
 
@@ -517,6 +517,7 @@ class BatchGenerator(InferenceGenerator):
                 self.agree_on_tasks()
 
         return self._gen.submit(
+            task_id=task.task_id,
             task_params=task.task_params,
             prompt=prompt,
             on_prefill_progress=on_prefill_progress,

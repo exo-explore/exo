@@ -12,6 +12,12 @@ class KVCacheGroupSpec:
     kv_cache_spec: KVCacheSpec
 
 @dataclass
+class KVCacheTensorSpec:
+    shared_by: list[str]
+    size: int
+
+@dataclass
 class KVCacheConfig:
     num_blocks: int
     kv_cache_groups: list[KVCacheGroupSpec]
+    kv_cache_tensors: list[KVCacheTensorSpec]
