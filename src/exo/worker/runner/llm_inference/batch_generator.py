@@ -317,7 +317,7 @@ class BatchGenerator(InferenceGenerator):
     device_rank: int
     cancel_receiver: MpReceiver[TaskId]
     event_sender: MpSender[Event]
-    _gen: ExoBatchGenerator | VllmBatchEngine
+    _gen: "ExoBatchGenerator | VllmBatchEngine"
     max_concurrent_requests: int = EXO_MAX_CONCURRENT_REQUESTS
     check_for_cancel_every: int = 50
 

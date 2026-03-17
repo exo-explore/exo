@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
 
 import mlx.core as mx
 from anyio import WouldBlock
@@ -61,7 +62,6 @@ from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
     load_mlx_items,
 )
-from exo.worker.engines.vllm.vllm_generator import VllmBatchEngine
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.batch_generator import (
     BatchGenerator,
@@ -71,6 +71,9 @@ from exo.worker.runner.llm_inference.batch_generator import (
 
 from .batch_generator import Cancelled, Finished
 from .tool_parsers import make_mlx_parser
+
+if TYPE_CHECKING:
+    pass
 
 
 class ExitCode(str, Enum):
@@ -481,7 +484,7 @@ class MlxBuilder(Builder):
         )
 
     def close(self):
-        with contextlib.suppress(NameError):
+        with contextlib.suppress(NameError, AttributeError):
             del self.inference_model, self.tokenizer
 
 
@@ -515,9 +518,8 @@ class VllmBuilder(Builder):
         )
 
     def build(self) -> InferenceGenerator:
-        from mlx_lm.tokenizer_utils import TokenizerWrapper
-
         from exo.worker.engines.vllm.vllm_generator import (
+            VllmBatchEngine,
             warmup_vllm_engine,
         )
 
@@ -546,5 +548,5 @@ class VllmBuilder(Builder):
         )
 
     def close(self) -> None:
-        with contextlib.suppress(NameError):
+        with contextlib.suppress(NameError, AttributeError):
             del self._engine, self._prefix_cache, self._tool_parser

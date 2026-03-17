@@ -1,6 +1,6 @@
 import os
 from copy import deepcopy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import mlx.core as mx
 import psutil
@@ -135,8 +135,7 @@ class KVPrefixCache:
 
     def _get_mlx_cache(self, index: int) -> MLXCacheType:
         cached = self.caches[index]
-        assert not isinstance(cached, TorchKVCache)
-        return cached
+        return cast(MLXCacheType, cached)
 
     def _get_snapshot(
         self, entry_index: int, target_token_count: int
@@ -220,7 +219,7 @@ class KVPrefixCache:
 
     def lookup(
         self, prompt_token_ids: list[int]
-    ) -> tuple[TorchKVCache | None, int, int | None]:
+    ) -> tuple["TorchKVCache | None", int, int | None]:
         from exo.worker.engines.kv_cache import TorchKVCache
 
         prompt_mx = mx.array(prompt_token_ids)
@@ -251,7 +250,9 @@ class KVPrefixCache:
         torch_cache = TorchKVCache.from_mlx_cache(cached)
         return torch_cache.trim_to(best_length), best_length, best_index
 
-    def add_from_torch(self, prompt_token_ids: list[int], cache: TorchKVCache) -> None:
+    def add_from_torch(
+        self, prompt_token_ids: list[int], cache: "TorchKVCache"
+    ) -> None:
         self._evict_if_needed()
         self.prompts.append(mx.array(prompt_token_ids))
         self.caches.append(cache.detach_cpu())

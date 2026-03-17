@@ -1,13 +1,8 @@
-from typing import TYPE_CHECKING
-
 import torch
+from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 
 from exo.shared.logging import logger
-
-if TYPE_CHECKING:
-    from vllm.v1.worker.gpu_model_runner import GPUModelRunner
-
-    from exo.worker.engines.mlx.cache import KVPrefixCache
+from exo.worker.engines.mlx.cache import KVPrefixCache
 
 INITIAL_FRACTION = 0.05
 GROWTH_HEADROOM_BYTES = 512 * 1024 * 1024
