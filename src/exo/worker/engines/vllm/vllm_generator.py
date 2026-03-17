@@ -1,4 +1,5 @@
 import gc
+import math
 import os
 import re
 import sys
@@ -23,7 +24,6 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import TaskId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
-from exo.worker.engines.vllm.kv_cache import TorchKVCache
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.utils_mlx import get_eos_token_ids_for_model
 from exo.worker.engines.vllm.growable_cache import (
@@ -31,6 +31,7 @@ from exo.worker.engines.vllm.growable_cache import (
     patch_vllm,
     set_prefix_cache,
 )
+from exo.worker.engines.vllm.kv_cache import TorchKVCache
 from exo.worker.engines.vllm.prompt_format import (
     format_vllm_prompt,
     make_vllm_sampling_params,
@@ -279,7 +280,7 @@ def vllm_generate(
                     )
 
 
-def warmup_vllm_engine(engine: LLMEngine) -> None:
+def warmup_vllm_engine(engine: LLMEngine) -> int:
     tokenizer = engine.get_tokenizer()
     messages = [
         {
@@ -293,9 +294,17 @@ def warmup_vllm_engine(engine: LLMEngine) -> None:
     token_ids: list[int] = tokenizer.encode(prompt_text, add_special_tokens=False)  # type: ignore
     params = SamplingParams(max_tokens=50, detokenize=False)
     engine.add_request("warmup", {"prompt_token_ids": token_ids}, params)
+    t = time.monotonic()
+    tokens_generated = 0
     while engine.has_unfinished_requests():
         engine.step()
-    logger.info("vLLM warmup complete")
+        tokens_generated += 1
+    elapsed = max(time.monotonic() - t, 0.001)
+    check_for_cancel_every = min(math.ceil(tokens_generated / elapsed), 100)
+    logger.info(
+        f"vLLM warmup complete, check_for_cancel_every={check_for_cancel_every}"
+    )
+    return check_for_cancel_every
 
 
 @dataclass(eq=False)
@@ -305,6 +314,9 @@ class VllmBatchEngine:
     prefix_cache: KVPrefixCache
 
     _active: dict[TaskId, _EngineRequest] = field(default_factory=dict, init=False)
+
+    def warmup(self) -> int:
+        return warmup_vllm_engine(self.engine)
 
     @property
     def has_work(self) -> bool:

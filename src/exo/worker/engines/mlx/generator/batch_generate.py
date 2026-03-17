@@ -18,6 +18,7 @@ from exo.shared.types.api import (
     TopLogprobItem,
     Usage,
 )
+from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import MLXCacheType, Model
 from exo.shared.types.tasks import TaskId
@@ -35,6 +36,7 @@ from exo.worker.engines.mlx.generator.generate import (
     eos_ids_from_tokenizer,
     extract_top_logprobs,
     prefill,
+    warmup_inference,
 )
 from exo.worker.engines.mlx.utils_mlx import fix_unmatched_think_end_tokens
 from exo.worker.runner.bootstrap import logger
@@ -75,6 +77,7 @@ class ExoBatchGenerator:
     tokenizer: TokenizerWrapper
     group: mx.distributed.Group | None
     kv_prefix_cache: KVPrefixCache | None
+    model_id: ModelId
 
     _mlx_gen: MlxBatchGenerator = field(init=False)
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
@@ -86,6 +89,9 @@ class ExoBatchGenerator:
             stop_tokens=set(eos_ids_from_tokenizer(self.tokenizer)),
             prefill_step_size=4096,
         )
+
+    def warmup(self) -> int:
+        return warmup_inference(self.model, self.tokenizer, self.group, self.model_id)
 
     @property
     def has_work(self) -> bool:

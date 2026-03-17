@@ -447,11 +447,28 @@ class MlxBuilder(Builder):
 
         kv_prefix_cache = KVPrefixCache(self.group)
 
+        from functools import partial
+
+        from exo.worker.engines.mlx.generator.generate import (
+            mlx_generate,
+            warmup_inference,
+        )
+
         device_rank = 0 if self.group is None else self.group.rank()
+        generate_fn = partial(
+            mlx_generate, model=self.inference_model, tokenizer=self.tokenizer
+        )
+        warmup_fn = partial(
+            warmup_inference,
+            model=self.inference_model,
+            tokenizer=self.tokenizer,
+            group=self.group,
+            model_id=self.model_id,
+        )
+
         if os.environ.get("EXO_NO_BATCH"):
             logger.info("using SequentialGenerator (batching disabled)")
             return SequentialGenerator(
-                model=self.inference_model,
                 tokenizer=self.tokenizer,
                 group=self.group,
                 tool_parser=tool_parser,
@@ -460,6 +477,8 @@ class MlxBuilder(Builder):
                 device_rank=device_rank,
                 cancel_receiver=self.cancel_receiver,
                 event_sender=self.event_sender,
+                _generate_fn=generate_fn,
+                _warmup_fn=warmup_fn,
             )
         from exo.worker.runner.llm_inference.batch_generator import ExoBatchGenerator
 
@@ -469,9 +488,9 @@ class MlxBuilder(Builder):
             tokenizer=self.tokenizer,
             group=self.group,
             kv_prefix_cache=kv_prefix_cache,
+            model_id=self.model_id,
         )
         return BatchGenerator(
-            model=self.inference_model,
             tokenizer=self.tokenizer,
             group=self.group,
             tool_parser=tool_parser,
@@ -519,12 +538,8 @@ class VllmBuilder(Builder):
         )
 
     def build(self) -> InferenceGenerator:
-        from exo.worker.engines.vllm.vllm_generator import (
-            VllmBatchEngine,
-            warmup_vllm_engine,
-        )
+        from exo.worker.engines.vllm.vllm_generator import VllmBatchEngine
 
-        warmup_vllm_engine(self._engine)
         gen = VllmBatchEngine(
             engine=self._engine,
             model_id=self.model_id,
@@ -535,7 +550,6 @@ class VllmBuilder(Builder):
 
         logger.info(f"using BatchGenerator (vLLM, max_concurrent={max_concurrent})")
         return BatchGenerator(
-            model=None,
             tokenizer=tokenizer,
             group=None,
             tool_parser=self._tool_parser,

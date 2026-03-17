@@ -13,6 +13,8 @@ from exo.worker.engines.mlx.utils_mlx import (
 def format_vllm_prompt(
     engine: LLMEngine, params: TextGenerationTaskParams
 ) -> tuple[list[int], str, int]:
+    # we should have our own wrapper
+    # (instead of abusing mlx's TokenizerWrapper, use tokenizers Tokenizer)
     tokenizer = TokenizerWrapper(engine.get_tokenizer())
     prompt_text = apply_chat_template(tokenizer, params)
     token_ids: list[int] = tokenizer.encode(prompt_text, add_special_tokens=False)  # type: ignore[reportUnknownMemberType]

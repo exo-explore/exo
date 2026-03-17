@@ -2,8 +2,6 @@ from collections.abc import Generator
 from functools import cache
 from typing import Any
 
-from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
-from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from openai_harmony import (
     HarmonyEncodingName,
@@ -15,7 +13,6 @@ from openai_harmony import (
 
 from exo.shared.types.api import ToolCallItem
 from exo.shared.types.common import ModelId
-from exo.shared.types.mlx import Model
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.worker.engines.mlx.utils_mlx import (
     detect_thinking_prompt_suffix,
@@ -35,29 +32,28 @@ def apply_all_parsers(
     prompt: str,
     tool_parser: ToolParser | None,
     tokenizer: TokenizerWrapper,
-    model_type: type[Model] | type[None],
     model_id: ModelId,
     tools: list[dict[str, Any]] | None,
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
-    mlx_generator = receiver
+    gen = receiver
 
     if tokenizer.has_thinking:
-        mlx_generator = parse_thinking_models(
-            mlx_generator,
+        gen = parse_thinking_models(
+            gen,
             tokenizer.think_start,
             tokenizer.think_end,
             starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
         )
 
     lower = model_id.normalize().lower()
-    if issubclass(model_type, GptOssModel) or "gpt-oss" in lower or "gpt_oss" in lower:
-        mlx_generator = parse_gpt_oss(mlx_generator)
-    elif issubclass(model_type, DeepseekV32Model) or "deepseek" in lower:
-        mlx_generator = parse_deepseek_v32(mlx_generator)
+    if "gpt-oss" in lower or "gpt_oss" in lower:
+        gen = parse_gpt_oss(gen)
+    elif "deepseek" in lower:
+        gen = parse_deepseek_v32(gen)
     elif tool_parser:
-        mlx_generator = parse_tool_calls(mlx_generator, tool_parser, tools)
+        gen = parse_tool_calls(gen, tool_parser, tools)
 
-    return mlx_generator
+    return gen
 
 
 _GPT_OSS_CHANNEL_TOKEN = 200005
