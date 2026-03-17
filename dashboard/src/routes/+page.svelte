@@ -42,6 +42,9 @@
     setSelectedChatModel,
     selectedChatModel,
     sendMessage,
+    generateImage,
+    editImage,
+    editingImage,
     messages,
     debugMode,
     toggleDebugMode,
@@ -838,6 +841,52 @@
     if (!model?.tasks) return false;
     return model.tasks.includes("ImageToImage");
   }
+
+  // Route a message to the correct endpoint based on model capabilities.
+  // Image models go to generateImage/editImage; text models go to sendMessage.
+  function routeMessage(
+    content: string,
+    files?: {
+      id: string;
+      name: string;
+      type: string;
+      textContent?: string;
+      preview?: string;
+    }[],
+  ) {
+    const model = selectedChatModel();
+    if (!model) {
+      sendMessage(content, files, null);
+      return;
+    }
+
+    const currentEditImage = editingImage();
+
+    // Image editing mode (explicit edit or attached image with ImageToImage model)
+    if (currentEditImage && content && modelSupportsImageEditing(model)) {
+      editImage(content, currentEditImage.imageDataUrl);
+      return;
+    }
+    if (
+      modelSupportsImageEditing(model) &&
+      files?.length &&
+      files[0].preview &&
+      content
+    ) {
+      editImage(content, files[0].preview);
+      return;
+    }
+
+    // Text-to-image generation
+    if (modelSupportsImageGeneration(model) && content) {
+      generateImage(content);
+      return;
+    }
+
+    // Default: text chat
+    sendMessage(content, files, null);
+  }
+
   let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
   type InstanceMeta = "MlxRing" | "MlxJaccl" | "Vllm";
 
@@ -2858,7 +2907,7 @@
         // Running model is same or better tier — use it directly
         setSelectedChatModel(bestRunning.id);
         if (!chatStarted) createConversation();
-        sendMessage(content, files);
+        routeMessage(content, files);
         return;
       }
     }
@@ -2875,7 +2924,7 @@
     if (hasRunningInstance(autoModel.id)) {
       setSelectedChatModel(autoModel.id);
       if (!chatStarted) createConversation();
-      sendMessage(content, files);
+      routeMessage(content, files);
       return;
     }
 
@@ -3028,7 +3077,7 @@
       if (pendingAutoMessage) {
         const msg = pendingAutoMessage;
         pendingAutoMessage = null;
-        sendMessage(msg.content, msg.files);
+        routeMessage(msg.content, msg.files);
       }
       return;
     }
@@ -3107,7 +3156,7 @@
     // Model is selected and running — send directly
     if (model && hasRunningInstance(model)) {
       chatLaunchState = "ready";
-      sendMessage(content, files, null);
+      routeMessage(content, files);
       return;
     }
 

@@ -58,8 +58,6 @@ class _EngineTask:
     matched_index: int | None
     cache_snapshots: list[CacheSnapshot] | None
     detokenizer: StreamingDetokenizer
-    prefill_tps: float = 0.0
-    prompt_token_count: int = 0
     on_generation_token: Callable[[], None] | None = None
     generated_text_parts: list[str] = field(default_factory=list)
     potential_stop_sequence_text: str = ""
@@ -67,6 +65,7 @@ class _EngineTask:
     generation_start_time: float = 0.0
     in_thinking: bool = False
     reasoning_tokens: int = 0
+    prefill_tps: float = 0.0
 
 
 @dataclass(eq=False)
@@ -141,7 +140,7 @@ class ExoBatchGenerator:
             top_k=task_params.top_k if task_params.top_k is not None else 0,
         )
 
-        prefill_tps, prefill_tokens, cache_snapshots = prefill(
+        _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
             self.model,
             self.tokenizer,
             sampler,
@@ -208,11 +207,10 @@ class ExoBatchGenerator:
             prefix_hit_length=prefix_hit_length,
             matched_index=matched_index,
             cache_snapshots=cache_snapshots or None,
-            prefill_tps=prefill_tps,
-            prompt_token_count=prefill_tokens,
             detokenizer=self.tokenizer.detokenizer,
             on_generation_token=on_generation_token,
             generation_start_time=time.perf_counter(),
+            prefill_tps=_prefill_tps,
         )
 
         return uid
@@ -289,15 +287,22 @@ class ExoBatchGenerator:
             stats: GenerationStats | None = None
             usage: Usage | None = None
             if is_done:
-                generation_elapsed = time.perf_counter() - state.generation_start_time
-                generation_tps = (
-                    state.completion_tokens / generation_elapsed
-                    if generation_elapsed > 0
-                    else 0.0
-                )
+                try:
+                    mlx_stats = self._exo_gen.stats()
+                    generation_tps = mlx_stats.generation_tps
+                except ZeroDivisionError:
+                    generation_elapsed = (
+                        time.perf_counter() - state.generation_start_time
+                    )
+                    generation_tps = (
+                        state.completion_tokens / generation_elapsed
+                        if generation_elapsed > 0
+                        else 0.0
+                    )
+
                 stats = GenerationStats(
                     prompt_tps=state.prefill_tps,
-                    generation_tps=float(generation_tps),
+                    generation_tps=generation_tps,
                     prompt_tokens=len(state.all_prompt_tokens),
                     generation_tokens=state.completion_tokens,
                     peak_memory_usage=Memory.from_gb(mx.get_peak_memory() / 1e9),
