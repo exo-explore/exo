@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import itertools
 import time
 from abc import ABC, abstractmethod

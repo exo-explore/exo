@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import os
 from copy import deepcopy
 from typing import TYPE_CHECKING

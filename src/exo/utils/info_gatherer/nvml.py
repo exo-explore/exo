@@ -1,6 +1,4 @@
 # pyright: reportMissingImports=false
-from __future__ import annotations
-
 from exo.shared.types.profiling import SystemPerformanceProfile
 from exo.utils.pydantic_ext import TaggedModel
 
@@ -72,7 +70,9 @@ def gather_nvidia_metrics() -> NvmlMetrics | None:
         nvmlShutdown()
 
         gpu_load_fraction = min(total_gpu_power / _GPU_POWER_MAX, 1.0)
-        estimated_cpu_power = _CPU_POWER_IDLE + (_CPU_POWER_MAX - _CPU_POWER_IDLE) * gpu_load_fraction
+        estimated_cpu_power = (
+            _CPU_POWER_IDLE + (_CPU_POWER_MAX - _CPU_POWER_IDLE) * gpu_load_fraction
+        )
 
         return NvmlMetrics(
             system_profile=SystemPerformanceProfile(

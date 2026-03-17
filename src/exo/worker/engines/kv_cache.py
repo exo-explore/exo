@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections.abc import Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -100,7 +98,7 @@ class TorchKVCache:
             if isinstance(layer, (KVLayerState, RotatingKVLayerState))
         ]
 
-    def detach_cpu(self) -> TorchKVCache:
+    def detach_cpu(self) -> "TorchKVCache":
         layers: list[LayerState] = []
         for layer in self.layers:
             if isinstance(layer, KVLayerState):
@@ -134,7 +132,7 @@ class TorchKVCache:
             torch.cuda.synchronize()
         return TorchKVCache(layers, list(self.token_offset_per_group))
 
-    def trim_to(self, num_tokens: int) -> TorchKVCache:
+    def trim_to(self, num_tokens: int) -> "TorchKVCache":
         trimmed = TorchKVCache(list(self.layers), list(self.token_offset_per_group))
         trimmed._num_tokens = num_tokens
         return trimmed
@@ -149,7 +147,7 @@ class TorchKVCache:
         cache: Sequence[
             KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList
         ],
-    ) -> TorchKVCache:
+    ) -> "TorchKVCache":
         layers: list[LayerState] = []
         for c in cache:
             if isinstance(c, RotatingKVCache):
@@ -230,7 +228,7 @@ class TorchKVCache:
         layer_to_group: list[int],
         num_tokens: int,
         token_offset_per_group: list[int] | None = None,
-    ) -> TorchKVCache:
+    ) -> "TorchKVCache":
         block_tables = [
             torch.tensor(ids, dtype=torch.long) for ids in block_ids_per_group
         ]
