@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import contextlib
 import json
@@ -25,6 +26,7 @@ from exo.master.adapters.chat_completions import (
     chat_request_to_text_generation,
     collect_chat_response,
     generate_chat_stream,
+    sse_with_keepalive,
 )
 from exo.master.adapters.claude import (
     claude_request_to_text_generation,
@@ -611,7 +613,7 @@ class API:
                     if chunk.finish_reason is not None:
                         break
 
-        except anyio.get_cancelled_exc_class():
+        except (anyio.get_cancelled_exc_class(), asyncio.CancelledError):
             command = TaskCancelled(cancelled_command_id=command_id)
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(
@@ -712,9 +714,11 @@ class API:
 
         if payload.stream:
             return StreamingResponse(
-                generate_chat_stream(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                sse_with_keepalive(
+                    generate_chat_stream(
+                        command.command_id,
+                        self._token_chunk_stream(command.command_id),
+                    ),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -965,7 +969,7 @@ class API:
                         del image_total_chunks[key]
                         del image_metadata[key]
 
-        except anyio.get_cancelled_exc_class():
+        except (anyio.get_cancelled_exc_class(), asyncio.CancelledError):
             command = TaskCancelled(cancelled_command_id=command_id)
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(
@@ -1051,7 +1055,7 @@ class API:
                     )
 
             return (images, stats if capture_stats else None)
-        except anyio.get_cancelled_exc_class():
+        except (anyio.get_cancelled_exc_class(), asyncio.CancelledError):
             command = TaskCancelled(cancelled_command_id=command_id)
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(

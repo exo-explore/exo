@@ -147,6 +147,40 @@ def chunk_to_response(
     )
 
 
+async def sse_with_keepalive(
+    sse_stream: AsyncGenerator[str, None],
+    interval: float = 15.0,
+) -> AsyncGenerator[str, None]:
+    import asyncio
+
+    queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def _producer() -> None:
+        try:
+            async for line in sse_stream:
+                await queue.put(line)
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(_producer())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=interval)
+                if item is None:
+                    return
+                yield item
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+
 async def generate_chat_stream(
     command_id: CommandId,
     chunk_stream: AsyncGenerator[
