@@ -321,7 +321,7 @@ def _patch_get_computed_blocks() -> None:
         if prefix_cache is None or request.prompt_token_ids is None:
             return original(self, request)
 
-        from exo.worker.engines.kv_cache import (
+        from exo.worker.engines.vllm.kv_cache import (
             TorchKVCache as _TorchKVCache,  # noqa: F811
         )
 

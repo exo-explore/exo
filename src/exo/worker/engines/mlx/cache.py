@@ -19,7 +19,7 @@ from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
 from exo.worker.runner.bootstrap import logger
 
 if TYPE_CHECKING:
-    from exo.worker.engines.kv_cache import TorchKVCache
+    from exo.worker.engines.vllm.kv_cache import TorchKVCache
 
 
 # Fraction of device memory above which LRU eviction kicks in.
@@ -220,7 +220,7 @@ class KVPrefixCache:
     def lookup(
         self, prompt_token_ids: list[int]
     ) -> tuple["TorchKVCache | None", int, int | None]:
-        from exo.worker.engines.kv_cache import TorchKVCache
+        from exo.worker.engines.vllm.kv_cache import TorchKVCache
 
         prompt_mx = mx.array(prompt_token_ids)
         max_length = len(prompt_token_ids)

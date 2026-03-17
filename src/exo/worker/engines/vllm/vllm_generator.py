@@ -1,12 +1,10 @@
 import gc
-import json
 import os
 import re
 import sys
 import time
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import torch
 from vllm.engine.arg_utils import EngineArgs
@@ -25,7 +23,7 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import TaskId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
-from exo.worker.engines.kv_cache import TorchKVCache
+from exo.worker.engines.vllm.kv_cache import TorchKVCache
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.utils_mlx import get_eos_token_ids_for_model
 from exo.worker.engines.vllm.growable_cache import (
@@ -457,17 +455,16 @@ def set_weight_loading_callback(cb: Callable[[int, int], None] | None) -> None:
 
 
 _LAYER_INDEX_PATTERN = re.compile(r"\.layers\.(\d+)\.")
+_n_layers: int = 1
 
 
-def _get_total_layers(model_dir: Path) -> int:
-    config_file = model_dir / "config.json"
-    if config_file.exists():
-        with open(config_file) as f:
-            config: dict[str, object] = json.load(f)
-        num = config.get("num_hidden_layers")
-        if isinstance(num, int) and num > 0:
-            return num
-    return 1
+def get_n_layers() -> int:
+    return _n_layers
+
+
+def set_n_layers(n: int) -> None:
+    global _n_layers
+    _n_layers = n
 
 
 def _wrap_weights_iterator(
@@ -478,8 +475,7 @@ def _wrap_weights_iterator(
     ) -> Generator[tuple[str, "torch.Tensor"], None, None]:  # pyright: ignore[reportUnknownParameterType]
         callback = get_weight_loading_callback()
         if callback is not None and hf_weights_files:
-            model_dir = Path(hf_weights_files[0]).parent
-            total_layers = _get_total_layers(model_dir)
+            total_layers = get_n_layers()
             seen_layers: set[int] = set()
             last_reported = 0
             for name, tensor in original(hf_weights_files, *args, **kwargs):  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
@@ -544,6 +540,7 @@ def load_vllm_engine(
     model_path: str,
     model_id: ModelId,
     trust_remote_code: bool,
+    n_layers: int = 1,
     on_layer_loaded: Callable[[int, int], None] | None = None,
 ) -> tuple[LLMEngine, ToolParser | None, KVPrefixCache]:
     patch_vllm()
@@ -553,6 +550,7 @@ def load_vllm_engine(
 
     prefix_cache = KVPrefixCache(group=None)
     set_prefix_cache(prefix_cache)
+    set_n_layers(n_layers)
 
     engine_args = EngineArgs(
         model=model_path,

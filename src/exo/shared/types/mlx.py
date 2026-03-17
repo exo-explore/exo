@@ -12,7 +12,7 @@ from mlx_lm.models.cache import (
     RotatingKVCache,
 )
 
-from exo.worker.engines.kv_cache import TorchKVCache
+from exo.worker.engines.vllm.kv_cache import TorchKVCache
 
 MLXCacheType = Sequence[
     KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList

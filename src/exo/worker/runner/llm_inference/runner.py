@@ -514,6 +514,7 @@ class VllmBuilder(Builder):
             model_path=self.model_path,
             model_id=self.model_id,
             trust_remote_code=self.trust_remote_code,
+            n_layers=bound_instance.bound_shard.model_card.n_layers,
             on_layer_loaded=on_layer_loaded,
         )
 
