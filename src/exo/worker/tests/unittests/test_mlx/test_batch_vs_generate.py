@@ -12,6 +12,7 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.common import ModelId
 from exo.shared.types.mlx import MLXCacheType, Model
+from exo.shared.types.tasks import TaskId
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.worker.engines.mlx.cache import CacheSnapshot, KVPrefixCache, cache_length
 from exo.worker.engines.mlx.generator.batch_generate import ExoBatchGenerator
@@ -87,7 +88,9 @@ def _collect_batch_generate(
     )
 
     prompt = apply_chat_template(tokenizer=tokenizer, task_params=task_params)
-    exo_gen.submit(task_params=task_params, prompt=prompt)
+    exo_gen.submit(
+        task_id=TaskId("test-single"), task_params=task_params, prompt=prompt
+    )
 
     tokens: list[int] = []
     while exo_gen.has_work:
@@ -369,24 +372,28 @@ class TestBatchVsGenerate:
 
             prompt_a = apply_chat_template(tokenizer=tokenizer, task_params=task_a)
             prompt_b = apply_chat_template(tokenizer=tokenizer, task_params=task_b)
-            uid_a = exo_gen.submit(task_params=task_a, prompt=prompt_a)
-            uid_b = exo_gen.submit(task_params=task_b, prompt=prompt_b)
+            tid_a = exo_gen.submit(
+                task_id=TaskId("batch-a"), task_params=task_a, prompt=prompt_a
+            )
+            tid_b = exo_gen.submit(
+                task_id=TaskId("batch-b"), task_params=task_b, prompt=prompt_b
+            )
 
-            batch_tokens: dict[int, list[int]] = {uid_a: [], uid_b: []}
-            finished: set[int] = set()
+            batch_tokens: dict[str, list[int]] = {tid_a: [], tid_b: []}
+            finished: set[str] = set()
             while exo_gen.has_work:
                 results = exo_gen.step()
-                for uid, response in results:
-                    batch_tokens[uid].append(response.token)
+                for tid, response in results:
+                    batch_tokens[tid].append(response.token)
                     if response.finish_reason is not None:
-                        finished.add(uid)
+                        finished.add(tid)
 
             exo_gen.close()
 
             # ── Verify both completed ──
-            assert len(batch_tokens[uid_a]) > 0, "No tokens for task A"
-            assert len(batch_tokens[uid_b]) > 0, "No tokens for task B"
-            assert uid_a in finished, "Task A never finished"
-            assert uid_b in finished, "Task B never finished"
+            assert len(batch_tokens[tid_a]) > 0, "No tokens for task A"
+            assert len(batch_tokens[tid_b]) > 0, "No tokens for task B"
+            assert tid_a in finished, "Task A never finished"
+            assert tid_b in finished, "Task B never finished"
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)

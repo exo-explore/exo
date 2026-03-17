@@ -1,6 +1,3 @@
-# pyright: reportUnknownMemberType=false, reportAttributeAccessIssue=false
-# pyright: reportUnknownVariableType=false, reportUnknownParameterType=false
-# pyright: reportUnknownArgumentType=false
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
@@ -53,8 +50,8 @@ def _mx_to_torch(arr: mx.array) -> torch.Tensor:
 def _torch_to_mx(t: torch.Tensor) -> mx.array:
     t = t.detach().cpu()
     if t.dtype == torch.bfloat16:
-        return mx.array(t.float().numpy()).astype(mx.bfloat16)
-    return mx.array(t.numpy())
+        return mx.array(t.float().numpy()).astype(mx.bfloat16)  # pyright: ignore[reportAny]
+    return mx.array(t.numpy())  # pyright: ignore[reportAny]
 
 
 def _split_kv(
@@ -87,6 +84,7 @@ class TorchKVCache:
     ):
         self.layers = layers
         self.token_offset_per_group = token_offset_per_group or []
+        self._num_tokens: int | None = None
 
     @property
     def num_layers(self) -> int:
@@ -169,7 +167,7 @@ class TorchKVCache:
                 else:
                     k, v = c.state
                     kt, vt = _kv_to_nhd(k, v)  # pyright: ignore[reportArgumentType]
-                    keep, max_size, offset, idx = (int(x) for x in c.meta_state)
+                    keep, max_size, offset, idx = (int(x) for x in c.meta_state)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType, reportUnknownArgumentType]
                     layers.append(
                         RotatingKVLayerState(
                             keys=kt,

@@ -455,6 +455,7 @@ def set_weight_loading_callback(cb: Callable[[int, int], None] | None) -> None:
     global _weight_loading_callback
     _weight_loading_callback = cb
 
+
 _LAYER_INDEX_PATTERN = re.compile(r"\.layers\.(\d+)\.")
 
 

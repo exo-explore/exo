@@ -131,6 +131,7 @@ def _patch_initialize_from_config() -> None:
 
     Worker.initialize_from_config = patched  # type: ignore
 
+
 def _patch_kv_cache_manager_init() -> None:
     from vllm.v1.core.kv_cache_manager import KVCacheManager
 

@@ -32,6 +32,7 @@ from exo.utils.pydantic_ext import TaggedModel
 from exo.utils.task_group import TaskGroup
 
 from .macmon import MacmonMetrics
+from .nvml import NvmlMetrics
 from .system_info import (
     get_friendly_name,
     get_model_and_chip,
@@ -41,6 +42,12 @@ from .system_info import (
 )
 
 IS_DARWIN = sys.platform == "darwin"
+
+
+def _has_nvml() -> bool:
+    from exo.utils.info_gatherer.nvml import has_nvml
+
+    return has_nvml()
 
 
 async def _get_thunderbolt_devices() -> set[str] | None:
@@ -354,6 +361,21 @@ async def _gather_iface_map() -> dict[str, str] | None:
     return ports
 
 
+class VllmCapability(TaggedModel):
+    available: bool
+    version: str | None = None
+
+    @classmethod
+    async def gather(cls) -> Self:
+        try:
+            import importlib
+
+            vllm = importlib.import_module("vllm")
+            return cls(available=True, version=getattr(vllm, "__version__", None))
+        except ImportError:
+            return cls(available=False)
+
+
 GatheredInfo = (
     MacmonMetrics
     | MemoryUsage
@@ -362,6 +384,8 @@ GatheredInfo = (
     | MacThunderboltConnections
     | RdmaCtlStatus
     | ThunderboltBridgeInfo
+    | VllmCapability
+    | NvmlMetrics
     | NodeConfig
     | MiscData
     | StaticNodeInformation
@@ -381,6 +405,7 @@ class InfoGatherer:
     static_info_poll_interval: float | None = 60
     rdma_ctl_poll_interval: float | None = 10 if IS_DARWIN else None
     disk_poll_interval: float | None = 30
+    vllm_capability_poll_interval: float | None = 60
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     async def run(self):
@@ -389,7 +414,6 @@ class InfoGatherer:
                 if (macmon_path := shutil.which("macmon")) is not None:
                     tg.start_soon(self._monitor_macmon, macmon_path)
                 else:
-                    # macmon not installed — fall back to psutil for memory
                     logger.warning(
                         "macmon not found, falling back to psutil for memory monitoring"
                     )
@@ -397,11 +421,14 @@ class InfoGatherer:
                 tg.start_soon(self._monitor_system_profiler_thunderbolt_data)
                 tg.start_soon(self._monitor_thunderbolt_bridge_status)
                 tg.start_soon(self._monitor_rdma_ctl_status)
+            elif _has_nvml():
+                tg.start_soon(self._monitor_nvml_metrics)
             tg.start_soon(self._watch_system_info)
             tg.start_soon(self._monitor_memory_usage)
             tg.start_soon(self._monitor_misc)
             tg.start_soon(self._monitor_static_info)
             tg.start_soon(self._monitor_disk_usage)
+            tg.start_soon(self._monitor_vllm_capability)
 
             nc = await NodeConfig.gather()
             if nc is not None:
@@ -524,6 +551,26 @@ class InfoGatherer:
             except Exception as e:
                 logger.warning(f"Error gathering disk usage: {e}")
             await anyio.sleep(self.disk_poll_interval)
+
+    async def _monitor_nvml_metrics(self):
+        while True:
+            try:
+                from exo.utils.info_gatherer.nvml import gather_nvidia_metrics
+
+                metrics = gather_nvidia_metrics()
+                if metrics is not None:
+                    await self.info_sender.send(metrics)
+            except Exception as e:
+                logger.warning(f"Error gathering NVML metrics: {e}")
+            await anyio.sleep(1)
+
+    async def _monitor_vllm_capability(self):
+        if self.vllm_capability_poll_interval is None:
+            return
+        try:
+            await self.info_sender.send(await VllmCapability.gather())
+        except Exception as e:
+            logger.warning(f"Error gathering vLLM capability: {e}")
 
     async def _monitor_macmon(self, macmon_path: str):
         if self.macmon_interval is None:

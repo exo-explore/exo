@@ -167,9 +167,9 @@ class FakeExoBatchGenerator:
         self._pending.clear()
         return results
 
-    def cancel(self, uids: list[int]) -> None:
-        for uid in uids:
-            self._pending.pop(uid, None)
+    def cancel(self, task_ids: list[str]) -> None:
+        for tid in task_ids:
+            self._pending.pop(tid, None)
 
     def close(self) -> None:
         pass

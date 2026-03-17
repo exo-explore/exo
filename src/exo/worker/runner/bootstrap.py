@@ -38,7 +38,7 @@ def _ensure_cuda_libs() -> None:
                 try:
                     ctypes.CDLL(str(lib_path), mode=ctypes.RTLD_GLOBAL)
                     logger.info(f"Loaded CUDA host lib: {lib_path}")
-                except OSError as e:
+                except OSError:
                     logger.warning(f"Failed to load {lib_path}")
                     raise
         return

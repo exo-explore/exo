@@ -220,14 +220,6 @@ class API:
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
 
-        try:
-            import vllm
-
-            logger.info(f"Found vllm version {vllm.__version__}")
-            self._vllm_available = True
-        except ImportError:
-            self._vllm_available = False
-
         self.app = FastAPI()
 
         @self.app.middleware("http")
@@ -465,7 +457,7 @@ class API:
             "4bit",
             "8bit",
         )
-        skip_mlx = self._vllm_available and is_quantized_mlx
+        skip_mlx = any(self.state.node_vllm.values()) and is_quantized_mlx
         is_vllm_compatible_mlx = is_mlx_community and model_card.quantization in (
             "",
             "bf16",
@@ -478,7 +470,7 @@ class API:
                     instance_combinations.extend(
                         [(sharding, instance_meta, i) for i in range(1, node_count + 1)]
                     )
-        if self._vllm_available and not skip_vllm:
+        if any(self.state.node_vllm.values()) and not skip_vllm:
             instance_combinations.append((Sharding.Pipeline, InstanceMeta.Vllm, 1))
 
         for sharding, instance_meta, min_nodes in instance_combinations:
@@ -802,7 +794,7 @@ class API:
         return resolved_model
 
     def _get_capabilities(self) -> dict[str, bool]:
-        return {"vllm_available": self._vllm_available}
+        return {"vllm_available": any(self.state.node_vllm.values())}
 
     def stream_events(self) -> StreamingResponse:
         def _generate_json_array(events: Iterable[Event]) -> Iterable[str]:
