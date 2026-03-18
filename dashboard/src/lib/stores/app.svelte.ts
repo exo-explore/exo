@@ -1577,6 +1577,7 @@ class AppStore {
     // Remove messages after user message (including the user message for image requests
     // since generateImage/editImage will re-add it)
     this.messages = this.messages.slice(0, lastUserIndex);
+    this.updateActiveConversation();
 
     switch (requestType) {
       case "image-generation":
