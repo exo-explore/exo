@@ -59,7 +59,8 @@ from exo.shared.types.tasks import (
 from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
-from exo.shared.types.worker.instances import InstanceId
+from exo.shared.types.worker.instances import Instance, InstanceId, VllmInstance
+from exo.shared.types.worker.runners import RunnerReady, RunnerRunning
 from exo.utils.channels import Receiver, Sender
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
@@ -93,8 +94,79 @@ class Master:
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
 
+    def _find_prefill_endpoints(self, decode_instance: Instance, decode_model_base: str) -> list[str]:
+        from exo.master.placement_utils import (
+            _find_ip_prioritised as find_ip_prioritised,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        endpoints: list[tuple[int, str]] = []
+        vllm_instance_count = 0
+        for instance in self.state.instances.values():
+            if not isinstance(instance, VllmInstance):
+                continue
+            if instance.instance_id == decode_instance.instance_id:
+                continue
+            vllm_instance_count += 1
+            first_shard = next(iter(instance.shard_assignments.runner_to_shard.values()), None)
+            if first_shard is None:
+                logger.info(f"Prefill routing: VllmInstance {instance.instance_id} has no shards")
+                continue
+            if first_shard.model_card.base_model != decode_model_base:
+                logger.info(
+                    f"Prefill routing: VllmInstance {instance.instance_id} base_model "
+                    f"{first_shard.model_card.base_model!r} != decode {decode_model_base!r}"
+                )
+                continue
+
+            active_task_count = sum(
+                1 for task in self.state.tasks.values()
+                if task.instance_id == instance.instance_id
+                and task.task_status in (TaskStatus.Pending, TaskStatus.Running)
+            )
+            if active_task_count > 0:
+                logger.info(f"Prefill routing: VllmInstance {instance.instance_id} busy ({active_task_count} active tasks)")
+                continue
+
+            for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
+                runner_status = self.state.runners.get(runner_id)
+                if not isinstance(runner_status, (RunnerReady, RunnerRunning)):
+                    logger.info(f"Prefill routing: runner {runner_id} not ready ({type(runner_status).__name__})")
+                    continue
+                port = runner_status.prefill_server_port
+                if port is None:
+                    logger.info(f"Prefill routing: runner {runner_id} has no prefill_server_port")
+                    continue
+
+                decode_node = next(iter(decode_instance.shard_assignments.node_to_runner.keys()), None)
+                if decode_node is None:
+                    continue
+
+                ip = find_ip_prioritised(decode_node, node_id, self.state.topology, self.state.node_network, ring=True)
+                if ip is None:
+                    logger.info(f"Prefill routing: no IP route from {decode_node} to {node_id}")
+                    continue
+
+                ip_type = "unknown"
+                node_net = self.state.node_network.get(node_id)
+                if node_net:
+                    for iface in node_net.interfaces:
+                        if iface.ip_address == ip:
+                            ip_type = iface.interface_type
+                            break
+                priority = {"thunderbolt": 0, "maybe_ethernet": 1, "ethernet": 2, "wifi": 3, "unknown": 4}.get(ip_type, 4)
+                endpoints.append((priority, f"{ip}:{port}"))
+
+        if not endpoints:
+            logger.info(
+                f"Prefill routing: no endpoints found for base_model={decode_model_base!r} "
+                f"(total VllmInstances in cluster: {vllm_instance_count})"
+            )
+
+        endpoints.sort(key=lambda x: x[0])
+        return [ep for _, ep in endpoints]
+
     async def run(self):
-        logger.info("Starting Master")
+        logger.debug("Starting Master")
 
         try:
             async with self._tg as tg:
@@ -108,14 +180,14 @@ class Master:
             self.command_receiver.close()
 
     async def shutdown(self):
-        logger.info("Stopping Master")
+        logger.debug("Stopping Master")
         self._tg.cancel_tasks()
 
     async def _command_processor(self) -> None:
         with self.command_receiver as commands:
             async for forwarder_command in commands:
                 try:
-                    logger.info(f"Executing command: {forwarder_command.command}")
+                    logger.debug(f"Executing command: {forwarder_command.command}")
 
                     generated_events: list[Event] = []
                     command = forwarder_command.command
@@ -124,19 +196,22 @@ class Master:
                         case TestCommand():
                             pass
                         case TextGeneration():
+                            from exo.shared.models.model_cards import derive_base_model
+
+                            request_base = derive_base_model(str(command.task_params.model))
+
                             for instance in self.state.instances.values():
-                                if (
-                                    instance.shard_assignments.model_id
-                                    == command.task_params.model
-                                ):
-                                    task_count = sum(
-                                        1
-                                        for task in self.state.tasks.values()
-                                        if task.instance_id == instance.instance_id
-                                    )
-                                    instance_task_counts[instance.instance_id] = (
-                                        task_count
-                                    )
+                                exact_match = instance.shard_assignments.model_id == command.task_params.model
+                                first_shard = next(iter(instance.shard_assignments.runner_to_shard.values()), None)
+                                base_match = first_shard is not None and first_shard.model_card.base_model == request_base
+                                if not (exact_match or base_match):
+                                    continue
+                                task_count = sum(
+                                    1
+                                    for task in self.state.tasks.values()
+                                    if task.instance_id == instance.instance_id
+                                )
+                                instance_task_counts[instance.instance_id] = task_count
 
                             if not instance_task_counts:
                                 raise ValueError(
@@ -145,12 +220,26 @@ class Master:
 
                             available_instance_ids = sorted(
                                 instance_task_counts.keys(),
-                                key=lambda instance_id: instance_task_counts[
-                                    instance_id
-                                ],
+                                key=lambda instance_id: (
+                                    0 if not isinstance(self.state.instances[instance_id], VllmInstance) else 1,
+                                    instance_task_counts[instance_id],
+                                ),
                             )
 
                             task_id = TaskId()
+                            decode_instance = self.state.instances[available_instance_ids[0]]
+                            logger.info(
+                                f"Decode routing: model={command.task_params.model} base={request_base} "
+                                f"instance={available_instance_ids[0]} type={type(decode_instance).__name__} "
+                                f"candidates={len(instance_task_counts)}"
+                            )
+                            task_params = command.task_params
+                            if not task_params.prefill_endpoints:
+                                prefill_eps = self._find_prefill_endpoints(decode_instance, request_base)
+                                logger.info(f"Prefill endpoints resolved: {prefill_eps}")
+                                if prefill_eps:
+                                    task_params = task_params.model_copy(update={"prefill_endpoints": prefill_eps})
+
                             generated_events.append(
                                 TaskCreated(
                                     task_id=task_id,
@@ -159,7 +248,7 @@ class Master:
                                         command_id=command.command_id,
                                         instance_id=available_instance_ids[0],
                                         task_status=TaskStatus.Pending,
-                                        task_params=command.task_params,
+                                        task_params=task_params,
                                     ),
                                 )
                             )
@@ -376,7 +465,7 @@ class Master:
             for node_id, time in self.state.last_seen.items():
                 now = datetime.now(tz=timezone.utc)
                 if now - time > timedelta(seconds=30):
-                    logger.info(f"Manually removing node {node_id} due to inactivity")
+                    logger.debug(f"Manually removing node {node_id} due to inactivity")
                     await self.event_sender.send(NodeTimedOut(node_id=node_id))
 
             await anyio.sleep(10)

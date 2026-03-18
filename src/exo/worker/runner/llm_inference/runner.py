@@ -137,6 +137,7 @@ class Runner:
             TaskId,
             TextGeneration,
         ] = {}
+        self.prefill_server_port: int | None = None
 
         logger.info("runner created")
         self.update_status(RunnerIdle())
@@ -237,7 +238,9 @@ class Runner:
                     on_timeout=on_model_load_timeout,
                     on_layer_loaded=on_layer_loaded,
                 )
+                builder_ref = self.generator
                 self.generator = self.generator.build()
+                self.prefill_server_port = getattr(builder_ref, "_prefill_server_port", None)
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
                 self.update_status(RunnerLoaded())
@@ -257,7 +260,7 @@ class Runner:
                 )
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
-                self.update_status(RunnerReady())
+                self.update_status(RunnerReady(prefill_server_port=self.prefill_server_port))
                 logger.info("runner ready")
 
             case TextGeneration() if isinstance(self.current_status, RunnerReady):
@@ -342,7 +345,7 @@ class Runner:
             except WouldBlock:
                 pass
 
-        self.update_status(RunnerReady())
+        self.update_status(RunnerReady(prefill_server_port=self.prefill_server_port))
         logger.info("runner ready")
 
         return ExitCode.AllTasksComplete
@@ -548,6 +551,23 @@ class VllmBuilder(Builder):
         tokenizer = TokenizerWrapper(self._engine.get_tokenizer())
         max_concurrent = 1 if os.environ.get("EXO_NO_BATCH") else 8
 
+        prefill_port = int(os.environ.get("EXO_PREFILL_PORT", "8900"))
+        overlapping = not os.environ.get("EXO_NO_OVERLAPPING_PREFILL_SENDS")
+        try:
+            from exo.disaggregated.prefill_server import start_prefill_server
+
+            self._prefill_server = start_prefill_server(
+                engine=self._engine,
+                bind_address="0.0.0.0",
+                port=prefill_port,
+                overlapping=overlapping,
+            )
+            self._prefill_server_port = prefill_port
+        except Exception:
+            logger.opt(exception=True).warning("Failed to start prefill server")
+            self._prefill_server = None
+            self._prefill_server_port = None
+
         logger.info(f"using BatchGenerator (vLLM, max_concurrent={max_concurrent})")
         return BatchGenerator(
             tokenizer=tokenizer,
@@ -564,4 +584,6 @@ class VllmBuilder(Builder):
 
     def close(self) -> None:
         with contextlib.suppress(NameError, AttributeError):
+            if hasattr(self, "_prefill_server") and self._prefill_server is not None:
+                self._prefill_server.shutdown()
             del self._engine, self._prefix_cache, self._tool_parser

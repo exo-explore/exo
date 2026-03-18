@@ -749,20 +749,25 @@ class API:
         return await self._collect_text_generation_with_stats(command.command_id)
 
     async def _resolve_and_validate_text_model(self, model_id: ModelId) -> ModelId:
-        """Validate a text model exists and return the resolved model ID.
+        from exo.shared.models.model_cards import derive_base_model
 
-        Raises HTTPException 404 if no instance is found for the model.
-        """
-        if not any(
+        if any(
             instance.shard_assignments.model_id == model_id
             for instance in self.state.instances.values()
         ):
-            await self._trigger_notify_user_to_download_model(model_id)
-            raise HTTPException(
-                status_code=404,
-                detail=f"No instance found for model {model_id}",
-            )
-        return model_id
+            return model_id
+
+        request_base = derive_base_model(str(model_id))
+        for instance in self.state.instances.values():
+            first_shard = next(iter(instance.shard_assignments.runner_to_shard.values()), None)
+            if first_shard is not None and first_shard.model_card.base_model == request_base:
+                return instance.shard_assignments.model_id
+
+        await self._trigger_notify_user_to_download_model(model_id)
+        raise HTTPException(
+            status_code=404,
+            detail=f"No instance found for model {model_id}",
+        )
 
     async def _validate_image_model(self, model: ModelId) -> ModelId:
         """Validate model exists and return resolved model ID.

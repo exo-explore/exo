@@ -149,16 +149,43 @@ class ExoBatchGenerator:
             top_k=task_params.top_k if task_params.top_k is not None else 0,
         )
 
-        _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
-            self.model,
-            self.tokenizer,
-            sampler,
-            prompt_tokens[:-1],
-            cache,
-            self.group,
-            on_prefill_progress,
-            distributed_prompt_progress_callback,
-        )
+        _prefill_tps: float = 0.0
+        cache_snapshots: list[CacheSnapshot] | None = None
+        used_remote_prefill = False
+        uncached_count = len(prompt_tokens)
+        if (
+            uncached_count > 1000
+            and task_params.prefill_endpoints
+            and not is_bench
+        ):
+            from exo.disaggregated.prefill_client import remote_prefill
+
+            t0 = time.perf_counter()
+            try:
+                injected_cache, total_tokens = remote_prefill(
+                    endpoint=task_params.prefill_endpoints[0],
+                    token_ids=[int(t) for t in all_prompt_tokens.tolist()],  # type: ignore
+                    model_id=str(task_params.model),
+                    mlx_model=self.model,
+                )
+                cache = injected_cache
+                _prefill_tps = total_tokens / max(time.perf_counter() - t0, 0.001)
+                used_remote_prefill = True
+                logger.info(f"Remote prefill: {total_tokens} tokens at {_prefill_tps:.0f} tok/s")
+            except Exception:
+                logger.opt(exception=True).warning("Remote prefill failed, falling back to local")
+
+        if not used_remote_prefill:
+            _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
+                self.model,
+                self.tokenizer,
+                sampler,
+                prompt_tokens[:-1],
+                cache,
+                self.group,
+                on_prefill_progress,
+                distributed_prompt_progress_callback,
+            )
 
         # We need to clamp rotating kv caches to max size so that mlx lm's _merge_caches behaves
         for c in cache:
@@ -182,7 +209,7 @@ class ExoBatchGenerator:
                 matched_index,
             )
 
-        last_tokens = prompt_tokens[-2:]
+        last_tokens = mx.array(all_prompt_tokens[-2:]) if used_remote_prefill else prompt_tokens[-2:]
 
         logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = (
             make_logits_processors(

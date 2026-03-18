@@ -107,6 +107,7 @@ def chat_request_to_text_generation(
         min_p=request.min_p,
         repetition_penalty=request.repetition_penalty,
         repetition_context_size=request.repetition_context_size,
+        prefill_endpoints=request.prefill_endpoints,
     )
 
 

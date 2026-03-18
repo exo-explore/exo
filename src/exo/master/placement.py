@@ -94,6 +94,17 @@ def place_instance(
                 if not any(node_vllm.get(nid, False) for nid in cycle.node_ids)
             ]
 
+    # mlx-community models should prefer Apple Silicon nodes over CUDA nodes.
+    if command.instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
+        if str(command.model_card.model_id).startswith("mlx-community/"):
+            apple_silicon_cycles = [
+                cycle
+                for cycle in candidate_cycles
+                if not any(node_vllm.get(nid, False) for nid in cycle.node_ids)
+            ]
+            if apple_silicon_cycles:
+                candidate_cycles = apple_silicon_cycles
+
     # Filter to cycles containing all required nodes (subset matching)
     if required_nodes:
         candidate_cycles = [
