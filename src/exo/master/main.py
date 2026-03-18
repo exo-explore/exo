@@ -3,7 +3,6 @@ from datetime import datetime, timedelta, timezone
 import anyio
 from loguru import logger
 
-from exo.utils.disk_event_log import DiskEventLog
 from exo.master.placement import (
     add_instance_to_placements,
     cancel_unnecessary_downloads,
@@ -61,6 +60,7 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, Sender
+from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
 

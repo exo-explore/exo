@@ -11,9 +11,9 @@ from loguru import logger
 from pydantic import PositiveInt
 
 import exo.routing.topics as topics
+from exo.api.main import API
 from exo.download.coordinator import DownloadCoordinator
 from exo.download.impl_shard_downloader import exo_shard_downloader
-from exo.api.main import API
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_id_keypair
