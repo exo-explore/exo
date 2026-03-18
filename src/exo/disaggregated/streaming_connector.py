@@ -14,6 +14,20 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (  # pyright: igno
 
 _LAYER_RE = re.compile(r"layers\.(\d+)\.")
 
+_shared_queue: queue.Queue[tuple[int, torch.Tensor, torch.Tensor] | None] = queue.Queue()
+
+
+def get_shared_queue() -> queue.Queue[tuple[int, torch.Tensor, torch.Tensor] | None]:
+    return _shared_queue
+
+
+def reset_shared_queue() -> None:
+    while not _shared_queue.empty():
+        try:
+            _shared_queue.get_nowait()
+        except queue.Empty:
+            break
+
 
 @dataclass
 class StreamingConnectorMetadata(KVConnectorMetadata):  # pyright: ignore[reportUntypedBaseClass]
@@ -25,7 +39,7 @@ class StreamingConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBa
 
     def __init__(self, vllm_config: Any, role: KVConnectorRole, kv_cache_config: Any = None) -> None:  # type: ignore
         super().__init__(vllm_config, role, kv_cache_config)  # pyright: ignore[reportUnknownMemberType]
-        self._queue = queue.Queue()
+        self._queue = _shared_queue
 
     @property
     def layer_queue(self) -> queue.Queue[tuple[int, torch.Tensor, torch.Tensor] | None]:

@@ -532,12 +532,22 @@ class VllmBuilder(Builder):
     ) -> None:
         from exo.worker.engines.vllm.vllm_generator import load_vllm_engine
 
+        kv_connector_cls: type[object] | None = None
+        overlapping = not os.environ.get("EXO_NO_OVERLAPPING_PREFILL_SENDS")
+        if overlapping:
+            from exo.disaggregated.streaming_connector import StreamingConnector
+            kv_connector_cls = StreamingConnector
+        else:
+            from exo.disaggregated.batch_connector import BatchConnector
+            kv_connector_cls = BatchConnector
+
         self._engine, self._tool_parser, self._prefix_cache = load_vllm_engine(
             model_path=self.model_path,
             model_id=self.model_id,
             trust_remote_code=self.trust_remote_code,
             n_layers=bound_instance.bound_shard.model_card.n_layers,
             on_layer_loaded=on_layer_loaded,
+            kv_connector_cls=kv_connector_cls,
         )
 
     def build(self) -> InferenceGenerator:

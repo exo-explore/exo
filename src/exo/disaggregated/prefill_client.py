@@ -4,6 +4,7 @@ import json
 import socket
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from typing import TYPE_CHECKING, BinaryIO, cast
 
 import mlx.core as mx
@@ -56,14 +57,19 @@ def _inject_rotating_kv_cache(cache: RotatingKVCache, keys: torch.Tensor, values
     else:
         keep = cache.keep
         window = cache.max_size
-        sink_keys = k_mx[:, :, :keep, :]
-        sink_values = v_mx[:, :, :keep, :]
-        recent_keys = k_mx[:, :, -(window - keep):, :]
-        recent_values = v_mx[:, :, -(window - keep):, :]
-        cache.keys = mx.concatenate([sink_keys, recent_keys], axis=2)
-        cache.values = mx.concatenate([sink_values, recent_values], axis=2)
+        if keep == 0:
+            cache.keys = k_mx[:, :, -window:, :]
+            cache.values = v_mx[:, :, -window:, :]
+            cache._idx = window
+        else:
+            sink_keys = k_mx[:, :, :keep, :]
+            sink_values = v_mx[:, :, :keep, :]
+            recent_keys = k_mx[:, :, -(window - keep):, :]
+            recent_values = v_mx[:, :, -(window - keep):, :]
+            cache.keys = mx.concatenate([sink_keys, recent_keys], axis=2)
+            cache.values = mx.concatenate([sink_values, recent_values], axis=2)
+            cache._idx = keep
         cache.offset = num_tokens
-        cache._idx = keep
 
 
 def _inject_arrays_cache(cache: ArraysCache, arrays: list[torch.Tensor]) -> None:
@@ -75,6 +81,7 @@ def remote_prefill(
     token_ids: list[int],
     model_id: str,
     mlx_model: Model,
+    on_prefill_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[list[KVCache | RotatingKVCache | ArraysCache], int]:
     if ":" in endpoint:
         host, port_str = endpoint.rsplit(":", 1)
@@ -101,11 +108,16 @@ def remote_prefill(
             raise RuntimeError(f"Prefill server error: {error_resp.get('error', 'unknown')}")
 
         header = read_header(stream)
+        num_layers: int = header["num_layers"]  # pyright: ignore[reportAssignmentType]
+        total_prompt_tokens = len(token_ids)
 
         kv_buffers: dict[int, list[tuple[torch.Tensor, torch.Tensor]]] = defaultdict(list)
         arrays_buffers: dict[int, list[torch.Tensor]] = {}
         total_tokens = 0
+        layers_seen: set[int] = set()
 
+        tokens_received = 0
+        chunks_received = 0
         t_first_chunk = None
         while True:
             msg = read_message(stream, header)
@@ -116,6 +128,15 @@ def remote_prefill(
                 if t_first_chunk is None:
                     t_first_chunk = time.perf_counter()
                 kv_buffers[msg.layer_idx].append((msg.keys, msg.values))
+                chunks_received += 1
+                layers_seen.add(msg.layer_idx)
+                tokens_received += msg.num_tokens
+                if on_prefill_progress and num_layers > 0 and chunks_received % num_layers == 0:
+                    step = chunks_received // num_layers
+                    on_prefill_progress(
+                        min(tokens_received // num_layers, total_prompt_tokens),
+                        total_prompt_tokens,
+                    )
             elif isinstance(msg, ArraysState):
                 arrays_buffers[msg.layer_idx] = msg.arrays
             elif isinstance(msg, Done):  # pyright: ignore[reportUnnecessaryIsInstance]

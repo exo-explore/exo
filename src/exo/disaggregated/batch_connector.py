@@ -13,6 +13,12 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (  # pyright: igno
 
 _LAYER_RE = re.compile(r"layers\.(\d+)\.")
 
+_active_instance: BatchConnector | None = None
+
+
+def get_active_batch_connector() -> BatchConnector | None:
+    return _active_instance
+
 
 @dataclass
 class BatchConnectorMetadata(KVConnectorMetadata):  # pyright: ignore[reportUntypedBaseClass]
@@ -25,6 +31,8 @@ class BatchConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBaseCl
     def __init__(self, vllm_config: Any, role: KVConnectorRole, kv_cache_config: Any = None) -> None:  # type: ignore
         super().__init__(vllm_config, role, kv_cache_config)  # pyright: ignore[reportUnknownMemberType]
         self.captured_layers = {}
+        global _active_instance
+        _active_instance = self
 
     def start_load_kv(self, forward_context: Any, **kwargs: Any) -> None:  # pyright: ignore[reportAny]
         pass

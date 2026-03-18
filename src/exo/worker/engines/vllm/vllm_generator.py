@@ -206,7 +206,7 @@ def vllm_generate(
     on_generation_token: Callable[[], None] | None = None,
 ) -> Generator[GenerationResponse, None, None]:
     token_ids, prompt_text, prompt_token_count = format_vllm_prompt(engine, task)
-    logger.info(prompt_text)
+    logger.debug(prompt_text)
     request_id = f"vllm-seq-{time.monotonic_ns()}"
     sampling_params = make_vllm_sampling_params(engine, task, model_id)
     engine.add_request(request_id, {"prompt_token_ids": token_ids}, sampling_params)
@@ -334,7 +334,7 @@ class VllmBatchEngine:
         token_ids, prompt_text, prompt_token_count = format_vllm_prompt(
             self.engine, task_params
         )
-        logger.info(prompt_text)
+        logger.debug(prompt_text)
         sampling_params = make_vllm_sampling_params(
             self.engine, task_params, self.model_id
         )
@@ -554,15 +554,28 @@ def load_vllm_engine(
     trust_remote_code: bool,
     n_layers: int = 1,
     on_layer_loaded: Callable[[int, int], None] | None = None,
+    kv_connector_cls: type[object] | None = None,
 ) -> tuple[LLMEngine, ToolParser | None, KVPrefixCache]:
     patch_vllm()
     _patch_weight_loading_progress()
+
+    if kv_connector_cls is not None:
+        from exo.disaggregated.prefill_server import _patch_vllm_for_connector
+
+        _patch_vllm_for_connector(kv_connector_cls)
 
     os.environ.setdefault("FASTSAFETENSORS_NOGDS", "1")
 
     prefix_cache = KVPrefixCache(group=None)
     set_prefix_cache(prefix_cache)
     set_n_layers(n_layers)
+
+    kv_transfer_config: dict[str, str] | None = None
+    if kv_connector_cls is not None:
+        kv_transfer_config = {
+            "kv_connector": f"{kv_connector_cls.__module__}:{kv_connector_cls.__name__}",
+            "kv_role": "kv_both",
+        }
 
     engine_args = EngineArgs(
         model=model_path,
@@ -574,6 +587,7 @@ def load_vllm_engine(
         attention_backend="TRITON_ATTN",
         enforce_eager=True,
         disable_log_stats=True,
+        kv_transfer_config=kv_transfer_config,  # type: ignore
     )
 
     set_weight_loading_callback(on_layer_loaded)

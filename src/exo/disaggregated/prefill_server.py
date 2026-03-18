@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import queue
 import socketserver
 import threading
 import time
@@ -97,21 +98,11 @@ def _run_prefill_overlapping(engine: LLMEngine, token_ids: list[int], wfile: Any
     model_runner = get_model_runner()
     assert model_runner is not None
 
-    connector: StreamingConnector | None = None
-    try:
-        engine_core = engine.engine_core.engine_core  # type: ignore
-        scheduler = engine_core.scheduler  # type: ignore
-        kv_manager = scheduler.kv_cache_manager  # type: ignore
-        connector_obj = getattr(kv_manager, "connector", None) or getattr(scheduler, "connector", None)  # pyright: ignore[reportUnknownArgumentType]
-        if isinstance(connector_obj, StreamingConnector):
-            connector = connector_obj
-    except Exception:
-        pass
+    from exo.disaggregated.streaming_connector import get_shared_queue, reset_shared_queue
 
-    if connector is None:
-        logger.warning("Could not find StreamingConnector, falling back to non-overlapping")
-        _run_prefill_batch(engine, token_ids, wfile)
-        return
+    reset_shared_queue()
+    layer_queue = get_shared_queue()
+    logger.info(f"Overlapping prefill: server reading from queue_id={id(layer_queue)}")
 
     num_layers, dtype_str, layers_info = _get_layer_info(engine)
     write_header(wfile, {"num_layers": num_layers, "dtype": dtype_str, "layers": layers_info})  # pyright: ignore[reportAny]
@@ -124,33 +115,33 @@ def _run_prefill_overlapping(engine: LLMEngine, token_ids: list[int], wfile: Any
     params = SamplingParams(max_tokens=1, detokenize=False)  # pyright: ignore[reportCallIssue]
     engine.add_request(request_id, {"prompt_token_ids": token_ids}, params)  # pyright: ignore[reportArgumentType]
 
-    prefill_done = threading.Event()
+    chunks_sent = [0]
 
-    def engine_loop() -> None:
-        while engine.has_unfinished_requests():
-            outputs = engine.step()
-            for output in outputs:
-                if output.request_id == request_id and output.outputs[0].token_ids:
-                    engine.abort_request([request_id])  # type: ignore
-                    connector.finish()
-                    prefill_done.set()
-                    return
-        connector.finish()
-        prefill_done.set()
+    def writer_loop() -> None:
+        while True:
+            item = layer_queue.get()
+            if item is None:
+                break
+            layer_idx, keys, values = item
+            write_kv_chunk(wfile, layer_idx, keys, values)  # pyright: ignore[reportAny]
+            chunks_sent[0] += 1
 
-    engine_thread = threading.Thread(target=engine_loop, daemon=True)
-    engine_thread.start()
+    writer_thread = threading.Thread(target=writer_loop, daemon=True)
+    writer_thread.start()
 
-    layer_queue = connector.layer_queue
-    while True:
-        item = layer_queue.get()
-        if item is None:
-            break
-        layer_idx, keys, values = item
-        write_kv_chunk(wfile, layer_idx, keys, values)  # pyright: ignore[reportAny]
+    while engine.has_unfinished_requests():
+        outputs = engine.step()
+        for output in outputs:
+            if output.request_id == request_id and output.outputs[0].token_ids:
+                engine.abort_request([request_id])  # type: ignore
+                break
+        else:
+            continue
+        break
 
-    prefill_done.wait()
-    engine_thread.join(timeout=5.0)
+    layer_queue.put(None)
+    writer_thread.join()
+    logger.info(f"Overlapping prefill: sent {chunks_sent[0]} KV chunks")
 
     _stream_gdn_states(engine, wfile, num_layers, layers_info)
     write_done(wfile, len(token_ids))  # pyright: ignore[reportAny]
@@ -165,16 +156,9 @@ def _run_prefill_batch(engine: LLMEngine, token_ids: list[int], wfile: Any) -> N
     model_runner = get_model_runner()
     assert model_runner is not None
 
-    connector: BatchConnector | None = None
-    try:
-        engine_core = engine.engine_core.engine_core  # type: ignore
-        scheduler = engine_core.scheduler  # type: ignore
-        kv_manager = scheduler.kv_cache_manager  # type: ignore
-        connector_obj = getattr(kv_manager, "connector", None) or getattr(scheduler, "connector", None)  # pyright: ignore[reportUnknownArgumentType]
-        if isinstance(connector_obj, BatchConnector):
-            connector = connector_obj
-    except Exception:
-        pass
+    from exo.disaggregated.batch_connector import get_active_batch_connector
+
+    connector = get_active_batch_connector()
 
     from vllm.sampling_params import (
         SamplingParams,
@@ -197,9 +181,13 @@ def _run_prefill_batch(engine: LLMEngine, token_ids: list[int], wfile: Any) -> N
     write_header(wfile, {"num_layers": num_layers, "dtype": dtype_str, "layers": layers_info})  # pyright: ignore[reportAny]
 
     if connector is not None:
+        logger.info(f"Batch prefill: streaming {len(connector.captured_layers)} captured layers")
         for layer_idx in sorted(connector.captured_layers.keys()):
             layer_data = connector.captured_layers[layer_idx]
             write_kv_chunk(wfile, layer_idx, layer_data["keys"], layer_data["values"])  # pyright: ignore[reportAny]
+        connector.captured_layers.clear()
+    else:
+        logger.info("Batch prefill: no connector, sending 0 KV chunks")
 
     _stream_gdn_states(engine, wfile, num_layers, layers_info)
     write_done(wfile, len(token_ids))  # pyright: ignore[reportAny]

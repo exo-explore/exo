@@ -111,7 +111,7 @@ class Master:
             if first_shard is None:
                 logger.info(f"Prefill routing: VllmInstance {instance.instance_id} has no shards")
                 continue
-            if first_shard.model_card.base_model != decode_model_base:
+            if first_shard.model_card.base_model.lower() != decode_model_base.lower():
                 logger.info(
                     f"Prefill routing: VllmInstance {instance.instance_id} base_model "
                     f"{first_shard.model_card.base_model!r} != decode {decode_model_base!r}"
@@ -203,7 +203,7 @@ class Master:
                             for instance in self.state.instances.values():
                                 exact_match = instance.shard_assignments.model_id == command.task_params.model
                                 first_shard = next(iter(instance.shard_assignments.runner_to_shard.values()), None)
-                                base_match = first_shard is not None and first_shard.model_card.base_model == request_base
+                                base_match = first_shard is not None and first_shard.model_card.base_model.lower() == request_base.lower()
                                 if not (exact_match or base_match):
                                     continue
                                 task_count = sum(

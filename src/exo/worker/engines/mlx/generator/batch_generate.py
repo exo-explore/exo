@@ -6,7 +6,7 @@ import mlx.core as mx
 from mlx_lm.generate import (
     BatchGenerator as MlxBatchGenerator,
 )
-from mlx_lm.models.cache import RotatingKVCache
+from mlx_lm.models.cache import KVCache, RotatingKVCache
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
 from mlx_lm.tokenizer_utils import StreamingDetokenizer, TokenizerWrapper
 
@@ -167,6 +167,7 @@ class ExoBatchGenerator:
                     token_ids=[int(t) for t in all_prompt_tokens.tolist()],  # type: ignore
                     model_id=str(task_params.model),
                     mlx_model=self.model,
+                    on_prefill_progress=on_prefill_progress,
                 )
                 cache = injected_cache
                 _prefill_tps = total_tokens / max(time.perf_counter() - t0, 0.001)
@@ -223,6 +224,13 @@ class ExoBatchGenerator:
             logits_processors = [ban_token_ids(eos_ids)] + logits_processors
 
         max_tokens = task_params.max_output_tokens or MAX_TOKENS
+
+        if used_remote_prefill:
+            for ci, c in enumerate(cache):
+                if isinstance(c, RotatingKVCache):
+                    logger.info(f"Cache[{ci}] RotatingKV: keys={c.keys.shape if c.keys is not None else None} _idx={c._idx} offset={c.offset} max_size={c.max_size}")
+                elif isinstance(c, KVCache):
+                    logger.info(f"Cache[{ci}] KV: keys={c.keys.shape if c.keys is not None else None} offset={c.offset}")
 
         uids = self._mlx_gen.insert(
             prompts=[last_tokens.tolist()],
