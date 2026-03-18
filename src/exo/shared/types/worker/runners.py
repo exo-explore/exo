@@ -47,11 +47,11 @@ class RunnerWarmingUp(BaseRunnerStatus):
 
 
 class RunnerReady(BaseRunnerStatus):
-    pass
+    prefill_server_port: int | None = None
 
 
 class RunnerRunning(BaseRunnerStatus):
-    pass
+    prefill_server_port: int | None = None
 
 
 class RunnerShuttingDown(BaseRunnerStatus):
