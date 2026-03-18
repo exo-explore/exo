@@ -4,7 +4,7 @@ import json
 from collections.abc import AsyncGenerator
 from typing import Any, cast
 
-from exo.master.adapters.claude import (
+from exo.api.adapters.claude import (
     ClaudeMessagesResponse,
     collect_claude_response,
     generate_claude_stream,

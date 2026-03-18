@@ -10,7 +10,7 @@ from exo.shared.types.common import CommandId
 
 def _make_api() -> Any:
     """Create a minimal API instance with cancel route and error handler."""
-    from exo.master.api import API
+    from exo.api.main import API
 
     app = FastAPI()
     api = object.__new__(API)

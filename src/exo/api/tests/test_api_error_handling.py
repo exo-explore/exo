@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 def test_http_exception_handler_formats_openai_style() -> None:
     """Test that HTTPException is converted to OpenAI-style error format."""
-    from exo.master.api import API
+    from exo.api.main import API
 
     app = FastAPI()
 

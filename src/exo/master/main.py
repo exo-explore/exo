@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import anyio
 from loguru import logger
 
-from exo.master.event_log import DiskEventLog
+from exo.utils.disk_event_log import DiskEventLog
 from exo.master.placement import (
     add_instance_to_placements,
     cancel_unnecessary_downloads,
