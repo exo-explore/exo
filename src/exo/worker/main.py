@@ -93,7 +93,7 @@ class Worker:
                 tg.start_soon(self.plan_step)
                 tg.start_soon(self._event_applier)
                 tg.start_soon(self._poll_connection_updates)
-                tg.start_soon(self._update_prefill_endpoints())
+                tg.start_soon(self._update_prefill_endpoints)
         finally:
             # Actual shutdown code - waits for all tasks to complete before executing.
             logger.info("Stopping Worker")
@@ -147,9 +147,9 @@ class Worker:
         candidates.sort(key=lambda i: self._IFACE_PRIORITY.get(i.interface_type, 3))
         return candidates[0].ip_address
 
-    def _update_prefill_endpoints(self) -> None:
+    async def _update_prefill_endpoints(self) -> None:
         while True:
-            anyio.sleep(5)
+            await anyio.sleep(5)
             try:
                 for runner_sup in self.runners.values():
                     instance = runner_sup.bound_instance.instance
@@ -176,6 +176,7 @@ class Worker:
                                     endpoints.append({"host": ip, "port": port})
 
                     safe_model = str(my_model_id).replace("/", "--")
+                    # TODO: Change this to be in the task with a list of optional prefill endpoints.
                     path = f"/tmp/exo_prefill_endpoints_{safe_model}.json"
                     with open(path, "w") as f:
                         json.dump(endpoints, f)
