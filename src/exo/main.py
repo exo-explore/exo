@@ -274,6 +274,10 @@ def main():
         os.environ["EXO_NO_BATCH"] = "1"
         logger.info("Continuous batching disabled (--no-batch)")
 
+    if args.no_overlapping_prefill_sends:
+        os.environ["EXO_NO_OVERLAPPING_PREFILL_SENDS"] = "1"
+        logger.info("Overlapping prefill sends disabled (--no-overlapping-prefill-sends)")
+
     # Set FAST_SYNCH override env var for runner subprocesses
     if args.fast_synch is True:
         os.environ["EXO_FAST_SYNCH"] = "on"
@@ -305,6 +309,7 @@ class Args(CamelCaseModel):
     no_downloads: bool = False
     offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     no_batch: bool = False
+    no_overlapping_prefill_sends: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
 
     @classmethod
@@ -362,6 +367,11 @@ class Args(CamelCaseModel):
             "--no-batch",
             action="store_true",
             help="Disable continuous batching, use sequential generation",
+        )
+        parser.add_argument(
+            "--no-overlapping-prefill-sends",
+            action="store_true",
+            help="Disable overlapping KV transfer during disaggregated prefill",
         )
         fast_synch_group = parser.add_mutually_exclusive_group()
         fast_synch_group.add_argument(

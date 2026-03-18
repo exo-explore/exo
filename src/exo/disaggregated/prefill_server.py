@@ -25,6 +25,10 @@ from exo.worker.runner.bootstrap import logger
 _engine_ref: LLMEngine | None = None
 _overlapping: bool = True
 _connector_patched: bool = False
+_gdn_patched: bool = False
+_gdn_states: dict[int, dict[str, torch.Tensor]] = {}
+_gdn_layer_order: list[int] = []
+_gdn_call_idx: list[int] = [0]
 
 
 def _patch_vllm_for_connector(connector_class: type[Any]) -> None:  # pyright: ignore[reportUnusedFunction]
@@ -68,6 +72,61 @@ def _patch_vllm_for_connector(connector_class: type[Any]) -> None:  # pyright: i
     factory.KVConnectorFactory._get_connector_class_with_compat = patched_get  # pyright: ignore[reportUnknownMemberType]
 
 
+def _patch_gdn_capture() -> None:
+    global _gdn_patched
+    if _gdn_patched:
+        return
+    _gdn_patched = True
+
+    try:
+        from vllm.model_executor.layers.mamba.ops.causal_conv1d import causal_conv1d_fn as orig_fn  # type: ignore
+        import vllm.model_executor.layers.mamba.ops.causal_conv1d as cc_mod  # type: ignore
+    except ImportError:
+        return
+
+    def patched_fn(*args: Any, conv_states: Any = None, cache_indices: Any = None, **kwargs: Any) -> Any:
+        result = orig_fn(*args, conv_states=conv_states, cache_indices=cache_indices, **kwargs)  # type: ignore
+        if conv_states is not None and cache_indices is not None:
+            x = args[0] if args else None
+            if x is not None and x.shape[0] <= 100:  # type: ignore
+                return result
+            torch.cuda.synchronize()
+            ci: int = cache_indices[0].item() if cache_indices.numel() > 0 else 0  # type: ignore
+            idx = _gdn_call_idx[0]
+            if _gdn_layer_order and idx < len(_gdn_layer_order) * 100:
+                layer_idx = _gdn_layer_order[idx % len(_gdn_layer_order)]
+                conv_at_ci = conv_states[ci : ci + 1].transpose(-1, -2).contiguous().cpu()  # type: ignore
+                _gdn_states.setdefault(layer_idx, {})["conv"] = conv_at_ci
+                _gdn_states[layer_idx]["ci"] = ci  # type: ignore
+            _gdn_call_idx[0] += 1
+        return result
+
+    cc_mod.causal_conv1d_fn = patched_fn  # type: ignore
+    import sys
+    for mod in list(sys.modules.values()):
+        if mod is None or mod is cc_mod:
+            continue
+        if hasattr(mod, "causal_conv1d_fn") and getattr(mod, "causal_conv1d_fn") is orig_fn:
+            setattr(mod, "causal_conv1d_fn", patched_fn)
+    logger.info("Patched causal_conv1d_fn for GDN state capture")
+
+
+def _init_gdn_layer_order() -> None:
+    from exo.worker.engines.vllm.growable_cache import get_model_runner
+
+    model_runner = get_model_runner()
+    if model_runner is None:
+        return
+    kv_caches = model_runner.kv_caches  # type: ignore
+    _gdn_layer_order.clear()
+    for li in range(len(kv_caches)):  # type: ignore
+        kv = kv_caches[li]  # type: ignore
+        if isinstance(kv, (list, tuple)) and len(kv) > 1:
+            _gdn_layer_order.append(li)
+    if _gdn_layer_order:
+        logger.info(f"GDN layer order: {_gdn_layer_order} ({len(_gdn_layer_order)} layers)")
+
+
 def _get_layer_info(engine: LLMEngine) -> tuple[int, str, list[dict[str, Any]]]:
     from exo.worker.engines.vllm.growable_cache import get_model_runner
 
@@ -101,8 +160,9 @@ def _run_prefill_overlapping(engine: LLMEngine, token_ids: list[int], wfile: Any
     from exo.disaggregated.streaming_connector import get_shared_queue, reset_shared_queue
 
     reset_shared_queue()
+    _gdn_states.clear()
+    _gdn_call_idx[0] = 0
     layer_queue = get_shared_queue()
-    logger.info(f"Overlapping prefill: server reading from queue_id={id(layer_queue)}")
 
     num_layers, dtype_str, layers_info = _get_layer_info(engine)
     write_header(wfile, {"num_layers": num_layers, "dtype": dtype_str, "layers": layers_info})  # pyright: ignore[reportAny]
@@ -148,7 +208,6 @@ def _run_prefill_overlapping(engine: LLMEngine, token_ids: list[int], wfile: Any
 
 
 def _run_prefill_batch(engine: LLMEngine, token_ids: list[int], wfile: Any) -> None:  # pyright: ignore[reportAny]
-    from exo.disaggregated.batch_connector import BatchConnector
     from exo.worker.engines.vllm.growable_cache import get_model_runner
 
     num_layers, dtype_str, layers_info = _get_layer_info(engine)
@@ -156,9 +215,12 @@ def _run_prefill_batch(engine: LLMEngine, token_ids: list[int], wfile: Any) -> N
     model_runner = get_model_runner()
     assert model_runner is not None
 
-    from exo.disaggregated.batch_connector import get_active_batch_connector
+    from exo.disaggregated.batch_connector import clear_shared_captured_layers, get_shared_captured_layers
 
-    connector = get_active_batch_connector()
+    _gdn_states.clear()
+    _gdn_call_idx[0] = 0
+    clear_shared_captured_layers()
+    captured_layers = get_shared_captured_layers()
 
     from vllm.sampling_params import (
         SamplingParams,
@@ -180,37 +242,51 @@ def _run_prefill_batch(engine: LLMEngine, token_ids: list[int], wfile: Any) -> N
 
     write_header(wfile, {"num_layers": num_layers, "dtype": dtype_str, "layers": layers_info})  # pyright: ignore[reportAny]
 
-    if connector is not None:
-        logger.info(f"Batch prefill: streaming {len(connector.captured_layers)} captured layers")
-        for layer_idx in sorted(connector.captured_layers.keys()):
-            layer_data = connector.captured_layers[layer_idx]
-            write_kv_chunk(wfile, layer_idx, layer_data["keys"], layer_data["values"])  # pyright: ignore[reportAny]
-        connector.captured_layers.clear()
-    else:
-        logger.info("Batch prefill: no connector, sending 0 KV chunks")
+    logger.info(f"Batch prefill: streaming {len(captured_layers)} captured layers")
+    for layer_idx in sorted(captured_layers.keys()):
+        layer_data = captured_layers[layer_idx]
+        write_kv_chunk(wfile, layer_idx, layer_data["keys"], layer_data["values"])  # pyright: ignore[reportAny]
+    clear_shared_captured_layers()
 
     _stream_gdn_states(engine, wfile, num_layers, layers_info)
     write_done(wfile, len(token_ids))  # pyright: ignore[reportAny]
 
 
-def _stream_gdn_states(_engine: LLMEngine, wfile: Any, num_layers: int, layers_info: list[dict[str, Any]]) -> None:  # pyright: ignore[reportAny]
+def _stream_gdn_states(_engine: LLMEngine, wfile: Any, num_layers: int, layers_info: list[dict[str, Any]]) -> None:  # type: ignore
     from exo.worker.engines.vllm.growable_cache import get_model_runner
+
+    if not _gdn_states:
+        return
 
     model_runner = get_model_runner()
     if model_runner is None:
         return
 
-    kv_caches = model_runner.kv_caches
-    for li in range(num_layers):
-        if li >= len(layers_info) or layers_info[li]["type"] != "arrays":
-            continue
-        kv = kv_caches[li]
-        if not isinstance(kv, (list, tuple)) or len(kv) < 2:
-            continue
-        arrays: list[torch.Tensor] = []
-        for pool in kv:  # pyright: ignore[reportUnknownVariableType]
-            arrays.append(pool[0:1].cpu().clone())  # type: ignore
-        write_arrays_state(wfile, li, arrays)  # pyright: ignore[reportAny]
+    kv_caches = model_runner.kv_caches  # type: ignore
+    torch.cuda.synchronize()
+
+    for layer_idx in sorted(_gdn_states.keys()):
+        try:
+            state = _gdn_states[layer_idx]
+            ci: int = state.get("ci", 0)  # type: ignore
+            conv = state.get("conv")
+            kv = kv_caches[layer_idx]  # type: ignore
+            rec: torch.Tensor | None = None
+            if isinstance(kv, (list, tuple)) and len(kv) > 1:
+                rec = kv[1][ci : ci + 1].cpu().clone()  # type: ignore
+
+            arrays: list[torch.Tensor] = []
+            if conv is not None:
+                arrays.append(conv.to(torch.bfloat16))
+            if rec is not None:
+                arrays.append(rec.to(torch.bfloat16))
+            if arrays:
+                write_arrays_state(wfile, layer_idx, arrays)  # type: ignore
+        except Exception:
+            logger.opt(exception=True).warning(f"Failed to capture GDN state for layer {layer_idx}")
+
+    _gdn_states.clear()
+    _gdn_call_idx[0] = 0
 
 
 class _PrefillHandler(socketserver.StreamRequestHandler):
@@ -256,6 +332,9 @@ def start_prefill_server(
     global _engine_ref, _overlapping
     _engine_ref = engine
     _overlapping = overlapping
+
+    _patch_gdn_capture()
+    _init_gdn_layer_order()
 
     server = socketserver.ThreadingTCPServer((bind_address, port), _PrefillHandler)
     server.daemon_threads = True

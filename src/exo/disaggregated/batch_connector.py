@@ -13,11 +13,15 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (  # pyright: igno
 
 _LAYER_RE = re.compile(r"layers\.(\d+)\.")
 
-_active_instance: BatchConnector | None = None
+_shared_captured_layers: dict[int, dict[str, torch.Tensor]] = {}
 
 
-def get_active_batch_connector() -> BatchConnector | None:
-    return _active_instance
+def get_shared_captured_layers() -> dict[int, dict[str, torch.Tensor]]:
+    return _shared_captured_layers
+
+
+def clear_shared_captured_layers() -> None:
+    _shared_captured_layers.clear()
 
 
 @dataclass
@@ -30,9 +34,7 @@ class BatchConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBaseCl
 
     def __init__(self, vllm_config: Any, role: KVConnectorRole, kv_cache_config: Any = None) -> None:  # type: ignore
         super().__init__(vllm_config, role, kv_cache_config)  # pyright: ignore[reportUnknownMemberType]
-        self.captured_layers = {}
-        global _active_instance
-        _active_instance = self
+        self.captured_layers = _shared_captured_layers
 
     def start_load_kv(self, forward_context: Any, **kwargs: Any) -> None:  # pyright: ignore[reportAny]
         pass

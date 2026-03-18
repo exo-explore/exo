@@ -41,7 +41,7 @@ _card_cache: dict[ModelId, "ModelCard"] = {}
 import re
 
 _QUANT_SUFFIXES = re.compile(
-    r"[-_](?:MXFP[0-9]+|GPTQ|AWQ|GGUF|fp16|bf16|fp8|int[0-9]+|[0-9]+(?:\.[0-9]+)?bit|Q[0-9]+(?:_[A-Z0-9]+)?|gs[0-9]+)(?:[-_](?:Q[0-9]+|Int[0-9]+|[A-Z0-9]+|gs[0-9]+))*$",
+    r"[-_](?:MLX|MXFP[0-9]+|GPTQ|AWQ|GGUF|fp16|bf16|fp8|int[0-9]+|[0-9]+(?:\.[0-9]+)?bit|Q[0-9]+(?:_[A-Z0-9]+)?|gs[0-9]+)(?:[-_](?:MLX|Q[0-9]+|Int[0-9]+|[A-Z0-9]+|gs[0-9]+))*$",
     re.IGNORECASE,
 )
 
