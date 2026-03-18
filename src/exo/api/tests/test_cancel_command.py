@@ -7,10 +7,11 @@ from fastapi.testclient import TestClient
 
 from exo.shared.types.common import CommandId
 
+from ..main import API
+
 
 def _make_api() -> Any:
     """Create a minimal API instance with cancel route and error handler."""
-    from exo.api.main import API
 
     app = FastAPI()
     api = object.__new__(API)

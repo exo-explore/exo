@@ -4,14 +4,15 @@ import json
 from collections.abc import AsyncGenerator
 from typing import Any, cast
 
-from exo.api.adapters.claude import (
+from exo.shared.types.api import ToolCallItem
+from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
+from exo.shared.types.common import CommandId, ModelId
+
+from ..adapters.claude import (
     ClaudeMessagesResponse,
     collect_claude_response,
     generate_claude_stream,
 )
-from exo.shared.types.api import ToolCallItem
-from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
-from exo.shared.types.common import CommandId, ModelId
 
 
 async def _chunks_to_stream(
