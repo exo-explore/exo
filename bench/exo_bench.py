@@ -454,7 +454,7 @@ def main() -> int:
         key=lambda p: (
             str(p.get("instance_meta", "")),
             str(p.get("sharding", "")),
-            -nodes_used_in_instance(p["instance"]),
+            nodes_used_in_instance(p["instance"]),
         ),
         reverse=True,
     )
