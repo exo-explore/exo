@@ -25,7 +25,7 @@ from typing import Any, Optional
 import mlx.core as mx
 import mlx.nn as nn
 
-from .kernels.fused_gdn_projections_8bit import fused_gdn_projections
+from .kernels.batched_fused_gdn_projections_8bit import batched_fused_gdn_projections as fused_gdn_projections
 from .kernels.fused_qk_rmsnorm import fused_qk_rmsnorm
 from .kernels.fused_rms_norm_gated import fused_rms_norm_gated
 
