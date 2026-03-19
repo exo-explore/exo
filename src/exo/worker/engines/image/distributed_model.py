@@ -6,8 +6,8 @@ import mlx.core as mx
 from mflux.models.common.config.config import Config
 from PIL import Image
 
+from exo.api.types import AdvancedImageParams
 from exo.download.download_utils import build_model_path
-from exo.shared.types.api import AdvancedImageParams
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.shards import CfgShardMetadata, PipelineShardMetadata
 from exo.worker.engines.image.config import ImageModelConfig

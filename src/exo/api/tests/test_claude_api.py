@@ -3,11 +3,11 @@
 import pydantic
 import pytest
 
-from exo.master.adapters.claude import (
+from exo.api.adapters.claude import (
     claude_request_to_text_generation,
     finish_reason_to_claude_stop_reason,
 )
-from exo.shared.types.claude_api import (
+from exo.api.types.claude_api import (
     ClaudeMessage,
     ClaudeMessagesRequest,
     ClaudeTextBlock,

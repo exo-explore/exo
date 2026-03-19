@@ -4,15 +4,8 @@ from collections.abc import AsyncGenerator
 from itertools import count
 from typing import Any
 
-from exo.shared.types.api import Usage
-from exo.shared.types.chunks import (
-    ErrorChunk,
-    PrefillProgressChunk,
-    TokenChunk,
-    ToolCallChunk,
-)
-from exo.shared.types.common import CommandId
-from exo.shared.types.openai_responses import (
+from exo.api.types import Usage
+from exo.api.types.openai_responses import (
     FunctionCallInputItem,
     ResponseCompletedEvent,
     ResponseContentPart,
@@ -42,6 +35,13 @@ from exo.shared.types.openai_responses import (
     ResponseTextDoneEvent,
     ResponseUsage,
 )
+from exo.shared.types.chunks import (
+    ErrorChunk,
+    PrefillProgressChunk,
+    TokenChunk,
+    ToolCallChunk,
+)
+from exo.shared.types.common import CommandId
 from exo.shared.types.text_generation import (
     InputMessage,
     TextGenerationTaskParams,

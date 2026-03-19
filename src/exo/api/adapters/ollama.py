@@ -2,14 +2,7 @@ import json
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from exo.shared.types.chunks import (
-    ErrorChunk,
-    PrefillProgressChunk,
-    TokenChunk,
-    ToolCallChunk,
-)
-from exo.shared.types.common import CommandId
-from exo.shared.types.ollama_api import (
+from exo.api.types.ollama_api import (
     OllamaChatRequest,
     OllamaChatResponse,
     OllamaDoneReason,
@@ -19,6 +12,13 @@ from exo.shared.types.ollama_api import (
     OllamaToolCall,
     OllamaToolFunction,
 )
+from exo.shared.types.chunks import (
+    ErrorChunk,
+    PrefillProgressChunk,
+    TokenChunk,
+    ToolCallChunk,
+)
+from exo.shared.types.common import CommandId
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 
 

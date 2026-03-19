@@ -5,10 +5,10 @@ import anyio
 from anyio import fail_after
 from loguru import logger
 
+from exo.api.types import ImageEditsTaskParams
 from exo.download.download_utils import resolve_model_in_path
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelId
-from exo.shared.types.api import ImageEditsTaskParams
 from exo.shared.types.commands import (
     ForwarderCommand,
     ForwarderDownloadCommand,

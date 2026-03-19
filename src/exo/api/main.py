@@ -21,17 +21,17 @@ from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from loguru import logger
 
-from exo.master.adapters.chat_completions import (
+from exo.api.adapters.chat_completions import (
     chat_request_to_text_generation,
     collect_chat_response,
     generate_chat_stream,
 )
-from exo.master.adapters.claude import (
+from exo.api.adapters.claude import (
     claude_request_to_text_generation,
     collect_claude_response,
     generate_claude_stream,
 )
-from exo.master.adapters.ollama import (
+from exo.api.adapters.ollama import (
     collect_ollama_chat_response,
     collect_ollama_generate_response,
     generate_ollama_chat_stream,
@@ -39,34 +39,12 @@ from exo.master.adapters.ollama import (
     ollama_generate_request_to_text_generation,
     ollama_request_to_text_generation,
 )
-from exo.master.adapters.responses import (
+from exo.api.adapters.responses import (
     collect_responses_response,
     generate_responses_stream,
     responses_request_to_text_generation,
 )
-from exo.master.event_log import DiskEventLog
-from exo.master.image_store import ImageStore
-from exo.master.placement import place_instance as get_instance_placements
-from exo.shared.apply import apply
-from exo.shared.constants import (
-    DASHBOARD_DIR,
-    EXO_CACHE_HOME,
-    EXO_EVENT_LOG_DIR,
-    EXO_IMAGE_CACHE_DIR,
-    EXO_MAX_CHUNK_SIZE,
-    EXO_TRACING_CACHE_DIR,
-)
-from exo.shared.election import ElectionMessage
-from exo.shared.logging import InterceptLogger
-from exo.shared.models.model_cards import (
-    ModelCard,
-    ModelId,
-    delete_custom_card,
-    get_model_cards,
-    is_custom_card,
-)
-from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
-from exo.shared.types.api import (
+from exo.api.types import (
     AddCustomModelParams,
     AdvancedImageParams,
     BenchChatCompletionRequest,
@@ -114,6 +92,48 @@ from exo.shared.types.api import (
     TraceStatsResponse,
     normalize_image_size,
 )
+from exo.api.types.claude_api import (
+    ClaudeMessagesRequest,
+    ClaudeMessagesResponse,
+)
+from exo.api.types.ollama_api import (
+    OllamaChatRequest,
+    OllamaChatResponse,
+    OllamaGenerateRequest,
+    OllamaGenerateResponse,
+    OllamaModelDetails,
+    OllamaModelTag,
+    OllamaPsModel,
+    OllamaPsResponse,
+    OllamaShowRequest,
+    OllamaShowResponse,
+    OllamaTagsResponse,
+)
+from exo.api.types.openai_responses import (
+    ResponsesRequest,
+    ResponsesResponse,
+)
+from exo.master.image_store import ImageStore
+from exo.master.placement import place_instance as get_instance_placements
+from exo.shared.apply import apply
+from exo.shared.constants import (
+    DASHBOARD_DIR,
+    EXO_CACHE_HOME,
+    EXO_EVENT_LOG_DIR,
+    EXO_IMAGE_CACHE_DIR,
+    EXO_MAX_CHUNK_SIZE,
+    EXO_TRACING_CACHE_DIR,
+)
+from exo.shared.election import ElectionMessage
+from exo.shared.logging import InterceptLogger
+from exo.shared.models.model_cards import (
+    ModelCard,
+    ModelId,
+    delete_custom_card,
+    get_model_cards,
+    is_custom_card,
+)
+from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
     ErrorChunk,
     ImageChunk,
@@ -121,10 +141,6 @@ from exo.shared.types.chunks import (
     PrefillProgressChunk,
     TokenChunk,
     ToolCallChunk,
-)
-from exo.shared.types.claude_api import (
-    ClaudeMessagesRequest,
-    ClaudeMessagesResponse,
 )
 from exo.shared.types.commands import (
     Command,
@@ -151,29 +167,13 @@ from exo.shared.types.events import (
     TracesMerged,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.ollama_api import (
-    OllamaChatRequest,
-    OllamaChatResponse,
-    OllamaGenerateRequest,
-    OllamaGenerateResponse,
-    OllamaModelDetails,
-    OllamaModelTag,
-    OllamaPsModel,
-    OllamaPsResponse,
-    OllamaShowRequest,
-    OllamaShowResponse,
-    OllamaTagsResponse,
-)
-from exo.shared.types.openai_responses import (
-    ResponsesRequest,
-    ResponsesResponse,
-)
 from exo.shared.types.state import State
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup
 

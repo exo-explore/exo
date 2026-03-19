@@ -1541,34 +1541,44 @@
   }
 
   // Helper to get download status for a model (checks all downloads for matching model ID)
-  function getModelDownloadStatus(modelId: string): {
+  type NodeDownloadStatus = {
+    nodeId: string;
+    nodeName: string;
+    status: "completed" | "partial" | "pending" | "downloading";
+    percentage: number;
+    progress: DownloadProgress | null;
+  };
+
+  // Shared helper: collect per-node download status for a model across a set of nodes.
+  // Handles deduplication, entry parsing, and aggregation in one place.
+  function collectDownloadStatus(
+    modelId: string,
+    nodeIds?: string[],
+  ): {
     isDownloading: boolean;
     progress: DownloadProgress | null;
-    perNode: Array<{
-      nodeId: string;
-      nodeName: string;
-      progress: DownloadProgress;
-    }>;
+    perNode: NodeDownloadStatus[];
+    failedError: string | null;
   } {
+    const empty = {
+      isDownloading: false,
+      progress: null,
+      perNode: [] as NodeDownloadStatus[],
+      failedError: null,
+    };
+
     if (!downloadsData || Object.keys(downloadsData).length === 0) {
-      return { isDownloading: false, progress: null, perNode: [] };
+      return empty;
     }
 
-    let totalBytes = 0;
-    let downloadedBytes = 0;
-    let totalSpeed = 0;
-    let completedFiles = 0;
-    let totalFiles = 0;
-    let isDownloading = false;
-    const allFiles: DownloadProgress["files"] = [];
-    const perNode: Array<{
-      nodeId: string;
-      nodeName: string;
-      progress: DownloadProgress;
-    }> = [];
+    // Deduplicate by nodeId — a node can have multiple entries for the same model
+    // (e.g. PipelineShardMetadata + TensorShardMetadata). Keep the last entry,
+    // which is the most recently applied event.
+    const perNodeMap = new Map<string, NodeDownloadStatus>();
 
-    // Check all nodes for downloads matching this model
+    const nodeIdSet = nodeIds ? new Set(nodeIds) : null;
     for (const [nodeId, nodeDownloads] of Object.entries(downloadsData)) {
+      if (nodeIdSet && !nodeIdSet.has(nodeId)) continue;
       if (!Array.isArray(nodeDownloads)) continue;
 
       for (const downloadWrapped of nodeDownloads) {
@@ -1581,29 +1591,45 @@
         const downloadPayload = (downloadWrapped as Record<string, unknown>)[
           downloadKind
         ] as Record<string, unknown>;
-
-        if (
-          downloadKind !== "DownloadOngoing" &&
-          downloadKind !== "DownloadPending"
-        )
-          continue;
         if (!downloadPayload) continue;
 
         const downloadModelId = extractModelIdFromDownload(downloadPayload);
+        if (!downloadModelId || downloadModelId !== modelId) continue;
 
-        // Match if the model ID contains or equals the requested model
-        // (handles cases like "mlx-community/Meta-Llama..." matching)
-        if (
-          !downloadModelId ||
-          !downloadModelId.includes(modelId.split("/").pop() || modelId)
-        ) {
-          // Try exact match or partial match
-          if (downloadModelId !== modelId) continue;
+        // DownloadFailed — return with any data collected so far
+        if (downloadKind === "DownloadFailed") {
+          return {
+            isDownloading: false,
+            progress: null,
+            perNode: Array.from(perNodeMap.values()),
+            failedError:
+              (downloadPayload.errorMessage as string) ||
+              (downloadPayload.error_message as string) ||
+              "Download failed",
+          };
         }
 
-        // For DownloadPending with partial bytes (paused/resumed downloads),
-        // synthesize a progress object from the top-level downloaded/total fields
-        let progress: DownloadProgress | null;
+        if (
+          downloadKind !== "DownloadOngoing" &&
+          downloadKind !== "DownloadPending" &&
+          downloadKind !== "DownloadCompleted"
+        )
+          continue;
+
+        const nodeName =
+          data?.nodes?.[nodeId]?.friendly_name ?? nodeId.slice(0, 8);
+
+        if (downloadKind === "DownloadCompleted") {
+          perNodeMap.set(nodeId, {
+            nodeId,
+            nodeName,
+            status: "completed",
+            percentage: 100,
+            progress: null,
+          });
+          continue;
+        }
+
         if (downloadKind === "DownloadPending") {
           const pendingDownloaded = getBytes(
             downloadPayload.downloaded ??
@@ -1616,44 +1642,67 @@
               downloadPayload.totalBytes,
           );
           if (pendingDownloaded <= 0 && pendingTotal <= 0) continue;
-          isDownloading = true;
-          progress = {
-            totalBytes: pendingTotal,
-            downloadedBytes: pendingDownloaded,
-            speed: 0,
-            etaMs: 0,
-            percentage:
-              pendingTotal > 0 ? (pendingDownloaded / pendingTotal) * 100 : 0,
-            completedFiles: 0,
-            totalFiles: 0,
-            files: [],
-          };
-        } else {
-          isDownloading = true;
-          progress = parseDownloadProgress(downloadPayload);
+          const pct =
+            pendingTotal > 0 ? (pendingDownloaded / pendingTotal) * 100 : 0;
+          perNodeMap.set(nodeId, {
+            nodeId,
+            nodeName,
+            status: pendingDownloaded > 0 ? "partial" : "pending",
+            percentage: pct,
+            progress: null,
+          });
+          continue;
         }
 
-        if (progress) {
-          // Sum all values across nodes - each node downloads independently
-          totalBytes += progress.totalBytes;
-          downloadedBytes += progress.downloadedBytes;
-          totalSpeed += progress.speed;
-          completedFiles += progress.completedFiles;
-          totalFiles += progress.totalFiles;
-          allFiles.push(...progress.files);
+        // DownloadOngoing
+        const progress = parseDownloadProgress(downloadPayload);
+        if (
+          !progress ||
+          (progress.downloadedBytes <= 0 && progress.totalBytes <= 0)
+        )
+          continue;
 
-          const nodeName =
-            data?.nodes?.[nodeId]?.friendly_name ?? nodeId.slice(0, 8);
-          perNode.push({ nodeId, nodeName, progress });
-        }
+        perNodeMap.set(nodeId, {
+          nodeId,
+          nodeName,
+          status: "downloading",
+          percentage: progress.percentage,
+          progress,
+        });
+      }
+    }
+
+    // Aggregate from deduplicated per-node entries
+    const perNode = Array.from(perNodeMap.values());
+    let totalBytes = 0;
+    let downloadedBytes = 0;
+    let totalSpeed = 0;
+    let completedFiles = 0;
+    let totalFiles = 0;
+    let isDownloading = false;
+    const allFiles: DownloadProgress["files"] = [];
+
+    for (const node of perNode) {
+      if (node.status === "downloading" && node.progress) {
+        isDownloading = true;
+        totalBytes += node.progress.totalBytes;
+        downloadedBytes += node.progress.downloadedBytes;
+        totalSpeed += node.progress.speed;
+        completedFiles += node.progress.completedFiles;
+        totalFiles += node.progress.totalFiles;
+        allFiles.push(...node.progress.files);
       }
     }
 
     if (!isDownloading) {
-      return { isDownloading: false, progress: null, perNode: [] };
+      return {
+        isDownloading: false,
+        progress: null,
+        perNode,
+        failedError: null,
+      };
     }
 
-    // ETA = total remaining bytes / total speed across all nodes
     const remainingBytes = totalBytes - downloadedBytes;
     const etaMs = totalSpeed > 0 ? (remainingBytes / totalSpeed) * 1000 : 0;
 
@@ -1670,7 +1719,19 @@
         files: allFiles,
       },
       perNode,
+      failedError: null,
     };
+  }
+
+  function getModelDownloadStatus(
+    modelId: string,
+    nodeIds?: string[],
+  ): {
+    isDownloading: boolean;
+    progress: DownloadProgress | null;
+    perNode: NodeDownloadStatus[];
+  } {
+    return collectDownloadStatus(modelId, nodeIds);
   }
 
   // Helper to get download status for an instance
@@ -1683,26 +1744,9 @@
     errorMessage: string | null;
     progress: DownloadProgress | null;
     statusText: string;
-    perNode: Array<{
-      nodeId: string;
-      nodeName: string;
-      progress: DownloadProgress;
-    }>;
+    perNode: NodeDownloadStatus[];
   } {
-    if (!downloadsData || Object.keys(downloadsData).length === 0) {
-      // No download data yet — defer to runner status instead of assuming RUNNING
-      const statusInfo = deriveInstanceStatus(instanceWrapped);
-      return {
-        isDownloading: false,
-        isFailed: false,
-        errorMessage: null,
-        progress: null,
-        statusText: statusInfo.statusText,
-        perNode: [],
-      };
-    }
-
-    // Unwrap the instance
+    // Unwrap the instance to get shard assignments
     const [instanceTag, instance] = getTagged(instanceWrapped);
     if (!instance || typeof instance !== "object") {
       return {
@@ -1722,132 +1766,9 @@
         modelId?: string;
       };
     };
-    const nodeToRunner = inst.shardAssignments?.nodeToRunner || {};
-    const runnerToShard = inst.shardAssignments?.runnerToShard || {};
     const instanceModelId = inst.shardAssignments?.modelId;
 
-    // Build reverse mapping: runnerId -> nodeId
-    const runnerToNode: Record<string, string> = {};
-    for (const [nodeId, runnerId] of Object.entries(nodeToRunner)) {
-      runnerToNode[runnerId] = nodeId;
-    }
-
-    let totalBytes = 0;
-    let downloadedBytes = 0;
-    let totalSpeed = 0;
-    let completedFiles = 0;
-    let totalFiles = 0;
-    let isDownloading = false;
-    const allFiles: DownloadProgress["files"] = [];
-    const perNode: Array<{
-      nodeId: string;
-      nodeName: string;
-      progress: DownloadProgress;
-    }> = [];
-
-    // Check downloads for nodes that are part of this instance
-    for (const runnerId of Object.keys(runnerToShard)) {
-      const nodeId = runnerToNode[runnerId];
-      if (!nodeId) continue;
-
-      const nodeDownloads = downloadsData[nodeId];
-      if (!Array.isArray(nodeDownloads)) continue;
-
-      for (const downloadWrapped of nodeDownloads) {
-        if (!downloadWrapped || typeof downloadWrapped !== "object") continue;
-
-        const keys = Object.keys(downloadWrapped as Record<string, unknown>);
-        if (keys.length !== 1) continue;
-
-        const downloadKind = keys[0];
-        const downloadPayload = (downloadWrapped as Record<string, unknown>)[
-          downloadKind
-        ] as Record<string, unknown>;
-
-        // Handle DownloadFailed - return immediately with error info
-        if (downloadKind === "DownloadFailed") {
-          const downloadModelId = extractModelIdFromDownload(downloadPayload);
-          if (
-            instanceModelId &&
-            downloadModelId &&
-            downloadModelId === instanceModelId
-          ) {
-            return {
-              isDownloading: false,
-              isFailed: true,
-              errorMessage:
-                (downloadPayload.errorMessage as string) || "Download failed",
-              progress: null,
-              statusText: "FAILED",
-              perNode: [],
-            };
-          }
-        }
-
-        if (
-          downloadKind !== "DownloadOngoing" &&
-          downloadKind !== "DownloadPending"
-        )
-          continue;
-        if (!downloadPayload) continue;
-
-        // Check if this download is for this instance's model
-        const downloadModelId = extractModelIdFromDownload(downloadPayload);
-        if (
-          instanceModelId &&
-          downloadModelId &&
-          downloadModelId === instanceModelId
-        ) {
-          // For DownloadPending with partial bytes, synthesize progress
-          let progress: DownloadProgress | null;
-          if (downloadKind === "DownloadPending") {
-            const pendingDownloaded = getBytes(
-              downloadPayload.downloaded ??
-                downloadPayload.downloaded_bytes ??
-                downloadPayload.downloadedBytes,
-            );
-            const pendingTotal = getBytes(
-              downloadPayload.total ??
-                downloadPayload.total_bytes ??
-                downloadPayload.totalBytes,
-            );
-            if (pendingDownloaded <= 0 && pendingTotal <= 0) continue;
-            isDownloading = true;
-            progress = {
-              totalBytes: pendingTotal,
-              downloadedBytes: pendingDownloaded,
-              speed: 0,
-              etaMs: 0,
-              percentage:
-                pendingTotal > 0 ? (pendingDownloaded / pendingTotal) * 100 : 0,
-              completedFiles: 0,
-              totalFiles: 0,
-              files: [],
-            };
-          } else {
-            isDownloading = true;
-            progress = parseDownloadProgress(downloadPayload);
-          }
-
-          if (progress) {
-            // Sum all values across nodes - each node downloads independently
-            totalBytes += progress.totalBytes;
-            downloadedBytes += progress.downloadedBytes;
-            totalSpeed += progress.speed;
-            completedFiles += progress.completedFiles;
-            totalFiles += progress.totalFiles;
-            allFiles.push(...progress.files);
-
-            const nodeName =
-              data?.nodes?.[nodeId]?.friendly_name ?? nodeId.slice(0, 8);
-            perNode.push({ nodeId, nodeName, progress });
-          }
-        }
-      }
-    }
-
-    if (!isDownloading) {
-      // Check runner status for other states
+    if (!instanceModelId) {
       const statusInfo = deriveInstanceStatus(instanceWrapped);
       return {
         isDownloading: false,
@@ -1859,26 +1780,49 @@
       };
     }
 
-    // ETA = total remaining bytes / total speed across all nodes
-    const remainingBytes = totalBytes - downloadedBytes;
-    const etaMs = totalSpeed > 0 ? (remainingBytes / totalSpeed) * 1000 : 0;
+    // Get node IDs assigned to this instance
+    const nodeToRunner = inst.shardAssignments?.nodeToRunner || {};
+    const runnerToShard = inst.shardAssignments?.runnerToShard || {};
+    const runnerToNode: Record<string, string> = {};
+    for (const [nodeId, runnerId] of Object.entries(nodeToRunner)) {
+      runnerToNode[runnerId] = nodeId;
+    }
+    const instanceNodeIds = Object.keys(runnerToShard)
+      .map((runnerId) => runnerToNode[runnerId])
+      .filter(Boolean);
+
+    const result = collectDownloadStatus(instanceModelId, instanceNodeIds);
+
+    if (result.failedError) {
+      return {
+        isDownloading: false,
+        isFailed: true,
+        errorMessage: result.failedError,
+        progress: null,
+        statusText: "FAILED",
+        perNode: [],
+      };
+    }
+
+    if (!result.isDownloading) {
+      const statusInfo = deriveInstanceStatus(instanceWrapped);
+      return {
+        isDownloading: false,
+        isFailed: statusInfo.statusText === "FAILED",
+        errorMessage: null,
+        progress: null,
+        statusText: statusInfo.statusText,
+        perNode: result.perNode,
+      };
+    }
 
     return {
       isDownloading: true,
       isFailed: false,
       errorMessage: null,
-      progress: {
-        totalBytes,
-        downloadedBytes,
-        speed: totalSpeed,
-        etaMs,
-        percentage: totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0,
-        completedFiles,
-        totalFiles,
-        files: allFiles,
-      },
+      progress: result.progress,
       statusText: "DOWNLOADING",
-      perNode,
+      perNode: result.perNode,
     };
   }
 
@@ -5376,10 +5320,10 @@
                             <div
                               class="mt-2 space-y-2 max-h-48 overflow-y-auto pr-1"
                             >
-                              {#each downloadInfo.perNode as nodeProg}
+                              {#each downloadInfo.perNode.filter((n) => n.status === "downloading" && n.progress) as nodeProg}
                                 {@const nodePercent = Math.min(
                                   100,
-                                  Math.max(0, nodeProg.progress.percentage),
+                                  Math.max(0, nodeProg.percentage),
                                 )}
                                 {@const isExpanded =
                                   instanceDownloadExpandedNodes.has(
@@ -5435,15 +5379,17 @@
                                     >
                                       <span
                                         >{formatBytes(
-                                          nodeProg.progress.downloadedBytes,
+                                          nodeProg.progress?.downloadedBytes ??
+                                            0,
                                         )} / {formatBytes(
-                                          nodeProg.progress.totalBytes,
+                                          nodeProg.progress?.totalBytes ?? 0,
                                         )}</span
                                       >
                                       <span
-                                        >{formatSpeed(nodeProg.progress.speed)} •
-                                        ETA {formatEta(
-                                          nodeProg.progress.etaMs,
+                                        >{formatSpeed(
+                                          nodeProg.progress?.speed ?? 0,
+                                        )} • ETA {formatEta(
+                                          nodeProg.progress?.etaMs ?? 0,
                                         )}</span
                                       >
                                     </div>
@@ -5451,14 +5397,14 @@
 
                                   {#if isExpanded}
                                     <div class="mt-2 space-y-1.5">
-                                      {#if nodeProg.progress.files.length === 0}
+                                      {#if nodeProg.progress?.files ?? [].length === 0}
                                         <div
                                           class="text-[11px] font-mono text-exo-light-gray/70"
                                         >
                                           No file details reported.
                                         </div>
                                       {:else}
-                                        {#each nodeProg.progress.files as f}
+                                        {#each nodeProg.progress?.files ?? [] as f}
                                           {@const filePercent = Math.min(
                                             100,
                                             Math.max(0, f.percentage ?? 0),
@@ -5960,12 +5906,15 @@
                 )}
                 {@const allPreviews = filteredPreviews()}
                 {#if selectedModel && allPreviews.length > 0}
-                  {@const downloadStatus = getModelDownloadStatus(
-                    selectedModel.id,
-                  )}
                   {@const tags = modelTags()[selectedModel.id] || []}
                   <div class="space-y-3">
                     {#each allPreviews as apiPreview, i}
+                      {@const downloadStatus = getModelDownloadStatus(
+                        selectedModel.id,
+                        apiPreview.memory_delta_by_node
+                          ? Object.keys(apiPreview.memory_delta_by_node)
+                          : undefined,
+                      )}
                       <div
                         role="group"
                         onmouseenter={() => {
@@ -6536,10 +6485,10 @@
                               <div
                                 class="mt-2 space-y-2 max-h-48 overflow-y-auto pr-1"
                               >
-                                {#each downloadInfo.perNode as nodeProg}
+                                {#each downloadInfo.perNode.filter((n) => n.status === "downloading" && n.progress) as nodeProg}
                                   {@const nodePercent = Math.min(
                                     100,
-                                    Math.max(0, nodeProg.progress.percentage),
+                                    Math.max(0, nodeProg.percentage),
                                   )}
                                   {@const isExpanded =
                                     instanceDownloadExpandedNodes.has(
@@ -6598,16 +6547,17 @@
                                       >
                                         <span
                                           >{formatBytes(
-                                            nodeProg.progress.downloadedBytes,
+                                            nodeProg.progress
+                                              ?.downloadedBytes ?? 0,
                                           )} / {formatBytes(
-                                            nodeProg.progress.totalBytes,
+                                            nodeProg.progress?.totalBytes ?? 0,
                                           )}</span
                                         >
                                         <span
                                           >{formatSpeed(
-                                            nodeProg.progress.speed,
+                                            nodeProg.progress?.speed ?? 0,
                                           )} • ETA {formatEta(
-                                            nodeProg.progress.etaMs,
+                                            nodeProg.progress?.etaMs ?? 0,
                                           )}</span
                                         >
                                       </div>
@@ -6615,14 +6565,14 @@
 
                                     {#if isExpanded}
                                       <div class="mt-2 space-y-1.5">
-                                        {#if nodeProg.progress.files.length === 0}
+                                        {#if nodeProg.progress?.files ?? [].length === 0}
                                           <div
                                             class="text-[11px] font-mono text-exo-light-gray/70"
                                           >
                                             No file details reported.
                                           </div>
                                         {:else}
-                                          {#each nodeProg.progress.files as f}
+                                          {#each nodeProg.progress?.files ?? [] as f}
                                             {@const filePercent = Math.min(
                                               100,
                                               Math.max(0, f.percentage ?? 0),

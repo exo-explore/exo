@@ -11,7 +11,7 @@ from openai_harmony import (
     load_harmony_encoding,
 )
 
-from exo.shared.types.api import ToolCallItem
+from exo.api.types import ToolCallItem
 from exo.shared.types.common import ModelId
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.worker.engines.mlx.utils_mlx import (
