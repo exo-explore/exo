@@ -79,7 +79,7 @@ def load_tokenizer_for_bench(model_id: str) -> Any:
         model_path = Path(
             snapshot_download(
                 model_id,
-                allow_patterns=["*.json", "*.py", "*.tiktoken", "*.model"],
+                allow_patterns=["*.json", "*.py", "*.tiktoken", "*.model", "*.jinja"],
             )
         )
 
