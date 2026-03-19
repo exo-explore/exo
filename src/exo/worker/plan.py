@@ -2,6 +2,8 @@
 
 from collections.abc import Mapping, Sequence
 
+from loguru import logger
+
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.tasks import (
     CancelTask,
@@ -102,7 +104,9 @@ def _create_runner(
             continue
 
         shard = instance.shard(runner_id)
-        assert shard is not None
+        if shard is None:
+            logger.warning(f"No shard found for runner {runner_id} in instance {instance.instance_id}")
+            continue
 
         return CreateRunner(
             instance_id=instance.instance_id,
@@ -168,8 +172,9 @@ def _init_distributed_backend(
         device_rank = shard.device_rank
         world_size = shard.world_size
 
-        assert device_rank < world_size
-        assert device_rank >= 0
+        if device_rank < 0 or device_rank >= world_size:
+            logger.warning(f"Invalid device_rank={device_rank} for world_size={world_size}, skipping")
+            continue
 
         accepting_ranks = device_rank < world_size - 1
 
@@ -243,8 +248,9 @@ def _ready_to_warmup(
 
         is_runner_loaded = isinstance(runner.status, RunnerLoaded)
 
-        assert device_rank < world_size
-        assert device_rank >= 0
+        if device_rank < 0 or device_rank >= world_size:
+            logger.warning(f"Invalid device_rank={device_rank} for world_size={world_size}, skipping")
+            continue
 
         # Rank != 0
         accepting_ranks_ready = device_rank > 0 and all(
@@ -301,7 +307,7 @@ def _pending_tasks(
                 continue
 
             if isinstance(runner.status, (RunnerReady, RunnerRunning)) and all(
-                isinstance(all_runners[global_runner_id], (RunnerReady, RunnerRunning))
+                isinstance(all_runners.get(global_runner_id), (RunnerReady, RunnerRunning))
                 for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
             ):
                 return task

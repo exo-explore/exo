@@ -4,6 +4,8 @@ import json
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from loguru import logger
+
 from exo.shared.types.chunks import (
     ErrorChunk,
     PrefillProgressChunk,
@@ -285,7 +287,9 @@ async def collect_ollama_chat_response(
 
     combined_text = "".join(text_parts)
     combined_thinking = "".join(thinking_parts) if thinking_parts else None
-    assert model is not None
+    if model is None:
+        logger.warning("No model received in chat response chunks, using fallback")
+        model = "unknown"
 
     yield OllamaChatResponse(
         model=model,
@@ -443,7 +447,9 @@ async def collect_ollama_generate_response(
                 finish_reason = chunk.finish_reason
                 prompt_eval_count, eval_count = _get_usage(chunk)
 
-    assert model is not None
+    if model is None:
+        logger.warning("No model received in generate response chunks, using fallback")
+        model = "unknown"
     yield OllamaGenerateResponse(
         model=model,
         response="".join(text_parts),

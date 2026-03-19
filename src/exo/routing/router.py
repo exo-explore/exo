@@ -1,3 +1,4 @@
+import os
 from copy import copy
 from itertools import count
 from math import inf
@@ -5,10 +6,12 @@ from os import PathLike
 from pathlib import Path
 from typing import cast
 
+import anyio
 from anyio import (
     BrokenResourceError,
     ClosedResourceError,
     move_on_after,
+    sleep,
     sleep_forever,
 )
 from exo_pyo3_bindings import (
@@ -82,7 +85,8 @@ class TopicRouter[T: CamelCaseModel]:
         to_clear: set[Sender[T]] = set()
         for sender in copy(self.senders):
             try:
-                await sender.send(item)
+                with move_on_after(5):
+                    await sender.send(item)
             except (ClosedResourceError, BrokenResourceError):
                 to_clear.add(sender)
         self.senders -= to_clear
@@ -113,6 +117,8 @@ class Router:
         self._tmp_networking_sender: Sender[tuple[str, bytes]] | None = send
         self._id_count = count()
         self._tg: TaskGroup = TaskGroup()
+        self._connected_peer_ids: set[str] = set()
+        self._persistent_peers: list[str] = []
 
     async def register_topic[T: CamelCaseModel](self, topic: TypedTopic[T]):
         send = self._tmp_networking_sender
@@ -127,24 +133,67 @@ class Router:
 
     def sender[T: CamelCaseModel](self, topic: TypedTopic[T]) -> Sender[T]:
         router = self.topic_routers.get(topic.topic, None)
-        # There's gotta be a way to do this without THIS many asserts
-        assert router is not None
-        assert router.topic == topic
+        if router is None or router.topic != topic:
+            raise ValueError(f"Topic {topic.topic} not registered or type mismatch")
         sender = cast(TopicRouter[T], router).new_sender()
         return sender
 
     def receiver[T: CamelCaseModel](self, topic: TypedTopic[T]) -> Receiver[T]:
         router = self.topic_routers.get(topic.topic, None)
-        # There's gotta be a way to do this without THIS many asserts
-
-        assert router is not None
-        assert router.topic == topic
-        assert router.topic.model_type == topic.model_type
+        if router is None or router.topic != topic or router.topic.model_type != topic.model_type:
+            raise ValueError(f"Topic {topic.topic} not registered or type mismatch")
 
         send, recv = channel[T]()
+
+        if len(router.senders) > 1000:
+            logger.warning("TopicRouter senders exceeded 1000, clearing stale senders")
+            router.senders.clear()
+
         router.senders.add(cast(Sender[CamelCaseModel], send))
 
         return recv
+
+    async def dial(self, addr: str):
+        """Manually dial a libp2p multiaddr."""
+        await self._net.dial(addr)
+        logger.info(f"Dialed {addr}")
+
+    async def _auto_dial_peers(self):
+        """Dial peers from EXO_PEERS env var (comma-separated multiaddrs)."""
+        peers_env = os.environ.get("EXO_PEERS", "")
+        if not peers_env:
+            return
+        self._persistent_peers = [
+            a.strip() for a in peers_env.split(",") if a.strip()
+        ]
+        await sleep(2)  # wait for swarm to be ready
+        for addr in self._persistent_peers:
+            if len(self._connected_peer_ids) > 0:
+                break  # already connected via incoming dial
+            try:
+                await self.dial(addr)
+            except Exception as e:
+                logger.warning(f"Failed to dial {addr}: {e}")
+
+    async def _reconnect_loop(self):
+        """Redial persistent peers when all connections are lost."""
+        await sleep(10)  # wait for _auto_dial_peers
+        peers = self._persistent_peers
+        if not peers:
+            return
+        backoff = 5
+        while True:
+            if len(self._connected_peer_ids) > 0:
+                await sleep(30)
+                backoff = 5
+                continue
+            for addr in peers:
+                try:
+                    await self.dial(addr)
+                except Exception as e:
+                    logger.warning(f"Redial {addr} failed: {e}")
+            await sleep(backoff)
+            backoff = min(backoff * 2, 60)
 
     async def run(self):
         logger.debug("Starting Router")
@@ -158,6 +207,10 @@ class Router:
                 # subscribe to pending topics
                 for topic in self.topic_routers:
                     await self._networking_subscribe(topic)
+                # auto-dial peers from env
+                tg.start_soon(self._auto_dial_peers)
+                # persistent reconnect loop for dropped connections
+                tg.start_soon(self._reconnect_loop)
                 # Router only shuts down if you cancel it.
                 await sleep_forever()
         finally:
@@ -170,11 +223,13 @@ class Router:
         self._tg.cancel_tasks()
 
     async def _networking_subscribe(self, topic: str):
-        await self._net.gossipsub_subscribe(topic)
+        with move_on_after(5):
+            await self._net.gossipsub_subscribe(topic)
         logger.info(f"Subscribed to {topic}")
 
     async def _networking_unsubscribe(self, topic: str):
-        await self._net.gossipsub_unsubscribe(topic)
+        with move_on_after(5):
+            await self._net.gossipsub_unsubscribe(topic)
         logger.info(f"Unsubscribed from {topic}")
 
     async def _networking_recv(self):
@@ -196,12 +251,21 @@ class Router:
                         await router.publish_bytes(data)
                     case PyFromSwarm.Connection():
                         message = ConnectionMessage.from_update(from_swarm)
-                        logger.trace(
-                            f"Received message on connection_messages with payload {message}"
-                        )
+                        if message.connected:
+                            if message.node_id in self._connected_peer_ids:
+                                continue  # deduplicate
+                            self._connected_peer_ids.add(message.node_id)
+                            logger.info(f"Peer {message.node_id} connected")
+                        else:
+                            if message.node_id not in self._connected_peer_ids:
+                                continue  # deduplicate
+                            self._connected_peer_ids.discard(message.node_id)
+                            logger.warning(f"Peer {message.node_id} disconnected")
                         if CONNECTION_MESSAGES.topic in self.topic_routers:
                             router = self.topic_routers[CONNECTION_MESSAGES.topic]
-                            assert router.topic.model_type == ConnectionMessage
+                            if router.topic.model_type != ConnectionMessage:
+                                logger.error("CONNECTION_MESSAGES topic has wrong model_type")
+                                continue
                             router = cast(TopicRouter[ConnectionMessage], router)
                             await router.publish(message)
                     case _:
@@ -227,7 +291,12 @@ class Router:
                 except NoPeersSubscribedToTopicError:
                     pass
                 except AllQueuesFullError:
-                    logger.warning(f"All peer queues full, dropping message on {topic}")
+                    logger.warning(f"All peer queues full on {topic}, retrying once after 100ms")
+                    await anyio.sleep(0.1)
+                    try:
+                        await self._net.gossipsub_publish(topic, data)
+                    except (AllQueuesFullError, MessageTooLargeError):
+                        logger.error(f"Retry failed: dropping message on {topic}")
                 except MessageTooLargeError:
                     logger.warning(
                         f"Message too large for gossipsub on {topic} ({len(data)} bytes), dropping"

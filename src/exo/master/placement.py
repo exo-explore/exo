@@ -1,6 +1,5 @@
 import random
 from collections.abc import Mapping
-from copy import deepcopy
 from typing import Sequence
 
 from exo.master.placement_utils import (
@@ -145,7 +144,8 @@ def place_instance(
     cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle.node_ids)
 
     instance_id = InstanceId()
-    target_instances = dict(deepcopy(current_instances))
+    # Shallow copy is safe: Instance is a frozen Pydantic model (immutable)
+    target_instances = dict(current_instances)
 
     match command.instance_meta:
         case InstanceMeta.MlxJaccl:
@@ -153,7 +153,8 @@ def place_instance(
             def get_device_rank(node_id: NodeId) -> int:
                 runner_id = shard_assignments.node_to_runner[node_id]
                 shard_metadata = shard_assignments.runner_to_shard.get(runner_id)
-                assert shard_metadata is not None
+                if shard_metadata is None:
+                    raise ValueError(f"No shard metadata for runner {runner_id}")
                 return shard_metadata.device_rank
 
             zero_node_ids = [
@@ -161,7 +162,10 @@ def place_instance(
                 for node_id in selected_cycle.node_ids
                 if get_device_rank(node_id) == 0
             ]
-            assert len(zero_node_ids) == 1
+            if len(zero_node_ids) != 1:
+                raise ValueError(
+                    f"Expected exactly 1 node with device_rank=0, got {len(zero_node_ids)}"
+                )
             coordinator_node_id = zero_node_ids[0]
 
             mlx_jaccl_devices = get_mlx_jaccl_devices_matrix(
@@ -202,11 +206,10 @@ def delete_instance(
     command: DeleteInstance,
     current_instances: Mapping[InstanceId, Instance],
 ) -> dict[InstanceId, Instance]:
-    target_instances = dict(deepcopy(current_instances))
-    if command.instance_id in target_instances:
-        del target_instances[command.instance_id]
-        return target_instances
-    raise ValueError(f"Instance {command.instance_id} not found")
+    if command.instance_id not in current_instances:
+        raise ValueError(f"Instance {command.instance_id} not found")
+    # Shallow copy is safe: Instance is a frozen Pydantic model (immutable)
+    return {k: v for k, v in current_instances.items() if k != command.instance_id}
 
 
 def get_transition_events(

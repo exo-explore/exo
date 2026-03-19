@@ -40,6 +40,8 @@ def filter_cycles_by_memory(
 def get_smallest_cycles(
     cycles: list[Cycle],
 ) -> list[Cycle]:
+    if not cycles:
+        return []
     min_nodes = min(len(cycle) for cycle in cycles)
     return [cycle for cycle in cycles if len(cycle) == min_nodes]
 
@@ -68,7 +70,8 @@ def allocate_layers_proportionally(
     for i in range(n):
         if result[i] == 0:
             max_idx = max(range(n), key=lambda j: result[j])
-            assert result[max_idx] > 1
+            if result[max_idx] <= 1:
+                raise ValueError(f"Cannot allocate minimum 1 layer per node: not enough layers ({total_layers}) for {n} nodes")
             result[max_idx] -= 1
             result[i] = 1
 
@@ -155,12 +158,43 @@ def _get_shard_assignments_for_cfg_parallel(
     cfg_world_size = 2
     pipeline_world_size = world_size // cfg_world_size
 
-    # Allocate layers for one pipeline group (both groups run the same layers)
-    pipeline_node_ids = cycle.node_ids[:pipeline_world_size]
-    pipeline_memory = _compute_total_memory(pipeline_node_ids, node_memory)
+    # Allocate layers for one pipeline group (both groups run the same layers).
+    # Use the minimum memory per pipeline rank across both groups to ensure
+    # the allocation is feasible for all nodes.
+    group0_node_ids = cycle.node_ids[:pipeline_world_size]
+    group1_node_ids = list(reversed(cycle.node_ids[pipeline_world_size:]))
+
+    # For each pipeline rank, take the minimum memory across both CFG groups
+    # so the allocation is safe for whichever group has less memory.
+    min_memory_node_ids: list[NodeId] = []
+    for rank in range(pipeline_world_size):
+        g0_mem = node_memory[group0_node_ids[rank]].ram_available
+        g1_mem = node_memory[group1_node_ids[rank]].ram_available
+        # Pick the node with less memory for allocation planning
+        min_memory_node_ids.append(
+            group0_node_ids[rank] if g0_mem <= g1_mem else group1_node_ids[rank]
+        )
+
+    pipeline_memory = _compute_total_memory(min_memory_node_ids, node_memory)
     layer_allocations = _allocate_and_validate_layers(
-        pipeline_node_ids, node_memory, pipeline_memory, model_card
+        min_memory_node_ids, node_memory, pipeline_memory, model_card
     )
+
+    # Also validate the other group's nodes can handle the allocation
+    total_storage = model_card.storage_size
+    total_layers = model_card.n_layers
+    for rank in range(pipeline_world_size):
+        node_layers = layer_allocations[rank]
+        for group_nodes in [group0_node_ids, group1_node_ids]:
+            node_id = group_nodes[rank]
+            required_memory = (total_storage * node_layers) // total_layers
+            available_memory = node_memory[node_id].ram_available
+            if required_memory > available_memory:
+                raise ValueError(
+                    f"CFG parallel: node {node_id} has insufficient memory: "
+                    f"requires {required_memory.in_gb:.2f} GB for {node_layers} layers, "
+                    f"but only has {available_memory.in_gb:.2f} GB available"
+                )
 
     # Ring topology: group 0 ascending [0,1,2,...], group 1 descending [...,2,1,0]
     # This places both last stages as neighbors for CFG exchange.
@@ -366,14 +400,16 @@ def _find_ip_prioritised(
             "unknown": 4,
         }
 
-    # RDMA prefers ethernet coordinator
+    # JACCL coordinator: prefer thunderbolt (40Gbps direct, lowest latency).
+    # Original code preferred ethernet — caused RDMA "not connected" on TB4 clusters.
+    # MISSED_THINGS.md noted TB5 instability but TB4 (M1 Max / M4) is stable.
     else:
         priority = {
-            "ethernet": 0,
-            "wifi": 1,
-            "unknown": 2,
-            "maybe_ethernet": 3,
-            "thunderbolt": 4,
+            "thunderbolt": 0,
+            "ethernet": 1,
+            "maybe_ethernet": 2,
+            "wifi": 3,
+            "unknown": 4,
         }
     return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2))
 

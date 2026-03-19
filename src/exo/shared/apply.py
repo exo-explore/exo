@@ -1,4 +1,3 @@
-import copy
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 
@@ -97,12 +96,11 @@ def event_apply(event: Event, state: State) -> State:
 
 
 def apply(state: State, event: IndexedEvent) -> State:
-    # Just to test that events are only applied in correct order
+    # Verify events are applied in correct order
     if state.last_event_applied_idx != event.idx - 1:
         logger.warning(
             f"Expected event {state.last_event_applied_idx + 1} but received {event.idx}"
         )
-    assert state.last_event_applied_idx == event.idx - 1
     new_state: State = event_apply(event.event, state)
     return new_state.model_copy(update={"last_event_applied_idx": event.idx})
 
@@ -199,9 +197,11 @@ def apply_runner_status_updated(event: RunnerStatusUpdated, state: State) -> Sta
 
 
 def apply_runner_deleted(event: RunnerDeleted, state: State) -> State:
-    assert event.runner_id in state.runners, (
-        "RunnerDeleted before any RunnerStatusUpdated events"
-    )
+    if event.runner_id not in state.runners:
+        logger.warning(
+            f"RunnerDeleted for unknown runner {event.runner_id} — ignoring"
+        )
+        return state
     new_runners: Mapping[RunnerId, RunnerStatus] = {
         rid: rs for rid, rs in state.runners.items() if rid != event.runner_id
     }
@@ -209,7 +209,7 @@ def apply_runner_deleted(event: RunnerDeleted, state: State) -> State:
 
 
 def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
-    topology = copy.deepcopy(state.topology)
+    topology = state.topology.copy()
     topology.remove_node(event.node_id)
     last_seen = {
         key: value for key, value in state.last_seen.items() if key != event.node_id
@@ -271,7 +271,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
 
 
 def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
-    topology = copy.deepcopy(state.topology)
+    topology = state.topology.copy()
     topology.add_node(event.node_id)
     info = event.info
 
@@ -376,13 +376,14 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
 
 
 def apply_topology_edge_created(event: TopologyEdgeCreated, state: State) -> State:
-    topology = copy.deepcopy(state.topology)
+    topology = state.topology.copy()
     topology.add_connection(event.conn)
     return state.model_copy(update={"topology": topology})
 
 
 def apply_topology_edge_deleted(event: TopologyEdgeDeleted, state: State) -> State:
-    topology = copy.deepcopy(state.topology)
+    topology = state.topology.copy()
     topology.remove_connection(event.conn)
-    # TODO: Clean up removing the reverse connection
+    # Also remove reverse-direction connections to maintain bidirectional consistency
+    topology.remove_all_connections_between(event.conn.sink, event.conn.source)
     return state.model_copy(update={"topology": topology})

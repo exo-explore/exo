@@ -147,21 +147,25 @@ impl Behaviour {
 
             // multiaddress should never already be present - else something has gone wrong
             let is_new_addr = mas.insert(ma);
-            assert!(is_new_addr, "cannot discover a discovered peer");
+            if !is_new_addr {
+                log::warn!("Duplicate peer discovery for {p:?}, ignoring");
+            }
         }
     }
 
     fn handle_mdns_expired(&mut self, peers: Vec<(PeerId, Multiaddr)>) {
         for (p, ma) in peers {
-            // at this point, we *must* have the peer
-            let mas = self
-                .mdns_discovered
-                .get_mut(&p)
-                .expect("nonexistent peer cannot expire");
+            // at this point, we *should* have the peer
+            let Some(mas) = self.mdns_discovered.get_mut(&p) else {
+                log::warn!("mDNS expiry for unknown peer {p:?}, ignoring");
+                continue;
+            };
 
-            // at this point, we *must* have the multiaddress
+            // at this point, we *should* have the multiaddress
             let was_present = mas.remove(&ma);
-            assert!(was_present, "nonexistent multiaddress cannot expire");
+            if !was_present {
+                log::warn!("mDNS expiry for unknown multiaddress of peer {p:?}, ignoring");
+            }
 
             // if empty, remove the peer-id entirely
             if mas.is_empty() {

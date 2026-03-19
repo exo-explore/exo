@@ -417,6 +417,8 @@ class QwenEditModelAdapter(ModelAdapter[QwenImageEdit, QwenTransformer]):
         image_size = pil_image.size
 
         # Vision-language dimensions (384x384 target area)
+        if image_size[1] == 0:
+            raise ValueError(f"Image has zero height: {image_path}")
         condition_image_size = 384 * 384
         condition_ratio = image_size[0] / image_size[1]
         vl_width = math.sqrt(condition_image_size * condition_ratio)

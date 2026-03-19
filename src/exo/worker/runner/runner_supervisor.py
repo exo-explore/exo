@@ -1,4 +1,5 @@
 import contextlib
+import itertools
 import multiprocessing as mp
 import signal
 from dataclasses import dataclass, field
@@ -46,6 +47,7 @@ from exo.worker.runner.bootstrap import entrypoint
 
 PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5
+_MAX_COMPLETED_TRACKING = 1000
 
 
 @dataclass(eq=False)
@@ -62,7 +64,7 @@ class RunnerSupervisor:
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
     in_progress: dict[TaskId, Task] = field(default_factory=dict, init=False)
-    completed: set[TaskId] = field(default_factory=set, init=False)
+    completed: dict[TaskId, None] = field(default_factory=dict, init=False)
     cancelled: set[TaskId] = field(default_factory=set, init=False)
     _cancel_watch_runner: anyio.CancelScope = field(
         default_factory=anyio.CancelScope, init=False
@@ -161,6 +163,7 @@ class RunnerSupervisor:
         try:
             await self._task_sender.send_async(task)
         except ClosedResourceError:
+            self.pending.pop(task.task_id, None)
             self.in_progress.pop(task.task_id, None)
             logger.warning(f"Task {task} dropped, runner closed communication.")
             return
@@ -191,14 +194,15 @@ class RunnerSupervisor:
                     if isinstance(event, RunnerStatusUpdated):
                         self.status = event.runner_status
                     if isinstance(event, TaskAcknowledged):
-                        self.pending.pop(event.task_id).set()
+                        ack_event = self.pending.pop(event.task_id, None)
+                        if ack_event is not None:
+                            ack_event.set()
                         continue
                     if (
                         isinstance(event, TaskStatusUpdated)
                         and event.task_status == TaskStatus.Complete
                     ):
-                        # If a task has just been completed, we should be working on it.
-                        assert isinstance(
+                        if not isinstance(
                             self.status,
                             (
                                 RunnerRunning,
@@ -207,15 +211,28 @@ class RunnerSupervisor:
                                 RunnerConnecting,
                                 RunnerShuttingDown,
                             ),
-                        )
+                        ):
+                            logger.warning(
+                                f"Task completed in unexpected runner state: {type(self.status).__name__}"
+                            )
                         self.in_progress.pop(event.task_id, None)
-                        self.completed.add(event.task_id)
+                        self.completed[event.task_id] = None
+                        if len(self.completed) > _MAX_COMPLETED_TRACKING:
+                            # Evict oldest half to amortize cleanup cost.
+                            # dict preserves insertion order, so iterating
+                            # gives us oldest-first.
+                            n_evict = len(self.completed) // 2
+                            keys_to_evict = list(itertools.islice(self.completed, n_evict))
+                            for k in keys_to_evict:
+                                del self.completed[k]
                     await self._event_sender.send(event)
         except (ClosedResourceError, BrokenResourceError) as e:
             await self._check_runner(e)
         finally:
-            for tid in self.pending:
-                self.pending[tid].set()
+            for tid in list(self.pending):
+                event = self.pending.pop(tid, None)
+                if event is not None:
+                    event.set()
 
     def __del__(self) -> None:
         if self.runner_process.is_alive():

@@ -32,7 +32,6 @@ from mlx_lm.models.llama import Model as LlamaModel
 from mlx_lm.models.minimax import MiniMaxAttention
 from mlx_lm.models.minimax import Model as MiniMaxModel
 from mlx_lm.models.ministral3 import Model as Ministral3Model
-from mlx_lm.models.qwen3_5 import DecoderLayer as Qwen3_5DecoderLayer
 from mlx_lm.models.qwen3_5 import Model as Qwen3_5TextModel
 from mlx_lm.models.qwen3_5 import Qwen3_5TextModel as Qwen3_5TextModelInner
 from mlx_lm.models.qwen3_5 import SparseMoeBlock as Qwen3_5SparseMoeBlock
@@ -41,7 +40,6 @@ from mlx_lm.models.qwen3_moe import Model as Qwen3MoeModel
 from mlx_lm.models.qwen3_moe import Qwen3MoeDecoderLayer, Qwen3MoeSparseMoeBlock
 from mlx_lm.models.qwen3_next import Model as Qwen3NextModel
 from mlx_lm.models.qwen3_next import (
-    Qwen3NextDecoderLayer,
     Qwen3NextGatedDeltaNet,
     Qwen3NextSparseMoeBlock,
 )
@@ -173,7 +171,15 @@ class PipelineLastLayer(CustomMlxLayer):
         self.r: int = r
         self.s: int = s
         self.group = group
-        self.original_layer_signature = signature(self.original_layer.__call__)
+        # When this wraps another CustomMlxLayer (e.g. single-layer shard where
+        # PipelineFirstLayer is the original_layer), the wrapper's __call__ has
+        # a (*args, **kwargs) signature which swallows named parameters like
+        # "cache" into kwargs, making bind_partial unable to extract them.
+        # Walk through the wrapper chain to find the real layer's signature.
+        unwrapped: _LayerCallable = self.original_layer
+        while isinstance(unwrapped, CustomMlxLayer):
+            unwrapped = unwrapped.original_layer
+        self.original_layer_signature = signature(unwrapped.__call__)
         self.is_prefill: bool = False
         self.queue_sends: bool = False
 
@@ -307,11 +313,13 @@ def pipeline_auto_parallel(
     device_rank, world_size = model_shard_meta.device_rank, model_shard_meta.world_size
 
     layers = layers[start_layer:end_layer]
+    if not layers:
+        raise ValueError(f"No layers in shard range [{start_layer}:{end_layer}]")
     total = len(layers)
     for i, layer in enumerate(layers):
         mx.eval(layer)  # type: ignore
         if on_layer_loaded is not None:
-            on_layer_loaded(i, total)
+            on_layer_loaded(i + 1, total)
 
     layers[0] = PipelineFirstLayer(layers[0], device_rank, group=group)
     layers[-1] = PipelineLastLayer(
@@ -375,10 +383,6 @@ def pipeline_auto_parallel(
 
     _set_layers(model, layers)
 
-    assert isinstance(layers, list), (
-        "Expected a list of layers after auto-parallel initialisation"
-    )
-
     return patch_pipeline_model(model, group)
 
 
@@ -399,7 +403,7 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
         )
 
         # Add dependency to last cache entry to ensure distributed ops are evaluated
-        if cache is not None:
+        if cache is not None and len(cache) > 0:  # type: ignore
             last = cache[-1]  # type: ignore
             dep_cache = last[0] if hasattr(last, "caches") else last  # type: ignore
             if hasattr(dep_cache, "keys") and dep_cache.keys is not None:  # type: ignore
@@ -431,7 +435,8 @@ def patch_tensor_model[T](model: T) -> T:
         if cache is not None and len(cache) > 0:  # pyright: ignore[reportAny]
             last = cache[-1]  # pyright: ignore[reportAny]
             dep_cache = last[0] if hasattr(last, "caches") else last  # pyright: ignore[reportAny]
-            dep_cache.keys = mx.depends(dep_cache.keys, logits)  # pyright: ignore[reportAny,reportUnknownMemberType]
+            if hasattr(dep_cache, "keys") and dep_cache.keys is not None:  # pyright: ignore[reportAny]
+                dep_cache.keys = mx.depends(dep_cache.keys, logits)  # pyright: ignore[reportAny,reportUnknownMemberType]
 
         return logits
 
@@ -471,12 +476,11 @@ def tensor_auto_parallel(
         group=group,
     )
 
-    n = group.size()
-
     def _sharded_to_all(path: str, weight: mx.array):
         if path.endswith("bias"):
-            logger.info(f"Sharding bias for {path} - sharded to all")
-            weight /= n
+            # Bias is not sharded in sharded-to-all layers; the all-reduce
+            # applies only to the matmul output, not the bias term.  Return
+            # None so shard_inplace skips this parameter.
             return None
         return -1, segments
 
@@ -576,6 +580,15 @@ class TensorParallelShardingStrategy(ABC):
         self.sharded_to_all_linear_in_place = sharded_to_all_linear_in_place
         self.group = group
         self.N = group.size()
+        if self.N <= 0:
+            raise ValueError(f"Distributed group size must be positive, got {self.N}")
+
+    def _check_divisible(self, name: str, value: int) -> None:
+        """Raise ValueError if value is not evenly divisible by world_size."""
+        if value % self.N != 0:
+            raise ValueError(
+                f"{name}={value} not evenly divisible by world_size={self.N}"
+            )
 
     @abstractmethod
     def shard_model(
@@ -604,8 +617,10 @@ class LlamaShardingStrategy(TensorParallelShardingStrategy):
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
             layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
+            self._check_divisible("n_heads", layer.self_attn.n_heads)
             layer.self_attn.n_heads //= self.N
             if layer.self_attn.n_kv_heads is not None:
+                self._check_divisible("n_kv_heads", layer.self_attn.n_kv_heads)
                 layer.self_attn.n_kv_heads //= self.N
 
             layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
@@ -613,7 +628,7 @@ class LlamaShardingStrategy(TensorParallelShardingStrategy):
             layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
             mx.eval(layer)
             if on_layer_loaded is not None:
-                on_layer_loaded(i, total)
+                on_layer_loaded(i + 1, total)
         return model
 
 
@@ -668,6 +683,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
                 )
 
             layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
+            self._check_divisible("num_heads", layer.self_attn.num_heads)
             layer.self_attn.num_heads //= self.N
 
             # Logic from upstream mlx
@@ -707,7 +723,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
 
             mx.eval(layer)
             if on_layer_loaded is not None:
-                on_layer_loaded(i, total)
+                on_layer_loaded(i + 1, total)
 
         return model
 
@@ -755,6 +771,7 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
                 )
 
             layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
+            self._check_divisible("num_heads", layer.self_attn.num_heads)
             layer.self_attn.num_heads //= self.N
 
             # Logic from upstream mlx
@@ -791,7 +808,7 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
                 layer.mlp.sharding_group = self.group  # type: ignore
             mx.eval(layer)
             if on_layer_loaded is not None:
-                on_layer_loaded(i, total)
+                on_layer_loaded(i + 1, total)
 
         return model
 
@@ -809,11 +826,11 @@ class WrappedMiniMaxAttention(CustomMlxLayer):
     ) -> mx.array:
         batch_dim, seq_dim, _ = x.shape
 
-        self._original_layer = cast(MiniMaxAttention, self.original_layer)  # type: ignore
+        attn = cast(MiniMaxAttention, self.original_layer)  # pyright: ignore[reportInvalidCast]
 
-        queries: mx.array = self._original_layer.q_proj(x)
-        keys: mx.array = self._original_layer.k_proj(x)
-        values: mx.array = self._original_layer.v_proj(x)
+        queries: mx.array = attn.q_proj(x)
+        keys: mx.array = attn.k_proj(x)
+        values: mx.array = attn.v_proj(x)
 
         if getattr(self, "use_qk_norm", False):
             q_dim = queries.shape[-1]
@@ -835,43 +852,43 @@ class WrappedMiniMaxAttention(CustomMlxLayer):
                 batch_dim, seq_dim, -1
             )  # (batch_dim, seq_dim, n * k_dim)
 
-            queries = self._original_layer.q_norm(queries)
-            keys = self._original_layer.k_norm(keys)
+            queries = attn.q_norm(queries)
+            keys = attn.k_norm(keys)
 
             # Split back and take this rank's portion
             queries = mx.split(queries, n, axis=-1)[self.group.rank()]
             keys = mx.split(keys, n, axis=-1)[self.group.rank()]
 
         queries = queries.reshape(
-            batch_dim, seq_dim, self._original_layer.num_attention_heads, -1
+            batch_dim, seq_dim, attn.num_attention_heads, -1
         ).transpose(0, 2, 1, 3)
         keys = keys.reshape(
-            batch_dim, seq_dim, self._original_layer.num_key_value_heads, -1
+            batch_dim, seq_dim, attn.num_key_value_heads, -1
         ).transpose(0, 2, 1, 3)
         values = values.reshape(
-            batch_dim, seq_dim, self._original_layer.num_key_value_heads, -1
+            batch_dim, seq_dim, attn.num_key_value_heads, -1
         ).transpose(0, 2, 1, 3)
 
         if cache is not None:
-            queries = self._original_layer.rope(queries, offset=cache.offset)
-            keys = self._original_layer.rope(keys, offset=cache.offset)
+            queries = attn.rope(queries, offset=cache.offset)
+            keys = attn.rope(keys, offset=cache.offset)
             keys, values = cache.update_and_fetch(keys, values)
         else:
-            queries = self._original_layer.rope(queries)
-            keys = self._original_layer.rope(keys)
+            queries = attn.rope(queries)
+            keys = attn.rope(keys)
 
         output = scaled_dot_product_attention(
             queries,
             keys,
             values,
             cache=cache,
-            scale=self._original_layer.scale,  # type: ignore
+            scale=attn.scale,  # type: ignore
             mask=mask,
         )
 
         output = output.transpose(0, 2, 1, 3).reshape(batch_dim, seq_dim, -1)
 
-        return self._original_layer.o_proj(output)
+        return attn.o_proj(output)
 
 
 class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
@@ -892,6 +909,8 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
             layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
 
+            self._check_divisible("num_attention_heads", layer.self_attn.num_attention_heads)
+            self._check_divisible("num_key_value_heads", layer.self_attn.num_key_value_heads)
             layer.self_attn.num_attention_heads //= self.N
             layer.self_attn.num_key_value_heads //= self.N
 
@@ -911,7 +930,7 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
             layer.block_sparse_moe.sharding_group = self.group  # pyright: ignore[reportAttributeAccessIssue]
             mx.eval(layer)
             if on_layer_loaded is not None:
-                on_layer_loaded(i, total)
+                on_layer_loaded(i + 1, total)
         return model
 
 
@@ -943,10 +962,11 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                 layer.self_attn.o_proj = self.sharded_to_all_linear(
                     layer.self_attn.o_proj
                 )
+                self._check_divisible("n_heads", layer.self_attn.n_heads)
+                self._check_divisible("n_kv_heads", layer.self_attn.n_kv_heads)
                 layer.self_attn.n_heads //= self.N
                 layer.self_attn.n_kv_heads //= self.N
             else:
-                assert isinstance(layer, (Qwen3NextDecoderLayer, Qwen3_5DecoderLayer))
                 if hasattr(layer, "linear_attn"):
                     linear_attn = layer.linear_attn
 
@@ -989,6 +1009,11 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                     rank = self.group.rank()
                     key_dim = linear_attn.key_dim
                     value_dim = linear_attn.value_dim
+                    if key_dim % self.N != 0 or value_dim % self.N != 0:
+                        raise ValueError(
+                            f"Mamba key_dim={key_dim} or value_dim={value_dim} "
+                            f"not evenly divisible by world_size={self.N}"
+                        )
                     key_dim_shard = key_dim // self.N
                     value_dim_shard = value_dim // self.N
 
@@ -1006,12 +1031,22 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                     new_conv_dim = key_dim_shard * 2 + value_dim_shard
                     linear_attn.conv1d.groups = new_conv_dim
 
+                    if linear_attn.num_v_heads % self.N != 0:
+                        raise ValueError(
+                            f"Mamba num_v_heads={linear_attn.num_v_heads} "
+                            f"not evenly divisible by world_size={self.N}"
+                        )
                     num_v_shard = linear_attn.num_v_heads // self.N
                     v_start = rank * num_v_shard
                     v_end = v_start + num_v_shard
                     linear_attn.A_log = linear_attn.A_log[v_start:v_end]
                     linear_attn.dt_bias = linear_attn.dt_bias[v_start:v_end]
 
+                    if linear_attn.num_k_heads % self.N != 0:
+                        raise ValueError(
+                            f"Mamba num_k_heads={linear_attn.num_k_heads} "
+                            f"not evenly divisible by world_size={self.N}"
+                        )
                     linear_attn.num_k_heads //= self.N
                     linear_attn.num_v_heads //= self.N
                     linear_attn.key_dim = (
@@ -1036,6 +1071,8 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                     layer.self_attn.o_proj = self.sharded_to_all_linear(
                         layer.self_attn.o_proj
                     )
+                    self._check_divisible("num_attention_heads", layer.self_attn.num_attention_heads)
+                    self._check_divisible("num_key_value_heads", layer.self_attn.num_key_value_heads)
                     layer.self_attn.num_attention_heads //= self.N
                     layer.self_attn.num_key_value_heads //= self.N
 
@@ -1072,7 +1109,7 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
 
             mx.eval(layer)
             if on_layer_loaded is not None:
-                on_layer_loaded(i, total)
+                on_layer_loaded(i + 1, total)
         return model
 
 
@@ -1093,6 +1130,8 @@ class Glm4MoeShardingStrategy(TensorParallelShardingStrategy):
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
             layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
+            self._check_divisible("n_heads", layer.self_attn.n_heads)
+            self._check_divisible("n_kv_heads", layer.self_attn.n_kv_heads)
             layer.self_attn.n_heads //= self.N
             layer.self_attn.n_kv_heads //= self.N
 
@@ -1120,7 +1159,7 @@ class Glm4MoeShardingStrategy(TensorParallelShardingStrategy):
 
             mx.eval(layer)
             if on_layer_loaded is not None:
-                on_layer_loaded(i, total)
+                on_layer_loaded(i + 1, total)
         return model
 
 
@@ -1142,6 +1181,8 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
             layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
 
+            self._check_divisible("num_attention_heads", layer.self_attn.num_attention_heads)
+            self._check_divisible("num_key_value_heads", layer.self_attn.num_key_value_heads)
             layer.self_attn.num_attention_heads //= self.N
             layer.self_attn.num_key_value_heads //= self.N
             layer.self_attn.num_key_value_groups = (
@@ -1163,7 +1204,7 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
             layer.mlp.sharding_group = self.group  # pyright: ignore[reportAttributeAccessIssue]
             mx.eval(layer)
             if on_layer_loaded is not None:
-                on_layer_loaded(i, total)
+                on_layer_loaded(i + 1, total)
         return model
 
 
@@ -1185,6 +1226,8 @@ class Step35ShardingStrategy(TensorParallelShardingStrategy):
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
             layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
 
+            self._check_divisible("num_heads", layer.self_attn.num_heads)
+            self._check_divisible("num_kv_heads", layer.self_attn.num_kv_heads)
             layer.self_attn.num_heads //= self.N
             layer.self_attn.num_kv_heads //= self.N
 
@@ -1208,5 +1251,5 @@ class Step35ShardingStrategy(TensorParallelShardingStrategy):
 
             mx.eval(layer)
             if on_layer_loaded is not None:
-                on_layer_loaded(i, total)
+                on_layer_loaded(i + 1, total)
         return model

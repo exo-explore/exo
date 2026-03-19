@@ -223,9 +223,6 @@ class QwenModelAdapter(ModelAdapter[QwenImage, QwenTransformer]):
     def encode_prompt(
         self, prompt: str, negative_prompt: str | None = None
     ) -> QwenPromptData:
-        assert isinstance(self.model.prompt_cache, dict)
-        assert isinstance(self.model.tokenizers, dict)
-
         if negative_prompt is None or negative_prompt == "":
             negative_prompt = " "
 

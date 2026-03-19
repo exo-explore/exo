@@ -29,7 +29,8 @@ def _once_then_never() -> Iterator[bool]:
 class InterceptLogger(HypercornLogger):
     def __init__(self, config: Config):
         super().__init__(config)
-        assert self.error_logger
+        if not self.error_logger:
+            raise RuntimeError("HypercornLogger error_logger not initialized")
         self.error_logger.handlers = [_InterceptHandler()]
 
 

@@ -57,11 +57,20 @@ class EventRouter:
     async def _simple_retry(self):
         while True:
             await anyio.sleep(1 + random())
+            now = anyio.current_time()
+            stale: list[EventId] = []
             # list here is a shallow clone for shared mutation
             for e_id, (time, event) in list(self.out_for_delivery.items()):
-                if anyio.current_time() > time + 5:
-                    self.out_for_delivery[e_id] = (anyio.current_time(), event)
+                if now > time + 60:
+                    # Drop events older than 60s to prevent unbounded growth
+                    stale.append(e_id)
+                elif now > time + 5:
+                    if e_id in self.out_for_delivery:
+                        self.out_for_delivery[e_id] = (now, event)
                     await self.external_outbound.send(event)
+            for e_id in stale:
+                if e_id in self.out_for_delivery:  # Check still present (may have been ACK'd)
+                    self.out_for_delivery.pop(e_id, None)
 
     def sender(self) -> Sender[Event]:
         send, recv = channel[Event]()
@@ -92,6 +101,14 @@ class EventRouter:
                 idx += 1
                 await self.external_outbound.send(f_ev)
                 self.out_for_delivery[event.event_id] = (anyio.current_time(), f_ev)
+                # Hard cap: drop oldest entries if unbounded growth
+                if len(self.out_for_delivery) > 5000:
+                    oldest_keys = list(self.out_for_delivery)[:1000]
+                    for k in oldest_keys:
+                        self.out_for_delivery.pop(k, None)
+                    logger.warning(
+                        f"Evicted {len(oldest_keys)} stale out_for_delivery entries"
+                    )
 
     async def _run_ext_in(self):
         buf = OrderedBuffer[Event]()
@@ -104,8 +121,7 @@ class EventRouter:
 
                 buf.ingest(event.origin_idx, event.event)
                 event_id = event.event.event_id
-                if event_id in self.out_for_delivery:
-                    self.out_for_delivery.pop(event_id)
+                self.out_for_delivery.pop(event_id, None)
 
                 drained = buf.drain_indexed()
                 if drained:
@@ -144,6 +160,7 @@ class EventRouter:
             self._nack_cancel_scope = scope
             delay: float = self._nack_base_seconds * (2.0**self._nack_attempts)
             delay = min(self._nack_cap_seconds, delay)
+            delay *= 0.5 + random()  # jitter to prevent thundering herd
             self._nack_attempts += 1
             try:
                 await anyio.sleep(delay)

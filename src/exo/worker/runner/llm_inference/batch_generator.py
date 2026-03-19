@@ -179,10 +179,12 @@ class SequentialGenerator(InferenceGenerator):
 
             if self._queue:
                 self._start_next()
-            else:
-                return map(lambda task: (task, Cancelled()), self._cancelled_tasks)
 
-        assert self._active is not None
+            # If still no active task (queue empty or all queued tasks were cancelled),
+            # just drain and return cancelled task IDs.
+            if self._active is None:
+                cancelled = self._drain_cancelled()
+                return map(lambda task: (task, Cancelled()), cancelled)
 
         task, mlx_gen, queue, output_generator = self._active
         response = None
@@ -198,13 +200,34 @@ class SequentialGenerator(InferenceGenerator):
             self._send_error(task, e)
             self._active = None
             raise
+        cancelled = self._drain_cancelled()
         return itertools.chain(
             [] if response is None else [(task.task_id, response)],
-            map(lambda task: (task, Cancelled()), self._cancelled_tasks),
+            map(lambda task: (task, Cancelled()), cancelled),
         )
 
+    def _drain_cancelled(self) -> set[TaskId]:
+        """Drain cancelled task IDs, filtering out the internal sentinel.
+
+        Retains cancellation records for tasks still sitting in _maybe_queue or _queue
+        so they are skipped when later dequeued by _start_next.
+        """
+        queued_ids = {t.task_id for t in self._maybe_queue} | {t.task_id for t in self._queue}
+        cancelled = {t for t in self._cancelled_tasks if t != TaskId("CANCEL_CURRENT_TASK") and t not in queued_ids}
+        # Only remove sentinel and IDs that are no longer queued
+        self._cancelled_tasks -= cancelled
+        self._cancelled_tasks.discard(TaskId("CANCEL_CURRENT_TASK"))
+        return cancelled
+
     def _start_next(self) -> None:
-        task = self._queue.popleft()
+        # Skip tasks that were cancelled while queued
+        while self._queue:
+            task = self._queue.popleft()
+            if task.task_id not in self._cancelled_tasks:
+                break
+            # Task was cancelled while queued; record it for drain
+        else:
+            return  # All queued tasks were cancelled
         try:
             mlx_gen = self._build_generator(task)
         except Exception as e:
@@ -262,7 +285,7 @@ class SequentialGenerator(InferenceGenerator):
 
             self.agree_on_tasks()
 
-        tokens_since_cancel_check = self.check_for_cancel_every
+        tokens_since_cancel_check = 0
 
         def on_generation_token() -> None:
             nonlocal tokens_since_cancel_check

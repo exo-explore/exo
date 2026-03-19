@@ -157,9 +157,6 @@ class FluxModelAdapter(ModelAdapter[Flux1, Transformer]):
     ) -> FluxPromptData:
         del negative_prompt
 
-        assert isinstance(self.model.prompt_cache, dict)
-        assert isinstance(self.model.tokenizers, dict)
-
         prompt_embeds, pooled_prompt_embeds = PromptEncoder.encode_prompt(
             prompt=prompt,
             prompt_cache=self.model.prompt_cache,

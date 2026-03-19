@@ -22,6 +22,13 @@ class Multiaddr(BaseModel):
                 f"Invalid multiaddr format: {v}. "
                 "Expected format like /ip4/127.0.0.1/tcp/4001 or /dns/example.com/tcp/443"
             )
+        # Validate IPv4 octets are 0-255
+        ip4_match = re.match(r"^/ip4/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", v)
+        if ip4_match:
+            ip_str = ip4_match.group(1)
+            parts = ip_str.split(".")
+            if any(int(p) > 255 for p in parts):
+                raise ValueError("Invalid IPv4 address: octets must be 0-255")
         return v
 
     @computed_field
@@ -57,12 +64,10 @@ class Multiaddr(BaseModel):
 
     @computed_field
     @property
-    def port(self) -> int:
+    def port(self) -> int | None:
         match = re.search(r"/tcp/(\d{1,5})", self.address)
         if not match:
-            raise ValueError(
-                f"Invalid multiaddr format: {self.address}. Expected format like /ip4/127.0.0.1/tcp/4001"
-            )
+            return None
         return int(match.group(1))
 
     def __str__(self) -> str:

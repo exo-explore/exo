@@ -1,5 +1,4 @@
 import base64
-import contextlib
 import json
 import random
 import time
@@ -20,6 +19,7 @@ from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType
 from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from loguru import logger
+from pydantic import ValidationError
 
 from exo.master.adapters.chat_completions import (
     chat_request_to_text_generation,
@@ -291,7 +291,7 @@ class API:
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=["*"],
-            allow_credentials=True,
+            allow_credentials=False,
             allow_methods=["*"],
             allow_headers=["*"],
         )
@@ -664,12 +664,14 @@ class API:
                 finish_reason = chunk.finish_reason
 
         combined_text = "".join(text_parts)
-        assert model is not None
+        if model is None:
+            logger.warning("No model received in bench response chunks, using fallback")
+            model = ModelId("unknown")
 
         resp = BenchChatCompletionResponse(
             id=command_id,
             created=int(time.time()),
-            model=model,
+            model=str(model),
             choices=[
                 ChatCompletionChoice(
                     index=0,
@@ -1126,6 +1128,8 @@ class API:
         advanced_params = _ensure_seed(advanced_params)
 
         image_content = await image.read()
+        if len(image_content) > 50 * 1024 * 1024:  # 50MB limit
+            raise HTTPException(status_code=413, detail="Image file too large (max 50MB)")
         image_data = base64.b64encode(image_content).decode("utf-8")
 
         image_strength = 0.7 if input_fidelity == "high" else 0.3
@@ -1197,10 +1201,12 @@ class API:
 
         parsed_advanced_params: AdvancedImageParams | None = None
         if advanced_params:
-            with contextlib.suppress(Exception):
+            try:
                 parsed_advanced_params = AdvancedImageParams.model_validate_json(
                     advanced_params
                 )
+            except Exception as exc:
+                logger.warning(f"Failed to parse advanced image params: {exc}")
 
         command = await self._send_image_edits_command(
             image=image,
@@ -1253,10 +1259,12 @@ class API:
         """Handle benchmark image editing requests with generation stats."""
         parsed_advanced_params: AdvancedImageParams | None = None
         if advanced_params:
-            with contextlib.suppress(Exception):
+            try:
                 parsed_advanced_params = AdvancedImageParams.model_validate_json(
                     advanced_params
                 )
+            except Exception as exc:
+                logger.warning(f"Failed to parse advanced image params: {exc}")
 
         command = await self._send_image_edits_command(
             image=image,
@@ -1360,10 +1368,13 @@ class API:
 
     async def ollama_chat(
         self, request: Request
-    ) -> OllamaChatResponse | StreamingResponse:
+    ) -> OllamaChatResponse | StreamingResponse | JSONResponse:
         """Ollama Chat API — accepts JSON regardless of Content-Type."""
         body = await request.body()
-        payload = OllamaChatRequest.model_validate_json(body)
+        try:
+            payload = OllamaChatRequest.model_validate_json(body)
+        except (ValidationError, ValueError) as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
         task_params = ollama_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
@@ -1397,10 +1408,13 @@ class API:
 
     async def ollama_generate(
         self, request: Request
-    ) -> OllamaGenerateResponse | StreamingResponse:
+    ) -> OllamaGenerateResponse | StreamingResponse | JSONResponse:
         """Ollama Generate API — accepts JSON regardless of Content-Type."""
         body = await request.body()
-        payload = OllamaGenerateRequest.model_validate_json(body)
+        try:
+            payload = OllamaGenerateRequest.model_validate_json(body)
+        except (ValidationError, ValueError) as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
         task_params = ollama_generate_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
@@ -1466,10 +1480,13 @@ class API:
             ]
         )
 
-    async def ollama_show(self, request: Request) -> OllamaShowResponse:
+    async def ollama_show(self, request: Request) -> OllamaShowResponse | JSONResponse:
         """Returns model information in Ollama show format."""
         body = await request.body()
-        payload = OllamaShowRequest.model_validate_json(body)
+        try:
+            payload = OllamaShowRequest.model_validate_json(body)
+        except (ValidationError, ValueError) as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
         model_name = payload.name or payload.model
         if not model_name:
             raise HTTPException(status_code=400, detail="name or model is required")
@@ -1669,7 +1686,9 @@ class API:
                     if queue := self._image_generation_queues.get(
                         event.command_id, None
                     ):
-                        assert isinstance(event.chunk, ImageChunk)
+                        if not isinstance(event.chunk, (ImageChunk, ErrorChunk)):
+                            logger.warning(f"Expected ImageChunk or ErrorChunk but got {type(event.chunk).__name__}")
+                            continue
                         try:
                             await queue.send(event.chunk)
                         except BrokenResourceError:
@@ -1677,7 +1696,9 @@ class API:
                     if queue := self._text_generation_queues.get(
                         event.command_id, None
                     ):
-                        assert not isinstance(event.chunk, ImageChunk)
+                        if isinstance(event.chunk, ImageChunk):
+                            logger.warning("Received ImageChunk in text generation queue")
+                            continue
                         try:
                             await queue.send(event.chunk)
                         except BrokenResourceError:

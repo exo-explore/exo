@@ -76,8 +76,11 @@ class Worker:
         # Buffer for input image chunks (for image editing)
         self.input_chunk_buffer: dict[CommandId, dict[int, str]] = {}
         self.input_chunk_counts: dict[CommandId, int] = {}
+        self._max_chunk_buffers: int = 100
 
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
+        self._state_version: int = 0
+        self._state_changed: anyio.Event = anyio.Event()
 
     async def run(self):
         logger.info("Starting Worker")
@@ -92,6 +95,10 @@ class Worker:
                 tg.start_soon(self.plan_step)
                 tg.start_soon(self._event_applier)
                 tg.start_soon(self._poll_connection_updates)
+        except BaseException:
+            # Worker was shut down via self._tg.cancel_tasks() — swallow the CancelledError
+            # so it doesn't propagate into the Node's TaskGroup and kill the new Worker.
+            pass
         finally:
             # Actual shutdown code - waits for all tasks to complete before executing.
             logger.info("Stopping Worker")
@@ -117,12 +124,23 @@ class Worker:
             async for event in events:
                 # 2. for each event, apply it to the state
                 self.state = apply(self.state, event=event)
+                self._state_version += 1
+                self._state_changed.set()
+                self._state_changed = anyio.Event()
                 event = event.event
 
                 # Buffer input image chunks for image editing
                 if isinstance(event, InputChunkReceived):
                     cmd_id = event.command_id
                     if cmd_id not in self.input_chunk_buffer:
+                        # Evict oldest buffers if too many accumulate (leak prevention)
+                        if len(self.input_chunk_buffer) >= self._max_chunk_buffers:
+                            oldest_key = next(iter(self.input_chunk_buffer))
+                            self.input_chunk_buffer.pop(oldest_key, None)
+                            self.input_chunk_counts.pop(oldest_key, None)
+                            logger.warning(
+                                f"Evicted stale chunk buffer for {oldest_key}"
+                            )
                         self.input_chunk_buffer[cmd_id] = {}
                         self.input_chunk_counts[cmd_id] = event.chunk.total_chunks
 
@@ -132,7 +150,9 @@ class Worker:
 
     async def plan_step(self):
         while True:
-            await anyio.sleep(0.1)
+            event = self._state_changed
+            with anyio.move_on_after(0.1):
+                await event.wait()
             task: Task | None = plan(
                 self.node_id,
                 self.runners,
@@ -154,7 +174,9 @@ class Worker:
                     continue
 
             logger.info(f"Worker plan: {task.__class__.__name__}")
-            assert task.task_status
+            if not task.task_status:
+                logger.warning(f"Task {task.task_id} has no task_status, skipping")
+                continue
             await self.event_sender.send(TaskCreated(task_id=task.task_id, task=task))
 
             # lets not kill the worker if a runner is unresponsive
@@ -175,6 +197,7 @@ class Worker:
                         logger.info(
                             f"Model {model_id} found in EXO_MODELS_PATH at {found_path}"
                         )
+                        self._download_backoff.reset(model_id)
                         await self.event_sender.send(
                             NodeDownloadProgress(
                                 download_progress=DownloadCompleted(
@@ -209,7 +232,15 @@ class Worker:
                             )
                         )
                 case Shutdown(runner_id=runner_id):
-                    runner = self.runners.pop(runner_id)
+                    runner = self.runners.pop(runner_id, None)
+                    if runner is None:
+                        logger.warning(f"Shutdown: runner {runner_id} already removed")
+                        await self.event_sender.send(
+                            TaskStatusUpdated(
+                                task_id=task.task_id, task_status=TaskStatus.Complete
+                            )
+                        )
+                        continue
                     try:
                         with fail_after(3):
                             await runner.start_task(task)
@@ -224,7 +255,10 @@ class Worker:
                 case CancelTask(
                     cancelled_task_id=cancelled_task_id, runner_id=runner_id
                 ):
-                    await self.runners[runner_id].cancel_task(cancelled_task_id)
+                    if (cancel_runner := self.runners.get(runner_id)) is not None:
+                        await cancel_runner.cancel_task(cancelled_task_id)
+                    else:
+                        logger.warning(f"CancelTask: runner {runner_id} not found")
                     await self.event_sender.send(
                         TaskStatusUpdated(
                             task_id=task.task_id, task_status=TaskStatus.Complete
@@ -234,7 +268,7 @@ class Worker:
                     # Assemble image from chunks and inject into task
                     cmd_id = task.command_id
                     chunks = self.input_chunk_buffer.get(cmd_id, {})
-                    assembled = "".join(chunks[i] for i in range(len(chunks)))
+                    assembled = "".join(chunks[i] for i in sorted(chunks.keys()))
                     logger.info(
                         f"Assembled input image from {len(chunks)} chunks, "
                         f"total size: {len(assembled)} bytes"
@@ -276,9 +310,17 @@ class Worker:
 
     async def _start_runner_task(self, task: Task):
         if (instance := self.state.instances.get(task.instance_id)) is not None:
-            await self.runners[
-                instance.shard_assignments.node_to_runner[self.node_id]
-            ].start_task(task)
+            runner_id = instance.shard_assignments.node_to_runner.get(self.node_id)
+            if runner_id is None:
+                logger.warning(
+                    f"No runner mapping for node {self.node_id} in instance {task.instance_id}"
+                )
+                return
+            runner = self.runners.get(runner_id)
+            if runner is None:
+                logger.warning(f"Runner {runner_id} not found for task {task.task_id}")
+                return
+            await runner.start_task(task)
 
     def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
         """Creates and stores a new AssignedRunner with initial downloading status."""

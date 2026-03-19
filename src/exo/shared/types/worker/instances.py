@@ -47,7 +47,8 @@ class BoundInstance(CamelCaseModel):
     @property
     def bound_shard(self) -> ShardMetadata:
         shard = self.instance.shard(self.bound_runner_id)
-        assert shard is not None
+        if shard is None:
+            raise ValueError(f"No shard found for runner {self.bound_runner_id}")
         return shard
 
     @property
@@ -59,9 +60,8 @@ class BoundInstance(CamelCaseModel):
 
     @model_validator(mode="after")
     def validate_shard_exists(self) -> "BoundInstance":
-        assert (
-            self.bound_runner_id in self.instance.shard_assignments.runner_to_shard
-        ), (
-            "Bound Instance must be constructed with a runner_id that is in the instances assigned shards"
-        )
+        if self.bound_runner_id not in self.instance.shard_assignments.runner_to_shard:
+            raise ValueError(
+                "Bound Instance must be constructed with a runner_id that is in the instances assigned shards"
+            )
         return self

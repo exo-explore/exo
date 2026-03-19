@@ -82,9 +82,10 @@ class MpState[T]:
     def __init__(self, max_buffer_size: float):
         if max_buffer_size == inf:
             max_buffer_size = 0
-        assert isinstance(max_buffer_size, int), (
-            "State should only ever be constructed with an integer or math.inf size."
-        )
+        if not isinstance(max_buffer_size, int):
+            raise TypeError(
+                f"State should only ever be constructed with an integer or math.inf size, got {type(max_buffer_size).__name__}"
+            )
 
         self.max_buffer_size: float = max_buffer_size
         self.buffer: mp.Queue[T | _MpEndOfStream] = mp.Queue(max_buffer_size)
@@ -140,9 +141,8 @@ class MpSender[T]:
     # == unique to Mp channels ==
     def join(self) -> None:
         """Ensure any queued messages are resolved before continuing"""
-        assert self._state.closed.is_set(), (
-            "Mp channels must be closed before being joined"
-        )
+        if not self._state.closed.is_set():
+            raise RuntimeError("Mp channels must be closed before being joined")
         self._state.buffer.join_thread()
 
     # == context manager support ==
@@ -219,9 +219,8 @@ class MpReceiver[T]:
     # == unique to Mp channels ==
     def join(self) -> None:
         """Block until all enqueued messages are drained off our side of the buffer"""
-        assert self._state.closed.is_set(), (
-            "Mp channels must be closed before being joined"
-        )
+        if not self._state.closed.is_set():
+            raise RuntimeError("Mp channels must be closed before being joined")
         self._state.buffer.join_thread()
 
     # == iterator support ==

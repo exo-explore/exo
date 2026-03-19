@@ -150,6 +150,16 @@ class DiskEventLog:
     def __len__(self) -> int:
         return self._count
 
+    def __enter__(self) -> "DiskEventLog":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        if not self._file.closed:
+            self._file.close()
+
     def close(self) -> None:
         """Close the file and rotate active file to compressed archive."""
         if self._file.closed:

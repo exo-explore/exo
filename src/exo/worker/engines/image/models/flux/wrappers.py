@@ -55,7 +55,8 @@ class FluxJointBlockWrapper(JointBlockWrapper[JointTransformerBlock]):
         rotary_embeddings: RotaryEmbeddings,
         patch_mode: bool = False,
     ) -> tuple[mx.array, mx.array, mx.array]:
-        assert isinstance(rotary_embeddings, mx.array)
+        if not isinstance(rotary_embeddings, mx.array):
+            raise TypeError(f"Expected mx.array rotary_embeddings, got {type(rotary_embeddings)}")
 
         attn = self.block.attn
 
@@ -164,8 +165,8 @@ class FluxJointBlockWrapper(JointBlockWrapper[JointTransformerBlock]):
         hidden_attn_output = attn.to_out[0](hidden_attn_output)  # pyright: ignore[reportAny]
         context_attn_output = attn.to_add_out(context_attn_output)
 
-        assert self._hidden_mod is not None
-        assert self._context_mod is not None
+        if self._hidden_mod is None or self._context_mod is None:
+            raise RuntimeError("Block modulation state not set; call forward() first")
 
         hidden_states = JointTransformerBlock.apply_norm_and_feed_forward(
             hidden_states=hidden_states,
@@ -209,7 +210,8 @@ class FluxSingleBlockWrapper(SingleBlockWrapper[SingleTransformerBlock]):
         rotary_embeddings: RotaryEmbeddings,
         patch_mode: bool = False,
     ) -> tuple[mx.array, mx.array, mx.array]:
-        assert isinstance(rotary_embeddings, mx.array)
+        if not isinstance(rotary_embeddings, mx.array):
+            raise TypeError(f"Expected mx.array rotary_embeddings, got {type(rotary_embeddings)}")
 
         attn = self.block.attn
 
@@ -268,7 +270,8 @@ class FluxSingleBlockWrapper(SingleBlockWrapper[SingleTransformerBlock]):
     ) -> mx.array:
         residual = hidden_states
 
-        assert self._norm_state is not None
+        if self._norm_state is None:
+            raise RuntimeError("Norm state not set; call forward() before feed_forward()")
 
         output = self.block._apply_feed_forward_and_projection(
             norm_hidden_states=self._norm_state.norm_hidden,

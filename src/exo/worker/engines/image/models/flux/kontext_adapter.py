@@ -210,6 +210,8 @@ class FluxKontextModelAdapter(ModelAdapter[Flux1Kontext, Transformer]):
         # Compute output dimensions from input image aspect ratio
         # Target area of 1024x1024 = ~1M pixels
         target_area = 1024 * 1024
+        if image_size[1] == 0:
+            raise ValueError(f"Image has zero height: {image_path}")
         ratio = image_size[0] / image_size[1]
         output_width = math.sqrt(target_area * ratio)
         output_height = output_width / ratio
@@ -266,9 +268,6 @@ class FluxKontextModelAdapter(ModelAdapter[Flux1Kontext, Transformer]):
                 "set_image_dimensions() must be called before encode_prompt() "
                 "for FluxKontextModelAdapter"
             )
-
-        assert isinstance(self.model.prompt_cache, dict)
-        assert isinstance(self.model.tokenizers, dict)
 
         # Encode text prompt
         prompt_embeds, pooled_prompt_embeds = PromptEncoder.encode_prompt(

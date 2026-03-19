@@ -148,4 +148,4 @@ class Memory(FrozenModel):
             val = self.in_bytes
             unit = "B"
 
-        return f"{val:.2f} {unit}".rstrip("0").rstrip(".") + f" {unit}"
+        return f"{val:.2f}".rstrip("0").rstrip(".") + f" {unit}"

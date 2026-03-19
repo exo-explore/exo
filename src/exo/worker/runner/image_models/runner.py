@@ -279,10 +279,11 @@ class Runner:
                 self.update_status(RunnerLoading())
                 self.acknowledge_task(task)
 
-                assert (
-                    ModelTask.TextToImage in self.shard_metadata.model_card.tasks
-                    or ModelTask.ImageToImage in self.shard_metadata.model_card.tasks
-                ), f"Incorrect model task(s): {self.shard_metadata.model_card.tasks}"
+                if (
+                    ModelTask.TextToImage not in self.shard_metadata.model_card.tasks
+                    and ModelTask.ImageToImage not in self.shard_metadata.model_card.tasks
+                ):
+                    raise ValueError(f"Incorrect model task(s): {self.shard_metadata.model_card.tasks}")
 
                 self.image_model = initialize_image_model(self.bound_instance)
                 self.current_status = RunnerLoaded()
@@ -295,7 +296,8 @@ class Runner:
 
                 logger.info(f"warming up inference for instance: {self.instance}")
 
-                assert self.image_model
+                if not self.image_model:
+                    raise ValueError("image_model must be loaded before warmup")
                 image = warmup_image_generator(model=self.image_model)
                 if image is not None:
                     logger.info(f"warmed up by generating {image.size} image")
@@ -312,7 +314,8 @@ class Runner:
             case ImageGeneration(task_params=task_params, command_id=command_id) if (
                 isinstance(self.current_status, RunnerReady)
             ):
-                assert self.image_model
+                if not self.image_model:
+                    raise ValueError("image_model must be loaded before generation")
                 logger.info(f"received image generation request: {str(task)[:500]}")
                 logger.info("runner running")
                 self.update_status(RunnerRunning())
@@ -373,7 +376,8 @@ class Runner:
             case ImageEdits(task_params=task_params, command_id=command_id) if (
                 isinstance(self.current_status, RunnerReady)
             ):
-                assert self.image_model
+                if not self.image_model:
+                    raise ValueError("image_model must be loaded before image edits")
                 logger.info(f"received image edits request: {str(task)[:500]}")
                 logger.info("runner running")
                 self.update_status(RunnerRunning())

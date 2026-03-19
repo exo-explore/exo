@@ -115,6 +115,7 @@ class KVPrefixCache:
         restore_pos: int,
     ):
         """Update an existing cache entry in-place."""
+        self._evict_if_needed()
         old_snapshots = self._snapshots[index]
         merged: list[CacheSnapshot] = []
         if old_snapshots:
@@ -210,15 +211,11 @@ class KVPrefixCache:
 
     def _evict_if_needed(self):
         """Evict least recently used entries while memory usage is high."""
-        if len(self.caches) == 0:
-            return
-
-        # Evict LRU entries until below threshold
         while (
             len(self.caches) > 0
             and self.get_memory_used_percentage() > _MEMORY_THRESHOLD
         ):
-            lru_index = self._last_used.index(min(self._last_used))
+            lru_index = min(range(len(self._last_used)), key=self._last_used.__getitem__)
             evicted_tokens = len(self.prompts[lru_index])
             self.prompts.pop(lru_index)
             self.caches.pop(lru_index)
@@ -227,6 +224,9 @@ class KVPrefixCache:
             logger.info(
                 f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory usage"
             )
+            # Force MLX to release evicted arrays so the next iteration's
+            # memory check reflects freed memory, preventing over-eviction.
+            mx.clear_cache()
 
     def get_memory_used_percentage(self) -> float:
         local_pressure: float = get_memory_used_percentage()
@@ -250,7 +250,7 @@ def trim_cache(
 ) -> None:
     for i, c in enumerate(cache):
         if isinstance(c, (ArraysCache, RotatingKVCache)):
-            if snapshot is not None and snapshot.states[i] is not None:
+            if snapshot is not None and i < len(snapshot.states) and snapshot.states[i] is not None:
                 cache[i] = deepcopy(snapshot.states[i])  # type: ignore
             else:
                 c.state = [None] * len(c.state)
@@ -284,6 +284,8 @@ def _entry_length(
 
 def cache_length(cache: KVCacheType) -> int:
     """Get the number of tokens in a KV cache."""
+    if not cache:
+        return 0
     return max(_entry_length(c) for c in cache)
 
 
@@ -312,7 +314,8 @@ def get_memory_used_percentage() -> float:
 def make_kv_cache(
     model: Model, max_kv_size: int | None = None, keep: int = 0
 ) -> KVCacheType:
-    assert hasattr(model, "layers")
+    if not hasattr(model, "layers"):
+        raise ValueError("Model must have a 'layers' attribute to create KV cache")
 
     if hasattr(model, "make_cache"):
         logger.info("Using MLX LM's make cache")

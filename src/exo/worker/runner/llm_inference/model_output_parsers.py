@@ -345,9 +345,10 @@ def parse_tool_calls(
 
         if in_tool_call:
             tool_call_text_parts.append(response.text)
-            if response.text.endswith(tool_parser.end_parsing):
+            accumulated_tool_text = "".join(tool_call_text_parts)
+            if accumulated_tool_text.endswith(tool_parser.end_parsing):
                 # parse the actual tool calls from the tool call text
-                parsed = tool_parser.parse("".join(tool_call_text_parts).strip(), tools)
+                parsed = tool_parser.parse(accumulated_tool_text.strip(), tools)
                 logger.info(f"parsed {tool_call_text_parts=} into {parsed=}")
                 if parsed is not None:
                     yield ToolCallResponse(
@@ -355,10 +356,11 @@ def parse_tool_calls(
                     )
                 else:
                     logger.warning(
-                        f"tool call parsing failed for text {''.join(tool_call_text_parts)}"
+                        f"tool call parsing failed for text {accumulated_tool_text}"
                     )
-                    response.text = "".join(tool_call_text_parts)
-                    yield response
+                    yield response.model_copy(
+                        update={"text": accumulated_tool_text}
+                    )
 
                 in_tool_call = False
                 tool_call_text_parts = []
@@ -370,10 +372,11 @@ def parse_tool_calls(
                 )
                 response = response.model_copy(
                     update={
-                        "text": "".join(tool_call_text_parts),
-                        "token": 0,
+                        "text": accumulated_tool_text,
                     }
                 )
+                in_tool_call = False
+                tool_call_text_parts = []
                 yield response
 
         else:

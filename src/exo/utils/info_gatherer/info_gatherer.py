@@ -215,21 +215,45 @@ class RdmaCtlStatus(TaggedModel):
 
     @classmethod
     async def gather(cls) -> Self | None:
-        if not IS_DARWIN or shutil.which("rdma_ctl") is None:
+        if not IS_DARWIN:
             return None
+
+        # TB5 path: rdma_ctl is authoritative when available and not Recovery-locked
+        if shutil.which("rdma_ctl") is not None:
+            try:
+                with anyio.fail_after(5):
+                    proc = await anyio.run_process(["rdma_ctl", "status"], check=False)
+                if proc.returncode == 0:
+                    output = proc.stdout.decode("utf-8").lower().strip()
+                    if "enabled" in output:
+                        return cls(enabled=True)
+                    # "disabled" on TB5 means explicitly off — fall through to TB4 check
+            except (TimeoutError, OSError):
+                pass
+
+        # TB4 path (M1 Max / M4): RDMA runs over Thunderbolt Bridge network interfaces.
+        # rdma_ctl requires Recovery OS on TB4 and always reports "disabled" even when
+        # RDMA is fully active. Detect active TB4 RDMA by checking system_profiler for
+        # connected Thunderbolt peers — if peers exist, JACCL/RDMA is live.
         try:
-            with anyio.fail_after(5):
-                proc = await anyio.run_process(["rdma_ctl", "status"], check=False)
-        except (TimeoutError, OSError):
-            return None
-        if proc.returncode != 0:
-            return None
-        output = proc.stdout.decode("utf-8").lower().strip()
-        if "enabled" in output:
-            return cls(enabled=True)
-        if "disabled" in output:
-            return cls(enabled=False)
-        return None
+            with anyio.fail_after(8):
+                proc = await anyio.run_process(
+                    ["system_profiler", "SPThunderboltDataType", "-json"], check=False
+                )
+            if proc.returncode == 0:
+                import json as _json
+                from typing import cast
+                tb_data = cast(dict[str, object], _json.loads(proc.stdout))
+                raw_items = tb_data.get("SPThunderboltDataType")
+                if isinstance(raw_items, list):
+                    items = cast(list[object], raw_items)
+                    for entry in items:
+                        if isinstance(entry, dict) and cast(dict[str, object], entry).get("_items"):
+                            return cls(enabled=True)
+        except (TimeoutError, OSError, Exception):
+            pass
+
+        return cls(enabled=False)
 
 
 class ThunderboltBridgeInfo(TaggedModel):
@@ -376,7 +400,7 @@ class InfoGatherer:
     misc_poll_interval: float | None = 60
     system_profiler_interval: float | None = 5 if IS_DARWIN else None
     memory_poll_rate: float | None = None if IS_DARWIN else 1
-    macmon_interval: float | None = 1 if IS_DARWIN else None
+    macmon_interval: float | None = 5 if IS_DARWIN else None
     thunderbolt_bridge_poll_interval: float | None = 10 if IS_DARWIN else None
     static_info_poll_interval: float | None = 60
     rdma_ctl_poll_interval: float | None = 10 if IS_DARWIN else None
@@ -444,7 +468,8 @@ class InfoGatherer:
                         raise ValueError("Failed to gather interface map")
 
                     data = await ThunderboltConnectivity.gather()
-                    assert data is not None
+                    if data is None:
+                        raise ValueError("ThunderboltConnectivity.gather() returned None")
 
                     idents = [
                         it for i in data if (it := i.ident(iface_map)) is not None

@@ -104,7 +104,7 @@ def pipeline_parallel_prefill(
     This function is designed to match mlx_lm's stream_generate exactly in terms of
     side effects (given the same prefill step size)
     """
-    prefill_step_size = prefill_step_size // min(4, group.size())
+    prefill_step_size = prefill_step_size // min(4, max(1, group.size()))
 
     quantize_cache_fn: Callable[..., None] = functools.partial(
         maybe_quantize_kv_cache,
@@ -178,7 +178,6 @@ def pipeline_parallel_prefill(
             quantize_cache_fn(_prompt_cache)
         flush_prefill_sends()
 
-    assert _prompt_cache is not None
     mx.eval([c.state for c in _prompt_cache])  # type: ignore
 
     # Final callback matching generate_step
@@ -247,7 +246,8 @@ def prefill(
     try:
         if is_pipeline and num_tokens >= prefill_step_size:
             set_pipeline_queue_sends(model, queue_sends=True)
-            assert group is not None, "Pipeline prefill requires a distributed group"
+            if group is None:
+                raise ValueError("Pipeline prefill requires a distributed group")
             pipeline_parallel_prefill(
                 model=model,
                 prompt=prompt_tokens,
@@ -285,14 +285,17 @@ def prefill(
 
     # stream_generate added 1 extra generated token to the cache, so we should trim it.
     # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
-    pre_gen = deepcopy(snapshots[-2]) if has_ssm else None
+    pre_gen = deepcopy(snapshots[-2]) if has_ssm and len(snapshots) >= 2 else None
     for i, c in enumerate(cache):
         if has_ssm and isinstance(c, (ArraysCache, RotatingKVCache)):
-            assert pre_gen is not None
+            if pre_gen is None:
+                logger.warning("SSM cache rollback skipped: insufficient snapshots")
+                continue
             if pre_gen.states[i] is not None:
                 cache[i] = deepcopy(pre_gen.states[i])  # type: ignore
         else:
-            assert not isinstance(c, (ArraysCache, RotatingKVCache))
+            if isinstance(c, (ArraysCache, RotatingKVCache)):
+                raise TypeError(f"Non-SSM cache rollback path got SSM cache type: {type(c)}")
             c.trim(2)
 
     elapsed = time.perf_counter() - start_time
@@ -447,6 +450,9 @@ def mlx_generate(
 
     # Encode prompt once at the top and fix unmatched think tags
     all_prompt_tokens = encode_prompt(tokenizer, prompt)
+    if len(all_prompt_tokens) == 0:
+        logger.warning("Empty prompt after tokenization, skipping generation")
+        return
     all_prompt_tokens = fix_unmatched_think_end_tokens(all_prompt_tokens, tokenizer)
 
     # Do not use the prefix cache if we are trying to do benchmarks.
@@ -518,8 +524,8 @@ def mlx_generate(
     usage: Usage | None = None
     in_thinking = False
     reasoning_tokens = 0
-    think_start = tokenizer.think_start
-    think_end = tokenizer.think_end
+    think_start_id: int | None = getattr(tokenizer, "think_start_id", None)
+    think_end_id: int | None = getattr(tokenizer, "think_end_id", None)
 
     logger.info("Starting decode")
     mx_barrier(group)
@@ -542,9 +548,9 @@ def mlx_generate(
         generated_text_parts.append(out.text)
         accumulated_text += out.text
 
-        if think_start is not None and out.text == think_start:
+        if think_start_id is not None and out.token == think_start_id:
             in_thinking = True
-        elif think_end is not None and out.text == think_end:
+        elif think_end_id is not None and out.token == think_end_id:
             in_thinking = False
         if in_thinking:
             reasoning_tokens += 1
@@ -562,7 +568,7 @@ def mlx_generate(
                     # Trim text to just before the stop sequence
                     stop_index = accumulated_text.find(stop_seq)
                     text_before_stop = accumulated_text[:stop_index]
-                    chunk_start = len(accumulated_text) - len(out.text)
+                    chunk_start = max(0, len(accumulated_text) - len(out.text))
                     text = text_before_stop[chunk_start:]
                     finish_reason = "stop"
                     stop_matched = True

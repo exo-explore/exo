@@ -7,6 +7,8 @@ K = TypeVar("K")
 class KeyedBackoff(Generic[K]):
     """Tracks exponential backoff state per key."""
 
+    _MAX_KEYS = 500
+
     def __init__(self, base: float = 0.5, cap: float = 10.0):
         self._base = base
         self._cap = cap
@@ -25,6 +27,11 @@ class KeyedBackoff(Generic[K]):
         """Record that an attempt was made for this key."""
         self._last_time[key] = time.monotonic()
         self._attempts[key] = self._attempts.get(key, 0) + 1
+        # Evict oldest entries if too many keys accumulate
+        if len(self._attempts) > self._MAX_KEYS:
+            oldest_key: K = min(self._last_time, key=lambda k: self._last_time[k])
+            self._attempts.pop(oldest_key, None)
+            self._last_time.pop(oldest_key, None)
 
     def reset(self, key: K) -> None:
         """Reset backoff state for a key (e.g., on success)."""

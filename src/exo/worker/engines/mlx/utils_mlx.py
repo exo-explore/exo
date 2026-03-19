@@ -124,9 +124,10 @@ def mlx_distributed_init(
             case MlxJacclInstance(
                 jaccl_devices=jaccl_devices, jaccl_coordinators=jaccl_coordinators
             ):
-                assert all(
+                if not all(
                     jaccl_devices[i][i] is None for i in range(len(jaccl_devices))
-                )
+                ):
+                    raise ValueError("JACCL device matrix diagonal must be None (no self-connections)")
                 # Use RDMA connectivity matrix
                 jaccl_devices_json = json.dumps(jaccl_devices)
 
@@ -156,9 +157,8 @@ def initialize_mlx(
     # TODO: pass in seed from params
     mx.random.seed(42)
 
-    assert len(bound_instance.instance.shard_assignments.node_to_runner) > 1, (
-        "Tried to initialize mlx for a single node instance"
-    )
+    if len(bound_instance.instance.shard_assignments.node_to_runner) <= 1:
+        raise ValueError("Tried to initialize mlx for a single node instance")
     return mlx_distributed_init(bound_instance)
 
 
@@ -181,7 +181,7 @@ def load_mlx_items(
             for i, layer in enumerate(layers):
                 mx.eval(layer)  # type: ignore
                 if on_layer_loaded is not None:
-                    on_layer_loaded(i, total)
+                    on_layer_loaded(i + 1, total)
         except ValueError as e:
             logger.opt(exception=e).debug(
                 "Model architecture doesn't support layer-by-layer progress tracking",
@@ -238,8 +238,6 @@ def shard_and_load(
         # model, config = quantize_model(
         #        model, config, group_size=KV_GROUP_SIZE, bits=ATTENTION_KV_BITS, quant_predicate=quant_predicate, mode=QUANTIZE_MODEL_MODE
         #    )
-
-    assert isinstance(model, nn.Module)
 
     tokenizer = get_tokenizer(model_path, shard_metadata)
 
@@ -348,7 +346,8 @@ def load_tokenizer_for_model_id(
         import importlib.util
         import types
 
-        sys.path.insert(0, str(model_path))
+        model_path_str = str(model_path)
+        sys.path.insert(0, model_path_str)
 
         # Load tool_declaration_ts first (tokenization_kimi imports it with relative import)
         tool_decl_path = model_path / "tool_declaration_ts.py"
@@ -384,6 +383,9 @@ def load_tokenizer_for_model_id(
             return list(hf_tokenizer.model.encode(text, allowed_special="all"))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
         hf_tokenizer.encode = _patched_encode
+        # Clean up sys.path to avoid import pollution from model directory
+        if model_path_str in sys.path:
+            sys.path.remove(model_path_str)
         return TokenizerWrapper(
             hf_tokenizer,
             eos_token_ids=eos_token_ids,
@@ -602,8 +604,8 @@ def fix_unmatched_think_end_tokens(
 ) -> mx.array:
     if not tokenizer.has_thinking:
         return tokens
-    assert tokenizer.think_start_id
-    assert tokenizer.think_end_id
+    if not tokenizer.think_start_id or not tokenizer.think_end_id:
+        return tokens
     think_start_id: int = tokenizer.think_start_id
     think_end_id: int = tokenizer.think_end_id
     token_list: list[int] = cast(list[int], tokens.tolist())
@@ -740,7 +742,7 @@ def _parse_kimi_tool_calls(text: str):
         func_args = func_args_match.group(1)
         try:
             arg_dct = json.loads(func_args)  # pyright: ignore[reportAny]
-        except Exception:
+        except (json.JSONDecodeError, ValueError):
             arg_dct = None
 
         return dict(id=tool_call_id, name=func_name, arguments=arg_dct)

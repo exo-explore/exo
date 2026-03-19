@@ -151,7 +151,8 @@ class Runner:
             case ConnectToGroup() if isinstance(
                 self.current_status, (RunnerIdle, RunnerFailed)
             ):
-                assert isinstance(self.generator, Builder)
+                if not isinstance(self.generator, Builder):
+                    raise TypeError(f"Expected Builder, got {type(self.generator).__name__}")
                 logger.info("runner connecting")
                 self.update_status(RunnerConnecting())
                 self.acknowledge_task(task)
@@ -194,9 +195,8 @@ class Runner:
                         RunnerLoading(layers_loaded=layers_loaded, total_layers=total)
                     )
 
-                assert (
-                    ModelTask.TextGeneration in self.shard_metadata.model_card.tasks
-                ), f"Incorrect model task(s): {self.shard_metadata.model_card.tasks}"
+                if ModelTask.TextGeneration not in self.shard_metadata.model_card.tasks:
+                    raise ValueError(f"Incorrect model task(s): {self.shard_metadata.model_card.tasks}")
                 self.generator.inference_model, self.generator.tokenizer = (
                     load_mlx_items(
                         self.bound_instance,
@@ -225,7 +225,8 @@ class Runner:
                 logger.info("runner loaded")
 
             case StartWarmup() if isinstance(self.current_status, RunnerLoaded):
-                assert isinstance(self.generator, InferenceGenerator)
+                if not isinstance(self.generator, InferenceGenerator):
+                    raise TypeError(f"Expected InferenceGenerator, got {type(self.generator).__name__}")
                 logger.info("runner warming up")
 
                 self.update_status(RunnerWarmingUp())
@@ -269,13 +270,16 @@ class Runner:
         self.update_status(RunnerShutdown())
 
     def submit_text_generation(self, task: TextGeneration):
-        assert isinstance(self.generator, InferenceGenerator)
+        if not isinstance(self.generator, InferenceGenerator):
+            raise TypeError(f"Expected InferenceGenerator, got {type(self.generator).__name__}")
         self.active_tasks[task.task_id] = task
         self.generator.submit(task)
 
     def handle_generation_tasks(self, starting_task: TextGeneration):
-        assert isinstance(self.current_status, RunnerReady)
-        assert isinstance(self.generator, InferenceGenerator)
+        if not isinstance(self.current_status, RunnerReady):
+            raise TypeError(f"Expected RunnerReady status, got {type(self.current_status).__name__}")
+        if not isinstance(self.generator, InferenceGenerator):
+            raise TypeError(f"Expected InferenceGenerator, got {type(self.generator).__name__}")
 
         logger.info(f"received chat request: {starting_task}")
         self.update_status(RunnerRunning())
@@ -302,7 +306,8 @@ class Runner:
                         )
 
             for task_id in finished:
-                del self.active_tasks[task_id]
+                self.active_tasks.pop(task_id, None)
+                self.seen.discard(task_id)
 
             try:
                 task = self.task_receiver.receive_nowait()
@@ -349,11 +354,10 @@ class Runner:
                     )
 
                 elif self.device_rank == 0:
-                    assert response.finish_reason not in (
-                        "error",
-                        "tool_calls",
-                        "function_call",
-                    )
+                    finish_reason = response.finish_reason
+                    if finish_reason in ("error", "tool_calls", "function_call"):
+                        logger.warning(f"Unexpected finish_reason={finish_reason} on device_rank=0")
+                        finish_reason = "stop"
                     self.event_sender.send(
                         ChunkGenerated(
                             command_id=command_id,
@@ -362,7 +366,7 @@ class Runner:
                                 text=response.text,
                                 token_id=response.token,
                                 usage=response.usage,
-                                finish_reason=response.finish_reason,
+                                finish_reason=finish_reason,
                                 stats=response.stats,
                                 logprob=response.logprob,
                                 top_logprobs=response.top_logprobs,
@@ -399,9 +403,12 @@ class Builder:
     def build(
         self,
     ) -> InferenceGenerator:
-        assert self.model_id
-        assert self.inference_model
-        assert self.tokenizer
+        if not self.model_id:
+            raise ValueError("model_id must be set before building")
+        if not self.inference_model:
+            raise ValueError("inference_model must be set before building")
+        if not self.tokenizer:
+            raise ValueError("tokenizer must be set before building")
 
         return SequentialGenerator(
             model=self.inference_model,

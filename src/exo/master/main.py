@@ -92,6 +92,9 @@ class Master:
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
+        # Cap for leak prevention: drop trace/mapping entries older than this many tasks
+        self._max_pending_traces: int = 500
+        self._max_command_task_mappings: int = 10000
 
     async def run(self):
         logger.info("Starting Master")
@@ -110,6 +113,16 @@ class Master:
     async def shutdown(self):
         logger.info("Stopping Master")
         self._tg.cancel_tasks()
+
+    def _track_command_task(self, command_id: CommandId, task_id: TaskId) -> None:
+        """Track command→task mapping with bounded eviction."""
+        self.command_task_mapping[command_id] = task_id
+        if len(self.command_task_mapping) > self._max_command_task_mappings:
+            # Evict oldest 10% to avoid per-insert eviction overhead
+            evict_count = self._max_command_task_mappings // 10
+            for old_cmd_id in list(self.command_task_mapping)[:evict_count]:
+                self.command_task_mapping.pop(old_cmd_id, None)
+            logger.warning(f"Evicted {evict_count} stale command_task_mapping entries")
 
     async def _command_processor(self) -> None:
         with self.command_receiver as commands:
@@ -164,7 +177,7 @@ class Master:
                                 )
                             )
 
-                            self.command_task_mapping[command.command_id] = task_id
+                            self._track_command_task(command.command_id, task_id)
                         case ImageGeneration():
                             for instance in self.state.instances.values():
                                 if (
@@ -207,7 +220,7 @@ class Master:
                                 )
                             )
 
-                            self.command_task_mapping[command.command_id] = task_id
+                            self._track_command_task(command.command_id, task_id)
 
                             if EXO_TRACING_ENABLED:
                                 selected_instance = self.state.instances.get(
@@ -261,7 +274,7 @@ class Master:
                                 )
                             )
 
-                            self.command_task_mapping[command.command_id] = task_id
+                            self._track_command_task(command.command_id, task_id)
 
                             if EXO_TRACING_ENABLED:
                                 selected_instance = self.state.instances.get(
@@ -318,8 +331,8 @@ class Master:
                             )
                         case TaskCancelled():
                             if (
-                                task_id := self.command_task_mapping.get(
-                                    command.cancelled_command_id
+                                task_id := self.command_task_mapping.pop(
+                                    command.cancelled_command_id, None
                                 )
                             ) is not None:
                                 generated_events.append(
@@ -328,6 +341,9 @@ class Master:
                                         task_id=task_id,
                                     )
                                 )
+                                # Clean up trace data for cancelled tasks
+                                self._pending_traces.pop(task_id, None)
+                                self._expected_ranks.pop(task_id, None)
                             else:
                                 logger.warning(
                                     f"Nonexistent command {command.cancelled_command_id} cancelled"
@@ -339,6 +355,9 @@ class Master:
                                 )
                             ) is not None:
                                 generated_events.append(TaskDeleted(task_id=task_id))
+                                # Clean up trace data for finished tasks
+                                self._pending_traces.pop(task_id, None)
+                                self._expected_ranks.pop(task_id, None)
                             else:
                                 logger.warning(
                                     f"Finished command {command.finished_command_id} finished"
@@ -361,9 +380,9 @@ class Master:
     # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
     async def _plan(self) -> None:
         while True:
-            # kill broken instances
+            # kill broken instances — snapshot to avoid mutation during iteration
             connected_node_ids = set(self.state.topology.list_nodes())
-            for instance_id, instance in self.state.instances.items():
+            for instance_id, instance in list(self.state.instances.items()):
                 for node_id in instance.shard_assignments.node_to_runner:
                     if node_id not in connected_node_ids:
                         await self.event_sender.send(
@@ -371,10 +390,11 @@ class Master:
                         )
                         break
 
-            # time out dead nodes
-            for node_id, time in self.state.last_seen.items():
+            # time out dead nodes — snapshot to avoid mutation during iteration
+            # Use 60s timeout (was 30s) to avoid false evictions under load
+            for node_id, time in list(self.state.last_seen.items()):
                 now = datetime.now(tz=timezone.utc)
-                if now - time > timedelta(seconds=30):
+                if now - time > timedelta(seconds=60):
                     logger.info(f"Manually removing node {node_id} due to inactivity")
                     await self.event_sender.send(NodeTimedOut(node_id=node_id))
 
@@ -424,6 +444,14 @@ class Master:
         if task_id not in self._pending_traces:
             self._pending_traces[task_id] = {}
         self._pending_traces[task_id][event.rank] = event.traces
+
+        # Evict oldest entries if too many pending traces accumulate (leak prevention)
+        if len(self._pending_traces) > self._max_pending_traces:
+            evict_count = len(self._pending_traces) - self._max_pending_traces
+            for old_task_id in list(self._pending_traces)[:evict_count]:
+                self._pending_traces.pop(old_task_id, None)
+                self._expected_ranks.pop(old_task_id, None)
+            logger.warning(f"Evicted {evict_count} stale pending trace entries")
 
         if (
             task_id in self._expected_ranks

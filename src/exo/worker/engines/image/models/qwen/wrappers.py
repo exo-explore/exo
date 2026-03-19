@@ -49,7 +49,8 @@ class QwenJointBlockWrapper(JointBlockWrapper[QwenTransformerBlock]):
         rotary_embeddings: RotaryEmbeddings,
         patch_mode: bool = False,
     ) -> tuple[mx.array, mx.array, mx.array]:
-        assert isinstance(rotary_embeddings, tuple)
+        if not isinstance(rotary_embeddings, tuple):
+            raise TypeError(f"Expected tuple rotary_embeddings, got {type(rotary_embeddings)}")
 
         batch_size = hidden_states.shape[0]
         img_seq_len = hidden_states.shape[1]
@@ -169,8 +170,8 @@ class QwenJointBlockWrapper(JointBlockWrapper[QwenTransformerBlock]):
     ) -> tuple[mx.array, mx.array]:
         attn = self.block.attn
 
-        assert self._img_mod is not None
-        assert self._txt_mod is not None
+        if self._img_mod is None or self._txt_mod is None:
+            raise RuntimeError("Block modulation state not set; call forward() first")
 
         txt_attn_output = attn_out[:, : self._text_seq_len, :]
         img_attn_output = attn_out[:, self._text_seq_len :, :]

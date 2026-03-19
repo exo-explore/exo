@@ -4,6 +4,8 @@ import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from loguru import logger
+
 from exo.shared.types.api import (
     ChatCompletionChoice,
     ChatCompletionMessage,
@@ -283,7 +285,9 @@ async def collect_chat_response(
 
     combined_text = "".join(text_parts)
     combined_thinking = "".join(thinking_parts) if thinking_parts else None
-    assert model is not None
+    if model is None:
+        logger.warning("No model received in chat completion chunks, using fallback")
+        model = "unknown"
 
     yield ChatCompletionResponse(
         id=command_id,

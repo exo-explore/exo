@@ -58,6 +58,13 @@ class Topology:
 
         return topology
 
+    def copy(self) -> "Topology":
+        """Shallow-copy the topology. Safe because all node/edge data are immutable."""
+        t = Topology.__new__(Topology)
+        t._graph = self._graph.copy()  # O(V+E) in Rust — much faster than deepcopy
+        t._vertex_indices = dict(self._vertex_indices)  # str→int, immutable values
+        return t
+
     def add_node(self, node_id: NodeId) -> None:
         if node_id in self._vertex_indices:
             return
@@ -180,6 +187,15 @@ class Topology:
         ):
             if self._graph.get_edge_data_by_index(conn_idx) == conn.edge:
                 self._graph.remove_edge_from_index(conn_idx)
+
+    def remove_all_connections_between(self, source: NodeId, sink: NodeId) -> None:
+        """Remove all edges from source to sink regardless of edge data."""
+        if source not in self._vertex_indices or sink not in self._vertex_indices:
+            return
+        for conn_idx in self._graph.edge_indices_from_endpoints(
+            self._vertex_indices[source], self._vertex_indices[sink]
+        ):
+            self._graph.remove_edge_from_index(conn_idx)
 
     def get_cycles(self) -> list[Cycle]:
         """Get simple cycles in the graph, including singleton cycles"""

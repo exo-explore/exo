@@ -309,8 +309,8 @@ class DiffusionRunner:
     def _exchange_and_apply_guidance(
         self, noise: mx.array, is_positive: bool
     ) -> mx.array:
-        assert self.group is not None
-        assert self.cfg_peer_rank is not None
+        if self.group is None or self.cfg_peer_rank is None:
+            raise RuntimeError("group and cfg_peer_rank must be set for CFG exchange")
 
         if is_positive:
             noise = mx.distributed.send(noise, self.cfg_peer_rank, group=self.group)
@@ -333,7 +333,8 @@ class DiffusionRunner:
 
     def _apply_guidance(self, noise_pos: mx.array, noise_neg: mx.array) -> mx.array:
         scale = self._get_effective_guidance_scale()
-        assert scale is not None
+        if scale is None:
+            raise RuntimeError("Guidance scale is None; CFG requires a valid scale")
         return self.adapter.apply_guidance(noise_pos, noise_neg, scale)
 
     def _ensure_wrappers(
@@ -615,7 +616,8 @@ class DiffusionRunner:
             kontext_image_ids=kontext_image_ids,
         )
 
-        assert self.joint_block_wrappers is not None
+        if self.joint_block_wrappers is None:
+            raise RuntimeError("Joint block wrappers not initialized")
         for wrapper in self.joint_block_wrappers:
             encoder_hidden_states, hidden_states = wrapper(
                 hidden_states=hidden_states,
@@ -629,7 +631,8 @@ class DiffusionRunner:
                 hidden_states, encoder_hidden_states
             )
 
-        assert self.single_block_wrappers is not None
+        if self.single_block_wrappers is None:
+            raise RuntimeError("Single block wrappers not initialized")
         for wrapper in self.single_block_wrappers:
             hidden_states = wrapper(
                 hidden_states=hidden_states,

@@ -109,6 +109,7 @@ class OllamaChatResponse(BaseModel, frozen=True, strict=True):
 class OllamaModelDetails(BaseModel, frozen=True, strict=True):
     format: str | None = None
     family: str | None = None
+    families: list[str] | None = None
     parameter_size: str | None = None
     quantization_level: str | None = None
 

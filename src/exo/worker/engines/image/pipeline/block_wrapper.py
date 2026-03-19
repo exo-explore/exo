@@ -77,19 +77,22 @@ class BlockWrapperMixin:
     def _cache_full_image_kv(self, img_key: mx.array, img_value: mx.array) -> None:
         self._ensure_cache(img_key)
         cache = self._get_active_cache()
-        assert cache is not None
+        if cache is None:
+            raise RuntimeError("KV cache not initialized; call _ensure_cache first")
         cache.update_image_patch(0, img_key.shape[2], img_key, img_value)
 
     def _cache_patch_kv(self, img_key: mx.array, img_value: mx.array) -> None:
         cache = self._get_active_cache()
-        assert cache is not None
+        if cache is None:
+            raise RuntimeError("KV cache not initialized for patch caching")
         cache.update_image_patch(self._patch_start, self._patch_end, img_key, img_value)
 
     def _get_full_kv(
         self, text_key: mx.array, text_value: mx.array
     ) -> tuple[mx.array, mx.array]:
         cache = self._get_active_cache()
-        assert cache is not None
+        if cache is None:
+            raise RuntimeError("KV cache not initialized for full KV retrieval")
         return cache.get_full_kv(text_key, text_value)
 
     def reset_cache(self) -> None:

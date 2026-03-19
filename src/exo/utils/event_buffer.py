@@ -9,6 +9,8 @@ class OrderedBuffer[T]:
     source at a time.
     """
 
+    _MAX_BUFFERED = 10000
+
     def __init__(self):
         self.store: dict[int, T] = {}
         self.next_idx_to_release: int = 0
@@ -19,11 +21,22 @@ class OrderedBuffer[T]:
         if idx < self.next_idx_to_release:
             return
         if idx in self.store:
-            assert self.store[idx] == t, (
-                "Received different messages with identical indices, probable race condition"
-            )
+            if self.store[idx] != t:
+                raise RuntimeError(
+                    f"Received different messages with identical index {idx}, probable race condition"
+                )
             return
         self.store[idx] = t
+        # Prevent unbounded growth from gaps that never fill
+        if len(self.store) > self._MAX_BUFFERED:
+            # Skip ahead to the lowest buffered index to unblock the drain
+            min_idx = min(self.store)
+            if min_idx > self.next_idx_to_release:
+                logger.warning(
+                    f"OrderedBuffer: skipping from {self.next_idx_to_release} to {min_idx} "
+                    f"({min_idx - self.next_idx_to_release} lost events) to prevent unbounded growth"
+                )
+                self.next_idx_to_release = min_idx
 
     def drain(self) -> list[T]:
         """Drain all available events from the buffer"""

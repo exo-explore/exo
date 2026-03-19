@@ -94,7 +94,7 @@ class ResumableShardDownloader(ShardDownloader):
     async def on_progress_wrapper(
         self, shard: ShardMetadata, progress: RepoDownloadProgress
     ) -> None:
-        for callback in self.on_progress_callbacks:
+        for callback in list(self.on_progress_callbacks):
             await callback(shard, progress)
 
     def on_progress(
@@ -149,7 +149,9 @@ class ResumableShardDownloader(ShardDownloader):
             try:
                 yield await task
             except Exception as e:
-                logger.warning(f"Error downloading shard: {type(e).__name__}")
+                logger.opt(exception=e).warning(
+                    f"Error checking shard download status: {type(e).__name__}: {e}"
+                )
 
     async def get_shard_download_status_for_shard(
         self, shard: ShardMetadata

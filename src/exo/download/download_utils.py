@@ -231,7 +231,8 @@ def _scan_model_directory(
                         path=rel_path,
                         size=None,
                     )
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error parsing index file {index_file}: {e}")
             continue
 
     return list(entries_by_path.values())
@@ -472,8 +473,10 @@ async def file_meta(
             r.headers.get("x-linked-size") or r.headers.get("content-length") or 0
         )
         etag = r.headers.get("x-linked-etag") or r.headers.get("etag")
-        assert content_length > 0, f"No content length for {url}"
-        assert etag is not None, f"No remote hash for {url}"
+        if content_length <= 0:
+            raise ValueError(f"No content length for {url}")
+        if etag is None:
+            raise ValueError(f"No remote hash for {url}")
         etag = trim_etag(etag)
         return content_length, etag
 
@@ -581,9 +584,10 @@ async def _download_file(
             if r.status in [401, 403]:
                 msg = await _build_auth_error_message(r.status, model_id)
                 raise HuggingFaceAuthenticationError(msg)
-            assert r.status in [200, 206], (
-                f"Failed to download {path} from {url}: {r.status}"
-            )
+            if r.status not in [200, 206]:
+                raise RuntimeError(
+                    f"Failed to download {path} from {url}: {r.status}"
+                )
             async with aiofiles.open(
                 partial_path, "ab" if resume_byte_pos else "wb"
             ) as f:
@@ -845,12 +849,16 @@ async def download_shard(
 
     semaphore = asyncio.Semaphore(max_parallel_downloads)
 
+    _progress_tasks: set[asyncio.Task[None]] = set()
+
     def schedule_progress(
         file: FileListEntry, curr_bytes: int, total_bytes: int, is_renamed: bool
     ) -> None:
-        asyncio.create_task(
+        task = asyncio.create_task(
             on_progress_wrapper(file, curr_bytes, total_bytes, is_renamed)
         )
+        _progress_tasks.add(task)
+        task.add_done_callback(_progress_tasks.discard)
 
     async def download_with_semaphore(file: FileListEntry) -> None:
         async with semaphore:
