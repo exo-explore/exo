@@ -9,7 +9,7 @@ from typing import Generator, Literal
 import mlx.core as mx
 from PIL import Image
 
-from exo.shared.types.api import (
+from exo.api.types import (
     AdvancedImageParams,
     ImageEditsTaskParams,
     ImageGenerationStats,

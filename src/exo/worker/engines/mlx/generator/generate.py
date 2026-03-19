@@ -13,7 +13,7 @@ from mlx_lm.models.cache import ArraysCache, RotatingKVCache
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.types.api import (
+from exo.api.types import (
     CompletionTokensDetails,
     FinishReason,
     GenerationStats,

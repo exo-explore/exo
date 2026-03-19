@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from exo.master.event_log import DiskEventLog
 from exo.shared.types.events import TestEvent
+from exo.utils.disk_event_log import DiskEventLog
 
 
 @pytest.fixture
