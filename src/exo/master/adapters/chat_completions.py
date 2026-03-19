@@ -10,8 +10,6 @@ from exo.shared.types.api import (
     ChatCompletionMessageText,
     ChatCompletionRequest,
     ChatCompletionResponse,
-    ErrorInfo,
-    ErrorResponse,
     FinishReason,
     Logprobs,
     LogprobsContentItem,
@@ -163,14 +161,23 @@ async def generate_chat_stream(
                 yield f": prefill_progress {chunk.model_dump_json()}\n\n"
 
             case ErrorChunk():
-                error_response = ErrorResponse(
-                    error=ErrorInfo(
-                        message=chunk.error_message or "Internal server error",
-                        type="InternalServerError",
-                        code=500,
-                    )
+                error_msg = chunk.error_message or "Internal server error"
+                error_chunk_response = ChatCompletionResponse(
+                    id=command_id,
+                    created=int(time.time()),
+                    model=chunk.model,
+                    choices=[
+                        StreamingChoiceResponse(
+                            index=0,
+                            delta=ChatCompletionMessage(
+                                role="assistant",
+                                content=f"\n[error] {error_msg}\n",
+                            ),
+                            finish_reason="stop",
+                        )
+                    ],
                 )
-                yield f"data: {error_response.model_dump_json()}\n\n"
+                yield f"data: {error_chunk_response.model_dump_json()}\n\n"
                 yield "data: [DONE]\n\n"
                 return
 
@@ -244,6 +251,8 @@ async def collect_chat_response(
 
             case ErrorChunk():
                 error_message = chunk.error_message or "Internal server error"
+                if model is None:
+                    model = chunk.model
                 break
 
             case TokenChunk():
@@ -280,7 +289,8 @@ async def collect_chat_response(
                 finish_reason = chunk.finish_reason
 
     if error_message is not None:
-        raise ValueError(error_message)
+        text_parts.append(f"\n[error] {error_message}\n")
+        finish_reason = "stop"
 
     combined_text = "".join(text_parts)
     combined_thinking = "".join(thinking_parts) if thinking_parts else None
