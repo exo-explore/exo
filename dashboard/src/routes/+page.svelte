@@ -1535,7 +1535,7 @@
   }
 
   // Helper to get download status for a model (checks all downloads for matching model ID)
-  function getModelDownloadStatus(modelId: string): {
+  function getModelDownloadStatus(modelId: string, nodeIds?: string[]): {
     isDownloading: boolean;
     progress: DownloadProgress | null;
     downloadedProgress: DownloadProgress | null;
@@ -1570,8 +1570,10 @@
       progress: DownloadProgress;
     }> = [];
 
-    // Check all nodes for downloads matching this model
+    // Check nodes for downloads matching this model
+    const nodeIdSet = nodeIds ? new Set(nodeIds) : null;
     for (const [nodeId, nodeDownloads] of Object.entries(downloadsData)) {
+      if (nodeIdSet && !nodeIdSet.has(nodeId)) continue;
       if (!Array.isArray(nodeDownloads)) continue;
 
       for (const downloadWrapped of nodeDownloads) {
@@ -5932,12 +5934,15 @@
                 )}
                 {@const allPreviews = filteredPreviews()}
                 {#if selectedModel && allPreviews.length > 0}
-                  {@const downloadStatus = getModelDownloadStatus(
-                    selectedModel.id,
-                  )}
                   {@const tags = modelTags()[selectedModel.id] || []}
                   <div class="space-y-3">
                     {#each allPreviews as apiPreview, i}
+                      {@const downloadStatus = getModelDownloadStatus(
+                        selectedModel.id,
+                        apiPreview.memory_delta_by_node
+                          ? Object.keys(apiPreview.memory_delta_by_node)
+                          : undefined,
+                      )}
                       <div
                         role="group"
                         onmouseenter={() => {
