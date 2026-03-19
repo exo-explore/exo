@@ -1535,15 +1535,19 @@
   }
 
   // Helper to get download status for a model (checks all downloads for matching model ID)
+  type NodeDownloadStatus = {
+    nodeId: string;
+    nodeName: string;
+    status: "completed" | "partial" | "pending" | "downloading";
+    percentage: number;
+    progress: DownloadProgress | null;
+  };
+
   function getModelDownloadStatus(modelId: string, nodeIds?: string[]): {
     isDownloading: boolean;
     progress: DownloadProgress | null;
     downloadedProgress: DownloadProgress | null;
-    perNode: Array<{
-      nodeId: string;
-      nodeName: string;
-      progress: DownloadProgress;
-    }>;
+    perNode: NodeDownloadStatus[];
   } {
     if (!downloadsData || Object.keys(downloadsData).length === 0) {
       return {
@@ -1564,11 +1568,7 @@
     let pendingDownloadedBytes = 0;
     let hasPendingProgress = false;
     const allFiles: DownloadProgress["files"] = [];
-    const perNode: Array<{
-      nodeId: string;
-      nodeName: string;
-      progress: DownloadProgress;
-    }> = [];
+    const perNode: NodeDownloadStatus[] = [];
 
     // Check nodes for downloads matching this model
     const nodeIdSet = nodeIds ? new Set(nodeIds) : null;
@@ -1589,7 +1589,8 @@
 
         if (
           downloadKind !== "DownloadOngoing" &&
-          downloadKind !== "DownloadPending"
+          downloadKind !== "DownloadPending" &&
+          downloadKind !== "DownloadCompleted"
         )
           continue;
         if (!downloadPayload) continue;
@@ -1604,6 +1605,20 @@
         ) {
           // Try exact match or partial match
           if (downloadModelId !== modelId) continue;
+        }
+
+        const nodeName =
+          data?.nodes?.[nodeId]?.friendly_name ?? nodeId.slice(0, 8);
+
+        if (downloadKind === "DownloadCompleted") {
+          perNode.push({
+            nodeId,
+            nodeName,
+            status: "completed",
+            percentage: 100,
+            progress: null,
+          });
+          continue;
         }
 
         // DownloadPending = bytes on disk but not actively downloading.
@@ -1623,6 +1638,15 @@
           hasPendingProgress = true;
           pendingTotalBytes += pendingTotal;
           pendingDownloadedBytes += pendingDownloaded;
+          const pct =
+            pendingTotal > 0 ? (pendingDownloaded / pendingTotal) * 100 : 0;
+          perNode.push({
+            nodeId,
+            nodeName,
+            status: pendingDownloaded > 0 ? "partial" : "pending",
+            percentage: pct,
+            progress: null,
+          });
           continue;
         }
 
@@ -1643,9 +1667,13 @@
         totalFiles += progress.totalFiles;
         allFiles.push(...progress.files);
 
-        const nodeName =
-          data?.nodes?.[nodeId]?.friendly_name ?? nodeId.slice(0, 8);
-        perNode.push({ nodeId, nodeName, progress });
+        perNode.push({
+          nodeId,
+          nodeName,
+          status: "downloading",
+          percentage: progress.percentage,
+          progress,
+        });
       }
     }
 
@@ -1670,7 +1698,7 @@
         isDownloading: false,
         progress: null,
         downloadedProgress,
-        perNode: [],
+        perNode,
       };
     }
 

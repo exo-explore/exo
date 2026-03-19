@@ -17,7 +17,9 @@
       perNode?: Array<{
         nodeId: string;
         nodeName: string;
-        progress: DownloadProgress;
+        status: "completed" | "partial" | "pending" | "downloading";
+        percentage: number;
+        progress: DownloadProgress | null;
       }>;
     } | null;
     nodes?: Record<string, NodeInfo>;
@@ -153,7 +155,7 @@
   const downloadedPercentage = $derived(
     downloadedProgress?.percentage ?? 0,
   );
-  let expandedNodes = $state<Set<string>>(new Set());
+  const perNode = $derived(downloadStatus?.perNode ?? []);
 
   function toggleNodeDetails(nodeId: string): void {
     const next = new Set(expandedNodes);
@@ -624,6 +626,26 @@
             style="width: {downloadedPercentage}%"
           ></div>
         </div>
+      </div>
+    {/if}
+    <!-- Per-node download status -->
+    {#if perNode.length > 0}
+      <div class="mb-2 flex flex-wrap gap-x-3 gap-y-0.5 text-xs font-mono">
+        {#each perNode as node}
+          <span class={node.status === "completed"
+            ? "text-green-400/60"
+            : node.status === "downloading"
+              ? "text-blue-400/60"
+              : "text-white/30"}>
+            {node.nodeName}: {node.status === "completed"
+              ? "100%"
+              : node.status === "downloading"
+                ? `${node.percentage.toFixed(1)}%`
+                : node.percentage > 0
+                  ? `${node.percentage.toFixed(1)}%`
+                  : "0%"}
+          </span>
+        {/each}
       </div>
     {/if}
 
