@@ -1,11 +1,14 @@
 [project]
-name = "mlx-runner"
+name = "exo-core"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
+authors = [
+    { name = "Evan", email = "evanev7@gmail.com" }
+]
 requires-python = ">=3.13"
 dependencies = []
 
 [build-system]
-requires = ["uv_build>=0.8.9,<0.9.0"]
+requires = ["uv_build>=0.9.24,<0.10.0"]
 build-backend = "uv_build"

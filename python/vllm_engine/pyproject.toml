@@ -1,0 +1,38 @@
+[project]
+name = "vllm-runner"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "torch>=2.10.0; sys_platform == 'linux'",
+  "vllm>=0.13.0; sys_platform == 'linux' and platform_machine == 'aarch64'",
+  "mlx-cuda-13==0.30.6; sys_platform == 'linux'",
+  "fastsafetensors>=0.1.10; sys_platform == 'linux'",
+]
+
+[tool.uv]
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'aarch64'"
+]
+
+
+[tool.uv.sources]
+vllm = { git = "https://github.com/hmellor/vllm.git", rev = "b99bedc737166ae5ca98cb9e3534b96e0c8c69aa" }
+torch = [{ index = "pytorch-cu130", marker = "platform_machine == 'aarch64'" },
+  { index = "pytorch-cpu", marker = "platform_machine == 'x86_64'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[build-system]
+requires = ["uv_build>=0.8.9,<0.9.0"]
+build-backend = "uv_build"

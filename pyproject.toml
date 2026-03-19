@@ -16,6 +16,7 @@ dependencies = [
   "psutil>=7.0.0",
   "loguru>=0.7.3",
   "exo_pyo3_bindings",                       # rust bindings
+  "exo_core",
   "anyio==4.11.0",
   "mlx; sys_platform == 'darwin'",
   "mlx==0.30.6; sys_platform == 'linux'",
@@ -47,14 +48,18 @@ dev = [
 
 [project.optional-dependencies]
 mlx = ["mlx_runner"]
-cuda = ["vllm_runner"]
+cuda = ["vllm_runner; sys_platform == 'linux' and platform_machine == 'aarch64'"]
 
 ###
 # workspace configuration
 ###
 
 [tool.uv.workspace]
-members = ["rust/exo_pyo3_bindings", "bench"]
+members = [
+    "rust/exo_pyo3_bindings",
+    "bench",
+    "python/exo_core",
+]
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
@@ -122,6 +127,8 @@ root = "src"
 required-version = ">=0.8.6"
 prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
+conflicts = [[{ package = "exo", extra = "cuda" }, { package = "exo-bench" }]]
+
 
 ###
 # ruff configuration
@@ -129,7 +136,6 @@ environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 
 [tool.ruff]
 extend-exclude = [
-  "shared/protobufs/**",
   "*mlx_typings/**",
   "*cuda_typings/**",
   "rust/exo_pyo3_bindings/**",
