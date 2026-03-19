@@ -1,0 +1,25 @@
+[project]
+name = "vllm-runner"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "torch>=2.10.0; sys_platform == 'linux'",
+  "vllm>=0.13.0; sys_platform == 'linux'",
+  "mlx-cuda-13==0.30.6; sys_platform == 'linux'",
+  "fastsafetensors>=0.1.10; sys_platform == 'linux'",
+]
+
+[tool.uv.sources]
+vllm = { git = "https://github.com/hmellor/vllm.git", branch = "transformers-v5" }
+torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[build-system]
+requires = ["uv_build>=0.8.9,<0.9.0"]
+build-backend = "uv_build"

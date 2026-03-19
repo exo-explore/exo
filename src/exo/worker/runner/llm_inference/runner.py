@@ -6,11 +6,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
-import mlx.core as mx
 from anyio import WouldBlock
-from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelTask
 from exo.shared.types.chunks import (
@@ -83,12 +81,20 @@ class ExitCode(str, Enum):
 
 class Builder(ABC):
     @abstractmethod
-    def connect(self, bound_instance: BoundInstance) -> None: ...
+    @classmethod
+    def create(
+        cls,
+        bound_instance: BoundInstance,
+        event_sender: MpSender[Event],
+        cancel_receiver: MpReceiver[TaskId],
+    ) -> Self: ...
+
+    @abstractmethod
+    def connect(self) -> None: ...
 
     @abstractmethod
     def load(
         self,
-        bound_instance: BoundInstance,
         on_timeout: Callable[[], None],
         on_layer_loaded: Callable[[int, int], None],
     ) -> None: ...
@@ -184,7 +190,7 @@ class Runner:
                 self.update_status(RunnerConnecting())
                 self.acknowledge_task(task)
 
-                self.generator.connect(self.bound_instance)
+                self.generator.connect()
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
                 self.update_status(RunnerConnected())
@@ -233,7 +239,6 @@ class Runner:
                 ), f"Incorrect model task(s): {self.shard_metadata.model_card.tasks}"
 
                 self.generator.load(
-                    self.bound_instance,
                     on_timeout=on_model_load_timeout,
                     on_layer_loaded=on_layer_loaded,
                 )
@@ -402,31 +407,47 @@ class Runner:
 
 @dataclass
 class MlxBuilder(Builder):
+    import mlx.core as mx
+    from mlx_lm.tokenizer_utils import TokenizerWrapper
+
     model_id: ModelId
+    bound_instance: BoundInstance
     event_sender: MpSender[Event]
     cancel_receiver: MpReceiver[TaskId]
     inference_model: Model | None = None
     tokenizer: TokenizerWrapper | None = None
     group: mx.distributed.Group | None = None
 
-    def connect(self, bound_instance: BoundInstance) -> None:
-        self.group = initialize_mlx(bound_instance)
+    @classmethod
+    def create(
+        cls,
+        bound_instance: BoundInstance,
+        event_sender: MpSender[Event],
+        cancel_receiver: MpReceiver[TaskId],
+    ) -> Self:
+        return cls(
+            bound_instance.instance.shard_assignments.model_id,
+            bound_instance,
+            event_sender,
+            cancel_receiver,
+        )
+
+    def connect(self) -> None:
+        self.group = initialize_mlx(self.bound_instance)
 
     def load(
         self,
-        bound_instance: BoundInstance,
         on_timeout: Callable[[], None],
         on_layer_loaded: Callable[[int, int], None],
     ) -> None:
         self.inference_model, self.tokenizer = load_mlx_items(
-            bound_instance,
+            self.bound_instance,
             self.group,
             on_timeout=on_timeout,
             on_layer_loaded=on_layer_loaded,
         )
 
     def build(self) -> InferenceGenerator:
-        assert self.model_id
         assert self.inference_model
         assert self.tokenizer
 
@@ -514,16 +535,34 @@ class VllmBuilder(Builder):
     trust_remote_code: bool
     cancel_receiver: MpReceiver[TaskId]
     event_sender: MpSender[Event]
-    group: mx.distributed.Group | None = None
+    bound_instance: BoundInstance
 
-    def connect(self, bound_instance: BoundInstance) -> None:
+    @classmethod
+    def create(
+        cls,
+        bound_instance: BoundInstance,
+        event_sender: MpSender[Event],
+        cancel_receiver: MpReceiver[TaskId],
+    ) -> Self:
+        from exo.shared.constants import EXO_MODELS_DIR
+
+        mid = bound_instance.instance.shard_assignments.model_id
+        return cls(
+            mid,
+            str(EXO_MODELS_DIR / mid.normalize()),
+            bound_instance.bound_shard.model_card.trust_remote_code,
+            cancel_receiver,
+            event_sender,
+            bound_instance,
+        )
+
+    def connect(self) -> None:
         raise NotImplementedError(
             "Multiple node VLLM instances are not supported at the moment!"
         )
 
     def load(
         self,
-        bound_instance: BoundInstance,
         on_timeout: Callable[[], None],
         on_layer_loaded: Callable[[int, int], None],
     ) -> None:
@@ -533,7 +572,7 @@ class VllmBuilder(Builder):
             model_path=self.model_path,
             model_id=self.model_id,
             trust_remote_code=self.trust_remote_code,
-            n_layers=bound_instance.bound_shard.model_card.n_layers,
+            n_layers=self.bound_instance.bound_shard.model_card.n_layers,
             on_layer_loaded=on_layer_loaded,
         )
 
@@ -545,6 +584,8 @@ class VllmBuilder(Builder):
             model_id=self.model_id,
             prefix_cache=self._prefix_cache,
         )
+        from mlx_lm.tokenizer_utils import TokenizerWrapper
+
         tokenizer = TokenizerWrapper(self._engine.get_tokenizer())
         max_concurrent = 1 if os.environ.get("EXO_NO_BATCH") else 8
 

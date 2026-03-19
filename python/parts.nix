@@ -3,7 +3,6 @@
   perSystem =
     { config, self', pkgs, lib, system, ... }:
     let
-      pkgsCuda = import ../nix/cuda-pkgs.nix { nixpkgs = inputs.nixpkgs; inherit system; };
       # Load workspace from uv.lock
       workspace = inputs.uv2nix.lib.workspace.loadWorkspace {
         workspaceRoot = inputs.self;
@@ -33,6 +32,8 @@
           '';
         };
       };
+
+      inherit (pkgs.stdenv.hostPlatform) isDarwin isLinux;
 
       python = pkgs.python313;
 
@@ -65,7 +66,7 @@
             final.setuptools
           ];
         });
-      } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+      } // lib.optionalAttrs isDarwin {
         # Use our pure Nix-built MLX with Metal support (macOS only)
         mlx = self'.packages.mlx;
       };
@@ -77,7 +78,7 @@
           ignoreMissing = drv: drv.overrideAttrs { autoPatchelfIgnoreMissingDeps = [ "*" ]; };
           nvidiaPackages = lib.filterAttrs (name: _: lib.hasPrefix "nvidia-" name) prev;
         in
-        lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
+        lib.optionalAttrs isLinux (
           (lib.mapAttrs (_: ignoreMissing) nvidiaPackages) // {
             mlx = ignoreMissing prev.mlx;
             mlx-cuda-13 = prev.mlx-cuda-13.overrideAttrs (old: {
@@ -100,39 +101,48 @@
           }
         );
 
-      baseOverlays = [
-        inputs.pyproject-build-systems.overlays.default
-        overlay
-        exoOverlay
-        buildSystemsOverlay
-        linuxOverlay
-      ];
+
 
       pythonSet = (pkgs.callPackage inputs.pyproject-nix.build.packages {
         inherit python;
       }).overrideScope (
-        lib.composeManyExtensions baseOverlays
+        lib.composeManyExtensions [
+          inputs.pyproject-build-systems.overlays.default
+          overlay
+          exoOverlay
+          buildSystemsOverlay
+          linuxOverlay
+        ]
       );
       # mlx-cpu and mlx-cuda-13 both ship mlx/ site-packages files; keep first.
       # mlx-cpu/mlx-cuda-13 and nvidia-cudnn-cu12/cu13 ship overlapping files.
-      venvCollisionPaths = lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+      venvCollisionPaths = lib.optionals isLinux [
         "lib/python3.13/site-packages/mlx*"
         "lib/python3.13/site-packages/nvidia*"
       ];
 
-      # Exclude bench deps from main env (bench has its own benchVenv)
-      exoDeps = removeAttrs workspace.deps.default [ "exo-bench" ];
-
-      exoVenv = (pythonSet.mkVirtualEnv "exo-env" exoDeps).overrideAttrs {
+      exoVenv = (pythonSet.mkVirtualEnv "exo-env" {
+        exo = lib.optionals isDarwin [ "mlx" ];
+        exo-pyo3-bindings = [ ];
+      }).overrideAttrs {
+        venvIgnoreCollisions = venvCollisionPaths;
+      };
+      exoCudaVenv = (pythonSet.mkVirtualEnv "exo-env" {
+        exo = lib.optionals isLinux [ "cuda" ];
+        exo-pyo3-bindings = [ ];
+      }).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;
       };
 
+
+
       # Virtual environment with dev dependencies for testing
-      testVenv = (pythonSet.mkVirtualEnv "exo-test-env" (
-        exoDeps // {
+      testVenv = (pythonSet.mkVirtualEnv "exo-test-env"
+        {
           exo = [ "dev" ]; # Include pytest, pytest-asyncio, pytest-env
+          exo-pyo3-bindings = [ ];
         }
-      )).overrideAttrs {
+      ).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;
       };
 
@@ -173,52 +183,32 @@
           makeWrapper ${exoVenv}/bin/exo $out/bin/exo \
             --set EXO_DASHBOARD_DIR ${self'.packages.dashboard} \
             --set EXO_RESOURCES_DIR ${inputs.self + /resources} \
-            ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
+            ${lib.optionalString isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
         '';
 
-      vllmEnv = pkgsCuda.python313.withPackages (ps: [ ps.vllm ps.fastsafetensors ]);
-
-      vllmSite = pkgs.runCommand "vllm-site-filtered" { } ''
-        mkdir -p $out
-        for pkg in ${vllmEnv}/${python.sitePackages}/*; do
-          name=$(basename "$pkg")
-          case "$name" in
-            anyio*|pydantic*) ;;
-            *) ln -s "$pkg" "$out/$name" ;;
-          esac
-        done
-      '';
-
-      exoCudaDeps = exoDeps // {
-        mlx-cuda-13 = [ ];
-      };
-
-      exoCudaVenv = (pythonSet.mkVirtualEnv "exo-cuda-env" exoCudaDeps).overrideAttrs {
-        venvIgnoreCollisions = venvCollisionPaths;
-      };
-
-      exoCudaPackage = pkgs.runCommand "exo-cuda"
+      exoCudaPackage = pkgs.runCommand "exo"
         {
           nativeBuildInputs = [ pkgs.makeWrapper ];
         }
         ''
           mkdir -p $out/bin
-          makeWrapper ${exoCudaVenv}/bin/exo $out/bin/exo-cuda \
+
+          # Create wrapper script
+          makeWrapper ${exoCudaVenv}/bin/exo $out/bin/exo \
             --set EXO_DASHBOARD_DIR ${self'.packages.dashboard} \
             --set EXO_RESOURCES_DIR ${inputs.self + /resources} \
-            --prefix PYTHONPATH : "${vllmSite}"
+            ${lib.optionalString isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
         '';
     in
     {
       # Python package only available on macOS (requires MLX/Metal)
-      packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin
+      packages = (lib.optionalAttrs isDarwin
         {
-          exo = exoPackage;
           # Test environment for running pytest outside of Nix sandbox (needs GPU access)
           exo-test-env = testVenv;
-        } // lib.optionalAttrs (pkgsCuda != null) {
-        exo-cuda-unwrapped = exoCudaPackage;
-      } // {
+        }) // {
+        exo = exoPackage;
+        exo-cuda = exoCudaPackage;
         exo-bench = mkBenchScript "exo-bench" (inputs.self + /bench/exo_bench.py);
         exo-eval = mkBenchScript "exo-eval" (inputs.self + /bench/exo_eval.py);
         exo-eval-tool-calls = mkBenchScript "exo-eval-tool-calls" (inputs.self + /bench/eval_tool_calls.py);

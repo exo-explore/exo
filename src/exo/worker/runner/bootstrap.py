@@ -97,8 +97,8 @@ def entrypoint(
         else:
             from exo.worker.runner.llm_inference.runner import MlxBuilder, Runner
 
-            builder = MlxBuilder(
-                model_id=bound_instance.bound_shard.model_card.model_id,
+            builder = MlxBuilder.create(
+                bound_instance,
                 event_sender=event_sender,
                 cancel_receiver=cancel_receiver,
             )

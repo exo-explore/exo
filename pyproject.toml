@@ -46,12 +46,8 @@ dev = [
 ]
 
 [project.optional-dependencies]
-cuda = [
-  "torch>=2.10.0; sys_platform == 'linux'",
-  "vllm>=0.13.0; sys_platform == 'linux'",
-  "mlx-cuda-13==0.30.6; sys_platform == 'linux'",
-  "fastsafetensors>=0.1.10; sys_platform == 'linux'",
-]
+mlx = ["mlx_runner"]
+cuda = ["vllm_runner"]
 
 ###
 # workspace configuration
@@ -62,18 +58,13 @@ members = ["rust/exo_pyo3_bindings", "bench"]
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
+mlx_runner = { path = "python/mlx_runner" }
+vllm_runner = { path = "python/vllm_runner" }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/eval-left-padding-in-batched-rotation" }
-torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux'" }]
-vllm = { git = "https://github.com/hmellor/vllm.git", branch = "transformers-v5" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }
 # mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }
-
-[[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
-explicit = true
 
 [build-system]
 requires = ["uv_build>=0.8.9,<0.9.0"]
@@ -130,22 +121,7 @@ root = "src"
 [tool.uv]
 required-version = ">=0.8.6"
 prerelease = "allow"
-environments = [
-  "sys_platform == 'darwin'",
-  "sys_platform == 'linux' and platform_machine == 'aarch64'",
-]
-no-binary-package = ["vllm"]
-no-build-isolation-package = ["vllm"]
-extra-build-dependencies = { vllm = [
-  "cmake>=3.26.1",
-  "ninja",
-  "packaging>=24.2",
-  "setuptools>=77.0.3,<81.0.0",
-  "setuptools-scm>=8.0",
-  "wheel",
-  "jinja2",
-] }
-conflicts = [[{ package = "exo", extra = "cuda" }, { package = "exo-bench" }]]
+environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 
 ###
 # ruff configuration
