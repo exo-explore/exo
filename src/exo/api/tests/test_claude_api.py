@@ -3,17 +3,16 @@
 import pydantic
 import pytest
 
-from exo.shared.types.claude_api import (
+from exo.api.adapters.claude import (
+    claude_request_to_text_generation,
+    finish_reason_to_claude_stop_reason,
+)
+from exo.api.types.claude_api import (
     ClaudeMessage,
     ClaudeMessagesRequest,
     ClaudeTextBlock,
 )
 from exo.shared.types.common import ModelId
-
-from ..adapters.claude import (
-    claude_request_to_text_generation,
-    finish_reason_to_claude_stop_reason,
-)
 
 
 class TestFinishReasonToClaudeStopReason:

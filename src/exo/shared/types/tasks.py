@@ -2,7 +2,7 @@ from enum import Enum
 
 from pydantic import Field
 
-from exo.shared.types.api import (
+from exo.api.types import (
     ImageEditsTaskParams,
     ImageGenerationTaskParams,
 )

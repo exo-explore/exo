@@ -5,9 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from exo.api.main import API
 from exo.shared.types.common import CommandId
-
-from ..main import API
 
 
 def _make_api() -> Any:

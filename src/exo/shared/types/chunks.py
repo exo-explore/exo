@@ -1,18 +1,18 @@
 from collections.abc import Generator
 from typing import Any, Literal
 
-from exo.shared.models.model_cards import ModelId
-from exo.shared.types.api import (
+from exo.api.types import (
+    FinishReason,
     GenerationStats,
     ImageGenerationStats,
+    ToolCallItem,
     TopLogprobItem,
     Usage,
 )
+from exo.shared.models.model_cards import ModelId
 from exo.utils.pydantic_ext import TaggedModel
 
-from .api import FinishReason
 from .common import CommandId
-from .worker.runner_response import ToolCallItem
 
 
 class BaseChunk(TaggedModel):

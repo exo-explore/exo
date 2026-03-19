@@ -44,28 +44,7 @@ from exo.api.adapters.responses import (
     generate_responses_stream,
     responses_request_to_text_generation,
 )
-from exo.master.image_store import ImageStore
-from exo.master.placement import place_instance as get_instance_placements
-from exo.shared.apply import apply
-from exo.shared.constants import (
-    DASHBOARD_DIR,
-    EXO_CACHE_HOME,
-    EXO_EVENT_LOG_DIR,
-    EXO_IMAGE_CACHE_DIR,
-    EXO_MAX_CHUNK_SIZE,
-    EXO_TRACING_CACHE_DIR,
-)
-from exo.shared.election import ElectionMessage
-from exo.shared.logging import InterceptLogger
-from exo.shared.models.model_cards import (
-    ModelCard,
-    ModelId,
-    delete_custom_card,
-    get_model_cards,
-    is_custom_card,
-)
-from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
-from exo.shared.types.api import (
+from exo.api.types import (
     AddCustomModelParams,
     AdvancedImageParams,
     BenchChatCompletionRequest,
@@ -113,6 +92,48 @@ from exo.shared.types.api import (
     TraceStatsResponse,
     normalize_image_size,
 )
+from exo.api.types.claude_api import (
+    ClaudeMessagesRequest,
+    ClaudeMessagesResponse,
+)
+from exo.api.types.ollama_api import (
+    OllamaChatRequest,
+    OllamaChatResponse,
+    OllamaGenerateRequest,
+    OllamaGenerateResponse,
+    OllamaModelDetails,
+    OllamaModelTag,
+    OllamaPsModel,
+    OllamaPsResponse,
+    OllamaShowRequest,
+    OllamaShowResponse,
+    OllamaTagsResponse,
+)
+from exo.api.types.openai_responses import (
+    ResponsesRequest,
+    ResponsesResponse,
+)
+from exo.master.image_store import ImageStore
+from exo.master.placement import place_instance as get_instance_placements
+from exo.shared.apply import apply
+from exo.shared.constants import (
+    DASHBOARD_DIR,
+    EXO_CACHE_HOME,
+    EXO_EVENT_LOG_DIR,
+    EXO_IMAGE_CACHE_DIR,
+    EXO_MAX_CHUNK_SIZE,
+    EXO_TRACING_CACHE_DIR,
+)
+from exo.shared.election import ElectionMessage
+from exo.shared.logging import InterceptLogger
+from exo.shared.models.model_cards import (
+    ModelCard,
+    ModelId,
+    delete_custom_card,
+    get_model_cards,
+    is_custom_card,
+)
+from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
     ErrorChunk,
     ImageChunk,
@@ -120,10 +141,6 @@ from exo.shared.types.chunks import (
     PrefillProgressChunk,
     TokenChunk,
     ToolCallChunk,
-)
-from exo.shared.types.claude_api import (
-    ClaudeMessagesRequest,
-    ClaudeMessagesResponse,
 )
 from exo.shared.types.commands import (
     Command,
@@ -150,23 +167,6 @@ from exo.shared.types.events import (
     TracesMerged,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.ollama_api import (
-    OllamaChatRequest,
-    OllamaChatResponse,
-    OllamaGenerateRequest,
-    OllamaGenerateResponse,
-    OllamaModelDetails,
-    OllamaModelTag,
-    OllamaPsModel,
-    OllamaPsResponse,
-    OllamaShowRequest,
-    OllamaShowResponse,
-    OllamaTagsResponse,
-)
-from exo.shared.types.openai_responses import (
-    ResponsesRequest,
-    ResponsesResponse,
-)
 from exo.shared.types.state import State
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta

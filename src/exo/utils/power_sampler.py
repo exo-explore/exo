@@ -5,7 +5,7 @@ from typing import final
 
 import anyio
 
-from exo.shared.types.api import NodePowerStats, PowerUsage
+from exo.api.types import NodePowerStats, PowerUsage
 from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import SystemPerformanceProfile
 
