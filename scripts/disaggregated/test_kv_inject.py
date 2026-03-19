@@ -70,7 +70,7 @@ def main():
     if vllm_token_ids:
         print(f"  Using vLLM token_ids ({len(vllm_token_ids)} tokens)")
     else:
-        print(f"  WARNING: No token_ids in metadata")
+        print("  WARNING: No token_ids in metadata")
 
     print(f"\nLoading MLX model: {args.model}")
     model, tokenizer = load(args.model)
@@ -161,7 +161,7 @@ def main():
     print(f"\n  Injected: {injected} layers, Skipped: {skipped} layers")
 
     from exo.worker.engines.vllm.kv_cache import TorchKVCache as TKV
-    print(f"\nRound-trip test (MLX → torch → MLX)...")
+    print("\nRound-trip test (MLX → torch → MLX)...")
     rt_caches = model.make_cache()
     rt_tokens = mx.array(vllm_token_ids)
     rt_logits = model(rt_tokens[None], cache=rt_caches)
@@ -184,7 +184,7 @@ def main():
             rt_max_diff = max(rt_max_diff, d)
     print(f"  Round-trip max diff: {rt_max_diff:.4e} ({'PASS' if rt_max_diff < 0.01 else 'FAIL'})")
 
-    print(f"\nComparing with MLX-native prefill...")
+    print("\nComparing with MLX-native prefill...")
     native_caches = rt_caches
 
     for i in range(num_model_layers):
@@ -243,12 +243,12 @@ def main():
     print(f"  Model (MLX):  {args.model}")
     print(f"  Prompt tokens: {num_tokens}")
     print(f"  Layers injected: {injected}/{num_model_layers}")
-    print(f"  Type mismatches: 0")
+    print("  Type mismatches: 0")
     print(f"  Generated {len(generated_tokens)} tokens")
     print(f"  Text: {generated_text!r}")
 
     if False:
-        print(f"\n  GAPS FOUND:")
+        print("\n  GAPS FOUND:")
         for idx, got, expected in type_mismatches:
             print(f"    Layer {idx}: vLLM gives KV tensors, MLX wants {expected}")
         arrays_layers = [i for i, c in enumerate(caches) if isinstance(c, ArraysCache)]
@@ -256,9 +256,9 @@ def main():
             print(f"    ArraysCache layers (not populated): {arrays_layers[:10]}{'...' if len(arrays_layers) > 10 else ''}")
 
     if generated_tokens and not all(t == generated_tokens[0] for t in generated_tokens):
-        print(f"\n  COHERENT OUTPUT: YES (varied tokens)")
+        print("\n  COHERENT OUTPUT: YES (varied tokens)")
     else:
-        print(f"\n  COHERENT OUTPUT: POSSIBLY NOT (all same token)")
+        print("\n  COHERENT OUTPUT: POSSIBLY NOT (all same token)")
 
 
 if __name__ == "__main__":

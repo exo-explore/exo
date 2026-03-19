@@ -52,8 +52,6 @@ class BatchConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBaseCl
             return
         layer_idx = int(m.group(1))
 
-        torch.cuda.synchronize()
-
         if isinstance(kv_layer, (list, tuple)):
             return
 
@@ -68,10 +66,8 @@ class BatchConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBaseCl
             v_flat = v_all.reshape(-1, *v_all.shape[-2:])  # pyright: ignore[reportAny]
             valid = slot_mapping >= 0  # pyright: ignore[reportAny]
             safe_sm = slot_mapping.clamp(min=0)  # pyright: ignore[reportAny]
-            keys = k_flat[safe_sm]  # pyright: ignore[reportAny]
-            values = v_flat[safe_sm]  # pyright: ignore[reportAny]
-            keys[~valid] = 0
-            values[~valid] = 0
+            keys = k_flat[safe_sm][valid]  # pyright: ignore[reportAny]
+            values = v_flat[safe_sm][valid]  # pyright: ignore[reportAny]
 
             prev = self.captured_layers.get(layer_idx)
             if prev is not None:

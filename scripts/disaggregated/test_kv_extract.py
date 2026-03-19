@@ -21,6 +21,7 @@ os.environ["VLLM_KV_CACHE_LAYOUT"] = "NHD"
 os.environ["VLLM_BATCH_INVARIANT"] = "1"
 
 from exo.worker.runner.bootstrap import _ensure_cuda_libs
+
 _ensure_cuda_libs()
 
 import torch
@@ -77,8 +78,9 @@ def main():
 
     from vllm.engine.arg_utils import EngineArgs
     from vllm.v1.engine.llm_engine import LLMEngine
-    from exo.worker.engines.vllm.growable_cache import patch_vllm, set_prefix_cache
+
     from exo.worker.engines.mlx.cache import KVPrefixCache
+    from exo.worker.engines.vllm.growable_cache import patch_vllm, set_prefix_cache
 
     patch_vllm()
 
@@ -101,18 +103,19 @@ def main():
         },
     )
 
-    print(f"Loading engine with KVConnector...")
+    print("Loading engine with KVConnector...")
     engine = LLMEngine.from_engine_args(engine_args)
     print("Engine loaded.")
 
+
     from exo.worker.engines.vllm.growable_cache import get_model_runner
-    from vllm.model_executor.layers.mamba.abstract import MambaBase
-    from capture_connector import captured_layers as gdn_captured
 
     model_runner = get_model_runner()
 
-    from vllm.model_executor.layers.mamba.ops.causal_conv1d import causal_conv1d_fn as orig_causal_conv1d_fn
     import vllm.model_executor.layers.mamba.ops.causal_conv1d as cc_mod
+    from vllm.model_executor.layers.mamba.ops.causal_conv1d import (
+        causal_conv1d_fn as orig_causal_conv1d_fn,
+    )
 
     gdn_states: dict[int, dict[str, torch.Tensor]] = {}
     gdn_call_idx = [0]
@@ -147,11 +150,11 @@ def main():
             continue
         if hasattr(mod, 'causal_conv1d_fn') and mod.causal_conv1d_fn is orig_causal_conv1d_fn:
             mod.causal_conv1d_fn = patched_causal_conv1d_fn
-    print(f"  Patched causal_conv1d_fn")
+    print("  Patched causal_conv1d_fn")
 
-    from exo.worker.engines.vllm.vllm_generator import VllmBatchEngine
-    from exo.shared.types.text_generation import TextGenerationTaskParams, InputMessage
     from exo.shared.types.tasks import TaskId
+    from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+    from exo.worker.engines.vllm.vllm_generator import VllmBatchEngine
 
     batch_engine = VllmBatchEngine(engine=engine, model_id=args.model, prefix_cache=prefix_cache)
 
@@ -163,7 +166,7 @@ def main():
 
     task_id = batch_engine.submit(task_id=TaskId("extract"), task_params=task, prompt=args.prompt)
 
-    print(f"Running prefill via VllmBatchEngine...")
+    print("Running prefill via VllmBatchEngine...")
     t0 = time.perf_counter()
     while batch_engine.has_work:
         results = batch_engine.step()

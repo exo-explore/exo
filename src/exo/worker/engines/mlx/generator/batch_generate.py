@@ -121,7 +121,9 @@ class ExoBatchGenerator:
         matched_index: int | None = None
         prompt_tokens = all_prompt_tokens
 
-        if self.kv_prefix_cache is not None and not is_bench:
+        has_prefill_endpoints = bool(task_params.prefill_endpoints) and len(all_prompt_tokens) > 1000
+
+        if self.kv_prefix_cache is not None and not is_bench and not has_prefill_endpoints:
             cache, remaining_tokens, matched_index = self.kv_prefix_cache.get_kv_cache(
                 self.model, all_prompt_tokens
             )
@@ -168,8 +170,13 @@ class ExoBatchGenerator:
                     model_id=str(task_params.model),
                     mlx_model=self.model,
                     on_prefill_progress=on_prefill_progress,
+                    existing_cache=None,
+                    start_pos=0,
                 )
                 cache = injected_cache
+                from exo.worker.engines.mlx.cache import snapshot_ssm_states
+
+                cache_snapshots = [snapshot_ssm_states(cache)]
                 _prefill_tps = total_tokens / max(time.perf_counter() - t0, 0.001)
                 used_remote_prefill = True
                 logger.info(f"Remote prefill: {total_tokens} tokens at {_prefill_tps:.0f} tok/s")

@@ -182,7 +182,6 @@ class Worker:
                         json.dump(endpoints, f)
             except:
                 logger.warning("Updating prefill endpoints failed")
-                pass
 
     async def plan_step(self):
         while True:

@@ -70,7 +70,7 @@ def entrypoint(
         if isinstance(bound_instance.instance, VllmInstance):
             os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
             os.environ["VLLM_KV_CACHE_LAYOUT"] = "NHD"
-            os.environ["VLLM_BATCH_INVARIANT"] = "1"
+            # os.environ["VLLM_BATCH_INVARIANT"] = "1"
             _ensure_cuda_libs()
             from exo.shared.constants import EXO_MODELS_DIR
             from exo.worker.runner.llm_inference.runner import Runner, VllmBuilder

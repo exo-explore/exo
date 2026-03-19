@@ -561,7 +561,9 @@ class VllmBuilder(Builder):
         tokenizer = TokenizerWrapper(self._engine.get_tokenizer())
         max_concurrent = 1 if os.environ.get("EXO_NO_BATCH") else 8
 
-        prefill_port = int(os.environ.get("EXO_PREFILL_PORT", "8900"))
+        from exo.master.placement import random_ephemeral_port
+
+        prefill_port = random_ephemeral_port()
         overlapping = not os.environ.get("EXO_NO_OVERLAPPING_PREFILL_SENDS")
         try:
             from exo.disaggregated.prefill_server import start_prefill_server
@@ -571,6 +573,7 @@ class VllmBuilder(Builder):
                 bind_address="0.0.0.0",
                 port=prefill_port,
                 overlapping=overlapping,
+                prefix_cache=self._prefix_cache,
             )
             self._prefill_server_port = prefill_port
         except Exception:

@@ -4,11 +4,9 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
-
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorBase_V1,
     KVConnectorMetadata,
-    KVConnectorRole,
 )
 
 captured_layers: dict[str, Any] = {}

@@ -213,8 +213,9 @@ def vllm_generate(
 
     tokenizer = engine.get_tokenizer()
     stop_ids = _stop_token_ids(tokenizer, model_id)
+    DEFAULT_PREFILL_STEP_SIZE = 8192
     max_batch_tokens: int = (
-        getattr(engine.model_config, "max_num_batched_tokens", 2048) or 2048
+        getattr(engine.model_config, "max_num_batched_tokens", DEFAULT_PREFILL_STEP_SIZE) or DEFAULT_PREFILL_STEP_SIZE
     )  # type: ignore[reportUnknownMemberType]
     start_time = time.perf_counter()
     first_token_time: float | None = None
@@ -577,21 +578,36 @@ def load_vllm_engine(
             "kv_role": "kv_both",
         }
 
-    engine_args = EngineArgs(
-        model=model_path,
-        served_model_name=str(model_id),
-        gpu_memory_utilization=0.05,
-        trust_remote_code=trust_remote_code,
-        load_format="fastsafetensors",
-        enable_prefix_caching=False,
-        attention_backend="TRITON_ATTN",
-        enforce_eager=True,
-        disable_log_stats=True,
-        kv_transfer_config=kv_transfer_config,  # type: ignore
-    )
+    is_nvfp4 = "nvfp4" in model_path.lower() or "nvfp4" in str(model_id).lower()
+    backends = ["FLASHINFER", "TRITON_ATTN"] if is_nvfp4 else ["FLASH_ATTN", "TRITON_ATTN"]
 
-    set_weight_loading_callback(on_layer_loaded)
-    engine = LLMEngine.from_engine_args(engine_args)
+    engine: LLMEngine | None = None
+    for backend in backends:
+        try:
+            engine_args = EngineArgs(
+                model=model_path,
+                served_model_name=str(model_id),
+                gpu_memory_utilization=0.05,
+                trust_remote_code=trust_remote_code,
+                load_format="fastsafetensors",
+                enable_prefix_caching=False,
+                attention_backend=backend,
+                enforce_eager=True,
+                disable_log_stats=True,
+                max_num_batched_tokens=4096,
+                kv_transfer_config=kv_transfer_config,  # type: ignore
+            )
+
+            set_weight_loading_callback(on_layer_loaded)
+            engine = LLMEngine.from_engine_args(engine_args)
+            logger.info(f"vLLM engine using attention backend: {backend}")
+            break
+        except (ValueError, RuntimeError) as e:
+            logger.warning(f"Attention backend {backend} failed: {e}, trying next")
+            continue
+
+    if engine is None:
+        raise RuntimeError(f"No attention backend worked for {model_id}")
 
     tool_parser: ToolParser | None = None
     tokenizer = engine.get_tokenizer()

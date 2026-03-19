@@ -41,7 +41,7 @@ _card_cache: dict[ModelId, "ModelCard"] = {}
 import re
 
 _QUANT_SUFFIXES = re.compile(
-    r"[-_](?:MLX|MXFP[0-9]+|GPTQ|AWQ|GGUF|fp16|bf16|fp8|int[0-9]+|[0-9]+(?:\.[0-9]+)?bit|Q[0-9]+(?:_[A-Z0-9]+)?|gs[0-9]+)(?:[-_](?:MLX|Q[0-9]+|Int[0-9]+|[A-Z0-9]+|gs[0-9]+))*$",
+    r"[-_ ](?:MLX|MXFP[0-9]+|NVFP[0-9]+|GPTQ|AWQ|GGUF|fp16|bf16|fp8|int[0-9]+|[0-9]+(?:\.[0-9]+)?bit|Q[0-9]+(?:_[A-Z0-9]+)?|gs[0-9]+)(?:[-_ ](?:MLX|Q[0-9]+|Int[0-9]+|[A-Z0-9]+|gs[0-9]+))*$",
     re.IGNORECASE,
 )
 
@@ -127,7 +127,8 @@ class ModelCard(CamelCaseModel):
         if not self.base_model:
             self.base_model = derive_base_model(self.model_id)
         else:
-            self.base_model = _normalize_base_model(self.base_model)
+            stripped = _QUANT_SUFFIXES.sub("", self.base_model)
+            self.base_model = _normalize_base_model(stripped)
         return self
 
     @field_validator("tasks", mode="before")

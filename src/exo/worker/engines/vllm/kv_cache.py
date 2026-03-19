@@ -264,6 +264,7 @@ class TorchKVCache:
 
         first = kv_caches[0]
         device = first[0].device if isinstance(first, list) else first.device
+        block_size = first[0].shape[1] if isinstance(first, list) else first.shape[-3]
         for layer_idx, layer in enumerate(self.layers):
             if not isinstance(layer, KVLayerState):
                 continue
@@ -271,14 +272,26 @@ class TorchKVCache:
             bt = block_tables[gi]
             kv = kv_caches[layer_idx]
             k_all, v_all = _split_kv(kv)
-            n_blocks = min(len(bt), layer.keys.shape[0])
+
+            keys = layer.keys
+            values = layer.values
+            if keys.dim() == 3:
+                offset = token_offset_per_group[gi] if token_offset_per_group else 0
+                if offset > 0:
+                    keys = keys[offset:]
+                    values = values[offset:]
+                s, h, d = keys.shape
+                pad = (block_size - s % block_size) % block_size
+                if pad > 0:
+                    keys = torch.nn.functional.pad(keys, (0, 0, 0, 0, 0, pad))
+                    values = torch.nn.functional.pad(values, (0, 0, 0, 0, 0, pad))
+                keys = keys.reshape(-1, block_size, h, d)
+                values = values.reshape(-1, block_size, h, d)
+
+            n_blocks = min(len(bt), keys.shape[0])
             if n_blocks > 0:
-                k_all[bt[:n_blocks]] = layer.keys[:n_blocks].to(
-                    device, non_blocking=True
-                )
-                v_all[bt[:n_blocks]] = layer.values[:n_blocks].to(
-                    device, non_blocking=True
-                )
+                k_all[bt[:n_blocks]] = keys[:n_blocks].to(device, non_blocking=True)
+                v_all[bt[:n_blocks]] = values[:n_blocks].to(device, non_blocking=True)
         torch.cuda.synchronize()
 
     def __iter__(self) -> Iterator[LayerState]:

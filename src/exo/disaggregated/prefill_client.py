@@ -48,28 +48,10 @@ def _inject_kv_cache(cache: KVCache, keys: torch.Tensor, values: torch.Tensor, n
 def _inject_rotating_kv_cache(cache: RotatingKVCache, keys: torch.Tensor, values: torch.Tensor, num_tokens: int) -> None:
     k_mx, v_mx = _nhd_to_bhsd(keys, values)
     seq_len = int(k_mx.shape[2])
-
-    if seq_len <= cache.max_size:
-        cache.keys = k_mx
-        cache.values = v_mx
-        cache.offset = seq_len
-        cache._idx = seq_len
-    else:
-        keep = cache.keep
-        window = cache.max_size
-        if keep == 0:
-            cache.keys = k_mx[:, :, -window:, :]
-            cache.values = v_mx[:, :, -window:, :]
-            cache._idx = window
-        else:
-            sink_keys = k_mx[:, :, :keep, :]
-            sink_values = v_mx[:, :, :keep, :]
-            recent_keys = k_mx[:, :, -(window - keep):, :]
-            recent_values = v_mx[:, :, -(window - keep):, :]
-            cache.keys = mx.concatenate([sink_keys, recent_keys], axis=2)
-            cache.values = mx.concatenate([sink_values, recent_values], axis=2)
-            cache._idx = keep
-        cache.offset = num_tokens
+    cache.keys = k_mx
+    cache.values = v_mx
+    cache.offset = seq_len
+    cache._idx = seq_len
 
 
 def _inject_arrays_cache(cache: ArraysCache, arrays: list[torch.Tensor]) -> None:
@@ -82,6 +64,8 @@ def remote_prefill(
     model_id: str,
     mlx_model: Model,
     on_prefill_progress: Callable[[int, int], None] | None = None,
+    existing_cache: list[KVCache | RotatingKVCache | ArraysCache] | None = None,
+    start_pos: int = 0,
 ) -> tuple[list[KVCache | RotatingKVCache | ArraysCache], int]:
     if ":" in endpoint:
         host, port_str = endpoint.rsplit(":", 1)
@@ -90,12 +74,12 @@ def remote_prefill(
         host = endpoint
         port = 8900
 
-    logger.info(f"Connecting to prefill server at {host}:{port} ({len(token_ids)} tokens)")
+    logger.info(f"Connecting to prefill server at {host}:{port} ({len(token_ids)} tokens, start_pos={start_pos})")
     t0 = time.perf_counter()
 
     sock = socket.create_connection((host, port), timeout=30)
     try:
-        request = json.dumps({"model": model_id, "token_ids": token_ids}).encode("utf-8") + b"\n"
+        request = json.dumps({"model": model_id, "token_ids": token_ids, "start_pos": start_pos}).encode("utf-8") + b"\n"
         sock.sendall(request)
 
         raw_stream = sock.makefile("rb", buffering=65536)
@@ -147,7 +131,16 @@ def remote_prefill(
     finally:
         sock.close()
 
-    caches: list[KVCache | RotatingKVCache | ArraysCache] = cast(list[KVCache | RotatingKVCache | ArraysCache], mlx_model.make_cache())  # pyright: ignore[reportUnknownMemberType]
+    if existing_cache is not None and start_pos > 0:
+        caches = existing_cache
+    else:
+        if hasattr(mlx_model, "make_cache"):
+            caches = cast(list[KVCache | RotatingKVCache | ArraysCache], mlx_model.make_cache())  # pyright: ignore[reportUnknownMemberType]
+        else:
+            from mlx_lm.models.cache import make_prompt_cache
+            caches = cast(list[KVCache | RotatingKVCache | ArraysCache], make_prompt_cache(mlx_model))  # pyright: ignore[reportUnknownMemberType]
+
+    final_offset = start_pos + total_tokens
 
     for i, cache in enumerate(caches):
         if i in kv_buffers:
@@ -161,19 +154,25 @@ def remote_prefill(
                 all_values = torch.cat([v for _k, v in chunks], dim=0)  # type: ignore
 
             if isinstance(cache, RotatingKVCache):
-                _inject_rotating_kv_cache(cache, all_keys, all_values, total_tokens)  # pyright: ignore[reportUnknownArgumentType]
+                _inject_rotating_kv_cache(cache, all_keys, all_values, final_offset)  # pyright: ignore[reportUnknownArgumentType]
             elif isinstance(cache, KVCache):
-                _inject_kv_cache(cache, all_keys, all_values, total_tokens)  # pyright: ignore[reportUnknownArgumentType]
+                if start_pos > 0 and cache.keys is not None:
+                    k_new, v_new = _nhd_to_bhsd(all_keys, all_values)  # pyright: ignore[reportUnknownArgumentType]
+                    cache.keys = mx.concatenate([cache.keys[:, :, :start_pos, :], k_new], axis=2)
+                    cache.values = mx.concatenate([cache.values[:, :, :start_pos, :], v_new], axis=2)
+                    cache.offset = final_offset
+                else:
+                    _inject_kv_cache(cache, all_keys, all_values, final_offset)  # pyright: ignore[reportUnknownArgumentType]
 
         if i in arrays_buffers and isinstance(cache, ArraysCache):
             _inject_arrays_cache(cache, arrays_buffers[i])
 
     t_injected = time.perf_counter()
     logger.info(
-        f"Remote prefill: {total_tokens} tokens, "
+        f"Remote prefill: {total_tokens} new tokens (start_pos={start_pos}, final_offset={final_offset}), "
         f"transfer={((t_received - t0) * 1000):.0f}ms, "
         f"inject={((t_injected - t_received) * 1000):.0f}ms, "
         f"total={((t_injected - t0) * 1000):.0f}ms"
     )
 
-    return caches, total_tokens
+    return caches, final_offset

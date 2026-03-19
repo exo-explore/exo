@@ -194,10 +194,18 @@ class KVPrefixCache:
         # This ensures stream_generate always has at least one token to start with
         mlx_cache = self._get_mlx_cache(best_index)
         has_ssm = has_non_kv_caches(mlx_cache)
+        snapshots_available = self._snapshots[best_index] is not None
+
+        if is_exact and has_ssm and not snapshots_available:
+            prompt_cache = deepcopy(mlx_cache)
+            self._access_counter += 1
+            self._last_used[best_index] = self._access_counter
+            remaining = prompt_tokens[best_length:]
+            return prompt_cache, remaining, best_index
+
         target = (max_length - 1) if is_exact and not has_ssm else best_length
         restore_pos, restore_snap = self._get_snapshot(best_index, target)
 
-        # No usable snapshot — need fresh cache
         if restore_snap is None and has_ssm:
             return make_kv_cache(model), prompt_tokens, None
 

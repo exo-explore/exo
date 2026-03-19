@@ -37,6 +37,8 @@ class StreamingConnectorMetadata(KVConnectorMetadata):  # pyright: ignore[report
 class StreamingConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBaseClass]
     _queue: queue.Queue[tuple[int, torch.Tensor, torch.Tensor] | None]
 
+    _save_count: int = 0
+
     def __init__(self, vllm_config: Any, role: KVConnectorRole, kv_cache_config: Any = None) -> None:  # type: ignore
         super().__init__(vllm_config, role, kv_cache_config)  # pyright: ignore[reportUnknownMemberType]
         self._queue = _shared_queue
@@ -61,10 +63,13 @@ class StreamingConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBa
             return
         layer_idx = int(m.group(1))
 
-        torch.cuda.synchronize()
-
         if isinstance(kv_layer, (list, tuple)):
             return
+
+        if self._save_count < 1:
+            import logging
+            logging.getLogger("exo").info(f"save_kv_layer: kv_layer.shape={kv_layer.shape} dtype={kv_layer.dtype} slot_mapping.shape={slot_mapping.shape if slot_mapping is not None else None}")  # pyright: ignore[reportAny]
+            self._save_count += 1
 
         if slot_mapping is not None:
             if kv_layer.shape[0] == 2:  # pyright: ignore[reportAny]
@@ -77,10 +82,11 @@ class StreamingConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBa
             v_flat = v_all.reshape(-1, *v_all.shape[-2:])  # pyright: ignore[reportAny]
             valid = slot_mapping >= 0  # pyright: ignore[reportAny]
             safe_sm = slot_mapping.clamp(min=0)  # pyright: ignore[reportAny]
-            keys = k_flat[safe_sm]  # pyright: ignore[reportAny]
-            values = v_flat[safe_sm]  # pyright: ignore[reportAny]
-            keys[~valid] = 0
-            values[~valid] = 0
+            keys = k_flat[safe_sm][valid]  # pyright: ignore[reportAny]
+            values = v_flat[safe_sm][valid]  # pyright: ignore[reportAny]
+            if keys.dtype not in (torch.bfloat16, torch.float16, torch.float32):  # pyright: ignore[reportAny]
+                keys = keys.to(torch.bfloat16)  # pyright: ignore[reportAny]
+                values = values.to(torch.bfloat16)  # pyright: ignore[reportAny]
             self._queue.put((layer_idx, keys.cpu(), values.cpu()))  # pyright: ignore[reportAny]
         else:
             self._queue.put((layer_idx, kv_layer.cpu().clone(), kv_layer.cpu().clone()))  # pyright: ignore[reportAny]

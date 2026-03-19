@@ -98,6 +98,7 @@ class Master:
         from exo.master.placement_utils import (
             _find_ip_prioritised as find_ip_prioritised,  # pyright: ignore[reportPrivateUsage]
         )
+        from exo.shared.models.model_cards import derive_base_model
 
         endpoints: list[tuple[int, str]] = []
         vllm_instance_count = 0
@@ -111,21 +112,14 @@ class Master:
             if first_shard is None:
                 logger.info(f"Prefill routing: VllmInstance {instance.instance_id} has no shards")
                 continue
-            if first_shard.model_card.base_model.lower() != decode_model_base.lower():
+            if derive_base_model(first_shard.model_card.base_model).lower() != decode_model_base.lower():
                 logger.info(
                     f"Prefill routing: VllmInstance {instance.instance_id} base_model "
                     f"{first_shard.model_card.base_model!r} != decode {decode_model_base!r}"
                 )
                 continue
 
-            active_task_count = sum(
-                1 for task in self.state.tasks.values()
-                if task.instance_id == instance.instance_id
-                and task.task_status in (TaskStatus.Pending, TaskStatus.Running)
-            )
-            if active_task_count > 0:
-                logger.info(f"Prefill routing: VllmInstance {instance.instance_id} busy ({active_task_count} active tasks)")
-                continue
+            pass
 
             for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
                 runner_status = self.state.runners.get(runner_id)

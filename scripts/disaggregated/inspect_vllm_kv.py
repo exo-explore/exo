@@ -20,6 +20,7 @@ os.environ["VLLM_KV_CACHE_LAYOUT"] = "NHD"
 os.environ["VLLM_BATCH_INVARIANT"] = "1"
 
 from exo.worker.runner.bootstrap import _ensure_cuda_libs
+
 _ensure_cuda_libs()
 
 import torch
@@ -44,8 +45,8 @@ def main():
     parser.add_argument("--prompt", default="Hello, world! How are you today?", help="Prompt to prefill")
     args = parser.parse_args()
 
-    from exo.worker.engines.vllm.vllm_generator import load_vllm_engine
     from exo.worker.engines.vllm.growable_cache import get_model_runner
+    from exo.worker.engines.vllm.vllm_generator import load_vllm_engine
 
     print(f"Loading vLLM engine from {args.model}...")
     engine, _, prefix_cache = load_vllm_engine(
