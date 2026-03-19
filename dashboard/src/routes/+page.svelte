@@ -1623,8 +1623,13 @@
             files: [],
           };
         } else {
-          isDownloading = true;
           progress = parseDownloadProgress(downloadPayload);
+          if (
+            !progress ||
+            (progress.downloadedBytes <= 0 && progress.totalBytes <= 0)
+          )
+            continue;
+          isDownloading = true;
         }
 
         if (progress) {
