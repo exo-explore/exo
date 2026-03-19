@@ -288,6 +288,28 @@ impl PyNetworkingHandle {
             })?;
         Ok(())
     }
+
+    /// Dials a multiaddr to manually connect to a peer.
+    async fn dial(&self, addr: String) -> PyResult<()> {
+        let (tx, rx) = oneshot::channel();
+
+        let multiaddr: libp2p::Multiaddr = addr
+            .parse()
+            .map_err(|e: libp2p::multiaddr::Error| PyRuntimeError::new_err(e.to_string()))?;
+
+        self.to_swarm
+            .send_py(ToSwarm::Dial {
+                addr: multiaddr,
+                result_sender: tx,
+            })
+            .allow_threads_py()
+            .await?;
+
+        rx.allow_threads_py()
+            .await
+            .map_err(|_| PyErr::receiver_channel_closed())?
+            .map_err(|e| PyRuntimeError::new_err(e))
+    }
 }
 
 pyo3_stub_gen::inventory::submit! {

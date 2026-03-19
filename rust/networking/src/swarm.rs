@@ -1,10 +1,10 @@
 use std::pin::Pin;
 
 use crate::swarm::transport::tcp_transport;
-use crate::{alias, discovery};
+use crate::alias;
 pub use behaviour::{Behaviour, BehaviourEvent};
 use futures_lite::{Stream, StreamExt};
-use libp2p::{PeerId, SwarmBuilder, gossipsub, identity, swarm::SwarmEvent};
+use libp2p::{Multiaddr, PeerId, SwarmBuilder, gossipsub, identity, swarm::SwarmEvent};
 use tokio::sync::{mpsc, oneshot};
 
 /// The current version of the network: this prevents devices running different versions of the
@@ -32,6 +32,10 @@ pub enum ToSwarm {
         topic: String,
         data: Vec<u8>,
         result_sender: oneshot::Sender<Result<gossipsub::MessageId, gossipsub::PublishError>>,
+    },
+    Dial {
+        addr: Multiaddr,
+        result_sender: oneshot::Sender<Result<(), String>>,
     },
 }
 pub enum FromSwarm {
@@ -112,10 +116,18 @@ fn on_message(swarm: &mut libp2p::Swarm<Behaviour>, message: ToSwarm) {
                 .publish(gossipsub::IdentTopic::new(topic), data);
             _ = result_sender.send(result);
         }
+        ToSwarm::Dial {
+            addr,
+            result_sender,
+        } => {
+            let result = swarm.dial(addr).map_err(|e| e.to_string());
+            _ = result_sender.send(result);
+        }
     }
 }
 
 fn filter_swarm_event(event: SwarmEvent<BehaviourEvent>) -> Option<FromSwarm> {
+    log::debug!("Swarm event: {:?}", event);
     match event {
         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
             message:
@@ -131,18 +143,21 @@ fn filter_swarm_event(event: SwarmEvent<BehaviourEvent>) -> Option<FromSwarm> {
             topic: topic.into_string(),
             data,
         }),
-        SwarmEvent::Behaviour(BehaviourEvent::Discovery(
-            discovery::Event::ConnectionEstablished { peer_id, .. },
-        )) => Some(FromSwarm::Discovered { peer_id }),
-        SwarmEvent::Behaviour(BehaviourEvent::Discovery(discovery::Event::ConnectionClosed {
-            peer_id,
-            ..
-        })) => Some(FromSwarm::Expired { peer_id }),
+        // Match top-level swarm connection events directly — these fire for ALL
+        // connections (manual dials, mDNS, etc.) without depending on the Discovery
+        // behaviour's event chain which can silently drop events.
+        SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+            Some(FromSwarm::Discovered { peer_id })
+        }
+        SwarmEvent::ConnectionClosed { peer_id, .. } => {
+            Some(FromSwarm::Expired { peer_id })
+        }
         _ => None,
     }
 }
 
-/// Create and configure a swarm which listens to all ports on OS
+/// Create and configure a swarm which listens on all interfaces.
+/// Use EXO_LIBP2P_PORT env var to set a fixed port (default: OS-assigned).
 pub fn create_swarm(
     keypair: identity::Keypair,
     from_client: mpsc::Receiver<ToSwarm>,
@@ -153,8 +168,9 @@ pub fn create_swarm(
         .with_behaviour(Behaviour::new)?
         .build();
 
-    // Listen on all interfaces and whatever port the OS assigns
-    swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+    let port = std::env::var("EXO_LIBP2P_PORT").unwrap_or_else(|_| "0".to_string());
+    let listen_addr = format!("/ip4/0.0.0.0/tcp/{}", port);
+    swarm.listen_on(listen_addr.parse()?)?;
     Ok(Swarm { swarm, from_client })
 }
 
