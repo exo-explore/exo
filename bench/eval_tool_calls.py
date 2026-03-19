@@ -17,11 +17,13 @@ from harness import (
     ExoClient,
     ExoHttpError,
     add_common_instance_args,
+    ensure_cuda_available,
     instance_id_from_instance,
     nodes_used_in_instance,
     resolve_model_short_id,
     run_planning_phase,
     settle_and_fetch_placements,
+    validate_vllm_args,
     wait_for_instance_gone,
     wait_for_instance_ready,
 )
@@ -933,6 +935,7 @@ Examples:
         help="Write JSON results to stdout instead of file",
     )
     args = parser.parse_args()
+    validate_vllm_args(args)
 
     all_scenarios = load_scenarios(SCENARIOS_PATH)
     if args.scenarios:
@@ -952,6 +955,8 @@ Examples:
 
     log = sys.stderr if args.stdout else sys.stdout
     exo = ExoClient(args.host, args.port, timeout_s=args.timeout)
+    if args.ensure_cuda:
+        ensure_cuda_available(exo)
     _short_id, full_model_id = resolve_model_short_id(exo, args.model)
 
     selected = settle_and_fetch_placements(

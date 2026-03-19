@@ -1,15 +1,47 @@
+import ctypes
 import os
 import resource
+import sys
+from pathlib import Path
 
 import loguru
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
 from exo.shared.types.tasks import Task, TaskId
-from exo.shared.types.worker.instances import BoundInstance
+from exo.shared.types.worker.instances import BoundInstance, VllmInstance
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 
 logger: "loguru.Logger" = loguru.logger
+
+_CUDA_HOST_LIBS = ["libcuda.so.1", "libnvidia-ml.so.1", "libnvidia-ptxjitcompiler.so.1"]
+_CUDA_HOST_SEARCH_DIRS = [
+    Path("/usr/lib/aarch64-linux-gnu"),
+    Path("/usr/lib/x86_64-linux-gnu"),
+    Path("/usr/lib64"),
+    Path("/usr/lib"),
+    Path("/usr/local/cuda/lib64"),
+    Path("/usr/local/cuda/compat"),
+]
+
+
+def _ensure_cuda_libs() -> None:
+    if sys.platform != "linux":
+        return
+    for search_dir in _CUDA_HOST_SEARCH_DIRS:
+        driver = search_dir / "libcuda.so.1"
+        if not driver.exists():
+            continue
+        for lib_name in _CUDA_HOST_LIBS:
+            lib_path = search_dir / lib_name
+            if lib_path.exists():
+                try:
+                    ctypes.CDLL(str(lib_path), mode=ctypes.RTLD_GLOBAL)
+                    logger.info(f"Loaded CUDA host lib: {lib_path}")
+                except OSError:
+                    logger.warning(f"Failed to load {lib_path}")
+                    raise
+        return
 
 
 def entrypoint(
@@ -35,7 +67,27 @@ def entrypoint(
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:
-        if bound_instance.is_image_model:
+        if isinstance(bound_instance.instance, VllmInstance):
+            os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
+            os.environ["VLLM_KV_CACHE_LAYOUT"] = "NHD"
+            os.environ["VLLM_BATCH_INVARIANT"] = "1"
+            _ensure_cuda_libs()
+            from exo.shared.constants import EXO_MODELS_DIR
+            from exo.worker.runner.llm_inference.runner import Runner, VllmBuilder
+
+            model_id = bound_instance.bound_shard.model_card.model_id
+            builder = VllmBuilder(
+                model_id=model_id,
+                model_path=str(EXO_MODELS_DIR / model_id.normalize()),
+                trust_remote_code=bound_instance.bound_shard.model_card.trust_remote_code,
+                cancel_receiver=cancel_receiver,
+                event_sender=event_sender,
+            )
+            runner = Runner(
+                bound_instance, event_sender, task_receiver, cancel_receiver, builder
+            )
+            runner.main()
+        elif bound_instance.is_image_model:
             from exo.worker.runner.image_models.runner import Runner as ImageRunner
 
             runner = ImageRunner(
@@ -43,10 +95,15 @@ def entrypoint(
             )
             runner.main()
         else:
-            from exo.worker.runner.llm_inference.runner import Runner
+            from exo.worker.runner.llm_inference.runner import MlxBuilder, Runner
 
+            builder = MlxBuilder(
+                model_id=bound_instance.bound_shard.model_card.model_id,
+                event_sender=event_sender,
+                cancel_receiver=cancel_receiver,
+            )
             runner = Runner(
-                bound_instance, event_sender, task_receiver, cancel_receiver
+                bound_instance, event_sender, task_receiver, cancel_receiver, builder
             )
             runner.main()
 

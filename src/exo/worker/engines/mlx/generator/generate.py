@@ -23,7 +23,7 @@ from exo.shared.types.api import (
 )
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
-from exo.shared.types.mlx import KVCacheType, Model
+from exo.shared.types.mlx import MLXCacheType, Model
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
@@ -76,7 +76,7 @@ def _has_pipeline_communication_layer(model: Model):
 def pipeline_parallel_prefill(
     model: Model,
     prompt: mx.array,
-    prompt_cache: KVCacheType,
+    prompt_cache: MLXCacheType,
     prefill_step_size: int,
     kv_group_size: int | None,
     kv_bits: int | None,
@@ -113,7 +113,7 @@ def pipeline_parallel_prefill(
         kv_bits=kv_bits,
     )
 
-    _prompt_cache: KVCacheType = prompt_cache
+    _prompt_cache: MLXCacheType = prompt_cache
     rank = group.rank()
     world_size = group.size()
 
@@ -195,7 +195,7 @@ def prefill(
     tokenizer: TokenizerWrapper,
     sampler: Callable[[mx.array], mx.array],
     prompt_tokens: mx.array,
-    cache: KVCacheType,
+    cache: MLXCacheType,
     group: mx.distributed.Group | None,
     on_prefill_progress: Callable[[int, int], None] | None,
     distributed_prompt_progress_callback: Callable[[], None] | None,

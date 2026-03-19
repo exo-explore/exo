@@ -196,6 +196,31 @@ def resolve_model_short_id(
     raise ValueError(f"Model not found in /models: {model_arg}")
 
 
+def validate_vllm_args(args: argparse.Namespace) -> None:
+    if args.instance_meta != "vllm":
+        return
+    if args.sharding == "tensor":
+        raise SystemExit(
+            "--instance-meta vllm is incompatible with --sharding tensor (vllm is pipeline-only)"
+        )
+    if args.min_nodes > 1:
+        raise SystemExit(
+            "--instance-meta vllm is incompatible with --min-nodes > 1 (vllm is single-node)"
+        )
+    if args.max_nodes > 1:
+        raise SystemExit(
+            "--instance-meta vllm is incompatible with --max-nodes > 1 (vllm is single-node)"
+        )
+
+
+def ensure_cuda_available(client: ExoClient) -> None:
+    capabilities = client.request_json("GET", "/capabilities")
+    if not capabilities or not capabilities.get("vllm_available"):
+        raise SystemExit(
+            "--ensure-cuda: vllm is not available on the exo cluster (no CUDA capability)"
+        )
+
+
 def placement_filter(instance_meta: str, wanted: str) -> bool:
     s = (instance_meta or "").lower()
     if wanted == "both":
@@ -475,7 +500,7 @@ def add_common_instance_args(ap: argparse.ArgumentParser) -> None:
         help="Only consider placements using >= this many nodes.",
     )
     ap.add_argument(
-        "--instance-meta", choices=["ring", "jaccl", "both"], default="both"
+        "--instance-meta", choices=["ring", "jaccl", "vllm", "both"], default="both"
     )
     ap.add_argument(
         "--sharding", choices=["pipeline", "tensor", "both"], default="both"
@@ -503,4 +528,9 @@ def add_common_instance_args(ap: argparse.ArgumentParser) -> None:
         "--danger-delete-downloads",
         action="store_true",
         help="Delete existing models from smallest to largest to make room for benchmark model.",
+    )
+    ap.add_argument(
+        "--ensure-cuda",
+        action="store_true",
+        help="Verify the exo cluster has CUDA/vllm capability; error if not.",
     )

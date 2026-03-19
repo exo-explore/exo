@@ -1,7 +1,12 @@
+import contextlib
+import gc
 import os
 import time
+from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
 
 import mlx.core as mx
 from anyio import WouldBlock
@@ -67,10 +72,32 @@ from exo.worker.runner.llm_inference.batch_generator import (
 from .batch_generator import Cancelled, Finished
 from .tool_parsers import make_mlx_parser
 
+if TYPE_CHECKING:
+    pass
+
 
 class ExitCode(str, Enum):
     AllTasksComplete = "AllTasksComplete"
     Shutdown = "Shutdown"
+
+
+class Builder(ABC):
+    @abstractmethod
+    def connect(self, bound_instance: BoundInstance) -> None: ...
+
+    @abstractmethod
+    def load(
+        self,
+        bound_instance: BoundInstance,
+        on_timeout: Callable[[], None],
+        on_layer_loaded: Callable[[int, int], None],
+    ) -> None: ...
+
+    @abstractmethod
+    def build(self) -> InferenceGenerator: ...
+
+    @abstractmethod
+    def close(self) -> None: ...
 
 
 class Runner:
@@ -80,6 +107,7 @@ class Runner:
         event_sender: MpSender[Event],
         task_receiver: MpReceiver[Task],
         cancel_receiver: MpReceiver[TaskId],
+        builder: Builder,
     ):
         self.event_sender = event_sender
         self.task_receiver = task_receiver
@@ -102,9 +130,7 @@ class Runner:
 
         self.setup_start_time = time.time()
 
-        self.generator: Builder | InferenceGenerator = Builder(
-            self.model_id, self.event_sender, self.cancel_receiver
-        )
+        self.generator: Builder | InferenceGenerator = builder
 
         self.seen: set[TaskId] = set()
         self.active_tasks: dict[
@@ -132,15 +158,19 @@ class Runner:
         self.event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
     def main(self):
-        with self.task_receiver:
-            for task in self.task_receiver:
-                if task.task_id in self.seen:
-                    logger.warning("repeat task - potential error")
-                    continue
-                self.seen.add(task.task_id)
-                self.handle_first_task(task)
-                if isinstance(self.current_status, RunnerShutdown):
-                    break
+        try:
+            with self.task_receiver:
+                for task in self.task_receiver:
+                    if task.task_id in self.seen:
+                        logger.warning("repeat task - potential error")
+                        continue
+                    self.seen.add(task.task_id)
+                    self.handle_first_task(task)
+                    if isinstance(self.current_status, RunnerShutdown):
+                        break
+        finally:
+            if not isinstance(self.current_status, RunnerShutdown):
+                self.generator.close()
 
     def handle_first_task(self, task: Task):
         self.send_task_status(task.task_id, TaskStatus.Running)
@@ -154,21 +184,27 @@ class Runner:
                 self.update_status(RunnerConnecting())
                 self.acknowledge_task(task)
 
-                self.generator.group = initialize_mlx(self.bound_instance)
+                self.generator.connect(self.bound_instance)
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
                 self.update_status(RunnerConnected())
                 logger.info("runner connected")
 
             # we load the model if it's connected with a group, or idle without a group. we should never tell a model to connect if it doesn't need to
-            case LoadModel() if isinstance(self.generator, Builder) and (
+            case LoadModel() if (
                 (
-                    isinstance(self.current_status, RunnerConnected)
+                    isinstance(self.generator, MlxBuilder)
+                    and isinstance(self.current_status, RunnerConnected)
                     and self.generator.group is not None
                 )
                 or (
-                    isinstance(self.current_status, RunnerIdle)
+                    isinstance(self.generator, MlxBuilder)
+                    and isinstance(self.current_status, RunnerIdle)
                     and self.generator.group is None
+                )
+                or (
+                    isinstance(self.generator, VllmBuilder)
+                    and isinstance(self.current_status, RunnerIdle)
                 )
             ):
                 total_layers = (
@@ -195,15 +231,12 @@ class Runner:
                 assert (
                     ModelTask.TextGeneration in self.shard_metadata.model_card.tasks
                 ), f"Incorrect model task(s): {self.shard_metadata.model_card.tasks}"
-                self.generator.inference_model, self.generator.tokenizer = (
-                    load_mlx_items(
-                        self.bound_instance,
-                        self.generator.group,
-                        on_timeout=on_model_load_timeout,
-                        on_layer_loaded=on_layer_loaded,
-                    )
-                )
 
+                self.generator.load(
+                    self.bound_instance,
+                    on_timeout=on_model_load_timeout,
+                    on_layer_loaded=on_layer_loaded,
+                )
                 self.generator = self.generator.build()
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
@@ -245,11 +278,7 @@ class Runner:
         logger.info("runner shutting down")
         self.update_status(RunnerShuttingDown())
         self.acknowledge_task(task)
-        if isinstance(self.generator, InferenceGenerator):
-            self.generator.close()
-        mx.clear_cache()
-        import gc
-
+        self.generator.close()
         gc.collect()
         self.send_task_status(task.task_id, TaskStatus.Complete)
         self.update_status(RunnerShutdown())
@@ -372,7 +401,7 @@ class Runner:
 
 
 @dataclass
-class Builder:
+class MlxBuilder(Builder):
     model_id: ModelId
     event_sender: MpSender[Event]
     cancel_receiver: MpReceiver[TaskId]
@@ -380,9 +409,23 @@ class Builder:
     tokenizer: TokenizerWrapper | None = None
     group: mx.distributed.Group | None = None
 
-    def build(
+    def connect(self, bound_instance: BoundInstance) -> None:
+        self.group = initialize_mlx(bound_instance)
+
+    def load(
         self,
-    ) -> InferenceGenerator:
+        bound_instance: BoundInstance,
+        on_timeout: Callable[[], None],
+        on_layer_loaded: Callable[[int, int], None],
+    ) -> None:
+        self.inference_model, self.tokenizer = load_mlx_items(
+            bound_instance,
+            self.group,
+            on_timeout=on_timeout,
+            on_layer_loaded=on_layer_loaded,
+        )
+
+    def build(self) -> InferenceGenerator:
         assert self.model_id
         assert self.inference_model
         assert self.tokenizer
@@ -404,11 +447,28 @@ class Builder:
 
         kv_prefix_cache = KVPrefixCache(self.group)
 
+        from functools import partial
+
+        from exo.worker.engines.mlx.generator.generate import (
+            mlx_generate,
+            warmup_inference,
+        )
+
         device_rank = 0 if self.group is None else self.group.rank()
+        generate_fn = partial(
+            mlx_generate, model=self.inference_model, tokenizer=self.tokenizer
+        )
+        warmup_fn = partial(
+            warmup_inference,
+            model=self.inference_model,
+            tokenizer=self.tokenizer,
+            group=self.group,
+            model_id=self.model_id,
+        )
+
         if os.environ.get("EXO_NO_BATCH"):
             logger.info("using SequentialGenerator (batching disabled)")
             return SequentialGenerator(
-                model=self.inference_model,
                 tokenizer=self.tokenizer,
                 group=self.group,
                 tool_parser=tool_parser,
@@ -417,10 +477,20 @@ class Builder:
                 device_rank=device_rank,
                 cancel_receiver=self.cancel_receiver,
                 event_sender=self.event_sender,
+                _generate_fn=generate_fn,
+                _warmup_fn=warmup_fn,
             )
+        from exo.worker.runner.llm_inference.batch_generator import ExoBatchGenerator
+
         logger.info("using BatchGenerator")
-        return BatchGenerator(
+        gen = ExoBatchGenerator(
             model=self.inference_model,
+            tokenizer=self.tokenizer,
+            group=self.group,
+            kv_prefix_cache=kv_prefix_cache,
+            model_id=self.model_id,
+        )
+        return BatchGenerator(
             tokenizer=self.tokenizer,
             group=self.group,
             tool_parser=tool_parser,
@@ -429,4 +499,69 @@ class Builder:
             device_rank=device_rank,
             cancel_receiver=self.cancel_receiver,
             event_sender=self.event_sender,
+            _gen=gen,
         )
+
+    def close(self):
+        with contextlib.suppress(NameError, AttributeError):
+            del self.inference_model, self.tokenizer
+
+
+@dataclass
+class VllmBuilder(Builder):
+    model_id: ModelId
+    model_path: str
+    trust_remote_code: bool
+    cancel_receiver: MpReceiver[TaskId]
+    event_sender: MpSender[Event]
+    group: mx.distributed.Group | None = None
+
+    def connect(self, bound_instance: BoundInstance) -> None:
+        raise NotImplementedError(
+            "Multiple node VLLM instances are not supported at the moment!"
+        )
+
+    def load(
+        self,
+        bound_instance: BoundInstance,
+        on_timeout: Callable[[], None],
+        on_layer_loaded: Callable[[int, int], None],
+    ) -> None:
+        from exo.worker.engines.vllm.vllm_generator import load_vllm_engine
+
+        self._engine, self._tool_parser, self._prefix_cache = load_vllm_engine(
+            model_path=self.model_path,
+            model_id=self.model_id,
+            trust_remote_code=self.trust_remote_code,
+            n_layers=bound_instance.bound_shard.model_card.n_layers,
+            on_layer_loaded=on_layer_loaded,
+        )
+
+    def build(self) -> InferenceGenerator:
+        from exo.worker.engines.vllm.vllm_generator import VllmBatchEngine
+
+        gen = VllmBatchEngine(
+            engine=self._engine,
+            model_id=self.model_id,
+            prefix_cache=self._prefix_cache,
+        )
+        tokenizer = TokenizerWrapper(self._engine.get_tokenizer())
+        max_concurrent = 1 if os.environ.get("EXO_NO_BATCH") else 8
+
+        logger.info(f"using BatchGenerator (vLLM, max_concurrent={max_concurrent})")
+        return BatchGenerator(
+            tokenizer=tokenizer,
+            group=None,
+            tool_parser=self._tool_parser,
+            kv_prefix_cache=None,
+            model_id=self.model_id,
+            device_rank=0,
+            cancel_receiver=self.cancel_receiver,
+            event_sender=self.event_sender,
+            _gen=gen,
+            max_concurrent_requests=max_concurrent,
+        )
+
+    def close(self) -> None:
+        with contextlib.suppress(NameError, AttributeError):
+            del self._engine, self._prefix_cache, self._tool_parser

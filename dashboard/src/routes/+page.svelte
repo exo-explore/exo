@@ -64,6 +64,7 @@
     nodeThunderboltBridge,
     nodeIdentities,
     isConnected,
+    vllmAvailable,
     type DownloadProgress,
     type PlacementPreview,
   } from "$lib/stores/app.svelte";
@@ -700,7 +701,10 @@
       ? Object.keys(topologyData()!.nodes).length
       : 1;
     const sharding = nodeCount <= 1 ? "Pipeline" : selectedSharding;
-    const instanceType = nodeCount <= 1 ? "MlxRing" : selectedInstanceType;
+    const instanceType =
+      nodeCount <= 1 && selectedInstanceType !== "Vllm"
+        ? "MlxRing"
+        : selectedInstanceType;
     try {
       const placementResponse = await fetch(
         `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${sharding}&instance_meta=${instanceType}&min_nodes=1`,
@@ -884,7 +888,7 @@
   }
 
   let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
-  type InstanceMeta = "MlxRing" | "MlxJaccl";
+  type InstanceMeta = "MlxRing" | "MlxJaccl" | "Vllm";
 
   // Launch defaults persistence
   const LAUNCH_DEFAULTS_KEY = "exo-launch-defaults-v2";
@@ -930,7 +934,11 @@
     // Apply sharding and instance type unconditionally
     selectedSharding = defaults.sharding;
     selectedInstanceType =
-      defaults.instanceType === "MlxRing" ? "MlxRing" : "MlxJaccl";
+      defaults.instanceType === "Vllm"
+        ? "Vllm"
+        : defaults.instanceType === "MlxRing"
+          ? "MlxRing"
+          : "MlxJaccl";
 
     // Apply minNodes if valid (between 1 and maxNodes)
     if (
@@ -1144,9 +1152,7 @@
   }
 
   const matchesSelectedRuntime = (runtime: InstanceMeta): boolean =>
-    selectedInstanceType === "MlxRing"
-      ? runtime === "MlxRing"
-      : runtime === "MlxJaccl";
+    runtime === selectedInstanceType;
 
   // Helper to check if a model can be launched (has valid placement with >= minNodes)
   function canModelFit(modelId: string): boolean {
@@ -2035,6 +2041,7 @@
     let instanceType = "Unknown";
     if (instanceTag === "MlxRingInstance") instanceType = "MLX Ring";
     else if (instanceTag === "MlxJacclInstance") instanceType = "MLX RDMA";
+    else if (instanceTag === "VllmInstance") instanceType = "vLLM (CUDA)";
 
     const inst = instance as {
       shardAssignments?: {
@@ -5786,6 +5793,32 @@
                         </span>
                         RDMA (Fast)
                       </button>
+                      {#if vllmAvailable()}
+                        <button
+                          onclick={() => {
+                            selectedInstanceType = "Vllm";
+                            saveLaunchDefaults();
+                          }}
+                          class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
+                          'Vllm'
+                            ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                            : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                        >
+                          <span
+                            class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
+                            'Vllm'
+                              ? 'border-exo-yellow'
+                              : 'border-exo-medium-gray'}"
+                          >
+                            {#if selectedInstanceType === "Vllm"}
+                              <span
+                                class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
+                              ></span>
+                            {/if}
+                          </span>
+                          vLLM (CUDA)
+                        </button>
+                      {/if}
                     </div>
                   </div>
 

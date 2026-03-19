@@ -1,5 +1,6 @@
 import os
 from copy import deepcopy
+from typing import TYPE_CHECKING, cast
 
 import mlx.core as mx
 import psutil
@@ -13,9 +14,12 @@ from mlx_lm.models.cache import (
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.memory import Memory
-from exo.shared.types.mlx import KVCacheType, Model
+from exo.shared.types.mlx import KVCacheType, MLXCacheType, Model
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
 from exo.worker.runner.bootstrap import logger
+
+if TYPE_CHECKING:
+    from exo.worker.engines.vllm.kv_cache import TorchKVCache
 
 
 # Fraction of device memory above which LRU eviction kicks in.
@@ -46,7 +50,7 @@ class CacheSnapshot:
         self.token_count = token_count
 
 
-def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
+def snapshot_ssm_states(cache: MLXCacheType) -> CacheSnapshot:
     states: list[ArraysCache | RotatingKVCache | None] = []
     for c in cache:
         if isinstance(c, (ArraysCache, RotatingKVCache)):
@@ -70,7 +74,7 @@ def _find_nearest_snapshot(
     return best
 
 
-def has_non_kv_caches(cache: KVCacheType) -> bool:
+def has_non_kv_caches(cache: MLXCacheType) -> bool:
     """Check if a cache contains any ArraysCache (SSM) entries."""
     return any(isinstance(c, (ArraysCache, RotatingKVCache)) for c in cache)
 
@@ -94,7 +98,7 @@ class KVPrefixCache:
     def add_kv_cache(
         self,
         prompt_tokens: mx.array,
-        cache: KVCacheType,
+        cache: MLXCacheType,
         ssm_snapshots: list[CacheSnapshot] | None = None,
     ):
         """Add a new cache entry. Evicts LRU entries if memory is high."""
@@ -110,7 +114,7 @@ class KVPrefixCache:
         self,
         index: int,
         prompt_tokens: mx.array,
-        cache: KVCacheType,
+        cache: MLXCacheType,
         snapshots: list[CacheSnapshot] | None,
         restore_pos: int,
     ):
@@ -129,10 +133,14 @@ class KVPrefixCache:
         self._last_used[index] = self._access_counter
         logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
 
+    def _get_mlx_cache(self, index: int) -> MLXCacheType:
+        cached = self.caches[index]
+        return cast(MLXCacheType, cached)
+
     def _get_snapshot(
         self, entry_index: int, target_token_count: int
     ) -> tuple[int, CacheSnapshot | None]:
-        if not has_non_kv_caches(self.caches[entry_index]):
+        if not has_non_kv_caches(self._get_mlx_cache(entry_index)):
             return target_token_count, None
 
         snapshots = self._snapshots[entry_index]
@@ -149,7 +157,7 @@ class KVPrefixCache:
         self,
         model: Model,
         prompt_tokens: mx.array,
-    ) -> tuple[KVCacheType, mx.array, int | None]:
+    ) -> tuple[MLXCacheType, mx.array, int | None]:
         """Get KV cache for prompt, returning remaining tokens to prefill.
 
         Returns:
@@ -184,7 +192,8 @@ class KVPrefixCache:
         # For exact match: trim to max_length-1 so remaining has the last token
         # For partial match: trim to best_length, remaining has suffix to prefill
         # This ensures stream_generate always has at least one token to start with
-        has_ssm = has_non_kv_caches(self.caches[best_index])
+        mlx_cache = self._get_mlx_cache(best_index)
+        has_ssm = has_non_kv_caches(mlx_cache)
         target = (max_length - 1) if is_exact and not has_ssm else best_length
         restore_pos, restore_snap = self._get_snapshot(best_index, target)
 
@@ -192,8 +201,8 @@ class KVPrefixCache:
         if restore_snap is None and has_ssm:
             return make_kv_cache(model), prompt_tokens, None
 
-        prompt_cache = deepcopy(self.caches[best_index])
-        cached_length = cache_length(self.caches[best_index])
+        prompt_cache = deepcopy(mlx_cache)
+        cached_length = cache_length(mlx_cache)
         tokens_to_trim = cached_length - restore_pos
         if tokens_to_trim > 0:
             trim_cache(prompt_cache, tokens_to_trim, restore_snap)
@@ -207,6 +216,50 @@ class KVPrefixCache:
         remaining = prompt_tokens[restore_pos:]
 
         return prompt_cache, remaining, best_index
+
+    def lookup(
+        self, prompt_token_ids: list[int]
+    ) -> tuple["TorchKVCache | None", int, int | None]:
+        from exo.worker.engines.vllm.kv_cache import TorchKVCache
+
+        prompt_mx = mx.array(prompt_token_ids)
+        max_length = len(prompt_token_ids)
+        best_index: int | None = None
+        best_length = 0
+
+        for i, cached_prompt in enumerate(self.prompts):
+            length = get_prefix_length(prompt_mx, cached_prompt)
+            if length >= max_length - 1:
+                best_index, best_length = i, length
+                break
+            if length > best_length:
+                best_index, best_length = i, length
+
+        if best_index is None or best_length == 0:
+            return None, 0, None
+
+        best_length = min(best_length, max_length - 1)
+
+        self._access_counter += 1
+        self._last_used[best_index] = self._access_counter
+
+        cached = self.caches[best_index]
+        if isinstance(cached, TorchKVCache):
+            return cached.trim_to(best_length), best_length, best_index
+
+        torch_cache = TorchKVCache.from_mlx_cache(cached)
+        return torch_cache.trim_to(best_length), best_length, best_index
+
+    def add_from_torch(
+        self, prompt_token_ids: list[int], cache: "TorchKVCache"
+    ) -> None:
+        self._evict_if_needed()
+        self.prompts.append(mx.array(prompt_token_ids))
+        self.caches.append(cache.detach_cpu())
+        self._snapshots.append(None)
+        self._access_counter += 1
+        self._last_used.append(self._access_counter)
+        logger.info(f"KV cache added (torch): {len(prompt_token_ids)} tokens")
 
     def _evict_if_needed(self):
         """Evict least recently used entries while memory usage is high."""
@@ -244,7 +297,7 @@ class KVPrefixCache:
 
 
 def trim_cache(
-    cache: KVCacheType,
+    cache: MLXCacheType,
     num_tokens: int,
     snapshot: CacheSnapshot | None = None,
 ) -> None:
@@ -282,7 +335,7 @@ def _entry_length(
     return 0
 
 
-def cache_length(cache: KVCacheType) -> int:
+def cache_length(cache: MLXCacheType) -> int:
     """Get the number of tokens in a KV cache."""
     return max(_entry_length(c) for c in cache)
 
@@ -311,7 +364,7 @@ def get_memory_used_percentage() -> float:
 
 def make_kv_cache(
     model: Model, max_kv_size: int | None = None, keep: int = 0
-) -> KVCacheType:
+) -> MLXCacheType:
     assert hasattr(model, "layers")
 
     if hasattr(model, "make_cache"):

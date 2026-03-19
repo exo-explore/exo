@@ -116,7 +116,6 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     # initialize_mlx returns a mock group
     monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(MockGroup()))
     monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
-    monkeypatch.setattr(mlx_batch_generator, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_batch_generator, "_check_for_debug_prompts", nothin)
     monkeypatch.setattr(mlx_batch_generator, "mx_any", make_nothin(False))
 
@@ -139,8 +138,10 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
 
 class FakeExoBatchGenerator:
     def __init__(self, *_args: object, **_kwargs: object) -> None:
-        self._uid_counter = 0
-        self._pending: dict[int, GenerationResponse] = {}
+        self._pending: dict[str, GenerationResponse] = {}
+
+    def warmup(self) -> int:
+        return 50
 
     @property
     def has_work(self) -> bool:
@@ -148,30 +149,29 @@ class FakeExoBatchGenerator:
 
     def submit(
         self,
+        task_id: str = "",
         task_params: object = None,
         prompt: object = None,
         on_prefill_progress: object = None,
         distributed_prompt_progress_callback: object = None,
         on_generation_token: object = None,
-    ) -> int:
-        uid = self._uid_counter
-        self._uid_counter += 1
-        self._pending[uid] = GenerationResponse(
+    ) -> str:
+        self._pending[task_id] = GenerationResponse(
             text="hi",
             token=0,
             finish_reason="stop",
             usage=None,
         )
-        return uid
+        return task_id
 
-    def step(self) -> list[tuple[int, GenerationResponse]]:
+    def step(self) -> list[tuple[str, GenerationResponse]]:
         results = list(self._pending.items())
         self._pending.clear()
         return results
 
-    def cancel(self, uids: list[int]) -> None:
-        for uid in uids:
-            self._pending.pop(uid, None)
+    def cancel(self, task_ids: list[str]) -> None:
+        for tid in task_ids:
+            self._pending.pop(tid, None)
 
     def close(self) -> None:
         pass
@@ -262,11 +262,17 @@ def _run(tasks: Iterable[Task], send_after_ready: list[Task] | None = None):
             "exo.worker.runner.llm_inference.runner.mx.distributed.all_gather",
             make_nothin(mx.array([1])),
         ):
+            builder = mlx_runner.MlxBuilder(
+                model_id=MODEL_A_ID,
+                event_sender=event_sender,  # pyright: ignore[reportArgumentType]
+                cancel_receiver=cancel_receiver,
+            )
             runner = mlx_runner.Runner(
                 bound_instance,
                 event_sender,  # pyright: ignore[reportArgumentType]
                 task_receiver,
                 cancel_receiver,
+                builder,
             )
             runner.main()
 

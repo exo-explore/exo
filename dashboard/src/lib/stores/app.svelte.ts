@@ -168,7 +168,7 @@ export interface ModelDownloadStatus {
 export interface PlacementPreview {
   model_id: string;
   sharding: "Pipeline" | "Tensor";
-  instance_meta: "MlxRing" | "MlxJaccl";
+  instance_meta: "MlxRing" | "MlxJaccl" | "Vllm";
   instance: unknown | null;
   memory_delta_by_node: Record<string, number> | null;
   error: string | null;
@@ -547,6 +547,7 @@ class AppStore {
       { total: { inBytes: number }; available: { inBytes: number } }
     >
   >({});
+  vllmAvailable = $state(false);
   placementPreviews = $state<PlacementPreview[]>([]);
   selectedPreviewModelId = $state<string | null>(null);
   isLoadingPreviews = $state(false);
@@ -1331,6 +1332,15 @@ class AppStore {
         this.isConnected = true;
       }
       this.consecutiveFailures = 0;
+
+      fetch("/capabilities")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: { vllm_available?: boolean } | null) => {
+          this.vllmAvailable = data?.vllm_available ?? false;
+        })
+        .catch(() => {
+          this.vllmAvailable = false;
+        });
     } catch (error) {
       this.consecutiveFailures++;
       if (
@@ -3334,6 +3344,7 @@ export const nodeThunderbolt = () => appStore.nodeThunderbolt;
 export const nodeRdmaCtl = () => appStore.nodeRdmaCtl;
 export const thunderboltBridgeCycles = () => appStore.thunderboltBridgeCycles;
 export const nodeThunderboltBridge = () => appStore.nodeThunderboltBridge;
+export const vllmAvailable = () => appStore.vllmAvailable;
 
 // Image generation params
 export const imageGenerationParams = () => appStore.getImageGenerationParams();

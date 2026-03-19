@@ -15,6 +15,7 @@ class InstanceId(Id):
 class InstanceMeta(str, Enum):
     MlxRing = "MlxRing"
     MlxJaccl = "MlxJaccl"
+    Vllm = "Vllm"
 
 
 class BaseInstance(TaggedModel):
@@ -35,8 +36,12 @@ class MlxJacclInstance(BaseInstance):
     jaccl_coordinators: dict[NodeId, str]
 
 
+class VllmInstance(BaseInstance):
+    pass
+
+
 # TODO: Single node instance
-Instance = MlxRingInstance | MlxJacclInstance
+Instance = MlxRingInstance | MlxJacclInstance | VllmInstance
 
 
 class BoundInstance(CamelCaseModel):

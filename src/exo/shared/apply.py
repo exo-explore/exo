@@ -49,9 +49,11 @@ from exo.utils.info_gatherer.info_gatherer import (
     NodeConfig,
     NodeDiskUsage,
     NodeNetworkInterfaces,
+    NvmlMetrics,
     RdmaCtlStatus,
     StaticNodeInformation,
     ThunderboltBridgeInfo,
+    VllmCapability,
 )
 
 
@@ -368,6 +370,16 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             update["node_rdma_ctl"] = {
                 **state.node_rdma_ctl,
                 event.node_id: NodeRdmaCtlStatus(enabled=info.enabled),
+            }
+        case NvmlMetrics():
+            update["node_system"] = {
+                **state.node_system,
+                event.node_id: info.system_profile,
+            }
+        case VllmCapability():
+            update["node_vllm"] = {
+                **state.node_vllm,
+                event.node_id: info.available,
             }
 
     return state.model_copy(update=update)

@@ -258,21 +258,24 @@ async def fetch_safetensors_size(model_id: ModelId) -> Memory:
 
     target_dir = (await ensure_models_dir()) / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)
-    index_path = await download_file_with_retry(
-        model_id,
-        "main",
-        "model.safetensors.index.json",
-        target_dir,
-        lambda curr_bytes, total_bytes, is_renamed: logger.debug(
-            f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
-        ),
-    )
-    async with aiofiles.open(index_path, "r") as f:
-        index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
+    try:
+        index_path = await download_file_with_retry(
+            model_id,
+            "main",
+            "model.safetensors.index.json",
+            target_dir,
+            lambda curr_bytes, total_bytes, is_renamed: logger.debug(
+                f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
+            ),
+        )
+        async with aiofiles.open(index_path, "r") as f:
+            index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
 
-    metadata = index_data.metadata
-    if metadata is not None:
-        return Memory.from_bytes(metadata.total_size)
+        metadata = index_data.metadata
+        if metadata is not None:
+            return Memory.from_bytes(metadata.total_size)
+    except FileNotFoundError:
+        pass
 
     info = model_info(model_id)
     if info.safetensors is None:

@@ -15,17 +15,17 @@ dependencies = [
   "huggingface-hub>=0.33.4",
   "psutil>=7.0.0",
   "loguru>=0.7.3",
-  "exo_pyo3_bindings",                         # rust bindings
+  "exo_pyo3_bindings",                       # rust bindings
   "anyio==4.11.0",
   "mlx; sys_platform == 'darwin'",
-  "mlx[cpu]==0.30.6; sys_platform == 'linux'",
+  "mlx==0.30.6; sys_platform == 'linux'",
   "mlx-lm",
-  "tiktoken>=0.12.0",                          # required for kimi k2 tokenizer
+  "tiktoken>=0.12.0",                        # required for kimi k2 tokenizer
   "hypercorn>=0.18.0",
   "openai-harmony>=0.0.8",
   "httpx>=0.28.1",
   "tomlkit>=0.14.0",
-  "mflux==0.16.9",
+  "mflux==0.16.9; sys_platform == 'darwin'",
   "python-multipart>=0.0.21",
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
@@ -45,11 +45,13 @@ dev = [
   "ruff>=0.11.13",
 ]
 
-# mlx[cuda] requires a newer version of mlx. the ideal on linux is: default to mlx[cpu] unless[cuda] specified.
 [project.optional-dependencies]
-# cuda = [
-#     "mlx[cuda]==0.26.3",
-# ]
+cuda = [
+  "torch>=2.10.0; sys_platform == 'linux'",
+  "vllm>=0.13.0; sys_platform == 'linux'",
+  "mlx-cuda-13==0.30.6; sys_platform == 'linux'",
+  "fastsafetensors>=0.1.10; sys_platform == 'linux'",
+]
 
 ###
 # workspace configuration
@@ -62,9 +64,16 @@ members = ["rust/exo_pyo3_bindings", "bench"]
 exo_pyo3_bindings = { workspace = true }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/eval-left-padding-in-batched-rotation" }
+torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux'" }]
+vllm = { git = "https://github.com/hmellor/vllm.git", branch = "transformers-v5" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }
 # mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
 [build-system]
 requires = ["uv_build>=0.8.9,<0.9.0"]
@@ -99,8 +108,16 @@ exclude = [
   "**/.direnv",
   "**/rust",
   "**/.github",
+  "**/vllm_patches",
+  "**/engines/vllm",
 ]
 stubPath = ".mlx_typings"
+extraPaths = [".cuda_typings"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "src/exo/worker/runner/vllm_inference"
+extraPaths = ["src", ".cuda_typings"]
+reportMissingModuleSource = false
 
 [[tool.basedpyright.executionEnvironments]]
 root = "src"
@@ -113,7 +130,22 @@ root = "src"
 [tool.uv]
 required-version = ">=0.8.6"
 prerelease = "allow"
-environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
+environments = [
+  "sys_platform == 'darwin'",
+  "sys_platform == 'linux' and platform_machine == 'aarch64'",
+]
+no-binary-package = ["vllm"]
+no-build-isolation-package = ["vllm"]
+extra-build-dependencies = { vllm = [
+  "cmake>=3.26.1",
+  "ninja",
+  "packaging>=24.2",
+  "setuptools>=77.0.3,<81.0.0",
+  "setuptools-scm>=8.0",
+  "wheel",
+  "jinja2",
+] }
+conflicts = [[{ package = "exo", extra = "cuda" }, { package = "exo-bench" }]]
 
 ###
 # ruff configuration
@@ -123,6 +155,7 @@ environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 extend-exclude = [
   "shared/protobufs/**",
   "*mlx_typings/**",
+  "*cuda_typings/**",
   "rust/exo_pyo3_bindings/**",
   "bench/vendor/**",
 ]

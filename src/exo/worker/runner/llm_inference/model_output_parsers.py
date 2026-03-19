@@ -2,12 +2,10 @@ from collections.abc import Generator
 from functools import cache
 from typing import Any
 
-from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
-from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
-from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
+from openai_harmony import (
     HarmonyEncodingName,
-    HarmonyError,  # pyright: ignore[reportUnknownVariableType]
+    HarmonyError,
     Role,
     StreamableParser,
     load_harmony_encoding,
@@ -15,7 +13,6 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
 
 from exo.shared.types.api import ToolCallItem
 from exo.shared.types.common import ModelId
-from exo.shared.types.mlx import Model
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.worker.engines.mlx.utils_mlx import (
     detect_thinking_prompt_suffix,
@@ -35,31 +32,32 @@ def apply_all_parsers(
     prompt: str,
     tool_parser: ToolParser | None,
     tokenizer: TokenizerWrapper,
-    model_type: type[Model],
     model_id: ModelId,
     tools: list[dict[str, Any]] | None,
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
-    mlx_generator = receiver
+    gen = receiver
 
     if tokenizer.has_thinking:
-        mlx_generator = parse_thinking_models(
-            mlx_generator,
+        gen = parse_thinking_models(
+            gen,
             tokenizer.think_start,
             tokenizer.think_end,
             starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
         )
 
-    if issubclass(model_type, GptOssModel):
-        mlx_generator = parse_gpt_oss(mlx_generator)
-    elif (
-        issubclass(model_type, DeepseekV32Model)
-        and "deepseek" in model_id.normalize().lower()
-    ):
-        mlx_generator = parse_deepseek_v32(mlx_generator)
+    lower = model_id.normalize().lower()
+    if "gpt-oss" in lower or "gpt_oss" in lower:
+        gen = parse_gpt_oss(gen)
+    elif "deepseek" in lower:
+        gen = parse_deepseek_v32(gen)
     elif tool_parser:
-        mlx_generator = parse_tool_calls(mlx_generator, tool_parser, tools)
+        gen = parse_tool_calls(gen, tool_parser, tools)
 
-    return mlx_generator
+    return gen
+
+
+_GPT_OSS_CHANNEL_TOKEN = 200005
+_GPT_OSS_MESSAGE_TOKEN = 200008
 
 
 def parse_gpt_oss(
@@ -75,44 +73,42 @@ def parse_gpt_oss(
         if response is None:
             yield None
             continue
+
+        token_id = response.token
+
         try:
-            stream.process(response.token)
-        except HarmonyError:
-            logger.error("Encountered critical Harmony Error, returning early")
+            stream.process(token_id)
+        except HarmonyError as e:
+            logger.error(
+                f"HarmonyError on token_id={response.token} text={response.text!r}: {e}"
+            )
             return
 
         delta = stream.last_content_delta
         ch = stream.current_channel
         recipient = stream.current_recipient
 
-        # Debug: log every token with state
-        logger.debug(
-            f"parse_gpt_oss token={response.token} text={response.text!r} "
-            f"recipient={recipient!r} ch={ch!r} delta={delta!r} "
-            f"state={stream.state} current_tool={current_tool_name!r}"
+        effective_recipient = (
+            recipient
+            if (recipient is not None and recipient.startswith("functions."))
+            else None
         )
-
-        if recipient != current_tool_name:
+        if effective_recipient != current_tool_name:
             if current_tool_name is not None:
-                prefix = "functions."
-                if current_tool_name.startswith(prefix):
-                    current_tool_name = current_tool_name[len(prefix) :]
-                logger.info(
-                    f"parse_gpt_oss yielding tool call: name={current_tool_name!r}"
-                )
+                tool_name = current_tool_name.removeprefix("functions.")
+                logger.info(f"parse_gpt_oss yielding tool call: name={tool_name!r}")
                 yield ToolCallResponse(
                     tool_calls=[
                         ToolCallItem(
-                            name=current_tool_name,
+                            name=tool_name,
                             arguments="".join(tool_arg_parts).strip(),
                         )
                     ],
                     usage=response.usage,
                 )
                 tool_arg_parts = []
-            current_tool_name = recipient
+            current_tool_name = effective_recipient
 
-        # If inside a tool call, accumulate arguments
         if current_tool_name is not None:
             if delta:
                 tool_arg_parts.append(delta)
@@ -121,17 +117,21 @@ def parse_gpt_oss(
                 tool_arg_parts = []
             continue
 
-        if ch == "analysis" and not thinking:
+        is_suppressed = ch == "analysis" or (
+            recipient is not None and recipient.startswith("!")
+        )
+
+        if is_suppressed and not thinking:
             thinking = True
 
-        if ch != "analysis" and thinking:
+        if not is_suppressed and thinking:
             thinking = False
 
         if delta:
             yield response.model_copy(update={"text": delta, "is_thinking": thinking})
 
         if response.finish_reason is not None:
-            yield response
+            yield response.model_copy(update={"text": ""})
 
 
 def parse_deepseek_v32(
