@@ -693,7 +693,9 @@ async def evaluate_benchmark(
 
     if release_version and "release_version" in ds.column_names:
         ds = ds.filter(lambda x: x["release_version"] == release_version)
-        logger.info(f"Filtered to {len(ds)} problems with release_version={release_version}")
+        logger.info(
+            f"Filtered to {len(ds)} problems with release_version={release_version}"
+        )
 
     # Sort by question_id to match LCB runner ordering (scenario_router.py:60).
     # This ensures [offset:offset+limit] slices select the same problems as vllm.
@@ -713,7 +715,11 @@ async def evaluate_benchmark(
         f"temperature={temperature}, max_tokens={max_tokens}"
         + (f", top_k={top_k}" if top_k is not None else "")
         + (f", min_p={min_p}" if min_p is not None else "")
-        + (f", enable_thinking={enable_thinking}" if enable_thinking is not None else "")
+        + (
+            f", enable_thinking={enable_thinking}"
+            if enable_thinking is not None
+            else ""
+        )
     )
 
     if config.kind == "code":
@@ -1015,7 +1021,9 @@ def print_results(
     )
     print(tok_line)
     if total_energy > 0:
-        print(f"  power: avg {avg_power:.1f}W  |  total energy: {total_energy:.1f}J ({total_energy / 3600:.2f}Wh)")
+        print(
+            f"  power: avg {avg_power:.1f}W  |  total energy: {total_energy:.1f}J ({total_energy / 3600:.2f}Wh)"
+        )
     if errors:
         print(f"  API errors: {errors}")
     if no_extract:
@@ -1228,7 +1236,9 @@ def _find_existing_instance(client: ExoClient, model_id: str) -> str | None:
     return None
 
 
-def _checkpoint_path(results_dir: str, benchmark: str, model: str, concurrency: int) -> Path:
+def _checkpoint_path(
+    results_dir: str, benchmark: str, model: str, concurrency: int
+) -> Path:
     """Return the JSONL checkpoint path for a benchmark run."""
     out_dir = Path(results_dir) / model.replace("/", "_") / benchmark
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1421,7 +1431,9 @@ def main() -> int:
             )
 
             settle_deadline = (
-                time.monotonic() + args.settle_timeout if args.settle_timeout > 0 else None
+                time.monotonic() + args.settle_timeout
+                if args.settle_timeout > 0
+                else None
             )
             download_duration = run_planning_phase(
                 client,
@@ -1530,7 +1542,11 @@ def main() -> int:
         + (f"min_p={min_p}, " if min_p is not None else "")
         + f"reasoning={'yes' if is_reasoning else 'no'}"
         + (f", reasoning_effort={reasoning_effort}" if reasoning_effort else "")
-        + (f", enable_thinking={enable_thinking}" if enable_thinking is not None else "")
+        + (
+            f", enable_thinking={enable_thinking}"
+            if enable_thinking is not None
+            else ""
+        )
     )
 
     # Common kwargs for evaluate_benchmark
@@ -1553,7 +1569,9 @@ def main() -> int:
                 for c in concurrency_levels:
                     logger.info(f"\n{'=' * 50}")
                     logger.info(f"Running {task_name} at concurrency={c}")
-                    checkpoint_path = _checkpoint_path(args.results_dir, task_name, full_model_id, c)
+                    checkpoint_path = _checkpoint_path(
+                        args.results_dir, task_name, full_model_id, c
+                    )
                     if args.force and checkpoint_path.exists():
                         checkpoint_path.unlink()
                     results = asyncio.run(
@@ -1579,7 +1597,7 @@ def main() -> int:
                             c,
                             results,
                             scores,
-                            )
+                        )
                         results_by_c[c] = results
                     # Clean up checkpoint on success
                     if checkpoint_path.exists():
@@ -1588,7 +1606,9 @@ def main() -> int:
                     print_comparison(task_name, results_by_c)
         else:
             for task_name in task_names:
-                checkpoint_path = _checkpoint_path(args.results_dir, task_name, full_model_id, args.num_concurrent)
+                checkpoint_path = _checkpoint_path(
+                    args.results_dir, task_name, full_model_id, args.num_concurrent
+                )
                 if args.force and checkpoint_path.exists():
                     checkpoint_path.unlink()
                 results = asyncio.run(
@@ -1631,7 +1651,9 @@ def main() -> int:
                 try:
                     wait_for_instance_gone(client, instance_id)
                 except TimeoutError:
-                    logger.warning(f"Timed out waiting for instance {instance_id} to be deleted")
+                    logger.warning(
+                        f"Timed out waiting for instance {instance_id} to be deleted"
+                    )
 
     return 0
 
