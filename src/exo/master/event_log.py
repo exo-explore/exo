@@ -18,6 +18,7 @@ _EVENT_ADAPTER: TypeAdapter[Event] = TypeAdapter(Event)
 _HEADER_SIZE = 4  # uint32 big-endian
 _OFFSET_CACHE_SIZE = 128
 _MAX_ARCHIVES = 5
+_MAX_ACTIVE_EVENTS = 10_000  # rotate active log when it reaches this many events
 
 
 def _serialize_event(event: Event) -> bytes:
@@ -75,6 +76,7 @@ class DiskEventLog:
         self._active_path = directory / "events.bin"
         self._offset_cache: OrderedDict[int, int] = OrderedDict()
         self._count: int = 0
+        self._base_index: int = 0  # global index of the first event in the active file
 
         # Rotate stale active file from a previous session/crash
         if self._active_path.exists():
@@ -115,25 +117,52 @@ class DiskEventLog:
         self._file.write(len(packed).to_bytes(_HEADER_SIZE, byteorder="big"))
         self._file.write(packed)
         self._count += 1
+        if self._count >= _MAX_ACTIVE_EVENTS:
+            self._rotate_active()
+
+    def _rotate_active(self) -> None:
+        """Rotate the active log mid-session. Advances _base_index by _count."""
+        try:
+            self._file.flush()
+            self._file.close()
+            self._rotate(self._active_path, self._directory)
+            self._base_index += self._count
+            self._count = 0
+            self._offset_cache.clear()
+            self._file = open(self._active_path, "w+b")  # noqa: SIM115
+            logger.info(f"Mid-session event log rotation at base_index={self._base_index}")
+        except Exception as e:
+            logger.opt(exception=e).warning("Failed mid-session event log rotation")
+
+    @property
+    def global_count(self) -> int:
+        """Total events ever appended (base + active)."""
+        return self._base_index + self._count
 
     def read_range(self, start: int, end: int) -> Iterator[Event]:
-        """Yield events from index start (inclusive) to end (exclusive)."""
-        end = min(end, self._count)
-        if start < 0 or end < 0 or start >= end:
+        """Yield events from global index start (inclusive) to end (exclusive).
+
+        If start is before _base_index (events were rotated away), reading
+        silently starts from _base_index so workers can still converge.
+        """
+        # Convert global indices to local (active-file) indices
+        local_start = max(start - self._base_index, 0)
+        local_end = min(end - self._base_index, self._count)
+        if local_start < 0 or local_end < 0 or local_start >= local_end:
             return
 
         self._file.flush()
         with open(self._active_path, "rb") as f:
-            self._seek_to(f, start)
-            for _ in range(end - start):
+            self._seek_to(f, local_start)
+            for _ in range(local_end - local_start):
                 event = _read_record(f)
                 if event is None:
                     break
                 yield event
 
             # Cache where we ended up so the next sequential read is a hit
-            if end < self._count:
-                self._cache_offset(end, f.tell())
+            if local_end < self._count:
+                self._cache_offset(local_end, f.tell())
 
     def read_all(self) -> Iterator[Event]:
         """Yield all events from the log one at a time."""

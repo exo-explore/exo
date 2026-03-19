@@ -49,8 +49,9 @@ def test_read_range_bounds(log_dir: Path):
 
     # Start beyond count
     assert list(log.read_range(5, 10)) == []
-    # Negative start
-    assert list(log.read_range(-1, 2)) == []
+    # Negative start clamps to 0 (worker requested before base_index — silently converge)
+    result = list(log.read_range(-1, 2))
+    assert len(result) == 2  # events 0 and 1
     # End beyond count is clamped
     result = list(log.read_range(1, 100))
     assert len(result) == 2
