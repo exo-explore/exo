@@ -374,9 +374,9 @@ class Master:
     # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
     async def _plan(self) -> None:
         while True:
-            # kill broken instances
+            # kill broken instances — snapshot to avoid mutation during iteration
             connected_node_ids = set(self.state.topology.list_nodes())
-            for instance_id, instance in self.state.instances.items():
+            for instance_id, instance in list(self.state.instances.items()):
                 for node_id in instance.shard_assignments.node_to_runner:
                     if node_id not in connected_node_ids:
                         await self.event_sender.send(
@@ -384,8 +384,8 @@ class Master:
                         )
                         break
 
-            # time out dead nodes
-            for node_id, time in self.state.last_seen.items():
+            # time out dead nodes — snapshot to avoid mutation during iteration
+            for node_id, time in list(self.state.last_seen.items()):
                 now = datetime.now(tz=timezone.utc)
                 if now - time > timedelta(seconds=30):
                     logger.info(f"Manually removing node {node_id} due to inactivity")
