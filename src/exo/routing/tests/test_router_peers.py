@@ -37,10 +37,8 @@ async def test_auto_dial_parses_peers():
     """EXO_PEERS with 2 addrs → both stored in _persistent_peers."""
     router = _make_router()
     addrs = "/ip4/192.168.2.2/tcp/51821/p2p/QmFoo,/ip4/10.0.0.152/tcp/51821/p2p/QmBar"
-    with patch.dict(os.environ, {"EXO_PEERS": addrs}):
-        # patch sleep to not wait
-        with patch("exo.routing.router.sleep", new_callable=AsyncMock):
-            await router._auto_dial_peers()  # pyright: ignore[reportPrivateUsage]
+    with patch.dict(os.environ, {"EXO_PEERS": addrs}), patch("exo.routing.router.sleep", new_callable=AsyncMock):
+        await router._auto_dial_peers()  # pyright: ignore[reportPrivateUsage]
     assert len(router._persistent_peers) == 2  # pyright: ignore[reportPrivateUsage]
     assert router._persistent_peers[0] == "/ip4/192.168.2.2/tcp/51821/p2p/QmFoo"  # pyright: ignore[reportPrivateUsage]
     assert router._persistent_peers[1] == "/ip4/10.0.0.152/tcp/51821/p2p/QmBar"  # pyright: ignore[reportPrivateUsage]
@@ -52,9 +50,8 @@ async def test_auto_dial_skips_when_already_connected():
     router = _make_router()
     router._connected_peer_ids.add("QmAlreadyHere")  # pyright: ignore[reportPrivateUsage]
     addrs = "/ip4/192.168.2.2/tcp/51821/p2p/QmFoo"
-    with patch.dict(os.environ, {"EXO_PEERS": addrs}):
-        with patch("exo.routing.router.sleep", new_callable=AsyncMock):
-            await router._auto_dial_peers()  # pyright: ignore[reportPrivateUsage]
+    with patch.dict(os.environ, {"EXO_PEERS": addrs}), patch("exo.routing.router.sleep", new_callable=AsyncMock):
+        await router._auto_dial_peers()  # pyright: ignore[reportPrivateUsage]
     assert _dial_mock(router).call_count == 0
 
 

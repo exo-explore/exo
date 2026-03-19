@@ -2,10 +2,18 @@
 Tests for topology-mutating apply functions.
 Verifies COW: original state topology must be unchanged after apply.
 """
-from exo.shared.apply import apply_node_timed_out, apply_topology_edge_created, apply_topology_edge_deleted
+from exo.shared.apply import (
+    apply_node_timed_out,
+    apply_topology_edge_created,
+    apply_topology_edge_deleted,
+)
 from exo.shared.topology import Topology
 from exo.shared.types.common import NodeId
-from exo.shared.types.events import NodeTimedOut, TopologyEdgeCreated, TopologyEdgeDeleted
+from exo.shared.types.events import (
+    NodeTimedOut,
+    TopologyEdgeCreated,
+    TopologyEdgeDeleted,
+)
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
 from exo.shared.types.topology import Connection, SocketConnection
