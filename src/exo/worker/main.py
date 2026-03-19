@@ -6,6 +6,8 @@ from anyio import fail_after
 from loguru import logger
 
 from exo.download.download_utils import resolve_model_in_path
+from exo.download.peer_state import discover_peers_for_model
+from exo.shared.constants import EXO_PEER_DOWNLOAD_PORT
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.api import ImageEditsTaskParams
@@ -193,12 +195,20 @@ class Worker:
                             )
                         )
                     else:
+                        # Discover peers that already have this model
+                        peers = discover_peers_for_model(
+                            self.node_id,
+                            self.state,
+                            shard.model_card.model_id.normalize(),
+                            EXO_PEER_DOWNLOAD_PORT,
+                        )
                         await self.download_command_sender.send(
                             ForwarderDownloadCommand(
                                 origin=self._system_id,
                                 command=StartDownload(
                                     target_node_id=self.node_id,
                                     shard_metadata=shard,
+                                    available_peers=peers,
                                 ),
                             )
                         )

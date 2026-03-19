@@ -13,11 +13,12 @@ from pydantic import PositiveInt
 import exo.routing.topics as topics
 from exo.download.coordinator import DownloadCoordinator
 from exo.download.impl_shard_downloader import exo_shard_downloader
+from exo.download.peer_file_server import PeerFileServer
 from exo.master.api import API  # TODO: should API be in master?
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_id_keypair
-from exo.shared.constants import EXO_LOG
+from exo.shared.constants import EXO_LOG, EXO_MODELS_DIR, EXO_PEER_DOWNLOAD_PORT
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
@@ -40,6 +41,7 @@ class Node:
 
     node_id: NodeId
     offline: bool
+    peer_file_server: PeerFileServer | None = None
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     @classmethod
@@ -63,17 +65,8 @@ class Node:
 
         logger.info(f"Starting node {node_id}")
 
-        # Create DownloadCoordinator (unless --no-downloads)
-        if not args.no_downloads:
-            download_coordinator = DownloadCoordinator(
-                node_id,
-                exo_shard_downloader(offline=args.offline),
-                event_sender=event_router.sender(),
-                download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
-                offline=args.offline,
-            )
-        else:
-            download_coordinator = None
+        peer_file_server: PeerFileServer | None = None
+        peer_download_enabled = not args.no_peer_download and not args.no_downloads
 
         if args.spawn_api:
             api = API(
@@ -97,6 +90,28 @@ class Node:
             )
         else:
             worker = None
+
+        # Create peer file server and download coordinator
+        if peer_download_enabled:
+            peer_file_server = PeerFileServer(
+                host="0.0.0.0",
+                port=EXO_PEER_DOWNLOAD_PORT,
+                models_dir=EXO_MODELS_DIR,
+            )
+
+        if not args.no_downloads:
+            download_coordinator: DownloadCoordinator | None = DownloadCoordinator(
+                node_id,
+                exo_shard_downloader(
+                    offline=args.offline,
+                    peer_download_enabled=peer_download_enabled,
+                ),
+                event_sender=event_router.sender(),
+                download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
+                offline=args.offline,
+            )
+        else:
+            download_coordinator = None
 
         # We start every node with a master
         master = Master(
@@ -134,6 +149,7 @@ class Node:
             api,
             node_id,
             args.offline,
+            peer_file_server,
         )
 
     async def run(self):
@@ -143,6 +159,8 @@ class Node:
             tg.start_soon(self.router.run)
             tg.start_soon(self.event_router.run)
             tg.start_soon(self.election.run)
+            if self.peer_file_server:
+                tg.start_soon(self.peer_file_server.run)
             if self.download_coordinator:
                 tg.start_soon(self.download_coordinator.run)
             if self.worker:
@@ -227,7 +245,10 @@ class Node:
                         self.download_coordinator.shutdown()
                         self.download_coordinator = DownloadCoordinator(
                             self.node_id,
-                            exo_shard_downloader(offline=self.offline),
+                            exo_shard_downloader(
+                                offline=self.offline,
+                                peer_download_enabled=self.peer_file_server is not None,
+                            ),
                             event_sender=self.event_router.sender(),
                             download_command_receiver=self.router.receiver(
                                 topics.DOWNLOAD_COMMANDS
@@ -303,6 +324,7 @@ class Args(CamelCaseModel):
     tb_only: bool = False
     no_worker: bool = False
     no_downloads: bool = False
+    no_peer_download: bool = False
     offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     no_batch: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
@@ -351,6 +373,11 @@ class Args(CamelCaseModel):
             "--no-downloads",
             action="store_true",
             help="Disable the download coordinator (node won't download models)",
+        )
+        parser.add_argument(
+            "--no-peer-download",
+            action="store_true",
+            help="Disable peer-to-peer model downloads (each node downloads from HuggingFace independently)",
         )
         parser.add_argument(
             "--offline",

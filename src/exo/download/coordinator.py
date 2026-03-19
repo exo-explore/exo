@@ -10,6 +10,7 @@ from exo.download.download_utils import (
     map_repo_download_progress_to_download_progress_data,
     resolve_model_in_path,
 )
+from exo.download.peer_shard_downloader import PeerAwareShardDownloader
 from exo.download.shard_downloader import ShardDownloader
 from exo.shared.constants import EXO_MODELS_DIR, EXO_MODELS_PATH
 from exo.shared.models.model_cards import ModelId, get_model_cards
@@ -115,7 +116,15 @@ class DownloadCoordinator:
                     continue
 
                 match cmd.command:
-                    case StartDownload(shard_metadata=shard):
+                    case StartDownload(shard_metadata=shard, available_peers=peers):
+                        # Pass peer endpoints to the shard downloader if it supports it
+                        if isinstance(self.shard_downloader, PeerAwareShardDownloader):
+                            self.shard_downloader.set_available_peers(peers)
+                        elif hasattr(self.shard_downloader, "shard_downloader") and isinstance(
+                            self.shard_downloader.shard_downloader, PeerAwareShardDownloader  # type: ignore[union-attr]
+                        ):
+                            # Unwrap SingletonShardDownloader
+                            self.shard_downloader.shard_downloader.set_available_peers(peers)  # type: ignore[union-attr]
                         await self._start_download(shard)
                     case DeleteDownload(model_id=model_id):
                         await self._delete_download(model_id)
