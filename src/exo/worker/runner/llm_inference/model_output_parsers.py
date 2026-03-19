@@ -358,7 +358,11 @@ def parse_tool_calls(
 
             if parsed is None:
                 logger.warning(f"tool call parsing failed for text {combined}")
-                yield response.model_copy(update={"text": combined})
+                yield response.model_copy(
+                    update={
+                        "text": "\n[tool call error] A tool call was attempted but could not be parsed due to malformed syntax. Please retry using the correct tool call format.\n",
+                    }
+                )
                 continue
 
             yield ToolCallResponse(
