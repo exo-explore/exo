@@ -1538,6 +1538,7 @@
   function getModelDownloadStatus(modelId: string): {
     isDownloading: boolean;
     progress: DownloadProgress | null;
+    downloadedProgress: DownloadProgress | null;
     perNode: Array<{
       nodeId: string;
       nodeName: string;
@@ -1545,7 +1546,12 @@
     }>;
   } {
     if (!downloadsData || Object.keys(downloadsData).length === 0) {
-      return { isDownloading: false, progress: null, perNode: [] };
+      return {
+        isDownloading: false,
+        progress: null,
+        downloadedProgress: null,
+        perNode: [],
+      };
     }
 
     let totalBytes = 0;
@@ -1554,6 +1560,9 @@
     let completedFiles = 0;
     let totalFiles = 0;
     let isDownloading = false;
+    let pendingTotalBytes = 0;
+    let pendingDownloadedBytes = 0;
+    let hasPendingProgress = false;
     const allFiles: DownloadProgress["files"] = [];
     const perNode: Array<{
       nodeId: string;
@@ -1595,9 +1604,8 @@
           if (downloadModelId !== modelId) continue;
         }
 
-        // For DownloadPending with partial bytes (paused/resumed downloads),
-        // synthesize a progress object from the top-level downloaded/total fields
-        let progress: DownloadProgress | null;
+        // DownloadPending = bytes on disk but not actively downloading.
+        // Track separately so UI can show "Downloaded X%" instead of "Downloading".
         if (downloadKind === "DownloadPending") {
           const pendingDownloaded = getBytes(
             downloadPayload.downloaded ??
@@ -1610,46 +1618,58 @@
               downloadPayload.totalBytes,
           );
           if (pendingDownloaded <= 0 && pendingTotal <= 0) continue;
-          isDownloading = true;
-          progress = {
-            totalBytes: pendingTotal,
-            downloadedBytes: pendingDownloaded,
-            speed: 0,
-            etaMs: 0,
-            percentage:
-              pendingTotal > 0 ? (pendingDownloaded / pendingTotal) * 100 : 0,
-            completedFiles: 0,
-            totalFiles: 0,
-            files: [],
-          };
-        } else {
-          progress = parseDownloadProgress(downloadPayload);
-          if (
-            !progress ||
-            (progress.downloadedBytes <= 0 && progress.totalBytes <= 0)
-          )
-            continue;
-          isDownloading = true;
+          hasPendingProgress = true;
+          pendingTotalBytes += pendingTotal;
+          pendingDownloadedBytes += pendingDownloaded;
+          continue;
         }
 
-        if (progress) {
-          // Sum all values across nodes - each node downloads independently
-          totalBytes += progress.totalBytes;
-          downloadedBytes += progress.downloadedBytes;
-          totalSpeed += progress.speed;
-          completedFiles += progress.completedFiles;
-          totalFiles += progress.totalFiles;
-          allFiles.push(...progress.files);
+        // DownloadOngoing = actively downloading
+        const progress = parseDownloadProgress(downloadPayload);
+        if (
+          !progress ||
+          (progress.downloadedBytes <= 0 && progress.totalBytes <= 0)
+        )
+          continue;
+        isDownloading = true;
 
-          const nodeName =
-            data?.nodes?.[nodeId]?.friendly_name ?? nodeId.slice(0, 8);
-          perNode.push({ nodeId, nodeName, progress });
-        }
+        // Sum all values across nodes - each node downloads independently
+        totalBytes += progress.totalBytes;
+        downloadedBytes += progress.downloadedBytes;
+        totalSpeed += progress.speed;
+        completedFiles += progress.completedFiles;
+        totalFiles += progress.totalFiles;
+        allFiles.push(...progress.files);
+
+        const nodeName =
+          data?.nodes?.[nodeId]?.friendly_name ?? nodeId.slice(0, 8);
+        perNode.push({ nodeId, nodeName, progress });
       }
     }
 
+    const downloadedProgress: DownloadProgress | null = hasPendingProgress
+      ? {
+          totalBytes: pendingTotalBytes,
+          downloadedBytes: pendingDownloadedBytes,
+          speed: 0,
+          etaMs: 0,
+          percentage:
+            pendingTotalBytes > 0
+              ? (pendingDownloadedBytes / pendingTotalBytes) * 100
+              : 0,
+          completedFiles: 0,
+          totalFiles: 0,
+          files: [],
+        }
+      : null;
+
     if (!isDownloading) {
-      return { isDownloading: false, progress: null, perNode: [] };
+      return {
+        isDownloading: false,
+        progress: null,
+        downloadedProgress,
+        perNode: [],
+      };
     }
 
     // ETA = total remaining bytes / total speed across all nodes
@@ -1668,6 +1688,7 @@
         totalFiles,
         files: allFiles,
       },
+      downloadedProgress,
       perNode,
     };
   }
@@ -1797,50 +1818,29 @@
           downloadModelId &&
           downloadModelId === instanceModelId
         ) {
-          // For DownloadPending with partial bytes, synthesize progress
-          let progress: DownloadProgress | null;
-          if (downloadKind === "DownloadPending") {
-            const pendingDownloaded = getBytes(
-              downloadPayload.downloaded ??
-                downloadPayload.downloaded_bytes ??
-                downloadPayload.downloadedBytes,
-            );
-            const pendingTotal = getBytes(
-              downloadPayload.total ??
-                downloadPayload.total_bytes ??
-                downloadPayload.totalBytes,
-            );
-            if (pendingDownloaded <= 0 && pendingTotal <= 0) continue;
-            isDownloading = true;
-            progress = {
-              totalBytes: pendingTotal,
-              downloadedBytes: pendingDownloaded,
-              speed: 0,
-              etaMs: 0,
-              percentage:
-                pendingTotal > 0 ? (pendingDownloaded / pendingTotal) * 100 : 0,
-              completedFiles: 0,
-              totalFiles: 0,
-              files: [],
-            };
-          } else {
-            isDownloading = true;
-            progress = parseDownloadProgress(downloadPayload);
-          }
+          // DownloadPending = bytes on disk but not actively downloading, skip
+          if (downloadKind === "DownloadPending") continue;
 
-          if (progress) {
-            // Sum all values across nodes - each node downloads independently
-            totalBytes += progress.totalBytes;
-            downloadedBytes += progress.downloadedBytes;
-            totalSpeed += progress.speed;
-            completedFiles += progress.completedFiles;
-            totalFiles += progress.totalFiles;
-            allFiles.push(...progress.files);
+          // DownloadOngoing = actively downloading
+          const progress = parseDownloadProgress(downloadPayload);
+          if (
+            !progress ||
+            (progress.downloadedBytes <= 0 && progress.totalBytes <= 0)
+          )
+            continue;
+          isDownloading = true;
 
-            const nodeName =
-              data?.nodes?.[nodeId]?.friendly_name ?? nodeId.slice(0, 8);
-            perNode.push({ nodeId, nodeName, progress });
-          }
+          // Sum all values across nodes - each node downloads independently
+          totalBytes += progress.totalBytes;
+          downloadedBytes += progress.downloadedBytes;
+          totalSpeed += progress.speed;
+          completedFiles += progress.completedFiles;
+          totalFiles += progress.totalFiles;
+          allFiles.push(...progress.files);
+
+          const nodeName =
+            data?.nodes?.[nodeId]?.friendly_name ?? nodeId.slice(0, 8);
+          perNode.push({ nodeId, nodeName, progress });
         }
       }
     }

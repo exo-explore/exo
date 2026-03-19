@@ -13,6 +13,7 @@
     downloadStatus?: {
       isDownloading: boolean;
       progress: DownloadProgress | null;
+      downloadedProgress?: DownloadProgress | null;
       perNode?: Array<{
         nodeId: string;
         nodeName: string;
@@ -148,6 +149,10 @@
   const isDownloading = $derived(downloadStatus?.isDownloading ?? false);
   const progress = $derived(downloadStatus?.progress);
   const percentage = $derived(progress?.percentage ?? 0);
+  const downloadedProgress = $derived(downloadStatus?.downloadedProgress);
+  const downloadedPercentage = $derived(
+    downloadedProgress?.percentage ?? 0,
+  );
   let expandedNodes = $state<Set<string>>(new Set());
 
   function toggleNodeDetails(nodeId: string): void {
@@ -602,6 +607,21 @@
           <div
             class="h-full bg-blue-500/70 transition-all duration-300"
             style="width: {percentage}%"
+          ></div>
+        </div>
+      </div>
+    {:else if !isDownloading && downloadedProgress}
+      <div class="mb-2 space-y-1">
+        <div class="flex items-center justify-between text-xs font-mono">
+          <span class="text-white/40 tracking-wider uppercase">Downloaded</span>
+          <span class="text-white/40"
+            >{downloadedPercentage.toFixed(1)}%</span
+          >
+        </div>
+        <div class="h-1 bg-exo-medium-gray/30 rounded overflow-hidden">
+          <div
+            class="h-full bg-white/20 transition-all duration-300"
+            style="width: {downloadedPercentage}%"
           ></div>
         </div>
       </div>
