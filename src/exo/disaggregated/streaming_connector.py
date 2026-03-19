@@ -14,6 +14,16 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (  # pyright: igno
 
 _LAYER_RE = re.compile(r"layers\.(\d+)\.")
 
+
+def _to_bf16(t: torch.Tensor) -> torch.Tensor:
+    if t.dtype == torch.uint8:
+        t = t.view(torch.float8_e4m3fn)  # type: ignore
+    if t.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):  # type: ignore
+        return t.to(torch.float32).to(torch.bfloat16)
+    if t.dtype in (torch.bfloat16, torch.float16, torch.float32):
+        return t
+    return t.to(torch.bfloat16)
+
 _shared_queue: queue.Queue[tuple[int, torch.Tensor, torch.Tensor] | None] = queue.Queue()
 
 
@@ -67,8 +77,6 @@ class StreamingConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBa
             return
 
         if self._save_count < 1:
-            import logging
-            logging.getLogger("exo").info(f"save_kv_layer: kv_layer.shape={kv_layer.shape} dtype={kv_layer.dtype} slot_mapping.shape={slot_mapping.shape if slot_mapping is not None else None}")  # pyright: ignore[reportAny]
             self._save_count += 1
 
         if slot_mapping is not None:
@@ -84,9 +92,8 @@ class StreamingConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBa
             safe_sm = slot_mapping.clamp(min=0)  # pyright: ignore[reportAny]
             keys = k_flat[safe_sm][valid]  # pyright: ignore[reportAny]
             values = v_flat[safe_sm][valid]  # pyright: ignore[reportAny]
-            if keys.dtype not in (torch.bfloat16, torch.float16, torch.float32):  # pyright: ignore[reportAny]
-                keys = keys.to(torch.bfloat16)  # pyright: ignore[reportAny]
-                values = values.to(torch.bfloat16)  # pyright: ignore[reportAny]
+            keys = _to_bf16(keys)  # pyright: ignore[reportAny]
+            values = _to_bf16(values)  # pyright: ignore[reportAny]
             self._queue.put((layer_idx, keys.cpu(), values.cpu()))  # pyright: ignore[reportAny]
         else:
             self._queue.put((layer_idx, kv_layer.cpu().clone(), kv_layer.cpu().clone()))  # pyright: ignore[reportAny]

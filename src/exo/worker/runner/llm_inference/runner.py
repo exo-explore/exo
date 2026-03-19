@@ -541,6 +541,7 @@ class VllmBuilder(Builder):
             from exo.disaggregated.batch_connector import BatchConnector
             kv_connector_cls = BatchConnector
 
+        self._bound_runner_id = bound_instance.bound_runner_id
         self._engine, self._tool_parser, self._prefix_cache = load_vllm_engine(
             model_path=self.model_path,
             model_id=self.model_id,
@@ -568,12 +569,25 @@ class VllmBuilder(Builder):
         try:
             from exo.disaggregated.prefill_server import start_prefill_server
 
+            from exo.shared.types.events import RunnerStatusUpdated
+            from exo.shared.types.worker.runners import RunnerReady, RunnerRunning
+
+            runner_id = self._bound_runner_id
+
+            def _on_prefill_status(running: bool) -> None:
+                port = prefill_port
+                if running:
+                    self.event_sender.send(RunnerStatusUpdated(runner_id=runner_id, runner_status=RunnerRunning(prefill_server_port=port)))
+                else:
+                    self.event_sender.send(RunnerStatusUpdated(runner_id=runner_id, runner_status=RunnerReady(prefill_server_port=port)))
+
             self._prefill_server = start_prefill_server(
                 engine=self._engine,
                 bind_address="0.0.0.0",
                 port=prefill_port,
                 overlapping=overlapping,
                 prefix_cache=self._prefix_cache,
+                on_status_change=_on_prefill_status,
             )
             self._prefill_server_port = prefill_port
         except Exception:

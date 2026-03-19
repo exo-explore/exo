@@ -50,7 +50,7 @@ def _inject_rotating_kv_cache(cache: RotatingKVCache, keys: torch.Tensor, values
     seq_len = int(k_mx.shape[2])
     cache.keys = k_mx
     cache.values = v_mx
-    cache.offset = seq_len
+    cache.offset = num_tokens
     cache._idx = seq_len
 
 
@@ -116,10 +116,9 @@ def remote_prefill(
                 layers_seen.add(msg.layer_idx)
                 tokens_received += msg.num_tokens
                 if on_prefill_progress and num_layers > 0 and chunks_received % num_layers == 0:
-                    step = chunks_received // num_layers
                     on_prefill_progress(
-                        min(tokens_received // num_layers, total_prompt_tokens),
-                        total_prompt_tokens,
+                        min(tokens_received // num_layers, total_prompt_tokens - start_pos),
+                        total_prompt_tokens - start_pos,
                     )
             elif isinstance(msg, ArraysState):
                 arrays_buffers[msg.layer_idx] = msg.arrays
@@ -140,7 +139,8 @@ def remote_prefill(
             from mlx_lm.models.cache import make_prompt_cache
             caches = cast(list[KVCache | RotatingKVCache | ArraysCache], make_prompt_cache(mlx_model))  # pyright: ignore[reportUnknownMemberType]
 
-    final_offset = start_pos + total_tokens
+    max_received = max((sum(k.shape[0] for k, _v in chunks) for chunks in kv_buffers.values()), default=0)
+    final_offset = start_pos + max_received
 
     for i, cache in enumerate(caches):
         if i in kv_buffers:

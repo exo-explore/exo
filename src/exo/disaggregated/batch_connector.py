@@ -68,6 +68,10 @@ class BatchConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBaseCl
             safe_sm = slot_mapping.clamp(min=0)  # pyright: ignore[reportAny]
             keys = k_flat[safe_sm][valid]  # pyright: ignore[reportAny]
             values = v_flat[safe_sm][valid]  # pyright: ignore[reportAny]
+            from exo.disaggregated.streaming_connector import _to_bf16
+
+            keys = _to_bf16(keys)  # pyright: ignore[reportAny]
+            values = _to_bf16(values)  # pyright: ignore[reportAny]
 
             prev = self.captured_layers.get(layer_idx)
             if prev is not None:

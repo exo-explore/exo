@@ -73,8 +73,15 @@ for i in range(min(6, len(mlx_cache))):
     diff_tensor = mx.abs(mlx_k[:, :, :n, :] - vk_mx[:, :, :n, :])
     max_idx = mx.argmax(diff_tensor.reshape(-1)).item()
     total_elems = diff_tensor.shape[1] * n * diff_tensor.shape[3]
-    h = (max_idx // (n * diff_tensor.shape[3])) % diff_tensor.shape[1]
-    s = (max_idx // diff_tensor.shape[3]) % n
-    d = max_idx % diff_tensor.shape[3]
-    print(f"  cosine_sim={cos_sim:.6f} max_diff={max_diff:.4f} at h={h} pos={s} dim={d}: mlx={float(mlx_k[0,h,s,d].item()):.6f} vllm={float(vk_mx[0,h,s,d].item()):.6f}")
-    print(f"  mean_diff={mean_diff:.6f} p50={float(mx.sort(diff_tensor.reshape(-1))[diff_tensor.size // 2].item()):.6f} p99={float(mx.sort(diff_tensor.reshape(-1))[int(diff_tensor.size * 0.99)].item()):.6f}")
+    h_idx = (max_idx // (n * diff_tensor.shape[3])) % diff_tensor.shape[1]
+    s_idx = (max_idx // diff_tensor.shape[3]) % n
+    d_idx = max_idx % diff_tensor.shape[3]
+    print(f"  cosine_sim={cos_sim:.6f} max_diff={max_diff:.4f} at h={h_idx} pos={s_idx} dim={d_idx}: mlx={float(mlx_k[0,h_idx,s_idx,d_idx].item()):.6f} vllm={float(vk_mx[0,h_idx,s_idx,d_idx].item()):.6f}")
+
+    D = mlx_k.shape[3]
+    for pos in [0, 100, n-1]:
+        mlx_row = [float(mlx_k[0, 0, pos, d].item()) for d in range(D)]
+        vllm_row = [float(vk_mx[0, 0, pos, d].item()) for d in range(D)]
+        diffs = [abs(mlx_row[d] - vllm_row[d]) for d in range(D)]
+        top5 = sorted(range(D), key=lambda d: -diffs[d])[:5]
+        print(f"  pos={pos} top5 diff dims: {[(d, f'{diffs[d]:.3f}', f'mlx={mlx_row[d]:.3f}', f'vllm={vllm_row[d]:.3f}') for d in top5]}")

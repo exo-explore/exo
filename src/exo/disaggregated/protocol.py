@@ -61,9 +61,7 @@ def _str_to_dtype(s: str) -> torch.dtype:
 
 
 def _dtype_size(dtype: torch.dtype) -> int:
-    if dtype == torch.bfloat16:
-        return 4
-    return {torch.float16: 2, torch.float32: 4}[dtype]
+    return {torch.float16: 2, torch.bfloat16: 2, torch.float32: 4}[dtype]
 
 
 def write_header(stream: BinaryIO, header: dict[str, object]) -> None:
@@ -74,7 +72,7 @@ def write_header(stream: BinaryIO, header: dict[str, object]) -> None:
 
 def _tensor_to_bytes(t: torch.Tensor) -> bytes:
     if t.dtype == torch.bfloat16:
-        return t.contiguous().float().numpy().tobytes()  # type: ignore
+        return t.contiguous().view(torch.int16).numpy().tobytes()  # type: ignore
     return t.contiguous().numpy().tobytes()  # type: ignore
 
 
@@ -135,8 +133,8 @@ def read_message(stream: BinaryIO, header: dict[str, object]) -> Message | None:
         values_raw = _read_exactly(stream, tensor_bytes)
         shape = (num_tokens, n_heads, head_dim)
         if dtype == torch.bfloat16:
-            keys: torch.Tensor = torch.frombuffer(bytearray(keys_raw), dtype=torch.float32).reshape(shape).to(torch.bfloat16).clone()  # type: ignore
-            values: torch.Tensor = torch.frombuffer(bytearray(values_raw), dtype=torch.float32).reshape(shape).to(torch.bfloat16).clone()  # type: ignore
+            keys: torch.Tensor = torch.frombuffer(bytearray(keys_raw), dtype=torch.int16).view(torch.bfloat16).reshape(shape).clone()  # type: ignore
+            values: torch.Tensor = torch.frombuffer(bytearray(values_raw), dtype=torch.int16).view(torch.bfloat16).reshape(shape).clone()  # type: ignore
         else:
             keys = torch.frombuffer(bytearray(keys_raw), dtype=dtype).reshape(shape).clone()  # type: ignore
             values = torch.frombuffer(bytearray(values_raw), dtype=dtype).reshape(shape).clone()  # type: ignore
@@ -159,7 +157,7 @@ def read_message(stream: BinaryIO, header: dict[str, object]) -> Message | None:
                 total_elems *= d  # pyright: ignore[reportAny]
             raw = _read_exactly(stream, total_elems * elem_size)
             if dtype == torch.bfloat16:
-                t: torch.Tensor = torch.frombuffer(bytearray(raw), dtype=torch.float32).reshape(shape_arr).to(torch.bfloat16).clone()  # type: ignore
+                t: torch.Tensor = torch.frombuffer(bytearray(raw), dtype=torch.int16).view(torch.bfloat16).reshape(shape_arr).clone()  # type: ignore
             else:
                 t = torch.frombuffer(bytearray(raw), dtype=dtype).reshape(shape_arr).clone()  # type: ignore
             arrays.append(t)  # pyright: ignore[reportUnknownArgumentType]

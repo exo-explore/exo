@@ -5,6 +5,7 @@ import json
 import socketserver
 import threading
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -26,6 +27,7 @@ from exo.worker.runner.bootstrap import logger
 _engine_ref: LLMEngine | None = None
 _prefix_cache_ref: KVPrefixCache | None = None
 _overlapping: bool = True
+_on_status_change: Callable[[bool], None] | None = None
 _connector_patched: bool = False
 _gdn_patched: bool = False
 _gdn_states: dict[int, dict[str, torch.Tensor]] = {}
@@ -478,10 +480,16 @@ class _PrefillHandler(socketserver.StreamRequestHandler):
             logger.info(f"Prefill request: {len(token_ids)} tokens, start_pos={start_pos}, overlapping={_overlapping}")
             t0 = time.perf_counter()
 
-            if _overlapping:
-                _run_prefill_overlapping(engine, token_ids, start_pos, self.wfile)
-            else:
-                _run_prefill_batch(engine, token_ids, start_pos, self.wfile)
+            if _on_status_change:
+                _on_status_change(True)
+            try:
+                if _overlapping:
+                    _run_prefill_overlapping(engine, token_ids, start_pos, self.wfile)
+                else:
+                    _run_prefill_batch(engine, token_ids, start_pos, self.wfile)
+            finally:
+                if _on_status_change:
+                    _on_status_change(False)
 
             elapsed = time.perf_counter() - t0
             logger.info(f"Prefill complete: {len(token_ids)} tokens in {elapsed*1000:.0f}ms ({len(token_ids)/elapsed:.0f} tok/s)")
@@ -495,11 +503,13 @@ def start_prefill_server(
     port: int,
     overlapping: bool = True,
     prefix_cache: KVPrefixCache | None = None,
+    on_status_change: Callable[[bool], None] | None = None,
 ) -> socketserver.ThreadingTCPServer:
-    global _engine_ref, _overlapping, _prefix_cache_ref
+    global _engine_ref, _overlapping, _prefix_cache_ref, _on_status_change
     _engine_ref = engine
     _overlapping = overlapping
     _prefix_cache_ref = prefix_cache
+    _on_status_change = on_status_change
 
     _patch_gdn_capture()
     _init_gdn_layer_order()

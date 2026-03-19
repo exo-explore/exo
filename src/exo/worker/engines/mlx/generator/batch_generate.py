@@ -27,6 +27,7 @@ from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
     KVPrefixCache,
+    cache_length,
     encode_prompt,
     make_kv_cache,
 )
@@ -121,9 +122,7 @@ class ExoBatchGenerator:
         matched_index: int | None = None
         prompt_tokens = all_prompt_tokens
 
-        has_prefill_endpoints = bool(task_params.prefill_endpoints) and len(all_prompt_tokens) > 1000
-
-        if self.kv_prefix_cache is not None and not is_bench and not has_prefill_endpoints:
+        if self.kv_prefix_cache is not None and not is_bench:
             cache, remaining_tokens, matched_index = self.kv_prefix_cache.get_kv_cache(
                 self.model, all_prompt_tokens
             )
@@ -170,8 +169,8 @@ class ExoBatchGenerator:
                     model_id=str(task_params.model),
                     mlx_model=self.model,
                     on_prefill_progress=on_prefill_progress,
-                    existing_cache=None,
-                    start_pos=0,
+                    existing_cache=list(cache) if prefix_hit_length > 0 else None,
+                    start_pos=cache_length(cache) if prefix_hit_length > 0 else 0,
                 )
                 cache = injected_cache
                 from exo.worker.engines.mlx.cache import snapshot_ssm_states
