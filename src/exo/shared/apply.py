@@ -118,7 +118,10 @@ def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> S
         # TODO(ciaran): deduplicate by model_id for now. Will need to use
         # shard_metadata again when pipeline and tensor downloads differ.
         # For now this is fine
-        if existing_dp.shard_metadata.model_card.model_id == dp.shard_metadata.model_card.model_id:
+        if (
+            existing_dp.shard_metadata.model_card.model_id
+            == dp.shard_metadata.model_card.model_id
+        ):
             current[i] = dp
             replaced = True
             break
