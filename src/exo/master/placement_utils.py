@@ -40,6 +40,8 @@ def filter_cycles_by_memory(
 def get_smallest_cycles(
     cycles: list[Cycle],
 ) -> list[Cycle]:
+    if not cycles:
+        return []
     min_nodes = min(len(cycle) for cycle in cycles)
     return [cycle for cycle in cycles if len(cycle) == min_nodes]
 
