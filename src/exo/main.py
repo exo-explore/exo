@@ -83,6 +83,7 @@ class Node:
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 election_receiver=router.receiver(topics.ELECTION_MESSAGES),
+                max_in_flight_text_generations=args.max_in_flight_text_generations,
             )
         else:
             api = None
@@ -300,6 +301,7 @@ class Args(CamelCaseModel):
     force_master: bool = False
     spawn_api: bool = False
     api_port: PositiveInt = 52415
+    max_in_flight_text_generations: PositiveInt = 2
     tb_only: bool = False
     no_worker: bool = False
     no_downloads: bool = False
@@ -342,6 +344,13 @@ class Args(CamelCaseModel):
             type=int,
             dest="api_port",
             default=52415,
+        )
+        parser.add_argument(
+            "--max-in-flight-text-generations",
+            type=int,
+            dest="max_in_flight_text_generations",
+            default=2,
+            help="Maximum concurrent in-flight text generation streams before API returns 429",
         )
         parser.add_argument(
             "--no-worker",

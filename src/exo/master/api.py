@@ -1,6 +1,7 @@
 import base64
 import contextlib
 import json
+import os
 import random
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
@@ -205,6 +206,7 @@ class API:
         download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
+        max_in_flight_text_generations: int = 2,
     ) -> None:
         self.state = State()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
@@ -216,6 +218,7 @@ class API:
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
         self.port = port
+        self.max_in_flight_text_generations = max_in_flight_text_generations
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -697,10 +700,30 @@ class API:
             "TODO: we should send a notification to the user to download the model"
         )
 
+    def _enforce_text_generation_backpressure(self) -> None:
+        """Protect workers from overload by limiting concurrent text streams.
+
+        Sub-agent workloads can issue many concurrent requests (for example, parallel
+        tool-calling clients). A bounded number of in-flight streams prevents runaway
+        queue growth and OOM cascades on smaller clusters.
+        """
+        max_in_flight = self.max_in_flight_text_generations
+        in_flight = len(self._text_generation_queues)
+        if in_flight >= max_in_flight:
+            raise HTTPException(
+                status_code=HTTPStatus.TOO_MANY_REQUESTS,
+                detail=(
+                    "Server is busy processing other generations. "
+                    f"in_flight={in_flight}, limit={max_in_flight}. "
+                    "Retry shortly or reduce client-side parallelism."
+                ),
+            )
+
     async def chat_completions(
         self, payload: ChatCompletionRequest
     ) -> ChatCompletionResponse | StreamingResponse:
         """OpenAI Chat Completions API - adapter."""
+        self._enforce_text_generation_backpressure()
         task_params = chat_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
@@ -735,6 +758,7 @@ class API:
     async def bench_chat_completions(
         self, payload: BenchChatCompletionRequest
     ) -> BenchChatCompletionResponse:
+        self._enforce_text_generation_backpressure()
         task_params = chat_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
