@@ -80,10 +80,10 @@ def write_kv_chunk(stream: BinaryIO, layer_idx: int, keys: torch.Tensor, values:
     keys_bytes = _tensor_to_bytes(keys)
     values_bytes = _tensor_to_bytes(values)
     num_tokens: int = keys.shape[0]
-    header = struct.pack(">BII", MSG_KV_CHUNK, layer_idx, num_tokens)
-    _write_exactly(stream, header)
-    _write_exactly(stream, keys_bytes)
-    _write_exactly(stream, values_bytes)
+    n_heads: int = keys.shape[1]
+    head_dim: int = keys.shape[2]
+    header = struct.pack(">BIIII", MSG_KV_CHUNK, layer_idx, num_tokens, n_heads, head_dim)
+    _write_exactly(stream, header + keys_bytes + values_bytes)
 
 
 def write_arrays_state(stream: BinaryIO, layer_idx: int, arrays: list[torch.Tensor]) -> None:
@@ -121,11 +121,9 @@ def read_message(stream: BinaryIO, header: dict[str, object]) -> Message | None:
     if msg_type == MSG_KV_CHUNK:
         layer_idx: int
         num_tokens: int
-        layer_idx, num_tokens = struct.unpack(">II", _read_exactly(stream, 8))  # pyright: ignore[reportAny]
-        layers_info: list[dict[str, object]] = header["layers"]  # pyright: ignore[reportAssignmentType]
-        layer_info: dict[str, object] = layers_info[layer_idx]
-        n_heads: int = layer_info["n_heads"]  # pyright: ignore[reportAssignmentType]
-        head_dim: int = layer_info["head_dim"]  # pyright: ignore[reportAssignmentType]
+        n_heads: int
+        head_dim: int
+        layer_idx, num_tokens, n_heads, head_dim = struct.unpack(">IIII", _read_exactly(stream, 16))  # pyright: ignore[reportAny]
         dtype = _str_to_dtype(str(header["dtype"]))
         elem_size = _dtype_size(dtype)
         tensor_bytes: int = num_tokens * n_heads * head_dim * elem_size

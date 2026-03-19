@@ -231,13 +231,6 @@ class ExoBatchGenerator:
 
         max_tokens = task_params.max_output_tokens or MAX_TOKENS
 
-        if used_remote_prefill:
-            for ci, c in enumerate(cache):
-                if isinstance(c, RotatingKVCache):
-                    logger.info(f"Cache[{ci}] RotatingKV: keys={c.keys.shape if c.keys is not None else None} _idx={c._idx} offset={c.offset} max_size={c.max_size}")
-                elif isinstance(c, KVCache):
-                    logger.info(f"Cache[{ci}] KV: keys={c.keys.shape if c.keys is not None else None} offset={c.offset}")
-
         uids = self._mlx_gen.insert(
             prompts=[last_tokens.tolist()],
             max_tokens=[max_tokens],

@@ -275,7 +275,8 @@ class TorchKVCache:
 
             keys = layer.keys
             values = layer.values
-            if keys.dim() == 3:
+            needs_reshape = keys.dim() == 3 and keys.shape[1:] != k_all.shape[1:]
+            if needs_reshape:
                 offset = token_offset_per_group[gi] if token_offset_per_group else 0
                 if offset > 0:
                     keys = keys[offset:]

@@ -77,12 +77,14 @@ def remote_prefill(
     logger.info(f"Connecting to prefill server at {host}:{port} ({len(token_ids)} tokens, start_pos={start_pos})")
     t0 = time.perf_counter()
 
-    sock = socket.create_connection((host, port), timeout=30)
+    sock = socket.create_connection((host, port), timeout=60)
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
     try:
         request = json.dumps({"model": model_id, "token_ids": token_ids, "start_pos": start_pos}).encode("utf-8") + b"\n"
         sock.sendall(request)
 
-        raw_stream = sock.makefile("rb", buffering=65536)
+        raw_stream = sock.makefile("rb", buffering=256 * 1024)
         stream: BinaryIO = raw_stream  # pyright: ignore[reportAssignmentType]
 
         first_byte: bytes = raw_stream.peek(1)[:1]  # type: ignore

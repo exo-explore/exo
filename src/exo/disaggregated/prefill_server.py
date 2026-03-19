@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import socket
 import socketserver
 import threading
 import time
@@ -172,27 +173,12 @@ def _run_prefill_overlapping(engine: LLMEngine, token_ids: list[int], start_pos:
     layer_queue = get_shared_queue()
 
     server_cached = 0
-    cached_torch: TorchKVCache | None = None
     if _prefix_cache_ref is not None:
-        cached_torch, server_cached, _ = _prefix_cache_ref.lookup(token_ids)
+        _, server_cached, _ = _prefix_cache_ref.lookup(token_ids)
     skip_tokens = max(0, start_pos - server_cached)
 
     num_layers, dtype_str, layers_info = _get_layer_info(engine)
     write_header(wfile, {"num_layers": num_layers, "dtype": dtype_str, "layers": layers_info})  # pyright: ignore[reportAny]
-
-    if start_pos < server_cached and cached_torch is not None:
-        for i, layer in enumerate(cached_torch.layers):
-            if isinstance(layer, KVLayerState) and layer.keys.numel() > 0:
-                keys = layer.keys
-                values = layer.values
-                if keys.dim() == 4:
-                    keys = keys.reshape(-1, keys.shape[-2], keys.shape[-1])
-                    values = values.reshape(-1, values.shape[-2], values.shape[-1])
-                keys = keys[start_pos:server_cached]
-                values = values[start_pos:server_cached]
-                if keys.shape[0] > 0:
-                    write_kv_chunk(wfile, i, keys, values)  # pyright: ignore[reportAny]
-        logger.info(f"Sent cached KV for positions {start_pos}-{server_cached} from server prefix cache")
 
     from vllm.sampling_params import (
         SamplingParams,
@@ -224,17 +210,20 @@ def _run_prefill_overlapping(engine: LLMEngine, token_ids: list[int], start_pos:
                 trim = skip_tokens - prev
                 keys = keys[trim:]
                 values = values[trim:]
+            if chunks_sent[0] == 0:
+                logger.info(f"First KV chunk: layer={layer_idx} keys={keys.shape} keys.dtype={keys.dtype} values.dtype={values.dtype}")
             write_kv_chunk(wfile, layer_idx, keys, values)  # pyright: ignore[reportAny]
             chunks_sent[0] += 1
 
     writer_thread = threading.Thread(target=writer_loop, daemon=True)
     writer_thread.start()
 
+    extracted_cache: TorchKVCache | None = None
     while engine.has_unfinished_requests():
         outputs = engine.step()
         for output in outputs:
             if output.request_id == request_id and output.outputs[0].token_ids:
-                _save_vllm_prefix_cache(engine, request_id, prefill_token_ids)
+                extracted_cache = _extract_vllm_cache(engine, request_id, len(prefill_token_ids))
                 engine.abort_request([request_id])  # type: ignore
                 break
         else:
@@ -244,14 +233,15 @@ def _run_prefill_overlapping(engine: LLMEngine, token_ids: list[int], start_pos:
     layer_queue.put(None)
     writer_thread.join()
     actual_per_layer = max(layer_token_counts.values()) if layer_token_counts else 0
-    new_tokens_sent = max(0, actual_per_layer - skip_tokens)
-    cached_tokens_sent = max(0, server_cached - start_pos) if start_pos < server_cached else 0
-    tokens_sent = cached_tokens_sent + new_tokens_sent
+    tokens_sent = max(0, actual_per_layer - skip_tokens)
     logger.info(f"Overlapping prefill: sent {chunks_sent[0]} chunks, {tokens_sent} tokens (server_cached={server_cached}, skip={skip_tokens})")
 
     cached_arrays: list[tuple[int, list[torch.Tensor]]] = []
     _stream_gdn_states_and_collect(engine, wfile, num_layers, layers_info, cached_arrays)
     write_done(wfile, tokens_sent)  # pyright: ignore[reportAny]
+
+    if extracted_cache is not None:
+        threading.Thread(target=_store_prefix_cache, args=(prefill_token_ids, extracted_cache), daemon=True).start()
 
 
 def _run_prefill_batch(engine: LLMEngine, token_ids: list[int], start_pos: int, wfile: Any) -> None:  # pyright: ignore[reportAny]
@@ -286,10 +276,12 @@ def _run_prefill_batch(engine: LLMEngine, token_ids: list[int], start_pos: int, 
     params = SamplingParams(max_tokens=2, detokenize=False)  # pyright: ignore[reportCallIssue]
     engine.add_request(request_id, {"prompt_token_ids": prefill_token_ids}, params)  # pyright: ignore[reportArgumentType]
 
+    extracted_cache: TorchKVCache | None = None
     while engine.has_unfinished_requests():
         outputs = engine.step()
         for output in outputs:
             if output.request_id == request_id and output.outputs[0].token_ids:
+                extracted_cache = _extract_vllm_cache(engine, request_id, len(prefill_token_ids))
                 engine.abort_request([request_id])  # type: ignore
                 break
         else:
@@ -315,6 +307,9 @@ def _run_prefill_batch(engine: LLMEngine, token_ids: list[int], start_pos: int, 
     cached_arrays: list[tuple[int, list[torch.Tensor]]] = []
     _stream_gdn_states_and_collect(engine, wfile, num_layers, layers_info, cached_arrays)
     write_done(wfile, tokens_sent)  # pyright: ignore[reportAny]
+
+    if extracted_cache is not None:
+        threading.Thread(target=_store_prefix_cache, args=(prefill_token_ids, extracted_cache), daemon=True).start()
 
 
 def _stream_gdn_states_and_collect(
@@ -387,32 +382,73 @@ def _build_torch_cache(kv_chunks: list[tuple[int, torch.Tensor, torch.Tensor]], 
     return TorchKVCache(ordered)
 
 
-def _save_vllm_prefix_cache(engine: LLMEngine, request_id: str, prefill_token_ids: list[int]) -> None:
-    if _prefix_cache_ref is None:
-        logger.info("Server prefix cache: no cache ref")
-        return
+def _extract_vllm_cache(engine: LLMEngine, request_id: str, num_tokens: int) -> TorchKVCache | None:
     try:
         from exo.worker.engines.vllm.vllm_generator import _save_prefix_cache
+        from exo.worker.engines.vllm.growable_cache import get_model_runner
+        from exo.worker.engines.vllm.vllm_generator import _build_layer_groups
+        model_runner = get_model_runner()
+        if model_runner is None:
+            return None
+        engine_core = engine.engine_core.engine_core  # type: ignore
+        coordinator = engine_core.scheduler.kv_cache_manager.coordinator  # type: ignore
+        kv_cache_config = engine_core.scheduler.kv_cache_manager.kv_cache_config  # type: ignore
 
-        try:
-            engine_core = engine.engine_core.engine_core  # type: ignore
-            coordinator = engine_core.scheduler.kv_cache_manager.coordinator  # type: ignore
-            all_keys: list[str] = []
-            for mgr in coordinator.single_type_managers:  # type: ignore
-                all_keys.extend(str(k) for k in mgr.req_to_blocks)  # type: ignore
-            logger.info(f"Server prefix cache: request_id={request_id}, available_keys={all_keys[:5]}")
-        except Exception:
-            pass
+        internal_id: str | None = None
+        for mgr in coordinator.single_type_managers:  # type: ignore
+            for key in mgr.req_to_blocks:  # type: ignore
+                if str(key).startswith(request_id):  # type: ignore
+                    internal_id = str(key)  # type: ignore
+                    break
+            if internal_id:
+                break
+        if internal_id is None:
+            return None
 
+        null_block = coordinator.block_pool.null_block  # type: ignore
+        block_ids_per_group: list[list[int]] = []
+        token_offset_per_group: list[int] = []
+        for mgr in coordinator.single_type_managers:  # type: ignore
+            blocks = mgr.req_to_blocks.get(internal_id)  # type: ignore
+            if not blocks:
+                block_ids_per_group.append([])
+                token_offset_per_group.append(0)
+                continue
+            block_size: int = mgr.block_size  # type: ignore
+            num_leading_nulls = 0
+            for b in blocks:  # type: ignore
+                if b is null_block or b.is_null:  # type: ignore
+                    num_leading_nulls += 1
+                else:
+                    break
+            real_blocks = [b for b in blocks if b is not null_block and not b.is_null]  # type: ignore
+            block_ids_per_group.append([b.block_id for b in real_blocks])  # type: ignore
+            token_offset_per_group.append(num_leading_nulls * block_size)
+
+        layer_to_group = _build_layer_groups(kv_cache_config)
+        return TorchKVCache.from_vllm_cache(
+            model_runner.kv_caches,  # type: ignore
+            block_ids_per_group,
+            layer_to_group,
+            num_tokens,
+            token_offset_per_group,
+        )
+    except Exception:
+        logger.opt(exception=True).warning("Failed to extract vLLM cache")
+        return None
+
+
+def _store_prefix_cache(token_ids: list[int], torch_cache: TorchKVCache) -> None:
+    if _prefix_cache_ref is None:
+        return
+    try:
         before = len(_prefix_cache_ref.prompts)
-        _save_prefix_cache(engine, _prefix_cache_ref, request_id, prefill_token_ids, len(prefill_token_ids))
+        _prefix_cache_ref.add_from_torch(token_ids, torch_cache)
         after = len(_prefix_cache_ref.prompts)
         if after > before:
-            logger.info(f"Server prefix cache: saved {len(prefill_token_ids)} tokens (entries: {before} → {after})")
-        else:
-            logger.info(f"Server prefix cache: save had no effect for request_id={request_id}")
+            logger.info(f"Server prefix cache: saved {len(token_ids)} tokens (entries: {before} → {after})")
     except Exception:
-        logger.opt(exception=True).warning("Failed to save server-side prefix cache")
+        logger.opt(exception=True).warning("Failed to store prefix cache")
 
 
 def _check_cache(token_ids: list[int]) -> TorchKVCache | None:
@@ -457,6 +493,11 @@ def _send_cached(torch_cache: TorchKVCache, token_ids: list[int], wfile: Any, en
 
 
 class _PrefillHandler(socketserver.StreamRequestHandler):
+    def setup(self) -> None:
+        super().setup()
+        self.request.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # type: ignore
+        self.request.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)  # type: ignore
+
     def handle(self) -> None:
         try:
             line = self.rfile.readline()
