@@ -2,10 +2,10 @@ from enum import Enum
 
 from pydantic import model_validator
 
-from exo.shared.models.model_cards import ModelTask
+from exo_core.model_cards import ModelTask
 from exo.shared.types.common import Host, Id, NodeId
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments, ShardMetadata
-from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
+from exo_core.pydantic_ext import CamelCaseModel, TaggedModel
 
 
 class InstanceId(Id):

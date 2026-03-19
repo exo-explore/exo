@@ -47,8 +47,8 @@ dev = [
 ]
 
 [project.optional-dependencies]
-mlx = ["mlx_runner"]
-cuda = ["vllm_runner; sys_platform == 'linux' and platform_machine == 'aarch64'"]
+mlx = ["mlx_engine"]
+cuda = ["vllm_engine; sys_platform == 'linux' and platform_machine == 'aarch64'"]
 
 ###
 # workspace configuration
@@ -63,8 +63,9 @@ members = [
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
-mlx_runner = { path = "python/mlx_runner" }
-vllm_runner = { path = "python/vllm_runner" }
+exo_core = { workspace = true }
+mlx_engine = { path = "python/mlx_engine" }
+vllm_engine = { path = "python/vllm_engine" }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/eval-left-padding-in-batched-rotation" }
 # Uncomment to use local mlx/mlx-lm development versions:

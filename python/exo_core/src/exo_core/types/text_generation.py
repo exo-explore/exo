@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from exo.shared.types.common import ModelId
+from exo_core.types.common import ModelId
 
 MessageRole = Literal["user", "assistant", "system", "developer"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]

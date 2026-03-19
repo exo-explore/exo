@@ -3,8 +3,8 @@ from typing import TypeAlias, final
 
 from pydantic import Field
 
-from exo.shared.models.model_cards import ModelCard
-from exo.utils.pydantic_ext import TaggedModel
+from exo_core.model_cards import ModelCard
+from exo_core.pydantic import TaggedModel
 
 
 class Sharding(str, Enum):

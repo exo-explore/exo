@@ -9,8 +9,8 @@ from exo.api.types import (
     TopLogprobItem,
     Usage,
 )
-from exo.shared.models.model_cards import ModelId
-from exo.utils.pydantic_ext import TaggedModel
+from exo_core.model_cards import ModelId
+from exo_core.pydantic import TaggedModel
 
 from .common import CommandId
 

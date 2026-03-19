@@ -2,10 +2,10 @@ from collections.abc import Mapping
 
 from pydantic import model_validator
 
-from exo.shared.models.model_cards import ModelId
-from exo.shared.types.common import Id, NodeId
-from exo.shared.types.worker.shards import ShardMetadata
-from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
+from exo_core.model_cards import ModelId
+from exo_core.types.common import Id, NodeId
+from exo_core.types.shards import ShardMetadata
+from exo_core.pydantic import CamelCaseModel, TaggedModel
 
 
 class RunnerId(Id):

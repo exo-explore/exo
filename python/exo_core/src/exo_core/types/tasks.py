@@ -6,12 +6,12 @@ from exo.api.types import (
     ImageEditsTaskParams,
     ImageGenerationTaskParams,
 )
-from exo.shared.types.common import CommandId, Id
-from exo.shared.types.text_generation import TextGenerationTaskParams
-from exo.shared.types.worker.instances import BoundInstance, InstanceId
-from exo.shared.types.worker.runners import RunnerId
-from exo.shared.types.worker.shards import ShardMetadata
-from exo.utils.pydantic_ext import TaggedModel
+from exo_core.types.common import CommandId, Id
+from exo_core.types.text_generation import TextGenerationTaskParams
+from exo_core.types.instances import BoundInstance, InstanceId
+from exo_core.types.runners import RunnerId
+from exo_core.types.shards import ShardMetadata
+from exo_core.pydantic import TaggedModel
 
 
 class TaskId(Id):
