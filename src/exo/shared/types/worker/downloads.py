@@ -23,32 +23,43 @@ class DownloadProgressData(CamelCaseModel):
     files: dict[str, "DownloadProgressData"]
 
 
-class BaseDownloadProgress(TaggedModel):
+class BaseModelStatus(TaggedModel):
     node_id: NodeId
     shard_metadata: ShardMetadata
     model_directory: str = ""
 
 
-class DownloadPending(BaseDownloadProgress):
+class ModelNotDownloading(BaseModelStatus):
     downloaded: Memory = Memory()
     total: Memory = Memory()
 
 
-class DownloadCompleted(BaseDownloadProgress):
+class ModelReady(BaseModelStatus):
     total: Memory
     read_only: bool = False
 
 
-class DownloadFailed(BaseDownloadProgress):
+class ModelDownloadFailed(BaseModelStatus):
     error_message: str
 
 
-class DownloadOngoing(BaseDownloadProgress):
+class ModelDownloading(BaseModelStatus):
     download_progress: DownloadProgressData
 
 
-DownloadProgress = (
-    DownloadPending | DownloadCompleted | DownloadFailed | DownloadOngoing
+class ModelRejected(BaseModelStatus):
+    reason: str
+    required: Memory
+    available: Memory
+    limit: Memory
+
+
+ModelStatus = (
+    ModelNotDownloading
+    | ModelReady
+    | ModelDownloadFailed
+    | ModelDownloading
+    | ModelRejected
 )
 
 

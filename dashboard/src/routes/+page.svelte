@@ -1553,12 +1553,14 @@
     progress: DownloadProgress | null;
     perNode: NodeDownloadStatus[];
     failedError: string | null;
+    rejectedError: string | null;
   } {
     const empty = {
       isDownloading: false,
       progress: null,
       perNode: [] as NodeDownloadStatus[],
       failedError: null,
+      rejectedError: null,
     };
 
     if (!downloadsData || Object.keys(downloadsData).length === 0) {
@@ -1590,8 +1592,8 @@
         const downloadModelId = extractModelIdFromDownload(downloadPayload);
         if (!downloadModelId || downloadModelId !== modelId) continue;
 
-        // DownloadFailed — return with any data collected so far
-        if (downloadKind === "DownloadFailed") {
+        // ModelDownloadFailed — return with any data collected so far
+        if (downloadKind === "ModelDownloadFailed") {
           return {
             isDownloading: false,
             progress: null,
@@ -1600,12 +1602,25 @@
               (downloadPayload.errorMessage as string) ||
               (downloadPayload.error_message as string) ||
               "Download failed",
+            rejectedError: null,
+          };
+        }
+
+        // ModelRejected — storage limit exceeded
+        if (downloadKind === "ModelRejected") {
+          return {
+            isDownloading: false,
+            progress: null,
+            perNode: Array.from(perNodeMap.values()),
+            failedError: null,
+            rejectedError:
+              (downloadPayload.reason as string) || "Storage limit exceeded",
           };
         }
 
         if (
-          downloadKind !== "DownloadOngoing" &&
-          downloadKind !== "DownloadPending" &&
+          downloadKind !== "ModelDownloading" &&
+          downloadKind !== "ModelNotDownloading" &&
           downloadKind !== "DownloadCompleted"
         )
           continue;
@@ -1624,7 +1639,7 @@
           continue;
         }
 
-        if (downloadKind === "DownloadPending") {
+        if (downloadKind === "ModelNotDownloading") {
           const pendingDownloaded = getBytes(
             downloadPayload.downloaded ??
               downloadPayload.downloaded_bytes ??
@@ -1648,7 +1663,7 @@
           continue;
         }
 
-        // DownloadOngoing
+        // ModelDownloading
         const progress = parseDownloadProgress(downloadPayload);
         if (
           !progress ||
@@ -1694,6 +1709,7 @@
         progress: null,
         perNode,
         failedError: null,
+        rejectedError: null,
       };
     }
 
@@ -1714,6 +1730,7 @@
       },
       perNode,
       failedError: null,
+      rejectedError: null,
     };
   }
 
@@ -1794,6 +1811,17 @@
         errorMessage: result.failedError,
         progress: null,
         statusText: "FAILED",
+        perNode: [],
+      };
+    }
+
+    if (result.rejectedError) {
+      return {
+        isDownloading: false,
+        isFailed: true,
+        errorMessage: result.rejectedError,
+        progress: null,
+        statusText: "REJECTED",
         perNode: [],
       };
     }
@@ -2447,7 +2475,13 @@
     if (Object.keys(prev).length > 0) {
       for (const [id, currentStatus] of Object.entries(currentStatuses)) {
         const prevStatus = prev[id];
-        if (!prevStatus || prevStatus === currentStatus) continue;
+        if (prevStatus === currentStatus) continue;
+        if (
+          !prevStatus &&
+          currentStatus !== "REJECTED" &&
+          currentStatus !== "FAILED"
+        )
+          continue;
 
         const modelId = getInstanceModelId(instanceData[id]);
         const shortName = modelId
@@ -2479,6 +2513,14 @@
         // Any -> Failed
         if (prevStatus !== "FAILED" && currentStatus === "FAILED") {
           addToast({ type: "error", message: `Model failed: ${shortName}` });
+        }
+
+        if (prevStatus !== "REJECTED" && currentStatus === "REJECTED") {
+          addToast({
+            type: "warning",
+            message: `Storage limit exceeded: ${shortName}`,
+            duration: 8000,
+          });
         }
 
         // Any -> Shutdown
