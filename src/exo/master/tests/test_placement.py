@@ -30,10 +30,10 @@ from exo.shared.types.text_generation import (
 )
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import (
-    DownloadCompleted,
-    DownloadFailed,
-    DownloadOngoing,
     DownloadProgressData,
+    ModelDownloadFailed,
+    ModelDownloading,
+    ModelReady,
 )
 from exo.shared.types.worker.instances import (
     Instance,
@@ -628,7 +628,7 @@ def test_placement_prefers_cycle_with_downloaded_model(
     # node_b has the model fully downloaded, node_a does not
     download_status = {
         node_b: [
-            DownloadCompleted(
+            ModelReady(
                 node_id=node_b,
                 shard_metadata=shard_meta,
                 total=model_card.storage_size,
@@ -675,7 +675,7 @@ def test_placement_prefers_cycle_with_higher_download_progress(
     # node_a: 30% downloaded, node_b: 80% downloaded
     download_status = {
         node_a: [
-            DownloadOngoing(
+            ModelDownloading(
                 node_id=node_a,
                 shard_metadata=shard_meta,
                 download_progress=DownloadProgressData(
@@ -691,7 +691,7 @@ def test_placement_prefers_cycle_with_higher_download_progress(
             ),
         ],
         node_b: [
-            DownloadOngoing(
+            ModelDownloading(
                 node_id=node_b,
                 shard_metadata=shard_meta,
                 download_progress=DownloadProgressData(
@@ -748,7 +748,7 @@ def test_placement_does_not_prefer_cycle_with_failed_download(
     # node_b has a failed download — should not be preferred
     download_status = {
         node_b: [
-            DownloadFailed(
+            ModelDownloadFailed(
                 node_id=node_b,
                 shard_metadata=shard_meta,
                 error_message="connection reset",
