@@ -69,6 +69,10 @@ def entrypoint(
 
     patch_yarn_rope()
 
+    from exo.worker.engines.mlx.gdn_softplus_patch import patch_gdn_softplus
+
+    patch_gdn_softplus()
+
     # Import main after setting global logger - this lets us just import logger from this module
     try:
         if isinstance(bound_instance.instance, VllmInstance):

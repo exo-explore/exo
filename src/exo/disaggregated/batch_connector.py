@@ -9,19 +9,26 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (  # pyright: igno
     KVConnectorBase_V1,  # pyright: ignore[reportUnknownVariableType]
     KVConnectorMetadata,  # pyright: ignore[reportUnknownVariableType]
     KVConnectorRole,  # pyright: ignore[reportUnknownVariableType]
+    SupportsHMA,  # pyright: ignore[reportUnknownVariableType]
 )
 
 _LAYER_RE = re.compile(r"layers\.(\d+)\.")
 
 _shared_captured_layers: dict[int, dict[str, torch.Tensor]] = {}
+_shared_captured_arrays: dict[int, list[torch.Tensor]] = {}
 
 
 def get_shared_captured_layers() -> dict[int, dict[str, torch.Tensor]]:
     return _shared_captured_layers
 
 
+def get_shared_captured_arrays() -> dict[int, list[torch.Tensor]]:
+    return _shared_captured_arrays
+
+
 def clear_shared_captured_layers() -> None:
     _shared_captured_layers.clear()
+    _shared_captured_arrays.clear()
 
 
 @dataclass
@@ -29,7 +36,7 @@ class BatchConnectorMetadata(KVConnectorMetadata):  # pyright: ignore[reportUnty
     pass
 
 
-class BatchConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBaseClass]
+class BatchConnector(KVConnectorBase_V1, SupportsHMA):  # pyright: ignore[reportUntypedBaseClass]
     captured_layers: dict[int, dict[str, torch.Tensor]]
 
     def __init__(self, vllm_config: Any, role: KVConnectorRole, kv_cache_config: Any = None) -> None:  # type: ignore
@@ -53,6 +60,9 @@ class BatchConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBaseCl
         layer_idx = int(m.group(1))
 
         if isinstance(kv_layer, (list, tuple)):
+            from exo.disaggregated.streaming_connector import _to_bf16
+
+            _shared_captured_arrays[layer_idx] = [_to_bf16(t).cpu() for t in kv_layer]  # pyright: ignore[reportAny]
             return
 
         if slot_mapping is not None:
@@ -87,6 +97,9 @@ class BatchConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBaseCl
 
     def wait_for_save(self) -> None:
         pass
+
+    def request_finished_all_groups(self, request: Any, block_ids: tuple[list[int], ...]) -> tuple[bool, dict[str, Any] | None]:  # pyright: ignore[reportAny]
+        return False, None
 
     def get_num_new_matched_tokens(self, request: Any, num_computed_tokens: int) -> tuple[int, bool]:  # pyright: ignore[reportAny]
         return 0, False

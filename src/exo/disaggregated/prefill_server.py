@@ -34,6 +34,7 @@ _gdn_patched: bool = False
 _gdn_states: dict[int, dict[str, torch.Tensor]] = {}
 _gdn_layer_order: list[int] = []
 _gdn_call_idx: list[int] = [0]
+_ssm_call_idx: list[int] = [0]
 
 
 def _patch_vllm_for_connector(connector_class: type[Any]) -> None:  # pyright: ignore[reportUnusedFunction]
@@ -116,6 +117,46 @@ def _patch_gdn_capture() -> None:
             mod.causal_conv1d_fn = patched_fn
     logger.info("Patched causal_conv1d_fn for GDN state capture")
 
+    try:
+        from vllm.model_executor.models import qwen3_next as qn_mod  # type: ignore
+
+        orig_chunk = getattr(qn_mod, "fi_chunk_gated_delta_rule", None)  # type: ignore
+        if orig_chunk is None:
+            return
+
+        def patched_chunk(*args: Any, **kwargs: Any) -> Any:
+            result = orig_chunk(*args, **kwargs)
+            output_final_state = kwargs.get("output_final_state", False)
+            if output_final_state and isinstance(result, tuple) and len(result) == 2:
+                _, ssm_state = result
+                idx = _ssm_call_idx[0]
+                if _gdn_layer_order and idx < len(_gdn_layer_order) * 100:
+                    layer_idx = _gdn_layer_order[idx % len(_gdn_layer_order)]
+                    _gdn_states.setdefault(layer_idx, {})["ssm"] = ssm_state.cpu()  # type: ignore
+                _ssm_call_idx[0] += 1
+            return result
+
+        qn_mod.fi_chunk_gated_delta_rule = patched_chunk  # type: ignore
+
+        orig_fla_chunk = getattr(qn_mod, "fla_chunk_gated_delta_rule", None)  # type: ignore
+        if orig_fla_chunk is not None:
+            def patched_fla_chunk(*args: Any, **kwargs: Any) -> Any:
+                result = orig_fla_chunk(*args, **kwargs)
+                output_final_state = kwargs.get("output_final_state", False)
+                if output_final_state and isinstance(result, tuple) and len(result) == 2:
+                    _, ssm_state = result
+                    idx = _ssm_call_idx[0]
+                    if _gdn_layer_order and idx < len(_gdn_layer_order) * 100:
+                        layer_idx = _gdn_layer_order[idx % len(_gdn_layer_order)]
+                        _gdn_states.setdefault(layer_idx, {})["ssm"] = ssm_state.cpu()  # type: ignore
+                    _ssm_call_idx[0] += 1
+                return result
+            qn_mod.fla_chunk_gated_delta_rule = patched_fla_chunk  # type: ignore
+
+        logger.info("Patched chunk_gated_delta_rule for SSM state capture")
+    except ImportError:
+        pass
+
 
 def _init_gdn_layer_order() -> None:
     from exo.worker.engines.vllm.growable_cache import get_model_runner
@@ -163,6 +204,7 @@ def _run_prefill_overlapping(engine: LLMEngine, token_ids: list[int], start_pos:
     assert model_runner is not None
 
     from exo.disaggregated.streaming_connector import (
+        get_shared_arrays_queue,
         get_shared_queue,
         reset_shared_queue,
     )
@@ -170,15 +212,48 @@ def _run_prefill_overlapping(engine: LLMEngine, token_ids: list[int], start_pos:
     reset_shared_queue()
     _gdn_states.clear()
     _gdn_call_idx[0] = 0
+    _ssm_call_idx[0] = 0
     layer_queue = get_shared_queue()
+    arrays_queue = get_shared_arrays_queue()
 
     server_cached = 0
+    cached_data: TorchKVCache | None = None
     if _prefix_cache_ref is not None:
-        _, server_cached, _ = _prefix_cache_ref.lookup(token_ids)
+        cached_data, server_cached, _ = _prefix_cache_ref.lookup(token_ids)
+        if not isinstance(cached_data, TorchKVCache):
+            cached_data = None
+            server_cached = 0
     skip_tokens = max(0, start_pos - server_cached)
 
     num_layers, dtype_str, layers_info = _get_layer_info(engine)
     write_header(wfile, {"num_layers": num_layers, "dtype": dtype_str, "layers": layers_info})  # pyright: ignore[reportAny]
+
+    if cached_data is not None and start_pos < server_cached:
+        from exo.worker.engines.vllm.kv_cache import ArraysLayerState
+        kv_sent = 0
+        arr_sent = 0
+        for i, layer in enumerate(cached_data.layers):
+            if isinstance(layer, KVLayerState) and layer.keys.numel() > 0:
+                keys = layer.keys
+                values = layer.values
+                if keys.shape != values.shape:
+                    logger.warning(f"Skipping layer {i}: keys={list(keys.shape)} != values={list(values.shape)}")
+                    continue
+                if keys.dim() == 4:
+                    keys = keys.reshape(-1, keys.shape[-2], keys.shape[-1])
+                    values = values.reshape(-1, values.shape[-2], values.shape[-1])
+                keys = keys[start_pos:server_cached]
+                values = values[start_pos:server_cached]
+                if keys.numel() > 0:
+                    write_kv_chunk(wfile, i, keys, values)  # pyright: ignore[reportAny]
+                    kv_sent += 1
+
+            elif isinstance(layer, ArraysLayerState):
+                arrays = [a for a in layer.arrays if a is not None]
+                if arrays:
+                    write_arrays_state(wfile, i, arrays)  # pyright: ignore[reportAny]
+                    arr_sent += 1
+        logger.info(f"Sent cached: {kv_sent} KV, {arr_sent} arrays for positions {start_pos}-{server_cached}")
 
     from vllm.sampling_params import (
         SamplingParams,
@@ -191,6 +266,7 @@ def _run_prefill_overlapping(engine: LLMEngine, token_ids: list[int], start_pos:
 
     chunks_sent = [0]
     layer_token_counts: dict[int, int] = {}
+    all_kv_chunks: list[tuple[int, torch.Tensor, torch.Tensor]] = []
 
     def writer_loop() -> None:
         while True:
@@ -198,6 +274,7 @@ def _run_prefill_overlapping(engine: LLMEngine, token_ids: list[int], start_pos:
             if item is None:
                 break
             layer_idx, keys, values = item
+            all_kv_chunks.append((layer_idx, keys, values))
 
             prev = layer_token_counts.get(layer_idx, 0)
             n = keys.shape[0]
@@ -218,12 +295,10 @@ def _run_prefill_overlapping(engine: LLMEngine, token_ids: list[int], start_pos:
     writer_thread = threading.Thread(target=writer_loop, daemon=True)
     writer_thread.start()
 
-    extracted_cache: TorchKVCache | None = None
     while engine.has_unfinished_requests():
         outputs = engine.step()
         for output in outputs:
             if output.request_id == request_id and output.outputs[0].token_ids:
-                extracted_cache = _extract_vllm_cache(engine, request_id, len(prefill_token_ids))
                 engine.abort_request([request_id])  # type: ignore
                 break
         else:
@@ -233,15 +308,33 @@ def _run_prefill_overlapping(engine: LLMEngine, token_ids: list[int], start_pos:
     layer_queue.put(None)
     writer_thread.join()
     actual_per_layer = max(layer_token_counts.values()) if layer_token_counts else 0
-    tokens_sent = max(0, actual_per_layer - skip_tokens)
+    cached_tokens_sent = max(0, server_cached - start_pos) if cached_data is not None and start_pos < server_cached else 0
+    tokens_sent = cached_tokens_sent + max(0, actual_per_layer - skip_tokens)
     logger.info(f"Overlapping prefill: sent {chunks_sent[0]} chunks, {tokens_sent} tokens (server_cached={server_cached}, skip={skip_tokens})")
+
+    while not arrays_queue.empty():
+        item = arrays_queue.get_nowait()
+        if item is not None:
+            layer_idx, arrays = item
+            write_arrays_state(wfile, layer_idx, arrays)  # pyright: ignore[reportAny]
+
+    gdn_snapshot: list[tuple[int, list[torch.Tensor]]] = []
+    for layer_idx in sorted(_gdn_states.keys()):
+        state = _gdn_states[layer_idx]
+        arrs: list[torch.Tensor] = []
+        if "conv" in state:
+            arrs.append(state["conv"])
+        if "ssm" in state:
+            arrs.append(state["ssm"])
+        if arrs:
+            gdn_snapshot.append((layer_idx, arrs))
 
     cached_arrays: list[tuple[int, list[torch.Tensor]]] = []
     _stream_gdn_states_and_collect(engine, wfile, num_layers, layers_info, cached_arrays)
     write_done(wfile, tokens_sent)  # pyright: ignore[reportAny]
 
-    if extracted_cache is not None:
-        threading.Thread(target=_store_prefix_cache, args=(prefill_token_ids, extracted_cache), daemon=True).start()
+    connector_cache = _build_torch_cache(all_kv_chunks, gdn_snapshot, num_layers)
+    threading.Thread(target=_store_prefix_cache, args=(prefill_token_ids, connector_cache), daemon=True).start()
 
 
 def _run_prefill_batch(engine: LLMEngine, token_ids: list[int], start_pos: int, wfile: Any) -> None:  # pyright: ignore[reportAny]
@@ -254,6 +347,7 @@ def _run_prefill_batch(engine: LLMEngine, token_ids: list[int], start_pos: int, 
 
     from exo.disaggregated.batch_connector import (
         clear_shared_captured_layers,
+        get_shared_captured_arrays,
         get_shared_captured_layers,
     )
 
@@ -261,6 +355,7 @@ def _run_prefill_batch(engine: LLMEngine, token_ids: list[int], start_pos: int, 
     _gdn_call_idx[0] = 0
     clear_shared_captured_layers()
     captured_layers = get_shared_captured_layers()
+    captured_arrays = get_shared_captured_arrays()
 
     server_cached = 0
     if _prefix_cache_ref is not None:
@@ -276,12 +371,10 @@ def _run_prefill_batch(engine: LLMEngine, token_ids: list[int], start_pos: int, 
     params = SamplingParams(max_tokens=2, detokenize=False)  # pyright: ignore[reportCallIssue]
     engine.add_request(request_id, {"prompt_token_ids": prefill_token_ids}, params)  # pyright: ignore[reportArgumentType]
 
-    extracted_cache: TorchKVCache | None = None
     while engine.has_unfinished_requests():
         outputs = engine.step()
         for output in outputs:
             if output.request_id == request_id and output.outputs[0].token_ids:
-                extracted_cache = _extract_vllm_cache(engine, request_id, len(prefill_token_ids))
                 engine.abort_request([request_id])  # type: ignore
                 break
         else:
@@ -298,18 +391,22 @@ def _run_prefill_batch(engine: LLMEngine, token_ids: list[int], start_pos: int, 
         all_kv.append((layer_idx, keys, values))
         if keys.shape[0] > skip_tokens:
             write_kv_chunk(wfile, layer_idx, keys[skip_tokens:], values[skip_tokens:])  # pyright: ignore[reportAny]
-    clear_shared_captured_layers()
 
     actual_per_layer = max((k.shape[0] for _, k, _ in all_kv), default=0)
     tokens_sent = max(0, actual_per_layer - skip_tokens)
     logger.info(f"Batch prefill: {len(all_kv)} layers, {tokens_sent} tokens sent (server_cached={server_cached}, skip={skip_tokens}, captured={actual_per_layer})")
 
+    batch_arrays: list[tuple[int, list[torch.Tensor]]] = list(captured_arrays.items())
+    for layer_idx, arrs in batch_arrays:
+        write_arrays_state(wfile, layer_idx, arrs)  # pyright: ignore[reportAny]
+    clear_shared_captured_layers()
+
     cached_arrays: list[tuple[int, list[torch.Tensor]]] = []
     _stream_gdn_states_and_collect(engine, wfile, num_layers, layers_info, cached_arrays)
     write_done(wfile, tokens_sent)  # pyright: ignore[reportAny]
 
-    if extracted_cache is not None:
-        threading.Thread(target=_store_prefix_cache, args=(prefill_token_ids, extracted_cache), daemon=True).start()
+    connector_cache = _build_torch_cache(all_kv, batch_arrays, num_layers)
+    threading.Thread(target=_store_prefix_cache, args=(prefill_token_ids, connector_cache), daemon=True).start()
 
 
 def _stream_gdn_states_and_collect(
@@ -334,18 +431,14 @@ def _stream_gdn_states_and_collect(
     for layer_idx in sorted(_gdn_states.keys()):
         try:
             state = _gdn_states[layer_idx]
-            ci: int = state.get("ci", 0)  # type: ignore
             conv = state.get("conv")
-            kv = kv_caches[layer_idx]  # type: ignore
-            rec: torch.Tensor | None = None
-            if isinstance(kv, (list, tuple)) and len(kv) > 1:
-                rec = kv[1][ci : ci + 1].cpu().clone()  # type: ignore
+            ssm = state.get("ssm")
 
             arrays: list[torch.Tensor] = []
             if conv is not None:
-                arrays.append(conv.to(torch.bfloat16))
-            if rec is not None:
-                arrays.append(rec.to(torch.bfloat16))
+                arrays.append(conv)
+            if ssm is not None:
+                arrays.append(ssm)
             if arrays:
                 write_arrays_state(wfile, layer_idx, arrays)  # type: ignore
                 out_arrays.append((layer_idx, arrays))
@@ -408,13 +501,16 @@ def _extract_vllm_cache(engine: LLMEngine, request_id: str, num_tokens: int) -> 
         null_block = coordinator.block_pool.null_block  # type: ignore
         block_ids_per_group: list[list[int]] = []
         token_offset_per_group: list[int] = []
+        block_sizes_per_group: list[int] = []
         for mgr in coordinator.single_type_managers:  # type: ignore
             blocks = mgr.req_to_blocks.get(internal_id)  # type: ignore
             if not blocks:
                 block_ids_per_group.append([])
                 token_offset_per_group.append(0)
+                block_sizes_per_group.append(0)
                 continue
             block_size: int = mgr.block_size  # type: ignore
+            block_sizes_per_group.append(block_size)
             num_leading_nulls = 0
             for b in blocks:  # type: ignore
                 if b is null_block or b.is_null:  # type: ignore
@@ -432,6 +528,7 @@ def _extract_vllm_cache(engine: LLMEngine, request_id: str, num_tokens: int) -> 
             layer_to_group,
             num_tokens,
             token_offset_per_group,
+            block_sizes_per_group,
         )
     except Exception:
         logger.opt(exception=True).warning("Failed to extract vLLM cache")
@@ -482,13 +579,18 @@ def _send_cached(torch_cache: TorchKVCache, token_ids: list[int], wfile: Any, en
     write_header(wfile, {"num_layers": num_layers, "dtype": dtype_str, "layers": layers_info})  # type: ignore
     from exo.worker.engines.vllm.kv_cache import ArraysLayerState
 
+    kv_sent = 0
+    arr_sent = 0
     for i, layer in enumerate(torch_cache.layers):
         if isinstance(layer, KVLayerState) and layer.keys.numel() > 0:
             write_kv_chunk(wfile, i, layer.keys, layer.values)  # type: ignore
+            kv_sent += 1
         elif isinstance(layer, ArraysLayerState):
             arrays = [a for a in layer.arrays if a is not None]
             if arrays:
                 write_arrays_state(wfile, i, arrays)  # type: ignore
+                arr_sent += 1
+    logger.info(f"_send_cached: sent {kv_sent} KV layers, {arr_sent} arrays layers")
     write_done(wfile, len(token_ids))  # type: ignore
 
 

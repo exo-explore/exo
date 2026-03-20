@@ -56,17 +56,18 @@ def _patch_determine_available_memory() -> None:
 
     @torch.inference_mode()
     def patched(self: "Worker") -> int:
+        real_empty_cache = torch.cuda.empty_cache
+        torch.cuda.empty_cache = lambda: None  # type: ignore
         try:
             original(self)
-        except AssertionError:
-            logger.warning(
-                "vLLM memory profiling assertion failed (free memory changed during init, "
-                "likely another process released GPU memory). Continuing with growable cache."
-            )
-        torch.cuda.empty_cache()
+        except (AssertionError, Exception):
+            pass
+        finally:
+            torch.cuda.empty_cache = real_empty_cache  # type: ignore
         free_bytes, _ = torch.cuda.mem_get_info()
         initial = max(int(free_bytes * INITIAL_FRACTION), 1)
         self._growable_max_kv_bytes = free_bytes
+        self.available_kv_cache_memory_bytes = initial
         logger.info(
             f"Growable KV cache: initial {initial / (1024**3):.2f} GiB "
             f"(max {free_bytes / (1024**3):.2f} GiB)"
@@ -164,12 +165,10 @@ def _try_grow_cache(kv_cache_manager: "object") -> bool:
     model_runner = kv_cache_manager._growable_model_runner  # type: ignore
 
     if model_runner is None:
-        logger.debug("No model_runner reference — cannot grow cache")
         return False
 
     free_bytes, _ = torch.cuda.mem_get_info()
     if free_bytes < GROWTH_HEADROOM_BYTES:
-        logger.debug(f"Only {free_bytes / (1024**3):.2f} GiB free — not enough to grow")
         return False
 
     kv_cache_config = model_runner._growable_kv_cache_config  # type: ignore
@@ -182,7 +181,6 @@ def _try_grow_cache(kv_cache_manager: "object") -> bool:
     growth_blocks = min(usable_bytes // per_block_bytes, old_num_blocks)
 
     if growth_blocks < MIN_GROWTH_BLOCKS:
-        logger.debug(f"Growth too small ({growth_blocks} blocks)")
         return False
 
     new_num_blocks = old_num_blocks + growth_blocks
@@ -193,16 +191,18 @@ def _try_grow_cache(kv_cache_manager: "object") -> bool:
     )
 
     try:
-        _grow_tensors(model_runner, kv_cache_config, old_num_blocks, new_num_blocks)
-        _grow_block_pool(block_pool, old_num_blocks, new_num_blocks)
         kv_cache_config.num_blocks = new_num_blocks
         for tensor_spec in kv_cache_config.kv_cache_tensors:
             tensor_spec.size = int(tensor_spec.size * new_num_blocks / old_num_blocks)
+        _grow_tensors(model_runner, kv_cache_config, old_num_blocks, new_num_blocks)
+        _grow_block_pool(block_pool, old_num_blocks, new_num_blocks)
         logger.info(f"KV cache grown successfully to {new_num_blocks} blocks")
         return True
     except Exception:
         logger.opt(exception=True).error("Failed to grow KV cache")
         return False
+
+
 
 
 def _grow_tensors(

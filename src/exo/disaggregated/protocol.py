@@ -77,6 +77,9 @@ def _tensor_to_bytes(t: torch.Tensor) -> bytes:
 
 
 def write_kv_chunk(stream: BinaryIO, layer_idx: int, keys: torch.Tensor, values: torch.Tensor) -> None:
+    if keys.dim() == 4:
+        keys = keys.reshape(-1, keys.shape[-2], keys.shape[-1])
+        values = values.reshape(-1, values.shape[-2], values.shape[-1])
     keys_bytes = _tensor_to_bytes(keys)
     values_bytes = _tensor_to_bytes(values)
     num_tokens: int = keys.shape[0]
@@ -86,11 +89,18 @@ def write_kv_chunk(stream: BinaryIO, layer_idx: int, keys: torch.Tensor, values:
     _write_exactly(stream, header + keys_bytes + values_bytes)
 
 
+def _dtype_to_str(dtype: torch.dtype) -> str:
+    return {torch.float16: "float16", torch.bfloat16: "bfloat16", torch.float32: "float32"}[dtype]
+
+
 def write_arrays_state(stream: BinaryIO, layer_idx: int, arrays: list[torch.Tensor]) -> None:
     buf = io.BytesIO()
     buf.write(struct.pack(">BI", MSG_ARRAYS_STATE, layer_idx))
     buf.write(struct.pack(">I", len(arrays)))
     for arr in arrays:
+        dtype_str = _dtype_to_str(arr.dtype).encode("utf-8")
+        buf.write(struct.pack(">I", len(dtype_str)))
+        buf.write(dtype_str)
         shape: tuple[int, ...] = tuple(arr.shape)
         buf.write(struct.pack(">I", len(shape)))
         for dim in shape:
@@ -143,10 +153,17 @@ def read_message(stream: BinaryIO, header: dict[str, object]) -> Message | None:
         num_arrays: int
         arr_layer_idx, = struct.unpack(">I", _read_exactly(stream, 4))  # pyright: ignore[reportAny]
         num_arrays, = struct.unpack(">I", _read_exactly(stream, 4))  # pyright: ignore[reportAny]
-        dtype = _str_to_dtype(str(header["dtype"]))
-        elem_size = _dtype_size(dtype)
+        fallback_dtype = _str_to_dtype(str(header["dtype"]))
         arrays: list[torch.Tensor] = []
         for _ in range(num_arrays):
+            dtype_len_raw = _read_exactly(stream, 4)
+            dtype_len: int = struct.unpack(">I", dtype_len_raw)[0]  # pyright: ignore[reportAny]
+            if dtype_len > 0 and dtype_len < 20:
+                dtype_str_bytes = _read_exactly(stream, dtype_len)
+                arr_dtype = _str_to_dtype(dtype_str_bytes.decode("utf-8"))
+            else:
+                arr_dtype = fallback_dtype
+            elem_size = _dtype_size(arr_dtype)
             ndim: int
             ndim, = struct.unpack(">I", _read_exactly(stream, 4))  # pyright: ignore[reportAny]
             shape_arr = struct.unpack(f">{ndim}I", _read_exactly(stream, ndim * 4))
@@ -154,10 +171,10 @@ def read_message(stream: BinaryIO, header: dict[str, object]) -> Message | None:
             for d in shape_arr:  # pyright: ignore[reportAny]
                 total_elems *= d  # pyright: ignore[reportAny]
             raw = _read_exactly(stream, total_elems * elem_size)
-            if dtype == torch.bfloat16:
+            if arr_dtype == torch.bfloat16:
                 t: torch.Tensor = torch.frombuffer(bytearray(raw), dtype=torch.int16).view(torch.bfloat16).reshape(shape_arr).clone()  # type: ignore
             else:
-                t = torch.frombuffer(bytearray(raw), dtype=dtype).reshape(shape_arr).clone()  # type: ignore
+                t = torch.frombuffer(bytearray(raw), dtype=arr_dtype).reshape(shape_arr).clone()  # type: ignore
             arrays.append(t)  # pyright: ignore[reportUnknownArgumentType]
         return ArraysState(layer_idx=arr_layer_idx, arrays=arrays)
 

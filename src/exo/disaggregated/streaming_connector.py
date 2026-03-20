@@ -10,6 +10,7 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (  # pyright: igno
     KVConnectorBase_V1,  # pyright: ignore[reportUnknownVariableType]
     KVConnectorMetadata,  # pyright: ignore[reportUnknownVariableType]
     KVConnectorRole,  # pyright: ignore[reportUnknownVariableType]
+    SupportsHMA,  # pyright: ignore[reportUnknownVariableType]
 )
 
 _LAYER_RE = re.compile(r"layers\.(\d+)\.")
@@ -25,16 +26,26 @@ def _to_bf16(t: torch.Tensor) -> torch.Tensor:
     return t.to(torch.bfloat16)
 
 _shared_queue: queue.Queue[tuple[int, torch.Tensor, torch.Tensor] | None] = queue.Queue()
+_shared_arrays_queue: queue.Queue[tuple[int, list[torch.Tensor]] | None] = queue.Queue()
 
 
 def get_shared_queue() -> queue.Queue[tuple[int, torch.Tensor, torch.Tensor] | None]:
     return _shared_queue
 
 
+def get_shared_arrays_queue() -> queue.Queue[tuple[int, list[torch.Tensor]] | None]:
+    return _shared_arrays_queue
+
+
 def reset_shared_queue() -> None:
     while not _shared_queue.empty():
         try:
             _shared_queue.get_nowait()
+        except queue.Empty:
+            break
+    while not _shared_arrays_queue.empty():
+        try:
+            _shared_arrays_queue.get_nowait()
         except queue.Empty:
             break
 
@@ -44,7 +55,7 @@ class StreamingConnectorMetadata(KVConnectorMetadata):  # pyright: ignore[report
     pass
 
 
-class StreamingConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBaseClass]
+class StreamingConnector(KVConnectorBase_V1, SupportsHMA):  # pyright: ignore[reportUntypedBaseClass]
     _queue: queue.Queue[tuple[int, torch.Tensor, torch.Tensor] | None]
 
     _save_count: int = 0
@@ -74,6 +85,8 @@ class StreamingConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBa
         layer_idx = int(m.group(1))
 
         if isinstance(kv_layer, (list, tuple)):
+            arrays = [_to_bf16(t).cpu() for t in kv_layer]  # pyright: ignore[reportAny]
+            _shared_arrays_queue.put((layer_idx, arrays))
             return
 
         if self._save_count < 1:
@@ -103,6 +116,9 @@ class StreamingConnector(KVConnectorBase_V1):  # pyright: ignore[reportUntypedBa
 
     def finish(self) -> None:
         self._queue.put(None)
+
+    def request_finished_all_groups(self, request: Any, block_ids: tuple[list[int], ...]) -> tuple[bool, dict[str, Any] | None]:  # pyright: ignore[reportAny]
+        return False, None
 
     def get_num_new_matched_tokens(self, request: Any, num_computed_tokens: int) -> tuple[int, bool]:  # pyright: ignore[reportAny]
         return 0, False

@@ -228,6 +228,7 @@ class TorchKVCache:
         layer_to_group: list[int],
         num_tokens: int,
         token_offset_per_group: list[int] | None = None,
+        block_sizes_per_group: list[int] | None = None,
     ) -> "TorchKVCache":
         block_tables = [
             torch.tensor(ids, dtype=torch.long) for ids in block_ids_per_group
@@ -244,6 +245,18 @@ class TorchKVCache:
             if len(bt) == 0:
                 layers.append(KVLayerState(keys=torch.empty(0), values=torch.empty(0)))
                 continue
+
+            if k_all.dim() >= 4 and len(bt) > 0 and block_sizes_per_group is not None:
+                page_size = k_all.shape[1]
+                sched_block_size = block_sizes_per_group[gi]
+                pages_per_block = sched_block_size // page_size
+                if pages_per_block > 1:
+                    expanded = []
+                    for b in bt.tolist():
+                        start_page = b * pages_per_block
+                        end_page = min(start_page + pages_per_block, k_all.shape[0])
+                        expanded.extend(range(start_page, end_page))
+                    bt = torch.tensor(expanded, dtype=torch.long)
 
             keys = k_all[bt].to("cpu", non_blocking=True)
             values = v_all[bt].to("cpu", non_blocking=True)
@@ -264,8 +277,18 @@ class TorchKVCache:
 
         first = kv_caches[0]
         device = first[0].device if isinstance(first, list) else first.device
-        block_size = first[0].shape[1] if isinstance(first, list) else first.shape[-3]
         for layer_idx, layer in enumerate(self.layers):
+            if isinstance(layer, ArraysLayerState):
+                gi = layer_to_group[layer_idx]
+                bt = block_tables[gi]
+                kv = kv_caches[layer_idx]
+                if isinstance(kv, list):
+                    for ti, (stored, target) in enumerate(zip(layer.arrays, kv)):
+                        if stored is not None and target is not None:
+                            n = min(len(bt), stored.shape[0])
+                            if n > 0:
+                                target[bt[:n]] = stored[:n].to(device, non_blocking=True)
+                continue
             if not isinstance(layer, KVLayerState):
                 continue
             gi = layer_to_group[layer_idx]
@@ -275,6 +298,7 @@ class TorchKVCache:
 
             keys = layer.keys
             values = layer.values
+            block_size = k_all.shape[-3] if k_all.dim() >= 3 else k_all.shape[1]
             needs_reshape = keys.dim() == 3 and keys.shape[1:] != k_all.shape[1:]
             if needs_reshape:
                 offset = token_offset_per_group[gi] if token_offset_per_group else 0
