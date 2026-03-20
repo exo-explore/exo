@@ -10,6 +10,7 @@ from exo.download.download_utils import resolve_model_in_path
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelId, add_to_card_cache, delete_custom_card
 from exo.shared.types.commands import (
+    DeleteInstance,
     ForwarderCommand,
     ForwarderDownloadCommand,
     StartDownload,
@@ -217,7 +218,7 @@ class Worker:
                                 task_status=TaskStatus.Running,
                             )
                         )
-                case Shutdown(runner_id=runner_id):
+                case Shutdown(runner_id=runner_id, instance_id=instance_id):
                     runner = self.runners.pop(runner_id)
                     try:
                         with fail_after(3):
@@ -230,6 +231,12 @@ class Worker:
                         )
                     finally:
                         runner.shutdown()
+                    await self.command_sender.send(
+                        ForwarderCommand(
+                            origin=self._system_id,
+                            command=DeleteInstance(instance_id=instance_id),
+                        )
+                    )
                 case CancelTask(
                     cancelled_task_id=cancelled_task_id, runner_id=runner_id
                 ):
