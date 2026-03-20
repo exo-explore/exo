@@ -3,6 +3,7 @@ import math
 import os
 import re
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
@@ -605,7 +606,7 @@ def load_vllm_engine(
                 load_format="fastsafetensors",
                 enable_prefix_caching=False,
                 attention_backend=backend,
-                compilation_config={"cudagraph_mode": "none"},
+                compilation_config={"cudagraph_mode": "none", "cache_dir": tempfile.mkdtemp(prefix="vllm_compile_")},
                 disable_log_stats=True,
                 max_num_batched_tokens=4096,
                 kv_transfer_config=kv_transfer_config,  # type: ignore

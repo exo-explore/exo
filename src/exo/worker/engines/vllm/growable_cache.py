@@ -56,6 +56,13 @@ def _patch_determine_available_memory() -> None:
 
     @torch.inference_mode()
     def patched(self: "Worker") -> int:
+        import pathlib
+        import shutil
+
+        aot_cache = pathlib.Path.home() / ".cache" / "vllm" / "torch_compile_cache" / "torch_aot_compile"
+        if aot_cache.exists():
+            shutil.rmtree(aot_cache, ignore_errors=True)
+
         real_empty_cache = torch.cuda.empty_cache
         torch.cuda.empty_cache = lambda: None  # type: ignore
         try:
@@ -243,7 +250,6 @@ def _grow_tensors(
         model_runner.compilation_config.static_forward_context
     )  # type: ignore
     runner_kv_caches: list[torch.Tensor] = model_runner.kv_caches  # type: ignore
-    runner_kv_caches.clear()
 
     from collections import defaultdict
 
@@ -258,12 +264,37 @@ def _grow_tensors(
     for ln in new_kv_caches:
         index2name[extract_layer_index(ln, num_attn_module)].append(ln)
 
+    new_ordered: list[torch.Tensor | list[torch.Tensor]] = []
     for layer_index in sorted(index2name.keys()):
         for ln in index2name[layer_index]:
-            runner_kv_caches.append(new_kv_caches[ln])
+            new_ordered.append(new_kv_caches[ln])
 
-    for layer_name, kv_cache in new_kv_caches.items():
-        forward_context[layer_name].kv_cache = [kv_cache]  # type: ignore
+    for i, new_kv in enumerate(new_ordered):
+        if i < len(runner_kv_caches):
+            old_kv = runner_kv_caches[i]
+            if isinstance(old_kv, list) and isinstance(new_kv, list):
+                for j, (old_t, new_t) in enumerate(zip(old_kv, new_kv)):
+                    old_t.set_(new_t.storage(), new_t.storage_offset(), new_t.shape, new_t.stride())  # type: ignore
+            elif isinstance(old_kv, torch.Tensor) and isinstance(new_kv, torch.Tensor):
+                old_kv.set_(new_kv.storage(), new_kv.storage_offset(), new_kv.shape, new_kv.stride())  # type: ignore
+            else:
+                runner_kv_caches[i] = new_kv
+        else:
+            runner_kv_caches.append(new_kv)
+
+    for layer_name, new_kv in new_kv_caches.items():
+        old_kv_list = forward_context[layer_name].kv_cache  # type: ignore
+        if old_kv_list and len(old_kv_list) > 0:
+            old_entry = old_kv_list[0]
+            if isinstance(old_entry, list) and isinstance(new_kv, list):
+                for j, (old_t, new_t) in enumerate(zip(old_entry, new_kv)):
+                    old_t.set_(new_t.storage(), new_t.storage_offset(), new_t.shape, new_t.stride())  # type: ignore
+            elif isinstance(old_entry, torch.Tensor) and isinstance(new_kv, torch.Tensor):
+                old_entry.set_(new_kv.storage(), new_kv.storage_offset(), new_kv.shape, new_kv.stride())  # type: ignore
+            else:
+                forward_context[layer_name].kv_cache = [new_kv]  # type: ignore
+        else:
+            forward_context[layer_name].kv_cache = [new_kv]  # type: ignore
 
 
 def _grow_block_pool(
