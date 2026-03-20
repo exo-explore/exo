@@ -358,7 +358,12 @@ def parse_tool_calls(
 
             if parsed is None:
                 logger.warning(f"tool call parsing failed for text {combined}")
-                yield response.model_copy(update={"text": combined})
+                yield response.model_copy(
+                    update={
+                        "text": combined,
+                        "finish_reason": "error",
+                    }
+                )
                 continue
 
             yield ToolCallResponse(

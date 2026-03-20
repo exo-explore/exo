@@ -69,8 +69,8 @@ class TestParseToolCalls:
         assert r1.text == " world"
         assert r1.finish_reason == "stop"
 
-    def test_failed_parse_yields_text(self):
-        """When tool call parsing fails, the text should be yielded as-is."""
+    def test_failed_parse_yields_error_finish_reason(self):
+        """When tool call parsing fails, finish_reason should be set to 'error'."""
 
         def _failing_parser(text: str) -> dict[str, Any]:
             raise ValueError("parse failed")
@@ -87,6 +87,7 @@ class TestParseToolCalls:
         assert len(results) == 1
         assert isinstance(results[0], GenerationResponse)
         assert results[0].text == "<tool_call>bad content</tool_call>"
+        assert results[0].finish_reason == "error"
 
     def test_tool_schema_coerces_string_arguments_to_expected_types(self):
         """Tool argument values should be coerced using provided JSON schema."""
