@@ -1,7 +1,7 @@
 from collections.abc import Generator
 from typing import Any, Literal
 
-from exo.shared.types.api import (
+from exo.api.types import (
     FinishReason,
     GenerationStats,
     ImageGenerationStats,

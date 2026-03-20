@@ -4,7 +4,7 @@ import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from exo.shared.types.api import (
+from exo.api.types import (
     ChatCompletionChoice,
     ChatCompletionMessage,
     ChatCompletionMessageText,

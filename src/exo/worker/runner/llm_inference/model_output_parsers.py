@@ -13,7 +13,7 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     load_harmony_encoding,
 )
 
-from exo.shared.types.api import ToolCallItem
+from exo.api.types import ToolCallItem
 from exo.shared.types.common import ModelId
 from exo.shared.types.mlx import Model
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse

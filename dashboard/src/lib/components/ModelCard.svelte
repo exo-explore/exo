@@ -16,7 +16,9 @@
       perNode?: Array<{
         nodeId: string;
         nodeName: string;
-        progress: DownloadProgress;
+        status: "completed" | "partial" | "pending" | "downloading";
+        percentage: number;
+        progress: DownloadProgress | null;
       }>;
     } | null;
     nodes?: Record<string, NodeInfo>;
@@ -145,10 +147,7 @@
     return `${s}s`;
   }
 
-  const isDownloading = $derived(downloadStatus?.isDownloading ?? false);
-  const progress = $derived(downloadStatus?.progress);
-  const percentage = $derived(progress?.percentage ?? 0);
-  let expandedNodes = $state<Set<string>>(new Set());
+  const perNode = $derived(downloadStatus?.perNode ?? []);
 
   function toggleNodeDetails(nodeId: string): void {
     const next = new Set(expandedNodes);
@@ -587,23 +586,49 @@
       </span>
     </div>
 
-    <!-- Download Status -->
-    {#if isDownloading && progress}
+    <!-- Download Status (per-node) -->
+    {#if perNode.length > 0}
       <div class="mb-2 space-y-1">
-        <div class="flex items-center justify-between text-xs font-mono">
-          <span class="text-blue-400 tracking-wider uppercase">Downloading</span
-          >
-          <span class="text-white/60"
-            >{percentage.toFixed(1)}% &middot; {formatSpeed(progress.speed)}
-            &middot; {formatEta(progress.etaMs)}</span
-          >
+        <div
+          class="text-[10px] font-mono text-white/20 tracking-widest uppercase"
+        >
+          Download progress
         </div>
-        <div class="h-1 bg-exo-medium-gray/30 rounded overflow-hidden">
-          <div
-            class="h-full bg-blue-500/70 transition-all duration-300"
-            style="width: {percentage}%"
-          ></div>
-        </div>
+        {#each perNode as node}
+          <div class="flex items-center gap-2 text-xs font-mono">
+            <span class="text-white/40 w-20 truncate" title={node.nodeId}
+              >{node.nodeName}</span
+            >
+            <div
+              class="flex-1 h-1 bg-exo-medium-gray/30 rounded overflow-hidden"
+            >
+              <div
+                class="h-full transition-all duration-300 {node.status ===
+                'downloading'
+                  ? 'bg-blue-500/70'
+                  : node.status === 'completed'
+                    ? 'bg-exo-yellow/40'
+                    : 'bg-white/20'}"
+                style="width: {node.percentage}%"
+              ></div>
+            </div>
+            <span
+              class="text-right {node.status === 'completed'
+                ? 'text-exo-yellow/60'
+                : node.status === 'downloading'
+                  ? 'text-blue-400/60'
+                  : 'text-white/30'}"
+            >
+              {#if node.status === "downloading" && node.progress}
+                {Math.round(node.percentage)}% {formatSpeed(
+                  node.progress.speed,
+                )}
+              {:else}
+                {node.percentage > 0 ? `${Math.round(node.percentage)}%` : "0%"}
+              {/if}
+            </span>
+          </div>
+        {/each}
       </div>
     {/if}
 
@@ -662,15 +687,7 @@
             {@const allConnections =
               isDebugMode && usedNodes.length > 1
                 ? (() => {
-                    const conns: Array<{
-                      ip: string;
-                      iface: string | null;
-                      from: string;
-                      to: string;
-                      midX: number;
-                      midY: number;
-                      arrow: string;
-                    }> = [];
+                    const conns: Array = [];
                     for (let i = 0; i < usedNodes.length; i++) {
                       for (let j = i + 1; j < usedNodes.length; j++) {
                         const n1 = usedNodes[i];
@@ -682,7 +699,12 @@
                           const toPos = nodePositions[c.to];
                           const arrow =
                             fromPos && toPos ? getArrow(fromPos, toPos) : "→";
-                          conns.push({ ...c, midX, midY, arrow });
+                          conns.push({
+                            ...c,
+                            midX,
+                            midY,
+                            arrow,
+                          });
                         }
                       }
                     }

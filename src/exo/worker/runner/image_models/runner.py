@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING, Literal
 
 import mlx.core as mx
 
+from exo.api.types import ImageGenerationStats
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE, EXO_TRACING_ENABLED
 from exo.shared.models.model_cards import ModelTask
 from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
-from exo.shared.types.api import ImageGenerationStats
 from exo.shared.types.chunks import ErrorChunk, ImageChunk
 from exo.shared.types.common import CommandId, ModelId
 from exo.shared.types.events import (

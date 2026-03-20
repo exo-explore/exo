@@ -5,14 +5,8 @@ import re
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from exo.shared.types.api import FinishReason, Usage
-from exo.shared.types.chunks import (
-    ErrorChunk,
-    PrefillProgressChunk,
-    TokenChunk,
-    ToolCallChunk,
-)
-from exo.shared.types.claude_api import (
+from exo.api.types import FinishReason, Usage
+from exo.api.types.claude_api import (
     ClaudeContentBlock,
     ClaudeContentBlockDeltaEvent,
     ClaudeContentBlockStartEvent,
@@ -34,6 +28,12 @@ from exo.shared.types.claude_api import (
     ClaudeToolResultBlock,
     ClaudeToolUseBlock,
     ClaudeUsage,
+)
+from exo.shared.types.chunks import (
+    ErrorChunk,
+    PrefillProgressChunk,
+    TokenChunk,
+    ToolCallChunk,
 )
 from exo.shared.types.common import CommandId
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams

@@ -3,7 +3,7 @@ from collections.abc import Mapping
 import anyio
 import pytest
 
-from exo.shared.types.api import PowerUsage
+from exo.api.types import PowerUsage
 from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import SystemPerformanceProfile
 from exo.utils.power_sampler import PowerSampler

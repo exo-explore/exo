@@ -4,7 +4,7 @@ from typing import Any
 
 from mlx_lm.chat_templates import deepseek_v32
 
-from exo.shared.types.api import ToolCallItem
+from exo.api.types import ToolCallItem
 
 BOS_TOKEN: str = deepseek_v32.bos_token
 EOS_TOKEN: str = deepseek_v32.eos_token
