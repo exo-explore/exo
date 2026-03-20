@@ -151,8 +151,10 @@ class Worker:
     async def plan_step(self):
         while True:
             event = self._state_changed
-            with anyio.move_on_after(0.1):
+            state_changed = False
+            with anyio.move_on_after(1.0):
                 await event.wait()
+                state_changed = True
             task: Task | None = plan(
                 self.node_id,
                 self.runners,
@@ -164,6 +166,9 @@ class Worker:
                 self.input_chunk_counts,
             )
             if task is None:
+                if not state_changed:
+                    # No state change and no work — true idle, yield before retrying
+                    await anyio.sleep(0.5)
                 continue
 
             # Gate DownloadModel on backoff BEFORE emitting TaskCreated
@@ -374,4 +379,4 @@ class Worker:
                     logger.debug(f"ping failed to discover {conn=}")
                     await self.event_sender.send(TopologyEdgeDeleted(conn=conn))
 
-            await anyio.sleep(10)
+            await anyio.sleep(30)

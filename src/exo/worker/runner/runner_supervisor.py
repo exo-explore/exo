@@ -237,8 +237,9 @@ class RunnerSupervisor:
     def __del__(self) -> None:
         if self.runner_process.is_alive():
             logger.critical("RunnerSupervisor was not stopped cleanly.")
-            with contextlib.suppress(ValueError):
+            with contextlib.suppress(OSError):
                 self.runner_process.kill()
+            self.runner_process.join(timeout=2)
 
     async def _watch_runner(self) -> None:
         with self._cancel_watch_runner:

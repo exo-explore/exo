@@ -396,14 +396,14 @@ GatheredInfo = (
 @dataclass
 class InfoGatherer:
     info_sender: Sender[GatheredInfo]
-    interface_watcher_interval: float | None = 10
+    interface_watcher_interval: float | None = 30
     misc_poll_interval: float | None = 60
-    system_profiler_interval: float | None = 5 if IS_DARWIN else None
+    system_profiler_interval: float | None = 60 if IS_DARWIN else None
     memory_poll_rate: float | None = None if IS_DARWIN else 1
     macmon_interval: float | None = 5 if IS_DARWIN else None
-    thunderbolt_bridge_poll_interval: float | None = 10 if IS_DARWIN else None
+    thunderbolt_bridge_poll_interval: float | None = 60 if IS_DARWIN else None
     static_info_poll_interval: float | None = 60
-    rdma_ctl_poll_interval: float | None = 10 if IS_DARWIN else None
+    rdma_ctl_poll_interval: float | None = 60 if IS_DARWIN else None
     disk_poll_interval: float | None = 30
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
@@ -554,6 +554,8 @@ class InfoGatherer:
         if self.macmon_interval is None:
             return
         # macmon pipe --interval [interval in ms]
+        macmon_interval: float = self.macmon_interval
+        consecutive_failures = 0
         while True:
             try:
                 async with await open_process(
@@ -561,7 +563,7 @@ class InfoGatherer:
                         macmon_path,
                         "pipe",
                         "--interval",
-                        str(self.macmon_interval * 1000),
+                        str(macmon_interval * 1000),
                     ]
                 ) as p:
                     if not p.stdout:
@@ -570,8 +572,10 @@ class InfoGatherer:
                     async for text in TextReceiveStream(
                         BufferedByteReceiveStream(p.stdout)
                     ):
+                        consecutive_failures = 0
                         await self.info_sender.send(MacmonMetrics.from_raw_json(text))
             except CalledProcessError as e:
+                consecutive_failures += 1
                 stderr_msg = "no stderr"
                 stderr_output = cast(bytes | str | None, e.stderr)
                 if stderr_output is not None:
@@ -581,8 +585,12 @@ class InfoGatherer:
                         else str(stderr_output)
                     )
                 logger.warning(
-                    f"MacMon failed with return code {e.returncode}: {stderr_msg}"
+                    f"MacMon failed with return code {e.returncode}: {stderr_msg} (failure #{consecutive_failures})"
                 )
             except Exception as e:
-                logger.warning(f"Error in macmon monitor: {e}")
-            await anyio.sleep(self.macmon_interval)
+                consecutive_failures += 1
+                logger.warning(f"Error in macmon monitor (failure #{consecutive_failures}): {e}")
+            # Exponential backoff on consecutive failures to prevent subprocess fork storms
+            exponent: int = min(consecutive_failures, 5)
+            backoff: float = min(macmon_interval * (1 << exponent), 300.0)
+            await anyio.sleep(backoff)

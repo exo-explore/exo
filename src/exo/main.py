@@ -223,6 +223,9 @@ class Node:
                         f"Node {result.session_id.master_node_id} elected master"
                     )
                 if result.is_new_master:
+                    # Brief grace period to batch rapid election cycles — prevents
+                    # repeated Worker/InfoGatherer recreation during startup churn.
+                    await anyio.sleep(0.5)
                     if self.download_coordinator:
                         self.download_coordinator.shutdown()
                         self.download_coordinator = DownloadCoordinator(

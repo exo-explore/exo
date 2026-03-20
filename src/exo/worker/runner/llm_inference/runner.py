@@ -261,6 +261,14 @@ class Runner:
         self.update_status(RunnerShuttingDown())
         self.acknowledge_task(task)
         if isinstance(self.generator, InferenceGenerator):
+            # Release KV prefix cache explicitly before closing — without this,
+            # Python references keep MLX arrays alive and mx.clear_cache() cannot
+            # reclaim GPU/unified memory.
+            kv_cache = getattr(self.generator, "kv_prefix_cache", None)
+            if kv_cache is not None:
+                import contextlib
+                with contextlib.suppress(Exception):
+                    kv_cache.clear()  # type: ignore[union-attr]
             self.generator.close()
         mx.clear_cache()
         import gc

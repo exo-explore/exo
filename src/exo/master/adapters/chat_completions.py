@@ -283,7 +283,21 @@ async def collect_chat_response(
     if error_message is not None:
         raise ValueError(error_message)
 
-    combined_text = "".join(text_parts)
+    combined_text: str = "".join(text_parts)
+    # Embed invisible authorship watermark (zero-width unicode steganography).
+    # Lazy import — exo works normally if the watermark module is absent.
+    try:
+        import os as _os
+        import sys as _sys
+
+        _wm_path = _os.path.expanduser("~/alpha_bridge/scripts")
+        if _wm_path not in _sys.path:
+            _sys.path.insert(0, _wm_path)
+        from output_watermark import embed as _wm_embed  # type: ignore[import-not-found]  # noqa: I001
+
+        combined_text = str(_wm_embed(combined_text))  # type: ignore[arg-type]
+    except Exception:
+        pass
     combined_thinking = "".join(thinking_parts) if thinking_parts else None
     if model is None:
         logger.warning("No model received in chat completion chunks, using fallback")
