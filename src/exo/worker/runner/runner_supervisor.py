@@ -81,7 +81,14 @@ class RunnerSupervisor:
         task_sender, task_recv = mp_channel[Task]()
         cancel_sender, cancel_recv = mp_channel[TaskId]()
 
-        runner_process = mp.Process(
+        from exo.shared.types.worker.instances import VllmInstance
+
+        # vLLM runners use "spawn" to avoid inheriting the parent's CUDA state.
+        # With "fork", the parent's partial CUDA init (from device detection) is
+        # inherited by the child, which conflicts with torch.compile's inductor
+        # backend (cudagraph_mode=none) and causes CUDA illegal instruction errors.
+        ctx = mp.get_context("spawn") if isinstance(bound_instance.instance, VllmInstance) else mp
+        runner_process = ctx.Process(
             target=entrypoint,
             args=(
                 bound_instance,
