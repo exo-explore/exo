@@ -2,6 +2,7 @@
 
 import pydantic
 import pytest
+from exo.shared.types.common import ModelId
 
 from exo.api.adapters.claude import (
     claude_request_to_text_generation,
@@ -12,7 +13,6 @@ from exo.api.types.claude_api import (
     ClaudeMessagesRequest,
     ClaudeTextBlock,
 )
-from exo.shared.types.common import ModelId
 
 
 class TestFinishReasonToClaudeStopReason:

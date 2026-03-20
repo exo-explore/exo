@@ -45,21 +45,22 @@ dev = [
   "pytest-env",
   "ruff>=0.11.13",
 ]
+build = [
+  "nanobind"
+]
 
 [project.optional-dependencies]
 mlx = ["mlx_engine"]
-cuda = ["vllm_engine; sys_platform == 'linux' and platform_machine == 'aarch64'"]
+cuda = [
+  "vllm_engine; sys_platform == 'linux' and platform_machine == 'aarch64'",
+]
 
 ###
 # workspace configuration
 ###
 
 [tool.uv.workspace]
-members = [
-    "rust/exo_pyo3_bindings",
-    "bench",
-    "python/exo_core",
-]
+members = ["rust/exo_pyo3_bindings", "bench", "python/exo_core"]
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
@@ -129,6 +130,9 @@ required-version = ">=0.8.6"
 prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 conflicts = [[{ package = "exo", extra = "cuda" }, { package = "exo-bench" }]]
+
+[tool.uv.extra-build-dependencies]
+xgrammar = [ "nanobind" ]
 
 
 ###

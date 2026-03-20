@@ -2,11 +2,18 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from typing import Self
 
+
 class TaskId(str): ...
+
+
 class Cancelled: ...
+
+
 class Finished: ...
 
+
 CANCEL_ALL_TASKS = TaskId("CANCEL_TALL_TASKS")
+
 
 class Engine[TaskType, ResponseType](ABC):
     _cancelled_tasks: set[TaskId]
@@ -32,12 +39,11 @@ class Engine[TaskType, ResponseType](ABC):
     @abstractmethod
     def step(
         self,
-    ) -> Iterable[
-        tuple[TaskId, ResponseType | Cancelled | Finished]
-    ]: ...
+    ) -> Iterable[tuple[TaskId, ResponseType | Cancelled | Finished]]: ...
 
     @abstractmethod
     def close(self) -> None: ...
+
 
 class EngineBuilder[SetupType, TaskType, ResponseType](ABC):
     @classmethod
@@ -62,4 +68,3 @@ class EngineBuilder[SetupType, TaskType, ResponseType](ABC):
 
     @abstractmethod
     def close(self) -> None: ...
-

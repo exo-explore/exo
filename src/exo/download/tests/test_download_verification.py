@@ -9,14 +9,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiofiles
 import aiofiles.os as aios
 import pytest
+from exo.shared.types.common import ModelId
+from exo.shared.types.memory import Memory
 from pydantic import TypeAdapter
 
 from exo.download.download_utils import (
     delete_model,
     fetch_file_list_with_cache,
 )
-from exo.shared.types.common import ModelId
-from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import FileListEntry, RepoFileDownloadProgress
 
 

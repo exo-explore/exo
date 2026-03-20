@@ -1,4 +1,18 @@
 import pytest
+from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
+from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.memory import Memory
+from exo.shared.types.tasks import TaskId, TaskStatus, TextGeneration
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo.shared.types.worker.instances import (
+    Instance,
+    InstanceId,
+    InstanceMeta,
+    MlxJacclInstance,
+    MlxRingInstance,
+)
+from exo.shared.types.worker.runners import ShardAssignments
+from exo.shared.types.worker.shards import Sharding
 
 from exo.master.placement import (
     get_transition_events,
@@ -10,30 +24,16 @@ from exo.master.tests.conftest import (
     create_rdma_connection,
     create_socket_connection,
 )
-from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.commands import PlaceInstance
-from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import (
     InstanceCreated,
     InstanceDeleted,
     TaskStatusUpdated,
 )
-from exo.shared.types.memory import Memory
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import NetworkInterfaceInfo, NodeNetworkInfo
-from exo.shared.types.tasks import TaskId, TaskStatus, TextGeneration
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.topology import Connection, SocketConnection
-from exo.shared.types.worker.instances import (
-    Instance,
-    InstanceId,
-    InstanceMeta,
-    MlxJacclInstance,
-    MlxRingInstance,
-)
-from exo.shared.types.worker.runners import ShardAssignments
-from exo.shared.types.worker.shards import Sharding
 
 
 @pytest.fixture

@@ -5,6 +5,9 @@ import aiofiles
 import aiofiles.os as aios
 import tomlkit
 from anyio import Path, open_file
+from exo.shared.types.common import ModelId
+from exo.shared.types.memory import Memory
+from exo.utils.pydantic_ext import CamelCaseModel
 from huggingface_hub import model_info
 from loguru import logger
 from pydantic import (
@@ -23,9 +26,6 @@ from exo.shared.constants import (
     EXO_ENABLE_IMAGE_MODELS,
     RESOURCES_DIR,
 )
-from exo.shared.types.common import ModelId
-from exo.shared.types.memory import Memory
-from exo.utils.pydantic_ext import CamelCaseModel
 
 # kinda ugly...
 # TODO: load search path from config.toml

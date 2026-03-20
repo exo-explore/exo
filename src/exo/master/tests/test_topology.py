@@ -1,7 +1,7 @@
 import pytest
+from exo.shared.types.common import NodeId
 
 from exo.shared.topology import Topology
-from exo.shared.types.common import NodeId
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.topology import Connection, SocketConnection
 

@@ -1,0 +1,25 @@
+diff --git a/cpp/nanobind/CMakeLists.txt b/cpp/nanobind/CMakeLists.txt
+index ebfd3da..6ef06e3 100644
+--- a/cpp/nanobind/CMakeLists.txt
++++ b/cpp/nanobind/CMakeLists.txt
+@@ -18,8 +18,18 @@ target_sources(python_methods PRIVATE python_methods.cc)
+ target_link_libraries(python_methods PUBLIC xgrammar)
+ 
+ # Any code that uses nanobind directly lives here
+-nanobind_add_module(xgrammar_bindings LTO nanobind.cc)
+-target_link_libraries(xgrammar_bindings PRIVATE python_methods)
++nanobind_build_library(nanobind)
++add_library(xgrammar_bindings MODULE nanobind.cc)
++target_link_libraries(xgrammar_bindings PRIVATE
++  python_methods
++  nanobind
++)
++nanobind_opt_size(xgrammar_bindings)
++nanobind_lto(xgrammar_bindings)
++nanobind_set_visibility(xgrammar_bindings)
++nanobind_extension(xgrammar_bindings)
++nanobind_compile_options(xgrammar_bindings)
++nanobind_link_options(xgrammar_bindings)
+ 
+ if(DEFINED SKBUILD_PROJECT_NAME)
+   # Building wheel through scikit-build-core

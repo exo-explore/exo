@@ -1,8 +1,9 @@
+from exo.shared.types.common import NodeId
+from exo.shared.types.memory import Memory
+
 from exo.shared.apply import apply_node_download_progress
 from exo.shared.tests.conftest import get_pipeline_shard_metadata
-from exo.shared.types.common import NodeId
 from exo.shared.types.events import NodeDownloadProgress
-from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.worker.tests.constants import MODEL_A_ID, MODEL_B_ID

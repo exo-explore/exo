@@ -1,8 +1,7 @@
 import anyio
 import pytest
-from pydantic import BaseModel, TypeAdapter, ValidationError
-
 from exo.utils.pydantic_ext import TaggedModel
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 
 def test_plain_union_prefers_first_member_when_shapes_are_identical():

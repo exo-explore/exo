@@ -1,7 +1,8 @@
+from exo.shared.types.worker.runners import RunnerId, RunnerIdle, RunnerShutdown
+
 from exo.shared.apply import apply_runner_status_updated
 from exo.shared.types.events import RunnerStatusUpdated
 from exo.shared.types.state import State
-from exo.shared.types.worker.runners import RunnerId, RunnerIdle, RunnerShutdown
 
 
 def test_apply_runner_shutdown_removes_runner():

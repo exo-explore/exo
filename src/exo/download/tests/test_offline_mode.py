@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, patch
 import aiofiles
 import aiofiles.os as aios
 import pytest
+from exo.shared.types.common import ModelId
 
 from exo.download.download_utils import (
     _download_file,  # pyright: ignore[reportPrivateUsage]
     download_file_with_retry,
     fetch_file_list_with_cache,
 )
-from exo.shared.types.common import ModelId
 from exo.shared.types.worker.downloads import FileListEntry
 
 

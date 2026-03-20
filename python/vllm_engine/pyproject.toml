@@ -12,14 +12,13 @@ dependencies = [
 ]
 
 [tool.uv]
-environments = [
-    "sys_platform == 'linux' and platform_machine == 'aarch64'"
-]
+environments = ["sys_platform == 'linux' and platform_machine == 'aarch64'"]
 
 
 [tool.uv.sources]
 vllm = { git = "https://github.com/hmellor/vllm.git", rev = "b99bedc737166ae5ca98cb9e3534b96e0c8c69aa" }
-torch = [{ index = "pytorch-cu130", marker = "platform_machine == 'aarch64'" },
+torch = [
+  { index = "pytorch-cu130", marker = "platform_machine == 'aarch64'" },
   { index = "pytorch-cpu", marker = "platform_machine == 'x86_64'" },
 ]
 

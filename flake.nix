@@ -76,15 +76,15 @@
         let
           # Use pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
           pkgsSwift = import inputs.nixpkgs-swift { inherit system; };
-
-          pkgsCuda = import ./nix/cuda-pkgs.nix { nixpkgs = inputs.nixpkgs; inherit system; };
         in
         {
           # Allow unfree for metal-toolchain (needed for Darwin Metal packages)
           _module.args.pkgs = import inputs.nixpkgs {
             inherit system;
-            config.allowUnfreePredicate = pkg: (pkg.pname or "") == "metal-toolchain";
-            overlays = [
+            config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ "metal-toolchain" "cuda-merged" "cuda_cuobjdump" "cuda_gdb" "cuda_nvcc" "cuda_nvdisasm" "cuda_nvprune" "cuda_cccl" "cuda_cudart" "cuda_cupti" "cuda_cuxxfilt" "cuda_nvml_dev" "cuda_nvrtc" "cuda_nvtx" "cuda_profiler_api" "cuda_sanitizer_api" "libcublas" "libcufft" "libcurand" "libcusolver" "libnvjitlink" "libcusparse" "libnpp" "cudnn" "libcusparse_lt" "libcufile" "libnvshmem" "libnvvm" "cuda_crt" ];
+            cudaSupport = true;
+            cudaCapabilities = [ "12.1" ];
+            overlays = lib.optionals (system == "aarch64-darwin") [
               (import ./nix/apple-sdk-overlay.nix)
             ];
           };
@@ -131,10 +131,8 @@
                 default = self'.packages.exo;
               }
             );
-          # CUDA development shell with torch + vLLM (aarch64-linux only)
           devShells =
             {
-
               default = with pkgs; pkgs.mkShell {
                 inputsFrom = [ self'.checks.cargo-build ];
 

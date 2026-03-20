@@ -38,38 +38,231 @@
       python = pkgs.python313;
 
       # Overlay to provide build systems and custom packages
-      buildSystemsOverlay = final: prev: {
-        # mlx-lm is a git dependency that needs setuptools
-        mlx-lm = prev.mlx-lm.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-            final.setuptools
+      buildSystemsOverlay = final: prev:
+        let
+          addSetupTools = (old: {
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+              final.setuptools
+            ];
+          });
+          torchLibs = [
+            final.nvidia-cuda-runtime
+            final.nvidia-cuda-nvrtc
+            final.nvidia-cuda-cupti
+            final.nvidia-nvjitlink
+            final.nvidia-cudnn-cu13
+            final.nvidia-cusparse
+            final.nvidia-cusparselt-cu13
+            final.nvidia-cufile
+            final.nvidia-nvshmem-cu13
+            final.nvidia-nccl-cu13
+            final.nvidia-cublas
+            final.nvidia-cufft
+            final.nvidia-curand
+            final.nvidia-cusolver
           ];
-        });
-        # rouge-score and sacrebleu don't declare setuptools as a build dependency
-        rouge-score = prev.rouge-score.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-            final.setuptools
+          cutlass = pkgs.fetchFromGitHub {
+            name = "cutlass-source";
+            owner = "NVIDIA";
+            repo = "cutlass";
+            tag = "v4.2.1";
+            hash = "sha256-iP560D5Vwuj6wX1otJhwbvqe/X4mYVeKTpK533Wr5gY=";
+          };
+          triton-kernels = pkgs.fetchFromGitHub {
+            owner = "triton-lang";
+            repo = "triton";
+            tag = "v3.5.0";
+            hash = "sha256-F6T0n37Lbs+B7UHNYzoIQHjNNv3TcMtoXjNrT8ZUlxY=";
+          };
+
+          cutlass-flashmla = pkgs.fetchFromGitHub {
+            owner = "NVIDIA";
+            repo = "cutlass";
+            rev = "147f5673d0c1c3dcf66f78d677fd647e4a020219";
+            hash = "sha256-dHQto08IwTDOIuFUp9jwm1MWkFi8v2YJ/UESrLuG71g=";
+          };
+
+          flashmla = pkgs.stdenv.mkDerivation {
+            pname = "flashmla";
+            version = "1.0.0";
+
+            src = pkgs.fetchFromGitHub {
+              name = "FlashMLA-source";
+              owner = "vllm-project";
+              repo = "FlashMLA";
+              rev = "c2afa9cb93e674d5a9120a170a6da57b89267208";
+              hash = "sha256-pKlwxV6G9iHag/jbu3bAyvYvnu5TbrQwUMFV0AlGC3s=";
+            };
+
+            dontConfigure = true;
+
+            buildPhase = ''
+              rm -rf csrc/cutlass
+              ln -sf ${cutlass-flashmla} csrc/cutlass
+            '';
+
+            installPhase = ''
+              cp -rva . $out
+            '';
+          };
+          qutlass = pkgs.fetchFromGitHub {
+            name = "qutlass-source";
+            owner = "IST-DASLab";
+            repo = "qutlass";
+            rev = "830d2c4537c7396e14a02a46fbddd18b5d107c65";
+            hash = "sha256-aG4qd0vlwP+8gudfvHwhtXCFmBOJKQQTvcwahpEqC84=";
+          };
+          vllm-flash-attn = pkgs.stdenv.mkDerivation {
+            pname = "vllm-flash-attn";
+            version = "2.7.2.post1";
+
+            src = pkgs.fetchFromGitHub {
+              name = "flash-attention-source";
+              owner = "vllm-project";
+              repo = "flash-attention";
+              rev = "188be16520ceefdc625fdf71365585d2ee348fe2";
+              hash = "sha256-Osec+/IF3+UDtbIhDMBXzUeWJ7hDJNb5FpaVaziPSgM=";
+            };
+
+            patches = [
+              (pkgs.fetchpatch {
+                url = "https://github.com/Dao-AILab/flash-attention/commit/dad67c88d4b6122c69d0bed1cebded0cded71cea.patch";
+                hash = "sha256-JSgXWItOp5KRpFbTQj/cZk+Tqez+4mEz5kmH5EUeQN4=";
+              })
+              (pkgs.fetchpatch {
+                url = "https://github.com/Dao-AILab/flash-attention/commit/e26dd28e487117ee3e6bc4908682f41f31e6f83a.patch";
+                hash = "sha256-NkCEowXSi+tiWu74Qt+VPKKavx0H9JeteovSJKToK9A=";
+              })
+            ];
+
+            dontConfigure = true;
+
+            buildPhase = ''
+              rm -rf csrc/cutlass
+              ln -sf ${cutlass} csrc/cutlass
+            '';
+
+            installPhase = ''
+              cp -rva . $out
+            '';
+          };
+
+          mergedCudaLibraries = with pkgs.cudaPackages_13; [
+            cuda_cudart # cuda_runtime.h, -lcudart
+            cuda_cccl
+            libcurand # curand_kernel.h
+            libcusparse # cusparse.h
+            libcusolver # cusolverDn.h
+            cuda_nvtx
+            cuda_nvrtc
+            # cusparselt # cusparseLt.h
+            libcublas
           ];
-        });
-        sacrebleu = prev.sacrebleu.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-            final.setuptools
-          ];
-        });
-        sqlitedict = prev.sqlitedict.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-            final.setuptools
-          ];
-        });
-        word2number = prev.word2number.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-            final.setuptools
-          ];
-        });
-      } // lib.optionalAttrs isDarwin {
-        # Use our pure Nix-built MLX with Metal support (macOS only)
-        mlx = self'.packages.mlx;
-      };
+
+	  cuda_cccl_compat = pkgs.runCommand "cuda-cccl-compat" {} ''
+	    mkdir -p $out/include
+	    ln -s ${pkgs.cudaPackages_13.cuda_cccl}/include $out/include/cccl
+	  '';
+          cudaToolkitRoot = pkgs.symlinkJoin {
+              name = "cuda-merged-exo";
+              paths = builtins.concatMap (p: [ (lib.getBin p) (lib.getLib p) (lib.getDev p) ]) (mergedCudaLibraries ++ [ pkgs.cudaPackages_13.cuda_nvcc  cuda_cccl_compat ]);
+            };
+
+        in
+
+        {
+          # mlx-lm is a git dependency that needs setuptools
+          mlx-lm = prev.mlx-lm.overrideAttrs addSetupTools;
+          # rouge-score and sacrebleu don't declare setuptools as a build dependency
+          rouge-score = prev.rouge-score.overrideAttrs addSetupTools;
+          sacrebleu = prev.sacrebleu.overrideAttrs addSetupTools;
+          sqlitedict = prev.sqlitedict.overrideAttrs addSetupTools;
+          word2number = prev.word2number.overrideAttrs addSetupTools;
+          fastsafetensors = prev.fastsafetensors.overrideAttrs (old: { nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ final.setuptools final.pybind11 ]; });
+          torch = prev.torch.overrideAttrs (old: {
+            propagatedBuildInputs = (old.propagatedBuildInputs or [ ]) ++ torchLibs ++ [ final.typing-extensions final.numpy ];
+            autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "libcuda.so.1" ];
+          });
+          torchaudio = prev.torchaudio.overrideAttrs (old:
+            {
+              buildInputs = (old.buildInputs or [ ]) ++ [
+                final.torch
+              ];
+              preFixup = (old.preFixup or "") + ''
+                addAutoPatchelfSearchPath "${final.torch}"
+              '';
+              autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "libcuda.so.1" ];
+            });
+          torchvision = prev.torchvision.overrideAttrs (old:
+            {
+              buildInputs = (old.buildInputs or [ ]) ++ [
+                final.torch
+              ];
+              preFixup = (old.preFixup or "") + ''
+                addAutoPatchelfSearchPath "${final.torch}"
+              '';
+              autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "libcuda.so.1" ];
+            });
+          xgrammar = prev.xgrammar.overrideAttrs (old: { nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ final.setuptools final.scikit-build-core final.packaging final.pathspec pkgs.cmake final.nanobind ]; 
+
+  prePatch = ''
+cat cpp/nanobind/CMakeLists.txt
+'';
+  patches = (old.patches or [ ]) ++ [ ./nanobind_cmake.patch ];
+});
+          vllm = prev.vllm.overrideAttrs (old: {
+            patches = (old.patches or [ ]) ++ [ ./vllm_uv2nix_cmake.patch ];
+            nativeBuildInputs = with pkgs.cudaPackages_13; (old.nativeBuildInputs or [ ]) ++ [
+              final.setuptools
+              final.setuptools-scm
+              final.scikit-build-core
+              pkgs.cmake
+              cuda_nvcc
+              final.jinja2
+              final.wheel
+              final.markupsafe
+              pkgs.ninja
+              pkgs.autoAddDriverRunpath
+            ];
+            buildInputs = with pkgs.cudaPackages_13; [
+              libcufile
+              cudnn
+              nccl
+            ] ++ mergedCudaLibraries;
+            propagatedBuildInputs = (old.propagatedBuildInputs or [ ]) ++ torchLibs ++ [ final.torch ];
+
+            CUDA_HOME = "${cudaToolkitRoot}";
+            VLLM_CUTLASS_SRC_DIR = "${lib.getDev cutlass}";
+            VLLM_TARGET_DEVICE = "cuda";
+            TORCH_CUDA_ARCH_LIST = "12.0;12.1";
+            TRITON_KERNELS_SRC_DIR = "${lib.getDev triton-kernels}/python/triton_kernels/triton_kernels";
+            FLASH_MLA_SRC_DIR = "${lib.getDev flashmla}";
+            QUTLASS_SRC_DIR = "${lib.getDev qutlass}";
+            VLLM_FLASH_ATTN_SRC_DIR = "${lib.getDev vllm-flash-attn}";
+            CAFFE2_USE_CUDNN = "ON";
+            CAFFE2_USE_CUFILE = "ON";
+            CUTLASS_ENABLE_CUBLAS = "ON";
+            CUTLASS_NVCC_ARCHS_ENABLED = "12.1;12.1";
+
+            UV2NIX_CMAKE_FLAGS_JSON = builtins.toJSON [
+              "-DFETCHCONTENT_SOURCE_DIR_CUTLASS=${lib.getDev cutlass}"
+              "-DFLASH_MLA_SRC_DIR=${lib.getDev flashmla}"
+              "-DVLLM_FLASH_ATTN_SRC_DIR=${lib.getDev vllm-flash-attn}"
+              "-DQUTLASS_SRC_DIR=${lib.getDev qutlass}"
+              "-DTORCH_CUDA_ARCH_LIST=12.0;12.1"
+              "-DCUTLASS_NVCC_ARCHS_ENABLED=${pkgs.cudaPackages_13.flags.cmakeCudaArchitecturesString}"
+              "-DCUDA_HOME=${cudaToolkitRoot}"
+              "-DCAFFE2_USE_CUDNN=ON"
+              "-DCAFFE2_USE_CUFILE=ON"
+              "-DCUTLASS_ENABLE_CUBLAS=ON"
+            ];
+
+
+          });
+        } // lib.optionalAttrs isDarwin {
+          # Use our pure Nix-built MLX with Metal support (macOS only)
+          mlx = self'.packages.mlx;
+        };
 
       # Additional overlay for Linux-specific fixes (type checking env).
       # Native wheels have shared lib dependencies we don't need at type-check time.
@@ -128,7 +321,7 @@
         venvIgnoreCollisions = venvCollisionPaths;
       };
       exoCudaVenv = (pythonSet.mkVirtualEnv "exo-env" {
-        exo = lib.optionals isLinux [ "cuda" ];
+        exo = [ "cuda" ];
         exo-pyo3-bindings = [ ];
       }).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;

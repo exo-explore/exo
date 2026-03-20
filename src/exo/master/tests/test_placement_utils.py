@@ -1,4 +1,12 @@
 import pytest
+from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
+from exo.shared.types.common import NodeId
+from exo.shared.types.memory import Memory
+from exo.shared.types.worker.shards import (
+    CfgShardMetadata,
+    PipelineShardMetadata,
+    Sharding,
+)
 
 from exo.master.placement_utils import (
     allocate_layers_proportionally,
@@ -12,20 +20,12 @@ from exo.master.tests.conftest import (
     create_node_memory,
     create_socket_connection,
 )
-from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
-from exo.shared.types.common import NodeId
-from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     NetworkInterfaceInfo,
     NodeNetworkInfo,
 )
 from exo.shared.types.topology import Connection, SocketConnection
-from exo.shared.types.worker.shards import (
-    CfgShardMetadata,
-    PipelineShardMetadata,
-    Sharding,
-)
 
 
 def test_filter_cycles_by_memory():

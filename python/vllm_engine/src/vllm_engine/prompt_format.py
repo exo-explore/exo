@@ -1,9 +1,9 @@
+from exo.shared.types.common import ModelId
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from vllm.sampling_params import SamplingParams
 from vllm.v1.engine.llm_engine import LLMEngine
 
-from exo.shared.types.common import ModelId
-from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     get_eos_token_ids_for_model,

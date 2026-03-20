@@ -8,21 +8,22 @@ from pathlib import Path
 from typing import Callable
 from unittest.mock import AsyncMock, patch
 
+from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
+from exo.shared.types.common import NodeId, SystemId
+from exo.shared.types.memory import Memory
+from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
+
 from exo.download.coordinator import DownloadCoordinator
 from exo.download.download_utils import RepoDownloadProgress
 from exo.download.impl_shard_downloader import SingletonShardDownloader
 from exo.download.shard_downloader import ShardDownloader
-from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.commands import (
     DeleteDownload,
     ForwarderDownloadCommand,
     StartDownload,
 )
-from exo.shared.types.common import NodeId, SystemId
 from exo.shared.types.events import Event, NodeDownloadProgress
-from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import DownloadCompleted
-from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 from exo.utils.channels import Receiver, Sender, channel
 
 NODE_ID = NodeId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")

@@ -8,11 +8,6 @@ from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 
 import torch
-from vllm.engine.arg_utils import EngineArgs
-from vllm.sampling_params import SamplingParams
-from vllm.v1.engine.llm_engine import LLMEngine
-from vllm.v1.kv_cache_interface import KVCacheConfig
-
 from exo.shared.types.api import (
     CompletionTokensDetails,
     GenerationStats,
@@ -24,8 +19,6 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import TaskId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
-from exo.worker.engines.mlx.cache import KVPrefixCache
-from exo.worker.engines.mlx.utils_mlx import get_eos_token_ids_for_model
 from exo.worker.engines.vllm.growable_cache import (
     get_model_runner,
     patch_vllm,
@@ -36,6 +29,13 @@ from exo.worker.engines.vllm.prompt_format import (
     format_vllm_prompt,
     make_vllm_sampling_params,
 )
+from vllm.engine.arg_utils import EngineArgs
+from vllm.sampling_params import SamplingParams
+from vllm.v1.engine.llm_engine import LLMEngine
+from vllm.v1.kv_cache_interface import KVCacheConfig
+
+from exo.worker.engines.mlx.cache import KVPrefixCache
+from exo.worker.engines.mlx.utils_mlx import get_eos_token_ids_for_model
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.tool_parsers import ToolParser, infer_tool_parser
 

@@ -3,32 +3,9 @@ from typing import Sequence
 
 import anyio
 import pytest
-from loguru import logger
-
-from exo.master.main import Master
-from exo.routing.router import get_node_id_keypair
 from exo.shared.models.model_cards import ModelCard, ModelTask
-from exo.shared.types.commands import (
-    CommandId,
-    ForwarderCommand,
-    ForwarderDownloadCommand,
-    PlaceInstance,
-    TextGeneration,
-)
 from exo.shared.types.common import ModelId, NodeId, SessionId, SystemId
-from exo.shared.types.events import (
-    Event,
-    GlobalForwarderEvent,
-    IndexedEvent,
-    InstanceCreated,
-    LocalForwarderEvent,
-    NodeGatheredInfo,
-    TaskCreated,
-)
 from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import (
-    MemoryUsage,
-)
 from exo.shared.types.tasks import TaskStatus
 from exo.shared.types.tasks import TextGeneration as TextGenerationTask
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
@@ -38,6 +15,29 @@ from exo.shared.types.worker.instances import (
     ShardAssignments,
 )
 from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
+from loguru import logger
+
+from exo.master.main import Master
+from exo.routing.router import get_node_id_keypair
+from exo.shared.types.commands import (
+    CommandId,
+    ForwarderCommand,
+    ForwarderDownloadCommand,
+    PlaceInstance,
+    TextGeneration,
+)
+from exo.shared.types.events import (
+    Event,
+    GlobalForwarderEvent,
+    IndexedEvent,
+    InstanceCreated,
+    LocalForwarderEvent,
+    NodeGatheredInfo,
+    TaskCreated,
+)
+from exo.shared.types.profiling import (
+    MemoryUsage,
+)
 from exo.utils.channels import channel
 
 

@@ -15,6 +15,10 @@ import aiofiles
 import aiofiles.os as aios
 import aiohttp
 import certifi
+from exo.shared.models.model_cards import ModelTask
+from exo.shared.types.common import ModelId
+from exo.shared.types.memory import Memory
+from exo.shared.types.worker.shards import ShardMetadata
 from huggingface_hub import (
     snapshot_download,  # pyright: ignore[reportUnknownVariableType]
 )
@@ -31,9 +35,6 @@ from exo.download.huggingface_utils import (
     get_hf_token,
 )
 from exo.shared.constants import EXO_MODELS_DIR, EXO_MODELS_PATH
-from exo.shared.models.model_cards import ModelTask
-from exo.shared.types.common import ModelId
-from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import (
     DownloadProgressData,
     FileListEntry,
@@ -41,7 +42,6 @@ from exo.shared.types.worker.downloads import (
     RepoDownloadProgress,
     RepoFileDownloadProgress,
 )
-from exo.shared.types.worker.shards import ShardMetadata
 
 
 class HuggingFaceAuthenticationError(Exception):

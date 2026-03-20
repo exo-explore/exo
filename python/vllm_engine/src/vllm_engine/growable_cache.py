@@ -339,9 +339,8 @@ def _patch_get_computed_blocks() -> None:
         ):
             return original(self, request)
 
-        from vllm.utils.math_utils import cdiv  # type: ignore[reportMissingImports]
-
         from exo.worker.engines.vllm.vllm_generator import _build_layer_groups
+        from vllm.utils.math_utils import cdiv  # type: ignore[reportMissingImports]
 
         num_groups = len(self.kv_cache_config.kv_cache_groups)
         null_block = self.block_pool.null_block
