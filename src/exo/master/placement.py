@@ -32,10 +32,11 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
-    ModelModelDownloadFailed,
+    ModelDownloadFailed,
     ModelDownloading,
     ModelNotDownloading,
     ModelReady,
+    ModelRejected,
     ModelStatus,
 )
 from exo.shared.types.worker.instances import (
@@ -86,6 +87,8 @@ def _get_node_download_fraction(
                 total = progress.total.in_bytes
                 return progress.downloaded.in_bytes / total if total > 0 else 0.0
             case ModelDownloadFailed():
+                return 0.0
+            case ModelRejected():
                 return 0.0
     return 0.0
 
