@@ -53,6 +53,10 @@ from exo.shared.types.worker.runners import (
 )
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.mlx.cache import KVPrefixCache
+from exo.worker.engines.mlx.remote_cache_tier import (
+    LiveTieredRemoteCache,
+    RemoteCacheTierProtocol,
+)
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
     load_mlx_items,
@@ -216,7 +220,10 @@ class Runner:
                         tok.tool_parser,  # pyright: ignore[reportAny]
                     )
 
-                self.generator.kv_prefix_cache = KVPrefixCache(self.generator.group)
+                _remote_tier: RemoteCacheTierProtocol | None = LiveTieredRemoteCache.from_env()
+                self.generator.kv_prefix_cache = KVPrefixCache(
+                    self.generator.group, remote=_remote_tier
+                )
 
                 self.generator = self.generator.build()
 

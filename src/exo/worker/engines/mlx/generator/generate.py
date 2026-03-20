@@ -285,7 +285,8 @@ def prefill(
 
     # stream_generate added 1 extra generated token to the cache, so we should trim it.
     # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
-    pre_gen = deepcopy(snapshots[-2]) if has_ssm and len(snapshots) >= 2 else None
+    # Reference only — individual states are deepcopied below when assigned to cache[i].
+    pre_gen = snapshots[-2] if has_ssm and len(snapshots) >= 2 else None
     for i, c in enumerate(cache):
         if has_ssm and isinstance(c, (ArraysCache, RotatingKVCache)):
             if pre_gen is None:

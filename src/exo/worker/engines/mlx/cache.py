@@ -1,4 +1,5 @@
 import os
+import uuid
 from copy import deepcopy
 
 import mlx.core as mx
@@ -15,7 +16,36 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType, Model
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
+from exo.worker.engines.mlx.remote_cache_tier import RemoteCacheTierProtocol
 from exo.worker.runner.bootstrap import logger
+
+
+class CacheVersion:
+    """Copy-on-write wrapper for a KVCacheType.
+
+    snapshot() returns a zero-copy read view (O(1)).
+    ensure_owned() materialises a deep copy only when a write is about to happen.
+    This avoids the eager deepcopy on every prefix cache retrieval and defers
+    allocation to the point where the caller actually needs an owned, mutable copy.
+    """
+
+    def __init__(self, cache: KVCacheType, owned: bool = True) -> None:
+        self._cache = cache
+        self._owned = owned
+
+    def snapshot(self) -> "CacheVersion":
+        """Return a read-only alias — O(1), zero allocation."""
+        return CacheVersion(self._cache, owned=False)
+
+    def ensure_owned(self) -> "CacheVersion":
+        """Return an owned (writable) copy — O(n) deepcopy only if not already owned."""
+        if not self._owned:
+            return CacheVersion(deepcopy(self._cache), owned=True)
+        return self
+
+    @property
+    def value(self) -> KVCacheType:
+        return self._cache
 
 
 # Fraction of device memory above which LRU eviction kicks in.
@@ -76,13 +106,18 @@ def has_non_kv_caches(cache: KVCacheType) -> bool:
 
 
 class KVPrefixCache:
-    def __init__(self, group: mx.distributed.Group | None):
+    def __init__(
+        self,
+        group: mx.distributed.Group | None,
+        remote: RemoteCacheTierProtocol | None = None,
+    ):
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
-        self.caches: list[KVCacheType] = []
+        self.caches: list[CacheVersion] = []
         self._snapshots: list[list[CacheSnapshot] | None] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
         self._access_counter: int = 0
         self._group = group
+        self._remote: RemoteCacheTierProtocol | None = remote
 
     def clear(self):
         """Clear all cached prompts and caches."""
@@ -100,7 +135,8 @@ class KVPrefixCache:
         """Add a new cache entry. Evicts LRU entries if memory is high."""
         self._evict_if_needed()
         self.prompts.append(prompt_tokens)
-        self.caches.append(deepcopy(cache))
+        # Owned copy — caller's cache keeps evolving during generation.
+        self.caches.append(CacheVersion(deepcopy(cache)))
         self._snapshots.append(ssm_snapshots)
         self._access_counter += 1
         self._last_used.append(self._access_counter)
@@ -124,7 +160,8 @@ class KVPrefixCache:
             merged.extend(snapshots)
 
         self.prompts[index] = prompt_tokens
-        self.caches[index] = deepcopy(cache)
+        # Owned copy — caller's cache keeps evolving during generation.
+        self.caches[index] = CacheVersion(deepcopy(cache))
         self._snapshots[index] = merged or None
         self._access_counter += 1
         self._last_used[index] = self._access_counter
@@ -133,7 +170,7 @@ class KVPrefixCache:
     def _get_snapshot(
         self, entry_index: int, target_token_count: int
     ) -> tuple[int, CacheSnapshot | None]:
-        if not has_non_kv_caches(self.caches[entry_index]):
+        if not has_non_kv_caches(self.caches[entry_index].value):
             return target_token_count, None
 
         snapshots = self._snapshots[entry_index]
@@ -180,12 +217,22 @@ class KVPrefixCache:
                 best_index, best_length = i, length
 
         if best_index is None:
+            # Check remote tier before giving up and running full prefill.
+            if self._remote is not None:
+                remote_result = self._remote.fetch(prompt_tokens, model)
+                if remote_result is not None:
+                    remote_cache, matched_len = remote_result
+                    remaining = prompt_tokens[matched_len:]
+                    logger.info(
+                        f"Remote KV cache hit: {matched_len}/{len(prompt_tokens)} tokens from iPad"
+                    )
+                    return remote_cache, remaining, None
             return make_kv_cache(model), prompt_tokens, None
 
         # For exact match: trim to max_length-1 so remaining has the last token
         # For partial match: trim to best_length, remaining has suffix to prefill
         # This ensures stream_generate always has at least one token to start with
-        has_ssm = has_non_kv_caches(self.caches[best_index])
+        has_ssm = has_non_kv_caches(self.caches[best_index].value)
         target = (max_length - 1) if is_exact and not has_ssm else best_length
         restore_pos, restore_snap = self._get_snapshot(best_index, target)
 
@@ -193,13 +240,16 @@ class KVPrefixCache:
         if restore_snap is None and has_ssm:
             return make_kv_cache(model), prompt_tokens, None
 
-        prompt_cache = deepcopy(self.caches[best_index])
-        cached_length = cache_length(self.caches[best_index])
+        # COW: take a zero-copy read view; only materialise owned copy when writes are needed.
+        cv = self.caches[best_index].snapshot()
+        cached_length = cache_length(cv.value)
         tokens_to_trim = cached_length - restore_pos
+        # ensure_owned() deepcopies only once, whether trim is needed or not.
+        cv = cv.ensure_owned()
         if tokens_to_trim > 0:
-            trim_cache(prompt_cache, tokens_to_trim, restore_snap)
+            trim_cache(cv.value, tokens_to_trim, restore_snap)
             # Reset cache offset to match trimmed length
-            for c in prompt_cache:
+            for c in cv.value:
                 if hasattr(c, "offset"):
                     c.offset = restore_pos
 
@@ -207,7 +257,7 @@ class KVPrefixCache:
         self._last_used[best_index] = self._access_counter
         remaining = prompt_tokens[restore_pos:]
 
-        return prompt_cache, remaining, best_index
+        return cv.value, remaining, best_index
 
     def _evict_if_needed(self):
         """Evict least recently used entries while memory usage is high."""
@@ -217,6 +267,16 @@ class KVPrefixCache:
         ):
             lru_index = min(range(len(self._last_used)), key=self._last_used.__getitem__)
             evicted_tokens = len(self.prompts[lru_index])
+
+            # Push to remote tier before dropping so it can be fetched on the next miss.
+            if self._remote is not None:
+                entry_id = str(uuid.uuid4())
+                self._remote.store_async(
+                    entry_id,
+                    self.prompts[lru_index],
+                    self.caches[lru_index].value,
+                )
+
             self.prompts.pop(lru_index)
             self.caches.pop(lru_index)
             self._snapshots.pop(lru_index)

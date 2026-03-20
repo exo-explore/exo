@@ -185,7 +185,7 @@ class TestKVPrefixCacheWithModel:
         kv_prefix_cache.add_kv_cache(tokens, cache, snapshots)
 
         assert len(kv_prefix_cache.prompts) == 1
-        stored_length = cache_length(kv_prefix_cache.caches[0])
+        stored_length = cache_length(kv_prefix_cache.caches[0].value)
         assert stored_length > 0
 
         # Retrieve with same prompt: exact match
@@ -279,7 +279,7 @@ class TestKVPrefixCacheWithModel:
         kv_prefix_cache = KVPrefixCache(None)
         kv_prefix_cache.add_kv_cache(tokens, cache, snapshots)
 
-        stored_length = cache_length(kv_prefix_cache.caches[0])
+        stored_length = cache_length(kv_prefix_cache.caches[0].value)
 
         # Get cache and mutate it (simulating what generation does)
         result_cache, _, matched_index = kv_prefix_cache.get_kv_cache(model, tokens)
@@ -295,7 +295,7 @@ class TestKVPrefixCacheWithModel:
         mx.eval([c.keys for c in result_cache])
 
         # Stored cache must be unchanged
-        assert cache_length(kv_prefix_cache.caches[0]) == stored_length
+        assert cache_length(kv_prefix_cache.caches[0].value) == stored_length
 
     def test_stored_cache_survives_repeated_get_mutate_cycles(
         self, model_and_tokenizer
@@ -326,7 +326,7 @@ class TestKVPrefixCacheWithModel:
         kv_prefix_cache = KVPrefixCache(None)
         kv_prefix_cache.add_kv_cache(tokens, cache, snapshots)
 
-        stored_length = cache_length(kv_prefix_cache.caches[0])
+        stored_length = cache_length(kv_prefix_cache.caches[0].value)
 
         for i in range(3):
             result_cache, _, _ = kv_prefix_cache.get_kv_cache(model, tokens)
@@ -338,7 +338,7 @@ class TestKVPrefixCacheWithModel:
                 layer_cache.update_and_fetch(extra, extra)
             mx.eval([c.keys for c in result_cache])
 
-            assert cache_length(kv_prefix_cache.caches[0]) == stored_length, (
+            assert cache_length(kv_prefix_cache.caches[0].value) == stored_length, (
                 f"Failed on loop {i}"
             )
 
@@ -371,7 +371,7 @@ class TestKVPrefixCacheWithModel:
         assert len(kv_prefix_cache.caches) == 1
         # Cache should contain prompt + generated tokens
         expected_length = len(prompt_tokens) + generated_tokens
-        assert cache_length(kv_prefix_cache.caches[0]) == expected_length
+        assert cache_length(kv_prefix_cache.caches[0].value) == expected_length
 
     def test_mlx_generate_second_call_gets_prefix_hit(self, model_and_tokenizer):
         """Second mlx_generate call with same prompt should get a prefix hit from stored cache."""
@@ -448,7 +448,7 @@ class TestKVPrefixCacheWithModel:
         first_gen_time = time.perf_counter() - t0
 
         assert len(kv_prefix_cache.prompts) == 1
-        first_cache_length = cache_length(kv_prefix_cache.caches[0])
+        first_cache_length = cache_length(kv_prefix_cache.caches[0].value)
 
         # Second generation: same long prompt + extra content (simulating multi-turn)
         task2 = TextGenerationTaskParams(
@@ -489,7 +489,7 @@ class TestKVPrefixCacheWithModel:
         # With prefix_hit > 1000, should update in-place (not add a second entry)
         assert len(kv_prefix_cache.prompts) == 1
         # Updated cache should be longer (prompt2 + generated > prompt1 + generated)
-        updated_cache_length = cache_length(kv_prefix_cache.caches[0])
+        updated_cache_length = cache_length(kv_prefix_cache.caches[0].value)
         assert updated_cache_length > first_cache_length
 
     def test_mlx_generate_stored_cache_not_mutated(self, model_and_tokenizer):
@@ -515,7 +515,7 @@ class TestKVPrefixCacheWithModel:
         ):
             pass
 
-        firstcache_length = cache_length(kv_prefix_cache.caches[0])
+        firstcache_length = cache_length(kv_prefix_cache.caches[0].value)
 
         # Second generation gets the cache and mutates it during generation
         for _response in mlx_generate(
@@ -529,7 +529,7 @@ class TestKVPrefixCacheWithModel:
             pass
 
         # The first stored cache must not have been mutated by the second generation
-        assert cache_length(kv_prefix_cache.caches[0]) == firstcache_length
+        assert cache_length(kv_prefix_cache.caches[0].value) == firstcache_length
 
     def test_evicts_lru_entry_under_memory_pressure(self, model_and_tokenizer):
         """Under memory pressure, adding a new cache entry evicts the least recently used one."""
