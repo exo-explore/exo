@@ -10,7 +10,7 @@ from typing import Any, cast
 import mlx.core as mx
 import mlx.nn as nn
 
-from exo.shared.constants import EXO_MODELS_DIR
+from exo.shared.constants import EXO_DEFAULT_MODELS_DIR
 from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
@@ -52,7 +52,7 @@ def create_hostfile(world_size: int, base_port: int) -> tuple[str, list[str]]:
 # Use GPT OSS 20b to test as it is a model with a lot of strange behaviour
 
 DEFAULT_GPT_OSS_CONFIG = PipelineTestConfig(
-    model_path=EXO_MODELS_DIR / "mlx-community--gpt-oss-20b-MXFP4-Q8",
+    model_path=EXO_DEFAULT_MODELS_DIR / "mlx-community--gpt-oss-20b-MXFP4-Q8",
     total_layers=24,
     base_port=29600,
     max_tokens=200,

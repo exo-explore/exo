@@ -26,7 +26,10 @@ def model_id() -> ModelId:
 async def temp_models_dir(tmp_path: Path) -> AsyncIterator[Path]:
     models_dir = tmp_path / "models"
     await aios.makedirs(models_dir, exist_ok=True)
-    with patch("exo.download.download_utils.EXO_MODELS_DIR", models_dir):
+    with (
+        patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
+        patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+    ):
         yield models_dir
 
 
