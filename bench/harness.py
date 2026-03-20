@@ -377,7 +377,7 @@ def run_planning_phase(
                 f"have {avail // (1024**3)}GB. Use --danger-delete-downloads to free space."
             )
 
-        # Delete from smallest to largest (skip read-only models from EXO_MODELS_PATH)
+        # Delete from smallest to largest (skip read-only models)
         completed = [
             (
                 unwrap_instance(p["DownloadCompleted"]["shardMetadata"])["modelCard"][
