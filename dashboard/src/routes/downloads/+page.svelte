@@ -225,6 +225,11 @@
   let configPolicy = $state<"manual" | "auto-evict">("manual");
   let configSaving = $state(false);
   let configApplyAll = $state(false);
+  let configDiskTotalGb = $derived(
+    storageConfigNode
+      ? Math.round((storageConfigNode.diskTotal ?? 0) / 1024 ** 3)
+      : 0,
+  );
 
   function openStorageConfig(col: NodeColumn) {
     storageConfigNode = col;
@@ -1074,31 +1079,52 @@
         <input
           type="checkbox"
           bind:checked={configNoLimit}
+          onchange={() => {
+            if (!configNoLimit && configMaxGb == null) {
+              configMaxGb = configDiskTotalGb || 50;
+            }
+          }}
           class="accent-exo-yellow w-4 h-4"
         />
         <span class="text-xs font-mono text-white/80">Unlimited storage</span>
       </label>
 
-      <!-- Max storage input -->
-      <div class="space-y-1">
-        <label
-          class="text-[11px] font-mono text-white/50 uppercase tracking-wider"
-          for="storage-max-gb"
-        >
-          Max storage (GB)
-        </label>
+      <!-- Max storage slider -->
+      <div class="space-y-1.5">
+        <div class="flex items-baseline justify-between">
+          <label
+            class="text-[11px] font-mono text-white/50 uppercase tracking-wider"
+            for="storage-max-gb"
+          >
+            Max storage
+          </label>
+          <span
+            class="text-xs font-mono tabular-nums transition-opacity {configNoLimit
+              ? 'opacity-30'
+              : 'text-white'}"
+          >
+            {configMaxGb ?? 0} GB
+          </span>
+        </div>
         <input
           id="storage-max-gb"
-          type="number"
+          type="range"
+          min="1"
+          max={Math.max(configDiskTotalGb, configMaxGb ?? 1)}
           step="1"
-          min="0"
           bind:value={configMaxGb}
           disabled={configNoLimit}
-          class="w-full bg-exo-black/60 border border-exo-medium-gray/30 rounded px-3 py-1.5 text-xs font-mono text-white
-            focus:outline-none focus:border-exo-yellow/40
+          class="slider w-full h-1.5 rounded-full appearance-none cursor-pointer
             disabled:opacity-30 disabled:cursor-not-allowed"
-          placeholder="e.g. 50"
         />
+        <div
+          class="flex justify-between text-[10px] font-mono text-white/30 transition-opacity {configNoLimit
+            ? 'opacity-30'
+            : ''}"
+        >
+          <span>1 GB</span>
+          <span>{Math.max(configDiskTotalGb, configMaxGb ?? 1)} GB</span>
+        </div>
       </div>
 
       <!-- Policy selector -->
@@ -1166,5 +1192,31 @@
 <style>
   table {
     min-width: max-content;
+  }
+
+  .slider {
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #f5c518;
+    cursor: pointer;
+  }
+  .slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: none;
+    background: #f5c518;
+    cursor: pointer;
+  }
+  .slider:disabled::-webkit-slider-thumb {
+    cursor: not-allowed;
+  }
+  .slider:disabled::-moz-range-thumb {
+    cursor: not-allowed;
   }
 </style>
