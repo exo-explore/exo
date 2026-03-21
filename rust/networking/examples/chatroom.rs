@@ -20,7 +20,7 @@ async fn main() {
         identity::Keypair::generate_ed25519(),
         from_client,
         vec![],
-        None,
+        0,
     )
     .expect("Swarm creation failed")
     .into_stream();

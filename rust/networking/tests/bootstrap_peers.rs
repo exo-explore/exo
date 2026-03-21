@@ -22,7 +22,7 @@ async fn two_nodes_connect_via_bootstrap_peers() {
     let keypair_a = libp2p::identity::Keypair::generate_ed25519();
     let peer_id_a = keypair_a.public().to_peer_id();
     let (_tx_a, rx_a) = mpsc::channel(16);
-    let swarm_a = create_swarm(keypair_a, rx_a, vec![], Some(port_a)).expect("create swarm A");
+    let swarm_a = create_swarm(keypair_a, rx_a, vec![], port_a).expect("create swarm A");
     let mut stream_a = swarm_a.into_stream();
 
     // Node B: bootstraps to A's address
@@ -32,7 +32,7 @@ async fn two_nodes_connect_via_bootstrap_peers() {
         keypair_b,
         rx_b,
         vec![format!("/ip4/127.0.0.1/tcp/{port_a}")],
-        None,
+        0,
     )
     .expect("create swarm B");
     let mut stream_b = swarm_b.into_stream();
@@ -68,7 +68,7 @@ async fn two_nodes_connect_via_bootstrap_peers() {
 async fn create_swarm_with_empty_bootstrap_peers() {
     let keypair = libp2p::identity::Keypair::generate_ed25519();
     let (_tx, rx) = mpsc::channel(16);
-    let swarm = create_swarm(keypair, rx, vec![], None);
+    let swarm = create_swarm(keypair, rx, vec![], 0);
     assert!(
         swarm.is_ok(),
         "create_swarm with no bootstrap peers should succeed"
@@ -88,7 +88,7 @@ async fn create_swarm_ignores_invalid_bootstrap_addrs() {
             "".to_string(),
             "/ip4/10.0.0.1/tcp/30000".to_string(), // valid
         ],
-        None,
+        0,
     );
     assert!(
         swarm.is_ok(),
@@ -102,6 +102,6 @@ async fn create_swarm_with_fixed_port() {
     let port = free_port();
     let keypair = libp2p::identity::Keypair::generate_ed25519();
     let (_tx, rx) = mpsc::channel(16);
-    let swarm = create_swarm(keypair, rx, vec![], Some(port));
+    let swarm = create_swarm(keypair, rx, vec![], port);
     assert!(swarm.is_ok(), "create_swarm with fixed port should succeed");
 }
